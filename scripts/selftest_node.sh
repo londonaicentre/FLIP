@@ -156,7 +156,13 @@ before="$(dicom_log_lines)"
 instance="$(curl -fsS -u "${ORTHANC_AUTH}" "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
 store="$(curl -fsS -u "${ORTHANC_AUTH}" -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
     -d "{\"Resources\":[\"${instance}\"],\"Synchronous\":true}" 2>/dev/null || true)"
+# XNAT logs the import after the store has returned, so poll for the log to grow rather than read
+# it once (the Helm smoke sleeps a fixed SETTLE_SECONDS for the same reason).
 after="$(dicom_log_lines)"
+for ((waited = 0; waited < ${SELFTEST_CSTORE_SETTLE_SECONDS:-30} && after <= before; waited++)); do
+    sleep 1
+    after="$(dicom_log_lines)"
+done
 errors="$(docker exec "${XNAT_CTR}" sh -c "tail -n +$((before + 1)) ${DICOM_LOG} 2>/dev/null" 2>/dev/null |
     grep -cE 'AbstractMethodError|NoSuchMethodError|unable to read DICOM object null' || true)"
 if [ -z "${XNAT_CTR}" ]; then

@@ -79,6 +79,7 @@ def _run(
     wc_reply: str = "",
     stale_kit: bool = False,
     bad_template: bool = False,
+    log_lag: int = 0,
 ) -> tuple[subprocess.CompletedProcess, dict | None, Path, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
@@ -116,7 +117,8 @@ def _run(
     wc_arm = (
         f"  *\"wc -l\"*) printf '%s\\n' '{wc_reply}';;\n"
         if wc_reply
-        else f'  *"wc -l"*) n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; echo $((n + 5)) > "{counter}";;\n'
+        else f'  *"wc -l"*) r=$(( $(cat "{counter}.reads" 2>/dev/null || echo 0) + 1 )); echo $r > "{counter}.reads"; '
+        f'n=$(cat "{counter}" 2>/dev/null || echo 10); echo $n; [ $r -gt {log_lag} ] && echo $((n + 5)) > "{counter}";;\n'
     )
     # `docker inspect` answers the FL client's state, one line per call (running restarting count).
     _stub(
@@ -214,6 +216,12 @@ def main() -> int:
         _check(report, "stack up").get("ok") is False and "skipped" in _check(report, "stack up").get("detail", ""),
         "stack up is recorded as skipped",
     )
+
+    print("xnat_imports_after_the_store_returns")
+    # XNAT writes dicom.log asynchronously: the store has returned but the line lands a few reads later.
+    result, report, _, _ = _run("lag", log_lag=3)
+    _assert(_check(report, "xnat c-store").get("ok") is True, "a log that grows late still passes",
+            json.dumps(_check(report, "xnat c-store")))
 
     print("health_failure_fails_run")
     result, report, _, _ = _run("health", failing_port="8010")
