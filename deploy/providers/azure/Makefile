@@ -124,7 +124,7 @@ kit-upload: ## Put a kit tarball in the node's kit drop (TARBALL=<path> [NAME=<b
 	@[ -f "$(TARBALL)" ] || { echo "❌ TARBALL=<path to a kit tarball> is required."; exit 1; }
 	@url=$$($(TF) -chdir=vm output -raw kit_drop_url 2>/dev/null); \
 	[ -n "$$url" ] || { echo "❌ No kit drop: apply the vm root with kit_drop_enabled=true first."; exit 1; }; \
-	az storage blob upload --subscription "$(SUB_ID)" --auth-mode login --overwrite --only-show-errors \
+	az storage blob upload --subscription "$(SUB_ID)" --auth-mode login --overwrite --only-show-errors --no-progress \
 		--blob-url "$$url/$(or $(NAME),$(notdir $(TARBALL)))" --file "$(TARBALL)" -o none || { \
 		echo "❌ Upload refused. A 403 usually means your IP ($(OPERATOR_IP)) is not the one the kit drop's firewall allows"; \
 		echo "   (re-run make plan && make apply to update it), or your role assignment is still propagating."; exit 1; }; \

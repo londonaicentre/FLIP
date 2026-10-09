@@ -167,6 +167,7 @@ def test_kit_upload_uses_entra_never_a_key():
     body = MAKEFILE.read_text().split("\nkit-upload:", 1)[1].split("\n\n", 1)[0]
     assert "--auth-mode login" in body, "kit-upload must authenticate with Entra (the kit drop has shared keys off)"
     assert "az storage blob upload" in body
+    assert "--no-progress" in body, "a progress bar floods Run Command and CI logs"
 
 
 def test_selftest_kit_packs_here_and_uploads_under_the_name_the_node_fetches():
