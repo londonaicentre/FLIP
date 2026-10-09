@@ -818,6 +818,9 @@ run_resolve "plan ignores RELEASE_TAG" RESOLVE_SHA_TAG=false RELEASE_TAG=v1.2.3
 expect_rc 0 "exits 0"
 expect_tag DOCKER_TAG "sha-9999999"
 expect_tag DOCKER_FL_TAG "sha-8888888"
+# fl-api is resolved separately but from the same running pair, so plan/drift must
+# report its live tag too — the review's point was that it was never asserted.
+expect_tag DOCKER_FL_API_TAG "sha-8888888"
 if [[ "${STDOUT}" == *"v1.2.3"* ]]; then
     no "never pins the release on a plan/drift run" "stdout: ${STDOUT}"
 else
@@ -861,6 +864,23 @@ if [[ "${RC}" -ne 0 && "${elapsed}" -lt 4 ]]; then
 else
     no "probes once instead of waiting the budget" "exit ${RC} after ${elapsed}s"
 fi
+
+# 33. THE TWO FL IMAGES SHARE ONE WAIT BUDGET. fl-server and fl-api are published
+#     by one workflow, so once fl-server has waited GHCR_WAIT_SECONDS out in full,
+#     fl-api probes once rather than spending a second full budget — otherwise an
+#     apply that touches only hub code waits 3x the advertised half hour.
+fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:stag"
+started="$(date +%s)"
+run_resolve "the FL images share one wait budget" GHCR_WAIT_SECONDS=6 GHCR_POLL_SECONDS=2
+elapsed=$(($(date +%s) - started))
+# flip-api and fl-server each wait the full 6s; fl-api must not add a third.
+if [[ "${RC}" -eq 0 && "${elapsed}" -lt 17 ]]; then
+    ok "fl-api probes once after fl-server's wait (${elapsed}s)"
+else
+    no "fl-api probes once after fl-server's wait" "exit ${RC} after ${elapsed}s"
+fi
+expect_tag DOCKER_FL_API_TAG "stag"
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

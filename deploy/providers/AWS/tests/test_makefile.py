@@ -88,6 +88,49 @@ def test_upgrade_trust_ec2_keeps_the_fl_client_cpu_only() -> None:
     assert "NUM_AVAILABLE_GPUS=0" in call, f"upgrade-trust-ec2 must pin the fl-client to CPU:\n{call}"
 
 
+def _base_ref_shell() -> str:
+    """deploy-centralhub's base_ref() helper, un-escaped from the Makefile into runnable sh."""
+    recipe = _recipe("deploy-centralhub")
+    m = re.search(r"(base_ref\(\) \{.*?\n\t\}; \\)", recipe, re.S)
+    assert m, "deploy-centralhub's base_ref() helper not found"
+    body = m.group(1).replace("$$", "$")
+    return "\n".join(line.rstrip(" \\").lstrip("\t") for line in body.splitlines())
+
+
+@pytest.mark.parametrize(
+    ("image", "expected"),
+    [
+        ("ghcr.io/londonaicentre/flip-api:stag", "ghcr.io/londonaicentre/flip-api"),
+        ("ghcr.io/londonaicentre/flip-api:v1.2.3@sha256:" + "a" * 64, "ghcr.io/londonaicentre/flip-api"),
+    ],
+)
+def test_base_ref_strips_the_digest_before_the_tag_swap(image: str, expected: str) -> None:
+    """A release apply leaves ECS on ``repo:vX.Y.Z@sha256:…`` (FLIP#1204).
+
+    ``${image%:*}`` on that raw reference cuts at the digest's own colon and yields
+    ``repo:v1.2.3@sha256:sha-1234567`` — a reference that passes nothing and pulls as
+    CannotPullContainer. Both loops in deploy-centralhub must go through base_ref().
+    """
+    script = _base_ref_shell() + f'\nb=$(base_ref "{image}" flip-api) || exit 1\nprintf \'%s\' "${{b%:*}}:sha-1234567"'
+    out = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout == f"{expected}:sha-1234567"
+
+
+def test_base_ref_refuses_a_digest_only_reference() -> None:
+    script = _base_ref_shell() + '\nbase_ref "ghcr.io/londonaicentre/flip-api@sha256:' + "a" * 64 + '" flip-api'
+    out = subprocess.run(["sh", "-c", script], capture_output=True, text=True)
+    assert out.returncode != 0, "a digest-only reference has no tag to swap and must be refused"
+    assert "digest-only" in out.stderr
+
+
+def test_both_deploy_loops_swap_the_tag_onto_the_stripped_reference() -> None:
+    """The verify loop and the register loop must agree, or the deploy verifies A and registers B."""
+    recipe = _recipe("deploy-centralhub")
+    assert '"$${image%:*}:$$TAG"' not in recipe, "a tag swap on the raw (possibly digest-pinned) image reference"
+    assert recipe.count('base_ref "$$image" "$$service"') == 2, "both loops must resolve through base_ref()"
+
+
 def test_deploy_trust_still_reseeds_so_the_two_verbs_stay_distinct() -> None:
     """deploy-trust is the first-install verb; if it ever stops re-seeding, the split above is moot.
 

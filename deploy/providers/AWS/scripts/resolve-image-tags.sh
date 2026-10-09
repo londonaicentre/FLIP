@@ -256,9 +256,15 @@ image_digest() {
     local ref="$1" out rc=0
     IMAGE_DIGEST=""
     out="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${ref}" 2>&1)" || rc=$?
-    [[ "${rc}" -eq 0 ]] ||
+    if [[ "${rc}" -ne 0 ]]; then
+        local hint=""
+        docker buildx version >/dev/null 2>&1 ||
+            hint="
+   (docker buildx is not available here — it is what reads the manifest-list digest. Install the
+   buildx plugin, or run this from CI, where the runner has it.)"
         die "docker buildx imagetools inspect ${ref} failed (exit ${rc}) while resolving the release digest. Output:
-   ${out}"
+   ${out}${hint}"
+    fi
 
     # --format prints the digest alone, but a warning line on stderr merged into
     # a caller's log is easy to produce; take the last non-empty line.
@@ -356,12 +362,19 @@ active_tag() {
     ACTIVE_TAG="${tag}"
 }
 
+# Wait groups whose publishing workflow has already been waited out in full.
+# fl-server and fl-api are built and pushed by one workflow
+# (fl-docker-build-<backend>.yml), so a full timeout on the first is a timeout
+# on the second; the sibling then probes once instead of spending a second
+# GHCR_WAIT_SECONDS.
+WAIT_GROUPS_EXHAUSTED=""
+
 # Resolve one tag into RESOLVED_TAG: published sha tag, else the live tag, else
 # the configured one. Assigns to a global for the reason given above active_tag.
 RESOLVED_TAG=""
 
 resolve() {
-    local label="$1" image_name="$2" service="$3" container="$4" fallback="$5"
+    local label="$1" image_name="$2" service="$3" container="$4" fallback="$5" wait_group="${6:-}"
     local ref="${PROBE_REGISTRY}${image_name}:${SHA_TAG}"
     RESOLVED_TAG=""
 
@@ -389,13 +402,29 @@ resolve() {
             log "   pinning ${RESOLVED_TAG}"
             return 0
         fi
-        log "🔎 ${label}: looking for ${ref}"
-        if wait_for_image "${ref}"; then
-            log "   pinning ${SHA_TAG}"
-            RESOLVED_TAG="${SHA_TAG}"
-            return 0
+        if [[ -n "${wait_group}" && " ${WAIT_GROUPS_EXHAUSTED} " == *" ${wait_group} "* ]]; then
+            # One workflow publishes every image in this group, so its sha tags
+            # appear together or not at all. A sibling has already waited the
+            # full GHCR_WAIT_SECONDS for that workflow and timed out; waiting
+            # again would only add another GHCR_WAIT_SECONDS to a run that is
+            # already going to fall back. Probe once instead (FLIP#1283).
+            log "🔎 ${label}: single probe for ${ref} — ${wait_group} already waited ${GHCR_WAIT_SECONDS}s"
+            if image_exists "${ref}"; then
+                log "   pinning ${SHA_TAG}"
+                RESOLVED_TAG="${SHA_TAG}"
+                return 0
+            fi
+            log "   not published — this merge probably changed no ${wait_group} code."
+        else
+            log "🔎 ${label}: looking for ${ref}"
+            if wait_for_image "${ref}"; then
+                log "   pinning ${SHA_TAG}"
+                RESOLVED_TAG="${SHA_TAG}"
+                return 0
+            fi
+            [[ -z "${wait_group}" ]] || WAIT_GROUPS_EXHAUSTED="${WAIT_GROUPS_EXHAUSTED} ${wait_group}"
+            log "   not published within ${GHCR_WAIT_SECONDS}s — this merge probably changed no service code."
         fi
-        log "   not published within ${GHCR_WAIT_SECONDS}s — this merge probably changed no service code."
     else
         # Plan and drift: what matters is agreeing with the deployed task
         # definition, not with a build that may not exist for this commit. A
@@ -424,11 +453,12 @@ resolve "hub images" "flip-api" "flip-api" "flip-api" "${FALLBACK_DOCKER_TAG}"
 hub_tag="${RESOLVED_TAG}"
 # The fl-server container is named for its net, not for the service role
 # (ecs_tasks.tf:275) — same string as the service, which is easy to mis-assume.
-resolve "FL server image" "${FL_SERVER_IMAGE}" "fl-server-net-1" "fl-server-net-1" "${FALLBACK_DOCKER_FL_TAG}"
+resolve "FL server image" "${FL_SERVER_IMAGE}" "fl-server-net-1" "fl-server-net-1" "${FALLBACK_DOCKER_FL_TAG}" "fl"
 fl_tag="${RESOLVED_TAG}"
 # Resolved separately from the server: same release tag, different repository,
-# therefore a different digest. See the header.
-resolve "FL API image" "${FL_API_IMAGE}" "fl-api-net-1" "fl-api-net-1" "${FALLBACK_DOCKER_FL_TAG}"
+# therefore a different digest. See the header. Same wait group, though — one
+# workflow publishes both, so the second one never waits a second full budget.
+resolve "FL API image" "${FL_API_IMAGE}" "fl-api-net-1" "fl-api-net-1" "${FALLBACK_DOCKER_FL_TAG}" "fl"
 fl_api_tag="${RESOLVED_TAG}"
 
 echo "DOCKER_TAG=${hub_tag}"
