@@ -683,9 +683,6 @@ roll the sha-pinned image forward again. And because `make apply` applies the sa
 a plan generated **before** a CLI deploy snapshots the older revision and applying it would roll
 the image back — re-run `make plan` after any `make deploy-centralhub`.
 
-> **Prod rollout note:** switch *production* deploys to this flow only after the 24 Jul 2026 DECAF
-> deadline (BDMS is live on legacy prod until then). Staging can adopt it immediately.
-
 ### Changing the browser CORS allowlist (Cognito `callback_urls`)
 
 The Cognito app client's `callback_urls` **is** this environment's browser CORS allowlist. The UI
@@ -1815,8 +1812,8 @@ AWS_PROFILE=stag LOCK=false make plan \
 ```bash
 # 1. Nothing to publish by hand: /flip/ci/host_aws_public_key, the EC2 keypair
 #    public key CI writes to ~/.ssh before planning, is declared in
-#    parameter_store.tf and created by the main root's own apply. In these two
-#    accounts it already existed from the retired seed-ci-keypair-param target;
+#    parameter_store.tf and created by the main root's own apply. Where the
+#    parameter already exists (an account seeded out of band, or a re-apply),
 #    `overwrite = true` adopts it on the first apply, rewriting the bytes CI has
 #    just read from it — a no-op.
 
@@ -1835,10 +1832,12 @@ AWS_PROFILE=stag LOCK=false make plan \
 #    ARNs it writes are read from IAM.
 #    --mode is the same PROD token the workflows read as TF_PROD, and this script
 #    sets that variable: it is what selects the env file, the profile and the keys
-#    the run requires. See "Repointing CI at the LZA accounts" for the LZA pair.
-bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag --dry-run
-bash scripts/setup-github-environments.sh --mode stag --env-file ../../../.env.stag
-bash scripts/setup-github-environments.sh --mode true --env-file ../../../.env.production
+#    the run requires. Both FLIP environments run on LZA accounts; see "Repointing
+#    CI at the LZA accounts" for the full per-account order these two commands sit
+#    at the end of.
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag --dry-run
+bash scripts/setup-github-environments.sh --mode lza-stag --env-file ../../../.env.lza-stag
+bash scripts/setup-github-environments.sh --mode lza --env-file ../../../.env.lza-prod
 ```
 
 Requires repo admin. It prints key names only — values go from the local env file
@@ -1927,10 +1926,10 @@ apply run:
   passes; from the second apply onward it behaves as on any other estate.
 - Every name in `.env.lza-stag` is reused from the legacy estate
   (`flip-terraform-state-stag`, `flipstag-*`, `flip-access-logs-*`) — bucket names
-  are globally unique, and reusing them works **only because the legacy accounts are
-  being emptied and closed**. If the two estates have to coexist, each of those names
-  needs changing in the env file *and* on the environment, `FLIP_TFSTATE_BUCKET_NAME`
-  included, or the first apply stops on
+  are globally unique, and reusing them worked **only because the legacy accounts were
+  emptied and closed** (staging 2026-09-28, production 2026-10-06). If two estates have
+  to coexist, each of those names needs changing in the env file *and* on the
+  environment, `FLIP_TFSTATE_BUCKET_NAME` included, or the first apply stops on
   `BucketAlreadyExists`/`AlreadyExists`.
 
 **`TF_PROD` was the rollback, while there was something to roll back to.** Setting
