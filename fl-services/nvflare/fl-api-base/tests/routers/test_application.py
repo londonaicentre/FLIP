@@ -74,6 +74,17 @@ def test_upload_app_success(client, override_session):
         assert kwargs["upload_dir"] == "/tmp/uploads"
 
 
+def test_upload_app_asks_each_site_for_its_gpus(client, override_session):
+    """FLIP#1390: the job's resource_spec follows what each trust's client reports."""
+    override_session.site_gpu_counts.return_value = {"trustA": 0, "trustB": 1}
+    with patch("fl_api.routers.application.upload_application", return_value={"status": "ok"}) as mock_upload:
+        response = client.post(f"/upload_app/{MODEL_ID}", json=make_upload_payload())
+
+    assert response.status_code == status.HTTP_200_OK
+    override_session.site_gpu_counts.assert_called_once_with(["trustA", "trustB"])
+    assert mock_upload.call_args.kwargs["site_gpus"] == {"trustA": 0, "trustB": 1}
+
+
 def test_upload_app_file_not_found(client):
     """Should return 404 when FileNotFoundError is raised."""
     with patch(

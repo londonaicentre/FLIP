@@ -139,7 +139,9 @@ def _relative_dir_for_download(model_id: str, s3_file_dir: str, file_name: str) 
     return app_folder_name, "app/custom"
 
 
-def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -> dict[str, str]:
+def upload_application(
+    model_id: str, body: UploadAppRequest, upload_dir: str, site_gpus: dict[str, int] | None = None
+) -> dict[str, str]:
     """Uploads an application to the upload dir folder of the server.
 
     Downloads the files from the provided bundle_urls (AWS S3 pre-signed URLs) in the UploadAppRequest body, creates the
@@ -149,6 +151,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         model_id (str): id of the model.
         body (UploadAppRequest): UploadAppRequest object with info such as project_id, cohort_query, trusts
         upload_dir (str): directory where the application will be uploaded (session's upload dir.)
+        site_gpus (dict[str, int] | None): GPUs each site reports, so the job never asks a site for more
+            (FLIP_Session.site_gpu_counts; FLIP#1390). None keeps the hub-wide request everywhere.
     Raises:
         HTTPException: if the application fails to upload, an error is raised.
         FileNotFoundError: if the application path is not found, an error is raised.
@@ -337,7 +341,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             # consider merging if it already exists.
             if app_folder_name == "app":
                 # Write meta.json file
-                configure_meta(job_dir, model_id, body.trusts)
+                configure_meta(job_dir, model_id, body.trusts, site_gpus=site_gpus)
 
         except Exception as e:
             logger.error(f"Error occurred while configuring application folder {app_folder_name}: {e}")

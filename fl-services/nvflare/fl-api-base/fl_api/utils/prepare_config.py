@@ -511,7 +511,7 @@ def configure_server(
     return config_file
 
 
-def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
+def configure_meta(job_dir: Path, app_name: str, trusts: list[str], site_gpus: dict[str, int] | None = None) -> Path:
     """
     Creates a meta.json file, which is part of the NVFLARE application.
 
@@ -519,6 +519,9 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
         job_dir (Path): job directory
         app_name (str): name of this specific application, under which the config and custom folders will be saved.
         trusts (List[str]): list of trusts that are part of this training (site names)
+        site_gpus (dict[str, int] | None): GPUs each site reports (FLIP_Session.site_gpu_counts). A site is
+            never asked for more than it has, so a CPU-only trust is asked for none; a site missing
+            here keeps the hub-wide JOB_RESOURCE_SPEC_NUM_GPUS.
 
     Returns:
         Path: path to the meta file that was created.
@@ -544,7 +547,13 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
         # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
         # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
         # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
-        resource_spec = {trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts}
+        # Never ask a site for more GPUs than it reports (FLIP#1390): a CPU-only trust asked for one
+        # leaves the whole job unschedulable. An explicit 0 rather than an omitted site, since the
+        # manager raises on a requirement that lacks num_of_gpus.
+        resource_spec = {}
+        for trust in trusts:
+            wanted = min(num_gpus, site_gpus[trust]) if site_gpus and trust in site_gpus else num_gpus
+            resource_spec[trust] = {"num_of_gpus": wanted, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib if wanted else 0}
     else:
         resource_spec = {}
 

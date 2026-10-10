@@ -446,3 +446,15 @@ def test_upload_app_raises_on_http_error_response(mock_requests_get_success, moc
 
     with pytest.raises(requests.HTTPError):
         upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+
+
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
+def test_upload_passes_each_sites_gpus_to_the_job_meta(mock_requests_get_success, mock_upload_correct_request):
+    with patch("fl_api.utils.upload.configure_meta") as configure_meta:
+        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR, site_gpus={"t1": 0})
+    assert configure_meta.call_args.kwargs["site_gpus"] == {"t1": 0}

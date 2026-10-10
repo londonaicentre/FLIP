@@ -38,7 +38,10 @@ def upload_app(model_id: UUID, body: UploadAppRequest, session: FLIP_Session = D
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
     """
-    return upload_application(str(model_id), body, upload_dir=session.upload_dir)
+    # Ask each site for no more GPUs than it has: a CPU-only trust asked for the hub-wide count
+    # would leave the job unschedulable (FLIP#1390).
+    site_gpus = session.site_gpu_counts(body.trusts)
+    return upload_application(str(model_id), body, upload_dir=session.upload_dir, site_gpus=site_gpus)
 
 
 @router.get("/get_available_apps_to_upload", status_code=status.HTTP_200_OK, response_model=list[str])
