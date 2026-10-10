@@ -16,6 +16,7 @@ scripts/
 Makefile
 *.md
 values-override.yaml
+values-aks.yaml
 values-secrets.yaml.example
 k8s-trust-*.yaml
 *.tgz
