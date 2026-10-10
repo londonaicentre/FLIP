@@ -275,6 +275,27 @@ the importer and passes throughout. Receipt is a new line in the receiver's `rec
 failures. `dicom.log` alone proves nothing, as XNAT writes it only when something goes wrong. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 
+### 6b. Run the trust self-test
+
+`make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>` runs the acceptance checklist every
+trust shape shares (the VM's is `scripts/selftest_node.sh`) against the deployed release:
+
+| Check | Passes when |
+|---|---|
+| release ready | every Deployment, StatefulSet and DaemonSet of the release has all its replicas ready |
+| fl kit delivered | the FL client sees its kit (`/app/startup/fed_client.json`; Flower: `/certs/ca.crt` and `/keys`) |
+| trust-api / imaging-api / data-access-api health | each answers its own `/health` with `"status":"ok"` |
+| omop seeded | `omop.person` has rows |
+| orthanc seeded | Orthanc holds instances |
+| orthanc requires auth | Orthanc answers 401 without credentials |
+| xnat c-store | `smoke-cstore` passes |
+| fl client running | the FL client is running, with no restart, at two samples 45 s apart |
+
+It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod
+the release already has, so it adds no workload, RBAC or NetworkPolicy exception. It writes
+`selftest-k8s-<backend>-<stamp>.json` and `.md` (and `latest-k8s-<backend>.md`) under
+`SELFTEST_OUT` (default `build/selftest/` in the checkout) and exits non-zero on any failure.
+
 ### 7. (FL training only) Open the FL-server NLB
 
 Polling needs nothing more. For FL *training*, the K8s node's FL client must
