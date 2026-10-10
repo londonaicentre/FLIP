@@ -316,8 +316,12 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-fl-client
           env:
+            {{- with .Values.uploadedFederatedDataBucket }}
+            # Only when set: flip-utils refuses an empty value ("Invalid S3 URL") and falls back
+            # to its own default when the variable is absent, as on the Compose stack (FLIP#1390).
             - name: UPLOADED_FEDERATED_DATA_BUCKET
-              value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+              value: {{ . | quote }}
+            {{- end }}
             {{- if $governed }}
             # The governance document's [fl_privacy.nvflare] section (FLIP#1259), as extracted
             # by governance-extract. The same filter as FL_SITE_PRIVACY_* below: set it in one

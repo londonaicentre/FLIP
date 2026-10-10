@@ -89,3 +89,17 @@ def test_staging_lets_the_flower_supernode_read_its_key():
 def test_the_secret_name_can_be_chosen():
     pod = _fl_client("flClient.kit.source=secret", "flClient.kit.secretName=my-kit")
     assert _volumes(pod)["fl-client-kit-secret"]["secret"]["secretName"] == "my-kit"  # pragma: allowlist secret
+
+
+def _client_env(*sets: str) -> dict:
+    pod = _fl_client("flClient.kitHostPath=/opt/flip/fl-kit", *sets)
+    client = next(c for c in pod["containers"] if c["name"] == "fl-client")
+    return {e["name"]: e.get("value") for e in client.get("env", [])}
+
+
+def test_an_unset_results_bucket_is_left_to_the_clients_default():
+    """flip-utils refuses an empty UPLOADED_FEDERATED_DATA_BUCKET ("Invalid S3 URL") and falls back to
+    its own default when the variable is absent, as on the Compose stack. Rendering it empty crashed
+    the client on AKS, where no override names a bucket (FLIP#1390)."""
+    assert "UPLOADED_FEDERATED_DATA_BUCKET" not in _client_env()
+    assert _client_env("uploadedFederatedDataBucket=s3://results")["UPLOADED_FEDERATED_DATA_BUCKET"] == "s3://results"
