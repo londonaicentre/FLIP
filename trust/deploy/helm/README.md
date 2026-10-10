@@ -269,8 +269,10 @@ they disagree. They disagree when the **pod spec** is older than the values — 
 live in an emptyDir refilled by an init container on every pod creation, so a mismatch
 means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
 different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
-stores a real object through the PACS and then greps the receiver's `dicom.log` rather
-than trusting a C-ECHO: C-ECHO never reaches the importer and passes throughout. See
+stores a real object through the PACS rather than trusting a C-ECHO: C-ECHO never reaches
+the importer and passes throughout. Receipt is a new line in the receiver's `received.log`
+(one per accepted object); the lines the transfer added to `dicom.log` are scanned for importer
+failures. `dicom.log` alone proves nothing, as XNAT writes it only when something goes wrong. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
 
 ### 7. (FL training only) Open the FL-server NLB

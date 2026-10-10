@@ -66,6 +66,10 @@ ORTHANC_URL="${ORTHANC_URL:-http://orthanc:8042}"
 # Override to store a known instance rather than whichever one Orthanc lists first.
 INSTANCE_ID="${INSTANCE_ID:-}"
 DICOM_LOG="${DICOM_LOG:-/data/xnat/home/logs/dicom.log}"
+# XNAT's SCP writes one line here per object it accepts. dicom.log is no evidence of receipt:
+# XNAT 1.10 writes it only on warnings and errors, so a working store leaves it empty (FLIP#1411).
+RECEIVED_LOG="${RECEIVED_LOG:-/data/xnat/home/logs/received.log}"
+RECEIPT_TIMEOUT_SECONDS="${RECEIPT_TIMEOUT_SECONDS:-30}"
 # How long to let the receiver write its side of the story before reading the log.
 SETTLE_SECONDS="${SETTLE_SECONDS:-5}"
 
@@ -153,6 +157,16 @@ LOG_MARK=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
 LOG_MARK="${LOG_MARK:-0}"
 info "   ${DICOM_LOG} is ${LOG_MARK} lines before the store"
 
+# Only digits survive: the count comes from inside the pod and is used in shell arithmetic.
+received_lines() {
+  local count
+  count=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
+    sh -c "wc -l < '${RECEIVED_LOG}' 2>/dev/null || echo 0" 2>/dev/null | tr -dc '0-9')
+  printf '%s' "${count:-0}"
+}
+RECEIVED_MARK=$(received_lines)
+info "   ${RECEIVED_LOG} is ${RECEIVED_MARK} lines before the store"
+
 # ── 2. Pick something to send ────────────────────────────────────────────────────────
 if [ -z "$INSTANCE_ID" ]; then
   # `since` and `limit` go together: Orthanc rejects either one alone with a 400. With
@@ -200,10 +214,16 @@ if [ "$FAILED_COUNT" != "0" ]; then
 fi
 green "✓ store reported success (${INSTANCE_COUNT:-?} instance(s), 0 failed)"
 
-# ── 4. Read the receiver's own log ───────────────────────────────────────────────────
+# ── 4. Read the receiver's own logs ──────────────────────────────────────────────────
 # This is the assertion that separates this smoke from a connectivity check. XNAT
 # answers the association at the network layer and only then hands the object to the
-# importer, so a plugin/core mismatch shows up HERE and nowhere else.
+# importer, so a plugin/core mismatch shows up HERE and nowhere else. XNAT records the
+# receipt after the store has returned, so received.log is polled rather than read once.
+RECEIVED_NOW=$(received_lines)
+for ((waited = 0; waited < RECEIPT_TIMEOUT_SECONDS && RECEIVED_NOW <= RECEIVED_MARK; waited++)); do
+  sleep 1
+  RECEIVED_NOW=$(received_lines)
+done
 sleep "$SETTLE_SECONDS"
 NEW_LOG=$("${KUBECTL[@]}" exec -n "$NAMESPACE" "$XNAT_POD" -- \
   sh -c "tail -n +$((LOG_MARK + 1)) '${DICOM_LOG}' 2>/dev/null || true")
@@ -215,10 +235,10 @@ if printf '%s' "$NEW_LOG" | grep -Eq "$FAILURE_PATTERNS"; then
   fail "the receiver logged an importer failure. An AbstractMethodError here means an XNAT plugin was built against a different core than the one running — compare the pod's /data/xnat/home/plugins against xnat.web.plugins.urls (make status), then redeploy with a HELM_TIMEOUT above the init job's real duration. See TROUBLESHOOTING.md §2.7."
 fi
 
-if [ -z "$NEW_LOG" ]; then
-  red "⚠  ${DICOM_LOG} gained no lines — the object may never have reached the importer"
+if [ "$RECEIVED_NOW" -le "$RECEIVED_MARK" ]; then
+  red "⚠  ${RECEIVED_LOG} stayed at ${RECEIVED_MARK} lines for ${RECEIPT_TIMEOUT_SECONDS}s — XNAT never recorded the object"
   fail "no receiver-side evidence of the transfer; check that the SCP receiver is the one Orthanc dialled (make status, TROUBLESHOOTING.md §2.1)"
 fi
 
-green "✓ receiver logged the transfer with no importer failure"
+green "✓ receiver recorded the object in received.log (${RECEIVED_MARK} → ${RECEIVED_NOW}) with no importer failure in dicom.log"
 green "✅ C-STORE smoke passed"
