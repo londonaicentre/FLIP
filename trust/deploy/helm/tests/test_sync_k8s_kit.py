@@ -137,6 +137,14 @@ def test_vocab_load_follows_the_operator_and_never_a_scaffolding_default():
     assert sync_k8s_kit.should_load_vocab(scaffold, "development", requested=True)
 
 
+def test_render_override_carries_the_kits_seed_partition():
+    """SOURCE_TRUST names the mock-data partition a trust is seeded with; without it the chart falls
+    back to the slot number, and a trust on Trust_3 finds no third partition (FLIP#1390)."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "SOURCE_TRUST": "1"}, "Trust_K8s", "eu-west-2")
+    assert '\ntrustData:\n  seed:\n    sourceTrust: "1"\n' in out
+    assert "sourceTrust" not in sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+
+
 def test_render_override_holds_pinned_images_back_from_the_release():
     """The kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG opt-outs reach the chart as `image.pin`,
     beside the global.image.tag the kit's DOCKER_TAG sets; a kit without them emits none."""
