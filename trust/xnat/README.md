@@ -102,6 +102,12 @@ make build
 
 This downloads the XNAT WAR and plugins from S3, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
 
+On `main`/`develop` pushes, the database and nginx image workflows watch only their own
+`postgres/` and `nginx/` build contexts, plus their workflow files. The web workflow keeps the
+broad `trust/xnat/` filter except for tool-only edits under `dcm2niix/`. A dcm2niix version bump
+still rebuilds the web image because it also updates the baked-in
+`xnat/config/dcm2niix_command.json`. Release tags and manual dispatches still build every image.
+
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
 GitHub workflow). It is referenced by an immutable version tag from

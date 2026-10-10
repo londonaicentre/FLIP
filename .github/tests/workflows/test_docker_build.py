@@ -22,13 +22,24 @@ Usage:
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
+import tempfile
+import textwrap
 import unittest
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from image_workflows import DOCKER_BUILD_WORKFLOWS, GITHUB_DIR, WORKFLOWS, ReleaseTagContract, code_text  # noqa: E402
+from image_workflows import (  # noqa: E402
+    DOCKER_BUILD_WORKFLOWS,
+    GITHUB_DIR,
+    WORKFLOWS,
+    ReleaseTagContract,
+    code_text,
+    step_block,
+)
 
 
 class DockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
@@ -83,6 +94,94 @@ class FlipReleaseBuildArg(unittest.TestCase):
             with self.subTest(dockerfile=dockerfile):
                 assert 'ARG FLIP_RELEASE=""' in text, dockerfile
                 assert "ENV FLIP_RELEASE=${FLIP_RELEASE}" in text, dockerfile
+
+
+class XnatBuildTriggers(unittest.TestCase):
+    """An image-context edit rebuilds that image; the dcm2niix command is baked into xnat-web."""
+
+    workflows = ("web", "db", "nginx")
+
+    def test_changed_paths_select_the_required_images(self) -> None:
+        cases: tuple[tuple[list[str], set[str]], ...] = (
+            (["trust/xnat/postgres/Dockerfile"], {"db", "web"}),
+            (["trust/xnat/nginx/nginx.conf"], {"nginx", "web"}),
+            (["trust/xnat/xnat/Dockerfile"], {"web"}),
+            (["trust/xnat/.env"], {"web"}),
+            (["trust/xnat/dcm2niix/Dockerfile"], set()),
+            (
+                ["trust/xnat/dcm2niix/Dockerfile", "trust/xnat/xnat/config/dcm2niix_command.json"],
+                {"web"},
+            ),
+            (["flip-api/src/flip_api/main.py"], set()),
+        )
+        for changed_paths, expected in cases:
+            selected = set()
+            for image in self.workflows:
+                text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
+                paths = re.search(r"\n    paths:\n((?:      - .*\n)+)", text)
+                assert paths, image
+                patterns = re.findall(r"      - [\"\']([^\"\']+)[\"\']", paths[1])
+                # GitHub evaluates positive/negative path filters in order; any included
+                # changed file starts the workflow. These globs use only * and **.
+                for changed_path in changed_paths:
+                    included = False
+                    for pattern in patterns:
+                        if fnmatchcase(changed_path, pattern.removeprefix("!")):
+                            included = not pattern.startswith("!")
+                    if included:
+                        selected.add(image)
+            with self.subTest(changed_paths=changed_paths):
+                assert selected == expected, f"selected={selected}, expected={expected}"
+
+    def test_own_workflow_edits_still_trigger_each_build(self) -> None:
+        for image in self.workflows:
+            name = f"docker_build_xnat_{image}.yml"
+            text = code_text(WORKFLOWS / name)
+            with self.subTest(image=image):
+                assert f'      - ".github/workflows/{name}"' in text, image
+
+    def test_push_triggered_builds_do_not_read_workflow_run_context(self) -> None:
+        for image in self.workflows:
+            text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
+            with self.subTest(image=image):
+                assert "workflow_run" not in text, image
+                assert "GH_WR_" not in text, image
+                assert 'if [[ "$GH_EVENT_NAME" == "push" ]]; then' in text, image
+
+    def test_tag_generation_preserves_push_and_dispatch_behavior(self) -> None:
+        sha = "1234567890abcdef"  # pragma: allowlist secret (synthetic commit ID)
+        cases = (
+            ("push", "main", [sha, "sha-1234567", "main", "prod"]),
+            ("push", "develop", [sha, "sha-1234567", "develop", "stag"]),
+            ("workflow_dispatch", "feature/foo", [sha, "sha-1234567", "feature-foo"]),
+            ("push", "v1.2.3", ["v1.2.3"]),
+            ("workflow_dispatch", "v1.2.3", ["v1.2.3"]),
+        )
+        for image in self.workflows:
+            step = step_block(code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml"), "Determine tags")
+            script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+            for expression, variable in (
+                ("github.sha", "GH_SHA"),
+                ("env.REGISTRY", "REGISTRY"),
+                ("env.IMAGE_NAME", "IMAGE_NAME"),
+            ):
+                script = script.replace("${{ " + expression + " }}", "${" + variable + "}")
+            for event, ref_name, expected_tags in cases:
+                with self.subTest(image=image, event=event, ref=ref_name), tempfile.TemporaryDirectory() as directory:
+                    output = Path(directory) / "output"
+                    env = {
+                        "GH_EVENT_NAME": event,
+                        "GH_REF_NAME": ref_name,
+                        "GH_REF": f"refs/{'tags' if ref_name.startswith('v') else 'heads'}/{ref_name}",
+                        "GH_SHA": sha,
+                        "REGISTRY": "ghcr.io",
+                        "IMAGE_NAME": f"londonaicentre/xnat-{image}",
+                        "GITHUB_OUTPUT": str(output),
+                    }
+                    result = subprocess.run(["bash", "-e"], input=script, env=env, capture_output=True, text=True)
+                    assert result.returncode == 0, result.stderr
+                    expected = ",".join(f"ghcr.io/londonaicentre/xnat-{image}:{tag}" for tag in expected_tags)
+                    assert output.read_text().strip() == f"tags={expected}", output.read_text()
 
 
 if __name__ == "__main__":
