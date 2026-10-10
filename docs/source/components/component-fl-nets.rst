@@ -83,6 +83,32 @@ Each net trains one job at a time; the queue is first-come, first-served, and a 
 shown in the UI while it waits. The backend of each net (NVFLARE or Flower) is recorded on the hub when the
 nets are seeded and decides which template is bundled: a deployment chooses the backend, a model does not.
 
+GPU requirements and NVFLARE's scheduler
+========================================
+
+On NVFLARE a job states what it needs at each Trust in its ``meta.json`` ``resource_spec``
+(``num_of_gpus`` and ``mem_per_gpu_in_GiB``, today set hub-wide by ``JOB_RESOURCE_SPEC_NUM_GPUS`` and
+``JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB``), and each Trust's FL client states what it has: its
+``GPUResourceManager`` is configured from the kit's ``NUM_AVAILABLE_GPUS``. Before the FL server starts a
+job it asks every Trust whether it can provide its share. FLIP never lowers the request to fit a Trust,
+because that would quietly train a GPU job on a CPU.
+
+If a Trust says no, NVFLARE's scheduler holds the job and tries again later, waiting longer each time
+(10 s, doubling to at most 10 minutes). After 10 tries, about 40 minutes, it gives up and marks the job
+``FINISHED:CAN_NOT_SCHEDULE``. The FL server's ``JobSchedulingReporter`` (a FLIP site component that the
+fl-server registers at start-up through ``local/flip__p_resources.json``, which NVFLARE loads only into
+the server's parent process) puts each refusal in the model's activity feed, against the Trust that could
+not provide the resources:
+
+- while NVFLARE keeps trying: *Waiting for resources · this trust cannot provide 1 GPU with 16 GiB · try
+  2 of 10*;
+- on the last try: *Training could not start · … · NVFLARE gave up after 10 tries*. The model then turns
+  ``ERROR`` and the net is freed. Without this, a job that never starts has nothing inside it to tell the
+  hub, and the model would sit at ``INITIATED`` with the net ``BUSY``.
+
+To run that model, either the Trust adds the GPUs, or the model goes to Trusts that have them. A CPU-only
+Trust (``NUM_AVAILABLE_GPUS=0``) can only take part in jobs that ask for no GPUs.
+
 Deployment mode (quiescing the nets)
 ====================================
 
