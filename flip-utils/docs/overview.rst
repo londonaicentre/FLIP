@@ -69,6 +69,19 @@ The ``flip`` package is organized into logical modules:
    - ``Utils`` — General utility functions
    - ``model_weights_handling`` — Model weight aggregation and manipulation
 
+``flip.training``
+   Batch guards for apps using ``flip-utils[full]``:
+
+   - ``skip_degenerate_batch(labels, loss=None, *, log, context)`` — Warn and skip
+     fully masked labels (all ``-1``) or a non-finite scalar loss. Call once before
+     the model forward pass with labels, then again with the computed loss before
+     backward or metric accumulation. ``log`` accepts a warning callback such as
+     ``logger.warning``; ``context`` names the phase and batch position.
+
+   The Flower and NVFLARE X-ray tutorials share this guard. Both deliberately use
+   a fixed gradient L2-norm cap of ``1.0`` to bound exploding gradients; it is a
+   stability constant, not a per-backend configuration option.
+
 ``flip.nvflare``
    NVFLARE-specific components:
 

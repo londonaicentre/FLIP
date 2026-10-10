@@ -64,6 +64,12 @@ start at the tutorial (`arkplus_fine_tuning.app_files.test_data_utils`). `nvflar
 deliberately do **not** carry one: a package named `nvflare` would shadow the real NVFLARE library
 the apps import.
 
+The X-ray `app/test_task.py` (Flower) and `app_files/test_trainer.py` (NVFLARE) share
+`xray_batch_contract.py`. A tiny CPU model exercises all five train/validation/test paths with
+masked labels and NaN/infinite losses, then checks that a partially supervised batch still
+updates weights and contributes metrics. These tests call the real shared batch guard and
+also preserve the existing empty-metric behavior when every batch is skipped.
+
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
 pydicom, torch, timm, sklearn), which is what the FL images give those apps at runtime — see

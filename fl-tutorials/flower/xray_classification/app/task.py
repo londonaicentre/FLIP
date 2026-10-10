@@ -11,10 +11,12 @@
 
 """Single-epoch train and validate helpers for chest-X-ray classification."""
 
+from functools import partial
 from logging import INFO, WARNING
 
 import numpy as np
 import torch
+from flip.training import skip_degenerate_batch
 from flwr.common import log
 from monai.data import DataLoader
 
@@ -81,31 +83,20 @@ def train_func(
         images = batch["image"].to(device)
         labels = get_lesion_label(batch, lesions).to(device)
 
-        # A fully-masked batch (every label -1) carries no supervision signal: the
-        # clamped loss would be a flat 0.0 that trains nothing and drags the epoch
-        # mean down. Skip it loudly so a systematic label degeneracy (e.g. a broken
-        # label join) stays visible in the logs instead of vanishing into the clamp
-        # (FLIP#764 — the live NaN trigger is still unpinned).
-        if (labels == -1).all():
-            log(WARNING, f"Train batch {i + 1}/{len(train_loader)}: all labels masked (-1), skipping batch")
+        context = f"Train batch {i + 1}/{len(train_loader)}"
+        if skip_degenerate_batch(labels, log=partial(log, WARNING), context=context):
             continue
 
         optimizer.zero_grad()
         logits = model(images)
         loss = get_bce_loss(logits, labels)
 
-        # Skip a non-finite batch instead of letting it poison the model: a single
-        # NaN/Inf loss backpropagates into every weight via optimizer.step(), after
-        # which every subsequent batch is NaN and the whole pass reports loss=nan,
-        # flipping the model to ERROR (FLIP#764). Dropping the batch keeps training
-        # alive so a transient bad batch can't kill the run.
-        if not torch.isfinite(loss):
-            log(WARNING, f"Skipping batch {i + 1}/{len(train_loader)}: non-finite loss ({loss.item()})")
+        if skip_degenerate_batch(labels, loss, log=partial(log, WARNING), context=context):
             continue
 
         loss.backward()
-        # Gradient clipping bounds the update so an exploding gradient on one batch
-        # can't diverge the model to NaN within a single optimizer step.
+        # Deliberate fixed L2-norm cap, shared with the NVFLARE X-ray tutorial:
+        # bounds exploding gradients without adding a per-backend tuning knob.
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
@@ -149,21 +140,14 @@ def validate_func(
             images = batch["image"].to(device)
             labels = get_lesion_label(batch, lesions).to(device)
 
-            # Skip fully-masked batches here too: with the clamped loss they would
-            # contribute a spurious 0.0 to the epoch mean, where the pre-clamp NaN
-            # was excluded by np.nanmean in _aggregate. Skipping keeps the epoch
-            # average over supervised batches only, and keeps the degeneracy visible.
-            if (labels == -1).all():
-                log(WARNING, f"Val batch {i + 1}/{len(val_loader)}: all labels masked (-1), skipping batch")
+            context = f"Val batch {i + 1}/{len(val_loader)}"
+            if skip_degenerate_batch(labels, log=partial(log, WARNING), context=context):
                 continue
 
             logits = model(images)
             loss = get_bce_loss(logits, labels)
 
-            # Mirror train_func's guard: np.nanmean in _aggregate already excludes a NaN from the
-            # epoch mean, but skipping silently would hide the degeneracy behind it (FLIP#764).
-            if not torch.isfinite(loss):
-                log(WARNING, f"Skipping val batch {i + 1}/{len(val_loader)}: non-finite loss ({loss.item()})")
+            if skip_degenerate_batch(labels, loss, log=partial(log, WARNING), context=context):
                 continue
 
             metrics["loss"].append(loss.item())
