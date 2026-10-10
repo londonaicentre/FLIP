@@ -208,3 +208,49 @@ def test_http_delete_raises_on_request_error():
     with patch.object(httpx.Client, "delete", side_effect=httpx.ConnectError("connection refused")):
         with pytest.raises(httpx.RequestError):
             http_delete("http://example.com/resource/1")
+
+
+@pytest.mark.parametrize("method", ["get", "post", "delete"])
+@pytest.mark.parametrize("status_code", [400, 403, 409, 422])
+def test_fl_api_refusal_preserves_detail_and_http_error_context(method, status_code):
+    request = httpx.Request(method.upper(), "http://fl-api/upload_app/model")
+    response = httpx.Response(
+        status_code, json={"detail": "No participating trusts in the upload request"}, request=request
+    )
+    with (
+        patch.object(httpx.Client, method, return_value=response),
+        pytest.raises(httpx.HTTPStatusError, match="No participating trusts") as caught,
+    ):
+        {"get": http_get, "post": http_post, "delete": http_delete}[method](str(request.url))
+    assert caught.value.request is request
+    assert caught.value.response is response
+    assert isinstance(caught.value.__cause__, httpx.HTTPStatusError)
+
+
+@pytest.mark.parametrize("method", ["get", "post", "delete"])
+@pytest.mark.parametrize(
+    "body",
+    [b"", b"not JSON", b'{"detail":', b"{}", b'{"detail": " "}', b'{"detail": null}', b"[]", b'{"detail": 12}'],
+)
+def test_fl_api_refusal_without_usable_detail_keeps_status_error(method, body):
+    request = httpx.Request(method.upper(), "http://fl-api/resource")
+    response = httpx.Response(400, content=body, request=request)
+    with pytest.raises(httpx.HTTPStatusError) as original:
+        response.raise_for_status()
+    with patch.object(httpx.Client, method, return_value=response), pytest.raises(httpx.HTTPStatusError) as caught:
+        {"get": http_get, "post": http_post, "delete": http_delete}[method](str(request.url))
+    assert str(caught.value) == str(original.value)
+    assert caught.value.request is request
+    assert caught.value.response is response
+
+
+@pytest.mark.parametrize("method", ["get", "post", "delete"])
+@pytest.mark.parametrize("status_code", [500, 503])
+def test_fl_api_server_errors_do_not_expose_body(method, status_code):
+    request = httpx.Request(method.upper(), "http://fl-api/resource")
+    response = httpx.Response(status_code, json={"detail": "private server exception"}, request=request)
+    with patch.object(httpx.Client, method, return_value=response), pytest.raises(httpx.HTTPStatusError) as caught:
+        {"get": http_get, "post": http_post, "delete": http_delete}[method](str(request.url))
+    assert str(status_code) in str(caught.value)
+    assert "private server exception" not in str(caught.value)
+    assert caught.value.response is response

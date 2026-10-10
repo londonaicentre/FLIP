@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
@@ -1284,6 +1285,8 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         ValueError: If the FL server is not running, or if ``target`` is invalid.
         DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
             rather than swallowed, so a failed abort is never reported as a success.
+        httpx.HTTPStatusError: If an FL API status check or abort request fails. The error
+            is recorded in the model activity feed before it is re-raised.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
@@ -1317,44 +1320,50 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
-    server_status = fetch_server_status(net_endpoint)
-    logger.debug(f"Server status: {server_status}")
+    try:
+        server_status = fetch_server_status(net_endpoint)
+        logger.debug(f"Server status: {server_status}")
 
-    if not server_status:  # or server_status.status != FLStatus.SUCCESS.value:
-        error_msg = f"FL Server not running for {model_id=}. Server status: {server_status}"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+        if not server_status:  # or server_status.status != FLStatus.SUCCESS.value:
+            error_msg = f"FL Server not running for {model_id=}. Server status: {server_status}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
-    # If there is no running job for this model, it is already terminal — abort is an
-    # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
-    # leaving it to the stale-BUSY watchdog.
-    if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
-        fl_scheduler_service.release_scheduler_for_model(model_id, session)
-        logger.info(
-            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); already stopped — nothing to abort."
-        )
-        return
+        # If there is no running job for this model, it is already terminal — abort is an
+        # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
+        # leaving it to the stale-BUSY watchdog.
+        if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+            fl_scheduler_service.release_scheduler_for_model(model_id, session)
+            logger.info(
+                f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
+                "already stopped — nothing to abort."
+            )
+            return
 
-    # Extracting target and clients from the request path parameters
-    path_params = request.path_params
-    target = path_params.get("target")
-    clients = path_params.get("clients")
+        # Extracting target and clients from the request path parameters
+        path_params = request.path_params
+        target = path_params.get("target")
+        clients = path_params.get("clients")
 
-    # Checking if the target provided is valid
-    if target and target not in FLTargets:
-        logger.error(f"Invalid target: {target}")
-        raise ValueError(f"Invalid target: {target}")
+        # Checking if the target provided is valid
+        if target and target not in FLTargets:
+            logger.error(f"Invalid target: {target}")
+            raise ValueError(f"Invalid target: {target}")
 
-    logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
+        logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
-    response = abort_job(net_endpoint, fl_backend_job_id)
+        response = abort_job(net_endpoint, fl_backend_job_id)
 
-    logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+        logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 
-    # The dequeue above DELETEd the model's jobs, so update_fl_scheduler (which only considers
-    # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.
-    released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
-    logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
+        # The dequeue above DELETEd the model's jobs, so update_fl_scheduler (which only considers
+        # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.
+        released = fl_scheduler_service.release_scheduler_for_model(model_id, session)
+        logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
+
+    except httpx.HTTPStatusError as error:
+        add_log(model_id, str(error), session, success=False)
+        raise
 
 
 def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
