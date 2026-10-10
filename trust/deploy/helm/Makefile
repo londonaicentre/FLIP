@@ -119,11 +119,11 @@ endif
 ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
-# A platform overlay applied after the per-trust override, e.g. values-aks.yaml on a managed
+# Platform overlays (space-separated, applied in order) after the per-trust override, e.g. values-aks.yaml on a managed
 # AKS cluster (FLIP#1390): settings that belong to where the chart runs, not to the trust.
 PLATFORM_VALUES ?=
 ifneq ($(strip $(PLATFORM_VALUES)),)
-	VALUES_OPTS := $(VALUES_OPTS) -f $(PLATFORM_VALUES)
+	VALUES_OPTS := $(VALUES_OPTS) $(foreach f,$(PLATFORM_VALUES),-f $(f))
 endif
 
 # The chart requires flClient.kitHostPath whenever flClient is enabled, so any

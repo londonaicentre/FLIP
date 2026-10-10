@@ -73,3 +73,43 @@ def test_make_deploy_layers_the_platform_values_last():
     ).stdout
     assert "-f values-aks.yaml" in out
     assert out.index("-f k8s-trust-X.yaml") < out.index("-f values-aks.yaml"), out
+
+
+def _cpu_m(q: str) -> int:
+    return int(q[:-1]) if q.endswith("m") else int(float(q) * 1000)
+
+
+def _mem_mi(q: str) -> int:
+    return int(q[:-2]) * 1024 if q.endswith("Gi") else int(q[:-2])
+
+
+def test_small_node_overlay_fits_the_trust_on_one_four_vcpu_node():
+    """A Standard_D4s_v5 offers about 3.86 CPUs and 12.6 GiB to pods, and AKS's own system pods
+    request about 0.6 CPU and 1 GiB of that (measured on the trial cluster). The rest must hold
+    every trust pod's requests, the busiest init container included."""
+    args = ["helm", "template", "trust-release", str(CHART_DIR)]
+    for f in ("values-aks.yaml", "values-small-node.yaml"):
+        args += ["-f", str(CHART_DIR / f)]
+    rendered = subprocess.run(args, capture_output=True, text=True, check=True, timeout=120).stdout
+    cpu = mem = 0
+    for doc in yaml.safe_load_all(rendered):
+        if not doc or doc.get("kind") not in ("Deployment", "StatefulSet", "DaemonSet", "Job"):
+            continue
+        spec = doc["spec"]["template"]["spec"]
+        requests = [c.get("resources", {}).get("requests", {}) for c in spec["containers"]]
+        cpu += sum(_cpu_m(str(r.get("cpu", "0m"))) for r in requests)
+        mem += sum(_mem_mi(str(r.get("memory", "0Mi"))) for r in requests)
+    assert cpu <= 3200, f"{cpu}m CPU requested"
+    assert mem <= 11 * 1024, f"{mem}Mi memory requested"
+
+
+def test_make_deploy_takes_several_platform_files_in_order():
+    if shutil.which("make") is None:
+        pytest.skip("make is not installed")
+    out = subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), "deploy", "PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout
+    assert out.index("-f values-aks.yaml") < out.index("-f values-small-node.yaml"), out
