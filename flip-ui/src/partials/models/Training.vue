@@ -79,7 +79,12 @@
             </template>
 
             <div class="flex flex-col flex-1 pt-4 overflow-y-auto">
-                <TrainingOptions :errors="errors" :disabled="!pending" :fl-backend-label="flBackendLabel" />
+                <TrainingOptions
+                    :errors="errors"
+                    :disabled="!pending"
+                    :fl-backend-label="flBackendLabel"
+                    :run-resources="pending ? null : runResources"
+                />
             </div>
         </AiCard>
     </Form>

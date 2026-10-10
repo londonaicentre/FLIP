@@ -731,6 +731,58 @@ describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
     });
 });
 
+describe("Training shows a dispatched run's GPU override in the real form", () => {
+    it("fills the locked inputs with what the run asked for, not blanks", async () => {
+        const wrapper = mount(Training, {
+            global: {
+                plugins: [
+                    createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false,
+                        initialState: {
+                            project: {
+                                project: {
+                                    id: "p-1",
+                                    approvedTrusts: [{
+                                        id: "trust-a",
+                                        name: "KCH",
+                                        status: "APPROVED"
+                                    }]
+                                }
+                            }
+                        }
+                    })
+                ],
+                stubs: {
+                    AiCard: { template: "<div><slot /></div>" },
+                    AiAlert: alertStub
+                }
+            },
+            props: {
+                canTrain: true,
+                status: "RUNNING" as const,
+                allFilesUploaded: true,
+                requiredFiles: [],
+                uploadedFileNames: [],
+                jobType: "standard",
+                view: "prepare" as const,
+                runTrusts: ["trust-a"],
+                runResources: {
+                    num_gpus: 1,
+                    mem_per_gpu_gib: 7
+                }
+            }
+        });
+        await flushPromises();
+
+        const gpus = wrapper.get("[data-test=gpu-count-input]").element as HTMLInputElement;
+        const mem = wrapper.get("[data-test=gpu-mem-input]").element as HTMLInputElement;
+        expect(gpus.value).toBe("1");
+        expect(mem.value).toBe("7");
+        expect(gpus.disabled).toBe(true);
+    });
+});
+
 describe("Training job-types failure", () => {
     // The required-files list is per-backend, so when it can't be loaded there is nothing honest
     // to show. The card says so rather than falling through to copy that implies we know.

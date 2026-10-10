@@ -112,6 +112,7 @@
                             type="number"
                             label="GPUs"
                             data-test="gpu-count-input"
+                            :initial-value="runResources ? String(runResources.num_gpus) : ''"
                             :input-props="{ min: 0, max: MAX_GPUS_PER_SITE, step: 1, disabled }"
                         />
                         <AiInput
@@ -120,6 +121,7 @@
                             label="Memory per GPU (GiB)"
                             hint="0 means any"
                             data-test="gpu-mem-input"
+                            :initial-value="runResources ? String(runResources.mem_per_gpu_gib) : ''"
                             :input-props="{ min: 0, max: MAX_MEM_PER_GPU_GIB, step: 1, disabled }"
                         />
                     </div>
@@ -136,7 +138,7 @@ import { computed, ComputedRef } from "vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import { projectHasImaging } from "@/partials/projects/projectType";
-import { MAX_GPUS_PER_SITE, MAX_MEM_PER_GPU_GIB } from "@/services/model-service";
+import { IJobResources, MAX_GPUS_PER_SITE, MAX_MEM_PER_GPU_GIB } from "@/services/model-service";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
@@ -146,6 +148,9 @@ interface ITrainingOptionsProps {
     disabled?: boolean
     // "NVFlare" or "Flower", when known: Flower records a GPU request without enforcing it.
     flBackendLabel?: string
+    // A dispatched run's GPU override. AiInput seeds its own field and would overwrite the Form's
+    // initialValues with "", so the inputs take the run's values directly.
+    runResources?: IJobResources | null
 }
 
 interface ITrustsToTrain {
@@ -161,7 +166,8 @@ interface ITrustsToTrain {
 
 const props = withDefaults(defineProps<ITrainingOptionsProps>(), {
     disabled: false,
-    flBackendLabel: undefined
+    flBackendLabel: undefined,
+    runResources: null
 });
 
 // The GPU inputs appear only once the researcher chooses to override the job's own request (FLIP#70).
