@@ -481,7 +481,7 @@ def abort_run(run_id: int) -> JobMetadata:
 
 
 @app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
-def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, str]:
+def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, Any]:
     """
     Upload an application to the server.
 
@@ -490,7 +490,7 @@ def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, str]:
         body (UploadAppRequest): The request body containing the application details.
 
     Returns:
-        dict[str, str]: A dictionary containing the status of the upload.
+        dict[str, Any]: The status of the upload, with the GPU request it recorded (never enforced on Flower).
     """
     upload_dir = _get_src_root()
     return upload_application(str(model_id), body, upload_dir=upload_dir)
