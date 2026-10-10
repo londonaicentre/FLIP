@@ -166,6 +166,7 @@ update-deps: ## Update Helm chart dependencies
 
 preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
 	@PROD="$(PROD)" \
+	 ENV="$(ENV)" \
 	 KIT="$(KIT)" \
 	 NAMESPACE="$(NAMESPACE)" \
 	 RELEASE_NAME="$(RELEASE_NAME)" \

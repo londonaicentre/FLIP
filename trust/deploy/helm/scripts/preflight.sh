@@ -36,10 +36,13 @@ PROD="${PROD:-}"
 KIT="${KIT:-}"
 OVERRIDES_FILE="${OVERRIDES_FILE:-}"
 
-# Resolve env suffix (same logic as the Makefile)
-if   [ "$PROD" = "true" ]; then ENV_SUFFIX="production"
-elif [ "$PROD" = "stag"  ]; then ENV_SUFFIX="stag"
-else                              ENV_SUFFIX="development"
+# The kit-file environment token. The Makefile passes ENV as deploy/env_mode.mk derived it from
+# PROD (the one place that mapping lives, so lza and lza-stag resolve too — FLIP#1390); the
+# fallback serves a direct run of this script.
+if   [ -n "${ENV:-}" ];          then ENV_SUFFIX="$ENV"
+elif [ "$PROD" = "true" ];       then ENV_SUFFIX="production"
+elif [ "$PROD" = "stag"  ];      then ENV_SUFFIX="stag"
+else                                  ENV_SUFFIX="development"
 fi
 
 # ── Colour support ─────────────────────────────────────────────────────────────
