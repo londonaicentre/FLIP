@@ -16,7 +16,7 @@ import pytest
 import requests
 from fastapi import HTTPException
 
-from fl_api.utils.schemas import UploadAppRequest
+from fl_api.utils.schemas import IOverridableConfig, JobResources, UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
 
 TEST_MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
@@ -141,7 +141,7 @@ def test_error_requests_get(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
 @patch("fl_api.utils.upload.read_config", MagicMock())
 def test_upload_app_success(
     mock_requests_get_success,
@@ -157,7 +157,7 @@ def test_upload_app_success(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
 @patch("fl_api.utils.upload.read_config", MagicMock())
 def test_upload_multiple_apps_success(
     mock_requests_get_success,
@@ -183,7 +183,7 @@ def test_upload_multiple_apps_missing_meta_json(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
 @patch("fl_api.utils.upload.read_config", MagicMock())
 def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_path, monkeypatch):
     """A bundle file under ``/server_checkpoints/`` is staged on the shared checkpoint volume
@@ -221,7 +221,7 @@ def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
-@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock(return_value=IOverridableConfig()))
 @patch("fl_api.utils.upload.read_config", MagicMock())
 def test_upload_clears_stale_server_checkpoints(
     mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch
@@ -390,6 +390,21 @@ def test_validate_config_best_model_metric_defaults_none():
     assert result.BEST_MODEL_METRIC_MINIMIZE is False
 
 
+def test_validate_config_reads_resource_spec_in_nvflares_names():
+    config = validate_config({"RESOURCE_SPEC": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}})
+
+    assert config.RESOURCE_SPEC == JobResources(num_gpus=1, mem_per_gpu_gib=7)
+
+
+def test_validate_config_resource_spec_defaults_none():
+    assert validate_config({}).RESOURCE_SPEC is None
+
+
+def test_validate_config_rejects_a_malformed_resource_spec():
+    with pytest.raises(ValueError, match="RESOURCE_SPEC"):
+        validate_config({"RESOURCE_SPEC": {"num_of_gpus": "one"}})
+
+
 def test_validate_config_rejects_non_dict_weights():
     with pytest.raises(ValueError, match="AGGREGATION_WEIGHTS must be a dictionary"):
         validate_config({"AGGREGATION_WEIGHTS": ["client1"]})
@@ -446,3 +461,64 @@ def test_upload_app_raises_on_http_error_response(mock_requests_get_success, moc
 
     with pytest.raises(requests.HTTPError):
         upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+
+
+# ── which GPU request reaches meta.json (FLIP#70) ───────────────────────────────────
+
+
+def _upload_with(request, configs_by_app, monkeypatch, default_gpus=0):
+    """Run upload_application with each app folder's config.json given by name; return configure_meta's call."""
+    import fl_api.utils.upload as upload_module
+
+    monkeypatch.setattr(upload_module, "read_config", lambda path: configs_by_app[path.parent.parent.name])
+    for name in ("configure_environment", "configure_server", "configure_client", "configure_config"):
+        monkeypatch.setattr(upload_module, name, MagicMock())
+    configure_meta = MagicMock()
+    monkeypatch.setattr(upload_module, "configure_meta", configure_meta)
+    settings = MagicMock(JOB_RESOURCE_SPEC_NUM_GPUS=default_gpus, JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=0)
+    monkeypatch.setattr(upload_module, "get_settings", lambda: settings)
+    response = upload_application(TEST_MODEL_ID, request, TMP_PATH_UPLOAD_DIR)
+    return configure_meta.call_args, response
+
+
+def test_the_jobs_config_json_request_reaches_meta_json(
+    mock_requests_get_success, mock_upload_correct_request, monkeypatch
+):
+    call, response = _upload_with(
+        mock_upload_correct_request,
+        {"app": {"RESOURCE_SPEC": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}}},
+        monkeypatch,
+    )
+
+    assert call.args[3] == JobResources(num_gpus=1, mem_per_gpu_gib=7)
+    assert response["resources"] == {"num_gpus": 1, "mem_per_gpu_gib": 7}
+    assert response["resources_source"] == "config.json"
+
+
+def test_without_a_declaration_the_default_applies(mock_requests_get_success, mock_upload_correct_request, monkeypatch):
+    call, response = _upload_with(mock_upload_correct_request, {"app": {}}, monkeypatch, default_gpus=1)
+
+    assert call.args[3] == JobResources(num_gpus=1)
+    assert response["resources_source"] == "default"
+
+
+def test_a_submission_override_beats_config_json(mock_requests_get_success, mock_upload_correct_request, monkeypatch):
+    request = mock_upload_correct_request.model_copy(update={"resources": JobResources(num_gpus=2)})
+
+    call, response = _upload_with(request, {"app": {"RESOURCE_SPEC": {"num_of_gpus": 1}}}, monkeypatch)
+
+    assert call.args[3] == JobResources(num_gpus=2)
+    assert response["resources_source"] == "submission"
+
+
+def test_app_folders_that_disagree_on_the_request_are_refused(
+    mock_requests_get_success, mock_upload_multiple_apps_request, monkeypatch
+):
+    """The request is job-level: NVFLARE's meta.json holds one resource_spec for the whole job."""
+    configs = {
+        "app": {"RESOURCE_SPEC": {"num_of_gpus": 1}},
+        "app-trust1": {"RESOURCE_SPEC": {"num_of_gpus": 2}},
+        "app-trust2": {},
+    }
+    with pytest.raises(ValueError, match="RESOURCE_SPEC"):
+        _upload_with(mock_upload_multiple_apps_request, configs, monkeypatch)

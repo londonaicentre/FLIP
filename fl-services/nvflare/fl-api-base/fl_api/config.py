@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -25,14 +26,13 @@ class Settings(BaseSettings):
 
     TIMEOUT_SESSION_CONNECT: float = 20.0
 
-    # GPU resources that the submitted NVFLARE jobs need in order to schedule correctly.
-    # TODO Currently this is set globally for all jobs, but we should allow per-job overrides in the future.
-    # See https://github.com/londonaicentre/flip/issues/41
-    # In development (only 1 GPU available for all clients), changing these settings causes the job to never start
-    # ("FL server: "not enough sites have enough resources to start the job""), see
-    # https://github.com/londonaicentre/flip/issues/488. We need a setup with >0 GPUs to test this properly.
-    JOB_RESOURCE_SPEC_NUM_GPUS: int = 0
-    JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: int = 0
+    # The GPU request, per site, for a job that declares none (FLIP#70). A job declares its own in its
+    # config.json RESOURCE_SPEC, and a researcher can override that when submitting training; see
+    # fl_api/utils/job_resources.py. NVFLARE's scheduler holds a job until every site can provide the
+    # request, so a non-zero default here keeps every job off a CPU-only site, which is what stalled the
+    # Azure trust under stag's default of 1 (FLIP#1390).
+    JOB_RESOURCE_SPEC_NUM_GPUS: int = Field(default=0, ge=0)
+    JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: int = Field(default=0, ge=0)
 
     # Job configuration defaults, used when the user-provided config is missing these values.
     JOB_CONFIG_DEFAULT_LOCAL_ROUNDS: int = 1

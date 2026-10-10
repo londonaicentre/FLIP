@@ -30,7 +30,7 @@ def create_fl_session() -> FLIP_Session:
 
     logger.info(f"Admin directory set to: {admin_dir}")
     logger.info(
-        f"Default GPU resource_spec for each job: {get_settings().JOB_RESOURCE_SPEC_NUM_GPUS} GPUs, "
+        f"GPU request for a job that declares none: {get_settings().JOB_RESOURCE_SPEC_NUM_GPUS} GPUs, "
         f"{get_settings().JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB} GiB per GPU"
     )
     logger.info(f"Using LOG_LEVEL: {get_settings().LOG_LEVEL}")
