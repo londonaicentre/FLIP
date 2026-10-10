@@ -444,10 +444,12 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
 
    **How dependencies resolve on-platform.** When you upload the app to FLIP, the platform bundles your
    files into its own base template (``fl-apps/flower/<job_type>/``), whose ``pyproject.toml``
-   governs the run — uploaded files cannot override it. At run time, Flower's runtime dependency
-   installer resolves that template's dependencies fresh for every run (``uv sync`` into an isolated
-   per-run environment) on the SuperLink (``ServerApp``) and on each SuperNode (``ClientApp``), with two
-   pins set by the template's ``[tool.uv.sources]``:
+   governs the run — uploaded files cannot override it. Nothing is installed at run time: the
+   ``ServerApp`` on the SuperLink and the ``ClientApp`` at each trust run in the FL image's own
+   environment, which carries every dependency the templates declare, so no FL host needs a package
+   index during a run. A dependency beyond them ships by rebuilding the FL images. Any ``uv sync``
+   against the template (a local ``flwr run``, for instance) follows two pins set by its
+   ``[tool.uv.sources]``:
 
    - ``flip-utils`` installs from the source copy shipped inside the FL images at ``/opt/flip-utils`` —
      never from PyPI — so the platform always runs the ``flip-utils`` matching its images.

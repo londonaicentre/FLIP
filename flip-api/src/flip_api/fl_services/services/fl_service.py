@@ -107,13 +107,14 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 #   Flower   pyproject.toml — the FAB definition; ``[tool.flwr.app.components]`` resolves
 #                             ``app.server_app:app`` relative to it, so it must sit at the run root.
 #
-# There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
-# dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
-# AGENTS.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
-# than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
-# keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
-# both halves have to change together: add the lockfile here and stop excluding it there, and the
-# lock then has to be resolved for the FL image's platform, not for whoever ran ``uv sync`` last.
+# There is deliberately no slot for a lockfile, and no template commits one. Nothing installs an
+# app's dependencies at run time (the FL apps run in the image's environment, see FL_APP_BASE_DIR in
+# AGENTS.md), and any ``uv sync`` against a template resolves fresh, so a committed ``uv.lock``
+# would be a resolution for the developer's machine rather than for the FL image — which is also why
+# ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to keep one out of an app folder. If
+# reproducible per-run resolution ever becomes a requirement, both halves have to change together:
+# add the lockfile here and stop excluding it there, and the lock then has to be resolved for the FL
+# image's platform, not for whoever ran ``uv sync`` last.
 BUNDLED_ROOT_FILES: dict[str, frozenset[str]] = {
     FLBackend.NVFLARE: frozenset({"meta.json"}),
     FLBackend.FLOWER: frozenset({"pyproject.toml"}),
@@ -192,7 +193,7 @@ def describe_bundled_app_dirs(fl_backend: FLBackend) -> str:
 # precisely to ignore ``.flwr/``, ``.venv/`` and ``uv.lock`` *inside* an ``app/`` directory. The
 # dot rule catches all but ``uv.lock``, which is named because it is not dot-prefixed: it is a
 # resolved lock for the developer's machine, and the Flower run-root ``pyproject.toml`` is what the
-# per-run ``uv sync`` at a trust resolves from.
+# ``uv sync`` against a template resolves from.
 #
 # So the two halves of the rule are not the same kind of rule, and only one of them is closed. At
 # the template root the allowlist is *positional* — a directory ships because it is an app folder,

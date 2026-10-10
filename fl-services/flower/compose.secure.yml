@@ -61,6 +61,9 @@ services:
     group_add: *host-gid
     environment:
       - LOCAL_DEV=true
+      # The ServerApp runs in the image's environment, as on the LZA estate: a cold
+      # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
+      - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       - WORKING_DIR=/app/runs
     volumes:
       - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
@@ -69,14 +72,11 @@ services:
       - ../../fl-tutorials/flower:/app/src
       # Mount the TLS certs for secure communication with SuperNodes and the FL API
       - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
-    # Runtime dependency installation is enabled by default on the SuperLink
-    # (ServerApp side); the SuperNodes below opt in explicitly. Apps whose
-    # pyproject pins `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
-    # (the fl-apps templates do; FLIP#767) build flip-utils from the copy baked
-    # into the image — rebuild the images to pick up flip-utils changes. The
-    # fl-tutorials apps submitted to this standalone stack don't carry the pin
-    # and runtime-install their declared flip-utils from PyPI (see the README's
-    # runtime-dependency section).
+    # No runtime dependency installation on either side (FLIP#1418): the
+    # ServerApp here and the ClientApps on the SuperNodes below run in the
+    # image's environment, where fl-base installs flip-utils[full] from
+    # /opt/flip-utils (FLIP#767) — rebuild the images to pick up flip-utils
+    # changes (see the README's runtime-dependency section).
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -151,11 +151,13 @@ services:
       - ${SUPERNODE_1_CLIENTAPPIO_PORT:-9094}
       - --health-server-address
       - ${SUPERNODE_1_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (still default-off on
-      # SuperNodes at flwr 1.36): resolves the app's declared deps per run
-      # (the fl-apps templates pin flip-utils to /opt/flip-utils via
-      # [tool.uv.sources]; FLIP#767).
-      - --allow-runtime-dependency-installation
+      # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
+      # per-run env after the run id, so every ClientApp launch in a run shares it,
+      # and each launch's exit handler deletes it -- a later round's `uv sync` then
+      # falls through to the base interpreter (Permission denied on setuptools) or
+      # loses its env mid-round. The ClientApp runs in the image's environment,
+      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # every Flower template dependency, and no package index needed at run time.
     deploy:
       resources:
         limits:
@@ -202,11 +204,13 @@ services:
       - ${SUPERNODE_2_CLIENTAPPIO_PORT:-9095}
       - --health-server-address
       - ${SUPERNODE_2_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (still default-off on
-      # SuperNodes at flwr 1.36): resolves the app's declared deps per run
-      # (the fl-apps templates pin flip-utils to /opt/flip-utils via
-      # [tool.uv.sources]; FLIP#767).
-      - --allow-runtime-dependency-installation
+      # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
+      # per-run env after the run id, so every ClientApp launch in a run shares it,
+      # and each launch's exit handler deletes it -- a later round's `uv sync` then
+      # falls through to the base interpreter (Permission denied on setuptools) or
+      # loses its env mid-round. The ClientApp runs in the image's environment,
+      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # every Flower template dependency, and no package index needed at run time.
     deploy:
       resources:
         limits:

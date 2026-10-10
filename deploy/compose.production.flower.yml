@@ -76,6 +76,9 @@ services:
       - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - NET_ID=net-1
+      # The ServerApp runs in the image's environment, as on the LZA estate: a cold
+      # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
+      - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       - LOCAL_DEV=false
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}

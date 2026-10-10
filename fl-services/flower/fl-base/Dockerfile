@@ -27,8 +27,9 @@ WORKDIR /app
 # (torch/MONAI/etc.); flip-utils' readme points at docs/overview.rst and its
 # version at flip/__init__.py, so both are copied.
 #
-# The source is kept at /opt/flip-utils after the install: Flower's runtime
-# dependency installer (`uv sync` on every app launch) resolves the fl-apps
+# The source is kept at /opt/flip-utils after the install. On-platform the
+# ServerApp and ClientApps run in this environment with no per-run install
+# (FLIP#1418), but any `uv sync` against a template (a local `flwr run`) resolves the fl-apps
 # templates' `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
 # against this copy, so FL runs always execute the in-repo flip-utils rather
 # than a PyPI release (#767). Removing this directory fails the launch of

@@ -65,11 +65,13 @@ services:
       # never overridden in any FLIP env file).
       - --port
       - ${SUPERNODE_1_CLIENTAPPIO_PORT:-9094}
-      # ClientApp-side runtime dependency install (still default-off on
-      # SuperNodes at flwr 1.36): resolves the app's deps per run, with
-      # flip-utils pinned to /opt/flip-utils via the template's
-      # [tool.uv.sources] (FLIP#767).
-      - --allow-runtime-dependency-installation
+      # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
+      # per-run env after the run id, so every ClientApp launch in a run shares it,
+      # and each launch's exit handler deletes it -- a later round's `uv sync` then
+      # falls through to the base interpreter (Permission denied on setuptools) or
+      # loses its env mid-round. The ClientApp runs in the image's environment,
+      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # every Flower template dependency, and no package index needed at run time.
     networks:
       - default
       - fl-net-1
@@ -118,8 +120,7 @@ services:
       # never overridden in any FLIP env file).
       - --port
       - ${SUPERNODE_2_CLIENTAPPIO_PORT:-9095}
-      # ClientApp-side runtime dependency install — see net-1 note (FLIP#767).
-      - --allow-runtime-dependency-installation
+      # No --allow-runtime-dependency-installation -- see net-1 note (FLIP#1418).
     networks:
       - default
       - fl-net-2
