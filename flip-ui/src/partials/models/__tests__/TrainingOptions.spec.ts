@@ -29,7 +29,8 @@ const aiSwitchStub = {
 function mountTrainingOptions(
     approvedTrusts: IProjectTrust[],
     disabled = false,
-    hasImaging: boolean | undefined = undefined
+    hasImaging: boolean | undefined = undefined,
+    flBackendLabel: string | undefined = undefined
 ) {
     return mount(TrainingOptions, {
         global: {
@@ -51,7 +52,8 @@ function mountTrainingOptions(
         },
         props: {
             errors: {},
-            disabled
+            disabled,
+            flBackendLabel
         }
     });
 }
@@ -216,5 +218,35 @@ describe("TrainingOptions enrichment copy", () => {
         const wrapper = mountTrainingOptions([], false, false);
         expect(wrapper.text()).toContain("This project has no imaging to enrich");
         expect(wrapper.find("[data-test=data-enrichment-btn]").exists()).toBe(true); // the gate itself stays
+    });
+});
+
+
+describe("TrainingOptions GPU request (FLIP#70)", () => {
+    it("offers an override switch that is off by default, so the job's own request applies", () => {
+        const wrapper = mountTrainingOptions([]);
+
+        const override = wrapper.get("[data-test=gpu-override-switch]");
+        expect(override.attributes("data-name")).toBe("gpu_override");
+        expect(wrapper.text()).toContain("config.json");
+        expect(wrapper.find("[data-test=gpu-count-input]").exists()).toBe(false);
+    });
+
+    it("locks the override with the rest of a dispatched run's options", () => {
+        const wrapper = mountTrainingOptions([], true);
+
+        expect(wrapper.get("[data-test=gpu-override-switch]").attributes("disabled")).toBeDefined();
+    });
+
+    it("says on a Flower net that the request is recorded, not enforced", () => {
+        const wrapper = mountTrainingOptions([], false, undefined, "Flower");
+
+        expect(wrapper.text()).toContain("Flower does not schedule jobs by GPU");
+    });
+
+    it("says nothing about Flower on an NVFlare net", () => {
+        const wrapper = mountTrainingOptions([], false, undefined, "NVFlare");
+
+        expect(wrapper.text()).not.toContain("Flower does not schedule jobs by GPU");
     });
 });

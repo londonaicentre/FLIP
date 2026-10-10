@@ -135,6 +135,7 @@
                                 ref="trainingRef"
                                 view="prepare"
                                 :run-trusts="runTrusts"
+                                :run-resources="modelData?.resources ?? null"
                                 :can-train="readyToTrain"
                                 :status="modelData?.status"
                                 :all-files-uploaded="allFilesUploaded"

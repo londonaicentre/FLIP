@@ -79,7 +79,7 @@
             </template>
 
             <div class="flex flex-col flex-1 pt-4 overflow-y-auto">
-                <TrainingOptions :errors="errors" :disabled="!pending" />
+                <TrainingOptions :errors="errors" :disabled="!pending" :fl-backend-label="flBackendLabel" />
             </div>
         </AiCard>
     </Form>
@@ -127,12 +127,14 @@
 import { Form } from "vee-validate";
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
-import { array, lazy, object, string } from "yup";
+import { array, lazy, number, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
-import { getStatusEnumValue, IInitTraining, initialiseTraining,
+import { getStatusEnumValue, IInitTraining, IJobResources, initialiseTraining,
     JobType,
+    MAX_GPUS_PER_SITE,
+    MAX_MEM_PER_GPU_GIB,
     ModelStatus,
     ModelStatusEnum } from "@/services/model-service";
 import { Snackbar } from "@/utils/snackbar";
@@ -156,6 +158,8 @@ interface ITrainingProps {
     jobTypesLoading?: boolean;
     // Ids of the trusts a dispatched run went to; empty before dispatch.
     runTrusts?: string[];
+    // The GPU override a dispatched run was given; null when it kept the job's own request.
+    runResources?: IJobResources | null;
     // Which stage tab is showing: "prepare" owns the run options (locked once the
     // model is dispatched); "run" owns the metrics and the activity feed.
     view: ModelTab;
@@ -165,7 +169,8 @@ const props = withDefaults(defineProps<ITrainingProps>(), {
     flBackendLabel: undefined,
     jobTypesError: false,
     jobTypesLoading: false,
-    runTrusts: () => []
+    runTrusts: () => [],
+    runResources: null
 });
 
 const emits = defineEmits(["started", "retryJobTypes"]);
@@ -189,7 +194,37 @@ const schema = object().shape({
                 .min(1, "You must select a minimum of one trust for training.")
                 .required("You must select a minimum of one trust for training.")
             :
-            string().required("You must select a minimum of one trust for training.")))
+            string().required("You must select a minimum of one trust for training."))),
+    // Only checked once the researcher overrides the job's own GPU request (FLIP#70). The caps are the
+    // hub's sanity limits, not a trust's capacity, which the FL server's scheduler decides.
+    gpu_override: string().nullable(),
+    num_gpus: number().when("gpu_override", {
+        is: (on: unknown) => Boolean(on),
+        then: (field) => field
+            .typeError("Enter a number of GPUs.")
+            .integer("The number of GPUs must be a whole number.")
+            .min(0, "The number of GPUs cannot be negative.")
+            .max(MAX_GPUS_PER_SITE, `Ask for at most ${MAX_GPUS_PER_SITE} GPUs per trust.`)
+            .required("Enter a number of GPUs."),
+        otherwise: (field) => field.strip()
+    }),
+    mem_per_gpu_gib: number().when(["gpu_override", "num_gpus"], {
+        is: (on: unknown) => Boolean(on),
+        then: (field) => field
+            .transform((value, original) => (original === "" ? 0 : value))
+            .typeError("Enter the memory per GPU in GiB.")
+            .integer("The memory per GPU must be a whole number of GiB.")
+            .min(0, "The memory per GPU cannot be negative.")
+            .max(MAX_MEM_PER_GPU_GIB, `Ask for at most ${MAX_MEM_PER_GPU_GIB} GiB per GPU.`)
+            .test(
+                "needs-a-gpu",
+                "Memory per GPU needs at least one GPU.",
+                function memoryNeedsAGpu(value) {
+                    return !value || Number(this.parent.num_gpus) > 0;
+                }
+            ),
+        otherwise: (field) => field.strip()
+    })
 });
 
 const formSubmitting = ref(false);
@@ -259,7 +294,14 @@ const initialValues = computed(() => (pending.value
     ? undefined
     : {
         enriched: "true",
-        trust_ids: props.runTrusts
+        trust_ids: props.runTrusts,
+        ...(props.runResources
+            ? {
+                gpu_override: "true",
+                num_gpus: props.runResources.num_gpus,
+                mem_per_gpu_gib: props.runResources.mem_per_gpu_gib
+            }
+            : {})
     }));
 
 const initTraining = async (formData: unknown): Promise<void> => {
@@ -273,11 +315,22 @@ const initTraining = async (formData: unknown): Promise<void> => {
 
     formSubmitting.value = true;
 
-    const { trust_ids } = formData as IInitTraining;
+    const { trust_ids, gpu_override, num_gpus, mem_per_gpu_gib } = formData as IInitTraining & {
+        gpu_override?: string;
+        num_gpus?: number;
+        mem_per_gpu_gib?: number;
+    };
 
     // If it is only one trust, add to an array
     const arr: string[] = [];
     const requestData: IInitTraining = { trust_ids: arr.concat(trust_ids) };
+    // Without the override the job's own config.json RESOURCE_SPEC, or the platform default, applies.
+    if (gpu_override) {
+        requestData.resources = {
+            num_gpus: Number(num_gpus),
+            mem_per_gpu_gib: Number(mem_per_gpu_gib ?? 0)
+        };
+    }
 
     try {
         await initialiseTraining(
