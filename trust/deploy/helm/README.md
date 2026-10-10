@@ -193,9 +193,12 @@ instead and deploy with `flClient.kit.source=secret` (FLIP#1390):
 
 ```bash
 make -C trust/deploy/helm kit-secret KIT_SRC=<the slot's kit directory> KUBE_CONTEXT=<kube context>
-# then deploy with --set flClient.kit.source=secret  (kitHostPath is not needed)
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> NO_VOCAB_LOAD=1 \
+  PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube context>
 ```
 
+`values-aks.yaml` carries what belongs to a managed cluster rather than to the trust (the kit from the Secret,
+Postgres data below the fresh disk's `lost+found`); `PLATFORM_VALUES` layers it after the per-trust override.
 `kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
 ...) in `<release>-flip-trust-fl-kit` (`flClient.kit.secretName` overrides it) and refuses a kit
 missing its backend's files, a nested directory, or more than a Secret's 1 MiB. At pod start the
