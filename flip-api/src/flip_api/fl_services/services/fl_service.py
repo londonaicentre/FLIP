@@ -27,6 +27,7 @@ from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
     IClientStatus,
     IJobMetaData,
+    IJobResources,
     IServerStatus,
     IStartTrainingBody,
     JobRequiredFiles,
@@ -656,6 +657,75 @@ def _raise_if_job_aborted(fl_job_id: UUID, session: Session) -> None:
         raise JobAbortedError(f"FL job {fl_job_id} was aborted before submission")
 
 
+def _job_gpu_override(fl_job_id: UUID, session: Session) -> IJobResources | None:
+    """The GPU override stored with the run at submission, if any (FLIP#70).
+
+    Args:
+        fl_job_id (UUID): The FL job.
+        session (Session): SQLModel session.
+
+    Returns:
+        IJobResources | None: the override, or None when the researcher set none.
+    """
+    job = session.get(FLJob, fl_job_id)
+    if job is None or job.num_gpus is None:
+        return None
+    return IJobResources(num_gpus=job.num_gpus, mem_per_gpu_gib=job.mem_per_gpu_gib or 0)
+
+
+_RESOURCE_SOURCES = {
+    "submission": "set for this run",
+    "config.json": "from the job's config.json",
+    "default": "the platform default",
+}
+
+
+def _log_applied_gpu_request(
+    model_id: UUID, override: IJobResources | None, upload_reply: Any, session: Session
+) -> None:
+    """Tell the researcher which GPU request the FL API applied, from its upload reply (FLIP#70).
+
+    The NVFLARE fl-api reports the request it wrote into the job and where it came from; the Flower
+    fl-api reports it recorded but did not enforce it. An fl-api older than per-job requests reports
+    nothing, which only matters when an override was sent and silently dropped.
+
+    Args:
+        model_id (UUID): The model being trained.
+        override (IJobResources | None): what was sent as the run's override.
+        upload_reply (Any): the FL API's reply to upload_app.
+        session (Session): SQLModel session.
+    """
+    from flip_api.model_services.services.model_service import add_log
+
+    reported = upload_reply.get("resources") if isinstance(upload_reply, dict) else None
+    if reported is None:
+        if override is not None:
+            add_log(
+                model_id,
+                f"The FL API did not report applying the GPU request set for this run ({override.describe()}); "
+                "it may predate per-job GPU requests.",
+                session,
+                success=False,
+            )
+        return
+    try:
+        described = IJobResources.model_validate(reported).describe()
+    except ValueError:
+        logger.warning(f"Unreadable GPU request in the FL API's upload reply for model {model_id}: {reported}")
+        return
+    if upload_reply.get("resources_enforced") is False:
+        if reported.get("num_gpus"):
+            add_log(
+                model_id,
+                f"GPU request per trust: {described}, recorded but not enforced: Flower does not schedule jobs by GPU",
+                session,
+                success=False,
+            )
+        return
+    source = _RESOURCE_SOURCES.get(str(upload_reply.get("resources_source")))
+    add_log(model_id, f"GPU request per trust: {described}" + (f" ({source})" if source else ""), session)
+
+
 def start_training(
     model_id: UUID,
     fl_job_id: UUID,
@@ -690,13 +760,15 @@ def start_training(
         cohort_query=required_info.cohort_query,
         trusts=clients,
         bundle_urls=bundle_urls,
+        resources=_job_gpu_override(fl_job_id, session),
     )
 
     # Gate before the (up to 900s) app transfer, and again right before submission: submit_job
     # is the side effect that creates the backend run, so a job aborted mid-prepare (#787) must
     # never reach it.
     _raise_if_job_aborted(fl_job_id, session)
-    upload_app(model_id, training_details, endpoint)
+    upload_reply = upload_app(model_id, training_details, endpoint)
+    _log_applied_gpu_request(model_id, training_details.resources, upload_reply, session)
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
@@ -1357,7 +1429,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
 
 
-def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
+def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session, resources: IJobResources | None = None) -> None:
     """
     Insert a new FL job into the database with its trust participants.
 
@@ -1367,13 +1439,20 @@ def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
             `fl_job_trust` link table — the relationship gives `job.trusts` direct
             access to full Trust ORM rows without a manual id-to-name lookup.
         session (Session): The SQLModel session to use for the database operation.
+        resources (IJobResources | None): the researcher's GPU override for this run (FLIP#70), sent to
+            the FL API when the job is dispatched. None keeps the job's own request or the default.
 
     Raises:
         Exception: If there is an error during the database operation.
     """
     logger.debug(f"Adding FL job for model ID: {model_id}")
 
-    job = FLJob(model_id=model_id, trusts=trusts)
+    job = FLJob(
+        model_id=model_id,
+        trusts=trusts,
+        num_gpus=resources.num_gpus if resources else None,
+        mem_per_gpu_gib=resources.mem_per_gpu_gib if resources else None,
+    )
 
     try:
         session.add(job)

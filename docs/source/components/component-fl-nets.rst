@@ -344,6 +344,21 @@ training settings. Every setting has a default, so an app that declares only ``j
 
    *Default = unset, i.e. only the final model is saved*
 
+**RESOURCE_SPEC**
+   What the job needs at each participating Trust, in NVFLARE's own names:
+   ``{"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7}`` asks every Trust for one GPU with at least 7 GiB.
+   The FL API writes it into the job's ``meta.json`` ``resource_spec``, and the FL server's scheduler
+   holds the job until every Trust's resource manager (configured from the kit's
+   ``NUM_AVAILABLE_GPUS``) can provide it. The request is never lowered to fit a Trust. Both values
+   are whole numbers, at most 8 GPUs and 192 GiB, ``mem_per_gpu_in_GiB`` needs ``num_of_gpus`` above
+   0, and any other key fails config validation. If several app folders declare it, they must agree.
+   A researcher can override it for one run when initiating training (see the
+   :doc:`user guide <../user-guides/user-common>`). Flower apps do not use this key: Flower does not
+   schedule jobs by GPU.
+
+   *Default = the platform's* ``JOB_RESOURCE_SPEC_NUM_GPUS`` */* ``JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB``
+   *(0 GPUs unless the deployment changes it)*
+
 Three further keys are read by FLIP's own NVFLARE components rather than by the FL API's validator,
 so they are unvalidated but are not simply passed through either: ``SERVER_CHECKPOINT`` (names a
 model file to stage on the FL server instead of bundling it into the app — a string or a list of

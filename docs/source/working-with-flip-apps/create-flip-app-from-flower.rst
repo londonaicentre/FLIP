@@ -58,7 +58,7 @@ If you are starting from scratch, ``fl-apps/flower/standard/`` provides the plat
 
 .. note::
 
-   ``config.json`` carries only ``job_type`` for a Flower app (``{"job_type": "standard"}``). The hub reads that key and nothing else from it, to pick which base template to bundle. Run configuration goes in ``config.toml``, not here — unlike NVFLARE, where ``config.json`` carries the training settings.
+   ``config.json`` carries only ``job_type`` for a Flower app (``{"job_type": "standard"}``). The hub reads that key and nothing else from it, to pick which base template to bundle. Run configuration goes in ``config.toml``, not here — unlike NVFLARE, where ``config.json`` carries the training settings. NVFLARE's ``RESOURCE_SPEC`` key has no Flower counterpart: Flower's deployment runtime does not schedule jobs by GPU, so a GPU request set when initiating training is recorded in the model's activity feed but not enforced, and a SuperNode runs the job with whatever GPUs its host gives it.
 
 .. note::
 

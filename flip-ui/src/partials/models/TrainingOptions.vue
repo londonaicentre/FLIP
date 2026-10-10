@@ -83,15 +83,62 @@
                     </div>
                 </div>
             </div>
+            <div class="sm:grid sm:grid-cols-3 sm:gap-4 sm:items-start sm:pt-5">
+                <label for="gpu_override" class="block text-sm font-medium text-gray-700 dark:text-gray-300 sm:mt-px sm:pt-2">
+                    GPU request per trust
+                    <div class="mr-2 text-sm text-gray-400 dark:text-gray-300">
+                        Off, the job's <code>config.json</code> <code>RESOURCE_SPEC</code> applies, or the platform
+                        default. On, this run asks every selected trust for what you set here. A trust that cannot
+                        provide it holds the run until it can; the request is never lowered to fit.
+                        <template v-if="isFlower">
+                            Flower does not schedule jobs by GPU, so on this net the request is recorded, not
+                            enforced.
+                        </template>
+                    </div>
+                </label>
+                <div class="mt-1 space-y-3 sm:mt-0 sm:col-span-2">
+                    <div class="text-right">
+                        <AiSwitch
+                            name="gpu_override"
+                            value="true"
+                            data-test="gpu-override-switch"
+                            :disabled="disabled"
+                            :label="{ enabled: 'Override for this run', disabled: 'Job default' }"
+                        />
+                    </div>
+                    <div v-if="overrideOn" class="grid grid-cols-2 gap-4">
+                        <AiInput
+                            name="num_gpus"
+                            type="number"
+                            label="GPUs"
+                            data-test="gpu-count-input"
+                            :initial-value="runResources ? String(runResources.num_gpus) : ''"
+                            :input-props="{ min: 0, max: MAX_GPUS_PER_SITE, step: 1, disabled }"
+                        />
+                        <AiInput
+                            name="mem_per_gpu_gib"
+                            type="number"
+                            label="Memory per GPU (GiB)"
+                            hint="0 means any"
+                            data-test="gpu-mem-input"
+                            :initial-value="runResources ? String(runResources.mem_per_gpu_gib) : ''"
+                            :input-props="{ min: 0, max: MAX_MEM_PER_GPU_GIB, step: 1, disabled }"
+                        />
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 </template>
 
 <script setup lang="ts">
+import { useFieldValue } from "vee-validate";
 import { computed, ComputedRef } from "vue";
 
+import AiInput from "@/components/AiInput/AiInput.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import { projectHasImaging } from "@/partials/projects/projectType";
+import { IJobResources, MAX_GPUS_PER_SITE, MAX_MEM_PER_GPU_GIB } from "@/services/model-service";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
@@ -99,6 +146,11 @@ interface ITrainingOptionsProps {
     // A dispatched run's configuration is a record, not a form: the controls stay
     // on screen so you can see which trusts took part, but nothing is editable.
     disabled?: boolean
+    // "NVFlare" or "Flower", when known: Flower records a GPU request without enforcing it.
+    flBackendLabel?: string
+    // A dispatched run's GPU override. AiInput seeds its own field and would overwrite the Form's
+    // initialValues with "", so the inputs take the run's values directly.
+    runResources?: IJobResources | null
 }
 
 interface ITrustsToTrain {
@@ -112,7 +164,16 @@ interface ITrustsToTrain {
     trustId: string;
 }
 
-withDefaults(defineProps<ITrainingOptionsProps>(), { disabled: false });
+const props = withDefaults(defineProps<ITrainingOptionsProps>(), {
+    disabled: false,
+    flBackendLabel: undefined,
+    runResources: null
+});
+
+// The GPU inputs appear only once the researcher chooses to override the job's own request (FLIP#70).
+const overrideValue = useFieldValue<string | undefined>("gpu_override");
+const overrideOn = computed(() => Boolean(overrideValue.value));
+const isFlower = computed(() => props.flBackendLabel === "Flower");
 
 const projectStore = useProjectStore();
 

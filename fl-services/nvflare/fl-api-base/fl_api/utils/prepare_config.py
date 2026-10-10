@@ -26,8 +26,9 @@ from fl_api.utils.constants import (
     META,
 )
 from fl_api.utils.io_utils import read_config, write_config
+from fl_api.utils.job_resources import nvflare_resource_spec, parse_resource_spec
 from fl_api.utils.logger import logger
-from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, TrainingRound
+from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, JobResources, TrainingRound
 
 
 # TODO Validation of config.json could be used to avoid some of the logic implemented here.
@@ -511,7 +512,7 @@ def configure_server(
     return config_file
 
 
-def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
+def configure_meta(job_dir: Path, app_name: str, trusts: list[str], resources: JobResources) -> Path:
     """
     Creates a meta.json file, which is part of the NVFLARE application.
 
@@ -519,34 +520,17 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
         job_dir (Path): job directory
         app_name (str): name of this specific application, under which the config and custom folders will be saved.
         trusts (List[str]): list of trusts that are part of this training (site names)
+        resources (JobResources): what the job needs at each site, already resolved from the submission override,
+            the job's config.json and the fl-api default (``job_resources.resolve_job_resources``; FLIP#70).
 
     Returns:
         Path: path to the meta file that was created.
     """
-    # Resources required to perform this job at each site
-    # See https://nvflare.readthedocs.io/en/2.4/real_world_fl/job.html#job
-    # TODO Currently this is set from the global config, but we should allow per-job overrides in the future.
-    # See https://github.com/londonaicentre/FLIP/issues/70
-    num_gpus = get_settings().JOB_RESOURCE_SPEC_NUM_GPUS
-    mem_per_gpu_in_gib = get_settings().JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
-    print(f"Job configured to use {num_gpus=} with {mem_per_gpu_in_gib=}.")
-
-    # Resource spec should be omitted by default so that 0 gpu jobs get picked up.
-    # Resource spec is only needed in envs with configured gpus
-    # e.g.
-    # {
-    #     "resource_spec": {
-    #         "Trust_1": { "num_of_gpus": 1, "mem_per_gpu_in_GiB": 1 },
-    #         "Trust_2": { "num_of_gpus": 1, "mem_per_gpu_in_GiB": 1 }
-    #     }
-    # }
-    if num_gpus > 0:
-        # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
-        # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
-        # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
-        resource_spec = {trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts}
-    else:
-        resource_spec = {}
+    # What the job needs at each site. NVFLARE's scheduler holds the job until every site's resource
+    # manager can provide it; the request is never lowered to fit a site.
+    # See https://nvflare.readthedocs.io/en/2.6/real_world_fl/job.html#job
+    resource_spec = nvflare_resource_spec(resources, trusts)
+    logger.info(f"Job resource_spec: {resource_spec or 'no GPUs requested'}")
 
     # Create the meta.json file.
     #
@@ -689,5 +673,10 @@ def validate_config(config: dict) -> IOverridableConfig:
         # BEST_MODEL_METRIC_MINIMIZE only has meaning alongside a selector metric — silently
         # accepting it without BEST_MODEL_METRIC would let a user believe it took effect.
         raise ValueError("BEST_MODEL_METRIC_MINIMIZE requires BEST_MODEL_METRIC to also be set")
+
+    if "RESOURCE_SPEC" in config:
+        # What the job needs at each site, in NVFLARE's names (FLIP#70). A malformed value is an error,
+        # not a silent fall-back to the default: the researcher asked for something specific.
+        validated.RESOURCE_SPEC = parse_resource_spec(config["RESOURCE_SPEC"])
 
     return validated

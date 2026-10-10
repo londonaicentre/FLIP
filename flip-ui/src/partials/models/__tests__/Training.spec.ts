@@ -62,6 +62,7 @@ interface MountOpts {
     jobTypesError?: boolean;
     jobTypesLoading?: boolean;
     runTrusts?: string[];
+    runResources?: { num_gpus: number; mem_per_gpu_gib: number } | null;
     formValues?: Record<string, unknown>;
 }
 
@@ -83,6 +84,7 @@ function mountTraining(options: MountOpts = {}) {
         // Mirrors the page default: nothing to watch until the model is dispatched.
         view = status === "PENDING" ? "prepare" : "run",
         runTrusts = [],
+        runResources = null,
         formValues = {}
     } = options;
 
@@ -141,7 +143,8 @@ function mountTraining(options: MountOpts = {}) {
             jobTypesError,
             jobTypesLoading,
             view,
-            runTrusts
+            runTrusts,
+            runResources
         }
     });
 }
@@ -449,6 +452,44 @@ describe("Training options reflect a dispatched run", () => {
 });
 
 
+describe("Training options show a dispatched run's GPU override", () => {
+    const initialValues = (wrapper: ReturnType<typeof mountTraining>) =>
+        JSON.parse(wrapper.get("form").attributes("data-initial-values") ?? "null");
+
+    it("shows the override a run was given, so the record says what it asked for", () => {
+        const wrapper = mountTraining({
+            status: "RUNNING",
+            view: "prepare",
+            runTrusts: ["trust-a"],
+            runResources: {
+                num_gpus: 1,
+                mem_per_gpu_gib: 7
+            }
+        });
+
+        expect(initialValues(wrapper)).toEqual({
+            enriched: "true",
+            trust_ids: ["trust-a"],
+            gpu_override: "true",
+            num_gpus: 1,
+            mem_per_gpu_gib: 7
+        });
+    });
+
+    it("leaves the override off for a run that kept the job's own request", () => {
+        const wrapper = mountTraining({
+            status: "RUNNING",
+            view: "prepare",
+            runTrusts: ["trust-a"]
+        });
+
+        expect(initialValues(wrapper)).toEqual({
+            enriched: "true",
+            trust_ids: ["trust-a"]
+        });
+    });
+});
+
 describe("Training reports whether the run options are complete", () => {
     const optionsComplete = (formValues: Record<string, unknown>) => {
         const wrapper = mountTraining({
@@ -542,7 +583,8 @@ describe("Training reads the real vee-validate form", () => {
         expect(complete(wrapper)).toBe(false);
 
         const switches = wrapper.findAll("button[role=\"switch\"]");
-        expect(switches.length).toBe(2);
+        // Enrichment, the one trust, and the optional GPU override (FLIP#70).
+        expect(switches.length).toBe(3);
 
         // Enrichment alone is not enough.
         await switches[0].trigger("click");
@@ -582,6 +624,162 @@ describe("Training reads the real vee-validate form", () => {
             expect(wrapper.text()).toContain("You must select a minimum of one trust for training.");
         });
         expect(vi.mocked(initialiseTraining)).not.toHaveBeenCalled();
+    });
+});
+
+describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
+    function mountWithRealForm() {
+        return mount(Training, {
+            global: {
+                plugins: [
+                    createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false,
+                        initialState: {
+                            project: {
+                                project: {
+                                    id: "p-1",
+                                    approvedTrusts: [{
+                                        id: "trust-a",
+                                        name: "KCH",
+                                        status: "APPROVED"
+                                    }]
+                                }
+                            }
+                        }
+                    })
+                ],
+                stubs: {
+                    AiCard: { template: "<div><slot /></div>" },
+                    AiAlert: alertStub
+                }
+            },
+            props: {
+                canTrain: true,
+                status: "PENDING" as const,
+                allFilesUploaded: true,
+                requiredFiles: [],
+                uploadedFileNames: [],
+                jobType: "standard",
+                view: "prepare" as const
+            }
+        });
+    }
+
+    async function readyToSubmit() {
+        const { initialiseTraining } = await import("@/services/model-service");
+        vi.mocked(initialiseTraining).mockReset();
+        vi.mocked(initialiseTraining).mockResolvedValue(undefined);
+        const wrapper = mountWithRealForm();
+        await flushPromises();
+        const switches = wrapper.findAll("button[role=\"switch\"]");
+        await switches[0].trigger("click");
+        await switches[1].trigger("click");
+        await flushPromises();
+
+        return {
+            wrapper,
+            switches,
+            initialiseTraining: vi.mocked(initialiseTraining)
+        };
+    }
+
+    it("leaves the request out when the override is off, so the job's own request applies", async () => {
+        const { wrapper, initialiseTraining } = await readyToSubmit();
+
+        expect(wrapper.find("[data-test=gpu-count-input]").exists()).toBe(false);
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
+        expect(initialiseTraining.mock.calls[0][1]).toEqual({ trust_ids: ["trust-a"] });
+    });
+
+    it("sends the GPU count and per-GPU memory when the override is on", async () => {
+        const { wrapper, switches, initialiseTraining } = await readyToSubmit();
+
+        await switches[2].trigger("click");
+        await flushPromises();
+        await wrapper.get("[data-test=gpu-count-input]").setValue("1");
+        await wrapper.get("[data-test=gpu-mem-input]").setValue("7");
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
+        expect(initialiseTraining.mock.calls[0][1]).toEqual({
+            trust_ids: ["trust-a"],
+            resources: {
+                num_gpus: 1,
+                mem_per_gpu_gib: 7
+            }
+        });
+    });
+
+    it.each([
+        ["9", "0", "at most 8"],
+        ["1.5", "0", "whole number"],
+        ["0", "7", "needs at least one GPU"]
+    ])("refuses %s GPUs with %s GiB", async (gpus, mem, message) => {
+        const { wrapper, switches, initialiseTraining } = await readyToSubmit();
+
+        await switches[2].trigger("click");
+        await flushPromises();
+        await wrapper.get("[data-test=gpu-count-input]").setValue(gpus);
+        await wrapper.get("[data-test=gpu-mem-input]").setValue(mem);
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(wrapper.text()).toContain(message));
+        expect(initialiseTraining).not.toHaveBeenCalled();
+    });
+});
+
+describe("Training shows a dispatched run's GPU override in the real form", () => {
+    it("fills the locked inputs with what the run asked for, not blanks", async () => {
+        const wrapper = mount(Training, {
+            global: {
+                plugins: [
+                    createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false,
+                        initialState: {
+                            project: {
+                                project: {
+                                    id: "p-1",
+                                    approvedTrusts: [{
+                                        id: "trust-a",
+                                        name: "KCH",
+                                        status: "APPROVED"
+                                    }]
+                                }
+                            }
+                        }
+                    })
+                ],
+                stubs: {
+                    AiCard: { template: "<div><slot /></div>" },
+                    AiAlert: alertStub
+                }
+            },
+            props: {
+                canTrain: true,
+                status: "RUNNING" as const,
+                allFilesUploaded: true,
+                requiredFiles: [],
+                uploadedFileNames: [],
+                jobType: "standard",
+                view: "prepare" as const,
+                runTrusts: ["trust-a"],
+                runResources: {
+                    num_gpus: 1,
+                    mem_per_gpu_gib: 7
+                }
+            }
+        });
+        await flushPromises();
+
+        const gpus = wrapper.get("[data-test=gpu-count-input]").element as HTMLInputElement;
+        const mem = wrapper.get("[data-test=gpu-mem-input]").element as HTMLInputElement;
+        expect(gpus.value).toBe("1");
+        expect(mem.value).toBe("7");
+        expect(gpus.disabled).toBe(true);
     });
 });
 

@@ -90,7 +90,7 @@ def initiate_training(
         )
 
     try:
-        add_fl_job(model_id, list(trusts), db)
+        add_fl_job(model_id, list(trusts), db, resources=payload.resources)
 
         updated = update_model_status(model_id, ModelStatus.INITIATED, db)
         if not updated:
@@ -100,6 +100,8 @@ def initiate_training(
         # position ("Model Queued (n)").
         log_queue_positions(db)
         add_log(model_id, f"Selected trusts for training: {', '.join(t.name for t in trusts)}", db)
+        if payload.resources is not None:
+            add_log(model_id, f"GPU request per trust set for this run: {payload.resources.describe()}", db)
 
     except HTTPException:
         raise  # re-raise known errors

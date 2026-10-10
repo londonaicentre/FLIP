@@ -20,10 +20,11 @@ from uuid import UUID, uuid4
 import pytest
 
 from flip_api.config import Settings
-from flip_api.db.models.main_models import Trust
+from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
+    IJobResources,
     IServerStatus,
     IStartTrainingBody,
 )
@@ -255,6 +256,7 @@ def test_start_training_with_config(
 ):
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
 
     fl_service.start_training(
         model_id=model_id,
@@ -286,6 +288,7 @@ def test_start_training_skips_upload_when_job_already_deleted(
     # must fire before the (up to 900s) app transfer even starts.
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
     fake_session.exec.return_value.one_or_none.return_value = JobStatus.DELETED
 
     with pytest.raises(JobAbortedError):
@@ -320,6 +323,7 @@ def test_start_training_skips_submit_when_job_deleted_during_upload(
     # run and stamps fl_backend_job_id onto the DELETED row).
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
     fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.DELETED]
 
     with pytest.raises(JobAbortedError):
@@ -2537,3 +2541,88 @@ class TestRealRequiredFilesManifests:
             "config.json",
             "models.py",
         ]
+
+
+# ── GPU request (FLIP#70) ───────────────────────────────────────────────────────────
+
+
+def test_add_fl_job_stores_a_gpu_override(model_id, fake_session):
+    fl_service.add_fl_job(model_id, [], fake_session, resources=IJobResources(num_gpus=1, mem_per_gpu_gib=7))
+
+    job = fake_session.add.call_args.args[0]
+    assert (job.num_gpus, job.mem_per_gpu_gib) == (1, 7)
+
+
+def test_add_fl_job_without_an_override_leaves_the_columns_null(model_id, fake_session):
+    fl_service.add_fl_job(model_id, [], fake_session)
+
+    job = fake_session.add.call_args.args[0]
+    assert (job.num_gpus, job.mem_per_gpu_gib) == (None, None)
+
+
+def _start(model_id, fl_job_id, fake_session, job, upload_reply=None):
+    """Run start_training against a stored job row; return what was uploaded and what was logged."""
+    fake_session.get.return_value = job
+    with (
+        patch("flip_api.fl_services.services.fl_service.submit_job"),
+        patch("flip_api.fl_services.services.fl_service.upload_app", return_value=upload_reply) as upload,
+        patch("flip_api.fl_services.services.fl_service.encrypt", return_value="encrypted"),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_required_training_details",
+            return_value=MagicMock(project_id="proj", cohort_query="query"),
+        ),
+        patch("flip_api.model_services.services.model_service.add_log") as add_log,
+    ):
+        fl_service.start_training(model_id, fl_job_id, ["Trust_1"], "endpoint", ["url"], fake_session)
+    return upload.call_args.args[1], [(c.args[1], c.kwargs.get("success", True)) for c in add_log.call_args_list]
+
+
+def test_start_training_sends_the_runs_override_to_the_fl_api(model_id, fl_job_id, fake_session):
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=2, mem_per_gpu_gib=16)
+
+    body, _ = _start(model_id, fl_job_id, fake_session, job)
+
+    assert body.resources == IJobResources(num_gpus=2, mem_per_gpu_gib=16)
+
+
+def test_start_training_without_an_override_sends_none(model_id, fl_job_id, fake_session):
+    body, _ = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id))
+
+    assert body.resources is None
+
+
+def test_start_training_logs_the_request_the_fl_api_applied_and_where_it_came_from(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": {"num_gpus": 1, "mem_per_gpu_gib": 7}, "resources_source": "config.json"}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
+
+    assert ("GPU request per trust: 1 GPU with 7 GiB (from the job's config.json)", True) in logged
+
+
+def test_start_training_says_when_flower_records_but_does_not_enforce_the_request(model_id, fl_job_id, fake_session):
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=1)
+    reply = {"message": "ok", "resources": {"num_gpus": 1, "mem_per_gpu_gib": 0}, "resources_enforced": False}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, job, reply)
+
+    assert (
+        "GPU request per trust: 1 GPU, recorded but not enforced: Flower does not schedule jobs by GPU",
+        False,
+    ) in logged
+
+
+def test_start_training_warns_when_the_fl_api_ignored_an_override(model_id, fl_job_id, fake_session):
+    """An fl-api that predates per-job requests drops the field silently; say so instead of implying it applied."""
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=1)
+
+    _, logged = _start(model_id, fl_job_id, fake_session, job, {"message": "ok"})
+
+    assert any("did not report applying the GPU request" in text and not ok for text, ok in logged)
+
+
+def test_start_training_logs_nothing_about_gpus_for_an_older_fl_api_when_none_was_asked(
+    model_id, fl_job_id, fake_session
+):
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), {"message": "ok"})
+
+    assert logged == []
