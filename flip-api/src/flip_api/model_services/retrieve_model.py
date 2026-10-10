@@ -23,6 +23,7 @@ from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import FLJob, FLJobTrust, Model, ModelsAudit, Trust, UploadedFiles
+from flip_api.domain.interfaces.fl import IJobResources
 from flip_api.domain.interfaces.model import IModelResponse, IQuery, ITrustSummary
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import FileUploadStatus, ModelStatus
@@ -205,6 +206,14 @@ def retrieve_model(
         ).all()
         trusts = [ITrustSummary(id=trust_id, name=name, code=code) for trust_id, name, code in trust_rows]
 
+        # The GPU override the run was given at submission, if any (FLIP#70) — same latest job.
+        resources_row = db.exec(
+            select(FLJob.num_gpus, FLJob.mem_per_gpu_gib).where(col(FLJob.id) == latest_job_id)
+        ).first()
+        resources = None
+        if resources_row is not None and resources_row[0] is not None:
+            resources = IJobResources(num_gpus=resources_row[0], mem_per_gpu_gib=resources_row[1] or 0)
+
         # Where this model stands in the FL training queue (1-based; None once
         # its job is picked up or it has none) — same source as the estate list.
         queue_position = queued_positions_by_model(db).get(model_id)
@@ -222,6 +231,7 @@ def retrieve_model(
             running_at=latest_per_action.get(ModelAuditAction.RUNNING),
             results_uploaded_at=latest_per_action.get(ModelAuditAction.RESULTS_UPLOADED),
             trusts=trusts,
+            resources=resources,
             queue_position=queue_position,
         )  # type: ignore[call-arg]
 

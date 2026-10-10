@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, computed_field, field_validator, model_validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import ClientStatus, FLJobStatus, NetStatus
@@ -74,11 +74,49 @@ def _load_job_types_config(fl_backend: FLBackend) -> dict[str, list[str]]:
         return {}
 
 
+# Sanity caps on a run's GPU request, for fast feedback on a typo; the same values as both fl-apis.
+# They are not capacity checks: the hub never compares a request with a trust's GPUs. On NVFLARE the
+# FL server's scheduler holds the job until every trust can provide it (FLIP#70).
+MAX_GPUS_PER_SITE = 8
+MAX_MEM_PER_GPU_GIB = 192
+
+
+class IJobResources(BaseModel):
+    """What a training run needs at each participating trust (FLIP#70).
+
+    Backend-neutral: the NVFLARE fl-api writes it into the job's ``meta.json`` ``resource_spec``,
+    the Flower fl-api records it without enforcing it. It applies to every selected trust and is
+    never lowered to fit one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_gpus: StrictInt = Field(ge=0, le=MAX_GPUS_PER_SITE)
+    # The least memory, in GiB, each of those GPUs must have. 0 = any.
+    mem_per_gpu_gib: StrictInt = Field(default=0, ge=0, le=MAX_MEM_PER_GPU_GIB)
+
+    @model_validator(mode="after")
+    def _memory_needs_gpus(self) -> "IJobResources":
+        if self.mem_per_gpu_gib and not self.num_gpus:
+            raise ValueError("mem_per_gpu_gib needs num_gpus > 0: memory per GPU means nothing without a GPU")
+        return self
+
+    def describe(self) -> str:
+        """The request in words, e.g. "1 GPU with 7 GiB"."""
+        if not self.num_gpus:
+            return "no GPU"
+        text = f"{self.num_gpus} GPU" if self.num_gpus == 1 else f"{self.num_gpus} GPUs"
+        return f"{text} with {self.mem_per_gpu_gib} GiB" if self.mem_per_gpu_gib else text
+
+
 class IStartTrainingBody(BaseModel):
     project_id: str
     cohort_query: str
     trusts: list[str]
     bundle_urls: list[str]
+    # The run's GPU override, if the researcher set one at submission (FLIP#70). None leaves the
+    # job's own config.json RESOURCE_SPEC, or the fl-api default, in force.
+    resources: IJobResources | None = None
 
 
 class ISchedulerResponse(BaseModel):
@@ -137,6 +175,14 @@ class IInitiateTrainingInputPayload(BaseModel):
     trust_ids: list[UUID] = Field(
         min_length=1,
         description="IDs of trusts to participate in training. Must be non-empty and unique.",
+    )
+
+    resources: IJobResources | None = Field(
+        default=None,
+        description=(
+            "GPU request per trust for this run, overriding the job's config.json RESOURCE_SPEC and the "
+            "platform default. Omit to keep those."
+        ),
     )
 
     @field_validator("trust_ids")

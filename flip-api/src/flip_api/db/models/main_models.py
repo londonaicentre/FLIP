@@ -87,6 +87,10 @@ class FLJob(SQLModel, table=True):
     # integer run-id for Flower. NULL until the job is submitted to the backend (see fl_service.submit_job).
     # Distinct from `id` above, which is the hub's own UUID primary key for the job record.
     fl_backend_job_id: str | None = None
+    # The researcher's GPU override for this run, per trust (FLIP#70). NULL = no override: the job's
+    # config.json RESOURCE_SPEC, or the fl-api default, applies.
+    num_gpus: int | None = None
+    mem_per_gpu_gib: int | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
     trusts: list["Trust"] = Relationship(link_model=FLJobTrust)
