@@ -414,6 +414,13 @@ def render_override(
     # has NO vocabulary (cohort queries joining omop.concept return nothing).
     # Each environment reads its OWN bucket (no cross-account read), which is
     # exactly what AICENTRE_BUCKET_NAME carries.
+    # The mock-data partition the seed hook loads (trustData.seed.sourceTrust). The chart falls back
+    # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
+    # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
+    source_trust = kit.get("SOURCE_TRUST", "").strip()
+    if source_trust:
+        lines += ["trustData:", "  seed:", f'    sourceTrust: "{source_trust}"', ""]
+
     if kit_bucket and vocab_load:
         lines += [
             "omopDb:",
