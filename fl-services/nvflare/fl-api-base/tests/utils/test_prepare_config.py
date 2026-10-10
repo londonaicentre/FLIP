@@ -27,6 +27,7 @@ from fl_api.utils.prepare_config import (
     configure_meta,
     configure_server,
 )
+from fl_api.utils.schemas import JobResources
 
 MOCK_CONFIG_PATH = Path("/path/to/config.json")
 MOCK_JOB_APP_DIR = Path("/job/dir/test_app")
@@ -883,19 +884,11 @@ class TestConfigureServer:
 
 
 class TestConfigureMeta:
-    def test_configure_meta_without_gpus(self, mock_write_config, mock_get_settings):
-        # Settings mock
-        # If num_gpus is not > 0, resource_spec should be set to an empty dict
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 0
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
+    def test_configure_meta_without_gpus(self, mock_write_config):
+        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS, JobResources(num_gpus=0))
 
-        # Execute
-        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS)
-
-        # Assert
         mock_write_config.assert_called_once()
-        args, _ = mock_write_config.call_args
-        meta_config = args[0]
+        meta_config = mock_write_config.call_args.args[0]
         assert meta_config["name"] == MOCK_APP_NAME
         assert meta_config["resource_spec"] == {}
         assert meta_config["deploy_map"] == {"app": ["server"] + MOCK_APP_CLIENTS}
@@ -903,38 +896,28 @@ class TestConfigureMeta:
         assert meta_config["mandatory_clients"] == MOCK_APP_CLIENTS
         assert meta_config["custom_props"] == {"model_id": MOCK_APP_NAME}
 
-    def test_configure_meta_with_gpus(self, mock_write_config, mock_get_settings):
-        # Settings mock
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 2
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
-
+    def test_configure_meta_writes_the_jobs_request_for_every_site(self, mock_write_config):
         # Must be "num_of_gpus" (NVFLARE GPUResourceManager's num_gpu_key) — "num_gpus" makes the
         # manager raise and the job fail to schedule.
-        expected_resource_spec_per_client = {"num_of_gpus": 2, "mem_per_gpu_in_GiB": 16}
+        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS, JobResources(num_gpus=2, mem_per_gpu_gib=16))
 
-        # Execute
-        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS)
-
-        # Assert
-        mock_write_config.assert_called_once()
-        args, _ = mock_write_config.call_args
-        meta_config = args[0]
-        assert meta_config["name"] == MOCK_APP_NAME
+        meta_config = mock_write_config.call_args.args[0]
         assert meta_config["resource_spec"] == {
-            client: expected_resource_spec_per_client for client in MOCK_APP_CLIENTS
+            client: {"num_of_gpus": 2, "mem_per_gpu_in_GiB": 16} for client in MOCK_APP_CLIENTS
         }
-        assert meta_config["deploy_map"] == {"app": ["server"] + MOCK_APP_CLIENTS}
-        assert meta_config["min_clients"] == 2
-        assert meta_config["mandatory_clients"] == MOCK_APP_CLIENTS
-        assert meta_config["custom_props"] == {"model_id": MOCK_APP_NAME}
 
-    def test_configure_meta_publishes_model_id_in_custom_props(self, mock_write_config, mock_get_settings):
+    def test_configure_meta_no_longer_reads_the_hub_wide_setting(self, mock_write_config, mock_get_settings):
+        """The request is resolved before configure_meta (FLIP#70); the setting is only the default there."""
+        mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 4
+
+        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS, JobResources(num_gpus=0))
+
+        assert mock_write_config.call_args.args[0]["resource_spec"] == {}
+
+    def test_configure_meta_publishes_model_id_in_custom_props(self, mock_write_config):
         # custom_props.model_id is the lazy-resolution channel for recipe-built job types
         # (e.g. standard) whose component configs carry no model_id. app_name is the model_id.
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 0
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
-
-        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS)
+        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS, JobResources(num_gpus=0))
 
         meta_config = mock_write_config.call_args.args[0]
         assert meta_config["custom_props"]["model_id"] == MOCK_APP_NAME

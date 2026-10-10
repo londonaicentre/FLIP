@@ -1,5 +1,6 @@
 {
   "job_type": "evaluation",
+  "RESOURCE_SPEC": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7},
   "label_mapping": {
     "arkplus_pretrained": "nih14_5class",
     "arkplus_finetuned": null

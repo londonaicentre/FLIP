@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
+from flip_api.domain.interfaces.fl import IJobResources
 from flip_api.domain.schemas.status import FileUploadStatus, ModelStatus
 from flip_api.main import app
 from flip_api.model_services.retrieve_model import load_sql, retrieve_model
@@ -135,7 +136,9 @@ def test_retrieve_model_success(
     trusts_call.all.return_value = []
     queue_call = MagicMock()
     queue_call.all.return_value = []
-    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, queue_call]
+    resources_call = MagicMock()
+    resources_call.first.return_value = None  # no job, or no GPU override for its run
+    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
 
     # response = client.get(f"/model/{test_model_id}")
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
@@ -243,7 +246,9 @@ def test_retrieve_model_reports_the_trusts_that_took_part(
     ]
     queue_call = MagicMock()
     queue_call.all.return_value = []
-    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, queue_call]
+    resources_call = MagicMock()
+    resources_call.first.return_value = None  # no job, or no GPU override for its run
+    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
 
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 
@@ -287,8 +292,42 @@ def test_retrieve_model_reports_the_queue_position(
     queue_call = MagicMock()
     # One queued job ahead of this model's, so it sits at position 2.
     queue_call.all.return_value = [uuid4(), test_model_id]
-    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, queue_call]
+    resources_call = MagicMock()
+    resources_call.first.return_value = None  # no job, or no GPU override for its run
+    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
 
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 
     assert result.queue_position == 2
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [((1, 7), IJobResources(num_gpus=1, mem_per_gpu_gib=7)), ((None, None), None), (None, None)],
+)
+def test_retrieve_model_reports_the_runs_gpu_override(
+    override_dependencies, mock_can_access_true, mock_load_sql, row, expected
+):
+    """The UI shows the override a dispatched run was given, from the latest job (FLIP#70)."""
+    mock_result = MagicMock()
+    mock_result.mappings.return_value.first.return_value = {
+        "model_id": str(test_model_id),
+        "model_name": "Test Model",
+        "model_description": "Desc",
+        "project_id": str(uuid4()),
+        "status": ModelStatus.RUNNING.value,
+        "files": [],
+        "query": None,
+    }
+    override_dependencies.execute.return_value = mock_result
+    creation_call, audit_call, trusts_call, resources_call, queue_call = (MagicMock() for _ in range(5))
+    creation_call.first.return_value = None
+    audit_call.all.return_value = []
+    trusts_call.all.return_value = []
+    resources_call.first.return_value = row
+    queue_call.all.return_value = []
+    override_dependencies.exec.side_effect = [creation_call, audit_call, trusts_call, resources_call, queue_call]
+
+    result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
+
+    assert result.resources == expected

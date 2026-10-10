@@ -13,6 +13,7 @@
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -25,6 +26,7 @@ from fl_api.utils.constants import (
     SERVER_CHECKPOINTS_PREFIX,
 )
 from fl_api.utils.io_utils import read_config
+from fl_api.utils.job_resources import default_job_resources, resolve_job_resources
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
     configure_client,
@@ -34,7 +36,7 @@ from fl_api.utils.prepare_config import (
     configure_server,
     validate_config,
 )
-from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
+from fl_api.utils.schemas import FLAggregators, IOverridableConfig, JobResources, TrainingRound, UploadAppRequest
 from fl_api.utils.validation import safe_join, validate_bundle_url
 
 # De-bundled evaluation checkpoints are large (hundreds of MB); allow far more time than the
@@ -139,7 +141,25 @@ def _relative_dir_for_download(model_id: str, s3_file_dir: str, file_name: str) 
     return app_folder_name, "app/custom"
 
 
-def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -> dict[str, str]:
+def _declared_resources(configs: dict[str, IOverridableConfig]) -> JobResources | None:
+    """The GPU request the job's config.json files declare, if any (FLIP#70).
+
+    Args:
+        configs (dict[str, IOverridableConfig]): each app folder's validated config.json.
+
+    Returns:
+        JobResources | None: the one request the folders declare, or None when none does.
+
+    Raises:
+        ValueError: if folders declare different requests; NVFLARE runs a job under one resource_spec.
+    """
+    declared = {name: config.RESOURCE_SPEC for name, config in configs.items() if config.RESOURCE_SPEC is not None}
+    if len({spec.model_dump_json() for spec in declared.values()}) > 1:
+        raise ValueError(f"App folders declare different RESOURCE_SPEC values, but a job has one: {declared}")
+    return next(iter(declared.values()), None)
+
+
+def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -> dict[str, Any]:
     """Uploads an application to the upload dir folder of the server.
 
     Downloads the files from the provided bundle_urls (AWS S3 pre-signed URLs) in the UploadAppRequest body, creates the
@@ -153,7 +173,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         HTTPException: if the application fails to upload, an error is raised.
         FileNotFoundError: if the application path is not found, an error is raised.
     Returns:
-        dict[str, str]: a dictionary containing a success message and the path where the application was uploaded.
+        dict[str, Any]: a success message naming where the application was uploaded, the GPU request written into
+        meta.json (``resources``) and where it came from (``resources_source``: submission, config.json or default;
+        FLIP#70).
 
     .. code-block:: text
 
@@ -283,14 +305,23 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     # We run this configuration script for all of the different app folders.
 
+    # Grab config values from each uploaded config.json first: the GPU request is job-level (meta.json holds one
+    # resource_spec), so it is settled before any folder is configured.
+    configs = {
+        name: validate_config(read_config(safe_join(job_dir, name) / "custom" / "config.json"))
+        for name in sorted(app_folder_names)
+    }
+    resources, resources_source = resolve_job_resources(
+        override=body.resources,
+        declared=_declared_resources(configs),
+        default=default_job_resources,
+    )
+    logger.info(f"GPU request per site: {resources.model_dump()} (from {resources_source})")
+
     for app_folder_name in sorted(app_folder_names):
         logger.info(f"Configuring application folder: {app_folder_name}")
         app_folder_path = safe_join(job_dir, app_folder_name)
-
-        # Grab config values from the uploaded config.json
-        config_path = app_folder_path / "custom" / "config.json"
-        raw_config = read_config(config_path)
-        config = validate_config(raw_config)
+        config = configs[app_folder_name]
 
         # Set defaults for config values if not provided in the uploaded config.json
         local_rounds = config.LOCAL_ROUNDS if config.LOCAL_ROUNDS else TrainingRound.MIN
@@ -337,13 +368,17 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             # consider merging if it already exists.
             if app_folder_name == "app":
                 # Write meta.json file
-                configure_meta(job_dir, model_id, body.trusts)
+                configure_meta(job_dir, model_id, body.trusts, resources)
 
         except Exception as e:
             logger.error(f"Error occurred while configuring application folder {app_folder_name}: {e}")
             raise e
 
-    response = {"message": f"Application uploaded successfully to: {job_dir}"}
+    response = {
+        "message": f"Application uploaded successfully to: {job_dir}",
+        "resources": resources.model_dump(),
+        "resources_source": resources_source.value,
+    }
 
     logger.info(response)
 

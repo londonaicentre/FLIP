@@ -567,8 +567,13 @@ When model files have been uploaded, you will then need to confirm that the data
 
 1. Navigate to project page
 2. On the right-hand side, toggle the button to confirm the dataset has been enriched
-3. Click the 'Initiate Training' button to start the training cycle
-4. Once the training cycle has been initiated, the progress bar at the top of the page will update as the various stages of the training cycle complete i.e., a green tick will appear
+3. Optionally, switch on **GPU request per trust** to set how many GPUs, and how much memory on each,
+   this run needs at every selected trust. Left off, the run uses the ``RESOURCE_SPEC`` in your
+   ``config.json``, or the platform default when there is none. A trust that cannot provide the request
+   holds the run until it can, and the reason appears in the activity feed; the request is never lowered
+   to fit. On a Flower deployment the request is recorded but not enforced.
+4. Click the 'Initiate Training' button to start the training cycle
+5. Once the training cycle has been initiated, the progress bar at the top of the page will update as the various stages of the training cycle complete i.e., a green tick will appear
 
 On the right-hand side of the page a window will also pop up to provided detailed status updates i.e., with date and time stamps, against each activity. The status messages show the scheduling activities, including queuing, *net* assignment, training in progress and training complete.
 
