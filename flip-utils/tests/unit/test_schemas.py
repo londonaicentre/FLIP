@@ -172,6 +172,19 @@ class TestTrainingLog:
         with pytest.raises(ValidationError):
             TrainingLog(event_type=FLLogEvent.ROUND_AGGREGATED)
 
+    def test_the_scheduling_event_carries_no_round(self):
+        """A job NVFLARE has not scheduled yet has no round; the scheduling verdict is sent round-less."""
+        payload = TrainingLog(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES,
+            details={"attempt": 1, "max_attempts": 10, "final": False, "sites": {"AZ1": {"num_of_gpus": 1}}},
+        )
+        assert payload.global_round is None
+
+    def test_round_events_still_require_a_round(self):
+        """Only the scheduling event is round-less; the round events keep their round."""
+        with pytest.raises(ValidationError, match="global_round"):
+            TrainingLog(event_type=FLLogEvent.ROUND_STARTED)
+
     def test_global_round_is_one_based(self):
         """Events are normalised to 1-based rounds on both backends before sending."""
         with pytest.raises(ValidationError):
@@ -329,6 +342,26 @@ class TestHubMirrorStaysInSync:
         assert hub_values == [flip.schemas.DEFAULT_X_AXIS_LABEL], (
             "DEFAULT_X_AXIS_LABEL value drifted between flip-utils and flip-api — update both together"
         )
+
+    def test_round_less_events_match_flip_api(self):
+        """Both validators skip the round check for ROUND_LESS_EVENTS by name, which the class-level guard
+        above compares; this pins what the name holds, so the two sides cannot disagree on which events
+        may arrive without a round (FLIP#1390)."""
+
+        def _definition(path: Path) -> str:
+            module = ast.parse(path.read_text())
+            matches = [
+                ast.dump(stmt.value)
+                for stmt in module.body
+                if isinstance(stmt, ast.Assign)
+                for target in stmt.targets
+                if isinstance(target, ast.Name) and target.id == "ROUND_LESS_EVENTS"
+            ]
+            assert len(matches) == 1, f"expected one ROUND_LESS_EVENTS in {path}"
+            return matches[0]
+
+        hub = _definition(_REPO_ROOT / "flip-api/src/flip_api/domain/schemas/types.py")
+        assert _definition(Path(flip.schemas.__file__)) == hub
 
     def test_queue_position_stays_hub_reserved(self):
         """Pin the shape of the one sanctioned mirror divergence.

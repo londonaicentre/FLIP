@@ -450,7 +450,7 @@ class FLIPStandardProd(FLIPBase):
         self,
         model_id: str,
         event_type: FLLogEvent,
-        global_round: int,
+        global_round: int | None,
         client_name: str | None = None,
         details: dict[str, Any] | None = None,
         success: bool = True,
@@ -466,7 +466,8 @@ class FLIPStandardProd(FLIPBase):
         Args:
             model_id (str): The ID of the model the event belongs to.
             event_type (FLLogEvent): Which round event this is.
-            global_round (int): The 1-based federated round.
+            global_round (int | None): The 1-based federated round; None only for a
+                round-less event (``flip.schemas.ROUND_LESS_EVENTS``).
             client_name (str | None): FL client identity for trust-attributed
                 events; None for hub-attributed ones.
             details (dict[str, Any] | None): Event-specific facts.
@@ -697,13 +698,13 @@ class FLIPStandardDev(FLIPBase):
         self,
         model_id: str,
         event_type: FLLogEvent,
-        global_round: int,
+        global_round: int | None,
         client_name: str | None = None,
         details: dict[str, Any] | None = None,
         success: bool = True,
     ) -> None:
         """Log only in dev mode - no actual event sending."""
-        self.logger.info("[DEV] Event → %s (round %d) from %s", event_type, global_round, client_name or "hub")
+        self.logger.info("[DEV] Event → %s (round %s) from %s", event_type, global_round, client_name or "hub")
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:

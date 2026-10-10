@@ -58,13 +58,23 @@ class FLLogEvent(StrEnum):
     redeploy and never an FL-image rebuild. Mirrors flip-api's
     ``domain/schemas/types.py::FLLogEvent``.
 
-    Rounds are 1-based on every event, on both backends (NVFLARE's internal
+    Rounds are 1-based on every round event, on both backends (NVFLARE's internal
     ``_current_round`` is 0-based and must be normalised before sending).
+    ``JOB_WAITING_FOR_RESOURCES`` is the one round-less event: NVFLARE's scheduler
+    has not started the job yet, so there is no round to name (FLIP#1390).
     """
 
     ROUND_STARTED = "ROUND_STARTED"
     CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
     ROUND_AGGREGATED = "ROUND_AGGREGATED"
+    # Sent by the fl-server's JobSchedulingReporter when NVFLARE's scheduler holds a job because a
+    # site cannot provide what its resource_spec asks for. One row per such site, attributed to it;
+    # details = {"attempt", "max_attempts", "final", "requested": the site's resource request}.
+    JOB_WAITING_FOR_RESOURCES = "JOB_WAITING_FOR_RESOURCES"
+
+
+# Events that describe a job before any round exists, so they carry no global_round.
+ROUND_LESS_EVENTS = frozenset({FLLogEvent.JOB_WAITING_FOR_RESOURCES.value})
 
 
 class TrainingMetrics(BaseModel):
@@ -124,9 +134,10 @@ class TrainingLog(BaseModel):
     # it is reserved for the hub's own FL scheduler and the hub 422-rejects it,
     # so refusing it here fails fast FL-side instead.
     event_type: str | None = Field(default=None, max_length=64)
-    # 1-based on both backends; every event in the vocabulary is round-scoped. The
-    # ceiling is the PG INTEGER max of the hub's fl_logs.global_round column —
-    # matching it here fails an oversized round sender-side instead of 500ing hub-side.
+    # 1-based on both backends; every event in the vocabulary is round-scoped except the
+    # ROUND_LESS_EVENTS, which describe a job not yet started. The ceiling is the PG INTEGER
+    # max of the hub's fl_logs.global_round column — matching it here fails an oversized
+    # round sender-side instead of 500ing hub-side.
     global_round: int | None = Field(default=None, ge=1, le=2_147_483_647)
     # Bounded by _bound_details below — same defence-in-depth rationale as the caps on
     # event_type and global_round (mirrored hub-side, where details is persisted verbatim
@@ -143,7 +154,7 @@ class TrainingLog(BaseModel):
             raise ValueError("'event_type' must be non-blank when set")
         if self.event_type == "QUEUE_POSITION":
             raise ValueError("'QUEUE_POSITION' is emitted by the hub's FL scheduler and cannot be sent")
-        if self.event_type is not None and self.global_round is None:
+        if self.event_type is not None and self.event_type not in ROUND_LESS_EVENTS and self.global_round is None:
             raise ValueError("'global_round' is required when 'event_type' is set")
         return self
 

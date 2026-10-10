@@ -37,3 +37,14 @@ The server config includes a PyTorch model persistor:
 "path": "nvflare.app_common.pt.pt_file_model_persistor.PTFileModelPersistor",
 "args": { "model": { "path": "models.get_model" } }
 ```
+
+## FLIP site components
+
+At start-up the entrypoint runs `python -m flip.nvflare.server_site_config /app/local`, which writes
+`local/flip__p_resources.json`. NVFLARE merges every `local/*__p_resources.json` into the server's
+parent process config, the process that runs the job scheduler, and never into a job, so the
+provisioned `resources.json` stays untouched. It registers `JobSchedulingReporter`: when NVFLARE's
+scheduler holds a job because a Trust cannot provide the GPUs its `resource_spec` asks for, the
+reporter puts that in the model's activity feed, and on the scheduler's last try it marks the model
+`ERROR` (FLIP#1390). The container refuses to start if the file cannot be written. See
+[GPU requirements and NVFLARE's scheduler](../../../docs/source/components/component-fl-nets.rst).
