@@ -112,10 +112,45 @@ def render_log(row: FLLogs) -> str:
         # A row with an unusable stored position must not invent one.
         return "Model Queued"
 
+    if row.event_type == FLLogEvent.JOB_WAITING_FOR_RESOURCES:
+        return _render_waiting_for_resources(details)
+
     if row.event_type is not None:
         return f"Round {row.global_round} · {row.event_type}"
 
     return ""
+
+
+def _render_waiting_for_resources(details: dict[str, Any]) -> str:
+    """NVFLARE's scheduler held the job because this row's trust lacks what the job asked for (FLIP#1390).
+
+    The row is attributed to the trust, so the text says what it was asked for and how far the
+    scheduler's retries have got. Any field that is not usable is left out rather than guessed.
+
+    Args:
+        details (dict[str, Any]): the stored facts: attempt, max_attempts, final, requested.
+
+    Returns:
+        str: the display text.
+    """
+    final = details.get("final") is True
+    parts = ["Training could not start" if final else "Waiting for resources"]
+
+    requested = details.get("requested")
+    if isinstance(requested, dict):
+        gpus, mem = requested.get("num_of_gpus"), requested.get("mem_per_gpu_in_GiB")
+        if _is_count(gpus) and gpus > 0:
+            need = f"{gpus} GPU" if gpus == 1 else f"{gpus} GPUs"
+            if isinstance(mem, (int, float)) and not isinstance(mem, bool) and mem > 0:
+                need += f" with {mem:g} GiB"
+            parts.append(f"this trust cannot provide {need}")
+        elif not requested:
+            parts.append("this trust did not confirm its resources")
+
+    attempt, max_attempts = details.get("attempt"), details.get("max_attempts")
+    if _is_count(attempt) and _is_count(max_attempts):
+        parts.append(f"NVFLARE gave up after {max_attempts} tries" if final else f"try {attempt} of {max_attempts}")
+    return " · ".join(parts)
 
 
 def render_fallback(row: FLLogs) -> str:

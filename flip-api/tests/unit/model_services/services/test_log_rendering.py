@@ -127,3 +127,43 @@ class TestRenderLog:
         """A row with an unusable stored position must not invent one."""
         row = _row(event_type=FLLogEvent.QUEUE_POSITION.value, details=details)
         assert render_log(row) == "Model Queued"
+
+    # ── NVFLARE's scheduling verdict (FLIP#1390) ─────────────────────────────────────
+
+    def test_waiting_for_resources_says_what_the_trust_was_asked_for_and_which_try(self):
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={
+                "attempt": 2,
+                "max_attempts": 10,
+                "final": False,
+                "requested": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 16},
+            },
+        )
+        assert render_log(row) == "Waiting for resources · this trust cannot provide 1 GPU with 16 GiB · try 2 of 10"
+
+    def test_the_last_try_says_training_could_not_start(self):
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={"attempt": 10, "max_attempts": 10, "final": True, "requested": {"num_of_gpus": 2}},
+        )
+        assert (
+            render_log(row)
+            == "Training could not start · this trust cannot provide 2 GPUs · NVFLARE gave up after 10 tries"
+        )
+
+    def test_a_trust_that_never_answered_is_said_to_have_not_answered(self):
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={"attempt": 1, "max_attempts": 10, "final": False, "requested": {}},
+        )
+        assert render_log(row) == "Waiting for resources · this trust did not confirm its resources · try 1 of 10"
+
+    @pytest.mark.parametrize(
+        "details",
+        [None, {}, {"attempt": "2", "max_attempts": 10}, {"requested": "lots"}, {"requested": {"num_of_gpus": "1"}}],
+    )
+    def test_waiting_for_resources_with_unusable_details_degrades_to_a_bare_line(self, details):
+        """Stored details are untyped JSONB: a row must never raise or invent a count it does not hold."""
+        row = _row(event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value, details=details)
+        assert render_log(row).startswith("Waiting for resources")

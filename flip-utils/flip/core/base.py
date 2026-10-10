@@ -157,7 +157,7 @@ class FLIPBase(ABC):
         self,
         model_id: str,
         event_type: FLLogEvent,
-        global_round: int,
+        global_round: int | None,
         client_name: str | None = None,
         details: dict[str, Any] | None = None,
         success: bool = True,
@@ -172,7 +172,8 @@ class FLIPBase(ABC):
         Args:
             model_id (str): The model UUID
             event_type (FLLogEvent): Which round event this is
-            global_round (int): The 1-based federated round the event belongs to
+            global_round (int | None): The 1-based federated round the event belongs to;
+                None only for a round-less event (``flip.schemas.ROUND_LESS_EVENTS``)
             client_name (str | None): FL client identity for trust-attributed
                 events (e.g. CLIENT_RESULT_RECEIVED); None for hub-attributed ones
             details (dict[str, Any] | None): Event-specific facts (total_rounds,
