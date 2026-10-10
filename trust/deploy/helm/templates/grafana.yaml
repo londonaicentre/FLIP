@@ -77,6 +77,11 @@ spec:
         app.kubernetes.io/component: grafana
     spec:
       enableServiceLinks: false
+      # A fresh cloud disk mounts root-owned and Grafana runs as uid 472: fsGroup hands it the volume, as
+      # Orthanc's does (FLIP#1390). kind's world-writable local-path volumes hid the gap.
+      securityContext:
+        fsGroup: 472
+        fsGroupChangePolicy: OnRootMismatch
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
