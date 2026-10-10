@@ -27,6 +27,8 @@ from monai.data import MetaTensor
 IMAGE_KEY = "image"
 WHOLE_GLAND_KEY = "whole_gland"
 PZ_TZ_KEY = "pz_tz"
+# The label channels, in order: whole gland, peripheral zone, transition zone.
+MASK_CHANNELS = ("wg", "pz", "tz")
 # Every volume is reoriented to this before use — see build_loader.
 AXCODES = "RAS"
 
@@ -46,18 +48,18 @@ def build_loader(
     10000_1000000). The simulator's own data goes through the same chain, so the two paths produce
     identical tensors — ``tests/test_prostate_dataset_orientation.py`` pins both.
 
-    The zonal (HeviAI23) and whole-gland (Bosma22b) labels are independent AI submissions and do
+    The zonal (Yuan23) and whole-gland (Guerbet23) labels are independent AI submissions and do
     not always share a grid, so both masks are resampled onto the *image's* grid by affine
     (nearest, zero-padded — a label must not bleed past its own extent). When a mask already sits
     on that grid the resample is the identity.
 
     Args:
-        target_spacing: If given, resample the image to this (x, y, z) voxel spacing in mm before
-            the masks are matched to it, so both land on the resampled grid together. Must happen
-            here, not in a later ``PicaiDataset(transform=...)`` step: ``PicaiDataset.__getitem__``
-            converts the image to a plain tensor before calling ``transform``, which drops the
-            affine a spacing-aware resample needs. Defaults to None (no resample, the image's own
-            native spacing is kept) — the prior behaviour.
+        target_spacing: If given, resample the image to this (x, y, z) spacing in mm (bilinear)
+            before the masks are matched to it, so both end up on the same grid. Must happen
+            here, not in a later ``PicaiDataset(transform=...)`` step:
+            ``PicaiDataset.__getitem__`` converts the image to a plain tensor before calling
+            ``transform``, which drops the affine a spacing-aware resample needs. Defaults to None
+            (no resample, the image keeps its native spacing).
 
     Returns:
         mt.Compose: ``{IMAGE_KEY, WHOLE_GLAND_KEY, PZ_TZ_KEY}`` paths in; channel-first ``AXCODES``
@@ -69,7 +71,7 @@ def build_loader(
         mt.Orientationd(keys=keys, axcodes=AXCODES, labels=None),
     ]
     if target_spacing is not None:
-        steps.append(mt.Spacingd(keys=[IMAGE_KEY], pixdim=target_spacing, mode="nearest"))
+        steps.append(mt.Spacingd(keys=[IMAGE_KEY], pixdim=target_spacing, mode="bilinear"))
     steps.append(
         mt.ResampleToMatchd(
             keys=[WHOLE_GLAND_KEY, PZ_TZ_KEY],
@@ -132,7 +134,7 @@ class PicaiDataset(monai.data.Dataset):
                 `calculate_dataset_fingerprint_segmentation.py`. `transform` is
                 ignored in this mode — the fingerprint has to describe the raw data.
             target_spacing: If given, resample image and masks to this (x, y, z) voxel spacing (mm)
-                while loading — see `build_loader`. Defaults to None (native spacing, prior behaviour).
+                while loading — see `build_loader`. Defaults to None (native spacing).
             patch_iter: Optional `monai.data.PatchIterd`. When given, `__getitem__` returns a LIST of
                 patch dicts tiling the volume instead of a single dict, which is how MambaX-Net fed
                 its DataLoader. `monai.data.list_data_collate` flattens those lists into one batch,
@@ -164,14 +166,14 @@ class PicaiDataset(monai.data.Dataset):
             pz_tz: (1, H, W, D) zonal mask (1=PZ, 2=TZ).
 
         Returns:
-            torch.Tensor: (3, H, W, D) mask, channels [whole_gland, pz, tz].
+            torch.Tensor: (3, H, W, D) mask, one channel per entry of MASK_CHANNELS.
         """
         whole_gland_labels = torch.round(whole_gland[0]).to(torch.int8)
         pz_tz_labels = torch.round(pz_tz[0]).to(torch.int8)
-        mask = torch.zeros((3, *whole_gland_labels.shape), dtype=torch.float32)
-        mask[0][whole_gland_labels == 1] = 1
-        mask[1][pz_tz_labels == 1] = 1  # pz
-        mask[2][pz_tz_labels == 2] = 1  # tz
+        mask = torch.zeros((len(MASK_CHANNELS), *whole_gland_labels.shape), dtype=torch.float32)
+        mask[MASK_CHANNELS.index("wg")][whole_gland_labels == 1] = 1
+        mask[MASK_CHANNELS.index("pz")][pz_tz_labels == 1] = 1
+        mask[MASK_CHANNELS.index("tz")][pz_tz_labels == 2] = 1
         return mask
 
     @staticmethod
@@ -187,7 +189,7 @@ class PicaiDataset(monai.data.Dataset):
 
         Args:
             image: (1, H, W, D) scan as the loader returns it; its affine is the pair's affine.
-            mask: (3, H, W, D) combined mask, channels [whole_gland, pz, tz].
+            mask: (3, H, W, D) combined mask, channels in MASK_CHANNELS order.
 
         Returns:
             dict: `{"image": (1, H, W, D) NIfTI, "mask": (3, H, W, D) NIfTI}`.

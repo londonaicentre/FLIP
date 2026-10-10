@@ -12,7 +12,7 @@
 """Upload the PI-CAI prostate labels into a FLIP project's XNAT (the data-enrichment step).
 
 The trust PACS supplies the bpMRI *images* only; a segmentation mask has nowhere to live in a
-cohort query, so the whole-gland (Bosma22b) and zonal PZ/TZ (HeviAI23) masks reach a project the
+cohort query, so the whole-gland (Guerbet23) and zonal PZ/TZ (Yuan23) masks reach a project the
 way the spleen labels do: uploaded into each scan's existing ``NIFTI`` resource, next to the
 ``input_*.nii.gz`` dcm2niix wrote at image pull.
 

@@ -41,7 +41,7 @@ license = "Apache-2.0"
 # planner's JSON (app/models.py). The planner itself needs nnunetv2 — see the `planning` group.
 dependencies = [
     "einops>=0.8.1",
-    "flwr[simulation]>=1.36.0",
+    "flwr[simulation]>=1.38.0",
     "monai>=1.6.0",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",

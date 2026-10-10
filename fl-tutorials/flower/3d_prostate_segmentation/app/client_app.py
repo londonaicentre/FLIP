@@ -135,7 +135,10 @@ def train(msg: Message, context: Context) -> Message:
     preprocess = build_case_transform(geometry.crop_size, geometry.image_mean, geometry.image_std)
     patch_iter = build_patch_iter(geometry.patch_size)
     train_dataset = build_dataset(
-        train_datalist, Compose([preprocess, build_augmentations()]), geometry.target_spacing, patch_iter
+        train_datalist,
+        Compose([preprocess, build_augmentations(geometry.image_std)]),
+        geometry.target_spacing,
+        patch_iter,
     )
     val_dataset = build_dataset(val_datalist, preprocess, geometry.target_spacing, patch_iter)
     # Each dataset item is a LIST of patches; list_data_collate flattens `batch-size` volumes' worth.
@@ -163,12 +166,16 @@ def train(msg: Message, context: Context) -> Message:
         "val_dice_pz": [],
         "val_dice_tz": [],
     }
+
+    nan_counts = {"train_loss_nan_count": 0, "val_loss_nan_count": 0}
     for epoch in range(local_epochs):
         log(INFO, "Starting epoch %d/%d (round %d)", epoch + 1, local_epochs, global_round + 1)
         train_loss, val_loss, metrics = train_seg(
             conf, model, optimizer, scheduler, train_loader, val_loader, criterion, device
         )
         scheduler.step()
+        nan_counts["train_loss_nan_count"] += int(metrics["train/loss_nan_count"])
+        nan_counts["val_loss_nan_count"] += int(metrics["val/loss_nan_count"])
         epoch_values = {
             "train_loss": float(train_loss),
             "val_loss": float(val_loss),
@@ -198,6 +205,7 @@ def train(msg: Message, context: Context) -> Message:
     metrics_record = MetricRecord(
         {
             **averages,
+            **nan_counts,
             "num-examples": len(train_datalist),
             "num-iterations": len(train_loader) * local_epochs,
             **per_epoch_metrics,
@@ -251,7 +259,7 @@ def evaluate(msg: Message, context: Context) -> Message:
         metrics = {"test_loss": 0.0, "test_dice_mean": 0.0, "num-examples": 0}
         return Message(content=RecordDict({"metrics": MetricRecord(metrics), "config": site_config}), reply_to=msg)
 
-    test_loss, dice = evaluate_func(model, test_loader, criterion, device, geometry.patch_size_zyx)
+    test_loss, dice = evaluate_func(model, test_loader, criterion, device, geometry.patch_size_zxy)
     log(
         INFO,
         "Evaluation completed for client %s. Test loss: %.4f, mean Dice: %.4f",

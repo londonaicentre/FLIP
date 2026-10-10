@@ -56,15 +56,23 @@ make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12   # the simulator 
 `FOLDS` narrows the download for a tutorial-sized cohort, e.g. `FOLDS="0"`. Data lands under
 `fl-tutorials/data/prostate/`: `images/` (one
 `<patient_id>/<patient_id>_<study_id>_<modality>.mha` per scan, modalities `t2w`/`adc`/`hbv`),
-`labels/` (`<patient_id>_<study_id>.nii.gz` whole-gland masks, AI-derived per
-[Bosma et al., 2022](https://grand-challenge.org/algorithms/prostate-segmentation/)),
+`labels/` (`<patient_id>_<study_id>.nii.gz` whole-gland masks, AI-generated:
+[Guerbet23](https://github.com/DIAGNijmegen/picai_labels/tree/ce4a4723d7c46d882a6cbaacb40ed6c4be86282f/anatomical_delineations/whole_gland/AI/Guerbet23),
+by Debs, Routier et al., 2022,
+[method](https://rumc-gcorg-p-public.s3.amazonaws.com/evaluation-supplementary/642/aa305b9a-be03-40bf-84e0-a7b51e2e408d/PICAI_abstract_2022.pdf)),
 `zonal_labels/` (`<patient_id>_<study_id>.nii.gz` peripheral/transition zone masks —
-`1`=PZ, `2`=TZ — AI-derived,
-[HeviAI23](https://github.com/DIAGNijmegen/picai_labels/tree/main/anatomical_delineations/zonal_pz_tz/AI/HeviAI23);
+`1`=PZ, `2`=TZ — AI-generated:
+[Yuan23](https://github.com/DIAGNijmegen/picai_labels/tree/ce4a4723d7c46d882a6cbaacb40ed6c4be86282f/anatomical_delineations/zonal_pz_tz/AI/Yuan23),
+by Yuan et al., 2022,
+[method](https://rumc-gcorg-p-public.s3.amazonaws.com/evaluation-supplementary/642/56ee09f3-ef48-435f-b6dd-42f2a3f83d40/PI-CAI_arXiv_Yuan_Yuan.pdf);
 picai_labels has no human-expert zonal delineations for this cohort), and
 `clinical_information/marksheet.csv` (per-study clinical fields — PSA, PI-RADS, ISUP, csPCa —
 plus the acquiring `center`: `RUMC`, `PCNN`, or `ZGT`). Labels and marksheet all come from the
-same `picai_labels` archive, so one download covers all three. Re-running the download skips
+same `picai_labels` archive, so one download covers all three. The archive is pinned to commit
+`ce4a4723d7c46d882a6cbaacb40ed6c4be86282f` (main on 2026-07-13, `PICAI_LABELS_SHA` in
+`download_data.py`) so everyone gets the same labels. This matters: picai_labels has several AI
+label sets for each structure, and a different set gives different Dice scores. Re-running the
+download skips
 folds/labels/zonal labels/clinical info already downloaded (marked by a `.done` file dropped in
 `images/`/`labels/`/`zonal_labels/`/`clinical_information/` after a successful extract).
 A fold that was interrupted resumes from its `.part` file rather than restarting, a connection that
@@ -150,14 +158,16 @@ sites/<RUMC|PCNN|ZGT>/
 
 Each site folder is symlinked back to the shared `nifti/`/`labels/`/`zonal_labels/` files
 rather than copied. A study is skipped (and counted) if its scans or either label aren't
-present locally yet, e.g. a partial download via `FOLDS`. Point each simulated FL client at
-its own `sites/<CENTER>` folder to train on that center's studies only — see
-[`../../flower/3d_prostate_segmentation/app/dataset.py`](../../flower/3d_prostate_segmentation/app/dataset.py)
-for `PicaiDataset`, which loads one center's partitioned folder end-to-end.
+present locally yet, e.g. a partial download via `FOLDS`. The site folders are only used by
+`make plan` and by the standalone reference trainer (`nnunet_train.py` / `nnunet_infer.py`, via
+`PicaiDataset` in
+[`../../flower/3d_prostate_segmentation/app/dataset.py`](../../flower/3d_prostate_segmentation/app/dataset.py)).
+The Flower app doesn't use them, in the simulator or on the platform.
 
 ## The `prostate_project` seed dataset (platform path)
 
-The simulator reads `sites/<CENTER>` from disk. The **platform** gets the same studies the way it
+The simulator reads `data/prostate/images/` and `dataframe.csv`, which
+`prepare-prostate-local-data` writes in the same layout as an XNAT export. The **platform** gets the same studies the way it
 gets everything: from a trust's OMOP database and PACS, which the seed pipeline
 (`make -C trust seed`, FLIP#1100) loads from the public `aicentreflip/trust-data` dataset. The
 scripts here produce `prostate_project`'s share of that dataset — the first cohort published with no
@@ -207,7 +217,7 @@ pinned data-version tag, rebuilds the OMOP tables and diffs them against the pub
 (`verify-prostate-omop-tables`, the shared gate). The run that backed tag `20260902` passed on all
 seven tables; its output is in the pull request that published the tag, not in a committed log.
 
-**Seeding and enrichment.** `prostate_project` is published from data-version tag `20260902` on (`20260903` re-cut the DICOM with the synthetic identities; the tables are unchanged), and `trust/.data_version` pins `20260903`, so `make -C trust seed-trusts PROJECTS="prostate_project"` loads each dev trust's slice (OMOP rows and DICOMs alike, by `source_trust`) with no override. A project's cohort query then pulls the studies into XNAT,
+**Seeding and enrichment.** `prostate_project` is published from data-version tag `20260902` on (`20260903` re-cut the DICOM with the synthetic identities; the tables are unchanged), and `trust/.data_version` pins `20260917` (the #1221 release, which still includes `prostate_project`), so `make -C trust seed-trusts PROJECTS="prostate_project"` loads each dev trust's slice (OMOP rows and DICOMs alike, by `source_trust`) with no override. A project's cohort query then pulls the studies into XNAT,
 and the labels follow as data enrichment: `upload_prostate_labels_to_xnat.py` puts the whole-gland
 mask (`label_<image>.nii.gz`) and the zonal mask (`zonal_<image>.nii.gz`) into every scan's NIFTI
 resource — the mapping is the identity, since the DICOM accession *is* the `picai_labels` file

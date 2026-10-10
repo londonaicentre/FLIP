@@ -25,8 +25,10 @@ import importlib
 import json
 import sys
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
+import numpy as np
+import pandas as pd
 import pytest
 import torch
 from monai.data import DataLoader, list_data_collate
@@ -110,7 +112,7 @@ def test_mini_plan_builds_the_planned_topology(prostate_app: dict[str, ModuleTyp
     assert [list(s) for s in net.strides] == MINI_ARCH["arch_kwargs"]["strides"]
     assert list(net.filters) == [4, 8, 16]
 
-    x = torch.zeros(1, 1, 4, 16, 16)  # (B, C, z, y, x) — the order train_seg feeds
+    x = torch.zeros(1, 1, 4, 16, 16)  # (B, C, z, x, y) — the order train_seg feeds
     net.train()
     outputs = net(x)
     # train mode + DS: nnU-Net's list, full resolution first, each head at its own resolution
@@ -249,6 +251,60 @@ def test_missing_plan_names_the_command(prostate_app: dict[str, ModuleType], tmp
         prostate_app["models"].load_plan(tmp_path / "nope.json")
 
 
+def _augmentation(prostate_app: dict[str, ModuleType], name: str, image_std: float = 116.0):
+    """Get one transform from build_augmentations and make it always run."""
+    transform = next(
+        t for t in prostate_app["preprocess"].build_augmentations(image_std).transforms if type(t).__name__ == name
+    )
+    transform.prob = 1.0
+    transform.set_random_state(0)
+    return transform
+
+
+def test_zoom_keeps_the_mask_binary(prostate_app: dict[str, ModuleType]) -> None:
+    """Zooming must keep the mask at 0 and 1."""
+    zoom = _augmentation(prostate_app, "RandZoomd")
+    mask = torch.zeros(3, 64, 64, 8)
+    mask[0, 20:44, 20:44] = 1
+    mask[2, 24:40, 24:40] = 1
+    for seed in range(10):
+        zoom.set_random_state(seed)
+        out = zoom({"image": torch.rand(1, 64, 64, 8), "mask": mask.half()})
+        assert set(out["mask"].float().unique().tolist()) <= {0.0, 1.0}, f"seed {seed}"
+
+
+def test_intensity_shift_is_scaled_to_normalised_units(prostate_app: dict[str, ModuleType]) -> None:
+    """The 10-20 shift is in raw intensity, so on a normalised image it should be 10-20 divided by the std."""
+    shift = _augmentation(prostate_app, "RandShiftIntensityd", image_std=100.0)
+    for seed in range(10):
+        shift.set_random_state(seed)
+        offset = shift({"image": torch.zeros(1, 4, 4, 2), "mask": torch.zeros(3, 4, 4, 2)})["image"].unique()
+        assert offset.numel() == 1, offset
+        assert 0.1 <= offset.item() <= 0.2, offset
+
+
+def test_image_resample_is_bilinear_and_masks_stay_binary(prostate_app: dict[str, ModuleType], tmp_path: Path) -> None:
+    """Resampling a 0.34 mm study to 0.5 mm should interpolate the image and keep the masks at 0 and 1."""
+    nib = pytest.importorskip("nibabel")
+
+    dataset = importlib.import_module("app.dataset")
+    affine = np.diag([0.34, 0.34, 3.6, 1.0])
+    x_ramp = np.broadcast_to(np.arange(30, dtype=np.float32)[:, None, None], (30, 30, 10))
+    gland = np.zeros((30, 30, 10), np.uint8)
+    gland[10:20, 10:20, 3:7] = 1
+    paths = {}
+    for key, array in ((dataset.IMAGE_KEY, x_ramp), (dataset.WHOLE_GLAND_KEY, gland), (dataset.PZ_TZ_KEY, gland * 2)):
+        paths[key] = tmp_path / f"{key}.nii.gz"
+        nib.save(nib.Nifti1Image(np.ascontiguousarray(array), affine), paths[key])
+
+    image, mask = dataset.load_case(paths, dataset.build_loader((0.5, 0.5, 3.0)))
+    assert np.abs(np.diag(np.asarray(image.affine))[:3]) == pytest.approx([0.5, 0.5, 3.0], abs=1e-3)
+    along_x = np.round(image.as_tensor()[0, :, 0, 0].numpy(), 3)
+    assert not set(along_x) <= set(range(30)), "interpolated, not nearest: values between the original pixels"
+    assert set(mask.unique().tolist()) <= {0.0, 1.0}
+    assert mask.shape[1:] == image.shape[1:]
+
+
 @pytest.mark.parametrize("depth", [3, 4, 9])
 def test_every_patch_has_the_planned_size(prostate_app: dict[str, ModuleType], depth: int) -> None:
     """A volume shallower than the patch is zero-padded up to it, never tiled into a smaller patch.
@@ -266,13 +322,27 @@ def test_every_patch_has_the_planned_size(prostate_app: dict[str, ModuleType], d
         assert int((patches[0]["image"] == 0).all(dim=(0, 1, 2)).sum()) == 4 - depth, "zero-padded, not wrapped"
 
 
-def test_plan_geometry_reverses_the_plan_axes(prostate_app: dict[str, ModuleType]) -> None:
+def test_plan_geometry_permutes_the_plan_axes(prostate_app: dict[str, ModuleType]) -> None:
     geometry = prostate_app["task"].plan_geometry(MINI_PLAN)
     assert geometry.target_spacing == (0.5, 0.5, 3.0)  # (x, y, z) for the MONAI loader
     assert geometry.patch_size == (16, 16, 4)  # (x, y, z) for PatchIterd
-    assert geometry.patch_size_zyx == (4, 16, 16)  # the sliding-window ROI, network order
+    assert geometry.patch_size_zxy == (4, 16, 16)  # the sliding-window ROI, network order
     assert geometry.crop_size == (384, 384)  # 383 padded up to even, both in-plane axes
     assert (geometry.image_mean, geometry.image_std) == (300.0, 150.0)
+
+
+def test_plan_geometry_keeps_a_non_square_plan_in_plane_axes_apart(prostate_app: dict[str, ModuleType]) -> None:
+    """The plan is (z, x, y). Reversing it would swap x and y, which you only notice on a non-square plan.
+
+    PCNN planned on its own gives [16, 640, 448]: 640 along x (array axis 0) and 448 along y (axis 1).
+    """
+    plan = json.loads(json.dumps(MINI_PLAN))
+    plan["original_median_spacing_after_transp"] = [3.0, 0.4, 0.6]
+    plan["configurations"]["3d_fullres"]["patch_size"] = [16, 640, 448]
+    geometry = prostate_app["task"].plan_geometry(plan)
+    assert geometry.patch_size == (640, 448, 16)  # x, y, z — what PatchIterd tiles the loader's arrays with
+    assert geometry.target_spacing == (0.4, 0.6, 3.0)
+    assert geometry.patch_size_zxy == (16, 640, 448)  # the network's (and the plan's) order
 
 
 def test_criterion_penalises_predicting_gland_everywhere(prostate_app: dict[str, ModuleType]) -> None:
@@ -341,8 +411,78 @@ def test_train_seg_runs_two_steps_on_cpu_with_the_toy_plan(prostate_app: dict[st
     )
 
     assert all(torch.isfinite(torch.tensor(v)) for v in (train_loss, val_loss))
-    assert set(metrics) == {f"{split}/{k}_dice_avg" for split in ("train", "val") for k in ("mean", "wp", "pz", "tz")}
+    dice_keys = {f"{split}/{k}_dice_avg" for split in ("train", "val") for k in ("mean", "wp", "pz", "tz")}
+    assert set(metrics) == dice_keys | {"train/loss_nan_count", "val/loss_nan_count"}
     assert scheduler.last_epoch == 1, "fast-forwarded to the round's start, not stepped per batch"
+
+
+def _toy_batches() -> DataLoader:
+    g = torch.Generator().manual_seed(0)
+    patches = [
+        {
+            "image": torch.rand(1, 16, 16, 4, generator=g),
+            "mask": (torch.rand(3, 16, 16, 4, generator=g) > 0.5).half(),
+            "accession_id": "a",
+            "coord": (0, 0, 0),
+        }
+        for _ in range(2)
+    ]
+    return DataLoader([patches], batch_size=1, collate_fn=list_data_collate)
+
+
+def test_average_of_nothing_finite_is_nan_not_zero(prostate_app: dict[str, ModuleType]) -> None:
+    """If every batch is NaN the average should be NaN, not 0.0 (which looks like a perfect score)."""
+    meter = prostate_app["train_helpers"].AverageMeter()
+    meter.update(torch.tensor(float("nan")))
+    meter.update(torch.tensor(float("nan")))
+    assert meter.avg != meter.avg, "NaN"
+    assert int(meter.nan_count) == 2
+    meter.update(torch.tensor(0.5))
+    assert meter.avg == pytest.approx(0.5)
+
+
+def test_train_seg_refuses_to_step_on_a_non_finite_loss(prostate_app: dict[str, ModuleType]) -> None:
+    """A NaN loss should stop training before the weights change."""
+    models, task, helpers = prostate_app["models"], prostate_app["task"], prostate_app["train_helpers"]
+    net = models.build_dynunet_from_plan(MINI_PLAN)
+    before = {k: v.clone() for k, v in net.state_dict().items()}
+    conf = {"bf16": False, "deep_supervision": True, "max_norm": 12, "norm_type": 2, "scheduler": "Polynomial"}
+    nan_loss = task.DeepSupervisionLoss(lambda p, t: (p * float("nan")).mean(), [1.0, 0.5])
+    optimizer = task.build_optimizer(net, 0.01, {})
+    loader = _toy_batches()
+    with pytest.raises(RuntimeError, match="non-finite training loss"):
+        helpers.train_seg(conf, net, optimizer, None, loader, loader, nan_loss, torch.device("cpu"))
+    assert all(torch.equal(before[k], v) for k, v in net.state_dict().items()), "no step was taken"
+
+
+def test_train_seg_reports_nan_counts(prostate_app: dict[str, ModuleType]) -> None:
+    models, task, helpers = prostate_app["models"], prostate_app["task"], prostate_app["train_helpers"]
+    net = models.build_dynunet_from_plan(MINI_PLAN)
+    conf = {"bf16": False, "deep_supervision": True, "max_norm": 12, "norm_type": 2, "scheduler": "Polynomial"}
+    criterion = task.build_criterion(conf, num_outputs=1 + net.deep_supr_num)
+    loader = _toy_batches()
+    _, _, metrics = helpers.train_seg(
+        conf, net, task.build_optimizer(net, 0.01, {}), None, loader, loader, criterion, torch.device("cpu")
+    )
+    assert metrics["train/loss_nan_count"] == 0
+    assert metrics["val/loss_nan_count"] == 0
+
+
+def test_state_dict_carries_each_tensor_once(prostate_app: dict[str, ModuleType]) -> None:
+    """The state dict should have each tensor once, and still load old checkpoints that have duplicates."""
+    models = prostate_app["models"]
+    net = models.build_dynunet_from_plan(MINI_PLAN)
+    state = net.state_dict()
+    assert not any(k.startswith("skip_layers.") for k in state)
+    assert sum(v.numel() for v in state.values()) == sum(p.numel() for p in net.parameters())
+
+    other = models.build_dynunet_from_plan(MINI_PLAN)
+    other.load_state_dict(state)  # strict
+    assert other.skip_layers.downsample.conv1.conv.weight is other.input_block.conv1.conv.weight
+    assert torch.equal(other.input_block.conv1.conv.weight, net.input_block.conv1.conv.weight)
+    legacy = torch.nn.Module.state_dict(net)  # old format, with the duplicates
+    assert len(legacy) > len(state)
+    models.build_dynunet_from_plan(MINI_PLAN).load_state_dict(legacy)  # still loads strictly
 
 
 def test_evaluate_func_scores_whole_volumes(prostate_app: dict[str, ModuleType]) -> None:
@@ -354,12 +494,57 @@ def test_evaluate_func_scores_whole_volumes(prostate_app: dict[str, ModuleType])
     loader = DataLoader(volumes, batch_size=1)
     criterion = task.build_criterion({"deep_supervision": False}, num_outputs=1)
 
-    loss, dice = task.evaluate_func(net, loader, criterion, torch.device("cpu"), roi_size_zyx=(4, 16, 16))
+    loss, dice = task.evaluate_func(net, loader, criterion, torch.device("cpu"), roi_size_zxy=(4, 16, 16))
 
     assert torch.isfinite(torch.tensor(loss))
     assert set(dice) == {"dice_mean", "dice_wg", "dice_pz", "dice_tz"}
     assert dice["dice_mean"] == pytest.approx((dice["dice_wg"] + dice["dice_pz"] + dice["dice_tz"]) / 3)
     assert net.deep_supervision is True, "the flag is restored after the pass"
+
+
+class _ZonePredictor(torch.nn.Module):
+    """Fake model: gets the gland right, predicts no PZ and predicts TZ everywhere.
+
+    The input image is the gland itself (1 inside, 0 outside).
+    """
+
+    deep_supervision = False
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gland = (x > 0.5).float() * 20 - 10
+        return torch.cat([gland, torch.full_like(x, -10.0), torch.full_like(x, 10.0)], dim=1)
+
+
+def test_evaluate_func_reports_each_zone_under_its_own_name(prostate_app: dict[str, ModuleType]) -> None:
+    """Each zone's Dice should be reported under its own name."""
+    task = prostate_app["task"]
+    gland = torch.zeros(1, 32, 24, 8)
+    gland[:, 8:24, 6:18, 2:6] = 1
+    pz = torch.zeros_like(gland)
+    pz[:, 8:24, 6:9, 2:6] = 1
+    tz = gland - pz
+    loader = DataLoader([{"image": gland, "mask": torch.cat([gland, pz, tz]), "accession_id": "v"}], batch_size=1)
+    criterion = task.build_criterion({"deep_supervision": False}, num_outputs=1)
+
+    _, dice = task.evaluate_func(_ZonePredictor(), loader, criterion, torch.device("cpu"), roi_size_zxy=(4, 16, 16))
+
+    expected_tz = 2 * tz.sum().item() / (tz.sum().item() + tz.numel())
+    assert dice["dice_wg"] == pytest.approx(1.0)
+    assert dice["dice_pz"] == pytest.approx(0.0)
+    assert dice["dice_tz"] == pytest.approx(expected_tz)
+    assert dice["dice_mean"] == pytest.approx((1.0 + expected_tz) / 3)
+
+
+def test_combine_masks_follows_mask_channels(prostate_app: dict[str, ModuleType]) -> None:
+    dataset = importlib.import_module("app.dataset")
+    whole_gland = torch.tensor([[[[1.0, 1.0, 0.0]]]])
+    pz_tz = torch.tensor([[[[1.0, 2.0, 0.0]]]])
+    mask = dataset.PicaiDataset.combine_masks(whole_gland, pz_tz)
+    by_name = dict(zip(dataset.MASK_CHANNELS, mask, strict=True))
+    assert by_name["wg"].flatten().tolist() == [1.0, 1.0, 0.0]
+    assert by_name["pz"].flatten().tolist() == [1.0, 0.0, 0.0]
+    assert by_name["tz"].flatten().tolist() == [0.0, 1.0, 0.0]
+    assert prostate_app["models"].OUT_CHANNELS == len(dataset.MASK_CHANNELS)
 
 
 @pytest.mark.skipif(
@@ -374,3 +559,96 @@ def test_shipped_plan_builds_and_is_stable(prostate_app: dict[str, ModuleType]) 
     geometry = prostate_app["task"].plan_geometry(models.load_plan())
     assert all(v > 0 for v in geometry.patch_size)
     assert geometry.image_std > 0
+
+
+# A plan small enough to train on the CPU: a 16 x 16 crop and a 4-slice patch.
+CLIENT_PLAN = json.loads(json.dumps(MINI_PLAN))
+CLIENT_PLAN["original_median_shape_after_transp"] = [4, 15, 15]
+
+
+def _write_study(root: Path, name: str, dataset: ModuleType) -> dict:
+    """One synthetic study on disk: a T2 image plus the whole-gland and zonal masks."""
+    nib = pytest.importorskip("nibabel")
+    affine = np.diag([0.5, 0.5, 3.0, 1.0])
+    rng = np.random.default_rng(len(name))
+    gland = np.zeros((16, 16, 6), np.uint8)
+    gland[4:12, 4:12, 1:5] = 1
+    zonal = gland * 2
+    zonal[4:12, 4:6, 1:5] = 1  # a strip of PZ, the rest TZ
+    image = (rng.normal(200, 50, gland.shape) + 150 * gland).astype(np.float32)
+    paths = {}
+    for key, array in ((dataset.IMAGE_KEY, image), (dataset.WHOLE_GLAND_KEY, gland), (dataset.PZ_TZ_KEY, zonal)):
+        paths[key] = root / f"{name}_{key}.nii.gz"
+        nib.save(nib.Nifti1Image(array, affine), paths[key])
+    return {**paths, "accession_id": name}
+
+
+class _FakeCohort:
+    """Stands in for FLIP_BASE: a fixed cohort of studies already on disk."""
+
+    def __init__(self, studies: list[dict]) -> None:
+        self.studies = studies
+        self.dataframe = pd.DataFrame({"accession_id": [s["accession_id"] for s in studies]})
+
+    def get_case_list(self, modality, val_split, test_split, is_test=False):
+        train, val, test = self.studies[:3], self.studies[3:4], self.studies[4:]
+        return test if is_test else (train, val)
+
+
+@pytest.fixture
+def client_run(prostate_app: dict[str, ModuleType], tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """The real client_app, using five small fake studies and a tiny plan."""
+    from flip.flower import identity
+    from flwr.app import ArrayRecord
+
+    client, models = prostate_app["client_app"], prostate_app["models"]
+    dataset = importlib.import_module("app.dataset")
+    studies = [_write_study(tmp_path, f"acc{i}", dataset) for i in range(5)]
+    monkeypatch.setattr(identity, "FlipConstants", SimpleNamespace(LOCAL_DEV=True))
+    monkeypatch.delenv("SUPERNODE_NAME", raising=False)
+    monkeypatch.setattr(client, "_fetch_cohort", lambda run_config, context: _FakeCohort(studies))
+    monkeypatch.setattr(client, "load_plan", lambda: CLIENT_PLAN)
+    monkeypatch.setattr(client, "get_model", lambda: models.build_dynunet_from_plan(CLIENT_PLAN))
+    # A real Message needs a running Flower run, so use a simple stand-in for the reply.
+    monkeypatch.setattr(client, "Message", lambda content, reply_to: SimpleNamespace(content=content))
+
+    torch.manual_seed(0)
+    global_weights = models.build_dynunet_from_plan(CLIENT_PLAN).state_dict()
+    run_config = {"num-server-rounds": 2, "local-epochs": 1, "learning-rate": 0.01, "batch-size": 1}
+    context = SimpleNamespace(run_config=run_config, node_config={"partition-id": "0", "num-partitions": "1"})
+
+    def message(server_round: int) -> SimpleNamespace:
+        content = {"arrays": ArrayRecord(global_weights), "config": {"server-round": server_round}}
+        return SimpleNamespace(content=content)
+
+    return client, message, context, global_weights
+
+
+def test_client_train_runs_a_round_and_returns_updated_weights(client_run) -> None:
+    client, message, context, global_weights = client_run
+
+    reply = client.train(message(1), context)
+
+    weights = reply.content["arrays"].to_torch_state_dict()
+    assert list(weights) == list(global_weights), "same keys and order as the global model"
+    assert any(not torch.equal(weights[k], global_weights[k]) for k in weights), "the weights moved"
+    metrics = reply.content["metrics"]
+    assert metrics["num-examples"] == 3
+    for key in ("train_loss", "val_loss", "val_dice_mean", "val_dice_wg", "val_dice_pz", "val_dice_tz"):
+        assert np.isfinite(metrics[key]), key
+    assert metrics["train_loss_nan_count"] == 0
+    assert "train_loss@epoch.x_1" in metrics
+    assert reply.content["config"]["site"] == "site-1"
+
+
+def test_client_evaluate_scores_the_test_split(client_run) -> None:
+    client, message, context, _ = client_run
+
+    reply = client.evaluate(message(1), context)
+
+    metrics = reply.content["metrics"]
+    assert metrics["num-examples"] == 1
+    for key in ("test_loss", "test_dice_mean", "test_dice_wg", "test_dice_pz", "test_dice_tz"):
+        assert np.isfinite(metrics[key]), key
+        assert metrics[f"{key}.x_0"] == metrics[key]
+    assert 0.0 <= metrics["test_dice_mean"] <= 1.0

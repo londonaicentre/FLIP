@@ -53,12 +53,15 @@ def build_case_transform(crop_size: tuple[int, int], image_mean: float, image_st
     )
 
 
-def build_augmentations() -> Compose:
-    """The training augmentations, with MambaX-Net's exact set and probabilities.
+def build_augmentations(image_std: float) -> Compose:
+    """The training augmentations. Same transforms as MambaX-Net, but with our own probabilities.
 
-    Applied to the WHOLE volume before patching (see ``client_app.py``), which is the order upstream's
-    PicSegDataset used. ``Rand3DElasticd`` is deliberately absent: an earlier port had added it, it
-    never ran upstream, and it would change what the model sees.
+    These run on the whole volume before it is split into patches (see ``client_app.py``), the same
+    order MambaX-Net uses.
+
+    Args:
+        image_std: The plan's intensity std (``task.PlanGeometry.image_std``). The images are already
+            divided by it, so the intensity shift is divided by it too.
 
     Returns:
         Compose: Operates on a `{"image", "mask"}` dict.
@@ -68,8 +71,8 @@ def build_augmentations() -> Compose:
             RandAxisFlipd(prob=0.1, keys=KEYS),
             RandRotate90d(prob=0.2, keys=KEYS),
             RandGaussianNoised(keys=["image"], prob=0.45),
-            RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
-            RandZoomd(prob=0.25, min_zoom=0.8, max_zoom=1.2, keep_size=True, keys=KEYS),
+            RandShiftIntensityd(keys=["image"], offsets=(10 / image_std, 20 / image_std), prob=0.15),
+            RandZoomd(prob=0.25, min_zoom=0.8, max_zoom=1.2, keep_size=True, keys=KEYS, mode=("area", "nearest")),
             RandGaussianSmoothd(
                 keys=["image"],
                 sigma_x=(0.25, 1.5),
@@ -84,20 +87,17 @@ def build_augmentations() -> Compose:
 
 
 def build_patch_iter(patch_size: tuple[int, int, int]) -> Callable[[dict], Iterator[tuple[dict, Any]]]:
-    """Tile a preprocessed volume into the plan's training patches — nnU-Net trains on patches, not volumes.
+    """Split a preprocessed volume into the plan's training patches.
 
-    A volume smaller than the patch along an axis is first zero-padded up to it, as nnU-Net pads an
-    image smaller than its patch: ``PatchIterd`` would otherwise shrink the patch to the volume (a
-    21-slice study under a 24-slice patch), and a patch the network's pooling cannot divide breaks
-    the skip connections. Then ``mode="wrap"`` pads the last, partial tile with voxels wrapped from
-    the volume's start, so every voxel is covered exactly once and the grid never drops the edge.
+    If the volume is smaller than the patch (e.g. 21 slices with a 24-slice patch), it is zero-padded
+    first. Otherwise ``PatchIterd`` would return a smaller patch, and the network can't take a size
+    its pooling doesn't divide. ``mode="wrap"`` fills the last partial patch so the edges are kept.
 
     Args:
-        patch_size: (x, y, z) patch, the plan's ``patch_size`` reversed (``task.PlanGeometry.patch_size``).
+        patch_size: The patch as (x, y, z), i.e. ``task.PlanGeometry.patch_size``.
 
     Returns:
-        A callable yielding ``(patch dict, coord)`` pairs over a `{"image", "mask"}` dict, every patch
-        exactly ``patch_size``.
+        A function that yields ``(patch dict, coord)`` pairs, each patch exactly ``patch_size``.
     """
     pad = SpatialPadd(keys=KEYS, spatial_size=patch_size)
     tiles = PatchIterd(keys=KEYS, patch_size=patch_size, start_pos=(0, 0, 0), mode="wrap")

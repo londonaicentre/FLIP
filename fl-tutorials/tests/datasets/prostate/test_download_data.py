@@ -215,3 +215,17 @@ def test_unknown_total_is_accepted_as_sent(
     download_data.download("https://example/main.zip", dest)
 
     assert dest.read_bytes() == BODY
+
+
+def test_existing_complete_file_is_not_fetched_again(
+    download_data: ModuleType, monkeypatch: pytest.MonkeyPatch, fast_retries: None, tmp_path: Path
+) -> None:
+    """If the zip is already there (unzip was interrupted), don't download it again."""
+    dest = tmp_path / "fold.zip"
+    dest.write_bytes(BODY)
+    session = _install(monkeypatch, download_data, [])
+
+    download_data.download("https://example/fold.zip", dest)
+
+    assert session.calls == []
+    assert dest.read_bytes() == BODY

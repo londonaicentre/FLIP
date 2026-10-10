@@ -35,6 +35,7 @@ weight aggregation impossible (see the README's "nnU-Net plans").
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,12 +44,13 @@ from monai.networks.blocks.dynunet_block import UnetUpBlock
 from monai.networks.nets import DynUNet
 from torch import nn
 
+from app.dataset import MASK_CHANNELS
+
 # The plan the planner wrote; committed so server and clients build the same net.
 PLAN_PATH = Path(__file__).with_name("nnUNetPlans_segmentation.json")
-# One t2w channel in; three overlapping label channels out — [whole gland, PZ, TZ], the order
-# `dataset.PicaiDataset.combine_masks` stacks them in.
+# One t2w channel in; one output channel per label in MASK_CHANNELS.
 IN_CHANNELS = 1
-OUT_CHANNELS = 3
+OUT_CHANNELS = len(MASK_CHANNELS)
 CONFIGURATION = "3d_fullres"
 
 
@@ -99,7 +101,13 @@ class NnUNetDynUNet(DynUNet):
       nnU-Net. Evaluation mode returns the single full-resolution output, unchanged.
 
     Every parameter maps one-to-one onto ``PlainConvUNet``'s, so the parameter count is nnU-Net's.
+
+    ``DynUNet`` keeps every block twice in its ``state_dict``: once under its own name and once
+    under ``skip_layers``. Both point at the same tensors, so we drop the ``skip_layers.*`` copies
+    when saving and add them back when loading.
     """
+
+    _ALIAS_PREFIX = "skip_layers."
 
     def __init__(self, *args: Any, conv_bias: bool = True, **kwargs: Any) -> None:
         super().__init__(*args, trans_bias=conv_bias, **kwargs)
@@ -122,6 +130,26 @@ class NnUNetDynUNet(DynUNet):
             trans_bias=self.trans_bias,
         )
 
+    def _aliases(self) -> dict[str, str]:
+        """Map each ``skip_layers.*`` key to the other key that holds the same tensor."""
+        state = super().state_dict(keep_vars=True)
+        canonical = {id(t): k for k, t in state.items() if not k.startswith(self._ALIAS_PREFIX)}
+        return {k: canonical[id(t)] for k, t in state.items() if k.startswith(self._ALIAS_PREFIX)}
+
+    def state_dict(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        state = super().state_dict(*args, **kwargs)
+        prefix = kwargs.get("prefix", "")
+        for key in [k for k in state if k.startswith(prefix + self._ALIAS_PREFIX)]:
+            del state[key]
+        return state
+
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True, assign: bool = False) -> Any:
+        full = dict(state_dict)
+        for alias, canonical in self._aliases().items():
+            if alias not in full and canonical in full:
+                full[alias] = full[canonical]
+        return super().load_state_dict(full, strict=strict, assign=assign)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor | list[torch.Tensor]:
         out = self.output_block(self.skip_layers(x))
         if self.training and self.deep_supervision:
@@ -139,9 +167,8 @@ def build_dynunet_from_plan(
 ) -> NnUNetDynUNet:
     """Instantiate an ``NnUNetDynUNet`` with the topology the plan's ``3d_fullres`` architecture describes.
 
-    The plan's ``kernel_sizes`` / ``strides`` are per stage in nnU-Net's transposed ``(z, y, x)``
-    order; the training loop feeds the network ``(B, C, z, y, x)`` tensors (``train_helpers.train_seg``
-    rearranges ``b c h w d -> b c d h w``), so they are passed through unchanged.
+    The plan's ``kernel_sizes`` and ``strides`` are in (z, x, y) order. ``train_seg`` feeds the
+    network (B, C, z, x, y) tensors, the same order, so they are used as they are.
 
     Mapping (plan → DynUNet):
 

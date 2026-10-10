@@ -57,7 +57,7 @@ def converter() -> ModuleType:
     return load_script("convert_mha_to_dicom")
 
 
-def picai_image(study_date: str = "2019-07-02", age: str = "073Y") -> sitk.Image:
+def picai_image(study_date: str | None = "2019-07-02", age: str = "073Y") -> sitk.Image:
     """A tiny scan with the headers PI-CAI's anonymisation leaves in its ``.mha`` files."""
     image = sitk.GetImageFromArray(np.arange(4 * 6 * 3, dtype=np.uint16).reshape(3, 6, 4))
     image.SetSpacing((0.5, 0.5, 3.0))
@@ -71,7 +71,8 @@ def picai_image(study_date: str = "2019-07-02", age: str = "073Y") -> sitk.Image
         "0010|1010": age,
         "0012|0062": "YES",
     }.items():
-        image.SetMetaData(tag, value)
+        if value is not None:
+            image.SetMetaData(tag, value)
     return image
 
 
@@ -155,3 +156,41 @@ def test_birth_date_is_omitted_rather_than_invented_when_age_is_not_in_years(con
     # GDCM writes the Type 2 tag present-but-empty; what matters is that no date was invented.
     assert str(ds.get("PatientBirthDate", "")) == ""
     assert str(ds.PatientName)
+
+
+def _series_bytes(directory):
+    return b"".join(path.read_bytes() for path in sorted(directory.glob("*.dcm")))
+
+
+def test_output_bytes_do_not_depend_on_the_clock(converter, identity, tmp_path):
+    """The current time never ends up in the DICOM, so re-running gives the same files."""
+    for run in ("first", "second"):
+        converter.write_dicom_series(picai_image(), tmp_path / run, "10000", "1000000", "t2w", "PCNN")
+    assert _series_bytes(tmp_path / "first") == _series_bytes(tmp_path / "second")
+
+    birth = identity.birth_date(date(2019, 7, 2), 73, "10000").strftime("%Y%m%d")
+    for path in sorted((tmp_path / "first").glob("*.dcm")):
+        ds = pydicom.dcmread(path)
+        stamps = {(el.VR, str(el.value)) for el in [*ds.file_meta, *ds.iterall()] if el.VR in ("DA", "TM", "DT")}
+        assert stamps <= {("DA", "20190702"), ("DA", birth), ("TM", converter.STUDY_TIME)}, stamps
+
+
+def test_study_date_falls_back_to_the_marksheet(converter, tmp_path):
+    converter.write_dicom_series(
+        picai_image(study_date=None), tmp_path / "t2w", "10000", "1000000", "t2w", marksheet_study_date="20190702"
+    )
+    ds = pydicom.dcmread(sorted((tmp_path / "t2w").glob("*.dcm"))[0])
+    assert ds.StudyDate == "20190702"
+    assert ds.InstanceCreationDate == "20190702"
+
+
+def test_scan_with_no_date_anywhere_is_refused(converter, tmp_path):
+    with pytest.raises(ValueError, match="no StudyDate"):
+        converter.write_dicom_series(picai_image(study_date=None), tmp_path / "t2w", "10000", "1000000", "t2w")
+
+
+def test_load_study_dates_reads_the_marksheet(converter, tmp_path):
+    marksheet = tmp_path / "marksheet.csv"
+    marksheet.write_text("patient_id,study_id,mri_date,center\n10000,1000000,2019-07-02,ZGT\n10001,1000001,,PCNN\n")
+    assert converter.load_study_dates(marksheet) == {("10000", "1000000"): "20190702"}
+    assert converter.load_study_dates(tmp_path / "absent.csv") == {}

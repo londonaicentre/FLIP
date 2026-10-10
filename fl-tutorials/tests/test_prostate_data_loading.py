@@ -26,6 +26,7 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+import requests
 from tutorial_apps import TUTORIALS_ROOT
 
 PROSTATE_DIR = TUTORIALS_ROOT / "flower" / "3d_prostate_segmentation"
@@ -189,7 +190,7 @@ def test_skips_accession_missing_a_label(data_loading_module: ModuleType, tmp_pa
     site = _platform_accession(tmp_path, "acc3", PLATFORM_SCANS, masks=False)
     flip_base = _flip_base(data_loading_module, {"acc3": site}, ["acc3"])
 
-    with pytest.raises(RuntimeError, match="No usable cases"):
+    with pytest.raises(RuntimeError, match="No usable cases.*1 without label_/zonal_ masks.*data enrichment"):
         flip_base.get_case_list(modality="t2w", val_split=0.0, test_split=0.0)
 
 
@@ -203,6 +204,50 @@ def test_skips_empty_accession_dir(data_loading_module: ModuleType, tmp_path: Pa
     train, _ = flip_base.get_case_list(modality="t2w", val_split=0.0, test_split=0.0)
 
     assert [case["accession_id"] for case in train] == ["acc5"]
+
+
+def _http_error(status: int) -> requests.HTTPError:
+    response = requests.Response()
+    response.status_code = status
+    return requests.HTTPError(f"{status} from imaging-api", response=response)
+
+
+def _raising(error: Exception):
+    def get_by_accession_number(_project, _accession, **_kw):
+        raise error
+
+    return get_by_accession_number
+
+
+def test_not_pulled_study_is_skipped_and_the_error_says_so(data_loading_module: ModuleType, tmp_path: Path) -> None:
+    """A 404 means that study wasn't pulled: skip it, and if nothing is left, say so (not "run enrichment")."""
+    flip_base = _flip_base(data_loading_module, {}, ["acc6"])
+    not_found = _http_error(404)
+    flip_base.flip.get_by_accession_number.side_effect = _raising(not_found)
+
+    with pytest.raises(RuntimeError, match="not found in XNAT") as raised:
+        flip_base.get_case_list(modality="t2w", val_split=0.0, test_split=0.0)
+
+    assert raised.value.__cause__ is not_found
+    assert "enrichment" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [_http_error(401), _http_error(403), _http_error(500), requests.Timeout("timed out"), OSError("disk full")],
+    ids=["401", "403", "500", "timeout", "disk"],
+)
+def test_trust_level_failures_propagate_as_themselves(
+    data_loading_module: ModuleType, tmp_path: Path, error: Exception
+) -> None:
+    """Errors that aren't about one study (bad key, 5xx, timeout, full disk) should be raised, not skipped."""
+    flip_base = _flip_base(data_loading_module, {}, ["acc7"])
+    flip_base.flip.get_by_accession_number.side_effect = _raising(error)
+
+    with pytest.raises(type(error)) as raised:
+        flip_base.get_case_list(modality="t2w", val_split=0.0, test_split=0.0)
+
+    assert raised.value is error
 
 
 def test_get_case_list_before_fetch_dataframe_raises(data_loading_module: ModuleType) -> None:

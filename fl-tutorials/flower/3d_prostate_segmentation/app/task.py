@@ -34,18 +34,20 @@ from monai.metrics import DiceMetric
 from torch import nn
 from torch.optim.lr_scheduler import PolynomialLR
 
+from app.dataset import MASK_CHANNELS
 from app.models import CONFIGURATION, deep_supervision_weights, set_deep_supervision_enabled
 from app.train_helpers import possible_patch_size
 
 
 @dataclass(frozen=True)
 class PlanGeometry:
-    """The numbers the plan fixes for preprocessing and patching, in the axis order each consumer wants.
+    """The plan's spacing, crop, patch and intensity numbers, in the axis order each part needs.
 
-    The plan stores spacing / shape / patch in nnU-Net's transposed ``(z, y, x)`` order. The MONAI
-    loader and ``PatchIterd`` work on ``(x, y, z)`` volumes, so those get the reversed tuples; the
-    network sees ``(z, y, x)`` after ``train_seg``'s rearrange, so the sliding-window ROI keeps the
-    plan's order.
+    The loader gives (x, y, z) arrays: x is right-left, y is front-back, z is the slice axis. The
+    planner reads them as (z, x, y), so that is the order the plan stores spacing, shape and patch
+    in, and the order the network sees. Note that (z, x, y) is not just (x, y, z) reversed.
+    Reversing it swaps x and y, which only shows up when the plan isn't square in-plane
+    (e.g. PCNN's [16, 640, 448]).
     """
 
     target_spacing: tuple[float, float, float]
@@ -54,12 +56,24 @@ class PlanGeometry:
     """In-plane (x, y) pad/crop the whole volume to — ``preprocess.build_case_transform``."""
     patch_size: tuple[int, int, int]
     """Training patch, (x, y, z) — ``preprocess.build_patch_iter``."""
-    patch_size_zyx: tuple[int, int, int]
-    """The same patch in network order — the sliding-window ROI in ``evaluate_func``."""
+    patch_size_zxy: tuple[int, int, int]
+    """The same patch as (z, x, y), the network's order. Used as the sliding window in ``evaluate_func``."""
     image_mean: float
     """Foreground intensity mean the plan measured — subtracted from every image."""
     image_std: float
     """Foreground intensity standard deviation — divides every image."""
+
+
+def zxy_to_xyz(values: Sequence[Any]) -> tuple[Any, Any, Any]:
+    """Turn a (z, x, y) tuple from the plan into the loader's (x, y, z) order."""
+    z, x, y = values
+    return (x, y, z)
+
+
+def xyz_to_zxy(values: Sequence[Any]) -> tuple[Any, Any, Any]:
+    """Turn a loader (x, y, z) tuple into the plan's and network's (z, x, y) order."""
+    x, y, z = values
+    return (z, x, y)
 
 
 def plan_geometry(plan: dict[str, Any], custom_patch: bool = False) -> PlanGeometry:
@@ -75,23 +89,23 @@ def plan_geometry(plan: dict[str, Any], custom_patch: bool = False) -> PlanGeome
     """
     configuration = plan["configurations"][CONFIGURATION]
     intensity = plan["foreground_intensity_properties_per_channel"]["0"]
-    median_shape_zyx = tuple(int(v) for v in plan["original_median_shape_after_transp"])
-    spacing_zyx = tuple(float(v) for v in plan["original_median_spacing_after_transp"])
-    plan_patch_zyx = tuple(int(v) for v in configuration["patch_size"])
+    median_shape_zxy = tuple(int(v) for v in plan["original_median_shape_after_transp"])
+    spacing_zxy = tuple(float(v) for v in plan["original_median_spacing_after_transp"])
+    plan_patch_zxy = tuple(int(v) for v in configuration["patch_size"])
 
-    crop, candidate_patches = possible_patch_size(median_shape_zyx, plan_patch_zyx)
+    crop, candidate_patches = possible_patch_size(median_shape_zxy, plan_patch_zxy)
     if custom_patch:
         if not candidate_patches:
             raise ValueError(f"no candidate patch tiles the {crop[:2]} crop; use the plan's patch size instead")
         patch_xyz = tuple(int(v) for v in candidate_patches[-1])
     else:
-        patch_xyz = plan_patch_zyx[::-1]
+        patch_xyz = zxy_to_xyz(plan_patch_zxy)
 
     return PlanGeometry(
-        target_spacing=spacing_zyx[::-1],
+        target_spacing=zxy_to_xyz(spacing_zxy),
         crop_size=(int(crop[0]), int(crop[1])),
         patch_size=patch_xyz,
-        patch_size_zyx=patch_xyz[::-1],
+        patch_size_zxy=xyz_to_zxy(patch_xyz),
         image_mean=float(intensity["mean"]),
         image_std=float(intensity["std"]),
     )
@@ -190,12 +204,12 @@ def evaluate_func(
     loader: torch.utils.data.DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    roi_size_zyx: tuple[int, int, int],
+    roi_size_zxy: tuple[int, int, int],
 ) -> tuple[float, dict[str, float]]:
     """Score whole volumes with sliding-window inference — the test-split path.
 
     ``train_seg`` reports training and validation Dice per *patch*; this scores each volume in one
-    piece, tiling it with ``roi_size_zyx`` windows and blending the overlaps, which is what a deployed
+    piece, tiling it with ``roi_size_zxy`` windows and blending the overlaps, which is what a deployed
     model would do. Deep supervision is switched off for the pass and restored afterwards.
 
     Args:
@@ -203,12 +217,12 @@ def evaluate_func(
         loader: Batches of ``{"image", "mask"}`` whole volumes in ``(B, C, x, y, z)`` layout.
         criterion: A plain (un-wrapped) loss.
         device: Where to run.
-        roi_size_zyx: The sliding window, in the network's ``(z, y, x)`` order.
+        roi_size_zxy: The sliding window, in the network's ``(z, x, y)`` order.
 
     Returns:
         ``(mean loss, {"dice_mean", "dice_wg", "dice_pz", "dice_tz"})``.
     """
-    inferer = SlidingWindowInferer(roi_size=roi_size_zyx, sw_batch_size=2, overlap=0.5, mode="gaussian")
+    inferer = SlidingWindowInferer(roi_size=roi_size_zxy, sw_batch_size=2, overlap=0.5, mode="gaussian")
     dice_metric = DiceMetric(include_background=True, reduction="mean_batch")
     losses: list[float] = []
 
@@ -228,8 +242,8 @@ def evaluate_func(
         model.train()
 
     if not losses:
-        return 0.0, {"dice_mean": 0.0, "dice_wg": 0.0, "dice_pz": 0.0, "dice_tz": 0.0}
-    per_channel = dice_metric.aggregate()
+        return 0.0, {"dice_mean": 0.0, **{f"dice_{name}": 0.0 for name in MASK_CHANNELS}}
+    per_channel = [float(v) for v in dice_metric.aggregate()]
     dice_metric.reset()
-    wg, pz, tz = (float(v) for v in per_channel)
-    return sum(losses) / len(losses), {"dice_mean": (wg + pz + tz) / 3, "dice_wg": wg, "dice_pz": pz, "dice_tz": tz}
+    dice = {f"dice_{name}": value for name, value in zip(MASK_CHANNELS, per_channel, strict=True)}
+    return sum(losses) / len(losses), {"dice_mean": sum(per_channel) / len(per_channel), **dice}

@@ -30,7 +30,7 @@ from torch.utils.data import ConcatDataset, DataLoader
 
 from app.dataset import AXCODES, IMAGE_KEY, PicaiDataset
 from app.preprocess import build_case_transform
-from app.task import DiceBCELoss
+from app.task import DiceBCELoss, xyz_to_zxy, zxy_to_xyz
 from app.train_helpers import (
     generate_predictions,
     inference_func,
@@ -102,7 +102,7 @@ def infer_loop():
     img_std = plans_manager.foreground_intensity_properties_per_channel["0"]["std"]
     median_size = plans_manager.original_median_shape_after_transp
     crop_sz, patch_sz = possible_patch_size(median_size, configuration_manager.patch_size)
-    spacing = plans_manager.original_median_spacing_after_transp[::-1]
+    spacing = zxy_to_xyz(plans_manager.original_median_spacing_after_transp)
 
     seed_torch(seed=config.get("seed", 42))
     set_determinism(seed=config.get("seed", 42))
@@ -123,7 +123,7 @@ def infer_loop():
     if config.get("custom_patch", False):
         patch_size = patch_sz[-1]
     else:
-        patch_size = tuple(configuration_manager.patch_size[::-1])
+        patch_size = zxy_to_xyz(configuration_manager.patch_size)
     LOGGER.info(f"Using patch size {patch_size}")
 
     # The same preprocessing and the same deterministic patch grid training used — no augmentation.
@@ -183,7 +183,7 @@ def infer_loop():
         test_loader,
         device,
         criterion,
-        spacing=(spacing[0], spacing[1], spacing[2]),
+        spacing=xyz_to_zxy(spacing),  # inference_func scores (D, H, W) = (z, x, y) tensors
     )
     LOGGER.info(
         f"  Mean Dice: {test_metrics['test_dice_mean']:.4f} | Mean WP: {test_metrics['test_wp_mean']:.4f} | "
@@ -202,11 +202,7 @@ def infer_loop():
         [
             mt.LoadImaged(keys=["image"], ensure_channel_first=True, image_only=True),
             mt.Orientationd(keys=["image"], axcodes=AXCODES, labels=None),
-            mt.Spacingd(
-                keys=["image"],
-                pixdim=(spacing[0], spacing[1], spacing[2]),
-                mode="nearest",
-            ),
+            mt.Spacingd(keys=["image"], pixdim=(spacing[0], spacing[1], spacing[2]), mode="bilinear"),
             mt.SpatialPadd(keys=["image"], spatial_size=[crop_sz[0], crop_sz[1], -1]),
             mt.CenterSpatialCropd(keys=["image"], roi_size=[crop_sz[0], crop_sz[1], -1]),
             mt.NormalizeIntensityd(keys="image", subtrahend=img_mean, divisor=img_std),

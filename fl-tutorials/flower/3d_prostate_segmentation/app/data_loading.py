@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from logging import INFO
+from logging import INFO, WARNING
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import requests
 import torch
 from flip import FLIP
 from flip.constants import ResourceType
@@ -143,31 +144,40 @@ class FLIP_BASE:
             raise RuntimeError("FLIP_BASE.dataframe not populated; call fetch_dataframe() first.")
 
         datalist = []
+        # We only skip a study when the problem is with that study: imaging-api returns 404 for it,
+        # it has no input NIfTI, or its masks are missing. Any other error (wrong trust key, a 5xx,
+        # a timeout, a full disk) is raised as is, so the user sees the real cause.
+        skipped: dict[str, list[str]] = {"not_found": [], "no_image": [], "no_labels": []}
+        first_skip: Exception | None = None
+        accession_ids = self.dataframe["accession_id"].unique()
         # One row per modality per study (see query.sql); pull each study's files once.
-        for accession_id in self.dataframe["accession_id"].unique():
+        for accession_id in accession_ids:
             try:
                 accession_folder = self.flip.get_by_accession_number(
                     self.project_id, accession_id, resource_type=[ResourceType.NIFTI]
                 )
-            except Exception as err:
-                log(
-                    INFO,
-                    f"⚠️ Could not fetch images for accession_id={accession_id}: {err}",
-                )
+            except requests.HTTPError as err:
+                if err.response is None or err.response.status_code != 404:
+                    raise
+                log(WARNING, f"Skipping accession_id={accession_id}: imaging-api has no such study (404): {err}")
+                skipped["not_found"].append(accession_id)
+                first_skip = first_skip or err
                 continue
 
             try:
                 image_path = select_series(Path(accession_folder), modality)
-            except FileNotFoundError:
-                log(INFO, f"⚠️ No input_*.nii.gz for accession_id={accession_id}")
+            except FileNotFoundError as err:
+                log(WARNING, f"Skipping accession_id={accession_id}: {err}")
+                skipped["no_image"].append(accession_id)
+                first_skip = first_skip or err
                 continue
             whole_gland_path = Path(str(image_path).replace("/input_", "/label_"))
             pz_tz_path = Path(str(image_path).replace("/input_", "/zonal_"))
-            if not whole_gland_path.exists() or not pz_tz_path.exists():
-                log(
-                    INFO,
-                    f"⚠️ No matching label(s) for accession_id={accession_id} — was data enrichment run?",
-                )
+            missing = [str(path) for path in (whole_gland_path, pz_tz_path) if not path.exists()]
+            if missing:
+                log(WARNING, f"Skipping accession_id={accession_id}: no enrichment mask(s) {missing}")
+                skipped["no_labels"].append(accession_id)
+                first_skip = first_skip or FileNotFoundError(f"missing masks for {accession_id}: {missing}")
                 continue
 
             datalist.append(
@@ -179,12 +189,24 @@ class FLIP_BASE:
                 }
             )
 
-        log(INFO, f"Dataset ready: {len(datalist)} case(s)")
+        counts = ", ".join(f"{len(ids)} {reason}" for reason, ids in skipped.items() if ids) or "none"
+        log(INFO, f"Dataset ready: {len(datalist)} of {len(accession_ids)} case(s); skipped: {counts}")
         if not datalist:
+            hints = []
+            if skipped["not_found"]:
+                hints.append(f"{len(skipped['not_found'])} not found in XNAT — has the image pull finished?")
+            if skipped["no_image"]:
+                hints.append(
+                    f"{len(skipped['no_image'])} pulled with no input_*.nii.gz — did the NIfTI conversion run?"
+                )
+            if skipped["no_labels"]:
+                hints.append(
+                    f"{len(skipped['no_labels'])} without label_/zonal_ masks — was data enrichment "
+                    "(upload_prostate_labels_to_xnat.py) run after the image pull?"
+                )
             raise RuntimeError(
-                f"No usable cases found across {len(self.dataframe['accession_id'].unique())} accession(s). "
-                "Was the data-enrichment step (upload_prostate_labels_to_xnat.py) run after the image pull?"
-            )
+                f"No usable cases across {len(accession_ids)} accession(s): " + " ".join(hints)
+            ) from first_skip
 
         n_total = len(datalist)
         n_test = int(test_split * n_total)

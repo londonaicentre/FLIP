@@ -32,6 +32,8 @@ from pydicom.uid import generate_uid
 from synthetic_identity import STUDY_DESCRIPTION, birth_date, patient_name, referring_physician_name
 from tqdm import tqdm
 
+# PI-CAI has no acquisition time, so we use a fixed one. This keeps the output the same on every run.
+STUDY_TIME = "000000"
 MODALITY_DESCRIPTIONS = {"t2w": "T2 Weighted", "adc": "ADC Map", "hbv": "High B-Value DWI"}
 
 # Every generated UID (study, series, frame-of-reference, and per-slice SOP instance) is
@@ -100,6 +102,29 @@ def load_centers(marksheet_path: Path) -> dict[tuple[str, str], str]:
         return {(row["patient_id"], row["study_id"]): row["center"] for row in csv.DictReader(handle)}
 
 
+def load_study_dates(marksheet_path: Path) -> dict[tuple[str, str], str]:
+    """Read each study's MRI date from the marksheet, as ``YYYYMMDD``.
+
+    Used when a scan's ``.mha`` header has no StudyDate. The marksheet has a date for all 1500
+    studies. Checked fold 0, and it matches the header for every study there.
+
+    Args:
+        marksheet_path: ``clinical_information/marksheet.csv`` from the PI-CAI labels archive.
+
+    Returns:
+        dict[tuple[str, str], str]: ``(patient_id, study_id) -> YYYYMMDD``. Empty if there is no
+        marksheet.
+    """
+    if not marksheet_path.is_file():
+        return {}
+    with open(marksheet_path, newline="") as handle:
+        return {
+            (row["patient_id"], row["study_id"]): row["mri_date"].replace("-", "")
+            for row in csv.DictReader(handle)
+            if row.get("mri_date")
+        }
+
+
 def _age_in_years(patient_age: str) -> int | None:
     """PatientAge (0010,1010) as whole years — ``"073Y"`` → 73 — or ``None`` when absent or not in years."""
     if len(patient_age) == 4 and patient_age.endswith("Y") and patient_age[:3].isdigit():
@@ -108,19 +133,32 @@ def _age_in_years(patient_age: str) -> int | None:
 
 
 def write_dicom_series(
-    image: sitk.Image, out_dir: Path, patient_id: str, study_id: str, modality: str, center: str = ""
+    image: sitk.Image,
+    out_dir: Path,
+    patient_id: str,
+    study_id: str,
+    modality: str,
+    center: str = "",
+    marksheet_study_date: str = "",
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     # Read the source metadata *before* casting: sitk.Cast returns a new image with an empty
     # metadata dictionary, so anything read after this line would silently come back missing.
     source_tags = {tag: image.GetMetaData(tag) for tag in PRESERVED_SOURCE_TAGS if image.HasMetaDataKey(tag)}
-    # PI-CAI writes the acquisition date as YYYY-MM-DD; DICOM DA wants YYYYMMDD. Without this
-    # every study is stamped with the date it happened to be converted.
-    source_study_date = image.GetMetaData("0008|0020").replace("-", "") if image.HasMetaDataKey("0008|0020") else ""
+    # Use the date from the header, or the marksheet if the header has none. Never use today's date.
+    # PI-CAI writes it as YYYY-MM-DD; DICOM wants YYYYMMDD.
+    header_date = image.GetMetaData("0008|0020") if image.HasMetaDataKey("0008|0020") else ""
+    study_date = (header_date or marksheet_study_date).replace("-", "")
+    if not study_date:
+        raise ValueError(
+            f"{patient_id}_{study_id}_{modality}: no StudyDate (0008|0020) in the header and no mri_date "
+            "in the marksheet"
+        )
     image = sitk.Cast(image, sitk.sitkInt16)
 
-    modification_date = time.strftime("%Y%m%d")
-    modification_time = time.strftime("%H%M%S")
+    # Don't use the current time anywhere, so re-running gives the same files. The instance
+    # creation date/time are set to the study's, like datasets/utils/dicom_writer.py does.
+    study_time = STUDY_TIME
     if modality not in MODALITY_UID_COMPONENT:
         raise ValueError(f"Unrecognised modality {modality!r}; add it to MODALITY_UID_COMPONENT")
     modality_component = MODALITY_UID_COMPONENT[modality]
@@ -143,8 +181,8 @@ def write_dicom_series(
     series_tag_values = {
         "0008|0050": f"{patient_id}_{study_id}",
         "0008|0060": "MR",
-        "0008|0020": source_study_date or modification_date,
-        "0008|0030": modification_time,
+        "0008|0020": study_date,
+        "0008|0030": study_time,
         "0008|103e": MODALITY_DESCRIPTIONS.get(modality, modality.upper()),
         "0010|0020": patient_id,
         "0020|000d": study_uid,
@@ -168,9 +206,9 @@ def write_dicom_series(
     series_tag_values["0008|0090"] = referring_physician_name(patient_id, study_id)
     series_tag_values["0008|1030"] = STUDY_DESCRIPTION
     age_years = _age_in_years(source_tags.get("0010|1010", ""))
-    if source_study_date and age_years is not None:
-        study_date = time.strptime(source_study_date, "%Y%m%d")
-        dob = birth_date(date(study_date.tm_year, study_date.tm_mon, study_date.tm_mday), age_years, patient_id)
+    if age_years is not None:
+        parsed = time.strptime(study_date, "%Y%m%d")
+        dob = birth_date(date(parsed.tm_year, parsed.tm_mon, parsed.tm_mday), age_years, patient_id)
         series_tag_values["0010|0030"] = dob.strftime("%Y%m%d")
     if center:
         # ClinicalTrialSiteID, NOT InstitutionName (0008,0080). PI-CAI's `center` is a
@@ -197,19 +235,24 @@ def write_dicom_series(
         # in a series gets its own deterministic, collision-free UID.
         instance_entropy = [patient_id, study_id, modality_component, "instance", str(i)]
         image_slice.SetMetaData("0008|0018", generate_uid(prefix=UID_PREFIX, entropy_srcs=instance_entropy))
-        image_slice.SetMetaData("0008|0012", modification_date)
-        image_slice.SetMetaData("0008|0013", modification_time)
+        image_slice.SetMetaData("0008|0012", study_date)
+        image_slice.SetMetaData("0008|0013", study_time)
         image_slice.SetMetaData("0020|0013", str(i))
         image_slice.SetMetaData("0020|0032", "\\".join(str(v) for v in image.TransformIndexToPhysicalPoint((0, 0, i))))
         writer.SetFileName(str(out_dir / f"{i:04d}.dcm"))
         writer.Execute(image_slice)
 
 
-def _convert_one(mha_path: Path, output_dir: Path, centers: dict[tuple[str, str], str]) -> None:
+def _convert_one(
+    mha_path: Path, output_dir: Path, centers: dict[tuple[str, str], str], study_dates: dict[tuple[str, str], str]
+) -> None:
     patient_id, study_id, modality = mha_path.stem.rsplit("_", 2)
     series_dir = output_dir / patient_id / study_id / modality
     image = sitk.ReadImage(str(mha_path))
-    write_dicom_series(image, series_dir, patient_id, study_id, modality, centers.get((patient_id, study_id), ""))
+    study = (patient_id, study_id)
+    write_dicom_series(
+        image, series_dir, patient_id, study_id, modality, centers.get(study, ""), study_dates.get(study, "")
+    )
 
 
 def convert_archive(
@@ -221,7 +264,8 @@ def convert_archive(
         input_dir: The PI-CAI ``images/`` tree, ``<patient>/<patient>_<study>_<modality>.mha``.
         output_dir: Root of the DICOM tree, ``<patient>/<study>/<modality>/<i>.dcm``.
         workers: Process pool size.
-        marksheet_path: ``clinical_information/marksheet.csv`` (for ClinicalTrialSiteID).
+        marksheet_path: ``clinical_information/marksheet.csv`` (for ClinicalTrialSiteID, and for the
+            StudyDate when a scan's header has none).
         modalities: Keep only these modality suffixes (e.g. ``["t2w", "adc", "hbv"]``); ``None`` converts all.
     """
     mha_paths = sorted(input_dir.rglob("*.mha"))
@@ -231,8 +275,9 @@ def convert_archive(
             raise ValueError(f"Unrecognised modalities {unknown}; known: {sorted(MODALITY_UID_COMPONENT)}")
         mha_paths = [p for p in mha_paths if p.stem.rsplit("_", 1)[-1] in modalities]
     centers = load_centers(marksheet_path)
+    study_dates = load_study_dates(marksheet_path)
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        futures = [pool.submit(_convert_one, mha_path, output_dir, centers) for mha_path in mha_paths]
+        futures = [pool.submit(_convert_one, mha_path, output_dir, centers, study_dates) for mha_path in mha_paths]
         for future in tqdm(as_completed(futures), total=len(futures), desc="Converting to DICOM", unit="scan"):
             future.result()
 

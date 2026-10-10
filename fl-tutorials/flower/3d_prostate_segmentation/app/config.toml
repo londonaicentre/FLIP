@@ -8,8 +8,8 @@
 #
 # Tuning rationale:
 #  - learning-rate = 0.01, batch-size = 1: nnU-Net's defaults, as nnunet_train.py ran them. A batch
-#    is one VOLUME's worth of patches (the whole wrap-mode grid, ~18 patches of the plan's patch size
-#    per study), not one patch.
+#    is one volume's patches, not one patch. The [24, 384, 384] patch covers the whole 384x384
+#    crop, so a study is 1 patch, or 2 if it has more than 24 slices (about 12 GiB per step in bf16).
 #  - num-server-rounds = 20, local-epochs = 5: 100 passes per client; the polynomial LR decay is
 #    stretched over all of them (task.build_scheduler), so the schedule is the same whatever the
 #    rounds/epochs split. Start here and tune from the first platform run.

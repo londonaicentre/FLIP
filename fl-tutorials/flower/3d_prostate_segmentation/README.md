@@ -150,33 +150,40 @@ SimpleITK-converted tree out in the same shape, and `make plan PLAN_SITES=…/lo
 the same plan: the fingerprint reads only zooms, cropped shapes and intensities, none of which depend
 on the storage order.
 
-**Generate the plan once, pooled, and give every site the same file.** Planned per site over the
-full cohort (`t2w`, `--gpu-memory-GB 8`):
+**Make one plan from all sites together and give every site the same file.** Here is what you get
+when each site is planned on its own, on PI-CAI fold 0 (`t2w`, `--gpu-memory-GB 24`, the Makefile
+default):
 
-| site | studies | median spacing (d, h, w) | median shape | patch size |
-| ---- | ------- | ------------------------ | ------------ | ---------- |
-| ZGT  | 350 | `[3.0, 0.5, 0.5]`   | `[21, 383, 383]`  | `[14, 256, 224]` |
-| RUMC | 800 | `[3.6, 0.5, 0.5]`   | `[19, 383, 383]`  | `[12, 192, 192]` |
-| PCNN | 350 | `[3.0, 0.34, 0.34]` | `[27, 1024, 672]` | `[10, 352, 224]` |
-| all three pooled | 1500 | `[3.0, 0.5, 0.5]` | `[21, 383, 383]` | `[10, 192, 160]` |
+| site | studies | median spacing (d, h, w) | median shape | patch size | stages |
+| ---- | ------- | ------------------------ | ------------ | ---------- | ------ |
+| ZGT  | 76  | `[3.0, 0.5, 0.5]`   | `[21, 383, 383]`  | `[24, 384, 384]` | 7 |
+| RUMC | 155 | `[3.0, 0.5, 0.5]`   | `[19, 383, 383]`  | `[24, 384, 384]` | 7 |
+| PCNN | 69  | `[3.0, 0.34, 0.34]` | `[27, 1024, 672]` | `[16, 640, 448]` | 7 |
+| all three pooled | 300 | `[3.0, 0.5, 0.5]` | `[21, 383, 383]` | `[24, 384, 384]` | 7 |
 
-ZGT and RUMC land on the same topology, but PCNN — the highest in-plane resolution — keeps stage 3
-anisotropic (`kernel_sizes` `[1, 3, 3]` where the others have `[3, 3, 3]`), which changes the shape
-of the convolution weights: a client planned on PCNN cannot have its updates aggregated with one
-planned on ZGT. Which site is the odd one out shifts with how many studies each contributes, so it
-cannot be predicted from the centre alone. Pooling is a *planning-time* pooling of shape and
-intensity statistics only; no imaging leaves its site during training.
+ZGT and RUMC get the same network as the pooled plan. PCNN, which has the finest in-plane
+resolution, gets a different one (`[1, 3, 3]` kernels at stage 3 where the others have `[3, 3, 3]`,
+and different strides). Its weights have different shapes, so they can't be averaged with the other
+sites'. Pooling only combines shape and intensity statistics at planning time; no images leave a
+site during training.
 
-**Provenance of the committed plan** (`app/nnUNetPlans_segmentation.json`), regenerated 2026-09-23:
-the canonical dcm2niix route over the **full PI-CAI public cohort** — `download-prostate-data`
-(all five folds) → `convert-prostate-to-dicom` (t2w/adc/hbv) → `convert-prostate-to-nifti`
+We plan with a 24 GB budget so the patch covers the whole 384 × 384 crop. Each training step uses
+all the patches of one study (`batch-size = 1`), so a study is 1 patch, or 2 if it has more than 24
+slices. A step then needs about 12 GiB in bf16. A smaller budget gives a smaller patch, which needs
+a 2 × 2 grid to cover the crop and actually uses more memory (8–12 patches of `[16, 320, 320]` at
+8 GB, which no longer fits on a 24 GB GPU for the deepest studies).
+
+**Provenance of the committed plan** (`app/nnUNetPlans_segmentation.json`), regenerated 2026-10-05:
+the canonical dcm2niix route over **PI-CAI fold 0** — `download-prostate-data FOLDS=0` →
+`convert-prostate-to-dicom` (t2w/adc/hbv) → `convert-prostate-to-nifti`
 (`ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724`) → `partition-prostate-data` → `make plan`
-pooled over `sites/{ZGT,PCNN,RUMC}` = 350 + 350 + 800 = 1500 studies, `--modality t2w`,
-`--gpu-memory-GB 8`. Result: median spacing `[3.0, 0.5, 0.5]`, median shape `[21, 383, 383]`, patch
-`[10, 192, 160]`, six stages `[32, 64, 128, 256, 320, 320]`, kernels `[1,3,3] [1,3,3] [3,3,3] ×4`,
-strides `[1,1,1] [1,2,2] [1,2,2] [2,2,2] [1,2,2] [1,2,2]`, foreground mean/std 215.6 / 120.4 — the
-pooled row of the table above. As a DynUNet that is 30.2 M parameters with four auxiliary outputs.
-Record the route, cohort, budget and date here whenever the plan is regenerated.
+pooled over `sites/{ZGT,PCNN,RUMC}` = 76 + 69 + 155 = 300 studies, `--modality t2w`,
+`--gpu-memory-GB 24`. Result: median spacing
+`[3.0, 0.5, 0.5]`, median shape `[21, 383, 383]`, patch `[24, 384, 384]`, seven stages
+`[32, 64, 128, 256, 320, 320, 320]`, kernels `[1,3,3] [1,3,3] [3,3,3] ×5`, strides
+`[1,1,1] [1,2,2] [1,2,2] [2,2,2] [2,2,2] [1,2,2] [1,2,2]`, foreground mean/std 214.5 / 116.1 — the
+pooled row of the table above. As an `NnUNetDynUNet` that is 44.6 M parameters with five auxiliary
+outputs. Record the route, cohort, budget and date here whenever the plan is regenerated.
 
 ### From the plan to a MONAI network
 

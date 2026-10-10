@@ -26,16 +26,7 @@ import pandas as pd
 import torch
 from batchgenerators.utilities.file_and_folder_operations import load_json
 from monai.data import PatchIterd, list_data_collate
-from monai.transforms import (
-    Compose,
-    RandAxisFlipd,
-    RandCoarseDropoutd,
-    RandGaussianNoised,
-    RandGaussianSmoothd,
-    RandRotate90d,
-    RandShiftIntensityd,
-    RandZoomd,
-)
+from monai.transforms import Compose
 from monai.utils import set_determinism
 from nnunetv2.training.loss.deep_supervision import DeepSupervisionWrapper
 from nnunetv2.utilities.plans_handling.plans_handler import PlansManager
@@ -43,8 +34,8 @@ from torch.optim.lr_scheduler import PolynomialLR
 from torch.utils.data import ConcatDataset, DataLoader
 
 from app.dataset import PicaiDataset
-from app.preprocess import build_case_transform
-from app.task import DiceBCELoss
+from app.preprocess import build_augmentations, build_case_transform
+from app.task import DiceBCELoss, zxy_to_xyz
 from app.train_helpers import (
     init_logger,
     possible_patch_size,
@@ -63,45 +54,33 @@ seed_torch(seed=SEED)
 class EarlyStopping:
     """Early stops training if a monitored validation loss doesn't improve after a given patience.
 
-    Moved here from MambaX-Net's metrics/utils.py (flattened as metrics_utils.py), this script being
-    its only consumer. Upstream's save_checkpoint() came with it but was never called by anything —
-    it wrote a hardcoded "checkpoint.pt" into the CWD — so it is dropped here; train_loop does its
-    own checkpointing. `verbose` and `val_loss_min` are kept: verbose is still passed by the
-    constructor call below, and both stay part of the object's attribute surface.
+    Adapted from MambaX-Net's metrics/utils.py, without its save_checkpoint(); train_loop saves
+    its own checkpoints.
 
     Attributes:
         patience (float): Number of consecutive non-improving calls to wait before stopping.
-        verbose (bool): Retained for constructor compatibility; with save_checkpoint gone nothing
-            reads it.
         counter (int): Number of consecutive calls since the last improvement.
         best_score (Optional[float]): Best (lowest) validation loss seen so far.
         early_stop (bool): Set to True once patience is exceeded.
-        val_loss_min (float): Initialised to inf and never updated, save_checkpoint having been
-            its only writer.
     """
 
-    def __init__(self, patience: float = 7, verbose: bool = False) -> None:
+    def __init__(self, patience: float = 7) -> None:
         """
         Early stops the training if validation loss doesn't improve after a given patience.
 
         Args:
             patience (float): How long to wait after last time validation loss improved.
                             Default: 7
-            verbose (bool): If True, prints a message for each validation loss improvement.
-                            Default: False
         """
         self.patience = patience
-        self.verbose = verbose
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.inf
 
-    def __call__(self, val_loss: float, model: torch.nn.Module) -> None:
+    def __call__(self, val_loss: float) -> None:
         """
         Args:
             val_loss (float): Validation loss value
-            model (torch.nn.Module): Model to save. Currently not used
         """
         score = val_loss
 
@@ -174,48 +153,6 @@ def build_site_datasets(
     return ConcatDataset(train_sets), ConcatDataset(valid_sets)
 
 
-def build_augmentations() -> Compose:
-    """The training augmentations, with MambaX-Net's exact set and probabilities.
-
-    Applied to the WHOLE volume before patching (see train_loop), which is the order upstream's
-    PicSegDataset used. `Rand3DElasticd` is deliberately absent: this port had added it, it never
-    ran upstream, and it would change what the model sees.
-
-    Returns:
-        Compose: Operates on a `{"image", "mask"}` dict.
-    """
-    return Compose(
-        [
-            RandAxisFlipd(prob=0.1, keys=["image", "mask"]),
-            RandRotate90d(prob=0.2, keys=["image", "mask"]),
-            RandGaussianNoised(keys=["image"], prob=0.45),
-            RandShiftIntensityd(keys=["image"], offsets=(10, 20), prob=0.15),
-            RandZoomd(
-                prob=0.25,
-                min_zoom=0.8,
-                max_zoom=1.2,
-                keep_size=True,
-                keys=["image", "mask"],
-            ),
-            RandGaussianSmoothd(
-                keys=["image"],
-                sigma_x=(0.25, 1.5),
-                sigma_y=(0.25, 1.5),
-                sigma_z=(0.25, 1.5),
-                approx="erf",
-                prob=0.15,
-            ),
-            RandCoarseDropoutd(
-                keys=["image"],
-                holes=8,
-                max_holes=15,
-                spatial_size=(30, 30, 5),
-                prob=0.15,
-            ),
-        ]
-    )
-
-
 def train_loop():
     """Run the full nnU-Net-style training pipeline for PICAI/AS prostate segmentation.
 
@@ -286,7 +223,7 @@ def train_loop():
 
     median_size = plans_manager.original_median_shape_after_transp  # [::-1]
     crop_sz, patch_sz = possible_patch_size(median_size, suggested_patch_size)
-    spacing = plans_manager.original_median_spacing_after_transp[::-1]
+    spacing = zxy_to_xyz(plans_manager.original_median_spacing_after_transp)
 
     seed_torch(seed=config.get("seed", 42))
     set_determinism(seed=config.get("seed", 42))
@@ -324,12 +261,12 @@ def train_loop():
 
     LOGGER.info("Loading dataset...")
 
-    transforms = build_augmentations()
+    transforms = build_augmentations(img_std)
     if config.get("custom_patch", False):
         patch_size = patch_sz[-1]
         LOGGER.info(f"Using custom patch size {patch_size}")
     else:
-        patch_size = tuple(configuration_manager.patch_size[::-1])
+        patch_size = zxy_to_xyz(configuration_manager.patch_size)
         LOGGER.info(f"Using suggested patch size {patch_size}")
 
     preprocess_transform = build_case_transform(
@@ -384,7 +321,7 @@ def train_loop():
 
     scheduler = PolynomialLR(optimizer, total_iters=config.get("epochs", 1000), power=0.9)
 
-    early_stopping = EarlyStopping(patience=config.get("patience", 50), verbose=False)
+    early_stopping = EarlyStopping(patience=config.get("patience", 50))
 
     criterion = DiceBCELoss()
 
@@ -444,7 +381,7 @@ def train_loop():
         checkpoint_path = os.path.join(checkpoints_dir, f"{exp_name}_checkpoint.pt")
         torch.save(checkpoint, checkpoint_path)
 
-        early_stopping(avg_val_loss, model)
+        early_stopping(avg_val_loss)
         if early_stopping.early_stop:
             print("Early stopping")
             break

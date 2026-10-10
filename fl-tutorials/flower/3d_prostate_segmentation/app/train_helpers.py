@@ -48,12 +48,10 @@ from app.models import set_deep_supervision_enabled, split_deep_supervision_outp
 class AverageMeter:
     """Computes and stores the average and current value, ignoring NaN updates.
 
-    Moved here from MambaX-Net's metrics/utils.py (flattened as metrics_utils.py), train_seg being
-    its only consumer. monai.metrics.CumulativeAverage is NOT a drop-in: it has no NaN-skipping
-    branch and its aggregate() performs a distributed all-gather.
+    Adapted from MambaX-Net's metrics/utils.py. monai.metrics.CumulativeAverage isn't a drop-in
+    replacement: it doesn't skip NaNs and its aggregate() does a distributed all-gather.
 
-    reset() used to allocate on the GPU (upstream behaviour); the port keeps the running values on the
-    CPU so train_seg runs on whatever device the model is on, GPU or not.
+    The running values live on the CPU, so it works whatever device the model is on.
 
     Attributes:
         val (torch.Tensor): Most recently added value (a tensor at reset, a Python float after update() is called).
@@ -97,7 +95,7 @@ class AverageMeter:
         if self.count != 0:
             self.avg = (self.sum / self.count).detach().cpu().item()
         else:
-            self.avg = torch.tensor(0.0).detach().cpu().item()
+            self.avg = float("nan")
 
 
 def init_logger(log_file: str = "train.log") -> Logger:
@@ -145,18 +143,15 @@ def possible_patch_size(
     image_size: tuple[int, int, int],
     suggested_patch_sz: tuple[int, int, int],
     patch_sizes: tuple[int, ...] = (64, 128, 256, 512),
-) -> tuple[tuple[int, int, int], list[tuple[int, int, int]]]:
-    """Determines a padded crop size and the candidate patch sizes it fits
+) -> tuple[tuple[int, int], list[tuple[int, int, int]]]:
+    """Determines a padded in-plane crop size and the candidate patch sizes it fits
 
     image_size[1] (the in-plane dimension) is padded up to the next even
     number to give the crop's x/y extent, and each candidate in patch_sizes
     that evenly divides that extent is kept as a possible in-plane patch
     size, paired with the suggested z patch size.
 
-    Moved here from MambaX-Net's nifti_utilities.py, the only function of that module this
-    tutorial ever used — the rest was NIfTI load/save superseded by dataset.py's MONAI
-    LoadImaged/Orientationd chain. Callers take crop_sz[0:2] and patch_sz[-1]; crop_sz[2]
-    (suggested z + 8) is returned for interface parity and read by no one.
+    Adapted from MambaX-Net's nifti_utilities.py.
 
     Args:
         image_size (tuple[int, int, int]): size of the image
@@ -165,14 +160,12 @@ def possible_patch_size(
         patch_sizes (tuple[int, ...]): candidate in-plane patch sizes to test
 
     Returns:
-        crop_size (tuple[int, int, int]): padded (x, y, z) crop size, with
-            x/y rounded up to even and z equal to suggested z patch size + 8
+        crop_size (tuple[int, int]): padded (x, y) crop size, rounded up to even
         sizes (list[tuple[int, int, int]]): (patch_size, patch_size, z)
             tuples for each candidate patch size that evenly divides the
             padded x/y extent
     """
     x_remainder = image_size[1] % 2
-    _ = image_size[0] % 2
 
     suggested_z_patch = suggested_patch_sz[0]
 
@@ -184,7 +177,7 @@ def possible_patch_size(
     for patch_size in patch_sizes:
         if new_x % patch_size == 0:
             sizes.append((patch_size, patch_size, new_z))
-    return (new_x, new_y, suggested_z_patch + 8), sizes
+    return (new_x, new_y), sizes
 
 
 def train_seg(
@@ -228,7 +221,11 @@ def train_seg(
     Returns:
         Tuple[float, float, Dict[str, float]]: Average training loss, average
         validation loss, and a dict of averaged train/val Dice metrics
-        (e.g. "train/mean_dice_avg", "val/wp_dice_avg", ...).
+        (e.g. "train/mean_dice_avg", "val/wp_dice_avg", ...) plus "train/loss_nan_count" and
+        "val/loss_nan_count".
+
+    Raises:
+        RuntimeError: If the training loss or gradient norm is NaN/inf (raised before the step).
     """
 
     def _build_ds_targets(
@@ -332,9 +329,15 @@ def train_seg(
         train_dice_metric(logits.detach(), mask.detach())
         train_dice_metric_batch(logits.detach(), mask.detach())
 
+        # Stop instead of stepping on a NaN/inf loss. There is no GradScaler on the bf16 path to skip
+        # a bad step, and FedAvg would average the broken weights into the global model.
+        if not torch.isfinite(loss):
+            raise RuntimeError(f"non-finite training loss ({loss.item()}) — not stepping the optimizer")
         loss.backward()
         if conf.get("max_norm", 12) is not None:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), conf.get("max_norm", 12), conf.get("norm_type", 2))
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), conf.get("max_norm", 12), conf.get("norm_type", 2), error_if_nonfinite=True
+            )
         optimizer.step()
 
         if conf.get("scheduler", "Polynomial") == "OneCycle":
@@ -342,7 +345,7 @@ def train_seg(
 
         train_loss.update(loss.detach())
 
-        # Per-channel order is [whole_gland, pz, tz], matching dataset.py's combine_masks.
+        # Channels follow dataset.MASK_CHANNELS: wg, pz, tz.
         train_metric = train_dice_metric.aggregate()
         train_metric_wp, train_metric_pz, train_metric_tz = train_dice_metric_batch.aggregate().detach()
         train_dice_metric.reset()
@@ -431,6 +434,8 @@ def train_seg(
         "val/wp_dice_avg": val_wp_dice.avg,
         "val/pz_dice_avg": val_pz_dice.avg,
         "val/tz_dice_avg": val_tz_dice.avg,
+        "train/loss_nan_count": int(train_loss.nan_count),
+        "val/loss_nan_count": int(val_loss.nan_count),
     }
 
     return train_loss.avg, val_loss.avg, metrics
@@ -453,11 +458,6 @@ def _forward_with_tta_flag(
 
     With use_tta, runs 4 forward passes per fold (original + flip-D + flip-H + flip-W)
     and un-flips each output before averaging; without it, the single un-flipped view.
-
-    The no-TTA case used to be a separate _plain_ensemble_forward. It was exactly this
-    loop over the one `None` view — verified identical over every branch (1/2-channel
-    input, 1-3 folds, dual_scan, deep_supervision, and the `mask`-in-signature path) —
-    so the two were merged rather than kept in sync by hand.
     """
     all_logits: list[torch.Tensor] = []
     tta_views = ([None] + _TTA_FLIP_DIMS) if use_tta else [None]
@@ -921,7 +921,7 @@ def inference_func(
         for k, v_list in region_batch.items():
             _region_accum[k].extend(v_list)
 
-    # One float per subject, per zone; channel order [whole_gland, pz, tz].
+    # One value per subject and zone. Channels follow dataset.MASK_CHANNELS: wg, pz, tz.
     test_metric = test_dice_metric.aggregate().detach().cpu().numpy().flatten().tolist()
     test_metric_wp, test_metric_pz, test_metric_tz = test_dice_metric_batch.aggregate().detach().cpu().T.tolist()
     metric_wp_hdf, metric_pz_hdf, metric_tz_hdf = test_hdf_metric_batch.aggregate().detach().cpu().T.tolist()

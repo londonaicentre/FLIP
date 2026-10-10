@@ -168,6 +168,19 @@ direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke 
 the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
 shared `fl-tutorials/datasets/spleen/` tree either way.)
 
+**Prostate.** `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` does the same for the PI-CAI
+tutorial (`fl-tutorials/flower/3d_prostate_segmentation`, Flower only). The cohort is `prostate_project`
+(`make -C trust seed-trusts PROJECTS=prostate_project`), and enrichment uploads two masks per study with
+`fl-tutorials/datasets/prostate/upload_prostate_labels_to_xnat.py`: the whole gland as `label_*` and the
+PZ/TZ zones as `zonal_*`. No mapping is fetched, because the accession number is the label file's name.
+Prereqs: `make -C fl-tutorials download-prostate-data FOLDS=0` (for the labels) and `XNAT_USER`/`XNAT_PASS`.
+Standalone, outside the smoke:
+
+```bash
+make -C fl-tutorials upload-prostate-labels FLIP_PROJECT_ID=<uuid> \
+  XNAT_URLS="http://127.0.0.1:8105 http://127.0.0.1:8107" DRY_RUN=1   # then drop DRY_RUN
+```
+
 Enrichment must land **after** the pull and after DICOM→NIfTI conversion; the hook's position guarantees that.
 The uploader derives each target filename from the converted `input_*.nii.gz`, so with no `NIFTI` resource it
 skips every scan (reported as *skipped (no image in resource)*) — i.e. a broken XNAT Container Service surfaces

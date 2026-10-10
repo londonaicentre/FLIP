@@ -32,10 +32,13 @@ import requests
 from tqdm import tqdm
 
 ZENODO_FOLD_URL = "https://zenodo.org/records/6624726/files/picai_public_images_fold{fold}.zip?download=1"
-LABELS_URL = "https://github.com/DIAGNijmegen/picai_labels/archive/refs/heads/main.zip"
-LABELS_SUBDIR = "picai_labels-main/anatomical_delineations/whole_gland/AI/Guerbet23"
-ZONAL_LABELS_SUBDIR = "picai_labels-main/anatomical_delineations/zonal_pz_tz/AI/Yuan23"
-CLINICAL_INFO_FILE = "picai_labels-main/clinical_information/marksheet.csv"
+# Pin picai_labels to one commit instead of the main branch, so the labels remain consistent and reproducible.
+PICAI_LABELS_SHA = "ce4a4723d7c46d882a6cbaacb40ed6c4be86282f"  # main on 2026-07-13
+LABELS_URL = f"https://github.com/DIAGNijmegen/picai_labels/archive/{PICAI_LABELS_SHA}.zip"
+LABELS_ROOT = f"picai_labels-{PICAI_LABELS_SHA}"  # the archive's top-level folder
+LABELS_SUBDIR = f"{LABELS_ROOT}/anatomical_delineations/whole_gland/AI/Guerbet23"
+ZONAL_LABELS_SUBDIR = f"{LABELS_ROOT}/anatomical_delineations/zonal_pz_tz/AI/Yuan23"
+CLINICAL_INFO_FILE = f"{LABELS_ROOT}/clinical_information/marksheet.csv"
 
 
 CONNECT_TIMEOUT = 30
@@ -93,8 +96,12 @@ def download(url: str, dest: Path) -> None:
     """Fetch `url` to `dest`, resuming a previous partial transfer and retrying a stalled one.
 
     The bytes land in `<dest>.part` and are renamed into place only once the whole file is
-    there, so a `dest` that exists is always complete.
+    there, so if `dest` exists it is complete and we skip the download. This also means that if
+    unzipping a fold was interrupted, a re-run unzips it again instead of downloading ~5 GB again.
     """
+    if dest.exists():
+        print(f"{dest.name} already downloaded, skipping the transfer.", flush=True)
+        return
     part = dest.with_name(dest.name + ".part")
     session = requests.Session()
     for attempt in range(1, ATTEMPTS + 1):
