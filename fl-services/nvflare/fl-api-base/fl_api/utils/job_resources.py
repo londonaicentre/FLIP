@@ -26,11 +26,13 @@ Which statement applies, first match wins:
 3. the fl-api default, ``JOB_RESOURCE_SPEC_NUM_GPUS`` / ``JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB``.
 """
 
+from collections.abc import Callable
 from enum import StrEnum
 from typing import Any
 
 from pydantic import ValidationError
 
+from fl_api.config import get_settings
 from fl_api.utils.schemas import JobResources
 
 # config.json RESOURCE_SPEC key -> JobResources field. NVFLARE's names, so a researcher writes what
@@ -72,15 +74,42 @@ def parse_resource_spec(raw: Any) -> JobResources:
         raise ValueError(f"RESOURCE_SPEC is invalid: {problems}") from e
 
 
+def default_job_resources() -> JobResources:
+    """The request for a job that declares none: ``JOB_RESOURCE_SPEC_NUM_GPUS`` / ``…_MEM_PER_GPU_IN_GIB``.
+
+    The fl-api checks it at start-up (``create_fl_session``), so a value the request contract refuses
+    stops the service instead of failing every upload that falls back to it.
+
+    Returns:
+        JobResources: the default request.
+
+    Raises:
+        ValueError: if the two settings do not make a valid request, e.g. memory with no GPUs (deleting only
+            ``JOB_RESOURCE_SPEC_NUM_GPUS`` does that) or a value above the sanity caps.
+    """
+    settings = get_settings()
+    try:
+        return JobResources(
+            num_gpus=settings.JOB_RESOURCE_SPEC_NUM_GPUS,
+            mem_per_gpu_gib=settings.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB,
+        )
+    except ValidationError as e:
+        raise ValueError(
+            f"JOB_RESOURCE_SPEC_NUM_GPUS={settings.JOB_RESOURCE_SPEC_NUM_GPUS} and "
+            f"JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB={settings.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB} are not a valid "
+            f"default GPU request: {e.errors()[0]['msg']}. Set both, or set both to 0."
+        ) from e
+
+
 def resolve_job_resources(
-    override: JobResources | None, declared: JobResources | None, default: JobResources
+    override: JobResources | None, declared: JobResources | None, default: Callable[[], JobResources]
 ) -> tuple[JobResources, ResourceSource]:
     """Pick the request that applies to a job.
 
     Args:
         override (JobResources | None): what the researcher set at submission, if anything.
         declared (JobResources | None): the job's ``config.json`` ``RESOURCE_SPEC``, if any.
-        default (JobResources): the fl-api default.
+        default (Callable[[], JobResources]): the fl-api default, read only when neither of the others is set.
 
     Returns:
         tuple[JobResources, ResourceSource]: the request and where it came from.
@@ -89,7 +118,7 @@ def resolve_job_resources(
         return override, ResourceSource.SUBMISSION
     if declared is not None:
         return declared, ResourceSource.CONFIG
-    return default, ResourceSource.DEFAULT
+    return default(), ResourceSource.DEFAULT
 
 
 def nvflare_resource_spec(resources: JobResources, sites: list[str]) -> dict[str, dict[str, int]]:

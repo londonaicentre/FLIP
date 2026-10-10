@@ -466,7 +466,7 @@ def test_upload_app_raises_on_http_error_response(mock_requests_get_success, moc
 # ── which GPU request reaches meta.json (FLIP#70) ───────────────────────────────────
 
 
-def _upload_with(request, configs_by_app, monkeypatch, default_gpus=0):
+def _upload_with(request, configs_by_app, monkeypatch, default_gpus=0, default_mem=0):
     """Run upload_application with each app folder's config.json given by name; return configure_meta's call."""
     import fl_api.utils.upload as upload_module
 
@@ -475,8 +475,8 @@ def _upload_with(request, configs_by_app, monkeypatch, default_gpus=0):
         monkeypatch.setattr(upload_module, name, MagicMock())
     configure_meta = MagicMock()
     monkeypatch.setattr(upload_module, "configure_meta", configure_meta)
-    settings = MagicMock(JOB_RESOURCE_SPEC_NUM_GPUS=default_gpus, JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=0)
-    monkeypatch.setattr(upload_module, "get_settings", lambda: settings)
+    settings = MagicMock(JOB_RESOURCE_SPEC_NUM_GPUS=default_gpus, JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=default_mem)
+    monkeypatch.setattr("fl_api.utils.job_resources.get_settings", lambda: settings)
     response = upload_application(TEST_MODEL_ID, request, TMP_PATH_UPLOAD_DIR)
     return configure_meta.call_args, response
 
@@ -522,3 +522,15 @@ def test_app_folders_that_disagree_on_the_request_are_refused(
     }
     with pytest.raises(ValueError, match="RESOURCE_SPEC"):
         _upload_with(mock_upload_multiple_apps_request, configs, monkeypatch)
+
+
+def test_a_run_override_still_uploads_when_the_default_is_misconfigured(
+    mock_requests_get_success, mock_upload_correct_request, monkeypatch
+):
+    """The default is read only when nothing else sets the request, so a bad one cannot block other jobs."""
+    request = mock_upload_correct_request.model_copy(update={"resources": JobResources(num_gpus=1)})
+
+    call, response = _upload_with(request, {"app": {}}, monkeypatch, default_gpus=0, default_mem=7)
+
+    assert call.args[3] == JobResources(num_gpus=1)
+    assert response["resources_source"] == "submission"

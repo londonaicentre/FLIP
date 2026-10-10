@@ -13,6 +13,7 @@
 
 from fl_api.config import get_settings
 from fl_api.utils.flip_session import FLIP_Session
+from fl_api.utils.job_resources import default_job_resources
 from fl_api.utils.logger import logger
 
 
@@ -29,10 +30,9 @@ def create_fl_session() -> FLIP_Session:
     debug = get_settings().LOG_LEVEL == "DEBUG"
 
     logger.info(f"Admin directory set to: {admin_dir}")
-    logger.info(
-        f"GPU request for a job that declares none: {get_settings().JOB_RESOURCE_SPEC_NUM_GPUS} GPUs, "
-        f"{get_settings().JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB} GiB per GPU"
-    )
+    # Refuse to start on a default the request contract rejects: every job that falls back to it would fail.
+    default_resources = default_job_resources()
+    logger.info(f"GPU request for a job that declares none: {default_resources.model_dump()}")
     logger.info(f"Using LOG_LEVEL: {get_settings().LOG_LEVEL}")
 
     # Set up the session

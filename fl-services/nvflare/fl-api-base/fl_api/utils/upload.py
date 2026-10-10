@@ -19,7 +19,6 @@ from urllib.parse import urlparse
 import requests
 from fastapi import HTTPException
 
-from fl_api.config import get_settings
 from fl_api.utils.constants import (
     META,
     SERVER_CHECKPOINT_ROOT_DEFAULT,
@@ -27,7 +26,7 @@ from fl_api.utils.constants import (
     SERVER_CHECKPOINTS_PREFIX,
 )
 from fl_api.utils.io_utils import read_config
-from fl_api.utils.job_resources import resolve_job_resources
+from fl_api.utils.job_resources import default_job_resources, resolve_job_resources
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
     configure_client,
@@ -315,10 +314,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     resources, resources_source = resolve_job_resources(
         override=body.resources,
         declared=_declared_resources(configs),
-        default=JobResources(
-            num_gpus=get_settings().JOB_RESOURCE_SPEC_NUM_GPUS,
-            mem_per_gpu_gib=get_settings().JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB,
-        ),
+        default=default_job_resources,
     )
     logger.info(f"GPU request per site: {resources.model_dump()} (from {resources_source})")
 

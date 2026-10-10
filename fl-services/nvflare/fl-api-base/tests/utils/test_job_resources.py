@@ -16,6 +16,8 @@ The job states its need; the site's GPUResourceManager states what it has; NVFLA
 decides. Nothing here ever lowers a request to fit a site.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 from nvflare.app_common.resource_managers.gpu_resource_manager import GPUResourceManager
 from nvflare.private.fed.server.job_meta_validator import JobMetaValidator
@@ -24,6 +26,7 @@ from pydantic import ValidationError
 
 from fl_api.utils.job_resources import (
     ResourceSource,
+    default_job_resources,
     nvflare_resource_spec,
     parse_resource_spec,
     resolve_job_resources,
@@ -104,7 +107,7 @@ def test_a_malformed_resource_spec_is_an_error_naming_the_key(raw):
 
 
 def test_with_nothing_declared_the_fl_api_default_applies():
-    resources, source = resolve_job_resources(override=None, declared=None, default=JobResources(num_gpus=0))
+    resources, source = resolve_job_resources(override=None, declared=None, default=lambda: JobResources(num_gpus=0))
 
     assert resources == JobResources(num_gpus=0)
     assert source is ResourceSource.DEFAULT
@@ -113,7 +116,9 @@ def test_with_nothing_declared_the_fl_api_default_applies():
 def test_the_jobs_config_json_beats_the_default():
     declared = JobResources(num_gpus=1, mem_per_gpu_gib=7)
 
-    resources, source = resolve_job_resources(override=None, declared=declared, default=JobResources(num_gpus=0))
+    resources, source = resolve_job_resources(
+        override=None, declared=declared, default=lambda: JobResources(num_gpus=0)
+    )
 
     assert resources == declared
     assert source is ResourceSource.CONFIG
@@ -137,6 +142,38 @@ def test_an_override_of_zero_gpus_is_honoured_not_mistaken_for_no_override():
 
     assert resources.num_gpus == 0
     assert source is ResourceSource.SUBMISSION
+
+
+def test_the_default_is_never_read_when_the_job_or_the_run_sets_a_request():
+    """A misconfigured default must not break a job that does not use it."""
+
+    def broken_default():
+        raise AssertionError("the default was read")
+
+    assert resolve_job_resources(JobResources(num_gpus=1), None, broken_default)[0].num_gpus == 1
+    assert resolve_job_resources(None, JobResources(num_gpus=2), broken_default)[0].num_gpus == 2
+
+
+# ── the fl-api default ──────────────────────────────────────────────────────────────
+
+
+def _settings(num_gpus, mem):
+    return MagicMock(JOB_RESOURCE_SPEC_NUM_GPUS=num_gpus, JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=mem)
+
+
+def test_the_default_comes_from_the_fl_api_settings(monkeypatch):
+    monkeypatch.setattr("fl_api.utils.job_resources.get_settings", lambda: _settings(1, 7))
+
+    assert default_job_resources() == JobResources(num_gpus=1, mem_per_gpu_gib=7)
+
+
+@pytest.mark.parametrize(("num_gpus", "mem"), [(0, 7), (MAX_GPUS_PER_SITE + 1, 0), (1, MAX_MEM_PER_GPU_GIB + 1)])
+def test_a_default_the_request_contract_refuses_names_the_settings(monkeypatch, num_gpus, mem):
+    """Deleting only JOB_RESOURCE_SPEC_NUM_GPUS leaves memory without a GPU, for one."""
+    monkeypatch.setattr("fl_api.utils.job_resources.get_settings", lambda: _settings(num_gpus, mem))
+
+    with pytest.raises(ValueError, match="JOB_RESOURCE_SPEC_NUM_GPUS"):
+        default_job_resources()
 
 
 # ── meta.json resource_spec ─────────────────────────────────────────────────────────
