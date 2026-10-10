@@ -1,5 +1,6 @@
 {
   "job_type": "standard",
+  "RESOURCE_SPEC": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7},
   "SERVER_CHECKPOINT": "pretrained_weights.pt",
   "AGGREGATE_ONLY_REGEX": "omni_heads",
   "GLOBAL_ROUNDS": 50,
