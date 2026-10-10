@@ -119,6 +119,7 @@ BASE_ENV = {
     # sleep stubbed out, a test that makes that route fail would spin at full speed for the default
     # 900s budget rather than failing; cap it so the harness can never hang on one.
     "XNAT_PLUGIN_READINESS_TIMEOUT_SECONDS": "5",
+    "XNAT_XDAT_READINESS_TIMEOUT_SECONDS": "1",
     "XNAT_PLUGIN_READINESS_POLL_SECONDS": "0",
 }
 

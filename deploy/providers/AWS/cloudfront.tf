@@ -382,25 +382,55 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
 # drop ALL public access — CloudFront reads it via OAC, exactly like the
 # flip-ui bucket.
 #
-# The bucket is deliberately not Terraform-managed: its lifecycle is manual
-# (bundles are staged by hand per demo release) and it must survive
-# `make destroy`. Terraform manages the access edges only: the
-# public-access block, the OAC-scoped bucket policy, and the CloudFront
-# origin + /ark_demo/assets/* behavior on the main distribution.
-# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty.
+# Two shapes, by estate (FLIP#1199):
+#
+#   * LEGACY (self-contained account) — the bucket is NOT Terraform-managed.
+#     It predates this stack, its lifecycle is manual (bundles are staged by
+#     hand per demo release) and it must survive `make destroy`, so it is
+#     adopted through a `data` lookup and Terraform manages only the access
+#     edges: the public-access block, the OAC-scoped bucket policy, and the
+#     CloudFront origin + /ark_demo/assets/* behavior on the in-account
+#     distribution.
+#
+#   * LZA (platform-managed estate) — there is no bucket to adopt and no
+#     in-account CloudFront to attach an origin to (the workload distribution
+#     is gated off; the web edge lives in the networking account). Terraform
+#     therefore CREATES the bucket through the same `flip_s3_bucket` module as
+#     every other FLIP bucket (`module.flip_demo_assets_bucket`, services.tf)
+#     — versioned, access-logged, prevent_destroy, public access blocked —
+#     and grants `s3:GetObject` on `ark_demo/assets/*` to the edge
+#     distribution via cross-account OAC, exactly as the flip-ui bucket does.
+#     The OAC, the response-headers policies and the cache behaviours are the
+#     edge stack's to declare (aicentre-lza-iac); none of them can be created
+#     in this account, so all five resources below stay legacy-only there.
+#
+# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty in both
+# shapes. Note the asymmetry when it is cleared: on legacy that silently
+# removes four access-edge resources; on LZA it would propose destroying a
+# managed bucket, which `prevent_destroy` turns into a loud apply failure.
+#
+# No live estate runs the legacy shape any more — aws-prod was repointed at
+# LZA prod on 2026-10-06 and the legacy prod account (which held
+# flipprod-demo-assets) was closed the same day. The branch stays because
+# lza_managed_network = false remains the self-contained shape a standalone
+# account gets; collapsing the two onto flip_s3_bucket is a follow-up.
 ############################
 
 locals {
   demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""
+  # The bucket already exists and is adopted, not created: legacy only.
+  demo_assets_external = local.demo_assets_enabled && !var.lza_managed_network
+  # Terraform creates and owns the bucket: LZA only. Consumed by services.tf.
+  demo_assets_managed = local.demo_assets_enabled && var.lza_managed_network
 }
 
 data "aws_s3_bucket" "demo_assets" {
-  count  = local.demo_assets_enabled ? 1 : 0
+  count  = local.demo_assets_external ? 1 : 0
   bucket = var.DEMO_ASSETS_BUCKET_NAME
 }
 
 resource "aws_cloudfront_origin_access_control" "demo_assets" {
-  count                             = local.demo_assets_enabled ? 1 : 0
+  count                             = local.demo_assets_external ? 1 : 0
   name                              = "demo-assets-${var.flip_alb_subdomain}"
   description                       = "OAC for the Ark+ demo assets S3 bucket"
   origin_access_control_origin_type = "s3"
@@ -412,7 +442,7 @@ resource "aws_cloudfront_origin_access_control" "demo_assets" {
 # any more — a leftover public-read policy (how the demo assets were served
 # before this behavior existed) is replaced by aws_s3_bucket_policy below.
 resource "aws_s3_bucket_public_access_block" "demo_assets" {
-  count                   = local.demo_assets_enabled ? 1 : 0
+  count                   = local.demo_assets_external ? 1 : 0
   bucket                  = data.aws_s3_bucket.demo_assets[0].id
   block_public_acls       = true
   block_public_policy     = true
@@ -425,7 +455,7 @@ resource "aws_s3_bucket_public_access_block" "demo_assets" {
 # anything else staged in the bucket stays private. No s3:ListBucket: a
 # missing key returns 403 instead of an XML key listing.
 resource "aws_s3_bucket_policy" "demo_assets" {
-  count  = local.demo_assets_enabled ? 1 : 0
+  count  = local.demo_assets_external ? 1 : 0
   bucket = data.aws_s3_bucket.demo_assets[0].id
 
   policy = jsonencode({
@@ -437,8 +467,12 @@ resource "aws_s3_bucket_policy" "demo_assets" {
       Action    = "s3:GetObject"
       Resource  = "${data.aws_s3_bucket.demo_assets[0].arn}/ark_demo/assets/*"
       Condition = {
+        # Legacy-only resource (see demo_assets_external above), so this is the
+        # in-account distribution unconditionally. The LZA equivalent — the
+        # cross-account grant to the edge distribution — is carried by
+        # module.flip_demo_assets_bucket's own policy in services.tf.
         StringEquals = {
-          "AWS:SourceArn" = var.lza_managed_network ? var.lza_web_edge_distribution_arn : aws_cloudfront_distribution.flip_ui[0].arn
+          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui[0].arn
         }
       }
     }]
@@ -866,7 +900,7 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
 # Do not relax it to match; tests/test_csp_enforcing.py pins the difference.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
-  count   = local.demo_assets_enabled ? 1 : 0
+  count   = local.demo_assets_external ? 1 : 0
   name    = "flip-ui-ark-demo-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo SPA at ${var.flip_alb_subdomain}/ark_demo/"
 
@@ -924,7 +958,7 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
 # rendered as a document on the same origin as the real app.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_assets" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
-  count   = local.demo_assets_enabled ? 1 : 0
+  count   = local.demo_assets_external ? 1 : 0
   name    = "flip-ui-ark-demo-assets-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo download bundles at ${var.flip_alb_subdomain}/ark_demo/assets/"
 
@@ -1037,7 +1071,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # Ark+ demo download assets (see the demo-assets section above). Present
   # only when DEMO_ASSETS_BUCKET_NAME is set.
   dynamic "origin" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       domain_name              = data.aws_s3_bucket.demo_assets[0].bucket_regional_domain_name
       origin_id                = "s3-demo-assets"
@@ -1084,7 +1118,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # every demo-assets download would be swallowed by the SPA behavior and
   # served (wrongly) from the flip-ui bucket instead of the assets bucket.
   dynamic "ordered_cache_behavior" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       path_pattern               = "/ark_demo/assets/*"
       target_origin_id           = "s3-demo-assets"
@@ -1104,7 +1138,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # prefix-aware spa_rewrite function for deep-link fallback. Must be
   # listed after "/ark_demo/assets/*" — see the precedence note above.
   dynamic "ordered_cache_behavior" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       path_pattern               = "/ark_demo/*"
       target_origin_id           = "s3-flip-ui"
