@@ -40,10 +40,11 @@ dependencies = [
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
-# On-platform, Flower's runtime dependency installer runs `uv sync` against this
-# file on every app launch (ServerApp on the SuperLink, ClientApp on each
-# SuperNode) and prepends the resulting per-run env to sys.path. The [tool.uv]
-# tables below steer that resolution (FLIP#767):
+# On-platform, nothing installs these at run time (FLIP#1418): the ServerApp and
+# the ClientApps run in the FL image's environment, which already carries every
+# dependency below. The [tool.uv] tables below steer any `uv sync` that does run
+# against this file (a local `flwr run`, or Flower's per-run install if it is ever
+# re-enabled) (FLIP#767):
 #   * flip-utils installs from the source baked into the FL images at
 #     /opt/flip-utils — never from PyPI — so FL runs always execute the in-repo
 #     flip-utils. To test unpublished flip-utils changes, rebuild the FL images

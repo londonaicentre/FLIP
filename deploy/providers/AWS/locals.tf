@@ -219,13 +219,13 @@ locals {
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
-      }, var.lza_managed_network ? {
-      # Sealed egress (FLIP#749): the SuperLink's per-run `uv sync` cannot reach any
-      # package index, so the ServerApp runs in the image's preinstalled environment
-      # instead — Flower's documented restricted-network mode (exit-code 608 docs).
+      # The ServerApp runs in the image's preinstalled environment on every estate:
+      # Flower's documented restricted-network mode (exit-code 608 docs). Sealed egress
+      # (FLIP#749) leaves the per-run `uv sync` no package index to reach, and elsewhere a
+      # cold sync outlives Flower's task heartbeat, so the run never starts (FLIP#1418).
       # Researcher package additions ship via image rebuild, not pyproject.
       FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
-    } : {})
+    })
     # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
     # addresses use the Cloud Map name — the provisioned server cert must
     # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).
