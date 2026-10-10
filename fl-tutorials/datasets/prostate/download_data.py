@@ -38,7 +38,7 @@ from tqdm import tqdm
 
 ZENODO_FOLD_URL = "https://zenodo.org/records/6624726/files/picai_public_images_fold{fold}.zip?download=1"
 # Pin picai_labels to one commit instead of the main branch, so the labels remain consistent and reproducible.
-PICAI_LABELS_SHA = "ce4a4723d7c46d882a6cbaacb40ed6c4be86282f"  # main on 2026-07-13
+PICAI_LABELS_SHA = "ce4a4723d7c46d882a6cbaacb40ed6c4be86282f"  # main on 2026-07-13  # pragma: allowlist secret
 LABELS_URL = f"https://github.com/DIAGNijmegen/picai_labels/archive/{PICAI_LABELS_SHA}.zip"
 LABELS_ROOT = f"picai_labels-{PICAI_LABELS_SHA}"  # the archive's top-level folder
 LABELS_SUBDIR = f"{LABELS_ROOT}/anatomical_delineations/whole_gland/AI/Guerbet23"
