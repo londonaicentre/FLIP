@@ -42,3 +42,23 @@ def _pod_specs() -> dict[str, dict]:
 @pytest.mark.parametrize(("component", "gid"), [("grafana", 472), ("loki", 10001)])
 def test_the_volume_is_handed_to_the_images_user(component, gid):
     assert _pod_specs()[component].get("securityContext", {}).get("fsGroup") == gid
+
+
+XNAT_DATA_SUBDIRS = ("archive", "build", "cache", "prearchive", "home/logs")
+
+
+def test_xnat_web_gets_its_data_dirs_before_tomcat_starts():
+    """xnat-web mounts five subPaths of its volume; Kubernetes creates a missing subPath root-owned
+    0755, and XNAT runs as uid 1001, so it could write neither prearchive nor archive and aborted
+    every C-STORE ("Peer aborted Association") on AKS. kind's world-writable volumes hid it."""
+    spec = _pod_specs()["xnat-web"]
+    init = next(c for c in spec["initContainers"] if c["name"] == "prepare-data-dirs")
+    assert init["securityContext"]["runAsUser"] == 0
+    assert "CHOWN" in init["securityContext"]["capabilities"]["add"]
+    script = init["command"][-1]
+    for sub in XNAT_DATA_SUBDIRS:
+        assert f"/data/xnat/{sub}" in script, sub
+    assert "chown 1001:1001" in script
+    assert {m["name"] for m in init["volumeMounts"]} == {"data"}
+    names = [c["name"] for c in spec["initContainers"]]
+    assert names.index("prepare-data-dirs") == 0, "first, before anything writes there"
