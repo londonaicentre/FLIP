@@ -11,7 +11,6 @@
 #
 
 
-import ast
 from typing import Any
 
 from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
@@ -193,35 +192,3 @@ class FLIP_Session(Session):
             List[ClientInfoModel]: a list of ClientInfoModel objects containing name, last connect time, and status.
         """
         return super().get_connected_client_list()
-
-    def site_gpu_counts(self, sites: list[str]) -> dict[str, int]:
-        """
-        How many GPUs each client's resource manager reports (FLIP#1390).
-
-        The job's resource_spec must not ask a site for GPUs it does not have: a CPU-only trust asked
-        for one leaves the job unschedulable ("not enough sites have enough resources"). NVFLARE's
-        GPUResourceManager reports ``{"resources": [one entry per GPU], ...}``, which the server
-        hands back as the ``str`` of that dict.
-
-        Args:
-            sites (list[str]): the client names in the job.
-
-        Returns:
-            dict[str, int]: GPU count per site that could be read. A site that did not answer, or
-            runs a resource manager that tracks no GPUs, is left out, so the caller keeps its
-            default for it; an unreachable server yields an empty dict.
-        """
-        try:
-            reported = self.report_resources("client", sites)
-        except Exception as e:  # noqa: BLE001 - the hub-wide default still applies
-            logger.warning(f"Could not read the clients' resources, so every site keeps the default GPU request: {e}")
-            return {}
-        counts: dict[str, int] = {}
-        for site, value in reported.items():
-            try:
-                resources = ast.literal_eval(value) if isinstance(value, str) else value
-            except (ValueError, SyntaxError):
-                continue
-            if isinstance(resources, dict) and isinstance(resources.get("resources"), list):
-                counts[site] = len(resources["resources"])
-        return counts

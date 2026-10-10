@@ -550,28 +550,3 @@ def test_collect_info_commands_reach_the_transport(session, call_session, expect
     # keywords are what this test is pinning, so only assert the payload where one applies.
     if isinstance(result, dict):
         assert result == {"server": {"ServerRunner": "some error"}}
-
-
-# ── site_gpu_counts: what each client's GPU resource manager reports (FLIP#1390) ─────────────
-
-
-def test_site_gpu_counts_counts_each_reported_gpu(session):
-    # Session.report_resources returns the server's table as {site: str(resources dict)}.
-    reported = {
-        "Trust_1": "{'resources': [{'id': 0, 'memory': 8}, {'id': 1, 'memory': 8}], 'reserved_resources': {}}",
-        "Trust_3": "{'resources': [], 'reserved_resources': {}}",
-    }
-    with patch.object(Session, "report_resources", return_value=reported) as report:
-        assert session.site_gpu_counts(["Trust_1", "Trust_3"]) == {"Trust_1": 2, "Trust_3": 0}
-    report.assert_called_once_with("client", ["Trust_1", "Trust_3"])
-
-
-def test_site_gpu_counts_leaves_out_a_site_it_cannot_read(session):
-    reported = {"Trust_1": "No replies", "Trust_2": "{}", "Trust_3": "{'resources': [{'id': 0}]}"}
-    with patch.object(Session, "report_resources", return_value=reported):
-        assert session.site_gpu_counts(["Trust_1", "Trust_2", "Trust_3"]) == {"Trust_3": 1}
-
-
-def test_site_gpu_counts_is_empty_when_the_server_cannot_answer(session):
-    with patch.object(Session, "report_resources", side_effect=InternalError("no responses from clients")):
-        assert session.site_gpu_counts(["Trust_1"]) == {}

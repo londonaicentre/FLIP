@@ -928,31 +928,6 @@ class TestConfigureMeta:
         assert meta_config["mandatory_clients"] == MOCK_APP_CLIENTS
         assert meta_config["custom_props"] == {"model_id": MOCK_APP_NAME}
 
-    def test_a_site_without_gpus_is_asked_for_none(self, mock_write_config, mock_get_settings):
-        # FLIP#1390: a CPU-only trust advertises 0 GPUs. Asking it for the hub-wide count left the job
-        # unschedulable ("not enough sites have enough resources"), so it is asked for exactly none.
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 1
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 7
-
-        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS, site_gpus={"app-trust1": 0, "app-trust2": 2})
-
-        assert mock_write_config.call_args.args[0]["resource_spec"] == {
-            "app-trust1": {"num_of_gpus": 0, "mem_per_gpu_in_GiB": 0},
-            "app-trust2": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 7},
-        }
-
-    def test_a_site_is_never_asked_for_more_gpus_than_it_has(self, mock_write_config, mock_get_settings):
-        # A site whose resources could not be read keeps the hub-wide request, as before.
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 2
-        mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
-
-        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS, site_gpus={"app-trust1": 1})
-
-        assert mock_write_config.call_args.args[0]["resource_spec"] == {
-            "app-trust1": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 16},
-            "app-trust2": {"num_of_gpus": 2, "mem_per_gpu_in_GiB": 16},
-        }
-
     def test_configure_meta_publishes_model_id_in_custom_props(self, mock_write_config, mock_get_settings):
         # custom_props.model_id is the lazy-resolution channel for recipe-built job types
         # (e.g. standard) whose component configs carry no model_id. app_name is the model_id.
