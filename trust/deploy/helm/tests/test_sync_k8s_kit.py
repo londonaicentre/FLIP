@@ -120,6 +120,31 @@ def test_render_override_omits_vocab_load_without_bucket():
     assert "s3Bucket" not in out
 
 
+def test_render_override_can_leave_the_vocab_load_off():
+    """A cluster with no AWS route (AKS, FLIP#1390) must not get the S3 vocab-load hook: it would
+    fail, and as a post-install hook it fails the whole release."""
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2", vocab_load=False)
+    assert "vocabLoad" not in out
+
+
+def test_vocab_load_follows_the_operator_and_never_a_scaffolding_default():
+    stag = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipstag-aicentre"}
+    scaffold = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipdev-aicentre"}
+    assert sync_k8s_kit.should_load_vocab(stag, "stag", requested=True)
+    assert not sync_k8s_kit.should_load_vocab(stag, "stag", requested=False), "the operator opted out"
+    # #881: .env.example ships the dev bucket, which no other environment can read.
+    assert not sync_k8s_kit.should_load_vocab(scaffold, "lza-stag", requested=True)
+    assert sync_k8s_kit.should_load_vocab(scaffold, "development", requested=True)
+
+
+def test_render_override_carries_the_kits_seed_partition():
+    """SOURCE_TRUST names the mock-data partition a trust is seeded with; without it the chart falls
+    back to the slot number, and a trust on Trust_3 finds no third partition (FLIP#1390)."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "SOURCE_TRUST": "1"}, "Trust_K8s", "eu-west-2")
+    assert '\ntrustData:\n  seed:\n    sourceTrust: "1"\n' in out
+    assert "sourceTrust" not in sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+
+
 def test_render_override_holds_pinned_images_back_from_the_release():
     """The kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG opt-outs reach the chart as `image.pin`,
     beside the global.image.tag the kit's DOCKER_TAG sets; a kit without them emits none."""
@@ -455,3 +480,21 @@ def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch
         sync_k8s_kit.render_override(
             {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile"}, "Trust_K8s", "eu-west-2", trust_dir=tmp_path
         )
+
+
+def test_make_passes_no_vocab_load_through_to_every_sync():
+    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the S3 hook out (FLIP#1390); dry-run the target."""
+    import shutil
+    import subprocess
+
+    if shutil.which("make") is None:
+        pytest.skip("make is not installed")
+    chart = Path(__file__).resolve().parents[1]
+    run = lambda *extra: subprocess.run(  # noqa: E731
+        ["make", "-n", "-C", str(chart), "sync-kit", "KIT=Trust_K8s", "PROD=stag", *extra],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    ).stdout
+    assert "--no-vocab-load" in run("NO_VOCAB_LOAD=1")
+    assert "--no-vocab-load" not in run()

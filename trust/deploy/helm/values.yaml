@@ -449,6 +449,14 @@ flClient:
   # path the Compose and Ansible trust deployments use — so keep any override in step
   # with the path the kit was actually staged to, or the pod stays Pending.
   kitHostPath: ""
+  kit:
+    # Where the kit comes from. hostPath: kitHostPath on the node (kind, a single host).
+    # secret: a Kubernetes Secret, laid out by the stage-fl-kit init container into the pod's
+    # own volume — for a managed node pool (AKS), whose nodes are replaced at will (FLIP#1390).
+    # Build the Secret with `make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir>`.
+    source: hostPath
+    # The Secret's name; empty means <release fullname>-fl-kit.
+    secretName: ""
   hostAliases:
     - ip: "13.43.162.56"
       hostnames:
@@ -542,6 +550,10 @@ omopDb:
     storageClassName: ""
     size: 10Gi
     accessMode: ReadWriteOnce
+    # Keep Postgres's data in this subdirectory of the volume (e.g. "pgdata"). Needed on a
+    # freshly formatted cloud disk (Azure Disk, EBS), whose lost+found at the root makes initdb
+    # refuse to start. Leave empty on an existing volume: its data is at the root.
+    pgdataSubdir: ""
   resources:
     requests:
       memory: "512Mi"
@@ -747,6 +759,10 @@ xnat:
     # LoadBalancer — the only two options that reach a PACS outside the cluster.
     dicomService:
       type: ClusterIP
+      # Annotations for the DICOM Service, chiefly to choose the load balancer a managed cluster
+      # creates for type LoadBalancer. On AKS keep the receiver off the internet with
+      #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      annotations: {}
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
@@ -826,6 +842,8 @@ xnat:
       storageClassName: ""
       size: 20Gi
       accessMode: ReadWriteOnce
+      # As omopDb.persistence.pgdataSubdir: "pgdata" on a fresh cloud disk, empty on an existing volume.
+      pgdataSubdir: ""
     resources:
       requests:
         memory: "512Mi"

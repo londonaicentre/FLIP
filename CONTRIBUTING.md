@@ -647,6 +647,11 @@ make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
 # receiver log (a C-ECHO cannot see an importer crash — FLIP#1228)
 make -C trust/deploy/helm smoke-cstore
+
+# The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
+# health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, FL client steady; writes a
+# JSON + markdown report under build/selftest/ and needs no hub
+make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
 ```
 
 `make -C trust/deploy/helm deploy` (and `deploy-trust-k8s`) take `HELM_TIMEOUT` (default

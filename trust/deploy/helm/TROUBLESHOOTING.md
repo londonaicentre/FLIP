@@ -676,7 +676,7 @@ kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
 make -C trust/deploy/helm status        # FAILs naming both the expected and the found version
 
 # Exercise the path the roster is on, rather than just the socket
-make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then reads dicom.log
+make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then reads received.log and dicom.log
 ```
 
 **Fix.** Get one `helm upgrade` to complete, from a checkout that carries both the roster and

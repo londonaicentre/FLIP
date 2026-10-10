@@ -1,0 +1,28 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+#
+# Requests for a single 4-vCPU, 16 GiB node (Standard_D4s_v5, the Azure free trial's whole quota),
+# layered after values-aks.yaml: PLATFORM_VALUES="values-aks.yaml values-small-node.yaml".
+# Requests only: limits are unchanged, so a pod still bursts when the node is idle. A real trust's
+# node pool is larger (and GPU-equipped for training); leave this overlay out there.
+
+flClient:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 2Gi
+
+xnat:
+  web:
+    resources:
+      requests:
+        cpu: 500m

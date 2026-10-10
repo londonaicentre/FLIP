@@ -185,6 +185,28 @@ The failure mode if you miss one is loud rather than silent: an unknown value is
 Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
 reached the node leaves the pod `Pending` on the `hostPath type check failed` event above.
 
+
+#### On a managed cluster (AKS): the kit from a Secret
+
+A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret
+instead and deploy with `flClient.kit.source=secret` (FLIP#1390):
+
+```bash
+make -C trust/deploy/helm kit-secret KIT_SRC=<the slot's kit directory> KUBE_CONTEXT=<kube context>
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> NO_VOCAB_LOAD=1 \
+  PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube context>
+```
+
+`values-aks.yaml` carries what belongs to a managed cluster rather than to the trust (the kit from the Secret,
+Postgres data below the fresh disk's `lost+found`); `PLATFORM_VALUES` layers it after the per-trust override.
+`kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
+...) in `<release>-flip-trust-fl-kit` (`flClient.kit.secretName` overrides it) and refuses a kit
+missing its backend's files, a nested directory, or more than a Secret's 1 MiB. At pod start the
+`stage-fl-kit` init container copies the files into the pod's own kit volume, because a Secret
+volume is read-only and NVFLARE writes into `local/`, `startup/` and `transfer/`; it hands them to
+uid 1000 (NVFLARE) or makes the Flower key readable by gid 49999. That volume lives as long as the
+pod, so anything NVFLARE leaves in `transfer/` goes with it.
+
 ### 5. Install / upgrade the chart
 
 ```bash
@@ -247,9 +269,32 @@ they disagree. They disagree when the **pod spec** is older than the values — 
 live in an emptyDir refilled by an init container on every pod creation, so a mismatch
 means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
 different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
-stores a real object through the PACS and then greps the receiver's `dicom.log` rather
-than trusting a C-ECHO: C-ECHO never reaches the importer and passes throughout. See
+stores a real object through the PACS rather than trusting a C-ECHO: C-ECHO never reaches
+the importer and passes throughout. Receipt is a new line in the receiver's `received.log`
+(one per accepted object); the lines the transfer added to `dicom.log` are scanned for importer
+failures. `dicom.log` alone proves nothing, as XNAT writes it only when something goes wrong. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
+
+### 6b. Run the trust self-test
+
+`make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>` runs the acceptance checklist every
+trust shape shares (the VM's is `scripts/selftest_node.sh`) against the deployed release:
+
+| Check | Passes when |
+|---|---|
+| release ready | every Deployment, StatefulSet and DaemonSet of the release has all its replicas ready |
+| fl kit delivered | the FL client sees its kit (`/app/startup/fed_client.json`; Flower: `/certs/ca.crt` and `/keys`) |
+| trust-api / imaging-api / data-access-api health | each answers its own `/health` with `"status":"ok"` |
+| omop seeded | `omop.person` has rows |
+| orthanc seeded | Orthanc holds instances |
+| orthanc requires auth | Orthanc answers 401 without credentials |
+| xnat c-store | `smoke-cstore` passes |
+| fl client running | the FL client is running, with no restart, at two samples 45 s apart |
+
+It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod
+the release already has, so it adds no workload, RBAC or NetworkPolicy exception. It writes
+`selftest-k8s-<backend>-<stamp>.json` and `.md` (and `latest-k8s-<backend>.md`) under
+`SELFTEST_OUT` (default `build/selftest/` in the checkout) and exits non-zero on any failure.
 
 ### 7. (FL training only) Open the FL-server NLB
 
@@ -513,7 +558,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships the dev one, and trust roles have no cross-account read. `sync-kit` now skips the load, with a warning, when it still sees that dev default outside development (#881), and `NO_VOCAB_LOAD=1` keeps it out entirely on a cluster with no route to AWS (AKS, FLIP#1390) — the hook would otherwise fail and, being post-install, fail the whole release. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):
@@ -695,7 +740,7 @@ model:
 
 - Deny all ingress from outside the namespace
 - Allow all intra-namespace communication
-- Allow egress to DNS (port 53), HTTPS (port 443), AWS IMDS (169.254.169.254)
+- Allow egress to DNS (port 53), HTTPS (port 443), and AWS IMDS (169.254.169.254) only when the omop-db vocab-load Job reads S3 through a node role
 - Allow custom egress CIDRs via `networkPolicies.allowedEgressCIDRs`
 
 ```yaml
