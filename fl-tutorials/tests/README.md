@@ -19,8 +19,8 @@ templates that actually deploy), the EHR risk-prediction tutorial's shared featu
 model contract (`test_ehr_feature_engineering.py` — that app reads no DICOM, so it is deliberately
 absent from `DICOM_APPS`), and a second, dataset-tooling suite over `datasets/**`. No GPU,
 no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
-DICOMs and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and
-each suite runs in well under a second.
+DICOMs, NIfTI volumes and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV
+fixtures).
 
 ```bash
 make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
@@ -44,7 +44,7 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 `trust/imaging-api/tests/routers/test_imaging.py`.
 
 Cross-cutting guards that assert a property across several source files
-(`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
+(`test_dicom_orientation.py`, `test_nifti_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
 `test_flwr_import_paths.py`, `test_offline_apps.py`, `test_ldm_offline_backbone.py`,
 `test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
@@ -148,7 +148,7 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_main_flow_*` | The script end to end against the fakes (`flwr run` faked too, `pgrep` shimmed away from real processes, a synthetic `SIM_DATA_ROOT`): a completed run passes and the EHR mapping exports exactly `DEV_DATAFRAME` (no images dir); a failed run, a failed submission (`flwr run` non-zero) and a missing run id each fail with the right status. |
 | `test_app_loads_checkpoints_weights_only` (in `test_offline_apps.py`) | Every `torch.load` in a shipped app dir passes `weights_only=True` explicitly — an implicit default or `weights_only=False` unpickles arbitrary objects from the checkpoint. Host-side `process_tools/` conversions are outside the walked app dirs and stay exempt. |
 
-Three design points are load-bearing, and each is itself asserted rather than assumed:
+Three design points underpin the DICOM checks, and each is itself asserted rather than assumed:
 
 - **The assertion is on values, never on shape.** `Rotate90d(k=-1)` restores the correct shape and
   is still wrong — upright but mirrored, which swaps the patient's left and right and looks
@@ -164,6 +164,26 @@ The fixture is synthesised, not committed: ~12 KB against ~640 KB for a downsamp
 provenance or PHI question, and the identical code path — the axis order is a property of the
 reader's convention, wholly independent of pixel content. It is parametrised over `MONOCHROME1`,
 `MONOCHROME2` and RLE Lossless, where the array path genuinely differs.
+
+## NIfTI orientation
+
+`test_nifti_orientation.py` covers the five shipped NIfTI transform modules: NVFLARE and Flower
+spleen segmentation, their evaluation variants, and NVFLARE latent diffusion. All nine factories
+are exercised, including both training and validation factories where present. A registry guard
+discovers every non-DICOM `LoadImaged` factory, so a new module or factory cannot remain uncovered.
+
+Pytest writes a tiny asymmetric image and binary label under its temporary directory, in equivalent
+RAS and LPS encodings. Reorienting both voxels and affine preserves physical coordinates; changing
+only the affine would describe a different volume. All spatial dimensions differ, and neither the
+image nor label is mirror-symmetric on any axis. No binary fixture or downloaded data is required.
+
+The shipped prefix through `Orientationd` must reproduce the known RAS voxels and affine exactly,
+for the image and label independently. This catches a wrong target orientation even if both inputs
+produce identical outputs. A second check runs complete validation/evaluation preprocessing, or
+the training prefix before its first random crop/augmentation, and compares both encodings' values
+and affines after the `Orientationd`/`Spacingd` path. Image and label must stay spatially aligned.
+The phantom spacing matches the apps' target spacing, keeping interpolation fidelity outside this
+orientation check. Random training behaviour remains outside its scope.
 
 ## Bundle-export parity
 
@@ -195,9 +215,9 @@ contract, and should not be mistaken for it. Untested here:
 - End-to-end training behaviour, which stays with the GPU simulator harness
   (`make -C fl-tutorials run-tutorial`).
 
-**Out of scope by design:** the spleen and latent-diffusion tutorials. They load 3-D NIfTI through
-`Orientationd`/`Spacingd`, where this correction would be actively wrong. Do not add them to
-`DICOM_APPS`.
+The spleen and latent-diffusion tutorials have their own NIfTI orientation checks above. They stay
+outside `DICOM_APPS`: the 2-D DICOM reader correction does not apply to their 3-D
+`Orientationd`/`Spacingd` path.
 
 Tutorials are copy-and-adapt example code, and a repository test cannot follow a copy out of the
 repository. It can keep the thing being copied correct, which is the point: `fl-apps/` (the

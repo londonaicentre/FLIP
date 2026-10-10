@@ -17,7 +17,7 @@ def get_train_transforms(spatial_shape: tuple | list) -> mt.Compose:
         [
             mt.LoadImaged(keys=["image"], image_only=True),
             mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-            mt.Orientationd(keys=["image"], axcodes="RAS"),
+            mt.Orientationd(keys=["image"], axcodes="RAS", labels=None),
             mt.Spacingd(
                 keys=["image"],
                 pixdim=(1.5, 1.5, 2.0),
@@ -43,7 +43,7 @@ def get_val_transforms(spatial_shape: tuple | list) -> mt.Compose:
         [
             mt.LoadImaged(keys=["image"], image_only=True),
             mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-            mt.Orientationd(keys=["image"], axcodes="RAS"),
+            mt.Orientationd(keys=["image"], axcodes="RAS", labels=None),
             mt.Spacingd(
                 keys=["image"],
                 pixdim=(1.5, 1.5, 2.0),
