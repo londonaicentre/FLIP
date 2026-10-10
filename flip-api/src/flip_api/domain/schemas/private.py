@@ -93,6 +93,17 @@ class TrainingMetrics(BaseModel):
         return data
 
 
+class TrainingMetricsInput(TrainingMetrics):
+    """Metrics wire input, allowing non-finite numbers to be dropped after authorization.
+
+    All other validation is inherited from the finite storage/domain schema. The endpoint
+    rejects no run for an undefined numeric value, but never persists that point (FLIP#625).
+    """
+
+    result: float
+    x_value: float
+
+
 class TrainingLog(BaseModel):
     """One row for ``POST /model/{id}/logs``: free text XOR a typed round event.
 

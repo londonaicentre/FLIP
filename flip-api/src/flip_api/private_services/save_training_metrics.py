@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import math
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -17,7 +18,7 @@ from sqlmodel import Session
 
 from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.database import get_session
-from flip_api.domain.schemas.private import TrainingMetrics
+from flip_api.domain.schemas.private import TrainingMetrics, TrainingMetricsInput
 from flip_api.model_services.services.model_service import resolve_trust_from_fl_client_name, validate_trust_ids
 from flip_api.private_services.services.private_service import save_training_metrics
 from flip_api.utils.logger import logger
@@ -34,7 +35,7 @@ router = APIRouter(tags=["private_services"])
 )
 def save_training_metrics_endpoint(
     model_id: UUID,
-    training_metrics: TrainingMetrics,
+    training_metrics: TrainingMetricsInput,
     request: Request,
     db: Session = Depends(get_session),
     _: None = Depends(authenticate_internal_service),
@@ -47,7 +48,7 @@ def save_training_metrics_endpoint(
 
     Args:
         model_id (UUID): The unique identifier for the model.
-        training_metrics (TrainingMetrics): The training metrics to be saved.
+        training_metrics (TrainingMetricsInput): The training metrics to save, or drop if non-finite.
         request (Request): The FastAPI request object, used for logging and context.
         db (Session): Database session dependency.
 
@@ -84,7 +85,21 @@ def save_training_metrics_endpoint(
             logger.error(error_msg)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
-        save_training_metrics(model_id=model_id, trust=trust, training_metrics=training_metrics, db=db)
+        # Drop only after the normal auth/trust checks: accepting an undefined value must not
+        # let an unapproved client bypass authorization. Keep it out of both the DB and plots.
+        if not math.isfinite(training_metrics.result) or not math.isfinite(training_metrics.x_value):
+            logger.warning(
+                "Dropping non-finite metric %s from FL client %s for model %s (result=%s, x_value=%s)",
+                training_metrics.label,
+                fl_client_name,
+                model_id,
+                training_metrics.result,
+                training_metrics.x_value,
+            )
+            return
+
+        finite_metrics = TrainingMetrics.model_validate(training_metrics.model_dump())
+        save_training_metrics(model_id=model_id, trust=trust, training_metrics=finite_metrics, db=db)
 
     except HTTPException as http_exc:
         logger.warning(

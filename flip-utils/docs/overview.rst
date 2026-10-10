@@ -54,6 +54,13 @@ The ``flip`` package is organized into logical modules:
    - ``FLIPStandardDev`` — Development implementation using local CSV/filesystem
    - ``FLIP()`` factory — Automatically selects the correct implementation based on environment
 
+   ``send_metrics`` is best-effort: invalid metric values or plot coordinates
+   (including NaN and infinity) are dropped with a warning, and validation,
+   serialization or HTTP failures do not interrupt training. The hub also drops
+   non-finite points from older senders after checking the client's authorization,
+   keeping stored metrics and plot coordinates finite. Later valid points are
+   reported normally.
+
 ``flip.constants``
    Configuration and enumerations:
 

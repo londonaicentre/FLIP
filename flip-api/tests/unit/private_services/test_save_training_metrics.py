@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -21,7 +22,7 @@ from sqlmodel import Session
 
 from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.models.main_models import Trust
-from flip_api.domain.schemas.private import TrainingMetrics
+from flip_api.domain.schemas.private import TrainingMetrics, TrainingMetricsInput
 from flip_api.main import app
 from flip_api.private_services.services.private_service import save_training_metrics
 
@@ -122,6 +123,19 @@ class TestTrainingMetricsModel:
         with pytest.raises(ValidationError):
             TrainingMetrics(**{**sample_metrics_payload_dict, "result": float("nan")})
 
+    @pytest.mark.parametrize("field", ["result", "x_value"])
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "minus-inf"])
+    def test_wire_input_can_reach_the_non_finite_drop_guard(self, sample_metrics_payload_dict, field, value):
+        payload = {**sample_metrics_payload_dict, field: value}
+        TrainingMetricsInput(**payload)
+        with pytest.raises(ValidationError):
+            TrainingMetrics(**payload)
+
+    @pytest.mark.parametrize("changes", [{"global_round": -1}, {"result": "not a number"}, {"x_label": "x" * 65}])
+    def test_wire_input_keeps_other_validation(self, sample_metrics_payload_dict, changes):
+        with pytest.raises(ValidationError):
+            TrainingMetricsInput(**{**sample_metrics_payload_dict, **changes})
+
 
 class TestServiceFunctions:
     def test_save_training_metrics_success(
@@ -210,6 +224,55 @@ class TestSaveTrainingMetricsEndpoint:
         assert mock_validate_trust_ids.call_args.kwargs["trust_ids"] == [trust.id]
         # save_training_metrics receives the resolved Trust.
         assert mock_save_metrics.call_args.kwargs["trust"] is trust
+        assert type(mock_save_metrics.call_args.kwargs["training_metrics"]) is TrainingMetrics
+
+    @pytest.mark.parametrize("field", ["result", "x_value"])
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")], ids=["nan", "inf", "minus-inf"])
+    @patch("flip_api.private_services.save_training_metrics.logger.warning")
+    @patch("flip_api.private_services.save_training_metrics.save_training_metrics")
+    @patch("flip_api.private_services.save_training_metrics.validate_trust_ids")
+    @patch("flip_api.private_services.save_training_metrics.resolve_trust_from_fl_client_name")
+    def test_non_finite_metric_is_dropped_then_finite_metric_saves(
+        self, mock_resolve, mock_validate, mock_save, mock_warning, sample_metrics_payload_dict, trust, field, value
+    ):
+        mock_resolve.return_value = trust
+        mock_validate.return_value = True
+        # requests/httpx refuse non-finite floats in their json= serializer. Raw wire input
+        # exercises the hub's defensive path for an older or malformed sender.
+        body = json.dumps({**sample_metrics_payload_dict, field: value})
+        response = client.post(self.url, content=body, headers={**self.headers, "Content-Type": "application/json"})
+        assert response.status_code == 204
+        mock_save.assert_not_called()
+        mock_warning.assert_called_once()
+        assert mock_warning.call_args.args[0].startswith("Dropping non-finite metric")
+        assert mock_warning.call_args.args[1:4] == ("example_label", "Example Trust", self.model_id)
+        mock_validate.assert_called_once()
+
+        response = client.post(self.url, json=sample_metrics_payload_dict, headers=self.headers)
+        assert response.status_code == 204
+        mock_save.assert_called_once()
+        assert mock_save.call_args.kwargs["training_metrics"].result == 0.85
+        assert type(mock_save.call_args.kwargs["training_metrics"]) is TrainingMetrics
+
+    @patch("flip_api.private_services.save_training_metrics.save_training_metrics")
+    @patch("flip_api.private_services.save_training_metrics.validate_trust_ids")
+    @patch("flip_api.private_services.save_training_metrics.resolve_trust_from_fl_client_name")
+    def test_non_finite_metric_cannot_bypass_trust_authorization(
+        self, mock_resolve, mock_validate, mock_save, sample_metrics_payload_dict, trust
+    ):
+        mock_resolve.return_value = trust
+        mock_validate.return_value = False
+        body = json.dumps({**sample_metrics_payload_dict, "result": float("nan")})
+        response = client.post(self.url, content=body, headers={**self.headers, "Content-Type": "application/json"})
+        assert response.status_code == 400
+        mock_save.assert_not_called()
+
+    @pytest.mark.parametrize("changes", [{"global_round": -1}, {"result": "broken"}, {"x_label": ""}])
+    @patch("flip_api.private_services.save_training_metrics.save_training_metrics")
+    def test_other_malformed_payloads_still_fail_validation(self, mock_save, sample_metrics_payload_dict, changes):
+        response = client.post(self.url, json={**sample_metrics_payload_dict, **changes}, headers=self.headers)
+        assert response.status_code == 422
+        mock_save.assert_not_called()
 
     @patch("flip_api.private_services.save_training_metrics.validate_trust_ids")
     @patch("flip_api.private_services.save_training_metrics.resolve_trust_from_fl_client_name")
@@ -249,14 +312,15 @@ class TestSaveTrainingMetricsEndpoint:
         assert response.status_code == 500
         assert "internal server error" in response.json()["detail"].lower()
 
-    def test_save_metrics_missing_token(self, sample_metrics_payload_dict):
+    @pytest.mark.parametrize("result", [0.85, "nan"], ids=["finite", "non-finite"])
+    def test_save_metrics_missing_token(self, sample_metrics_payload_dict, result):
         # Temporarily override to simulate auth failure
         def mock_auth():
             raise HTTPException(status_code=401, detail="Invalid token")
 
         app.dependency_overrides[authenticate_internal_service] = mock_auth
 
-        response = client.post(self.url, json=sample_metrics_payload_dict)
+        response = client.post(self.url, json={**sample_metrics_payload_dict, "result": result})
 
         assert response.status_code == 401
         assert "invalid token" in response.json()["detail"].lower()

@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import boto3
 import pandas as pd
 import requests
+from pydantic import ValidationError
 from requests import HTTPError
 
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
@@ -336,7 +337,9 @@ class FLIPStandardProd(FLIPBase):
         x_label: str | None = None,
     ) -> None:
         """
-        Sends a metric value to the Central Hub.
+        Sends a finite metric value to the Central Hub, without interrupting training.
+
+        Invalid metric values/coordinates and reporting failures are logged and dropped.
 
         Args:
             client_name (str): The name of the client.
@@ -349,27 +352,24 @@ class FLIPStandardProd(FLIPBase):
                 ``global_round`` (the schema backfills it).
             x_label (str | None): Label naming the x-axis; falls back to "Global Rounds" when not given.
         """
-        # model_validate (not kwargs) so a None x_value reaches the schema's backfill validator,
-        # which resolves it to the global round — the schema owns that default, not this call site.
-        # `or` (not an explicit None check) is deliberate for x_label: "" is not a meaningful axis
-        # name and the hub rejects it (min_length=1), so a falsy label coalesces to the default
-        # rather than shipping a guaranteed-reject payload.
-        payload = TrainingMetrics.model_validate(
-            {
-                "fl_client_name": client_name,
-                "global_round": global_round,
-                "label": label,
-                "result": value,
-                "x_value": x_value,
-                "x_label": x_label or DEFAULT_X_AXIS_LABEL,
-            }
-        ).model_dump()
-
-        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
-
-        self.logger.info(f"Attempting to send metrics raised by {client_name}...")
-
         try:
+            # Validation belongs inside the guard: a NaN/Inf raises before HTTP serialization,
+            # and an invalid point must not abort the FL run (FLIP#625).
+            # model_validate lets None x_value reach the schema's global-round backfill.
+            # A falsy x_label still selects the default rather than sending a blank axis title.
+            payload = TrainingMetrics.model_validate(
+                {
+                    "fl_client_name": client_name,
+                    "global_round": global_round,
+                    "label": label,
+                    "result": value,
+                    "x_value": x_value,
+                    "x_label": x_label or DEFAULT_X_AXIS_LABEL,
+                }
+            ).model_dump()
+            endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
+            self.logger.info(f"Attempting to send metrics raised by {client_name}...")
+
             response = requests.post(
                 endpoint,
                 json=payload,
@@ -380,10 +380,14 @@ class FLIPStandardProd(FLIPBase):
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent metrics for {client_name}")
+        except ValidationError as validation_err:
+            self.logger.warning(
+                "Dropping invalid metric %s from %s for model %s: %s", label, client_name, model_id, validation_err
+            )
         except HTTPError as http_err:
             self.logger.error(
                 f"An http error occurred when sending metrics, see exception below | status code "
-                f"{http_err.response.status_code}"
+                f"{getattr(http_err.response, 'status_code', 'unknown')}"
             )
             self.logger.exception(http_err)
         except Exception as e:
