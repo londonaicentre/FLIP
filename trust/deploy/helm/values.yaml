@@ -34,7 +34,8 @@ logLevel: INFO
 # it holds no AWS credentials and its kit is staged onto the node out-of-band.
 awsRegion: "eu-west-2"
 
-# S3 bucket for uploaded federated data (mounted by FL client)
+# S3 bucket for uploaded federated data (s3://…). Leave empty to omit the variable
+# from the FL client (flip-utils then uses its default); an empty string is rejected.
 uploadedFederatedDataBucket: ""
 
 # FL backend selection — switches image, command, volumes, env for the FL client
