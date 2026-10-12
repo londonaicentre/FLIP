@@ -29,12 +29,14 @@ def test_stop_after_enrichment_without_an_enrichment_command_is_rejected(
 
 
 def test_stop_after_enrichment_with_an_enrichment_command_is_accepted(tmp_path: Path) -> None:
-    args = parse_args([
-        "--stop-after-enrichment",
-        "--data-enrichment-cwd",
-        str(tmp_path),
-        "--data-enrichment-cmd",
-        "true",
-    ])
+    args = parse_args(
+        [
+            "--stop-after-enrichment",
+            "--data-enrichment-cwd",
+            str(tmp_path),
+            "--data-enrichment-cmd",
+            "true",
+        ]
+    )
     assert args.stop_after_enrichment
     assert args.data_enrichment_cmd == "true"
