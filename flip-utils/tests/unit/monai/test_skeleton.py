@@ -41,7 +41,6 @@ def bundle(tmp_path: Path) -> Path:
 
 def _fill(skeleton: dict) -> dict:
     """Do what the researcher does: replace the placeholders."""
-    skeleton["flip"]["query_ref"] = "query.sql"
     skeleton["flip"]["imaging"]["resource"] = "NIFTI"
     skeleton["flip"]["imaging"]["keys"] = {
         "image": {"pattern": "input_*.nii.gz"},
@@ -76,8 +75,9 @@ def test_skeleton_is_refused_until_filled(bundle: Path):
 def test_every_value_line_is_marked_locked_or_editable(bundle: Path):
     text = generate_skeleton(bundle)
     marked = {line.split(":")[0].strip() for line in text.splitlines() if "# LOCKED" in line or "# EDITABLE" in line}
-    for key in ("source", "name", "version", "configs", "query_ref", "resource", "keys", "local_epochs", "profile"):
+    for key in ("source", "name", "version", "configs", "resource", "keys", "local_epochs", "profile"):
         assert key in marked, key
+    assert "query_ref" not in text
     for key in ("source", "name", "version", "configs", "profile"):
         line = next(ln for ln in text.splitlines() if ln.strip().startswith(f"{key}:"))
         assert "# LOCKED" in line, line

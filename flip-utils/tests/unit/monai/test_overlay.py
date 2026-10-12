@@ -32,7 +32,6 @@ VALID = {
         },
     },
     "flip": {
-        "query_ref": "query.sql",
         "imaging": {
             "resource": "NIFTI",
             "keys": {"image": {"pattern": "input_*.nii.gz"}, "label": {"pattern": "label_*.nii.gz"}},
@@ -110,8 +109,8 @@ def test_load_overlay_from_file(tmp_path: Path):
         ("bundle.configs.train", "configs/train.py", "configs/train.py"),
         ("bundle.configs.train", "configs/../../etc/passwd.json", "no '..'"),
         ("bundle.configs.evaluate", [], "at least one"),
-        ("flip.query_ref", "/abs/query.sql", "inside the bundle"),
-        ("flip.query_ref", "query.txt", ".sql"),
+        # The cohort is the project's approved query, never the bundle's (dropped from v0.1).
+        ("flip.query_ref", "query.sql", "flip.query_ref"),
         ("flip.imaging.resource", "ALL", "ALL cannot be paired"),
         ("flip.imaging.resource", "PNG", "flip.imaging.resource"),
         ("flip.imaging.keys", {"label": {"pattern": "label_*.nii.gz"}}, "'image' key"),
@@ -125,7 +124,7 @@ def test_load_overlay_from_file(tmp_path: Path):
         ("flip.governance.allowed_outputs", [], "allowed_outputs"),
         ("flip.governance.allowed_outputs", ["raw_data"], "allowed_outputs"),
         ("flip.governance.allowed_outputs", ["model"], "'metrics' is not in governance.allowed_outputs"),
-        ("flip.query_ref", ..., "flip.query_ref"),
+        ("flip.imaging", ..., "flip.imaging"),
     ],
 )
 def test_invalid_overlays_rejected_with_field_path(path, value, fragment):
@@ -138,15 +137,15 @@ def test_invalid_overlays_rejected_with_field_path(path, value, fragment):
 
 def test_placeholder_is_refused_with_its_own_message():
     with pytest.raises(OverlayError, match="skeleton placeholder"):
-        parse_overlay(_with("flip.query_ref", "<FILL_ME: path to the cohort .sql>"))
+        parse_overlay(_with("flip.imaging.resource", "<FILL_ME: NIFTI | SEG | DICOM>"))
 
 
 def test_every_error_is_reported_at_once():
-    data = _with("flip.query_ref", "query.txt")
+    data = _with("flip.fl.local_epochs", 0)
     data["flip"]["imaging"]["resource"] = "ALL"
     with pytest.raises(OverlayError) as excinfo:
         parse_overlay(data)
-    assert "flip.query_ref" in str(excinfo.value)
+    assert "flip.fl.local_epochs" in str(excinfo.value)
     assert "flip.imaging.resource" in str(excinfo.value)
 
 
