@@ -31,6 +31,8 @@ import yaml
 CHART_DIR = Path(__file__).resolve().parents[2]
 KIT_HOST_PATH = "/opt/flip/fl-kit"
 JOB_PODS = "flClient.nvflare.jobPods"
+# NVFLARE mounts a job pod's workspace at the parent's workspace path, so the parent cannot use /app (the image).
+WORKSPACE = "/var/tmp/nvflare/workspace"
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
 
@@ -52,7 +54,8 @@ def _enabled(*extra: str) -> list[dict]:
 
 def _one(docs: list[dict], kind: str, name_suffix: str) -> dict:
     matches = [d for d in docs if d["kind"] == kind and d["metadata"]["name"].endswith(name_suffix)]
-    assert len(matches) == 1, f"expected one {kind} named *{name_suffix}, found {[m['metadata']['name'] for m in matches]}"
+    names = [m["metadata"]["name"] for m in matches]
+    assert len(matches) == 1, f"expected one {kind} named *{name_suffix}, found {names}"
     return matches[0]
 
 
@@ -119,9 +122,9 @@ def test_the_client_switches_its_kit_before_nvflare_starts():
     container = _client_container(docs)
 
     script = container["command"][-1]
-    switch = script.index("python -m flip.nvflare.k8s_job_mode /app/local")
-    assert switch < script.index("exec ./sub_start.sh")
-    assert script.index("cp /app/local/resources.json.default /app/local/resources.json") < switch
+    switch = script.index(f"python -m flip.nvflare.k8s_job_mode {WORKSPACE}/local")
+    assert switch < script.index(f"cd {WORKSPACE}/startup")
+    assert script.index(f"cp {WORKSPACE}/local/resources.json.default {WORKSPACE}/local/resources.json") < switch
 
     env = _env(container)
     assert env["FL_K8S_NAMESPACE"]["valueFrom"] == {"fieldRef": {"fieldPath": "metadata.namespace"}}
@@ -198,3 +201,65 @@ def test_a_parent_that_holds_a_gpu_is_refused():
 
     assert result.returncode != 0
     assert "jobPods.maxGpus" in result.stderr
+
+
+def test_only_the_parent_may_reach_an_api_server_off_port_443():
+    """The launcher calls the Kubernetes API from the parent. NetworkPolicy sees the API server's real endpoint
+    (minikube 8443, kind 6443), not the kubernetes Service's 443, so a cluster that listens elsewhere names it."""
+    docs = _enabled(
+        "--set", f"{JOB_PODS}.apiServer.cidrs[0]=192.168.58.2/32",
+        "--set", f"{JOB_PODS}.apiServer.port=8443",
+    )  # fmt: skip
+
+    policy = _one(docs, "NetworkPolicy", "-fl-client-api-server")
+    assert policy["spec"]["policyTypes"] == ["Egress"]
+    assert policy["spec"]["egress"] == [
+        {"to": [{"ipBlock": {"cidr": "192.168.58.2/32"}}], "ports": [{"port": 8443, "protocol": "TCP"}]}
+    ]
+    selector = policy["spec"]["podSelector"]["matchLabels"]
+    assert selector.items() <= _client(docs)["spec"]["template"]["metadata"]["labels"].items()
+    assert not selector.items() <= _job_pod(docs)["metadata"]["labels"].items(), "job pods never get API access"
+
+
+def test_no_api_server_rule_without_cidrs_or_without_network_policies():
+    assert not [d for d in _enabled() if d["metadata"]["name"].endswith("-fl-client-api-server")]
+    docs = _enabled("--set", f"{JOB_PODS}.apiServer.cidrs[0]=10.0.0.1/32", "--set", "networkPolicies.enabled=false")
+    assert not [d for d in docs if d["metadata"]["name"].endswith("-fl-client-api-server")]
+
+
+@pytest.mark.parametrize("backend", ["nvflare", "flower"])
+def test_a_rollout_never_runs_two_clients_with_one_identity(backend):
+    """A trust's FL client is one identity (one NVFLARE site, one SuperNode credential). Under RollingUpdate the new
+    pod starts before the old one stops, the two evict each other's connection to the server, and the server drops
+    the site — on the job-pod parent that aborts whatever job started meanwhile."""
+    docs = _docs("--set", f"flBackend={backend}")
+
+    # rollingUpdate is cleared explicitly: an existing Deployment holds the API server's RollingUpdate defaults, and
+    # Helm's server-side apply refuses Recreate beside them ("may not be specified when strategy type is Recreate").
+    assert _client(docs)["spec"]["strategy"] == {"type": "Recreate", "rollingUpdate": None}
+
+
+def test_the_parent_keeps_its_workspace_off_the_image_directory():
+    docs = _enabled()
+    container = _client_container(docs)
+    mounts = {m["mountPath"]: m for m in container["volumeMounts"]}
+
+    for sub in ("local", "startup", "transfer"):
+        assert mounts[f"{WORKSPACE}/{sub}"]["subPath"] == sub
+        assert f"/app/{sub}" not in mounts
+    volumes = {v["name"]: v for v in _client(docs)["spec"]["template"]["spec"]["volumes"]}
+    workspace = volumes[mounts[WORKSPACE]["name"]]
+    assert "emptyDir" in workspace, "the workspace root must be writable for per-job directories"
+    lines = container["command"][-1].splitlines()
+    commands = "\n".join(line for line in lines if not line.strip().startswith("#"))
+    assert "/app/local" not in commands
+    assert "/app/startup" not in commands
+
+
+def test_process_mode_keeps_the_app_workspace():
+    container = _client_container(_docs())
+    mount_paths = {m["mountPath"] for m in container["volumeMounts"]}
+
+    assert {"/app/local", "/app/startup", "/app/transfer"} <= mount_paths
+    assert WORKSPACE not in mount_paths
+    assert "cd /app/startup" in container["command"][-1]

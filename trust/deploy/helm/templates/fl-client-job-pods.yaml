@@ -174,4 +174,35 @@ metadata:
 data:
   job-pod.yaml: |
     {{- include "flip-trust.flJobPod" . | nindent 4 }}
+{{- if and .Values.networkPolicies.enabled .Values.flClient.nvflare.jobPods.apiServer.cidrs }}
+---
+# The launcher calls the Kubernetes API from the parent. NetworkPolicy matches the API server's real
+# endpoint, not the kubernetes Service's 443, so where that endpoint listens on another port the
+# chart's 443 egress does not cover it. The parent alone gets this: job pods run researcher code.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-api-server
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: fl-client
+      flip/network: {{ .Values.flClient.netId }}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        {{- range .Values.flClient.nvflare.jobPods.apiServer.cidrs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.flClient.nvflare.jobPods.apiServer.port }}
+          protocol: TCP
+{{- end }}
 {{- end }}

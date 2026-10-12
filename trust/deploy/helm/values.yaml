@@ -502,6 +502,15 @@ flClient:
       # NVFLARE fails it immediately instead of waiting for the node.
       tolerations: []
       nodeSelector: {}
+      # The launcher calls the Kubernetes API from the parent. The chart's egress already allows port
+      # 443 to any address (networkPolicies.allowedEgressPorts), which covers an API server reached on
+      # 443 (AKS, EKS). NetworkPolicy matches the API server's real endpoint rather than the kubernetes
+      # Service, so where it listens on another port (minikube 8443, kind 6443) name it here, e.g. from
+      # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`. Without it the
+      # launcher's first call hangs and no job pod is ever created. Only the parent gets this rule.
+      apiServer:
+        cidrs: []
+        port: 443
   flower:
     superlink: ""
     # flwr>=1.36 split --clientappio-api-address into separate --host/--port
