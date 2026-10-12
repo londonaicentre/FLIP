@@ -220,7 +220,15 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, data: Mapping[str, Any]) -> None:
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    """Write through a temporary file and a rename, so the old file's mode does not matter.
+
+    A kit staged from a Kubernetes Secret arrives read-only (0400) in a directory the client owns: the
+    file cannot be opened for writing, but it can be replaced. The rename also means a crash leaves the
+    old file or the new one, never half of either.
+    """
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def apply(local_dir: Path, mode: K8sJobMode) -> None:
@@ -247,8 +255,11 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
         raise FileNotFoundError(f"pod template {mode.pod_template} does not exist")
 
     if mode.pod_template is not None:
-        (local_dir / POD_TEMPLATE).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(mode.pod_template, local_dir / POD_TEMPLATE)
+        target = local_dir / POD_TEMPLATE
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_name(f".{target.name}.tmp")
+        shutil.copyfile(mode.pod_template, tmp)
+        os.replace(tmp, target)
     _write_json(local_dir / STUDY_RUNTIME, study_runtime(mode))
     _write_json(comm_path, comm_config)
     _write_json(resources_path, resources)
