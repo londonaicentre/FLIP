@@ -270,6 +270,15 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "kit": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Where the FL kit comes from: hostPath (flClient.kitHostPath on the node) or secret (a Kubernetes Secret, for a managed node pool such as AKS).",
+          "properties": {
+            "source": { "type": "string", "enum": ["hostPath", "secret"] },
+            "secretName": { "type": "string" }
+          }
+        },
         "resources": {
           "type": "object",
           "properties": {

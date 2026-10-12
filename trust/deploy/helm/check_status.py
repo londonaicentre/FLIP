@@ -160,6 +160,9 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         error_output = e.stderr if hasattr(e, "stderr") else str(e)
         return False, error_output
+    except FileNotFoundError as e:
+        # A tool this host lacks (macOS has no `free`) is a check that cannot run, not a crash.
+        return False, str(e)
 
 
 def kubectl_get_condition(resource_type: str, resource_name: str, condition: str) -> bool:
@@ -1128,7 +1131,9 @@ def main(
 
     print_status("INFO", "Checking memory usage...")
     success, mem = run_command(["free"])
-    if success:
+    if not success:
+        print_status("INFO", "Memory check skipped: `free` is not available on this host")
+    else:
         for line in mem.split("\n"):
             if line.startswith("Mem:"):
                 fields = line.split()
