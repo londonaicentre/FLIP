@@ -266,6 +266,20 @@ def test_the_entrypoint_refuses_a_workspace_that_holds_the_image_python(tmp_path
     assert "process_launcher" in _by_id(json.loads((local / "resources.json").read_text())), "nothing was written"
 
 
+def test_the_entrypoint_replaces_kit_files_it_cannot_open_for_writing(tmp_path):
+    """A kit staged from a Kubernetes Secret arrives read-only (mode 0400) in a directory the client owns."""
+    local = _kit(tmp_path)
+    (local / "comm_config.json").write_text(json.dumps({"backbone_conn_gen": 2}))
+    for name in ("resources.json", "comm_config.json"):
+        (local / name).chmod(0o400)
+
+    assert main([str(local)], env=ENV) == 0
+
+    assert "k8s_launcher" in _by_id(json.loads((local / "resources.json").read_text()))
+    assert json.loads((local / "comm_config.json").read_text())["backbone_conn_gen"] == 2
+    assert not [f for f in local.iterdir() if f.name.startswith(".")], "no temporary files are left behind"
+
+
 def test_the_entrypoint_fails_closed_when_the_pod_template_is_missing(tmp_path, capsys):
     local = _kit(tmp_path)
 
