@@ -70,6 +70,5 @@ def reimport_imaging_project_studies_scheduled_task() -> None:
         with Session(get_engine()) as db:
             reimport_imaging_project_studies(db)
     except Exception as e:
-        error_message = f"Error in scheduled reimport_imaging_project_studies execution: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Error in scheduled reimport_imaging_project_studies execution")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

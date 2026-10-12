@@ -1,0 +1,19 @@
+schema_type: dataframe
+columns:
+  vocabulary_id:
+    dtype: string[python]
+    unique: true
+  vocabulary_name:
+    dtype: string[python]
+  vocabulary_reference:
+    dtype: string[python]
+    nullable: true
+    required: false
+  vocabulary_version:
+    dtype: string[python]
+    nullable: true
+    required: false
+  vocabulary_concept_id:
+    dtype: int64
+strict: true
+drop_invalid_rows: false

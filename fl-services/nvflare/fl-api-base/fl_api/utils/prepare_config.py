@@ -397,7 +397,7 @@ def configure_server(
         job_dir (Path): directory where the job is stored (includes the application name)
         app_name (str): application name
         global_rounds (int): number of global rounds
-        trusts (List[str]): list of trusts that will be part of the job
+        trusts (list[str]): list of trusts that will be part of the job
         ignore_result_error (bool): whether to ignore result errors
         aggregator (str): name of the aggregator to be used
         aggregation_weights (dict): aggregation weights to be used in the job (per trust)
@@ -470,12 +470,16 @@ def configure_server(
         # ScatterAndGather close every round on the first (fastest) trust's update, silently
         # dropping all slower trusts' contributions (observed live: a 2-trust 20-round job
         # aggregated 20/20 updates from one trust and 0 from the other).
-        if "args" in workflow and "num_rounds" in workflow["args"] and not isinstance(
-            workflow["args"]["num_rounds"], str
+        if (
+            "args" in workflow
+            and "num_rounds" in workflow["args"]
+            and not isinstance(workflow["args"]["num_rounds"], str)
         ):
             workflow["args"]["num_rounds"] = global_rounds
-        if "args" in workflow and "min_clients" in workflow["args"] and not isinstance(
-            workflow["args"]["min_clients"], str
+        if (
+            "args" in workflow
+            and "min_clients" in workflow["args"]
+            and not isinstance(workflow["args"]["min_clients"], str)
         ):
             workflow["args"]["min_clients"] = len(trusts)
 
@@ -514,7 +518,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     Args:
         job_dir (Path): job directory
         app_name (str): name of this specific application, under which the config and custom folders will be saved.
-        trusts (List[str]): list of trusts that are part of this training (site names)
+        trusts (list[str]): list of trusts that are part of this training (site names)
 
     Returns:
         Path: path to the meta file that was created.
@@ -540,9 +544,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
         # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
         # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
         # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
-        resource_spec = {
-            trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts
-        }
+        resource_spec = {trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts}
     else:
         resource_spec = {}
 
@@ -603,7 +605,7 @@ def validate_config(config: dict) -> IOverridableConfig:
     Validate the provided configuration dictionary.
 
     Args:
-        config (IOverridableConfig): The configuration dictionary to validate.
+        config (dict): The configuration dictionary to validate.
 
     Returns:
         IOverridableConfig: The validated configuration dictionary.

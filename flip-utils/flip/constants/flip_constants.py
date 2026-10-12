@@ -20,7 +20,7 @@ This module provides:
 
 from enum import StrEnum
 
-from pydantic import HttpUrl, PositiveInt, field_validator
+from pydantic import HttpUrl, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -28,7 +28,6 @@ class _Common(BaseSettings):
     """Base settings shared by both development and production environments."""
 
     LOCAL_DEV: bool = True  # Defaults to dev mode
-    MIN_CLIENTS: PositiveInt = 1
 
 
 class DevSettings(_Common):
@@ -117,7 +116,33 @@ def get_flip_constants() -> DevSettings | ProdSettings:
 # For backward compatibility, provide FlipConstants as a property-like access
 # Users should migrate to get_flip_constants() for better lazy loading
 class _FlipConstantsProxy:
-    """Proxy to provide lazy loading via attribute access."""
+    """Proxy to provide lazy loading via attribute access.
+
+    The annotations below declare, for the type checker, every setting the proxy forwards — the
+    union of the ``DevSettings`` and ``ProdSettings`` fields — so ``FlipConstants.<NAME>`` carries
+    the field's type instead of ``object``. At runtime only the active environment's fields
+    resolve (``getattr`` raises ``AttributeError`` for the other environment's), which is why
+    call sites keep environment-specific settings behind a ``LOCAL_DEV`` check. The unit tests
+    pin these annotations to the settings fields so the two cannot drift apart.
+    """
+
+    # _Common
+    LOCAL_DEV: bool
+    # DevSettings
+    DEV_DATAFRAME: str
+    DEV_IMAGES_DIR: str
+    # ProdSettings
+    FLIP_API_INTERNAL_URL: HttpUrl
+    INTERNAL_SERVICE_KEY_HEADER: str
+    INTERNAL_SERVICE_KEY: str
+    SERVER_CHECKPOINT_ROOT: str
+    DATA_ACCESS_API_URL: HttpUrl
+    IMAGING_API_URL: HttpUrl
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str
+    TRUST_INTERNAL_SERVICE_KEY: str
+    IMAGES_DIR: str
+    NET_ID: str
+    UPLOADED_FEDERATED_DATA_BUCKET: str
 
     def __getattribute__(self, name: str) -> object:
         if name.startswith("_"):
@@ -125,7 +150,7 @@ class _FlipConstantsProxy:
         return getattr(get_flip_constants(), name)
 
 
-FlipConstants = _FlipConstantsProxy()  # type: ignore[assignment]
+FlipConstants = _FlipConstantsProxy()
 
 
 class ResourceType(StrEnum):

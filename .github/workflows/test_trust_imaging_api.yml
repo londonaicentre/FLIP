@@ -17,7 +17,18 @@ on:
     branches: [main, develop]
     paths:
       - "trust/imaging-api/**"
+      # imaging_api/main.py imports log_config at module import time, resolved via
+      # pyproject.toml's pythonpath = [..., "../observability"], so a break there fails
+      # this suite. Both sibling trust suites already list it.
+      - "trust/observability/**"
       - ".github/workflows/test_trust_imaging_api.yml"
+      # This service's Makefile includes+exports the GSTT kit example at parse time, so a
+      # line make cannot read stops the suite before a test runs, and its values land in the
+      # environment Settings reads. The KCH twin exists but no Makefile reads it.
+      # The root .env.development.example is deliberately NOT listed here, unlike the two
+      # sibling trust suites — nothing in this job reads it; see the note above the test
+      # step for why the copy it used to make was removed.
+      - "trust/.env.GSTT.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -25,7 +36,25 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/imaging-api/**
+        trust/observability/**
+        .github/workflows/test_trust_imaging_api.yml
+        trust/.env.GSTT.development.example
+
   imaging-api:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
@@ -49,16 +78,15 @@ jobs:
       - name: Install uv (if used for dependency management)
         run: pip install uv
 
-      - name: Setup environment file
-        run: | # pragma: allowlist secret
-          cp ../../.env.development.example ../../.env.development
-          # Override sensitive values with GitHub secrets
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnk=' }}" >> ../../.env.development  # pragma: allowlist secret
-          echo "TRUST_API_KEY=${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}" >> ../../.env.development
-          echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "ENV=development" >> ../../.env.development
+      # No "Setup environment file" step here, deliberately, unlike the trust-api and
+      # data-access-api suites: their config.py sets env_file to the repo-root
+      # .env.development, so copying the template there is load-bearing for them.
+      # imaging_api/config.py declares no env_file at all — its values come from
+      # tests/conftest.py's defaults and from the kit example trust/imaging-api/Makefile
+      # includes+exports — so the copy was written and never read, and the four repository
+      # secrets it injected reached nothing. Restore it if imaging-api ever gains an
+      # env_file, and add .env.development.example to this workflow's two path lists when
+      # you do.
 
       - name: Run tests with pytest (example)
         run: make local_test

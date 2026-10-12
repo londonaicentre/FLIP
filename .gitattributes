@@ -13,3 +13,11 @@ fl-apps/*/required_files.json linguist-generated=true
 fl-apps/nvflare/*/app/config/config_fed_server.json linguist-generated=true
 fl-apps/nvflare/*/app/config/config_fed_client.json linguist-generated=true
 fl-apps/nvflare/*/meta.json linguist-generated=true
+
+# fl-tutorials/datasets/utils/schemas/*.yaml are Pandera's own serialisation (pandera.io.to_yaml) of
+# schemas derived from the official OMOP CDM 5.4 PostgreSQL DDL — do not hand-edit; regenerate with
+# `python fl-tutorials/datasets/utils/omop_schemas.py --regenerate` after bumping DDL_URL, and commit
+# the result. They carry no Apache header because pandera writes the file and would drop one on every
+# regenerate; marking them generated is the same treatment the aggregates above get, and records that
+# the licence rule applies to the generator rather than to its output.
+fl-tutorials/datasets/utils/schemas/*.yaml linguist-generated=true

@@ -1,3 +1,16 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
 # Debugging across services in FLIP [VScode guide]
 
 Before running the debug command, ensure that the services are up. Start the full stack normally with:
@@ -23,16 +36,18 @@ To leave debug mode use `make debug-off SERVICE=<service-name>` or `make debug-o
 
 ![Run and Debug panel](https://github.com/user-attachments/assets/57ac2c82-7f70-49c4-bc8b-6e5f2d9c220f)
 
-In the VSCode `Run and Debug` panel, you will find a task named:
+In the VSCode `Run and Debug` panel, you will find a launch configuration named:
 
-- `Central Hub API`
-- `FL API`
+- `CH API`
 - `Trust API`
 - `Imaging API`
 - `Data Access API`
 - `UI`
-- `Central Services` (UI, Central Hub API, FL API)
-- `Trust Services` (Trust API, Imaging API, Data Access API)
+
+There is no launch configuration for the FL API, and no compound configurations to launch several
+services together — attach to each one individually. To debug the FL API, run the `debug-fl-api`
+VSCode task (`Terminal > Run Task... > debug-fl-api`), which is equivalent to
+`make debug SERVICE=fl-api-net-1`, then attach your debugger to the port it opens.
 
 #### Automatically creating projects for manually testing the system
 

@@ -67,10 +67,7 @@ def test_parse_script_reports_offending_line_number(tmp_path: Path) -> None:
     """Errors must reference the source line so PR debugging stays cheap."""
     path = _write_script(
         tmp_path,
-        'version "6.5"\n'
-        "// blank-ish header\n"
-        "(0010,0020) := subject\n"
-        "garbage on line four\n",
+        'version "6.5"\n// blank-ish header\n(0010,0020) := subject\ngarbage on line four\n',
     )
     with pytest.raises(UnsupportedRuleError, match=r"line 4:"):
         parse_script(path)
@@ -85,9 +82,6 @@ def test_parse_script_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
     """
     path = _write_script(
         tmp_path,
-        'version "6.5"\n'
-        "\n"
-        "// just a comment\n"
-        "   // indented comment\n",
+        'version "6.5"\n\n// just a comment\n   // indented comment\n',
     )
     assert parse_script(path) == []

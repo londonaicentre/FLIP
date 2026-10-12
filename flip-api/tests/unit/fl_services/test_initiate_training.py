@@ -107,8 +107,15 @@ def mock_log_queue_positions():
 
 
 def test_initiate_training_success(
-    model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_add_fl_job, mock_update_model_status,
-    mock_add_log, mock_log_queue_positions
+    model_id,
+    fake_request,
+    mock_db,
+    client1,
+    mock_can_modify_model,
+    mock_add_fl_job,
+    mock_update_model_status,
+    mock_add_log,
+    mock_log_queue_positions,
 ):
     payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
     response = initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")

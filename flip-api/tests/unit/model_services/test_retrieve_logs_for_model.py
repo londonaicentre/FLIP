@@ -265,4 +265,5 @@ def test_retrieve_logs_for_model_unexpected_error(mock_can_access_true, mock_mod
     override_dependencies.exec.side_effect = Exception("Unexpected error")
     response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Unexpected error" in response.json()["detail"]
+    assert response.json()["detail"] == "Internal server error"
+    assert "Unexpected error" not in response.json()["detail"]

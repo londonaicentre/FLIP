@@ -19,7 +19,7 @@ This is the NVFLARE **Client API** latent-diffusion job type (`JOB_TYPE=diffusio
 It runs a **two-stage** federated training — an autoencoder (+ GAN discriminator)
 FedAvg stage followed by a diffusion-model FedAvg stage over the frozen autoencoder's latent space,
 each stage with its own cross-site validation — driving the clients through the NVFLARE Client
-API (`InProcessClientAPIExecutor`). It replaced the retired Executor-based `diffusion_model`
+API (`ClientAPIExecutor`, in-process mode). It replaced the retired Executor-based `diffusion_model`
 template, which drove the clients through the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pairs.
 
 The base configs (`app/config/config_fed_server.json`, `app/config/config_fed_client.json`) and
@@ -71,7 +71,7 @@ script stamps on the outgoing `FLModel`.
 
 - `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
 - `train_ae`, `train_dm`, `validate_ae`, `validate_dm` → ONE
-  `nvflare.app_common.executors.InProcessClientAPIExecutor` running `custom/trainer.py`
+  `nvflare.app_common.executors.ClientAPIExecutor` (in-process mode) running `custom/trainer.py`
 - `train_ae`/`train_dm` results → `flip.nvflare.components.StagePercentilePrivacy` (stage-aware DP
   noise filter)
 - Event handlers: `ClientEventHandler`, `FlipAnalyticsBridge`

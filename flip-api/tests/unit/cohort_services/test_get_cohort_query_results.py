@@ -147,7 +147,8 @@ def test_get_cohort_results_internal_error(mock_access):
         get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
 
     assert exc_info.value.status_code == 500
-    assert "Internal server error" in str(exc_info.value.detail)
+    assert exc_info.value.detail == "Internal server error"
+    assert "Unexpected DB error" not in exc_info.value.detail
 
 
 @patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)

@@ -326,9 +326,7 @@ class TestEvaluationJsonGenerator:
             mock_engine.get_workspace.return_value.get_run_dir.return_value = run_dir
             self.fl_ctx.get_engine.return_value = mock_engine
             self.fl_ctx.get_job_id.return_value = "job_123"
-            self.generator._eval_failures = [
-                {"model": "SRV_model", "client": "Trust_1", "return_code": "TASK_ABORTED"}
-            ]
+            self.generator._eval_failures = [{"model": "SRV_model", "client": "Trust_1", "return_code": "TASK_ABORTED"}]
 
             self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
 

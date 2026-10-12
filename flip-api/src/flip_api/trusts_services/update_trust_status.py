@@ -169,6 +169,5 @@ def update_trust_status(
         # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        error_msg = f"Error updating trust status: {str(e)}"
-        logger.error(error_msg)
-        raise HTTPException(status_code=500, detail=error_msg)
+        logger.exception("Error updating trust status")
+        raise HTTPException(status_code=500, detail="Internal server error") from e

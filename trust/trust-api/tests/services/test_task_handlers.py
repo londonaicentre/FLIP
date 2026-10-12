@@ -216,10 +216,12 @@ async def test_handle_get_imaging_status_success(mock_make_request):
     """Should call imaging-api status endpoint."""
     mock_make_request.return_value = {"import_status": {"total": 10, "imported": 8}}
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is True
     call_args = mock_make_request.call_args
@@ -236,10 +238,12 @@ async def test_handle_reimport_studies_success(mock_make_request):
     """Should call imaging-api reimport endpoint."""
     mock_make_request.return_value = {"status": "reimporting"}
 
-    result = await handle_reimport_studies({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_reimport_studies(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is True
     call_args = mock_make_request.call_args
@@ -256,10 +260,12 @@ async def test_handle_update_user_profile_success(mock_make_request):
     """Should call imaging-api users endpoint."""
     mock_make_request.return_value = {"status": "updated"}
 
-    result = await handle_update_user_profile({
-        "email": "user@test.com",
-        "enabled": True,
-    })
+    result = await handle_update_user_profile(
+        {
+            "email": "user@test.com",
+            "enabled": True,
+        }
+    )
 
     assert result["success"] is True
     call_args = mock_make_request.call_args
@@ -296,10 +302,12 @@ async def test_handle_get_imaging_status_error(mock_make_request):
     """Should return failure on error."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
@@ -312,10 +320,12 @@ async def test_handle_get_imaging_status_reports_upstream_status_code(mock_make_
     to sniff it out of the error string."""
     mock_make_request.side_effect = HTTPException(status_code=404, detail="Project not found")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert result["status_code"] == 404
@@ -326,10 +336,12 @@ async def test_handle_get_imaging_status_reports_transport_status_code(mock_make
     """make_request maps transport failures to 502; that is an unreachable XNAT, not a missing project."""
     mock_make_request.side_effect = HTTPException(status_code=502, detail="Failed to connect")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert result["status_code"] == 502
@@ -340,10 +352,12 @@ async def test_handle_get_imaging_status_omits_status_code_for_non_http_errors(m
     """A non-HTTP failure has no meaningful status code — omit the key rather than invent one."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert "status_code" not in result
@@ -354,10 +368,12 @@ async def test_handle_reimport_studies_error(mock_make_request):
     """Should return failure on error."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_reimport_studies({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_reimport_studies(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]

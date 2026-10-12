@@ -62,13 +62,16 @@
   "task_data_filters": [],
   "task_result_filters": [
     {
+      "tasks": [
+        "post_validation",
+        "validate"
+      ],
       "filters": [
         {
-          "args": {},
-          "path": "flip.nvflare.components.client_exception_reporter.ClientExceptionReporter"
+          "path": "flip.nvflare.components.client_exception_reporter.ClientExceptionReporter",
+          "args": {}
         }
-      ],
-      "tasks": ["validate", "post_validation"]
+      ]
     }
   ]
 }

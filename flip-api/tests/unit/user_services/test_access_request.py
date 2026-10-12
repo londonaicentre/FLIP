@@ -19,7 +19,7 @@ from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from flip_api.config import Settings
+from flip_api.config import DevSettings
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import AccessRequest, AccessRequestStatus
 from flip_api.domain.interfaces.shared import IAccessRequest, IUpdateAccessRequestStatus
@@ -45,7 +45,9 @@ def mock_session():
 
 @pytest.fixture
 def mocked_settings():
-    mock = Settings(
+    # DevSettings (not the Settings base) because the SES addresses live on the
+    # per-environment classes since FLIP#919 — dev defaults them, prod requires them.
+    mock = DevSettings(
         AWS_REGION="mock-region",
         AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
         AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
@@ -56,10 +58,7 @@ def mocked_settings():
 
 def test_request_access_persists_and_emails(valid_access_request, mock_session, mocked_settings):
     """Happy path: the request is persisted, the admin email is sent, and email_notified is set."""
-    with patch("flip_api.user_services.access_request.boto3.client") as mock_boto3_client:
-        mock_ses_client = MagicMock()
-        mock_boto3_client.return_value = mock_ses_client
-
+    with patch("flip_api.user_services.access_request.send_templated_email") as mock_send_email:
         assert request_access(valid_access_request, mock_session) is None
 
         # Persisted first: an AccessRequest row was added and committed.
@@ -72,16 +71,16 @@ def test_request_access_persists_and_emails(valid_access_request, mock_session, 
         assert persisted.status == AccessRequestStatus.PENDING
         assert mock_session.commit.called
 
-        # Admin email dispatched via SES v2 with the expected template + payload.
-        mock_boto3_client.assert_called_once_with("sesv2", region_name="mock-region")
-        mock_ses_client.send_email.assert_called_once()
-        call_args = mock_ses_client.send_email.call_args[1]
-        assert call_args["FromEmailAddress"] == "sender@example.com"
-        assert call_args["Destination"]["ToAddresses"] == ["admin@example.com"]
-        assert call_args["Content"]["Template"]["TemplateName"] == "flip-access-request"
-        assert "valid@email.com" in call_args["Content"]["Template"]["TemplateData"]
-        assert "Full Name" in call_args["Content"]["Template"]["TemplateData"]
-        assert "reason for access" in call_args["Content"]["Template"]["TemplateData"]
+        # Admin email dispatched with the expected recipient, template + payload.
+        mock_send_email.assert_called_once()
+        call_kwargs = mock_send_email.call_args.kwargs
+        assert call_kwargs["recipient"] == "admin@example.com"
+        assert call_kwargs["template_name"] == "flip-access-request"
+        assert call_kwargs["template_data"] == {
+            "email": "valid@email.com",
+            "name": "Full Name",
+            "purpose": "reason for access",
+        }
 
         # Flagged as notified once the email succeeds, and the row's modified
         # timestamp is bumped to reflect that write.
@@ -92,14 +91,12 @@ def test_request_access_persists_and_emails(valid_access_request, mock_session, 
 def test_request_access_persists_even_when_ses_fails(valid_access_request, mock_session, mocked_settings):
     """A SES failure is best-effort: it must NOT fail the submission nor lose the request (#699)."""
     with (
-        patch("flip_api.user_services.access_request.boto3.client") as mock_boto3_client,
+        patch("flip_api.user_services.access_request.send_templated_email") as mock_send_email,
         patch("flip_api.user_services.access_request.logger") as mock_logger,
     ):
-        mock_ses_client = MagicMock()
-        mock_ses_client.send_email.side_effect = ClientError(
+        mock_send_email.side_effect = ClientError(
             {"Error": {"Code": "MessageRejected", "Message": "Email address is not verified"}}, "SendEmail"
         )
-        mock_boto3_client.return_value = mock_ses_client
 
         # Does not raise despite the broken email backend.
         assert request_access(valid_access_request, mock_session) is None
@@ -116,7 +113,7 @@ def test_request_access_persists_even_when_ses_fails(valid_access_request, mock_
 def test_request_access_swallows_unexpected_notification_error(valid_access_request, mock_session, mocked_settings):
     """Any non-ClientError during notification is also swallowed after the request is persisted."""
     with (
-        patch("flip_api.user_services.access_request.boto3.client", side_effect=Exception("boom")),
+        patch("flip_api.user_services.access_request.send_templated_email", side_effect=Exception("boom")),
         patch("flip_api.user_services.access_request.logger") as mock_logger,
     ):
         assert request_access(valid_access_request, mock_session) is None
@@ -131,7 +128,7 @@ def test_request_access_persist_failure_raises_500(valid_access_request, mock_se
     """If the request cannot be persisted the submission genuinely failed — surface a 500, skip the email."""
     mock_session.commit.side_effect = Exception("db down")
     with (
-        patch("flip_api.user_services.access_request.boto3.client") as mock_boto3_client,
+        patch("flip_api.user_services.access_request.send_templated_email") as mock_send_email,
         patch("flip_api.user_services.access_request.logger"),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -140,7 +137,7 @@ def test_request_access_persist_failure_raises_500(valid_access_request, mock_se
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         mock_session.rollback.assert_called()
         # No email is attempted once persistence fails.
-        mock_boto3_client.assert_not_called()
+        mock_send_email.assert_not_called()
 
 
 def test_api_endpoint_returns_204(mocked_settings):
@@ -149,7 +146,7 @@ def test_api_endpoint_returns_204(mocked_settings):
     app.dependency_overrides[get_session] = lambda: mock_session
     try:
         with (
-            patch("flip_api.user_services.access_request.boto3.client"),
+            patch("flip_api.user_services.access_request.send_templated_email"),
             patch("flip_api.user_services.access_request.logger"),
         ):
             client = TestClient(app)

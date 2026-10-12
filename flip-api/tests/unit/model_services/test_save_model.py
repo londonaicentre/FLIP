@@ -145,11 +145,13 @@ def test_save_model_database_error(
     override_dependencies,
 ):
     override_dependencies.exec.return_value.all.return_value = [uuid4()]  # Approved trusts
-    override_dependencies.add.side_effect = SQLAlchemyError
+    override_dependencies.add.side_effect = SQLAlchemyError("connection to db-host:5432 refused")
 
     response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Database error" in response.json()["detail"]
+    # The driver's message can carry the DSN — category only in the body (#906).
+    assert response.json()["detail"] == "Database error occurred while saving model."
+    assert "db-host" not in response.json()["detail"]
 
 
 def test_save_model_unexpected_error(
@@ -162,4 +164,5 @@ def test_save_model_unexpected_error(
 
     response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Unexpected error" in response.json()["detail"]
+    assert response.json()["detail"] == "Internal server error"
+    assert "Unexpected error" not in response.json()["detail"]

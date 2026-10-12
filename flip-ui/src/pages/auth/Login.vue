@@ -44,11 +44,24 @@
             >
                 <template #labelRight>
                     <router-link
+                        v-if="authStore.capabilities.forgotPassword"
                         to="/auth/change-password"
+                        data-test="forgot-password-link"
                         class="text-sm text-right text-primary-500 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 hover:underline"
                     >
                         Forgot password?
                     </router-link>
+                    <!-- Keycloak owns the reset flow: hand over to its own page in a new tab. -->
+                    <a
+                        v-else
+                        :href="externalResetUrl"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        data-test="forgot-password-link"
+                        class="text-sm text-right text-primary-500 hover:text-primary-700 dark:text-primary-300 dark:hover:text-primary-200 hover:underline"
+                    >
+                        Forgot password?
+                    </a>
                 </template>
             </AiInput>
             <div class="grow" />
@@ -78,11 +91,12 @@
 </template>
 
 <script setup lang="ts">
-import { fetchAuthSession } from "aws-amplify/auth";
 import { Form } from "vee-validate";
 import { onBeforeMount, ref } from "vue";
 import { object } from "yup";
 
+import { keycloakResetCredentialsUrl } from "@/auth/keycloak-provider";
+import { AccountActionRequiredError, SignInStep } from "@/auth/provider";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import { routeChange } from "@/router";
@@ -100,16 +114,19 @@ interface ILogin {
 const authStore = useAuthStore();
 const loginLoader = ref(false);
 
+// Only a backend without an in-app reset flow (Keycloak) renders the
+// external link, so this is only ever read when the Keycloak config exists.
+const externalResetUrl = authStore.capabilities.forgotPassword ? "" : keycloakResetCredentialsUrl();
+
 onBeforeMount(async () => {
-    // Only redirect to /projects if the user has a real access token.
-    // `fetchAuthSession` can return a session object (e.g. with a stale
-    // challenge string) without tokens and without throwing, and the
-    // previous `routeChange.viewProjects()` on any non-throw was what
-    // made "Back to log in" from mid-challenge pages bounce straight
-    // back to the challenge page via the router guard.
+    // Only redirect to /projects if the user has a real session. The
+    // provider's `hasSession` answers false for a stale challenge-only
+    // session — the previous `routeChange.viewProjects()` on any
+    // non-throwing session read was what made "Back to log in" from
+    // mid-challenge pages bounce straight back to the challenge page via
+    // the router guard.
     try {
-        const session = await fetchAuthSession();
-        if (session.tokens?.accessToken) {
+        if (await authStore.hasSession()) {
             routeChange.viewProjects();
         }
     } catch {
@@ -137,33 +154,49 @@ const submit = async (v: unknown): Promise<void> => {
             password: values.password
         });
 
-        // Route based on the next step returned by Cognito. Challenge pages
-        // drive their own follow-ups; once the challenge chain is cleared,
-        // the MFA gate (via `needsMfaEnrolment`) decides whether to send
-        // the user to the app or into post-auth enrolment.
+        // Route based on the next step returned by the provider. Challenge
+        // pages drive their own follow-ups; once the challenge chain is
+        // cleared, the MFA gate (via `needsMfaEnrolment`) decides whether to
+        // send the user to the app or into post-auth enrolment.
         switch (authStore.signInStep) {
-            case "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED":
+            case SignInStep.NEW_PASSWORD_REQUIRED:
                 routeChange.newPassword();
                 break;
-            case "CONTINUE_SIGN_IN_WITH_TOTP_SETUP":
+            case SignInStep.TOTP_SETUP:
                 routeChange.mfaSetup();
                 break;
-            case "CONFIRM_SIGN_IN_WITH_TOTP_CODE":
+            case SignInStep.TOTP_CODE:
                 routeChange.mfaVerify();
                 break;
             default:
-                if (authStore.needsMfaEnrolment) {
+                if (authStore.needsMfaEnrolment && authStore.capabilities.totpEnrolment) {
                     routeChange.mfaSetup();
                 } else {
                     routeChange.viewProjects();
                 }
         }
-    } catch {
-        Snackbar.show({
-            type: "error",
-            title: "Error",
-            text: "There was a problem logging you in. Please check your details and try again."
-        });
+    } catch (e) {
+        if (e instanceof AccountActionRequiredError) {
+            // The provider will not issue tokens until the user completes a
+            // required action in its own UI (Keycloak: forced password
+            // update, incomplete profile, ...). Point them there; the
+            // notice stays up long enough to come back to.
+            const actionUrl = e.actionUrl;
+            Snackbar.warning({
+                title: "Finish setting up your account",
+                text: "Finish setting up your account in Keycloak, then sign in again.",
+                actionText: "Open Keycloak",
+                action: () => {
+                    window.open(actionUrl, "_blank", "noopener,noreferrer");
+                }
+            }, 60_000);
+        } else {
+            Snackbar.show({
+                type: "error",
+                title: "Error",
+                text: "There was a problem logging you in. Please check your details and try again."
+            });
+        }
     }
 
     loginLoader.value = false;

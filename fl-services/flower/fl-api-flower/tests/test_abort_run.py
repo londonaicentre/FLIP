@@ -46,9 +46,7 @@ def test_abort_run_idempotent_for_terminal_run(client, src_root, mock_flwr_run):
             "list": {
                 "returncode": 0,
                 "stdout": (
-                    '{"success": true, "runs": ['
-                    '{"run-id": "9478652229627629048", "status": "finished:completed"}'
-                    "]}"
+                    '{"success": true, "runs": [{"run-id": "9478652229627629048", "status": "finished:completed"}]}'
                 ),
             },
         }

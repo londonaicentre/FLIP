@@ -1,0 +1,425 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Terraform apply on merge (FLIP#962): develop → staging, main → production.
+#
+# Production applies automatically, on the official release cycle, with no human
+# gate beyond branch protection and PR review on `main`. Two hazards make that
+# safe to switch on, and both are handled here rather than left to a runbook:
+#
+#   Hazard A — an apply un-pins the released image.
+#     ecs_services.tf tracks max(terraform_revision, live_revision), so a no-op
+#     apply preserves what deploy-centralhub deployed. But an apply that *changes*
+#     a task definition mints a revision from the env file's mutable `:stag` /
+#     `:prod` tag, discarding the immutable sha pin from FLIP#751. Solved by
+#     resolving the tag instead of reading it — see scripts/resolve-image-tags.sh.
+#
+#   Hazard B — replacing fl-server-net-1 kills an in-flight training run (FLIP#770).
+#     A runner cannot ask the hub whether a run is in flight (GET /fl/quiesce is
+#     Cognito-gated, CloudFront strips the internal key, and the scheduler state
+#     is in a private subnet), so the gate asks the plan instead: if nothing on
+#     the FL watch list changes, apply; otherwise hold for an operator. See
+#     scripts/check-fl-plan-impact.sh.
+#
+# Re-running after quiescing: dispatch this workflow on the same branch with
+# `fl_quiesced: true`. That input is the operator's attestation that FL job
+# pickup is paused and no net is BUSY, and it is the only thing that skips the
+# gate — without it the re-run re-reads the same plan, finds the same FL change
+# and holds again, forever. Dispatching from any other branch fails closed: the
+# apply role's trust policy pins job_workflow_ref to this file at
+# refs/heads/{develop,main}.
+#
+# Release applies (FLIP#1283). release.yml dispatches this workflow on
+# refs/heads/main with `release_tag: v<X.Y.Z>` once the twelve image builds it
+# fired at the tag have gone green, and the tag is forwarded to the resolver as
+# RELEASE_TAG. Three consequences worth stating plainly:
+#
+#   * A release workflow can now trigger a production apply. It is still this
+#     file running on refs/heads/main under the aws-prod environment, so the OIDC
+#     trust policy, branch protection and environment rules are unchanged — what
+#     is new is the trigger, not the authority.
+#   * The ref is refs/heads/main and not the tag precisely because of that trust
+#     policy: a dispatch at refs/tags/v<X.Y.Z> presents job_workflow_ref at the
+#     tag and fails to assume the role.
+#   * The release dispatch and the ordinary push apply of the same commit share
+#     the concurrency group `tf-apply-main` with cancel-in-progress: false, so a
+#     running apply is never interrupted, and the release one — fired after a
+#     wait the length of an image build — applies second. That is the order that
+#     matters: the push apply pins `sha-<short7>`, the release apply pins
+#     `v<X.Y.Z>@sha256:…` over it.
+#     `cancel-in-progress: false` protects the RUNNING apply, not a QUEUED one.
+#     GitHub holds at most one pending run per group, so whatever is queued next
+#     on main displaces what was queued before it. If you re-dispatch this
+#     workflow while a release is in flight — the usual case being an
+#     `fl_quiesced: true` re-dispatch of a held apply — pass `release_tag` too,
+#     or your run silently takes the release apply's place and production stays
+#     on the previous release. release.yml's "Confirm the release apply actually
+#     ran" step catches that case and re-dispatches once (FLIP#1283).
+#
+# A release apply that changes the FL task-definition tag trips hazard B's gate
+# and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any
+# other FL-affecting apply does. That is deliberate: a platform release is an
+# attended event, and the gate is not weakened for it.
+
+name: Terraform Apply
+
+on:
+  push:
+    branches: [develop, main]
+    paths:
+      - "deploy/providers/AWS/**"
+      - ".github/workflows/terraform_apply.yml"
+  workflow_dispatch:
+    inputs:
+      fl_quiesced:
+        description: >-
+          FL is quiesced (deployment mode on, no BUSY net) — skip the FL-impact
+          gate. This is an operator attestation, not a check: the runner cannot
+          reach GET /fl/quiesce, so nothing verifies it.
+        type: boolean
+        default: false
+      release_tag:
+        description: >-
+          Pin this release (v<X.Y.Z>) instead of the commit's sha image. Set by
+          release.yml once the release builds are green; leave empty for an
+          ordinary operator re-run. Fails closed if the release images are not
+          published — see scripts/resolve-image-tags.sh.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  # Never cancel an apply in progress — a half-applied plan leaves state and
+  # reality disagreeing in a way the next run cannot reason about.
+  group: tf-apply-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    name: Apply (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    # Setting the repository variable TF_STAG_DISABLED=true pauses the staging
+    # leg of plan, apply and drift, so a develop merge cannot rebuild a staging
+    # estate that was torn down on purpose. It is a repository variable rather
+    # than an aws-stag one because a job-level `if` is evaluated before the job's
+    # environment is loaded. Production (main) never reads it.
+    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+      packages: read # probe GHCR for the release image tag
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # Full history: the image-wait decision below diffs this push against
+          # its predecessor, which a shallow clone cannot reach.
+          fetch-depth: 0
+
+      # Validated here as well as in the resolver, because the two reject
+      # different things: the resolver only ever sees the string, while the
+      # estate check below is this workflow's own invariant. `release_tag` is a
+      # free-text dispatch input, so a typo would otherwise reach the resolver as
+      # "the release image is absent" and read as a failed build.
+      - name: Validate the release tag
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+            { echo "::error::release_tag must be a stable release tag v<X>.<Y>.<Z> (got '${RELEASE_TAG}')"; exit 1; }
+          # The estate is chosen by the ref — develop → stag, main → prod — and a
+          # release is a main/prod event by definition. A release_tag on develop
+          # would pin a production release into staging from a branch whose code
+          # is not in it.
+          [[ "${GITHUB_REF_NAME}" == "main" ]] ||
+            { echo "::error::release_tag is only valid on main (prod); got ref ${GITHUB_REF_NAME}"; exit 1; }
+
+          # THE TAG MUST BE THIS COMMIT. The dispatch runs main as it is when the
+          # dispatch fires, up to the whole build wait after the tag was cut. If a
+          # hotfix B merged during that window, B's own push apply has pinned
+          # sha-B; applying release A's images on top of B's code is a silent
+          # rollback of production. Checking the tag against the commit actually
+          # checked out turns that into a red run before any AWS call.
+          #
+          # Recovery is to cut a release from the newer commit, not to re-run
+          # this: by then the older release's images are genuinely not what main
+          # is.
+          TAG_SHA="$(git rev-parse -q --verify "${RELEASE_TAG}^{commit}" 2>/dev/null || true)"
+          [[ -n "${TAG_SHA}" ]] ||
+            { echo "::error::${RELEASE_TAG} does not resolve to a commit in this checkout"; exit 1; }
+          [[ "${TAG_SHA}" == "${GITHUB_SHA}" ]] ||
+            { echo "::error::${RELEASE_TAG} is ${TAG_SHA}, but this run is applying ${GITHUB_SHA} — main moved on after the tag was cut. Applying ${RELEASE_TAG}'s images over newer code would roll production back; cut a release from ${GITHUB_SHA} instead."; exit 1; }
+          echo "Pinning release ${RELEASE_TAG} (${TAG_SHA})."
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
+          role-session-name: flip-tf-apply-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # This workflow fires on `deploy/providers/AWS/**`; the image builds fire on
+      # service paths. An infrastructure-only merge therefore publishes no
+      # `sha-<short7>` image at all, and waiting the full budget for one that
+      # cannot exist burns GHCR_WAIT_SECONDS of idle runner on the commonest kind
+      # of apply. The resolver looks for three images (flip-api, fl-server,
+      # fl-api), but the two FL ones are published by one workflow and share a
+      # single budget, so the worst case is two waits, not three. So the budget is
+      # spent only when this push actually touched a path that builds one of them.
+      - name: Decide how long to wait for this commit's images
+        id: wait
+        env:
+          BEFORE: ${{ github.event.before }}
+          CONFIGURED_WAIT: ${{ vars.GHCR_WAIT_SECONDS || 900 }}
+        run: |
+          set -euo pipefail
+          # flip-api        <- test_flip_api.yml -> docker_build_flip_api.yml
+          # flare-fl-server
+          # flower-superlink <- fl-docker-build-{nvflare,flower}.yml
+          paths=(
+            flip-api
+            fl-services
+            flip-utils
+            .github/workflows/test_flip_api.yml
+            .github/workflows/docker_build_flip_api.yml
+            .github/workflows/fl-docker-build-nvflare.yml
+            .github/workflows/fl-docker-build-flower.yml
+          )
+          seconds="${CONFIGURED_WAIT}"
+          reason="cannot tell what changed — waiting the full budget"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${BEFORE}" =~ ^[0-9a-f]{40}$ ]] &&
+            git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            if [[ -z "$(git diff --name-only "${BEFORE}" "${GITHUB_SHA}" -- "${paths[@]}")" ]]; then
+              seconds=0
+              reason="no service path changed in ${BEFORE:0:7}..${GITHUB_SHA:0:7} — probing once instead of waiting"
+            else
+              reason="a service path changed — waiting up to ${CONFIGURED_WAIT}s for its image"
+            fi
+          fi
+          echo "GHCR wait: ${seconds}s (${reason})."
+          echo "seconds=${seconds}" >> "$GITHUB_OUTPUT"
+
+      # Hazard A. Waits for this commit's `sha-<short7>` images, which
+      # docker_build_*.yml publishes only after the service's tests pass — so an
+      # apply cannot deploy an image that never went green. When no image was
+      # published (an infrastructure-only merge) it reuses what the services are
+      # already running, never the mutable tag.
+      - name: Resolve the image tags to pin
+        env:
+          GIT_SHA: ${{ github.sha }}
+          # Empty on every path but a release dispatch, which is exactly the
+          # pre-FLIP#1283 sha behaviour — see scripts/resolve-image-tags.sh.
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FALLBACK_DOCKER_TAG: ${{ vars.DOCKER_TAG }}
+          FALLBACK_DOCKER_FL_TAG: ${{ vars.DOCKER_FL_TAG }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          GHCR_WAIT_SECONDS: ${{ steps.wait.outputs.seconds }}
+        run: deploy/providers/AWS/scripts/resolve-image-tags.sh >> "$GITHUB_ENV"
+
+      # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent from this env block:
+      # they are inherited from the step above via $GITHUB_ENV. Setting them from
+      # `vars` here would override the resolved values and reintroduce hazard A.
+      - name: Compose the Terraform env file
+        env:
+          # Which mode this run composes for: the deploy/env_mode.mk token, from
+          # the TF_PROD variable on the environment (stag | true | lza-stag | lza).
+          # Unset keeps the legacy pair — `true` on main, `stag` otherwise — so a
+          # repository that has not set it behaves exactly as before, and a
+          # repointed estate only has to set one variable. The script derives the
+          # env-file name, the AWS_PROFILE the Makefile's guard expects and which
+          # keys are required, from this one token.
+          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+          # The class this run is allowed to compose, asserted by the script. The
+          # ref says which class the *branch* deploys; TF_PROD says which estate to
+          # deploy it into, and nothing else checks the two agree. They must:
+          # TF_PROD=stag (or lza-stag) on aws-prod composes a prod-sized plan whose
+          # RDS is refreshed as deletion_protection = false, skip_final_snapshot =
+          # true — then applies it unattended on main. With this, that is a red
+          # compose step instead of a plan someone has to read closely.
+          EXPECTED_ENV_CLASS: ${{ github.ref_name == 'main' && 'prod' || 'stag' }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
+          AICENTRE_BUCKET_NAME: ${{ vars.AICENTRE_BUCKET_NAME }}
+          FLIP_APP_BUNDLES_BUCKET_NAME: ${{ vars.FLIP_APP_BUNDLES_BUCKET_NAME }}
+          FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
+          FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
+          FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
+          FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
+          ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
+          DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
+          FL_ADMIN_DIRECTORY: ${{ vars.FL_ADMIN_DIRECTORY }}
+          INTERNAL_SERVICE_KEY_HEADER: ${{ vars.INTERNAL_SERVICE_KEY_HEADER }}
+          TRUST_API_KEY_HEADER: ${{ vars.TRUST_API_KEY_HEADER }}
+          SES_VERIFIED_EMAIL: ${{ vars.SES_VERIFIED_EMAIL }}
+          ALB_SUBDOMAIN: ${{ vars.ALB_SUBDOMAIN }}
+          NLB_SUBDOMAIN: ${{ vars.NLB_SUBDOMAIN }}
+          DOCKER_REGISTRY: ${{ vars.DOCKER_REGISTRY }}
+          FL_BACKEND: ${{ vars.FL_BACKEND }}
+          FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
+          FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
+          FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
+          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
+          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
+          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
+          JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
+          JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
+          # The LZA keys (FLIP#749). Required when TF_PROD selects a
+          # platform-managed estate (lza-stag / lza), expected absent on the
+          # legacy tokens — see compose-ci-env.sh, which is the one place that
+          # decides. The last four have no `export TF_VAR_…` line in the Makefile,
+          # so the script writes them into the env file as raw exports. The two
+          # web-edge values are optional on purpose: the edge is built from this
+          # stack's outputs, so they are legitimately empty on a first apply.
+          ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
+          EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
+          LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
+          MANAGE_DNS: ${{ vars.MANAGE_DNS }}
+          NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
+          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
+          LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
+          LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
+          # NOT one of the LZA keys above: this one is for a self-contained
+          # account, set to "true" on aws-prod (or aws-stag) for the single apply
+          # that hands the public web name to another estate's edge. Unset is the
+          # everyday value — see compose-ci-env.sh and README, "Handing the public
+          # name over".
+          RELEASE_WEB_ALIAS: ${{ vars.RELEASE_WEB_ALIAS }}
+          ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
+          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
+          INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
+          INTERNAL_SERVICE_KEY_HASH: ${{ secrets.INTERNAL_SERVICE_KEY_HASH }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+        run: deploy/providers/AWS/scripts/compose-ci-env.sh
+
+      - name: Write the EC2 keypair public key
+        run: |
+          mkdir -p "$HOME/.ssh"
+          if ! aws ssm get-parameter \
+            --name /flip/ci/host_aws_public_key \
+            --query Parameter.Value --output text > "$HOME/.ssh/host-aws.pub"; then
+            echo "::error::/flip/ci/host_aws_public_key is missing. It is declared in" \
+                 "deploy/providers/AWS/parameter_store.tf and created by the first" \
+                 "laptop apply of that root in this account."
+            exit 1
+          fi
+          chmod 600 "$HOME/.ssh/host-aws.pub"
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "~> 1.13"
+          terraform_wrapper: false
+
+      - name: Export the Terraform variables
+        working-directory: deploy/providers/AWS
+        env:
+          # Same token as the compose step above, for the same reason: `make` is
+          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
+          # it has to be looking at the environment this run composed for.
+          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+        run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
+
+      # Plan first and apply *that file*, never `apply -auto-approve` against a
+      # fresh plan: the gate below has to inspect the same plan that gets applied,
+      # or it is checking something else.
+      - name: Terraform plan
+        uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
+        with:
+          command: plan
+          working-directory: deploy/providers/AWS
+          arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
+          validate: true
+          format: true
+          # preserve-plan keeps the file in the working directory, which the FL
+          # gate below and the apply step both read. That is local to the runner.
+          preserve-plan: true
+          # upload-plan is a different thing and MUST stay false: it publishes
+          # the plan as a workflow artifact, and the plan file is a zip
+          # containing the full tfstate — AES_KEY_BASE64, INTERNAL_SERVICE_KEY
+          # and ADMIN_USER_PASSWORD in plaintext. This repository is public, so
+          # that artifact would be a public download of production credentials.
+          # An applied-plan audit trail is not worth that; the run log records
+          # what was applied.
+          upload-plan: false
+
+      # Hazard B. Exit 1 holds the deploy with the resources named; exit 2 means
+      # the plan could not be read, which is also a hold — never an apply.
+      - name: Check the plan for FL impact
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.fl_quiesced) }}
+        working-directory: deploy/providers/AWS
+        run: |
+          terraform show -json tfplan > tfplan.json
+          scripts/check-fl-plan-impact.sh tfplan.json
+
+      # The same script, advisory-only, on exactly the runs the gate above skips
+      # (FLIP#1199). `fl_quiesced=true` attests that FL is quiesced — it says
+      # nothing about whether the networking account has been updated, and an NLB
+      # replacement is both FL-disruptive and ingress-changing, so the one apply
+      # most likely to break the cross-repo contract is the one that would
+      # otherwise emit no LZA advisory at all. It exits 0 on every readable plan;
+      # an unreadable plan fails the step (it fails closed rather than claiming
+      # "no advisory"), which is why `continue-on-error: true` is set here: the
+      # attestation is what releases the apply, and a broken advisory — an
+      # unexpected plan shape, a jq error, a future selector bug — must not take
+      # away the one documented way past a gate that is holding or failing.
+      - name: Emit the plan advisories (FL gate skipped)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.fl_quiesced }}
+        continue-on-error: true
+        working-directory: deploy/providers/AWS
+        env:
+          ADVISORY_ONLY: "true"
+        run: |
+          terraform show -json tfplan > tfplan.json
+          scripts/check-fl-plan-impact.sh tfplan.json
+
+      # The documented remedy for a held apply — quiesce FL, then re-run — needs
+      # a way to say "I have quiesced it", or the re-run holds on the same plan
+      # forever. Nothing here verifies the claim: the runner cannot reach
+      # GET /fl/quiesce. It is recorded as a warning annotation with the actor's
+      # name so the attestation is attributable after the fact.
+      - name: Record the FL-quiesce attestation
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.fl_quiesced }}
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          echo "::warning title=FL gate skipped::${ACTOR} dispatched this apply with fl_quiesced=true, so the FL gate did not hold this apply (scripts/check-fl-plan-impact.sh ran advisory-only). An in-flight training run is killed if that attestation is wrong."
+
+      # tf-via-pr moves `plan-file` onto its own working path, so hand it a copy
+      # rather than the file it is about to overwrite.
+      - name: Stage the reviewed plan
+        working-directory: deploy/providers/AWS
+        run: cp tfplan tfplan.gated
+
+      - name: Terraform apply
+        uses: op5dev/tf-via-pr@39ed2635c056ca408ed24cc5c2baf0ef4381a7a5 # v13.7.4
+        with:
+          command: apply
+          working-directory: deploy/providers/AWS
+          arg-backend-config: bucket=${{ vars.FLIP_TFSTATE_BUCKET_NAME }},region=${{ vars.AWS_REGION }}
+          plan-file: deploy/providers/AWS/tfplan.gated
+          # Belt and braces. Today tf-via-pr only uploads for `command: plan`, so
+          # this step would not publish anything — but the state-in-plaintext
+          # consequence is severe enough on a public repo that it should not
+          # depend on that staying true. The harness requires it on every step.
+          upload-plan: false

@@ -43,6 +43,9 @@ run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 
 up:
+# flip-api depends on the object store, whose data directory the root Makefile
+# pre-creates host-owned (FLIP#1291) — the compose refuses to start it otherwise.
+	@$(MAKE) -C .. _ensure-object-store-dir
 # Note we need to start the db first
 	@echo "🚀 Starting flip-db..."
 	$(docker_command) up --remove-orphans -d flip-db
@@ -111,10 +114,20 @@ delete_testing_projects:
 seed_demo_projects:
 	@echo "🌱 Seeding the demo radiology project catalogue..."
 	env DB_HOST=localhost uv run python -m tests.seed_demo_projects $(EXTRA_ARGS)
-# Provision the demo Cognito users for the demo-video recorder. Passwords
-# come from DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD in the env.
+# Provision the demo users for the demo-video recorder in the configured
+# identity provider (AUTH_BACKEND: the local Keycloak realm or the Cognito pool).
+# Runs inside the flip-api container so the provider is reached exactly as the
+# app reaches it (KEYCLOAK_URL is a docker-network name; ~/.aws is mounted for
+# Cognito). Passwords come from DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD
+# in the env and are handed to the container per call — the service's explicit
+# environment list does not carry them. The DEMO_*_EMAIL overrides ride along so
+# the users created match the ones the host-side recorder signs in as. `exec`
+# rather than `run`: no orphan
+# removal, so a running FL stack is left alone.
 create_demo_users:
-	uv run python -m flip_api.scripts.create_demo_users
+	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD \
+		-e DEMO_RESEARCHER_EMAIL -e DEMO_ADMIN_EMAIL $(service_name) \
+		python -m flip_api.scripts.create_demo_users
 # Record the end-to-end demo video against the running dev stack (Dockerised
 # Cypress segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
 # e.g. DEMO_ARGS="--skip-xnat" or DEMO_ARGS="--project-id <uuid> --from-segment 4".
@@ -141,6 +154,7 @@ demo_video:
 # target-specific one, so folding the enrichment flags into EXTRA_ARGS meant
 # `make e2e_smoke_spleen EXTRA_ARGS="--project-id <uuid>"` — the documented fast-iterate flow —
 # silently dropped enrichment and died at the zero-pairs guard minutes later.
+# TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
@@ -151,7 +165,7 @@ QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
 endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
-	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(EXTRA_ARGS)
+	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir "$(MODEL_FILES_DIR)" --query-file "$(QUERY_FILE)" $(ENRICHMENT_ARGS) $(TARGET_ARGS) $(EXTRA_ARGS)
 
 # Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
 # defaults plus a data-enrichment step that uploads segmentation labels into every
@@ -164,8 +178,9 @@ e2e_smoke:
 #
 # Every trust needs enriching, not just one: each trust's XNAT holds only its own studies, so a
 # trust left without labels takes the whole run down at that guard. SPLEEN_XNAT_URLS is the roster
-# the uploader visits in a single invocation — it defaults to the two dev trusts (GSTT :8104,
-# KCH :8106; IPv4 literals because "localhost" can resolve to ::1, which the swarm-published
+# the uploader visits in a single invocation — it defaults to the two dev trusts (GSTT :8105,
+# KCH :8107 — the XNAT_WEB_PORT of each, not XNAT_PORT, which is the DICOM SCP receiver since the
+# FLIP#993 port split; IPv4 literals because "localhost" can resolve to ::1, which the swarm-published
 # XNAT ports do not answer on). Override it for any other roster, or blank it to fall back to a
 # single XNAT_HOST.
 #
@@ -177,7 +192,7 @@ e2e_smoke:
 # dir, two levels below the repo root), so relative paths written from flip-api/ would not
 # resolve there.
 SPLEEN_ENRICHMENT_CWD := ../fl-tutorials/datasets/spleen
-SPLEEN_XNAT_URLS ?= http://127.0.0.1:8104 http://127.0.0.1:8106
+SPLEEN_XNAT_URLS ?= http://127.0.0.1:8105 http://127.0.0.1:8107
 # The MSD build by default even though the uploaded app is Flower's: enrichment is
 # backend-agnostic, and only the MSD download can reach all 41 mapped cases.
 SPLEEN_LABELS_DIR ?= $(abspath ../fl-tutorials/data/spleen/images)
@@ -199,6 +214,43 @@ e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_spleen
 e2e_smoke_spleen_evaluation: QUERY_FILE := ../fl-tutorials/flower/3d_spleen_segmentation/query.sql
 e2e_smoke_spleen_evaluation: ENRICHMENT_ARGS := $(SPLEEN_ENRICHMENT_ARGS)
 e2e_smoke_spleen_evaluation: e2e_smoke
+
+# EHR risk-prediction (tabular-only) variant of e2e_smoke: the tutorial matching FL_BACKEND,
+# created with has_imaging=false so the hub skips the imaging stage and the smoke skips the
+# image-pull wait (FLIP#1071). TARGET_ARGS rather than EXTRA_ARGS so a command-line EXTRA_ARGS
+# (e.g. --project-id) cannot clobber the flag. Prereq: `make -C trust load-synthea-ehr` on every trust and,
+# if the EHR query was already submitted before that load, a data-access-api restart (results are cached by query text).
+EHR_FLOWER_DIR := ../fl-tutorials/flower/ehr_risk_prediction
+EHR_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction
+e2e_smoke_ehr: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/app,$(EHR_NVFLARE_DIR)/app_files)
+e2e_smoke_ehr: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DIR)/query.sql,$(EHR_NVFLARE_DIR)/query.sql)
+e2e_smoke_ehr: TARGET_ARGS := --no-imaging
+e2e_smoke_ehr: e2e_smoke
+
+# Prostate variant: the PI-CAI cohort (prostate_project, seeded into the trusts by
+# `make -C trust seed-trusts PROJECTS=prostate_project`), with both picai_labels masks uploaded into
+# every trust's XNAT as the enrichment step, then the Flower 3d_prostate_segmentation app trained
+# on the T2W series. Prereqs: `make -C fl-tutorials download-prostate-data FOLDS=0` (the labels +
+# zonal labels; the images are only needed to build the dataset) and XNAT_USER / XNAT_PASS.
+# Pair with FL_BACKEND=flower. EXTRA_ARGS="--stop-after-enrichment" verifies the data path alone.
+# --require-full-coverage makes the enrichment step fail unless every scan in the project got its
+# masks, so a partly labelled cohort stops here instead of training on the studies that were.
+PROSTATE_ENRICHMENT_CWD := ../fl-tutorials/datasets/prostate
+PROSTATE_XNAT_URLS ?= $(SPLEEN_XNAT_URLS)
+PROSTATE_LABELS_DIR ?= $(abspath ../fl-tutorials/data/prostate/labels)
+PROSTATE_ZONAL_LABELS_DIR ?= $(abspath ../fl-tutorials/data/prostate/zonal_labels)
+PROSTATE_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_prostate_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(PROSTATE_LABELS_DIR) --zonal-labels-dir $(PROSTATE_ZONAL_LABELS_DIR) $(foreach url,$(PROSTATE_XNAT_URLS),--xnat-url $(url)) --require-full-coverage
+PROSTATE_ENRICHMENT_ARGS := --data-enrichment-cwd $(PROSTATE_ENRICHMENT_CWD) --data-enrichment-cmd '$(PROSTATE_ENRICHMENT_CMD)'
+
+e2e_smoke_prostate: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_prostate_segmentation/app
+e2e_smoke_prostate: QUERY_FILE := ../fl-tutorials/flower/3d_prostate_segmentation/query.sql
+e2e_smoke_prostate: ENRICHMENT_ARGS := $(PROSTATE_ENRICHMENT_ARGS)
+e2e_smoke_prostate: _require_flower_backend e2e_smoke
+
+# The prostate app exists for Flower only: fail before the ~6 min image pull rather than after it,
+# when an NVFLARE hub would reject the Flower bundle.
+_require_flower_backend:
+	@[ "$(FL_BACKEND)" = flower ] || { echo "❌ e2e_smoke_prostate uploads a Flower app — run it with FL_BACKEND=flower (got '$(FL_BACKEND)')"; exit 1; }
 
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)

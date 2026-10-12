@@ -12,6 +12,13 @@
 
 FROM python:3.12-slim-bookworm AS development
 
+# Build identity (FLIP#1204): CI passes the release tag (v<X.Y.Z>) or the sha-<short7>
+# tag it is publishing; /health and the hub heartbeat report it so Connection Status
+# names the build a site runs. Empty for a local build (pyproject version fallback).
+ARG FLIP_RELEASE=""
+ENV FLIP_RELEASE=${FLIP_RELEASE}
+LABEL org.opencontainers.image.version=${FLIP_RELEASE}
+
 ARG UID
 ARG GID
 ARG UNAME

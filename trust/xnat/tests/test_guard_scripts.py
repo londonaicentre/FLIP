@@ -258,15 +258,11 @@ def test_xnat_db_guard_refuses_unset_password(shell: tuple[str, ...], variable: 
 @pytest.mark.parametrize("shell", SHELLS, ids=SHELL_IDS)
 @pytest.mark.parametrize("variable", ["POSTGRES_PASSWORD", "XNAT_DATASOURCE_PASSWORD"])
 @pytest.mark.parametrize("weak", sorted(CANONICAL_WEAK_VALUES))
-def test_xnat_db_guard_refuses_weak_password(
-    shell: tuple[str, ...], variable: str, weak: str, stub_bin: Path
-) -> None:
+def test_xnat_db_guard_refuses_weak_password(shell: tuple[str, ...], variable: str, weak: str, stub_bin: Path) -> None:
     """xnat-db must refuse every canonical weak value, on either password."""
     _install_argv_recorder(stub_bin, "docker-entrypoint.sh", stub_bin / "argv")
 
-    result = _run(
-        GUARD_XNAT_DB, _xnat_db_env(**{variable: weak}), shell=shell, stub_bin=stub_bin, argv=("postgres",)
-    )
+    result = _run(GUARD_XNAT_DB, _xnat_db_env(**{variable: weak}), shell=shell, stub_bin=stub_bin, argv=("postgres",))
 
     assert result.returncode == 1
     assert f"ERROR: {variable} is set to a weak default or placeholder value." in result.stderr
@@ -331,9 +327,7 @@ def test_xnat_db_guard_execs_entrypoint_with_argv_intact(
     record = tmp_path / "argv"
     _install_argv_recorder(stub_bin, "docker-entrypoint.sh", record)
 
-    result = _run(
-        GUARD_XNAT_DB, _xnat_db_env(), shell=shell, stub_bin=stub_bin, argv=("postgres", "one two", "*")
-    )
+    result = _run(GUARD_XNAT_DB, _xnat_db_env(), shell=shell, stub_bin=stub_bin, argv=("postgres", "one two", "*"))
 
     assert result.returncode == 0, result.stderr
     assert record.read_text().splitlines() == ["3", "postgres", "one two", "*"]

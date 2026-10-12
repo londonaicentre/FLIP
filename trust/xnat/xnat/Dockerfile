@@ -45,6 +45,11 @@ COPY build-artifacts/xnat-web-${XNAT_VERSION}.war /tmp/xnat-web-${XNAT_VERSION}.
 RUN unzip -o -d ${TOMCAT_XNAT_FOLDER_PATH} /tmp/xnat-web-${XNAT_VERSION}.war
 RUN rm -f /tmp/xnat-web-${XNAT_VERSION}.war
 
+# FLIP branding for the enclave XNAT login/header. configure-xnat.sh points the site's siteLogoPath
+# at this served path so the login page shows the FLIP logo instead of the stock XNAT one. Baked into
+# the webapp (not a bind mount) so it is present in dev and prod alike.
+COPY branding/flip-logo.png ${TOMCAT_XNAT_FOLDER_PATH}/images/flip-logo.png
+
 # Create a non-root xnat user and group, and set ownership on all XNAT paths
 RUN groupadd --system --gid 1001 xnat \
     && useradd --system --uid 1001 --gid xnat --home "${XNAT_HOME}" --shell /sbin/nologin xnat \

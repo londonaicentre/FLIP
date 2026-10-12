@@ -25,7 +25,23 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        flip-ui/**
+        .github/workflows/test_flip_ui.yml
+
   flip-ui:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
@@ -76,6 +92,8 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   cypress-e2e:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Runs the Cypress E2E suite against a stubbed API (network-level
     # intercepts in test/cypress/support/globalIntercepts.ts). No real
     # backend or Cognito user pool is needed — the fixture-driven flow
@@ -105,6 +123,8 @@ jobs:
       # cannot ship in a production bundle.
       VITE_E2E: "true"
       CENTRAL_HUB_API_URL: "http://localhost:8080"
+      # The Cypress suites stub Cognito's endpoint; keep the UI on that provider (FLIP#919).
+      AUTH_BACKEND: "cognito"
       AWS_COGNITO_USER_POOL_ID: "eu-west-2_DUMMY1234"
       AWS_COGNITO_APP_CLIENT_ID: "dummyclientid1234567890ab"
       AWS_REGION: "eu-west-2"
@@ -146,6 +166,7 @@ jobs:
           VITE_LOCAL=false
           VITE_E2E=true
           CENTRAL_HUB_API_URL=http://localhost:8080
+          AUTH_BACKEND=cognito
           AWS_COGNITO_USER_POOL_ID=eu-west-2_DUMMY1234
           AWS_COGNITO_APP_CLIENT_ID=dummyclientid1234567890ab
           AWS_REGION=eu-west-2

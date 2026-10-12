@@ -65,7 +65,5 @@ def compose_stack() -> Generator[DockerCompose, None, None]:
 @pytest.fixture(scope="session")
 def data_access_api_url(compose_stack: DockerCompose) -> str:
     """Resolve the ephemeral host URL where the data-access-api is reachable."""
-    host, port = compose_stack.get_service_host_and_port(
-        _DATA_ACCESS_SERVICE, _DATA_ACCESS_INTERNAL_PORT
-    )
+    host, port = compose_stack.get_service_host_and_port(_DATA_ACCESS_SERVICE, _DATA_ACCESS_INTERNAL_PORT)
     return f"http://{host}:{port}"

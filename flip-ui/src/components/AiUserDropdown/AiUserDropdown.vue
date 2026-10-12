@@ -71,7 +71,7 @@
                                 active ? 'bg-gray-100 dark:bg-dark-surface' : 'text-gray-600 dark:text-gray-300',
                                 'group flex rounded-md items-center w-full px-3 py-2 text-sm transition font-semibold',
                             ]"
-                            data-test="sign-out-btn"
+                            data-test="dark-mode-btn"
                             @click="emit('toggleDarkMode')"
                         >
                             <icon-ph-sun v-if="isDark" class="dark:group-hover:text-yellow-200 h-5 w-5 mr-3 text-gray-500 dark:text-gray-300 transition group-hover:text-gray-600" />

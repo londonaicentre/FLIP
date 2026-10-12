@@ -84,10 +84,11 @@ def edit_model_endpoint(
         logger.error(error_message)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
 
+    except HTTPException:
+        # Pass a domain error's own status and detail through unchanged (e.g. a 404), rather than
+        # re-wrapping it with the exception text prefixed onto the detail.
+        raise
+
     except Exception as e:
-        error_message = f"Unexpected error occurred during model edit: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(
-            status_code=e.status_code if hasattr(e, "status_code") else status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_message,
-        )
+        logger.exception("Unexpected error occurred during model edit")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

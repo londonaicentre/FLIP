@@ -28,7 +28,7 @@ def env_file(tmp_path: Path) -> Path:
     f = tmp_path / ".env.test"
     f.write_text(
         "SOME_VAR=hello\n"
-        "INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key\n"
+        "INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key\n"  # pragma: allowlist secret
         "INTERNAL_SERVICE_KEY_HASH=<placeholder>\n"
     )
     return f
@@ -134,7 +134,7 @@ class TestGenerateInternalServiceKey:
         key = "test-key-abc123"
         env_file.write_text(
             f"INTERNAL_SERVICE_KEY={key}\n"
-            "INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key\n"
+            "INTERNAL_SERVICE_KEY_HEADER=X-Internal-Service-Key\n"  # pragma: allowlist secret
             "INTERNAL_SERVICE_KEY_HASH=stale-hash\n"
         )
         env_file.chmod(0o644)

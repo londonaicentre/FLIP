@@ -55,19 +55,19 @@ WIDTH = 71
 # ─────────────────────────────────────────────────────────────────────
 
 _TTY = sys.stdout.isatty()
-RESET  = "\033[0m"  if _TTY else ""
-BOLD   = "\033[1m"  if _TTY else ""
-DIM    = "\033[2m"  if _TTY else ""
-GREEN  = "\033[32m" if _TTY else ""
-RED    = "\033[31m" if _TTY else ""
+RESET = "\033[0m" if _TTY else ""
+BOLD = "\033[1m" if _TTY else ""
+DIM = "\033[2m" if _TTY else ""
+GREEN = "\033[32m" if _TTY else ""
+RED = "\033[31m" if _TTY else ""
 YELLOW = "\033[33m" if _TTY else ""
-CYAN   = "\033[36m" if _TTY else ""
+CYAN = "\033[36m" if _TTY else ""
 
 
 class Status(Enum):
-    PASS    = ("✅", GREEN)
-    FAIL    = ("❌", RED)
-    WARN    = ("⚠️ ", YELLOW)  # trailing space — ⚠️ renders narrow on some terminals
+    PASS = ("✅", GREEN)
+    FAIL = ("❌", RED)
+    WARN = ("⚠️ ", YELLOW)  # trailing space — ⚠️ renders narrow on some terminals
 
     @property
     def glyph(self) -> str:
@@ -80,10 +80,10 @@ class Status(Enum):
 
 @dataclass
 class Check:
-    label:  str
+    label: str
     status: Status
     detail: str = ""
-    hints:  list[str] = field(default_factory=list)
+    hints: list[str] = field(default_factory=list)
 
 
 def rule(char: str = "═") -> None:
@@ -139,10 +139,11 @@ def check_kit_slot(env_vars: dict[str, str], env_file: Path) -> Check:
     raw = env_vars.get("FL_KIT_SLOT_NAMES", "")
     if not raw:
         return Check(
-            f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES", Status.FAIL,
+            f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES",
+            Status.FAIL,
             "FL_KIT_SLOT_NAMES not set in env file",
             hints=[
-                f"Add FL_KIT_SLOT_NAMES=[\"Trust_1\", \"Trust_2\", \"{K8S_TRUST_CODE}\"]",
+                f'Add FL_KIT_SLOT_NAMES=["Trust_1", "Trust_2", "{K8S_TRUST_CODE}"]',
                 f"to {env_file.name}, then re-apply Terraform so the slot is seeded.",
             ],
         )
@@ -150,20 +151,23 @@ def check_kit_slot(env_vars: dict[str, str], env_file: Path) -> Check:
         slot_names: list[str] = json.loads(raw)
     except json.JSONDecodeError:
         return Check(
-            f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES", Status.FAIL,
+            f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES",
+            Status.FAIL,
             f"cannot parse FL_KIT_SLOT_NAMES as JSON: {raw!r}",
-            hints=[f"Expected a JSON array, e.g. [\"Trust_1\", \"{K8S_TRUST_CODE}\"]"],
+            hints=[f'Expected a JSON array, e.g. ["Trust_1", "{K8S_TRUST_CODE}"]'],
         )
     if K8S_TRUST_CODE in slot_names:
         return Check(
-            f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES", Status.PASS,
+            f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES",
+            Status.PASS,
             f"slot present ({', '.join(slot_names)})",
         )
     return Check(
-        f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES", Status.FAIL,
+        f"{K8S_TRUST_CODE} in FL_KIT_SLOT_NAMES",
+        Status.FAIL,
         f"missing — current slots: {slot_names}",
         hints=[
-            f"Add \"{K8S_TRUST_CODE}\" to FL_KIT_SLOT_NAMES in {env_file.name}:",
+            f'Add "{K8S_TRUST_CODE}" to FL_KIT_SLOT_NAMES in {env_file.name}:',
             f"  FL_KIT_SLOT_NAMES={json.dumps(slot_names + [K8S_TRUST_CODE])}",
             "Then re-run `make plan apply` so the slot is seeded into the DB.",
         ],
@@ -175,26 +179,32 @@ def check_kubectl_context() -> Check:
     try:
         result = subprocess.run(
             ["kubectl", "config", "get-contexts", K8S_KUBECTL_CONTEXT, "--no-headers"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
     except FileNotFoundError:
         return Check(
-            f"kubectl context {K8S_KUBECTL_CONTEXT}", Status.FAIL,
+            f"kubectl context {K8S_KUBECTL_CONTEXT}",
+            Status.FAIL,
             "kubectl not found in PATH",
             hints=["Install kubectl: https://kubernetes.io/docs/tasks/tools/"],
         )
     except subprocess.TimeoutExpired:
         return Check(
-            f"kubectl context {K8S_KUBECTL_CONTEXT}", Status.FAIL,
+            f"kubectl context {K8S_KUBECTL_CONTEXT}",
+            Status.FAIL,
             "kubectl timed out",
         )
     if result.returncode == 0 and result.stdout.strip():
         return Check(
-            f"kubectl context {K8S_KUBECTL_CONTEXT}", Status.PASS,
+            f"kubectl context {K8S_KUBECTL_CONTEXT}",
+            Status.PASS,
             "context present in kubeconfig",
         )
     return Check(
-        f"kubectl context {K8S_KUBECTL_CONTEXT}", Status.FAIL,
+        f"kubectl context {K8S_KUBECTL_CONTEXT}",
+        Status.FAIL,
         "context not found in kubeconfig",
         hints=[
             "Install k3s and merge its kubeconfig:",
@@ -211,16 +221,20 @@ def check_cluster_reachable() -> Check:
     try:
         result = subprocess.run(
             ["kubectl", "cluster-info", "--context", K8S_KUBECTL_CONTEXT],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
     except FileNotFoundError:
         return Check(
-            "K8s cluster reachable", Status.FAIL,
+            "K8s cluster reachable",
+            Status.FAIL,
             "kubectl not found — install kubectl first",
         )
     except subprocess.TimeoutExpired:
         return Check(
-            "K8s cluster reachable", Status.FAIL,
+            "K8s cluster reachable",
+            Status.FAIL,
             "cluster-info timed out (cluster unreachable)",
             hints=["Check k3s is running: systemctl status k3s"],
         )
@@ -231,7 +245,8 @@ def check_cluster_reachable() -> Check:
                 return Check("K8s cluster reachable", Status.PASS, line.strip())
         return Check("K8s cluster reachable", Status.PASS, "cluster-info OK")
     return Check(
-        "K8s cluster reachable", Status.FAIL,
+        "K8s cluster reachable",
+        Status.FAIL,
         "cluster-info returned non-zero",
         hints=[
             "Check k3s service: systemctl status k3s",
@@ -245,7 +260,8 @@ def check_helm() -> Check:
     helm_path = shutil.which("helm")
     if not helm_path:
         return Check(
-            "helm ≥ 3 installed", Status.FAIL,
+            "helm ≥ 3 installed",
+            Status.FAIL,
             "helm not found in PATH",
             hints=[
                 "macOS:  brew install helm",
@@ -256,7 +272,9 @@ def check_helm() -> Check:
     try:
         result = subprocess.run(
             ["helm", "version", "--short"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         version_str = result.stdout.strip()
     except subprocess.TimeoutExpired:
@@ -271,7 +289,8 @@ def check_helm() -> Check:
     if major >= 3:
         return Check("helm ≥ 3 installed", Status.PASS, version_str)
     return Check(
-        "helm ≥ 3 installed", Status.FAIL,
+        "helm ≥ 3 installed",
+        Status.FAIL,
         f"found {version_str or '(unknown version)'} — need ≥ 3",
         hints=["Upgrade helm: https://helm.sh/docs/intro/install/"],
     )
@@ -285,7 +304,8 @@ def check_public_ip(provided_ip: str | None) -> Check:
     """
     if provided_ip:
         return Check(
-            "K8S_TRUST_IP", Status.PASS,
+            "K8S_TRUST_IP",
+            Status.PASS,
             f"{provided_ip} (provided explicitly)",
         )
     try:
@@ -295,15 +315,17 @@ def check_public_ip(provided_ip: str | None) -> Check:
         detected = None
     if detected:
         return Check(
-            "K8S_TRUST_IP (auto-detect)", Status.PASS,
+            "K8S_TRUST_IP (auto-detect)",
+            Status.PASS,
             f"{detected} — will be used for the FL-server NLB rule",
         )
     return Check(
-        "K8S_TRUST_IP (auto-detect)", Status.WARN,
+        "K8S_TRUST_IP (auto-detect)",
+        Status.WARN,
         "cannot reach api.ipify.org — IP undetectable",
         hints=[
             "Provide the K8s node's public/egress IP explicitly:",
-            f"  make full-deploy-with-k8s K8S_TRUST_IP=<ip> PROD=<env>",
+            "  make full-deploy-with-k8s K8S_TRUST_IP=<ip> PROD=<env>",
         ],
     )
 
@@ -331,11 +353,13 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--prod", default="stag",
+        "--prod",
+        default="stag",
         help="PROD value (stag or true). Selects .env.stag or .env.production.",
     )
     parser.add_argument(
-        "--k8s-trust-ip", default=None,
+        "--k8s-trust-ip",
+        default=None,
         help="K8s node public IP (overrides auto-detection).",
     )
     args = parser.parse_args()

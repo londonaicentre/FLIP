@@ -17,7 +17,7 @@ Code to deploy the NVIDIA FLARE Federated Learning server.
 
 ## Ports
 
-> Note that from version 2.7 onwards, [there is an option to use a single port for both controller and admin API communications](https://nvflare.readthedocs.io/en/2.7.0/user_guide/admin_guide/configurations/server_port_consolidation.html).
+> Note that from version 2.7 onwards, [there is an option to use a single port for both controller and admin API communications](https://nvflare.readthedocs.io/en/2.9.0/user_guide/admin_guide/configurations/server_port_consolidation.html).
 
 In NVIDIA FLARE, ports 8002 and 8003 are typically used by the FL server and associated services to facilitate communication between components of the federated learning system.
 

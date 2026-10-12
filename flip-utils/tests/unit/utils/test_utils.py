@@ -35,8 +35,8 @@ class TestUtilsIsValidUuid:
 
     def test_valid_uuid_without_hyphens(self):
         """Should return True for UUID without hyphens."""
-        assert Utils.is_valid_uuid("123e4567e89b12d3a456426614174000") is True
-        assert Utils.is_valid_uuid("550e8400e29b41d4a716446655440000") is True
+        assert Utils.is_valid_uuid("123e4567e89b12d3a456426614174000") is True  # pragma: allowlist secret
+        assert Utils.is_valid_uuid("550e8400e29b41d4a716446655440000") is True  # pragma: allowlist secret
 
     def test_invalid_uuid_too_short(self):
         """Should return False for UUID that is too short."""

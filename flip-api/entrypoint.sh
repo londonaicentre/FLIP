@@ -17,6 +17,10 @@
 DEBUG=${DEBUG:-false}
 ENV=${ENV:-development}
 
+# UV_NO_SYNC=1 and PYTHONPATH=/app/src are image ENV (see the Dockerfile): the
+# baked venv is authoritative and never re-resolved at boot, whichever way the
+# image runs -- this entrypoint, `docker exec`, or an ECS run-task override.
+
 echo "🚀 Starting flip-api entrypoint script..."
 echo "🌍 Environment: $ENV"
 echo "🐛 Debug mode: $DEBUG"

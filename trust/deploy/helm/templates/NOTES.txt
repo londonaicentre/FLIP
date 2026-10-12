@@ -1,0 +1,60 @@
+{{/*
+Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+    http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/}}
+{{ include "flip-trust.fullname" . }} installed into namespace {{ include "flip-trust.namespace" . }}.
+
+Trust: {{ .Values.trustName }} (slot {{ .Values.trustNumber }})
+
+Check the stack is up:
+  kubectl get pods -n {{ include "flip-trust.namespace" . }}
+{{- if and .Values.omopDb.enabled .Values.omopDb.vocabLoad.enabled (not .Values.omopDb.vocabLoad.s3Bucket) }}
+
+⚠️  OMOP core vocabulary was NOT loaded
+
+    omopDb.vocabLoad.s3Bucket is empty, so the omop-vocab-load hook was skipped.
+
+    The omop-db image and the seeded database are vocab-free by design: the
+    licensed bundle (SNOMED CT / LOINC / Read v2 / dm+d) cannot be published,
+    so this chart will not fetch it for you.
+
+    Until it is loaded, cohort queries that join omop.concept return NOTHING —
+    the stack looks healthy and silently matches no patients.
+
+    Load it by either:
+      * setting omopDb.vocabLoad.s3Bucket to a bucket this cluster can read
+        (your OWN environment's AICENTRE_BUCKET_NAME — trust roles have no
+        cross-account read) and re-running `helm upgrade`. From the repo root:
+            make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>
+            make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>
+        or
+      * running trust/omop-db/files/load_core_vocab.sh against the database
+        with your own OHDSI Athena / NHS TRUD export.
+
+    See trust/deploy/helm/README.md → "OMOP core vocabulary".
+{{- end }}
+{{- if and .Values.flClient.enabled (not .Values.sharedImagesPvc.enabled) }}
+
+⚠️  fl-client and imaging-api do NOT share an images volume
+
+    sharedImagesPvc.enabled is false, so the `images` volume is a per-pod
+    emptyDir: imaging-api "successfully" downloads studies into its own pod
+    while the fl-client's copy of {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+    stays empty. Nothing errors — training just finds no data and dies with
+    num_samples=0.
+
+    For a functional FL trust, set sharedImagesPvc.enabled=true and re-run
+    `helm upgrade`. The shipped default is ReadWriteOnce, which every storage
+    class this chart is validated on provides; the fl-client is pinned to
+    imaging-api's node (flClient.affinity) so the single-node mount that RWO
+    implies is satisfied. Only move to an RWX-capable class if you need the two
+    pods on different nodes, and relax that affinity if you do.
+{{- end }}

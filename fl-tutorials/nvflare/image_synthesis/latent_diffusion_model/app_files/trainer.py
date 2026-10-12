@@ -27,14 +27,18 @@ validation maths are unchanged; only the NVFLARE plumbing moved to the Client AP
 """
 
 import argparse
+import hashlib
 import json
 import logging
+import os
+import shutil
 from pathlib import Path
 
 import einops
 import nibabel as nib
 import numpy as np
 import nvflare.client as flare
+import pandas as pd
 import torch
 from flip import FLIP
 from flip.constants import FlipMetaKey, ResourceType
@@ -45,6 +49,7 @@ from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.api import get_task_name
 from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
+from torchvision.models import SqueezeNet1_1_Weights
 from transforms import get_train_transforms, get_val_transforms
 from validator import build_inferer, validate_ae, validate_dm
 
@@ -61,6 +66,68 @@ STAGE_MODULES = {
     TRAIN_AE_TASK: [["autoencoder", "discriminator"]],
     TRAIN_DM_TASK: [["diffusion_model"]],
 }
+
+# The perceptual loss's backbone. lpips resolves it through torch.hub, which downloads the
+# torchvision checkpoint on first use unless it is already in the hub dir — and an FL app never
+# downloads at run time (FLIP#1206; the user guide's *Model Files* section has the why). So the
+# checkpoint is shipped beside this file (`make weights` in the tutorial dir, then uploaded with
+# the app) and staged into a hub `checkpoints/` layout here. SqueezeNet rather than the AlexNet
+# used before: 5 MB per job to every trust instead of 233. MONAI's own `PerceptualLoss(cache_dir=)`
+# would also call `torch.hub.set_dir`, but not copy the file into the layout torchvision reads,
+# so the staging stays explicit.
+PERCEPTUAL_BACKBONE = "squeeze"
+HUB_CHECKPOINT = "squeezenet1_1-b8a52dc0.pth"
+
+
+def stage_perceptual_backbone(working_dir: Path) -> Path:
+    """Point torch.hub at ``working_dir/torch_hub`` and put the shipped backbone where it looks.
+
+    Uploads and the bundler are flat, so the checkpoint arrives as ``<app dir>/HUB_CHECKPOINT``;
+    torchvision wants ``<hub dir>/checkpoints/<basename of the weights URL>``. torch.hub reuses a
+    file already there without going online — and without re-checking its hash — so the check
+    happens here instead: the shipped file must be the one torchvision will ask for, and its
+    sha256 must start with the prefix in its name. Anything else raises rather than reaching
+    for the network.
+    """
+    expected = Path(SqueezeNet1_1_Weights.IMAGENET1K_V1.url).name
+    if expected != HUB_CHECKPOINT:
+        raise RuntimeError(
+            f"torchvision now loads SqueezeNet from {expected}, but this app ships {HUB_CHECKPOINT}: update "
+            "HUB_CHECKPOINT and the tutorial Makefile, re-run `make weights` and re-upload (FLIP#1206)."
+        )
+    shipped = working_dir / HUB_CHECKPOINT
+    if not shipped.is_file():
+        raise FileNotFoundError(
+            f"{HUB_CHECKPOINT} is missing from {working_dir}. FL apps do not download weights at run time "
+            "(FLIP#1206): run `make weights` in the tutorial directory to stage it, and upload it together "
+            "with the other app files."
+        )
+    _verify_hash_prefix(shipped)
+    hub_dir = working_dir / "torch_hub"
+    torch.hub.set_dir(str(hub_dir))
+    target = hub_dir / "checkpoints" / HUB_CHECKPOINT
+    if not target.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Copy beside and rename into place: an interrupted copy must not leave a partial file
+        # under the name torch.hub trusts.
+        partial = target.with_name(target.name + ".part")
+        shutil.copyfile(shipped, partial)
+        os.replace(partial, target)
+    return target
+
+
+def _verify_hash_prefix(path: Path) -> None:
+    """Refuse a shipped checkpoint whose sha256 does not start with the prefix in its filename."""
+    match = torch.hub.HASH_REGEX.search(path.name)
+    if match is None:
+        raise RuntimeError(f"{path.name} carries no sha256 prefix; the shipped backbone must keep torchvision's name")
+    prefix = match.group(1)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not digest.startswith(prefix):
+        raise RuntimeError(
+            f"{path} has sha256 {digest[: len(prefix)]}…, expected {prefix}…: not torchvision's checkpoint. Re-run "
+            "`make weights` and re-upload it (FLIP#1206)."
+        )
 
 
 class KLDivergenceLoss:
@@ -127,7 +194,7 @@ class DiffusionTrainer:
     executor instances — each phase's optimizer state persists across that phase's global rounds.
     """
 
-    def __init__(self, config: dict, project_id: str, query: str):
+    def __init__(self, config: dict, project_id: str, query: str) -> None:
         self.config = config
         self.project_id = project_id
         working_dir = Path(__file__).parent.resolve()
@@ -145,12 +212,12 @@ class DiffusionTrainer:
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
         # Losses, optimizers etc.
-        torch.hub.set_dir(f"{working_dir}/torch_hub")
+        stage_perceptual_backbone(working_dir)
         self.losses_ae = {
             "reconstruction_loss": torch.nn.L1Loss(),
             "kld_loss": KLDivergenceLoss(),
             "gan_loss": PatchAdversarialLoss(criterion="least_squares"),
-            "perceptual_loss": PerceptualLoss(2, network_type="alex"),
+            "perceptual_loss": PerceptualLoss(2, network_type=PERCEPTUAL_BACKBONE),
         }
         self.perceptual_slices = 12
         self.losses_dm = {"loss": torch.nn.functional.mse_loss}
@@ -203,7 +270,7 @@ class DiffusionTrainer:
         self._train_dataset = Dataset(self.train_items, transform=get_train_transforms(config["spatial_shape"]))
         self._val_dataset = Dataset(self.val_items, transform=get_val_transforms(config["spatial_shape"]))
 
-    def get_image_list(self, dataframe) -> tuple[list, list]:
+    def get_image_list(self, dataframe: pd.DataFrame) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         """Fetch each accession's converted NIfTI images and split into train/validation lists.
 
         Also detects axial anisotropy (thick-slice data) from the first readable image, which
@@ -255,10 +322,13 @@ class DiffusionTrainer:
         val_size = int(self.config["VAL_SPLIT"] * len(datalist))
         return datalist[val_size:], datalist[:val_size]
 
-    def reset_perceptual_to_anisotropic(self):
+    def reset_perceptual_to_anisotropic(self) -> None:
         """If we spot axial anisotropy, we reset the perceptual loss to 2D if it was 3D to have better results."""
         if self.axial_anisotropy and self.losses_ae["perceptual_loss"].spatial_dims == 3:
-            self.losses_ae["perceptual_loss"] = PerceptualLoss(spatial_dims=2, network_type="radimagenet_resnet50")
+            # Unreachable while the loss above is built 2-D; kept for a 3-D configuration. Same
+            # shipped backbone as above: radimagenet_resnet50 would be fetched through torch.hub
+            # at first use, which an FL app must never do (FLIP#1206).
+            self.losses_ae["perceptual_loss"] = PerceptualLoss(spatial_dims=2, network_type=PERCEPTUAL_BACKBONE)
             if self.weights_ae["w_perceptual_loss"] <= 1.0:
                 self.weights_ae["w_perceptual_loss"] = 10
                 # This perceptual loss tends to have very low values.
@@ -485,9 +555,7 @@ class DiffusionTrainer:
 
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
+                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
                         0,
@@ -528,9 +596,7 @@ class DiffusionTrainer:
                 self.model.diffusion_model.eval()
                 with autocast(enabled=False, device_type=self.device.type):
                     noise = torch.randn(
-                        [images.shape[0]]
-                        + [self.model.autoencoder.encoder.blocks[-1].out_channels]
-                        + ldm_latent_shape
+                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
                     ).to(self.device)
                     timesteps = torch.randint(
                         0,
@@ -627,9 +693,7 @@ def main() -> None:
             flare.send(flare.FLModel(metrics={f"metrics_{task_name}": {"val_loss": val_loss, "val_ssim": val_ssim}}))
 
         elif task_name == VALIDATE_DM_TASK:
-            trainer.model.load_state_dict(
-                {k: v.to(trainer.device) for k, v in weights.items()}, strict=False
-            )
+            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()}, strict=False)
             test_loader = trainer.val_loader(config["BATCH_SIZE_DM"])
             val_loss = validate_dm(
                 trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer

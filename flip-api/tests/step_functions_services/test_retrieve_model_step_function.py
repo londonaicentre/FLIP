@@ -124,4 +124,5 @@ def test_retrieve_model_raises_exception(
     response = client.post(f"/api/step/model/{model_id}")
 
     assert response.status_code == 500
-    assert "Failed to retrieve model" in response.json()["detail"]
+    assert response.json()["detail"] == "Internal server error"
+    assert "Database connection error" not in response.json()["detail"]

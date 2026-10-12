@@ -13,11 +13,20 @@
 from fastapi import FastAPI
 from log_config import LoggingMiddleware
 
-# Ensure structured logging is configured on import
-import data_access_api.utils.logger  # noqa: F401
-from data_access_api.config import get_settings
+from data_access_api.config import get_policy, get_settings
+from data_access_api.policy import describe_policy
 from data_access_api.routers.cohort import router as cohort_router
 from data_access_api.routers.health import router as health_router
+
+# Importing the logger configures structured logging.
+from data_access_api.utils.logger import logger
+
+# Which governance policy this process enforces, once, at startup (FLIP#1259). The line is the
+# operator's evidence that an edit reached the service: reload-governance waits for it, and its
+# digest matches the one check-governance prints for the same document. WARNING rather than
+# INFO so a trust running at TRUST_LOG_LEVEL=WARNING still prints it — without it
+# reload-governance would report an image that ignores the document.
+logger.warning(describe_policy(get_policy(), floor=get_settings().COHORT_QUERY_THRESHOLD))
 
 # Disable Swagger / OpenAPI / ReDoc in production. Data-access-api executes SQL
 # against OMOP under a service account; leaking its route + schema map to anyone

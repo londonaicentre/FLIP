@@ -21,15 +21,11 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
 # Load the env file selected by PROD (dev by default), exactly as the root Makefile
 # does, so compose + the provisioning targets see the dev vars (FL_API_PORT,
-# LOG_LEVEL, NET_ENDPOINTS, FL_PORT, …) and, with PROD=stag|true, the upload vars
-# (AICENTRE_BUCKET_NAME, FLARE_KIT_DATE) used by upload-kits-to-s3.
-ifeq ($(PROD),true)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.stag
-else
-MAIN_ENV_FILE := $(REPO_ROOT)/.env.development
-endif
+# LOG_LEVEL, NET_ENDPOINTS, FL_PORT, …) and, with PROD=stag|true (or lza|lza-stag
+# for the LZA estate, FLIP#749), the upload vars (AICENTRE_BUCKET_NAME,
+# FLARE_KIT_DATE) used by upload-kits-to-s3.
+include $(REPO_ROOT)/deploy/env_mode.mk
+MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
@@ -66,8 +62,18 @@ build:
 
 # Dev: provision net-<NET_NUMBER> startup kits into DEV_WORKSPACE_DIR (gitignored),
 # where the dev compose mounts expect them.
+# NVFLARE writes every private key 0600. The FL server and clients run as the host uid in
+# dev and read theirs as owner, but the FL API runs as the image's user, so its admin key
+# is opened to the provisioning user's group and the container joins that group (group_add
+# in deploy/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
+# use (FLIP#1384). The root `make up` checks the key still matches.
+FL_API_ADMIN_KEY = $(DEV_WORKSPACE_DIR)/net-$(NET_NUMBER)/services/flip-fl-api-net-$(NET_NUMBER)/startup/client.key
 provision:
 	$(SCRIPTS)/provision-network.sh $(PROVISION)/net-$(NET_NUMBER)_project_dev.yml $(NET_NUMBER) $(DEV_WORKSPACE_DIR)
+	@test -f $(FL_API_ADMIN_KEY) || { echo "❌ Provisioning produced no FL API admin key at $(FL_API_ADMIN_KEY)" \
+		"(check the admin participant in $(PROVISION)/net-$(NET_NUMBER)_project_dev.yml)" >&2; exit 1; }
+	chgrp $$(id -g) $(FL_API_ADMIN_KEY)
+	chmod 640 $(FL_API_ADMIN_KEY)
 
 provision-2-nets:
 	$(MAKE) provision NET_NUMBER=1
@@ -110,13 +116,14 @@ provision-add-client-prod:
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
 # the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
 # which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
-# net-N/services/<slot>/). Run with PROD=stag|true so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
-# load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real.
-FL_KIT_WORKSPACE := $(if $(filter true,$(PROD)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
+# net-N/services/<slot>/). Run with PROD=stag|true (or lza|lza-stag) so AICENTRE_BUCKET_NAME +
+# FLARE_KIT_DATE load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload
+# for real. The LZA pair maps onto the legacy workspaces (same FQDN + CA by design, FLIP#749).
+FL_KIT_WORKSPACE := $(if $(filter prod,$(ENV_CLASS)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
 DRYRUN ?= --dryrun
 upload-kits-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
-	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
+	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
 	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
 

@@ -43,7 +43,7 @@ _FAKE_SIGNED_URL = (
     "X-Amz-Date=20260506T000000Z&"
     "X-Amz-Expires=600&"
     "X-Amz-SignedHeaders=host&"
-    "X-Amz-Signature=deadbeefcafe1234567890abcdef"
+    "X-Amz-Signature=deadbeefcafe1234567890abcdef"  # pragma: allowlist secret
 )
 
 # Match any URL that carries SigV4 query parameters, regardless of host —
@@ -89,6 +89,4 @@ def _assert_logs_have_no_presigned_url(records: list[logging.LogRecord]) -> None
                 assert token not in candidate, (
                     f"Pre-signed URL artefact {token!r} leaked into a log line: {candidate!r}"
                 )
-            assert not _S3_URL_WITH_QUERY.search(candidate), (
-                f"Pre-signed S3 URL leaked into a log line: {candidate!r}"
-            )
+            assert not _S3_URL_WITH_QUERY.search(candidate), f"Pre-signed S3 URL leaked into a log line: {candidate!r}"

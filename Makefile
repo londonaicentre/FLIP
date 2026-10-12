@@ -10,27 +10,21 @@
 # limitations under the License.
 #
 
-.PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access generate-internal-service-key generate-xnat-credentials \
+.PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
+		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
+		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock checkov-lint \
+		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
-		demo-video demo-users seed-demo-projects
+		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
+		demo-video demo-users seed-demo-projects reset-keycloak
 
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=.env.production
-__DCKR_SUFFIX=production
-ENV=production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=.env.stag
-__DCKR_SUFFIX=production
-ENV=stag
-else
-MAIN_ENV_FILE=.env.development
-__DCKR_SUFFIX=development
-ENV=development
-endif
+# What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
+# deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
+# targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
+# token the AWS Makefile's KIT_ENV_SUFFIX and register-trusts.sh use.
+include deploy/env_mode.mk
+MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
 # Print which environment files are being used
 # Exported so `make -C flip-api` / `-C trust` resolve the SAME env file rather than
@@ -39,10 +33,15 @@ endif
 export MAIN_ENV_FILE
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 
-# replace environment variables by the values from the .env files
+# Replace environment variables by the values from the .env files.
+# The sed extracts ONLY real assignments (`^KEY=`): a plain `sed 's/=.*//'` also
+# emits commented-out lines like `# DOCKER_FL_REGISTRY=`, and a bare
+# `export DOCKER_FL_REGISTRY` DEFINES it as empty (origin=file) — which silently
+# defeats `DOCKER_FL_REGISTRY ?= $(DOCKER_REGISTRY)` in deploy/fl_backend.mk and
+# leaves the FL images unprefixed (`flare-fl-server:stag` -> pull access denied).
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
 endif
 
 include deploy/fl_backend.mk
@@ -59,6 +58,26 @@ FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override FL_PROVISIONED_DIR := $(call abs_or_relative_to,$(FL_PROVISIONED_DIR),$(MAKEFILE_DIR))
 override FL_JOBS_DIR := $(call abs_or_relative_to,$(FL_JOBS_DIR),$(MAKEFILE_DIR))
+# The dev object store's data directory (FLIP#1291), bind-mounted into the RustFS
+# container: one sub-directory per bucket — that is how RustFS defines a bucket — created
+# by _ensure-object-store-dir before the store starts, the jobs/ idiom. Per instance
+# (`<instance>-object-store`): two RustFS processes must never share a data directory.
+# Exported so the compose sees the absolute path.
+OBJECT_STORE_DIR ?= $(INSTANCE_PREFIX)object-store
+ifeq ($(strip $(OBJECT_STORE_DIR)),)
+$(error OBJECT_STORE_DIR is empty: set it to a directory (default object-store) or leave it unset)
+endif
+override OBJECT_STORE_DIR := $(call abs_or_relative_to,$(OBJECT_STORE_DIR),$(MAKEFILE_DIR))
+# `clean-object-store` removes this directory, so it must never resolve to the checkout or
+# to anything the checkout lives in (an empty or `.` value would otherwise resolve to the
+# repo root through abs_or_relative_to).
+ifneq ($(filter $(OBJECT_STORE_DIR) $(OBJECT_STORE_DIR)/%,$(MAKEFILE_DIR)),)
+$(error OBJECT_STORE_DIR=$(OBJECT_STORE_DIR) is the checkout or a directory containing it; it must be a directory of its own)
+endif
+ifeq ($(OBJECT_STORE_DIR),/)
+$(error OBJECT_STORE_DIR=/ is not a directory of its own)
+endif
+export OBJECT_STORE_DIR
 
 # Service configuration
 define SERVICE_CONFIG
@@ -134,7 +153,7 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -173,13 +192,41 @@ _ensure-fl-jobs-dir:
 # Fail fast (NVFLARE) when the per-net startup kits are missing — delegated to
 # scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
 # come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
-# for non-NVFLARE backends.
+# for non-NVFLARE backends. In development it also checks that the NVFLARE FL API can read its
+# admin key through the host group (FL_API_KEY_GID, FLIP#1384).
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
-		scripts/check-fl-provisioned.sh
+		FL_API_KEY_GID='$(if $(filter development,$(ENV)),$(DOCKER_GID))' scripts/check-fl-provisioned.sh
+
+# Refuse to drive the hub compose project when another checkout created its containers
+# (FLIP#1227). Compose project names are global to the Docker daemon and this one is
+# $(COMPOSE_PROJECT), plain `deploy` unless FLIP_INSTANCE is set, so a second checkout on the
+# same host lands on the first one's stack and `up` recreates it from the wrong env file.
+# Compose stamps each container with the deploy/ directory it was created from (the
+# working_dir label); both sides are compared with symlinks resolved, an unlabelled container
+# counts as foreign, and `ps -a` because a stopped stack still owns the name. The first
+# prerequisite of every target here that drives the project. ALLOW_FOREIGN_PROJECT=1 skips
+# it: deliberately not FORCE, which `up` hands on to generate-internal-service-key, where it
+# rotates the key.
+_check-compose-project-owner:
+	@mine=$$(cd deploy && pwd -P); \
+	others=$$(docker ps -a --filter "label=com.docker.compose.project=$(COMPOSE_PROJECT)" \
+		--format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null | sort -u | \
+		while IFS= read -r dir; do \
+			[ -n "$$dir" ] && [ "$$(cd "$$dir" 2>/dev/null && pwd -P)" = "$$mine" ] || echo "      $${dir:-<no working_dir label>}"; \
+		done); \
+	if [ -n "$$others" ] && [ "$(ALLOW_FOREIGN_PROJECT)" != 1 ]; then \
+		echo "❌ Compose project '$(COMPOSE_PROJECT)' has containers created from another checkout:"; \
+		echo "$$others"; \
+		echo "   Acting on it from here would recreate or remove that checkout's stack."; \
+		echo "   To run a second stack beside it, set FLIP_INSTANCE=<name> (and give it its own ports)."; \
+		echo "   To hand the stack over, run 'make down' in that checkout first."; \
+		echo "   ALLOW_FOREIGN_PROJECT=1 skips this check."; \
+		exit 1; \
+	fi
 
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
+up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -198,7 +245,7 @@ up-trust-ec2: create-networks
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-central-hub: create-networks-centralhub
+central-hub: _check-compose-project-owner create-networks-centralhub _ensure-object-store-dir
 	$(MAKE) -C flip-api up
 
 # On-prem operator flow — start a trust on the local host pointing at a
@@ -211,8 +258,23 @@ central-hub: create-networks-centralhub
 # compose / pydantic failure deeper in the stack.
 up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+
+# Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
+# trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
+# changed, redeploy XNAT WITHOUT xnat-reset. Never up-trust: that is the first-install
+# verb and wipes the XNAT archive. TAG defaults to the release the hub runs (read from
+# the hub's /health), so a plain `make upgrade-onprem-trust KIT=<slot>` is "catch up
+# with the hub"; FL_TAG= pins the FL client apart (sha- moves only — a release builds every
+# image at one tag); FORCE=1 allows a downgrade, YES=1 skips the confirmation. A release
+# TAG is refused unless this checkout is at that tag — the compose files and this very verb
+# come from the checkout, so `git fetch --tags origin && git checkout vX.Y.Z` comes first;
+# ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
+upgrade-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
+	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.
@@ -242,18 +304,45 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT)
+	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) PROD=$(or $(PROD),true) ONBOARD_ARGS="$(ONBOARD_ARGS)"
 
 # Stop all containers
-down:
+down: _check-compose-project-owner
 	@echo "🛑 Stopping all services..."
 	$(MAKE) -C trust down
 
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 
+# Pre-create the object store's bucket directories, host-owned, before RustFS starts
+# (FLIP#1291): a top-level directory under its data dir IS a bucket, the container runs as
+# the host uid (`user:` in the compose) so it can write what the host created, and docker
+# would otherwise create the mount source root-owned. Idempotent; the three names are the
+# *_BUCKET_NAME values the hub's s3:// settings are built from, each a single path segment.
+# A directory that already exists but is not writable by this uid (created root-owned by a
+# bare `docker compose up`, say) fails here with the remedy, not four layers later as a
+# store that answers healthy and refuses every upload. Development only: the deployed
+# environments run no store, so the target is a no-op there.
+_ensure-object-store-dir:
+	@if [ -n "$(IS_DEPLOYED)" ]; then exit 0; fi; \
+	for var in FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME FLIP_FL_RESULTS_BUCKET_NAME FLIP_APP_BUNDLES_BUCKET_NAME; do \
+		eval "bucket=\$$$$var"; \
+		[ -n "$$bucket" ] || { echo "❌ _ensure-object-store-dir: $$var is empty or unset in $(MAIN_ENV_FILE)" >&2; exit 1; }; \
+		case "$$bucket" in */*|.|..|*'<'*|*'>'*) echo "❌ _ensure-object-store-dir: $$var='$$bucket' is not a bucket name (one path segment, no placeholders)" >&2; exit 1;; esac; \
+		dir="$(OBJECT_STORE_DIR)/$$bucket"; \
+		mkdir -p "$$dir" 2>/dev/null || { echo "❌ _ensure-object-store-dir: cannot create $$dir — if $(OBJECT_STORE_DIR) exists root-owned, run: sudo chown -R $$(id -u):$$(id -g) '$(OBJECT_STORE_DIR)'" >&2; exit 1; }; \
+		[ -w "$$dir" ] || { echo "❌ _ensure-object-store-dir: $$dir is not writable by uid $$(id -u) — run: sudo chown -R $$(id -u):$$(id -g) '$(OBJECT_STORE_DIR)'" >&2; exit 1; }; \
+	done
+
+# Empty the dev object store (FLIP#1291): stop the RustFS service and remove its host
+# directory. `make down` keeps the directory, like the jobs/ dir; this is the purge knob.
+# The parse-time guard on OBJECT_STORE_DIR above is what keeps this `rm -rf` off the checkout.
+clean-object-store: _check-compose-project-owner
+	${DOCKER_COMMAND} rm -sf object-store
+	rm -rf "$(OBJECT_STORE_DIR)"
+
 # Clean Docker resources
-clean:
+clean: _check-compose-project-owner
 	${DOCKER_COMMAND} down --rmi local && \
 	docker system prune -f && \
 	rm -rf ./flip-fl-api/*/transfer/*/
@@ -274,7 +363,11 @@ restart: down up
 #       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
 #       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
 #       own log — so a tree that has never run `make up` fails every FL job until this runs.
-restart-fl: _ensure-fl-jobs-dir
+# NOTE: _ensure-object-store-dir likewise (FLIP#1402). On Flower, step 4's register-supernode-keys
+#       services depend on object-store, so compose recreates it from this tree; without
+#       ./object-store the bind mount is refused and make stops after step 1 has removed every
+#       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
+restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
@@ -291,7 +384,7 @@ restart-fl: _ensure-fl-jobs-dir
 	@echo "✅ FL services restarted successfully!"
 
 # Stop and start all services except the trust services related services
-restart-no-trust:
+restart-no-trust: _check-compose-project-owner
 	@echo "Debug mode: '${DEBUG}'"
 	@echo "Passing DEBUG=${DEBUG} to the downstream $(MAKE) commands..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
@@ -302,7 +395,32 @@ ci:
 # gitignored deploy env files, which contributors don't have.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
-ui:
+# Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
+# version constraints, AWS argument values the API would reject. Credential-free;
+# needs tflint at the version pinned in the script, and downloads the pinned AWS
+# ruleset plugin on first run. Runs the script directly for the same reason as
+# checkov-lint.
+tflint-lint:
+	bash deploy/providers/AWS/scripts/tflint_lint.sh
+# Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
+# self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
+# from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
+# build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
+# so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
+# paths are not byte-identical: the committed copies are the container render (byte-stable across
+# runs), and a host `dot` of another graphviz version produces a different file for an unchanged
+# diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
+# rather than via deploy/providers/AWS/Makefile for the same credential-free reason as checkov-lint.
+aws-diagram:
+ifneq ($(shell command -v dot 2>/dev/null),)
+	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
+else
+	docker run --rm -v "$(CURDIR):/work" -w /work/deploy/providers/AWS python:3.12-slim sh -c \
+	  "apt-get update -qq >/dev/null && apt-get install -y -qq graphviz >/dev/null && \
+	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
+	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
+endif
+ui: _check-compose-project-owner
 ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
@@ -310,7 +428,7 @@ else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when PROD=$(PROD); no container to start."
 	@echo "    Run \`make -C deploy/providers/AWS deploy-ui PROD=$(PROD)\` to publish the bundle."
 endif
-ui-off:
+ui-off: _check-compose-project-owner
 ifeq ($(strip $(PROD)),)
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
@@ -322,11 +440,11 @@ tests:
 	$(MAKE) -C flip-ui e2e_test
 	$(MAKE) -C flip-api test
 
-debug-all:
+debug-all: _check-compose-project-owner
 	@echo "🚨 Starting debug mode by overriding the DEBUG environment variable..."
 	DEBUG=true $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug
-debug-off-all:
+debug-off-all: _check-compose-project-owner
 	@echo "🚨 Stopping debug mode by removing the DEBUG environment variable override..."
 	$(MAKE) -C flip-api delete_testing_projects
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
@@ -335,8 +453,11 @@ debug-off-all:
 # Hub-shared network names all follow `$(INSTANCE_PREFIX)deploy_<name>`, where `deploy_` names
 # the hub compose project that owns them — the same string compose would generate itself if it
 # still created them, rather than looked them up `external:` (FLIP#957).
+# Every external network the hub-only services join, so `make central-hub` needs no trust
+# create-networks; the trust Makefile ensures trust-apis too, for a standalone trust (idempotent).
 create-networks-centralhub:
 	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-network)
+	$(call ensure_bridge_network,$(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network)
 
 create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
@@ -352,7 +473,7 @@ recreate-networks: remove-networks create-networks
 	@echo "ℹ️  Trust networks now use overlay driver for swarm compatibility"
 
 # Add a parameterized debug command
-debug:
+debug: _check-compose-project-owner
 	@if [ -z "$(SERVICE)" ]; then \
 		echo "❌ Usage: make debug SERVICE=<service-name>"; \
 		echo "   Available services: data-access-api, imaging-api, trust-api, flip-api, fl-api-net-1"; \
@@ -368,7 +489,7 @@ debug:
 			echo "❌ Unknown service: $(SERVICE)"; exit 1 ;; \
 	esac
 
-debug-off:
+debug-off: _check-compose-project-owner
 	@if [ -z "$(SERVICE)" ]; then \
 		echo "❌ Usage: make debug-off SERVICE=<service-name>"; \
 		exit 1; \
@@ -390,7 +511,7 @@ debug-off:
 print-docker-tag:  ## Print the current DOCKER_TAG value
 	@echo "DOCKER_TAG=$(DOCKER_TAG)"
 
-up-pgadmin:
+up-pgadmin: _check-compose-project-owner
 	${DOCKER_COMMAND} up -d pgadmin
 
 unit_test:
@@ -415,6 +536,7 @@ UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-acce
 # `exclude-newer` window, so transitive pin versions may shift even when no
 # direct dependency changed.
 lock:
+	@./scripts/check-uv-version.sh
 	@for dir in $(UV_PROJECTS); do \
 		echo "Locking $$dir"; \
 		( cd $$dir && uv lock ) || exit 1; \
@@ -430,6 +552,9 @@ lock:
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
 	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR="$(abspath $(MODEL_FILES_DIR))") $(if $(QUERY_FILE),QUERY_FILE="$(abspath $(QUERY_FILE))") $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+# EHR risk-prediction tutorial (tabular-only, no imaging stage — FLIP#1071) on the FL_BACKEND stack.
+e2e_smoke_ehr:
+	$(MAKE) -C flip-api e2e_smoke_ehr $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 # Record the end-to-end demo video against the running dev stack: six
 # Dockerised Cypress segments over the live UI (real Cognito, trusts, S3,
@@ -443,6 +568,17 @@ demo-video:
 # DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD env vars, never committed).
 demo-users:
 	$(MAKE) -C flip-api create_demo_users
+
+# Recreate the dev identity provider from deploy/keycloak/flip-realm.json. The
+# keycloak service keeps no volume and `--import-realm` skips a realm that
+# already exists, so an edit to the realm file only applies to a fresh
+# container: this removes it and the next `make up`/`make central-hub` (or the
+# `up -d keycloak` here) re-imports. Users registered from the Admin Area
+# since the last import are lost with it — they live only in that container.
+reset-keycloak: _check-compose-project-owner
+	@echo "🔁 Recreating the keycloak service from deploy/keycloak/flip-realm.json..."
+	$(DOCKER_COMMAND) rm -sf keycloak
+	$(DOCKER_COMMAND) up -d keycloak
 
 # Pre-populate the platform with a curated catalogue of radiology projects in
 # honest lifecycle states (no fabricated metrics/results). Cleanup:
@@ -472,7 +608,7 @@ _wait-for-hub:
 # already-registered name is skipped, credentials preserved), then writes the
 # minted credentials + assigned FL kit slot + hub-shared block back into the
 # kit. The hub keeps no trust list — the kit files ARE the list.
-register-trust: _wait-for-hub
+register-trust: _check-compose-project-owner _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit="trust/.env.$(KIT).$(ENV)"; ex="$$kit.example"; \
 	  if [ ! -f "$$kit" ]; then \
@@ -547,10 +683,10 @@ sync-trust-kits:
 # Kubernetes Helm chart targets
 # ---------------------------------------------------------------------------
 deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
-	$(MAKE) -C deploy/providers/kubernetes deploy
+	$(MAKE) -C trust/deploy/helm deploy
 
 undeploy-trust-k8s: ## Remove trust services from Kubernetes
-	$(MAKE) -C deploy/providers/kubernetes undeploy
+	$(MAKE) -C trust/deploy/helm undeploy
 
 # Mint the XNAT stack passwords (XNAT_DATASOURCE_PASSWORD,
 # XNAT_DATASOURCE_ADMIN_PASSWORD, XNAT_ACTIVEMQ_PASSWORD) into kit files —
@@ -580,6 +716,8 @@ check-aws-access:
 	fi
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
+		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. Only the"; \
+		echo "    AWS-backed targets need it — deploy/providers/AWS, FL kit uploads, the optional OMOP vocabulary load.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

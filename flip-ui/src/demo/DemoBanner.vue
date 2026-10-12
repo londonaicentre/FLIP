@@ -26,19 +26,28 @@
         class="w-full py-1.5 px-3 text-sm font-medium text-center text-white bg-amber-600 dark:bg-amber-700"
         data-test="demo-banner"
     >
-        Read-only demo — snapshot of the Ark+ federated experiments, captured {{ capturedOn }}.
+        Read-only demo — snapshot of the Ark+ federated experiments: fine-tuning captured
+        {{ capturedOn }}, evaluation {{ evaluationCapturedOn }}.
     </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
 
-import { DEMO_CAPTURE_DATE } from "../../mocks/demo/ark-plus-register";
+import { DEMO_CAPTURE_DATE, DEMO_EVALUATION_CAPTURE_DATE } from "../../mocks/demo/ark-plus-register";
 
-const capturedOn = computed(() => new Date(`${DEMO_CAPTURE_DATE}T00:00:00Z`).toLocaleDateString("en-GB", {
+// Two dates, not one: the fine-tuning project was re-captured on its own after
+// the FLIP#821 image-orientation fix while the evaluation project was left on
+// its earlier capture. Naming a single date would misdate half the exhibit —
+// see the note on DEMO_EVALUATION_CAPTURE_DATE. Collapse this back to one date
+// only once both projects are captured together again.
+const asDate = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     timeZone: "UTC"
-}));
+});
+
+const capturedOn = computed(() => asDate(DEMO_CAPTURE_DATE));
+const evaluationCapturedOn = computed(() => asDate(DEMO_EVALUATION_CAPTURE_DATE));
 </script>

@@ -12,6 +12,9 @@
 
 from unittest.mock import AsyncMock, patch
 
+from cryptography.exceptions import InvalidTag
+
+from imaging_api.utils.encryption import PROJECT_ID_CONTEXT
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 
 _REQUEST_BODY = {
@@ -33,6 +36,35 @@ def test_download_images_success(client):
 
     assert response.status_code == 200
     assert response.json()["path"] == "/tmp/images/net1/ACC123"
+
+
+def test_download_images_decrypts_for_the_project_id_context(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id") as mock_decrypt,
+        patch("imaging_api.routers.download.download_and_unzip_images", new_callable=AsyncMock, return_value="/x"),
+    ):
+        client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    mock_decrypt.assert_called_once_with("encrypted-id", context=PROJECT_ID_CONTEXT)
+
+
+def test_download_images_rejects_a_project_id_that_fails_authentication(client):
+    """The caller's own payload is bad: a 400 that says so, not a 500 with an empty reason."""
+    with patch("imaging_api.routers.download.decrypt", side_effect=InvalidTag()):
+        response = client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "failed authentication" in response.json()["detail"]
+
+
+def test_download_images_rejects_a_malformed_envelope(client):
+    with patch(
+        "imaging_api.routers.download.decrypt", side_effect=ValueError("Payload is not a FLIP encryption envelope")
+    ):
+        response = client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "not a FLIP encryption envelope" in response.json()["detail"]
 
 
 def test_download_images_force_refresh_threads_through(client):
@@ -63,6 +95,49 @@ def test_download_images_force_refresh_defaults_to_false(client):
 
     assert response.status_code == 200
     assert mock_service.await_args.kwargs["force_refresh"] is False
+
+
+def test_download_images_rejects_accession_id_traversal_before_service_call(client):
+    """A traversal accession_id must fail body validation (422) and never reach
+    the download service, which would otherwise issue an admin-authenticated
+    XNAT request to the traversed URL."""
+    body = {**_REQUEST_BODY, "accession_id": "../../etc/passwd"}
+    with patch(
+        "imaging_api.routers.download.download_and_unzip_images",
+        new_callable=AsyncMock,
+    ) as mock_service:
+        response = client.post("/download/images/net1", json=body)
+
+    assert response.status_code == 422
+    mock_service.assert_not_called()
+
+
+def test_download_images_rejects_resource_type_outside_allow_list_before_service_call(client):
+    """resource_type is interpolated into the XNAT download URL; anything outside
+    the known resource-type allow-list must 422 before the service is invoked."""
+    with patch(
+        "imaging_api.routers.download.download_and_unzip_images",
+        new_callable=AsyncMock,
+    ) as mock_service:
+        response = client.post("/download/images/net1?resource_type=../../etc/passwd", json=_REQUEST_BODY)
+
+    assert response.status_code == 422
+    mock_service.assert_not_called()
+
+
+def test_download_images_accepts_known_resource_type(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch(
+            "imaging_api.routers.download.download_and_unzip_images",
+            new_callable=AsyncMock,
+            return_value="/tmp/images/net1/ACC123",
+        ) as mock_service,
+    ):
+        response = client.post("/download/images/net1?resource_type=DICOM", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    assert mock_service.await_args.kwargs["resource_type"] == "DICOM"
 
 
 def test_download_images_not_found(client):

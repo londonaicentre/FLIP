@@ -16,7 +16,7 @@ from nvflare.apis.fl_constant import EventScope, FedEventHeader, FLContextKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 
-from flip import FLIP
+from flip import FLIP, FLIPBase
 from flip.constants.flip_constants import FlipEvents
 from flip.utils.utils import Utils
 
@@ -27,7 +27,7 @@ def send_metrics_value(
     fl_ctx: FLContext,
     x_value: float | None = None,
     x_label: str | None = None,
-    flip: FLIP = FLIP(),
+    flip: FLIPBase = FLIP(),
 ) -> None:
     """
     Sends a metric value to the Central Hub.
@@ -95,7 +95,7 @@ def send_metrics_value(
     )
 
 
-def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str, flip: FLIP = FLIP()) -> None:
+def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str, flip: FLIPBase = FLIP()) -> None:
     """
     Use on the server to handle metrics data events raised by clients.
 

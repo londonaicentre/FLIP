@@ -20,6 +20,7 @@ from fl_api.utils.logger import logger
 
 class HealthResponse(BaseModel):
     status: str
+    version: str
 
 
 class FlowerCommandResponse(BaseModel):

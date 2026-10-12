@@ -22,7 +22,8 @@ DEFAULT_X_AXIS_LABEL = "Global Rounds"
 
 # AWS SES email templates
 ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
-IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
+# Invite email carrying a host-less "set your own password" link — never a password (FLIP-PT-079).
+IMAGING_INVITE_TEMPLATE_NAME = "flip-xnat-invite"
 IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 
 

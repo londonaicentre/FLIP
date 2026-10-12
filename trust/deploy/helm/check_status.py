@@ -1,0 +1,1208 @@
+#!/usr/bin/env python3
+#
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+"""FLIP Kubernetes Deployment Status Checker.
+
+This script verifies that the Kubernetes trust-side deployment is functioning correctly.
+
+PREREQUISITES:
+  - kubectl installed and configured
+  - helm installed (optional, for chart version check)
+  - The flip-trust chart deployed (``helm install flip-trust ...``)
+
+WHAT IT CHECKS:
+  ✓ Prerequisites (kubectl, helm)
+  ✓ Namespace and Helm release status
+  ✓ Pod readiness (all trust-side services)
+  ✓ GPU allocation (fl-client)
+  ✓ PersistentVolumeClaims
+  ✓ XNAT plugin roster (running pod vs xnat.web.plugins.urls)
+  ✓ HTTP endpoints (trust-api, imaging-api, data-access-api, Orthanc)
+  ✓ MinIO S3 store (FL participant kits)
+  ✓ System resources (disk, memory on the node)
+  ✓ Container logs for recent errors
+
+EXIT CODES:
+  0 - All checks passed (warnings are acceptable)
+  1 - One or more checks failed
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass, field
+from enum import StrEnum
+
+
+# Color codes for terminal output
+class Colors:
+    """ANSI color codes for terminal output."""
+
+    RED = "\033[0;31m"
+    GREEN = "\033[0;32m"
+    YELLOW = "\033[1;33m"
+    BLUE = "\033[0;34m"
+    NC = "\033[0m"  # No Color
+
+
+@dataclass
+class StatusCounters:
+    """Track check results."""
+
+    passed: int = 0
+    failed: int = 0
+    warnings: int = 0
+
+    @property
+    def total(self) -> int:
+        """Get total checks."""
+        return self.passed + self.failed + self.warnings
+
+
+# Global counters
+counters = StatusCounters()
+
+
+def print_status(status: str, message: str) -> None:
+    """Print a status message with color coding.
+
+    Args:
+        status: Status type (PASS, FAIL, INFO, WARN)
+        message: Message to display
+    """
+    global counters
+
+    symbols = {
+        "PASS": f"{Colors.GREEN}✓ PASS{Colors.NC}",
+        "FAIL": f"{Colors.RED}✗ FAIL{Colors.NC}",
+        "WARN": f"{Colors.YELLOW}⚠ WARN{Colors.NC}",
+        "INFO": f"{Colors.BLUE}ℹ INFO{Colors.NC}",
+    }
+
+    symbol = symbols.get(status, "")
+    print(f"{symbol} - {message}")
+
+    if status == "PASS":
+        counters.passed += 1
+    elif status == "FAIL":
+        counters.failed += 1
+    elif status == "WARN":
+        counters.warnings += 1
+
+
+def print_section(title: str) -> None:
+    """Print a section header.
+
+    Args:
+        title: Section title
+    """
+    print()
+    print(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
+    print(f"{Colors.BLUE}{title}{Colors.NC}")
+    print(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
+
+
+def check_command(command: str) -> bool:
+    """Check if a command is available.
+
+    Args:
+        command: Command name to check
+
+    Returns:
+        True if command exists, False otherwise
+    """
+    try:
+        subprocess.run(
+            ["which", command],
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
+    """Run a shell command.
+
+    Args:
+        args: Command arguments
+        timeout: Command timeout in seconds
+
+    Returns:
+        Tuple of (success, output)
+    """
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout,
+        )
+        return True, result.stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        error_output = e.stderr if hasattr(e, "stderr") else str(e)
+        return False, error_output
+
+
+def kubectl_get_condition(resource_type: str, resource_name: str, condition: str) -> bool:
+    """Check a Kubernetes resource condition.
+
+    Args:
+        resource_type: e.g. 'pod', 'deployment', 'pvc'
+        resource_name: Resource name
+        condition: 'Ready', 'Bound', 'Available' etc.
+
+    Returns:
+        True if condition is met
+    """
+    try:
+        result = subprocess.run(
+            [
+                "kubectl",
+                "get",
+                resource_type,
+                resource_name,
+                "-o",
+                f"jsonpath='{{.status.conditions[?(@.type==\"{condition}\")].status}}'",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        return result.stdout.strip().strip("'") == "True"
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+def kubectl_get(items: list[str], namespace: str, timeout: int = 15) -> tuple[bool, str]:
+    """Run a kubectl get command and return the output.
+
+    Args:
+        items: What to get (e.g. ['pods', '-l', 'app=foo'])
+        namespace: Kubernetes namespace
+        timeout: Command timeout
+
+    Returns:
+        Tuple of (success, output)
+    """
+    args = ["kubectl", "get"] + items
+    if namespace:
+        args.extend(["-n", namespace])
+    return run_command(args, timeout=timeout)
+
+
+def kubectl_json(resource: str, namespace: str, timeout: int = 15) -> dict | None:
+    """Get a Kubernetes resource as JSON.
+
+    Args:
+        resource: Resource identifier (e.g. 'deployment/flip-trust-trust-api')
+        namespace: Kubernetes namespace
+        timeout: Command timeout
+
+    Returns:
+        Parsed JSON dict or None
+    """
+    args = ["kubectl", "get", resource, "-n", namespace, "-o", "json"]
+    try:
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout,
+        )
+        return json.loads(result.stdout)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+
+
+def kubectl_list(items: list[str], namespace: str, timeout: int = 15) -> list[str]:
+    """List Kubernetes resources by name.
+
+    Args:
+        items: What to list with -o name (e.g. ['pods'])
+        namespace: Kubernetes namespace
+        timeout: Command timeout
+
+    Returns:
+        List of resource names (e.g. ['pod/foo-xxx', 'pod/bar-yyy'])
+    """
+    args = ["kubectl", "get"] + items + ["-o", "name"]
+    if namespace:
+        args.extend(["-n", namespace])
+    success, output = run_command(args, timeout=timeout)
+    if not success:
+        return []
+    return [line.strip() for line in output.split("\n") if line.strip()]
+
+
+def _fl_client_kit_missing(pod: str, namespace: str) -> bool:
+    """Report whether an unready fl-client pod is blocked on its un-staged FL kit.
+
+    The kit is a hostPath volume with `type: Directory` (templates/fl-client.yaml), so
+    an unstaged kit surfaces as a pod stuck outside Running with a kubelet event naming
+    the path — not as an application error. Matching on the event keeps this specific:
+    a genuinely broken fl-client still reports FAIL.
+
+    Args:
+        pod: Pod resource name as returned by kubectl_list (e.g. 'pod/fl-client-xxx')
+        namespace: Kubernetes namespace.
+
+    Returns:
+        True if the pod is not Running and a mount event names a hostPath failure.
+    """
+    success, phase = run_command(["kubectl", "get", pod, "-n", namespace, "-o", "jsonpath={.status.phase}"])
+    if not success or phase.strip().strip("'\"") == "Running":
+        return False
+    # Events carry the diagnosis; the pod status only says ContainerCreating.
+    success, events = run_command(
+        [
+            "kubectl",
+            "get",
+            "events",
+            "-n",
+            namespace,
+            "--field-selector",
+            f"involvedObject.name={pod.split('/')[-1]}",
+            "-o",
+            "jsonpath={.items[*].message}",
+        ]
+    )
+    return success and "hostPath type check failed" in events
+
+
+# Where the chart's download-plugins init container writes the jars it fetches
+# (templates/xnat-web.yaml mounts an emptyDir here, so this is the WHOLE roster the
+# running XNAT sees — the image's own plugins are masked by the mount).
+XNAT_PLUGIN_DIR = "/data/xnat/home/plugins"
+
+
+def plugin_jar_name(url: str) -> str | None:
+    """Derive the on-disk jar name the chart will download a plugin URL to.
+
+    This mirrors ``templates/xnat-web.yaml``'s own derivation (``basename`` of the URL
+    path) rather than restating the versions, so the version keeps living in exactly one
+    place: ``xnat.web.plugins.urls``. Restating them here would give this check its own
+    copy to drift from, which is the class of bug it exists to catch.
+
+    Args:
+        url: Plugin download URL as written in values.
+
+    Returns:
+        The jar filename, or None if the URL does not name a ``.jar``. None means "the
+        chart would reject this config", not "unverifiable": ``download-plugins`` derives
+        the filename the same way and raises ``SystemExit`` when it is not a ``.jar``, so a
+        release carrying such a URL never starts an xnat-web pod. The caller reports those
+        keys rather than dropping them, since a redirect-style URL that looks serviceable
+        is exactly the one an operator would otherwise expect to work.
+    """
+    if not isinstance(url, str):
+        return None
+    name = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1]
+    return name if name.endswith(".jar") else None
+
+
+def _is_build_of(key: str, jar: str) -> bool:
+    """Is ``jar`` a build of the plugin named ``key``?
+
+    A bare ``startswith(f"{key}-")`` is not enough: ``container-service-`` also prefixes
+    ``container-service-extras-1.0.jar``, so a container-service that never downloaded
+    would be reported as *stale* naming the extras jar — pointing the operator at a file
+    they must not touch, and hiding the failed download that is the actual fault. The
+    match therefore requires a digit immediately after ``<key>-``, which is where every
+    plugin in the roster carries its version.
+
+    Args:
+        key: Plugin key from ``xnat.web.plugins.urls``.
+        jar: A filename found in the pod's plugin directory.
+
+    Returns:
+        True if ``jar`` is a versioned build of ``key``.
+    """
+    if not jar.endswith(".jar"):
+        return False
+    prefix = f"{key}-"
+    return jar.startswith(prefix) and jar[len(prefix) : len(prefix) + 1].isdigit()
+
+
+def compare_plugin_roster(
+    expected: dict[str, str], found: list[str]
+) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
+    """Diff the jars a pod is running against the ones its values ask for.
+
+    Args:
+        expected: ``{plugin key: jar filename}`` derived from ``xnat.web.plugins.urls``.
+        found: Filenames actually present in the pod's plugin directory.
+
+    Returns:
+        ``(missing, stale)``. ``missing`` is ``(key, expected jar)`` for a plugin with
+        nothing of its name on disk. ``stale`` is ``(key, expected jar, found jar)`` where
+        a DIFFERENT version of that same plugin is present — the signal that matters here,
+        because the pod is then running a jar the chart stopped asking for, which is how a
+        1.9.x DQR plugin survived on an XNAT 1.10.0 pod and aborted every C-STORE with
+        AbstractMethodError (FLIP#1228).
+
+        Only a versioned build of the key itself counts as stale (see ``_is_build_of``),
+        and never a jar the roster expects under another key: a plugin whose name merely
+        starts with another's stays *missing*, which is the diagnosis that sends the
+        operator to the init container's logs where the failed download actually is.
+    """
+    found_set = set(found)
+    # A jar the roster expects under some other key belongs to that key, and is never this
+    # plugin's stale copy however its name reads. (The loop skips any key whose own jar is
+    # present, so a jar left in here is always another key's.)
+    spoken_for = set(expected.values())
+    missing: list[tuple[str, str]] = []
+    stale: list[tuple[str, str, str]] = []
+
+    for key, jar in sorted(expected.items()):
+        if jar in found_set:
+            continue
+        others = sorted(f for f in found_set if _is_build_of(key, f) and f not in spoken_for)
+        if others:
+            stale.append((key, jar, ", ".join(others)))
+        else:
+            missing.append((key, jar))
+
+    return missing, stale
+
+
+class RosterLookup(StrEnum):
+    """Outcome of asking the live release what plugin jars it wants.
+
+    ``DISABLED`` and ``UNREADABLE`` are deliberately distinct. "XNAT is off in this
+    release" means there is nothing to check and the run is fine; "helm errored, timed out
+    or returned something unparseable" means the one check that catches FLIP#1228 did NOT
+    run. Collapsing the two into a single "skipped" lets a slow or broken helm turn this
+    check off while ``make status`` still exits green.
+    """
+
+    OK = "ok"
+    DISABLED = "disabled"
+    UNREADABLE = "unreadable"
+
+
+@dataclass(frozen=True)
+class PluginRoster:
+    """What the live release asks for, and why it might be nothing.
+
+    Attributes:
+        status: Whether the roster was read, is switched off, or could not be read.
+        jars: ``{plugin key: jar filename}`` when ``status`` is OK.
+        undrivable: Plugin keys whose URL names no ``.jar``. The chart's own
+            ``download-plugins`` container raises ``SystemExit`` on those, so such a
+            release cannot start a pod at all — worth reporting rather than dropping.
+        detail: Human-readable reason, for the DISABLED and UNREADABLE cases.
+    """
+
+    status: RosterLookup
+    jars: dict[str, str] = field(default_factory=dict)
+    undrivable: tuple[str, ...] = ()
+    detail: str = ""
+
+
+def expected_plugin_jars(helm_release: str, namespace: str) -> PluginRoster:
+    """Read the plugin roster the release was deployed with.
+
+    Uses ``helm get values --all`` rather than the chart's values.yaml on disk: the
+    question is what the LIVE release asks for, and a checkout can be ahead of, behind or
+    unrelated to it. (Reading the file would have reported the roster as correct
+    throughout FLIP#1228, which is precisely the false confidence being fixed.)
+
+    Args:
+        helm_release: Helm release name.
+        namespace: Kubernetes namespace.
+
+    Returns:
+        A :class:`PluginRoster`. A failure to read is reported as UNREADABLE rather than
+        as an empty roster, so the caller can say the check did not run instead of passing.
+    """
+    if not check_command("helm"):
+        return PluginRoster(RosterLookup.UNREADABLE, detail="helm is not on PATH")
+    success, output = run_command(
+        ["helm", "get", "values", helm_release, "-n", namespace, "--all", "-o", "json"],
+        timeout=30,
+    )
+    if not success:
+        return PluginRoster(
+            RosterLookup.UNREADABLE,
+            detail=f"`helm get values {helm_release} -n {namespace}` failed or timed out: {output.strip()[:200]}",
+        )
+    if not output.strip():
+        return PluginRoster(RosterLookup.UNREADABLE, detail="helm returned no values for this release")
+    try:
+        values = json.loads(output)
+    except json.JSONDecodeError as exc:
+        return PluginRoster(RosterLookup.UNREADABLE, detail=f"helm's values are not valid JSON: {exc}")
+
+    xnat = values.get("xnat") or {}
+    if not xnat.get("enabled", False):
+        return PluginRoster(RosterLookup.DISABLED, detail="xnat.enabled is false in this release")
+    plugins = ((xnat.get("web") or {}).get("plugins")) or {}
+    # With plugins off the chart mounts an empty emptyDir and runs no download container,
+    # so the pod legitimately carries no jars. Comparing anyway FAILs every plugin and
+    # points the operator at the logs of a container that was never created.
+    if not plugins.get("enabled", False):
+        return PluginRoster(RosterLookup.DISABLED, detail="xnat.web.plugins.enabled is false in this release")
+    urls = plugins.get("urls") or {}
+
+    jars = {key: plugin_jar_name(url) for key, url in urls.items()}
+    return PluginRoster(
+        RosterLookup.OK,
+        jars={key: jar for key, jar in jars.items() if jar},
+        undrivable=tuple(sorted(key for key, jar in jars.items() if not jar)),
+    )
+
+
+def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
+    """Assert the running xnat-web pod carries the jars its values ask for.
+
+    The plugins live in an emptyDir refilled by an init container on every pod creation,
+    so a pod whose roster disagrees with the values has a pod SPEC older than the values —
+    i.e. no upgrade since the roster changed ever completed far enough to roll the
+    Deployment. Nothing else in this script can see that: the release reports deployed,
+    the pod reports Ready, and XNAT answers HTTP. It only surfaces on the DICOM path.
+
+    Args:
+        helm_release: Helm release name.
+        namespace: Kubernetes namespace.
+    """
+    roster = expected_plugin_jars(helm_release, namespace)
+    if roster.status is RosterLookup.UNREADABLE:
+        print_status(
+            "WARN",
+            f"Could NOT read the plugin roster from the live release ({roster.detail}) — this check did "
+            "not run. It is the one that catches a stale-plugin pod, so do not read the rest of this "
+            "report as clearing the DICOM path.",
+        )
+        return
+    if roster.status is RosterLookup.DISABLED:
+        print_status("INFO", f"Skipping XNAT plugin roster check ({roster.detail})")
+        return
+    for key in roster.undrivable:
+        print_status(
+            "WARN",
+            f"XNAT plugin '{key}': its URL does not name a .jar, so no filename can be derived and it "
+            "is excluded from this comparison. The chart's own download-plugins container raises "
+            "SystemExit on such a URL, so this release cannot start an xnat-web pod at all — fix the "
+            "URL in xnat.web.plugins.urls.",
+        )
+    if not roster.jars:
+        print_status("INFO", "No XNAT plugin URLs configured — nothing to compare")
+        return
+
+    pods = kubectl_list(
+        [
+            "pods",
+            "-l",
+            f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=xnat-web",
+            "--field-selector=status.phase=Running",
+        ],
+        namespace,
+    )
+    if not pods:
+        pods = kubectl_list(
+            ["pods", "-l", "app.kubernetes.io/component=xnat-web", "--field-selector=status.phase=Running"],
+            namespace,
+        )
+    if not pods:
+        print_status("WARN", "No running xnat-web pod — cannot verify the plugin roster")
+        return
+
+    # EVERY Running pod, not pods[0]. Running is not Ready: during a rollout — and
+    # indefinitely if one stalls — a new pod sits Running beside the old one while the
+    # Service still routes to the old. Checking whichever sorted first would report the
+    # new pod's correct jars and PASS while every C-STORE still lands on the stale one,
+    # which is exactly the false confidence FLIP#1228 was made of.
+    if len(pods) > 1:
+        print_status(
+            "WARN",
+            f"{len(pods)} xnat-web pods are Running ({', '.join(pods)}) — a rollout is in progress or "
+            "stalled. Each is checked below, but note the Service may still be routing stores to the "
+            "OLD pod, so a correct roster on the new one does not mean stores are landing on it.",
+        )
+
+    inspected: list[str] = []
+    clean: list[str] = []
+    for pod in pods:
+        success, listing = run_command(
+            ["kubectl", "exec", pod, "-n", namespace, "--", "ls", "-1", XNAT_PLUGIN_DIR],
+            timeout=30,
+        )
+        if not success:
+            print_status("WARN", f"Could not list {XNAT_PLUGIN_DIR} in '{pod}' — its roster is unverified")
+            continue
+
+        inspected.append(pod)
+        found = [line.strip() for line in listing.splitlines() if line.strip().endswith(".jar")]
+        missing, stale = compare_plugin_roster(roster.jars, found)
+
+        for key, jar, present in stale:
+            print_status(
+                "FAIL",
+                f"XNAT plugin '{key}' on '{pod}': values ask for {jar}, the pod carries {present}. "
+                "The pod spec predates the values — no helm upgrade has rolled xnat-web since the "
+                "roster changed. Redeploy (make deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m) and "
+                "re-check; a plugin/core mismatch aborts every C-STORE while C-ECHO still passes.",
+            )
+        for key, jar in missing:
+            print_status(
+                "FAIL",
+                f"XNAT plugin '{key}': {jar} is not in {XNAT_PLUGIN_DIR} on '{pod}' — the "
+                "download-plugins init container did not fetch it (check its logs for a failed download).",
+            )
+        if not missing and not stale:
+            clean.append(pod)
+
+    if inspected and len(clean) == len(inspected):
+        jars = ", ".join(sorted(roster.jars.values()))
+        where = clean[0] if len(clean) == 1 else f"all {len(clean)} running pods"
+        print_status("PASS", f"XNAT plugin roster matches values on {where} ({len(roster.jars)} jars: {jars})")
+
+
+def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:
+    """Check HTTP endpoint availability.
+
+    Args:
+        url: URL to check
+        name: Endpoint name for logging
+        expected_status: Expected HTTP status code(s). Can be a single int or list of ints.
+
+    Returns:
+        True if endpoint is accessible, False otherwise
+    """
+    print_status("INFO", f"Checking {name} at {url}...")
+
+    valid_statuses = [expected_status] if isinstance(expected_status, int) else expected_status
+
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status in valid_statuses:
+                print_status("PASS", f"{name} is responding (HTTP {response.status})")
+                return True
+            else:
+                print_status(
+                    "FAIL",
+                    f"{name} returned HTTP {response.status} (expected {valid_statuses})",
+                )
+                return False
+    except urllib.error.HTTPError as e:
+        if e.code in valid_statuses:
+            print_status("PASS", f"{name} is responding (HTTP {e.code})")
+            return True
+        else:
+            print_status("FAIL", f"{name} returned HTTP {e.code} (expected {valid_statuses})")
+            return False
+    except Exception as e:
+        print_status("FAIL", f"{name} not responding: {e}")
+        return False
+
+
+def forward_then_check(
+    pod_name: str,
+    remote_port: int,
+    url: str,
+    name: str,
+    expected: int | list[int],
+    namespace: str,
+    timeout: int = 20,
+) -> bool:
+    """Port-forward to a pod, check the endpoint, then clean up.
+
+    This is a diagnostic convenience — not a persistent tunnel. Each check
+    starts and stops its own port-forward.
+
+    Args:
+        pod_name: Pod name (e.g. 'deploy/flip-trust-trust-api')
+        remote_port: Container port to forward
+        url: URL to probe on the forwarded port
+        name: Check name for logging
+        expected: Expected HTTP status code(s)
+        namespace: Kubernetes namespace the pod lives in
+        timeout: How long to wait for the forward to establish
+
+    Returns:
+        True if endpoint responds as expected
+    """
+    import socket
+
+    # Find a free local port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        local_port = s.getsockname()[1]
+
+    proc = subprocess.Popen(
+        ["kubectl", "port-forward", "-n", namespace, pod_name, f"{local_port}:{remote_port}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    # Wait for port-forward to become ready
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", local_port), timeout=1):
+                break
+        except (ConnectionRefusedError, OSError):
+            time.sleep(0.5)
+    else:
+        _, stderr = proc.communicate(timeout=2)
+        proc.terminate()
+        proc.wait()
+        err_msg = stderr.decode() if stderr else "no output"
+        print_status("FAIL", f"Port-forward to {pod_name}:{remote_port} did not become ready: {err_msg[:120]}")
+        return False
+
+    local_url = url.replace(f":{remote_port}", f":{local_port}").replace("localhost", "127.0.0.1")
+
+    result = check_http_endpoint(local_url, name, expected)
+
+    proc.terminate()
+    proc.wait()
+    return result
+
+
+def main(
+    namespace: str,
+    helm_release: str,
+    skip_endpoints: bool,
+    skip_gpu: bool,
+) -> None:
+    """Main entry point for Kubernetes smoke tests.
+
+    Args:
+        namespace: Kubernetes namespace for the flip-trust release
+        helm_release: Helm release name
+        skip_endpoints: Skip port-forward + HTTP checks
+        skip_gpu: Skip GPU allocation checks
+    """
+    # ── Prerequisites ────────────────────────────────────────────────────
+    print_section("Checking Prerequisites")
+
+    if not check_command("kubectl"):
+        print_status("FAIL", "Required command 'kubectl' not found. Please install it.")
+        sys.exit(1)
+    print_status("PASS", "kubectl command found")
+
+    if not check_command("helm"):
+        print_status("WARN", "helm not found — Helm release checks will be limited")
+    else:
+        print_status("PASS", "helm command found")
+
+    # ── K8s cluster connectivity ─────────────────────────────────────────
+    print_section("Kubernetes Cluster Connectivity")
+
+    success, nodes = run_command(["kubectl", "get", "nodes", "-o", "name"])
+    if not success or not nodes.strip():
+        print_status("FAIL", "Cannot connect to Kubernetes cluster — check kubeconfig and context")
+        sys.exit(1)
+
+    node_names = [n.replace("node/", "") for n in nodes.strip().split("\n")]
+    print_status("PASS", f"Connected — {len(node_names)} node(s): {', '.join(node_names)}")
+
+    # ── Namespace ─────────────────────────────────────────────────────────
+    print_section("Namespace and Helm Release")
+
+    success, ns_output = run_command(["kubectl", "get", "ns", namespace])
+    if not success or "Active" not in ns_output:
+        print_status("FAIL", f"Namespace '{namespace}' not found. Deploy first with: helm install {helm_release} ...")
+        sys.exit(1)
+    print_status("PASS", f"Namespace '{namespace}' exists")
+
+    if check_command("helm"):
+        # Helm 4 removed --all and exits 1 when any release is in a failed state,
+        # even though it still emits valid JSON on stdout.  Capture stdout directly
+        # so we get the release list regardless of the exit code.
+        try:
+            result = subprocess.run(
+                ["helm", "list", "-n", namespace, "-o", "json"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            hr = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            hr = ""
+        if hr and hr != "[]":
+            try:
+                releases = json.loads(hr)
+                match = [r for r in releases if r.get("name") == helm_release]
+                if match:
+                    rel = match[0]
+                    print_status(
+                        "PASS",
+                        f"Helm release '{helm_release}' is {rel.get('status', '?')} "
+                        f"(revision {rel.get('revision', '?')})",
+                    )
+                else:
+                    print_status("FAIL", f"Helm release '{helm_release}' not found in namespace '{namespace}'")
+            except json.JSONDecodeError:
+                print_status("WARN", "Could not parse Helm release list")
+        else:
+            print_status("FAIL", f"No Helm releases in namespace '{namespace}'")
+    else:
+        print_status("INFO", "Skipping Helm release check (helm not available)")
+
+    # ── Pod readiness ─────────────────────────────────────────────────────
+    print_section("Pod Readiness")
+
+    # Expected services and their minimum replica count.
+    # Discovered via label selector: app.kubernetes.io/instance=<release>,app.kubernetes.io/component=<svc>
+    expected_services = {
+        "trust-api": 1,
+        "data-access-api": 1,
+        "imaging-api": 1,
+        "omop-db": 1,
+        "orthanc": 1,
+        "fl-client": 1,
+        "xnat-web": 1,
+        "xnat-nginx": 1,
+        "xnat-db": 1,
+        "minio": 0,  # Optional — warn if missing, pass if present
+    }
+
+    for svc, min_ready in expected_services.items():
+        # Try exact instance+component label selector first, then fall back to
+        # component-only for pods that may be missing the instance label.
+        label_sel = f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component={svc}"
+        svc_pods = kubectl_list(["pods", "-l", label_sel], namespace)
+        if not svc_pods:
+            # Fallback: some pods lack the instance label
+            label_sel = f"app.kubernetes.io/component={svc}"
+            svc_pods = kubectl_list(["pods", "-l", label_sel], namespace)
+        if not svc_pods:
+            if min_ready == 0:
+                print_status("INFO", f"No '{svc}' pods (optional)")
+            else:
+                print_status("FAIL", f"No pods for '{svc}' — service may not be deployed or enabled")
+            continue
+
+        ready = 0
+        for pod_name in svc_pods:
+            success, status = run_command(
+                ["kubectl", "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].ready}"]
+            )
+            if success and status.strip().strip("'\"").lower() == "true":
+                ready += 1
+
+        if ready >= min_ready:
+            print_status("PASS", f"'{svc}': {ready}/{len(svc_pods)} ready")
+        else:
+            # For fl-client, the overwhelmingly common cause is that the FL participant
+            # kit was never staged onto the node. The chart mounts it as a hostPath with
+            # `type: Directory` (templates/fl-client.yaml), so a missing path is a mount
+            # failure naming that path, not a broken workload — report the remediation
+            # instead of a bare FAIL. (The chart holds no AWS credentials and no init
+            # container: it cannot fetch the kit, which arrives out-of-band.)
+            if svc == "fl-client" and _fl_client_kit_missing(svc_pods[0], namespace):
+                print_status(
+                    "INFO",
+                    "fl-client cannot mount its FL participant kit — the path in "
+                    "flClient.kitHostPath does not exist on the node. Stage it first: "
+                    "make stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<context>",
+                )
+            else:
+                print_status("FAIL", f"'{svc}': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")
+
+    # Check for Pods in CrashLoopBackOff / Error or high restart counts
+    all_pods = kubectl_list(["pods"], namespace)
+    print_status("INFO", "Scanning for unhealthy pods...")
+    unhealthy = []
+    for pod_name in all_pods:
+        success, reason = run_command(
+            [
+                "kubectl",
+                "get",
+                pod_name,
+                "-n",
+                namespace,
+                "-o",
+                "jsonpath={.status.containerStatuses[0].state.waiting.reason}",
+            ]
+        )
+        if success and reason.strip().strip("'\"") in ("CrashLoopBackOff", "Error", "ImagePullBackOff", "ErrImagePull"):
+            unhealthy.append((pod_name, reason.strip().strip("'\"")))
+            continue
+        # Also flag pods with excessive restarts (even if currently "running")
+        success, restarts = run_command(
+            ["kubectl", "get", pod_name, "-n", namespace, "-o", "jsonpath={.status.containerStatuses[0].restartCount}"]
+        )
+        if success:
+            try:
+                rc = int(restarts.strip().strip("'\""))
+            except (ValueError, TypeError):
+                rc = 0
+            if rc >= 5:
+                unhealthy.append((pod_name, f"restarted {rc} times"))
+
+    if unhealthy:
+        for pod_name, reason in unhealthy:
+            print_status("FAIL", f"Unhealthy pod: {pod_name} ({reason})")
+    else:
+        print_status("PASS", "No pods in CrashLoopBackOff or Error state")
+
+    # ── GPU ───────────────────────────────────────────────────────────────
+    if not skip_gpu:
+        print_section("GPU Allocation")
+
+        fl_label = f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=fl-client"
+        fl_pods = kubectl_list(["pods", "-l", fl_label], namespace)
+        if fl_pods:
+            gpu_count = "0"
+            for pod_name in fl_pods:
+                field = "jsonpath={.spec.containers[0].env[?(@.name=='NUM_AVAILABLE_GPUS')].value}"
+                success, value = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o", field])
+                if success:
+                    gpu_count = value.strip().strip("'\"")
+                    break
+
+            if gpu_count and int(gpu_count) > 0:
+                print_status("PASS", f"fl-client has {gpu_count} GPU(s) allocated (NUM_AVAILABLE_GPUS={gpu_count})")
+            else:
+                print_status(
+                    "WARN", "fl-client has no GPUs allocated — check nvidia-device-plugin and time-slicing config"
+                )
+        else:
+            print_status("INFO", "No fl-client pods — skipping GPU check")
+
+        # Node-level allocatable GPUs
+        success, gpu_alloc = run_command(
+            ["kubectl", "get", "nodes", "-o", "jsonpath={.items[0].status.allocatable.nvidia\\.com/gpu}"]
+        )
+        if success and gpu_alloc.strip().strip("'\"") and int(gpu_alloc.strip().strip("'\"")) > 0:
+            node_gpu_count = gpu_alloc.strip().strip("'\"")
+            print_status("PASS", f"Node reports {node_gpu_count} allocatable GPU(s)")
+
+    # ── PersistentVolumeClaims ────────────────────────────────────────────
+    print_section("PersistentVolumeClaims")
+
+    pvcs = kubectl_list(["pvc"], namespace)
+    if not pvcs:
+        print_status("INFO", "No PVCs in namespace")
+    else:
+        for pvc_name in pvcs:
+            pvc_short = pvc_name.replace("persistentvolumeclaim/", "")
+            success, phase = run_command(
+                ["kubectl", "get", pvc_name, "-n", namespace, "-o", "jsonpath={.status.phase}"]
+            )
+            phase_str = phase.strip().strip("'\"") if success else "Unknown"
+            if phase_str == "Bound":
+                print_status("PASS", f"PVC '{pvc_short}' is {phase_str}")
+            elif phase_str == "Pending":
+                print_status(
+                    "WARN", f"PVC '{pvc_short}' is {phase_str} — may be waiting for first consumer or provisioner"
+                )
+            else:
+                print_status("FAIL", f"PVC '{pvc_short}' status: {phase_str}")
+
+    # ── Init Jobs ─────────────────────────────────────────────────────────
+    print_section("Init Jobs")
+
+    init_jobs = [
+        ("trust-release-flip-trust-omop-db-init", "omop-db"),
+        ("trust-release-flip-trust-orthanc-init", "orthanc"),
+        ("trust-release-flip-trust-xnat-init", "xnat"),
+    ]
+
+    for job_name, label in init_jobs:
+        success, status_json = run_command(
+            ["kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"], timeout=10
+        )
+        if not success:
+            print_status("INFO", f"Init job '{job_name}' not found (may not be configured)")
+            continue
+
+        try:
+            job = json.loads(status_json)
+        except json.JSONDecodeError:
+            print_status("WARN", f"Could not parse job status for '{job_name}'")
+            continue
+
+        conditions = job.get("status", {}).get("conditions", [])
+        complete = any(c.get("type") == "Complete" and c.get("status") == "True" for c in conditions)
+        failed = any(c.get("type") == "Failed" and c.get("status") == "True" for c in conditions)
+
+        if complete:
+            print_status("PASS", f"Init job '{job_name}' ({label}) completed successfully")
+        elif failed:
+            print_status("FAIL", f"Init job '{job_name}' ({label}) failed — check its logs")
+        else:
+            print_status("WARN", f"Init job '{job_name}' ({label}) has not completed yet (still running?)")
+
+    # ── XNAT plugin roster ────────────────────────────────────────────────
+    print_section("XNAT Plugin Roster")
+
+    check_xnat_plugin_roster(helm_release, namespace)
+
+    # ── HTTP endpoint checks (via port-forward) ───────────────────────────
+    if not skip_endpoints:
+        print_section("Service Endpoint Checks")
+
+        # Use service resources for port-forwarding (more stable than deployment refs)
+        service_endpoints = [
+            ("service/trust-api", 8000, "/health", "trust-api", 200),
+            ("service/imaging-api", 8000, "/health", "imaging-api", 200),
+            ("service/data-access-api", 8000, "/health", "data-access-api", 200),
+            # Auth is always enforced (FLIP-PT-091): a 200 without credentials
+            # means an unauthenticated PACS — fail.
+            ("service/orthanc", 8042, "/", "Orthanc", [401]),
+        ]
+
+        for service_ref, container_port, path, name, expected in service_endpoints:
+            url = f"http://localhost:{container_port}{path}"
+            forward_then_check(service_ref, container_port, url, name, expected, namespace)
+
+        # ── MinIO S3 check ────────────────────────────────────────────────
+        print_section("MinIO S3 Store")
+
+        minio_label = f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=minio"
+        minio_pods = kubectl_list(["pods", "-l", minio_label], namespace)
+        if not minio_pods:
+            print_status("INFO", "No MinIO pod — FL client kits may not be available without S3 sync")
+        else:
+            print_status("PASS", "MinIO pod found")
+
+            # Check the fl-kits bucket exists and has the Trust_1 kit
+            print_status("INFO", "Checking MinIO bucket 'fl-kits' via S3 API...")
+
+            try:
+                import boto3  # noqa: F811
+                from botocore.client import Config  # noqa: F811
+            except ImportError:
+                print_status("WARN", "boto3 not available — skipping MinIO S3 probe. Install with: pip install boto3")
+                minio_skipped = True
+            else:
+                minio_skipped = False
+
+            # Port-forward then probe MinIO
+            import socket
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("127.0.0.1", 0))
+                minio_local = s.getsockname()[1]
+
+            minio_proc = subprocess.Popen(
+                ["kubectl", "port-forward", "service/minio", f"{minio_local}:9000", "-n", namespace],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(2)
+
+            if minio_skipped:
+                minio_proc.terminate()
+                minio_proc.wait()
+            else:
+                try:
+                    s3 = boto3.client(
+                        "s3",
+                        endpoint_url=f"http://127.0.0.1:{minio_local}",
+                        aws_access_key_id="minioadmin",
+                        aws_secret_access_key="minioadmin",  # pragma: allowlist secret
+                        config=Config(signature_version="s3v4"),
+                        region_name="us-east-1",
+                    )
+                    buckets = [b["Name"] for b in s3.list_buckets()["Buckets"]]
+                    if "fl-kits" in buckets:
+                        print_status("PASS", "MinIO bucket 'fl-kits' exists")
+
+                        # Check kit presence
+                        response = s3.list_objects_v2(
+                            Bucket="fl-kits",
+                            Prefix="fl-flare-participant-kits/20260318/net-1/services/Trust_1/startup/",
+                            MaxKeys=5,
+                        )
+                        if response.get("Contents"):
+                            kit_files = [o["Key"] for o in response["Contents"]]
+                            print_status("PASS", f"NVFLARE Trust_1 kit present ({len(kit_files)} files)")
+                        else:
+                            print_status("WARN", "NVFLARE Trust_1 kit not found in MinIO — run kit upload first")
+                    else:
+                        print_status("WARN", "MinIO bucket 'fl-kits' not found — create it and upload kits")
+                except Exception as e:
+                    print_status("WARN", f"Could not probe MinIO: {e}")
+                finally:
+                    minio_proc.terminate()
+                    minio_proc.wait()
+
+    # ── Container logs scan ───────────────────────────────────────────────
+    print_section("Container Logs")
+
+    critical_containers = {
+        "app.kubernetes.io/component=trust-api": "trust-api",
+        "app.kubernetes.io/component=data-access-api": "data-access-api",
+        "app.kubernetes.io/component=imaging-api": "imaging-api",
+        "app.kubernetes.io/component=orthanc": "orthanc",
+        "app.kubernetes.io/component=fl-client": "fl-client",
+        "app.kubernetes.io/component=xnat-web": "xnat-web",
+        "app.kubernetes.io/component=xnat-nginx": "xnat-nginx",
+    }
+
+    for label_sel, svc_name in critical_containers.items():
+        pods = kubectl_list(
+            [
+                "pods",
+                "-l",
+                f"app.kubernetes.io/instance={helm_release},{label_sel}",
+                "--field-selector=status.phase=Running",
+            ],
+            namespace,
+        )
+        if not pods:
+            # Fallback: some pods lack the instance label
+            pods = kubectl_list(
+                ["pods", "-l", label_sel, "--field-selector=status.phase=Running"],
+                namespace,
+            )
+        if not pods:
+            print_status("INFO", f"No running '{svc_name}' pods to check logs for")
+            continue
+
+        pod_name = pods[0]
+        success, logs = run_command(["kubectl", "logs", pod_name, "-n", namespace, "--tail=50"], timeout=15)
+        if not success:
+            print_status("WARN", f"Could not retrieve logs for '{svc_name}'")
+            continue
+
+        error_patterns = ["ERROR", "CRITICAL", "Exception", "Traceback", "FATAL"]
+        found = [p for p in error_patterns if p in logs]
+
+        if found:
+            # Downgrade to INFO when the only errors are about a missing hub URL —
+            # that means CENTRAL_HUB_API_URL hasn't been configured yet (no KIT synced),
+            # not a broken service.  Run 'make sync-kit KIT=<KIT> PROD=<env>' to fix.
+            hub_not_configured = all(
+                "Request URL is missing" in line or "hub" in line.lower()
+                for line in logs.splitlines()
+                if any(p in line for p in found)
+            )
+            if hub_not_configured:
+                print_status(
+                    "INFO",
+                    f"'{svc_name}' cannot reach hub (CENTRAL_HUB_API_URL not set) — "
+                    "run 'make sync-kit KIT=<KIT> PROD=<env>' to configure",
+                )
+            else:
+                print_status("WARN", f"'{svc_name}' has errors in logs: {', '.join(found)}")
+        else:
+            print_status("PASS", f"'{svc_name}' logs look clean")
+
+    # ── System resources ──────────────────────────────────────────────────
+    print_section("System Resources")
+
+    print_status("INFO", "Checking disk space...")
+    success, disk = run_command(["df", "-h", "/"])
+    if success:
+        for line in disk.split("\n")[1:]:
+            fields = line.split()
+            if len(fields) >= 5:
+                usage = fields[4].rstrip("%")
+                try:
+                    usage_int = int(usage)
+                    if usage_int < 80:
+                        print_status("PASS", f"Disk usage is {usage}% on /")
+                    else:
+                        print_status("WARN", f"Disk usage is {usage}% on / (consider cleanup)")
+                except ValueError:
+                    pass
+                break
+
+    print_status("INFO", "Checking memory usage...")
+    success, mem = run_command(["free"])
+    if success:
+        for line in mem.split("\n"):
+            if line.startswith("Mem:"):
+                fields = line.split()
+                if len(fields) >= 3:
+                    try:
+                        total = int(fields[1])
+                        used = int(fields[2])
+                        mem_pct = int((used / total) * 100)
+                        if mem_pct < 90:
+                            print_status(
+                                "PASS", f"Memory usage is {mem_pct}% ({used // 1024} MiB / {total // 1024} MiB)"
+                            )
+                        else:
+                            print_status("WARN", f"Memory usage is {mem_pct}% — high")
+                    except (ValueError, ZeroDivisionError):
+                        pass
+                break
+
+    # ── Summary ───────────────────────────────────────────────────────────
+    print_section("Summary")
+
+    print()
+    print(f"{Colors.GREEN}Passed:   {counters.passed}/{counters.total}{Colors.NC}")
+    print(f"{Colors.RED}Failed:   {counters.failed}/{counters.total}{Colors.NC}")
+    print(f"{Colors.YELLOW}Warnings: {counters.warnings}/{counters.total}{Colors.NC}")
+    print()
+
+    if counters.failed == 0:
+        print(f"{Colors.GREEN}✓ Kubernetes deployment verification completed successfully!{Colors.NC}")
+        if counters.warnings > 0:
+            print(
+                f"{Colors.YELLOW}⚠ However, there are {counters.warnings} "
+                f"warning(s) that should be reviewed.{Colors.NC}"
+            )
+        sys.exit(0)
+    else:
+        print(f"{Colors.RED}✗ Kubernetes deployment verification failed with {counters.failed} error(s).{Colors.NC}")
+        print(
+            f"{Colors.YELLOW}Please review the failed checks and ensure all services are properly deployed.{Colors.NC}"
+        )
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="FLIP Kubernetes Deployment Status Checker. "
+        "Verifies that the Kubernetes trust-side deployment is functioning correctly."
+    )
+    parser.add_argument(
+        "--namespace",
+        default="flip-trust",
+        help="Kubernetes namespace for the flip-trust release (default: flip-trust)",
+    )
+    parser.add_argument(
+        "--helm-release",
+        default="flip-trust",
+        help="Helm release name (default: flip-trust)",
+    )
+    parser.add_argument(
+        "--skip-endpoints",
+        action="store_true",
+        help="Skip port-forward + HTTP endpoint checks",
+    )
+    parser.add_argument(
+        "--skip-gpu",
+        action="store_true",
+        help="Skip GPU allocation checks",
+    )
+
+    args = parser.parse_args()
+
+    main(
+        namespace=args.namespace,
+        helm_release=args.helm_release,
+        skip_endpoints=args.skip_endpoints,
+        skip_gpu=args.skip_gpu,
+    )

@@ -1,0 +1,85 @@
+schema_type: dataframe
+columns:
+  drug_exposure_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  drug_concept_id:
+    dtype: int64
+  drug_exposure_start_date:
+    dtype: datetime64[ns]
+  drug_exposure_start_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  drug_exposure_end_date:
+    dtype: datetime64[ns]
+  drug_exposure_end_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  verbatim_end_date:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  drug_type_concept_id:
+    dtype: int64
+  stop_reason:
+    dtype: string[python]
+    nullable: true
+    required: false
+  refills:
+    dtype: int64
+    nullable: true
+    required: false
+  quantity:
+    dtype: float64
+    nullable: true
+    required: false
+  days_supply:
+    dtype: int64
+    nullable: true
+    required: false
+  sig:
+    dtype: string[python]
+    nullable: true
+    required: false
+  route_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  lot_number:
+    dtype: string[python]
+    nullable: true
+    required: false
+  provider_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_occurrence_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_detail_id:
+    dtype: int64
+    nullable: true
+    required: false
+  drug_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  drug_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  route_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  dose_unit_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

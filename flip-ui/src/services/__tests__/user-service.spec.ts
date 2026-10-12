@@ -197,8 +197,22 @@ describe("user-service", () => {
 
             const result = await updateUserRoles("u-1", ["r-1"]);
 
-            expect(_http.post).toHaveBeenCalledWith("/users/u-1/roles", { roles: ["r-1"] });
+            expect(_http.post).toHaveBeenCalledWith("/users/u-1/roles", {
+                roles: ["r-1"],
+                trustId: null
+            });
             expect(result).toEqual(["r-1"]);
+        });
+
+        it("sends the trust a Trust Admin administers alongside the role", async () => {
+            vi.mocked(_http.post).mockResolvedValue({ data: ["r-ta"] } as never);
+
+            await updateUserRoles("u-1", ["r-ta"], "trust-a");
+
+            expect(_http.post).toHaveBeenCalledWith("/users/u-1/roles", {
+                roles: ["r-ta"],
+                trustId: "trust-a"
+            });
         });
     });
 

@@ -1,0 +1,67 @@
+schema_type: dataframe
+columns:
+  person_id:
+    dtype: int64
+    unique: true
+  gender_concept_id:
+    dtype: int64
+  year_of_birth:
+    dtype: int64
+  month_of_birth:
+    dtype: int64
+    nullable: true
+    required: false
+  day_of_birth:
+    dtype: int64
+    nullable: true
+    required: false
+  birth_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  race_concept_id:
+    dtype: int64
+  ethnicity_concept_id:
+    dtype: int64
+  location_id:
+    dtype: int64
+    nullable: true
+    required: false
+  provider_id:
+    dtype: int64
+    nullable: true
+    required: false
+  care_site_id:
+    dtype: int64
+    nullable: true
+    required: false
+  person_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  gender_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  gender_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  race_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  race_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  ethnicity_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  ethnicity_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

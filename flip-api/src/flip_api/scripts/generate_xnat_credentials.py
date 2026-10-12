@@ -140,8 +140,8 @@ def main() -> None:
             "         very first initdb of the xnat-db data volume. If this trust's xnat-db has already been\n"
             "         deployed, the database still holds the OLD passwords and xnat-web will refuse to start\n"
             "         until the live database is updated to match the kit file (inside the xnat-db container):\n"
-            '           psql -U postgres -c "ALTER ROLE <XNAT_DATASOURCE_USERNAME> WITH PASSWORD \'<new value>\'"\n'
-            '           psql -U postgres -c "ALTER ROLE postgres WITH PASSWORD \'<new admin value>\'"'
+            "           psql -U postgres -c \"ALTER ROLE <XNAT_DATASOURCE_USERNAME> WITH PASSWORD '<new value>'\"\n"
+            "           psql -U postgres -c \"ALTER ROLE postgres WITH PASSWORD '<new admin value>'\""
         )
 
 

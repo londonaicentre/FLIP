@@ -55,7 +55,7 @@ def sentinel_path(accession_dir_abs: str, assessor_type: str, resource_type: str
     Args:
         accession_dir_abs (str): Absolute (realpath'd) accession directory the sentinel lives in.
         assessor_type (str): The assessor type of the download ("scan" or "assessor").
-        resource_type (str): XNAT resource type e.g. DICOM/NIFTI/ALL, or a custom value.
+        resource_type (str): XNAT resource type, one of DICOM, NIFTI, SEG or ALL.
 
     Returns:
         str: Absolute (resolved) path of the sentinel file, always a direct child of the accession

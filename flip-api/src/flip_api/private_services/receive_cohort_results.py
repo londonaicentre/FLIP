@@ -38,9 +38,7 @@ router = APIRouter(tags=["private_services"])
 # reaches the cohort UI. The trust-side mapping happens at source in
 # trust/data-access-api/data_access_api/services/cohort.py — this is
 # belt-and-braces only. Update both lists together.
-_ALLOWED_TRUST_ERROR_CATEGORIES: frozenset[str] = frozenset(
-    {"query_failed", "query_timeout", "internal_error"}
-)
+_ALLOWED_TRUST_ERROR_CATEGORIES: frozenset[str] = frozenset({"query_failed", "query_timeout", "internal_error"})
 
 
 def _redact_trust_error(raw: str | None) -> str:
@@ -86,12 +84,14 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
     )
 
     # Data to be stored in QueryResult.data column (as JSON string)
-    data_to_store = json.dumps({
-        "record_count": cohort_results.record_count,
-        "data": [d.model_dump() for d in cohort_results.data],
-        "error": cohort_results.error,
-        "suppressed": cohort_results.suppressed,
-    })
+    data_to_store = json.dumps(
+        {
+            "record_count": cohort_results.record_count,
+            "data": [d.model_dump() for d in cohort_results.data],
+            "error": cohort_results.error,
+            "suppressed": cohort_results.suppressed,
+        }
+    )
 
     # Try to retrieve existing result
     stmt = select(QueryResult).where(
@@ -117,18 +117,12 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
 
     except Exception as e:
         db.rollback()
-        logger.error(
-            f"""
-            Exception saving cohort results for query_id {cohort_results.query_id},
-            trust_id {cohort_results.trust_id}: {e}
-            """,
-            exc_info=True,
+        logger.exception(
+            f"Error saving cohort results for query_id {cohort_results.query_id}, trust_id {cohort_results.trust_id}"
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-            if isinstance(e, HTTPException)
-            else f"Error saving cohort results: {cohort_results.query_id}",
+            detail=f"Error saving cohort results: {cohort_results.query_id}",
         ) from e
 
 
@@ -300,12 +294,11 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 
     except Exception as e:
         db.rollback()
-        error_message = f"Error during aggregation for query_id {query_id}: {e}"
-        logger.error(error_message)
+        logger.exception(f"Error during aggregation for query_id {query_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_message,
-        )
+            detail=f"Error during aggregation for query_id {query_id}",
+        ) from e
 
 
 # [#114] ✅

@@ -62,6 +62,7 @@ jobs:
       # the API, and Amplify's pre-auth session probe just fails closed (which
       # is itself one of the findings, #702) — none of it blocks the audit.
       CENTRAL_HUB_API_URL: "http://localhost:8080"
+      AUTH_BACKEND: "cognito"
       AWS_COGNITO_USER_POOL_ID: "eu-west-2_DUMMY1234"
       AWS_COGNITO_APP_CLIENT_ID: "dummyclientid1234567890ab"
       AWS_REGION: "eu-west-2"
@@ -95,6 +96,7 @@ jobs:
           cat > .env.development <<'EOF'
           VITE_LOCAL=false
           CENTRAL_HUB_API_URL=http://localhost:8080
+          AUTH_BACKEND=cognito
           AWS_COGNITO_USER_POOL_ID=eu-west-2_DUMMY1234
           AWS_COGNITO_APP_CLIENT_ID=dummyclientid1234567890ab
           AWS_REGION=eu-west-2

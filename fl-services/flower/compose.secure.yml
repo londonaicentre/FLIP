@@ -35,10 +35,13 @@ services:
     group_add: &host-gid ["${DOCKER_GID:-1000}"]
     environment:
       - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-xray_classification,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
-      - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:9093}
+      - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:8000}
       - SUPERLINK_ROOT_CERTIFICATES=${SUPERLINK_ROOT_CERTIFICATES:-/certs/ca.crt}
       - SUPERLINK_HEALTH_ADDRESS=${SUPERLINK_HEALTH_ADDRESS:-superlink:9097}
       - FLOWER_SRC_ROOT=/app/src
+      # No BUNDLE_URL_ALLOWED_ORIGINS here on purpose: this harness has no hub, so nothing presigns
+      # bundle URLs for it (jobs are submitted by folder name) and the fl-api logs the documented
+      # empty-allow-list warning at startup. Every hub deployment sets it — see deploy/compose.*.yml.
     volumes:
       - ../../fl-tutorials/flower:/app/src
       - ../../fl-services/flower/fl-api-flower/fl_api:/app/fl_api
@@ -58,6 +61,9 @@ services:
     group_add: *host-gid
     environment:
       - LOCAL_DEV=true
+      # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
+      # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
+      - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
       - WORKING_DIR=/app/runs
     volumes:
       - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
@@ -66,14 +72,11 @@ services:
       - ../../fl-tutorials/flower:/app/src
       # Mount the TLS certs for secure communication with SuperNodes and the FL API
       - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
-    # Runtime dependency installation is enabled by default on the SuperLink
-    # (ServerApp side); the SuperNodes below opt in explicitly. Apps whose
-    # pyproject pins `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
-    # (the fl-apps templates do; FLIP#767) build flip-utils from the copy baked
-    # into the image — rebuild the images to pick up flip-utils changes. The
-    # fl-tutorials apps submitted to this standalone stack don't carry the pin
-    # and runtime-install their declared flip-utils from PyPI (see the README's
-    # runtime-dependency section).
+    # No runtime dependency installation on either side (FLIP#1418): the
+    # ServerApp here and the ClientApps on the SuperNodes below run in the
+    # image's environment, where fl-base installs flip-utils[full] from
+    # /opt/flip-utils (FLIP#767) — rebuild the images to pick up flip-utils
+    # changes (see the README's runtime-dependency section).
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -82,6 +85,11 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
+      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
+      # otherwise (see compose.dev.yml). The same app serves the ServerApp's /v1/runtime/*
+      # routes; no host port is published here.
+      - --host
+      - 0.0.0.0
       - --health-server-address
       - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     networks:
@@ -89,7 +97,7 @@ services:
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys:
-    image: flwr/base:1.32.0-py3.12-ubuntu24.04
+    image: flwr/base:1.38.0-py3.12-ubuntu24.04
     environment:
       - FL_API_ADDRESS=${FL_API_ADDRESS:-http://fl-api:8000}
       - TRUST_NAMES=${TRUST_NAMES:-Trust_1,Trust_2}
@@ -136,14 +144,20 @@ services:
       - superlink:9092
       - --auth-supernode-private-key
       - /keys/supernode_credentials_1
-      - --clientappio-api-address
-      - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
+      # flwr>=1.36 split the old --clientappio-api-address into --host/--port;
+      # host stays at flower-supernode's own 127.0.0.1 default (loopback-only,
+      # never overridden in any FLIP env file).
+      - --port
+      - ${SUPERNODE_1_CLIENTAPPIO_PORT:-9094}
       - --health-server-address
       - ${SUPERNODE_1_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
-      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
-      - --allow-runtime-dependency-installation
+      # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
+      # per-run env after the run id, so every ClientApp launch in a run shares it,
+      # and each launch's exit handler deletes it -- a later round's `uv sync` then
+      # falls through to the base interpreter (Permission denied on setuptools) or
+      # loses its env mid-round. The ClientApp runs in the image's environment,
+      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # every package the template app code imports, and no package index needed at run time.
     deploy:
       resources:
         limits:
@@ -183,14 +197,20 @@ services:
       - superlink:9092
       - --auth-supernode-private-key
       - /keys/supernode_credentials_2
-      - --clientappio-api-address
-      - ${SUPERNODE_2_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9095}
+      # flwr>=1.36 split the old --clientappio-api-address into --host/--port;
+      # host stays at flower-supernode's own 127.0.0.1 default (loopback-only,
+      # never overridden in any FLIP env file).
+      - --port
+      - ${SUPERNODE_2_CLIENTAPPIO_PORT:-9095}
       - --health-server-address
       - ${SUPERNODE_2_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
-      # ClientApp-side runtime dependency install (default-off on SuperNodes in
-      # flwr 1.32): resolves the app's declared deps per run (the fl-apps
-      # templates pin flip-utils to /opt/flip-utils via [tool.uv.sources]; FLIP#767).
-      - --allow-runtime-dependency-installation
+      # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
+      # per-run env after the run id, so every ClientApp launch in a run shares it,
+      # and each launch's exit handler deletes it -- a later round's `uv sync` then
+      # falls through to the base interpreter (Permission denied on setuptools) or
+      # loses its env mid-round. The ClientApp runs in the image's environment,
+      # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
+      # every package the template app code imports, and no package index needed at run time.
     deploy:
       resources:
         limits:

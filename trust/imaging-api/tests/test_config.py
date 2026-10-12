@@ -43,6 +43,7 @@ def test_minted_xnat_datasource_password_replaces_url_password(monkeypatch):
 
     settings = Settings()
 
+    # pragma: allowlist nextline secret
     assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat:minted-secret@xnat-db:5432/xnat"
 
 
@@ -72,4 +73,4 @@ def test_minted_password_with_url_special_chars_survives_round_trip(monkeypatch)
 
     settings = Settings()
 
-    assert make_url(settings.XNAT_DATABASE_URL).password == "p@ss:word/1"
+    assert make_url(settings.XNAT_DATABASE_URL).password == "p@ss:word/1"  # pragma: allowlist secret

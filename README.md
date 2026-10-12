@@ -37,107 +37,15 @@ Foundation Trust and King's College London.
 For the platform architecture, workflows, deployment guides, and user documentation, start with the
 [FLIP documentation](https://londonaicentreflip.readthedocs.io/en/latest/).
 
-## Quickstart: Central Hub with two example Trusts
+## Get started
 
-This developer quickstart starts the Central Hub and the shipped GSTT and KCH example Trust nodes on one Linux host.
-It uses the development AWS resources and XNAT artifacts maintained for authorised FLIP developers. If you do not
-have access to those resources, begin with the
-[Central Hub deployment guide](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) to create your
-own environment.
-
-### Prerequisites
-
-- Docker Engine with Compose and Swarm mode, plus the NVIDIA Container Toolkit on GPU hosts
-- GNU Make, `jq`, the AWS CLI, and [uv](https://docs.astral.sh/uv/)
-- An AWS SSO profile with access to the development Cognito, S3, and SES resources
-- GitHub Container Registry access for the published FLIP images
-
-The complete tool list and environment-variable checklist are in [CONTRIBUTING.md](CONTRIBUTING.md#prerequisites).
-
-### Start the platform
-
-```bash
-cp .env.development.example .env.development
-# Fill the required AWS, Cognito, SES, database, encryption, and S3 values.
-
-aws sso login --profile <your-profile>
-docker login ghcr.io
-
-# Required once per Docker host.
-docker swarm init
-
-# Provision the two local NVFLARE networks used by the example Trusts. `make up` does not do
-# this for you, and the FL containers cannot start without it.
-make -C fl-services/nvflare provision-2-nets
-
-# Pull the published service images, start the hub, register GSTT and KCH,
-# then start both Trust and XNAT stacks.
-make up
-```
-
-If Swarm is already active, `docker swarm init` reports that and can be skipped. Open `https://localhost` for the UI
-and `http://localhost:8080/docs` for the Central Hub API documentation.
-
-### Load the OMOP vocabulary
-
-`make up` fetches each Trust's OMOP data automatically, but the published tarballs are **vocab-free**. Load the core
-vocabulary once per Trust, then restart the readers so they drop their cached query results:
-
-```bash
-make -C trust/omop-db load-omop-vocab                    # Trust_1 (GSTT, port 5434)
-make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
-
-docker restart trust1-data-access-api-1 trust2-data-access-api-1
-```
-
-Skip it and every cohort query returns zero rows, which surfaces several steps later as a project that cannot be
-staged — `returned no cohort records (zero or privacy-suppressed)` — so it reads as a disclosure-threshold problem
-rather than a missing vocabulary. This is the one step needing credentials for the AI Centre's bundle; contributors
-without that access self-serve from OHDSI Athena. See
-[`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle) for the bundle and both routes.
-
-To run the scripted project lifecycle against the running stack:
-
-```bash
-make e2e_smoke
-```
-
-This creates a project, submits a cohort query, waits for imaging import, runs federated training, and downloads the
-result. It is intentionally not part of CI and can take several minutes.
-
-Stop the local platform with:
-
-```bash
-make down
-```
-
-The default backend is NVFLARE. To run the same topology with Flower, provision its per-net credentials instead —
-once per network, and again before `make up`:
-
-```bash
-make -C fl-services/flower provision NET_NUMBER=1
-make -C fl-services/flower provision NET_NUMBER=2
-make up FL_BACKEND=flower
-```
-
-See the [Flower service guide](fl-services/flower/README.md) for the full workflow. Use `make up BUILD=true` when
-dependency or Dockerfile changes require locally rebuilt images; ordinary source edits are bind-mounted for live
-reload. More detail is in [Running the stack](CONTRIBUTING.md#running-the-stack-pull-vs-build).
-
-## Where to go next
-
-| Goal | Guide |
+| I want to... | Guide |
 | --- | --- |
-| Understand the platform and its security model | [ReadTheDocs](https://londonaicentreflip.readthedocs.io/en/latest/) |
-| Set up a development environment or contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Run or adapt a federated-learning example | [FL tutorials](fl-tutorials/README.md) |
-| Build a FLIP application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) |
-| Deploy the Central Hub on AWS | [Central Hub deployment](docs/source/deploy-flip/deploy-central-hub.rst) |
-| Deploy a Trust on premises | [Local provider](deploy/providers/local/README.md) |
-| Deploy a Trust on Kubernetes | [Kubernetes provider](deploy/providers/kubernetes/README.md) |
-| Operate Trust-side services | [Trust services](trust/README.md) |
-| Debug a service in VS Code | [DEBUG.md](DEBUG.md) |
-| Debug or test a particular service | That service's README and Makefile |
+| Run FLIP on my machine (Central Hub + two example Trusts) | [Run FLIP locally for development](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-local-dev.html) |
+| Deploy the Central Hub on AWS | [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) — self-contained ([on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html)) or on a Landing Zone Accelerator estate ([on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html)) |
+| Add a Trust to a FLIP network | [On premises](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) · [In a TRE](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-in-tre.html) · [On Kubernetes](trust/deploy/helm/README.md) |
+| Build or run a federated-learning application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) · [FL tutorials](fl-tutorials/README.md) |
+| Contribute to FLIP | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Repository layout
 
@@ -147,15 +55,36 @@ FLIP is maintained as one monorepo. Each major area owns its detailed setup and 
 | --- | --- |
 | [`flip-api/`](flip-api/) | Central Hub FastAPI service, database, scheduling, and project lifecycle |
 | [`flip-ui/`](flip-ui/) | Vue 3 web application |
-| [`trust/`](trust/) | Trust gateway, data and imaging APIs, and local OMOP/PACS/XNAT services |
+| [`trust/`](trust/) | Trust gateway, data and imaging APIs, local OMOP/PACS/XNAT services, and the trust node's deployment shapes (Compose, Helm chart, on-prem Ansible play) |
 | [`flip-utils/`](flip-utils/) | Shared, pip-installable `flip` Python library |
 | [`fl-services/`](fl-services/) | NVFLARE and Flower network services, images, and provisioning |
 | [`fl-apps/`](fl-apps/) | Backend-specific application templates bundled by the Central Hub |
 | [`fl-tutorials/`](fl-tutorials/) | Worked federated-learning applications and local runners |
 | [`map-apps/`](map-apps/) | MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment |
-| [`deploy/`](deploy/) | Compose configuration and AWS, on-premises, and Kubernetes providers |
+| [`deploy/`](deploy/) | Central Hub Compose files and the AWS provider (Terraform) |
 | [`docs/`](docs/) | Sphinx source published on ReadTheDocs |
 | [`scripts/`](scripts/) | Repository-wide development and deployment helpers |
+
+## Citing FLIP
+
+If you use FLIP in your research, please cite
+[our paper](https://arxiv.org/abs/2609.36001):
+
+```bibtex
+@misc{garciadias2026flip,
+  title         = {Making Cross-Continental Federated Learning Repeatable with {FLIP}: a Multi-Application Study},
+  author        = {Garcia-Dias, Rafael and {Triay Bagur}, Alexandre and Tangwiriyasakul, Chayanin and Fernandez, Virginia and
+                   Esmaeili, Parhom and Ittichaiwong, Piyalitt and Li, Yang and Adams, Lawrence and Buncharoen, Wason and
+                   Chapman, Martin and Chayanond, Benjamaporn and Chunrod, Sadthavud and Fongsri, Tanawat and
+                   Gibson, Kass and Plungprasertkul, Supat and Tangpanithandee, Supawit and Veerakanjana, Kanyakorn and
+                   Goh, Vicky and Antonelli, Michela and Zhang, Joe and Kespechara, Kongkiat and Ourselin, Sebastien and
+                   Cardoso, M. Jorge},
+  year          = {2026},
+  eprint        = {2609.36001},
+  archivePrefix = {arXiv},
+  url           = {https://arxiv.org/abs/2609.36001}
+}
+```
 
 ## Contributing and support
 

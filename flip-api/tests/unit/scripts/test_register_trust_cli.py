@@ -62,8 +62,8 @@ def test_registers_new_trust_and_returns_one_kit(monkeypatch, session):
     assert len(kits) == 1
     kit = kits[0]
     assert kit["trust_name"] == "Open Trust (EC2)"
-    assert kit["trust_api_key"] == "plain-api-Open Trust (EC2)"
-    assert kit["trust_internal_service_key"] == "plain-internal-Open Trust (EC2)"
+    assert kit["trust_api_key"] == "plain-api-Open Trust (EC2)"  # pragma: allowlist secret
+    assert kit["trust_internal_service_key"] == "plain-internal-Open Trust (EC2)"  # pragma: allowlist secret
     assert kit["fl_kit_slot"] == "Trust_007"
     assert kit["fl_kit_slot_number"] == 7
     assert set(kit) == {
@@ -160,7 +160,7 @@ def test_propagates_registration_error(monkeypatch, session):
 # CLI entry point — `main()` parses argv, calls `register_one_trust`, writes
 # the kit JSON to stdout, and exits 1 on TrustRegistrationError. The body
 # below is what `deploy/providers/AWS/scripts/register-trusts.sh` (and the
-# Makefile's `register-trust-<n>` targets) drive, so it is worth its own
+# root Makefile's `register-trust` target) drive, so it is worth its own
 # coverage.
 # ---------------------------------------------------------------------------
 
@@ -171,9 +171,7 @@ def _patch_session(monkeypatch):
     session_ctx = MagicMock()
     session_ctx.__enter__.return_value = session_mock
     session_ctx.__exit__.return_value = False
-    monkeypatch.setattr(
-        "flip_api.scripts.register_trust.Session", lambda _engine: session_ctx
-    )
+    monkeypatch.setattr("flip_api.scripts.register_trust.Session", lambda _engine: session_ctx)
     return session_mock
 
 
@@ -190,15 +188,13 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
                 "trust_id": "tid",
                 "trust_name": name,
                 "trust_api_key": "k",
-                "trust_internal_service_key": "ik",
+                "trust_internal_service_key": "ik",  # pragma: allowlist secret
                 "fl_kit_slot": "Trust_001",
                 "fl_kit_slot_number": 1,
             }
         ],
     )
-    monkeypatch.setattr(
-        "sys.argv", ["register_trust", "--name", "Open Trust", "--code", "OPEN", "--region", "London"]
-    )
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Open Trust", "--code", "OPEN", "--region", "London"])
 
     cli.main()
 
@@ -289,7 +285,7 @@ from flip_api.trusts_services.services.register_trust import TrustRegistrationEr
 # hub_shared block
 # ---------------------------------------------------------------------------
 
-# Mirror of HUB_SHARED_ENV_KEYS in flip_api/scripts/register_trust.py — kept
+# Mirror of HUB_SHARED_ENV_KEYS in flip-api/src/flip_api/scripts/register_trust.py — kept
 # local (rather than importing the production tuple) so the tests fail loudly
 # if the production list changes without an explicit test update.
 HUB_SHARED_KEYS = (
@@ -322,7 +318,7 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
     env = {
         "AES_KEY_BASE64": "Zm9vYmFy",
         "CENTRAL_HUB_API_URL": "https://hub.example/api",
-        "TRUST_API_KEY_HEADER": "Authorization",
+        "TRUST_API_KEY_HEADER": "Authorization",  # pragma: allowlist secret
         "FL_BACKEND": "flower",
         "FLOWER_KIT_DATE": "20260401",
         "FLARE_KIT_DATE": "20260318",

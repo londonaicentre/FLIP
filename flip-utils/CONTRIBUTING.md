@@ -25,11 +25,12 @@ root guide. This file documents that path.
 
 ```bash
 uv sync --all-extras
-make unit-test        # ruff --fix, then pytest with coverage
+make unit-test        # ruff --fix, then mypy, then pytest with coverage
 ```
 
-`make unit-test` is the same lint + test pair the release workflow runs before publishing, so a green local run is a
-good predictor of a green release. See [`README.md`](README.md) for package structure, job types, and development mode.
+`make unit-test` runs the lint + test pair the release workflow runs before publishing, plus the mypy gate that
+[`unit-tests.yml`](../.github/workflows/unit-tests.yml) applies on every push, so a green local run is a good
+predictor of both. See [`README.md`](README.md) for package structure, job types, and development mode.
 
 ## Versioning
 

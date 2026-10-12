@@ -87,7 +87,7 @@ describe("Ai UserDropdown", () => {
 
         await comp.find("[data-test='account-menu-btn']").trigger("click");
 
-        const themeButton = comp.findAll("[data-test='sign-out-btn']")[0];
+        const themeButton = comp.find("[data-test='dark-mode-btn']");
         expect(themeButton.text()).toContain("Light Mode");
         expect(themeButton.find("svg").exists()).toBe(true);
     });
@@ -110,7 +110,7 @@ describe("Ai UserDropdown", () => {
 
         // The theme toggle is the first of the two buttons sharing the sign-out data-test.
         await openMenu();
-        await comp.findAll("[data-test='sign-out-btn']")[0].trigger("click");
+        await comp.find("[data-test='dark-mode-btn']").trigger("click");
         expect(comp.emitted("toggleDarkMode")).toHaveLength(1);
 
         await openMenu();
@@ -118,7 +118,7 @@ describe("Ai UserDropdown", () => {
         expect(routeChange.changePassword).toHaveBeenCalledWith("ada@example.com");
 
         await openMenu();
-        await comp.findAll("[data-test='sign-out-btn']")[1].trigger("click");
+        await comp.find("[data-test='sign-out-btn']").trigger("click");
         expect(comp.emitted("signOut")).toHaveLength(1);
     });
 });

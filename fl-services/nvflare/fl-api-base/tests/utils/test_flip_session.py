@@ -500,8 +500,10 @@ def test_construction_signature_matches_the_base():
         # `target_type` arrives as FLIP's TargetType StrEnum (schemas.py), and `targets` as a
         # comma-split list -- not the bare strings a hand-written test reaches for first.
         (lambda s: s.show_errors("job-1", TargetType.SERVER), "show_errors job-1 server"),
-        (lambda s: s.show_errors("job-1", TargetType.CLIENT, ["site-1", "site-2"]),
-         "show_errors job-1 client site-1 site-2"),
+        (
+            lambda s: s.show_errors("job-1", TargetType.CLIENT, ["site-1", "site-2"]),
+            "show_errors job-1 client site-1 site-2",
+        ),
         (lambda s: s.show_stats("job-1", TargetType.SERVER), "show_stats job-1 server"),
         (lambda s: s.reset_errors("job-1"), "reset_errors job-1 all"),
         # The fourth affected route, reached through `_shell_command_on_target` rather than
@@ -512,7 +514,7 @@ def test_construction_signature_matches_the_base():
 def test_collect_info_commands_reach_the_transport(session, call_session, expected_command):
     """The end-to-end regression for FLIP#1032, through NVFLARE's own code.
 
-NVFLARE 2.8.0 calls `_do_command(..., enforce_meta=False)` from eight sites; four of them are
+    NVFLARE 2.8.0 calls `_do_command(..., enforce_meta=False)` from eight sites; four of them are
     reachable from this service's routes -- show_errors / show_stats / reset_errors via
     `_collect_info`, and get_working_directory via `_shell_command_on_target`. Every one used to
     raise `TypeError: FLIP_Session._do_command() got an unexpected keyword argument

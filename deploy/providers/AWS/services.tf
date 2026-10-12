@@ -52,8 +52,10 @@ module "flip_model_files_uploads_bucket" {
   # GET is for model-file downloads: `download_file.py` hands the browser a
   # presigned GET URL (FLIP#784) instead of proxying bytes through flip-api,
   # so the bucket needs to accept a direct browser GET.
-  cors_methods          = ["POST", "GET"]
-  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  cors_methods = ["POST", "GET"]
+  # local.ui_origin (cloudfront.tf) — the canonical subdomain, or the default
+  # CloudFront domain on a zone-less bring-up (FLIP#749).
+  cors_allowed_origins  = [local.ui_origin]
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
@@ -74,7 +76,7 @@ module "flip_fl_results_bucket" {
   source                = "./modules/flip_s3_bucket"
   bucket_name           = var.FLIP_FL_RESULTS_BUCKET_NAME
   cors_methods          = ["GET"]
-  cors_allowed_origins  = ["https://${var.flip_alb_subdomain}"]
+  cors_allowed_origins  = [local.ui_origin]
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   logging_target_bucket = local.access_logs_bucket_name
   mfa_delete_protection = true
@@ -88,6 +90,62 @@ module "flip_app_bundles_bucket" {
   logging_target_bucket = local.access_logs_bucket_name
   kms_key_arn           = aws_kms_key.flip_app_key.arn
   depends_on            = [aws_s3_bucket_acl.flip_access_logs]
+}
+
+############################
+# Ark+ demo assets bucket (LZA estates only)
+############################
+#
+# On a self-contained (legacy) account the demo-assets bucket predates this
+# stack and is adopted through `data.aws_s3_bucket.demo_assets` — see the long
+# header in cloudfront.tf. On an LZA estate there is nothing to adopt: the
+# account is new, so the bucket is created here, through the same module as
+# every other FLIP bucket, and `local.demo_assets_managed` (cloudfront.tf)
+# keeps the two shapes mutually exclusive. The legacy plan is unchanged: the
+# count is 0 whenever lza_managed_network is false.
+#
+# Two deliberate departures from the sibling buckets:
+#
+#   * AES256, not the app CMK. CloudFront reads this bucket directly through
+#     OAC, and on LZA that CloudFront lives in ANOTHER account (the networking
+#     account's edge). A cross-account service principal cannot decrypt with
+#     this account's CMK without a key-policy grant, and never with the
+#     AWS-managed aws/s3 key. aws_s3_bucket.flip_ui — the other bucket the edge
+#     reads — is on AES256 for the same reason. The objects are public demo
+#     downloads: there is nothing confidential to protect with a CMK.
+#   * An extra bucket-policy statement rather than a second policy resource:
+#     S3 allows one policy per bucket, and the module already owns it.
+#
+# The grant is scoped to the `ark_demo/assets/*` prefix (not the whole bucket)
+# and carries no s3:ListBucket, so a missing key 403s instead of listing the
+# bucket — identical to the legacy policy. `AWS:SourceArn` is empty until the
+# edge stack exists (the two-phase wiring in README, "Edge wiring is
+# two-phase"); an empty string matches no distribution, so the grant is
+# fail-closed rather than open until the second apply fills it in.
+module "flip_demo_assets_bucket" {
+  count = local.demo_assets_managed ? 1 : 0
+
+  source      = "./modules/flip_s3_bucket"
+  bucket_name = var.DEMO_ASSETS_BUCKET_NAME
+  # No CORS: the bundles are fetched as top-level navigations (a download
+  # link), never by XHR/fetch from the demo SPA.
+  logging_target_bucket = local.access_logs_bucket_name
+  sse_algorithm         = "AES256"
+
+  extra_bucket_policy_statements_json = jsonencode([{
+    Sid       = "AllowCloudFrontOACDemoAssetsPrefix"
+    Effect    = "Allow"
+    Principal = { Service = "cloudfront.amazonaws.com" }
+    Action    = "s3:GetObject"
+    Resource  = "arn:aws:s3:::${var.DEMO_ASSETS_BUCKET_NAME}/ark_demo/assets/*"
+    Condition = {
+      StringEquals = {
+        "AWS:SourceArn" = var.lza_web_edge_distribution_arn
+      }
+    }
+  }])
+
+  depends_on = [aws_s3_bucket_acl.flip_access_logs]
 }
 
 ############################
@@ -135,7 +193,7 @@ resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
   cors_rule {
     allowed_headers = ["*"]
     allowed_methods = ["PUT", "GET"]
-    allowed_origins = ["https://${var.flip_alb_subdomain}"]
+    allowed_origins = [local.ui_origin]
     expose_headers  = []
   }
 }
@@ -191,18 +249,66 @@ resource "aws_s3_bucket_logging" "aicentre_bucket" {
 module "cognito" {
   source = "./modules/cognito"
 
-  user_pool_name     = var.flip_user_pool_name
-  client_name        = var.flip_cognito_client
-  sign_in_hostname   = var.flip_alb_subdomain
-  admin_email        = var.flip_cognito_admin_email
-  researcher_email   = var.flip_cognito_researcher_email
-  seed_user_password = var.ADMIN_USER_PASSWORD
-  templates_dir      = "${path.module}/templates/cognito"
-  # The UI uses USER_SRP_AUTH (Cognito's native auth flow, not OAuth2 redirect),
-  # so callback_urls are hygiene only — keep the canonical subdomain + localhost
-  # for dev.
-  callback_urls = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
-  logout_urls   = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
+  user_pool_name = var.flip_user_pool_name
+  client_name    = var.flip_cognito_client
+  # Hostname stamped into invite emails; derived from local.ui_origin
+  # (cloudfront.tf) so a zone-less bring-up (FLIP#749) sends the reachable
+  # CloudFront default domain rather than a dead subdomain. Identical to
+  # var.flip_alb_subdomain whenever DNS is managed (all legacy envs).
+  sign_in_hostname = trimprefix(local.ui_origin, "https://")
+  # Managed Login (v2) blocks PrivateLink access to cognito-idp, and the LZA
+  # account's ONLY path to Cognito is the central interface endpoint -- flip-api
+  # cannot boot against a v2 pool there (FLIP#749). Cosmetic either way: the
+  # FLIP UI signs in via the SDK, not the hosted UI.
+  managed_login_version   = var.lza_managed_network ? 1 : 2
+  user_pool_tier          = var.lza_managed_network ? "LITE" : null
+  create_hosted_ui_domain = !var.lza_managed_network
+  admin_email             = var.flip_cognito_admin_email
+  researcher_email        = var.flip_cognito_researcher_email
+  seed_user_password      = var.ADMIN_USER_PASSWORD
+  templates_dir           = "${path.module}/templates/cognito"
+  # callback_urls is NOT cosmetic — it is this environment's live browser CORS
+  # allowlist. Do not trim it without reading the following.
+  #
+  # The UI signs in with USER_SRP_AUTH (Cognito's native flow, not an OAuth2
+  # redirect), so Cognito itself never redirects to these URLs. flip-api reads
+  # them back instead: the Cognito identity provider's allowed_origins()
+  # (flip_api/auth/identity/cognito.py) calls
+  # describe_user_pool_client, normalizes each CallbackURL to a
+  # scheme://host[:port] origin, and CORSMiddleware serves that list with
+  # allow_credentials=true. Every browser origin that must call the API in
+  # stag/prod therefore has to be listed here, and removing one silently blocks
+  # that origin. No runtime test can catch it — the API reads the list from live
+  # Cognito at start-up, not from this file — so the guard is static, over this
+  # source (see tests/test_cognito_callback_urls.py).
+  #
+  # Operationally: a change here takes effect at the NEXT flip-api start, not at
+  # apply time. main.py's lifespan reads the list once and CORSMiddleware holds
+  # it by reference, so restart the flip-api service after applying. The full
+  # runbook — targeted apply (never a full stag/prod apply), restart, and the two
+  # verification steps — is in README.md, "Changing the browser CORS allowlist
+  # (Cognito callback_urls)".
+  #
+  # localhost is deliberately absent: this root stack is stag/prod only. Local
+  # development uses the separate ./dev root, whose var.cognito_callback_urls
+  # carries the localhost origins.
+  #
+  # The one origin is local.ui_origin (cloudfront.tf) rather than a literal
+  # "https://${var.flip_alb_subdomain}": the two are the same string wherever DNS
+  # is managed — every legacy environment — and on a zone-less LZA bring-up
+  # (FLIP#749) the local resolves to the reachable edge/CloudFront domain, which
+  # is the browser origin there. It is the same value fed to the S3 bucket CORS
+  # rules above, so the two allowlists cannot drift apart.
+  callback_urls = [local.ui_origin]
+
+  # Not read by flip-api; only Cognito's hosted UI would honour these as
+  # post-logout redirect targets, and allowed_oauth_flows_user_pool_client is
+  # unset (provider default false), so the hosted UI is not enabled for this
+  # client. Kept non-empty and localhost-free so the stag/prod client advertises
+  # no redirect target that isn't a real FLIP origin. logout_urls is Optional in
+  # the provider schema and need not mirror callback_urls — the ./dev root
+  # already passes lists of differing length.
+  logout_urls = [local.ui_origin]
 }
 
 # State migration: Cognito resources used to live at the root of this stack and
@@ -224,6 +330,11 @@ moved {
 moved {
   from = aws_cognito_user_pool_domain.main
   to   = module.cognito.aws_cognito_user_pool_domain.main
+}
+
+moved {
+  from = module.cognito.aws_cognito_user_pool_domain.main
+  to   = module.cognito.aws_cognito_user_pool_domain.main[0]
 }
 
 moved {

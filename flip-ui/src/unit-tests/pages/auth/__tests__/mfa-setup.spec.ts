@@ -16,8 +16,15 @@ import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { nextTick } from "vue";
 
+import { makeMockAuthProvider, NO_CAPABILITIES } from "@/auth/__tests__/mock-provider";
+import { SignInStep } from "@/auth/provider";
 import MfaSetup from "@/pages/auth/mfa-setup.vue";
 import { useAuthStore } from "@/store/auth";
+
+// The page reads the store's `capabilities` getter, which comes from the
+// provider behind the `@/auth` seam.
+const authProvider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
 
 // Route/router mocks — the page calls routeChange.* and we need to assert
 // on which navigation target it picked.
@@ -47,7 +54,7 @@ vi.mock("@/utils/snackbar", () => ({
 const mockToDataURL = vi.fn().mockResolvedValue("data:image/png;base64,STUB");
 vi.mock("qrcode", () => ({ default: { toDataURL: (...args: unknown[]) => mockToDataURL(...args) } }));
 
-const SIGN_IN_CHAIN_STEP = "CONTINUE_SIGN_IN_WITH_TOTP_SETUP";
+const SIGN_IN_CHAIN_STEP = SignInStep.TOTP_SETUP;
 
 interface AuthStoreState {
     signInStep: string | null;
@@ -113,6 +120,7 @@ describe("mfa-setup page", () => {
         mockSnackbarShow.mockReset();
         mockSnackbarError.mockReset();
         mockToDataURL.mockClear();
+        authProvider.current = makeMockAuthProvider();
     });
 
     // "Back to log in" lives in AuthLayout now (see AuthLayout.spec.ts); the
@@ -123,12 +131,40 @@ describe("mfa-setup page", () => {
         expect(wrapper.find("[data-test='mfa-setup-signout-btn']").exists()).toBe(false);
     });
 
-    describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", () => {
+    test("bounces to /projects with a notice when the backend cannot enrol TOTP in-app", async () => {
+        // Keycloak keeps TOTP enrolment in its own account console.
+        authProvider.current = makeMockAuthProvider({
+            backend: "keycloak",
+            capabilities: NO_CAPABILITIES
+        });
+
+        mountMfaSetup({
+            signInStep: "DONE",
+            user: {
+                username: "u",
+                userId: "u",
+                attributes: {
+                    sub: "s",
+                    email: "u@e.com"
+                },
+                permissions: []
+            },
+            mfaEnabled: false
+        });
+        await flushPromises();
+        const authStore = useAuthStore();
+
+        expect(mockViewProjects).toHaveBeenCalledTimes(1);
+        expect(mockSnackbarShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Not available" }));
+        expect(authStore.beginMfaEnrolment).not.toHaveBeenCalled();
+    });
+
+    describe("Sign-in-chain flow (signInStep = TOTP_SETUP)", () => {
         test("does not call beginMfaEnrolment — the setup details are already in the store", async () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -159,7 +195,7 @@ describe("mfa-setup page", () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -231,7 +267,7 @@ describe("mfa-setup page", () => {
                 user: signedInUser,
                 mfaEnabled: false,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -365,7 +401,7 @@ describe("mfa-setup page", () => {
         const buildSigninChainState = (): Partial<AuthStoreState> => ({
             signInStep: SIGN_IN_CHAIN_STEP,
             totpSetup: {
-                sharedSecret: "ABCD1234",
+                sharedSecret: "ABCD1234",  // pragma: allowlist secret
                 setupUri: "otpauth://totp/FLIP"
             }
         });
@@ -468,7 +504,7 @@ describe("mfa-setup page", () => {
                 },
                 mfaEnabled: false,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "otpauth://totp/FLIP"
                 }
             });
@@ -497,7 +533,7 @@ describe("mfa-setup page", () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri: "not-a-valid-uri"
                 }
             });
@@ -511,11 +547,11 @@ describe("mfa-setup page", () => {
 
     describe("QR rendering", () => {
         test("passes the setupUri and a grey light-mode colour to toDataURL", async () => {
-            const setupUri = "otpauth://totp/FLIP:user?secret=ABCD1234";
+            const setupUri = "otpauth://totp/FLIP:user?secret=ABCD1234";  // pragma: allowlist secret
             mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
                 totpSetup: {
-                    sharedSecret: "ABCD1234",
+                    sharedSecret: "ABCD1234",  // pragma: allowlist secret
                     setupUri
                 }
             });

@@ -65,7 +65,7 @@ def get_projects_paginated_orm(
         user_id (UUID | None): The requesting user's ID. When provided, results are restricted to
             projects the user owns or has explicit access to.
         paging_details (PagingInfo): Page size, offset, and optional search string.
-        filter_details (FilterInfo): Additional filter criteria (e.g. owner ID).
+        filter_details (FilterInfo): Additional filter criteria (owner, project type).
 
     Returns:
         IPagedResponse[IProject]: Paginated list of projects and total row count.
@@ -91,6 +91,11 @@ def get_projects_paginated_orm(
     # Owner filter condition
     if filter_owner_id:
         base_conditions.append(Projects.owner_id == filter_owner_id)
+
+    # Project-type filter (FLIP#1071): imaging projects vs tabular-only ones.
+    if filter_details.project_type is not None:
+        wants_imaging = filter_details.project_type.has_imaging
+        base_conditions.append(Projects.has_imaging.is_(wants_imaging))  # type: ignore[attr-defined]
 
     # User access condition (user can see projects they own or have access to)
     if user_id:
@@ -148,6 +153,7 @@ def get_projects_paginated_orm(
             creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
             staged_at=staged_at_by_project.get(project.id),
             status=project.status,
+            has_imaging=project.has_imaging,
             approved_trusts=trusts_by_project.get(project.id, []),
             query=queries_by_project.get(project.id),
         )  # type: ignore[call-arg]
@@ -197,9 +203,7 @@ def _load_latest_query_per_project(
         .order_by(col(Queries.project_id), col(Queries.created).desc())
     ).all()
 
-    latest_per_project: dict[
-        UUID, tuple[UUID, str, str, datetime | None, str | None, list[UUID]]
-    ] = {}
+    latest_per_project: dict[UUID, tuple[UUID, str, str, datetime | None, str | None, list[UUID]]] = {}
     for qid, pid, qname, qsql, qcreated, qcreated_by, persisted_queried in queries_rows:
         if pid is not None and pid not in latest_per_project:
             latest_per_project[pid] = (qid, qname, qsql, qcreated, qcreated_by, persisted_queried)
@@ -216,8 +220,9 @@ def _load_latest_query_per_project(
     responded_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     rows_by_query: dict[UUID, list[tuple[UUID | None, str | None]]] = {qid: [] for qid in query_ids}
     pair_rows = session.exec(
-        select(QueryResult.query_id, QueryResult.trust_id, QueryResult.data)
-        .where(col(QueryResult.query_id).in_(query_ids))
+        select(QueryResult.query_id, QueryResult.trust_id, QueryResult.data).where(
+            col(QueryResult.query_id).in_(query_ids)
+        )
     ).all()
     for qid, tid, data in pair_rows:
         if qid is None:
@@ -238,8 +243,7 @@ def _load_latest_query_per_project(
     pending_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     cancelled_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     task_rows = session.exec(
-        select(TrustTask.query_id, TrustTask.trust_id, TrustTask.status)
-        .where(
+        select(TrustTask.query_id, TrustTask.trust_id, TrustTask.status).where(
             col(TrustTask.query_id).in_(query_ids),
             col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
         )
@@ -247,11 +251,7 @@ def _load_latest_query_per_project(
     for qid, tid, task_status in task_rows:
         if qid is None or tid is None:
             continue
-        bucket = (
-            pending_trust_ids_by_query
-            if task_status == TaskStatus.PENDING
-            else cancelled_trust_ids_by_query
-        )
+        bucket = pending_trust_ids_by_query if task_status == TaskStatus.PENDING else cancelled_trust_ids_by_query
         if tid not in bucket.setdefault(qid, []):
             bucket[qid].append(tid)
 

@@ -126,7 +126,7 @@
 
 <script setup lang="ts">
 import { Form } from "vee-validate";
-import { ref } from "vue";
+import { onBeforeMount, ref } from "vue";
 import { useRoute } from "vue-router";
 import { object, string } from "yup";
 
@@ -157,6 +157,19 @@ const authStore = useAuthStore();
 const route = useRoute();
 const changePasswordLoader = ref(false);
 const codeRequested = ref(false);
+
+onBeforeMount(() => {
+    // The code-by-email reset is a Cognito flow; Keycloak runs its own
+    // "forgot password" page, which Login.vue links to instead.
+    if (!authStore.capabilities.forgotPassword) {
+        Snackbar.show({
+            type: "info",
+            title: "Not available",
+            text: "Password resets are handled by the identity provider for this deployment — use the link on the login page."
+        });
+        routeChange.gotoLogin();
+    }
+});
 
 /**
  * Methods

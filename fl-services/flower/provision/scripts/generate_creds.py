@@ -20,7 +20,6 @@ import argparse
 import datetime
 import ipaddress
 import os
-import shutil
 from pathlib import Path
 
 from cryptography import x509
@@ -91,10 +90,7 @@ def generate_ca() -> tuple[rsa.RSAPrivateKey, x509.Certificate]:
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(
-            datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(days=VALIDITY_DAYS)
-        )
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=VALIDITY_DAYS))
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .sign(private_key, hashes.SHA256())
     )
@@ -132,10 +128,7 @@ def generate_server_cert(
         .public_key(private_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
-        .not_valid_after(
-            datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(days=VALIDITY_DAYS)
-        )
+        .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=VALIDITY_DAYS))
         .add_extension(
             x509.SubjectAlternativeName(alt_names),
             critical=False,

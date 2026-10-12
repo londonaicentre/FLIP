@@ -1,0 +1,53 @@
+schema_type: dataframe
+columns:
+  note_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  note_date:
+    dtype: datetime64[ns]
+  note_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  note_type_concept_id:
+    dtype: int64
+  note_class_concept_id:
+    dtype: int64
+  note_title:
+    dtype: string[python]
+    nullable: true
+    required: false
+  note_text:
+    dtype: string[python]
+  encoding_concept_id:
+    dtype: int64
+  language_concept_id:
+    dtype: int64
+  provider_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_occurrence_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_detail_id:
+    dtype: int64
+    nullable: true
+    required: false
+  note_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  note_event_id:
+    dtype: int64
+    nullable: true
+    required: false
+  note_event_field_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

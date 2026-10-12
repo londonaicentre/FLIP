@@ -22,6 +22,10 @@ on:
       - "trust/observability/**"
       - ".github/workflows/test_trust_trust_api.yml"
       - ".github/actions/setup-trust-test-env/**"
+      # The shared bootstrap action copies the root env template to .env.development,
+      # which trust_api/config.py reads as its env_file and trust-api/Makefile
+      # includes+exports.
+      - ".env.development.example"
   pull_request:
     branches: [main, develop]
 
@@ -29,7 +33,28 @@ permissions:
   contents: read
 
 jobs:
+  # Gate for pull requests into develop: run the suite only when the PR touches this
+  # service (pr_paths_changed.yml; PRs into main always run everything). The list is
+  # the push `paths:` filter above, verbatim — scripts/tests/test_pr_paths_changed.py
+  # fails when the two drift.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        trust/trust-api/**
+        trust/deploy/compose.test.yml
+        trust/data-access-api/**
+        trust/observability/**
+        .github/workflows/test_trust_trust_api.yml
+        .github/actions/setup-trust-test-env/**
+        .env.development.example
+
   trust-api:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
@@ -40,17 +65,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # No inputs: the action generates throwaway credentials for the run. python-version is
+      # deliberately omitted too — the composite action defaults to the 3.12 that
+      # .python-version and requires-python pin. Do not restate it per job: the previous
+      # `github.event.inputs.python-version` form had no workflow_dispatch trigger to feed
+      # it, so this job silently ran 3.11 while the integration job below ran 3.12.
       - name: Setup trust test env
         uses: ./.github/actions/setup-trust-test-env
-        with:
-          # python-version deliberately omitted — the composite action defaults to
-          # the 3.12 that .python-version and requires-python pin. Do not restate
-          # it per job: the previous `github.event.inputs.python-version` form had
-          # no workflow_dispatch trigger to feed it, so this job silently ran 3.11
-          # while the integration job below ran 3.12.
-          trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
-          aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}  # pragma: allowlist secret
-          postgres-password: ${{ secrets.POSTGRES_PASSWORD }}
 
       - name: Run tests with pytest (example)
         # Replace with your actual test command
@@ -66,6 +87,8 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   trust-api-integration:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Brings up the omop-db + data-access-api Compose stack and exercises
     # ``handle_cohort_query`` end-to-end (issue #369, B3). Runs alongside the
     # unit job rather than on its `needs:` so a unit-suite regression doesn't
@@ -87,10 +110,10 @@ jobs:
       - name: Setup trust test env
         uses: ./.github/actions/setup-trust-test-env
         with:
-          # python-version deliberately omitted — see the unit job above.
-          trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
-          aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=' }}  # pragma: allowlist secret
-          postgres-password: ${{ secrets.POSTGRES_PASSWORD || 'test_password' }}
+          # python-version deliberately omitted — see the unit job above. The AES key and
+          # password match the constants trust/deploy/compose.test.yml pins for its stack.
+          aes-key-base64: "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA="  # pragma: allowlist secret
+          postgres-password: test_password  # pragma: allowlist secret
 
       - name: Sync trust-api venv (incl. testcontainers)
         run: uv sync --locked

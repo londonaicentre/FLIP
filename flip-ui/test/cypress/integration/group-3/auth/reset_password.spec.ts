@@ -59,7 +59,7 @@ describe("Reset Password Page", () => {
         cy.get("@changePassword").its("request.body").should("deep.include", {
             "Username": dummyEmail,
             "ConfirmationCode": "12345",
-            "Password": "NewPassword!1"
+            "Password": "NewPassword!1"  // pragma: allowlist secret
         });
         cy.get("@changePassword").its("request.body").should("have.property", "ClientId");
     });

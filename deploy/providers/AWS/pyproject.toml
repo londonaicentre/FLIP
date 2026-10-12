@@ -46,7 +46,7 @@ dev = [
     "simpleeval>=1.0.4",
     "taskipy>=1.14.1",
     "terraform-local>=0.24.1",
-    "tornado>=6.5.2",
+    "tornado>=6.5.8",
 ]
 
 
@@ -57,10 +57,6 @@ omit = ["*.venv/*", "*/tests/*", "*/__init__.py", "*/translation/*"]
 [tool.pytest.ini_options]
 python_files = ["test_*.py", "*_test.py"]
 addopts = []
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
-
-[tool.pytest.ini_options_debug]
-python_files = ["test_*.py", "*_test.py"]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]

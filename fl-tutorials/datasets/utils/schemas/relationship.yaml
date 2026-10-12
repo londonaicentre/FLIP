@@ -1,0 +1,17 @@
+schema_type: dataframe
+columns:
+  relationship_id:
+    dtype: string[python]
+    unique: true
+  relationship_name:
+    dtype: string[python]
+  is_hierarchical:
+    dtype: string[python]
+  defines_ancestry:
+    dtype: string[python]
+  reverse_relationship_id:
+    dtype: string[python]
+  relationship_concept_id:
+    dtype: int64
+strict: true
+drop_invalid_rows: false

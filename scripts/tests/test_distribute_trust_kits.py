@@ -78,8 +78,8 @@ def _full_kit() -> dict:
     return {
         "trust_id": "abc",
         "trust_name": "GSTT",
-        "trust_api_key": "plain-api-1",
-        "trust_internal_service_key": "plain-int-1",
+        "trust_api_key": "plain-api-1",  # pragma: allowlist secret
+        "trust_internal_service_key": "plain-int-1",  # pragma: allowlist secret
         "fl_kit_slot": "Trust_1",
         "fl_kit_slot_number": 1,
         "hub_shared": {"AES_KEY_BASE64": "Zm9vYmFy", "FL_BACKEND": "flower"},
@@ -184,7 +184,8 @@ def test_target_mode_dev_comments_hub_shared() -> None:
         content = target.read_text()
         _assert("# AES_KEY_BASE64=" in content, "hub-shared key commented in dev kit")
         live = [
-            ln for ln in content.splitlines()
+            ln
+            for ln in content.splitlines()
             if not ln.lstrip().startswith("#") and ln.split("=", 1)[0] == "AES_KEY_BASE64"
         ]
         _assert(not live, "no live hub-shared line in dev kit", str(live))

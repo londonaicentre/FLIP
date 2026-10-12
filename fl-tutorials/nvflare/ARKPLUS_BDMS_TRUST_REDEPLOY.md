@@ -83,7 +83,7 @@ DOCKER_FL_TAG=a3bf6c5bde4fac955d75858e25fc82a353345bec
 ```
 
 **1b. Replace your FL participant-kit slice with the one the FLIP team sends you**
-(`flkit-Trust_2-<date>.tar.gz`). The new `fl-client` runs NVFLARE 2.8, which **rejects the old
+(`flkit-Trust_2-<date>.tar.gz`). The new `fl-client` runs NVFLARE 2.9.0, which **rejects the old
 kit's config format** — without this step it crash-loops with
 `missing 'target' in server config for project 'net-1'; the startup kit may have been provisioned
 with an older HA-based template`. Your certificates/keys are unchanged (byte-identical in the new

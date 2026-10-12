@@ -32,7 +32,7 @@ from flip_api.domain.interfaces.project import (
     IReturnedProject,
     IUpdateXnatProfile,
 )
-from flip_api.domain.schemas.status import ModelStatus, ProjectStatus
+from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustApprovalStatus
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.utils.paging_utils import IPagedData, IPagedResponse
 
@@ -102,10 +102,15 @@ class TestIProjectQuerySchema:
 class TestIApprovedTrustSchema:
     def test_valid_iapproved_trust(self):
         trust_id = str(uuid4())
-        trust = IApprovedTrust(id=trust_id, name="Test Trust", approved=True)
+        decider = str(uuid4())
+        trust = IApprovedTrust(
+            id=trust_id, name="Test Trust", status="DECLINED", decidedBy=decider, decidedByName="Ada", decidedAt=now
+        )
         assert trust.id == UUID(trust_id)
         assert trust.name == "Test Trust"
-        assert trust.approved is True
+        assert trust.status == TrustApprovalStatus.DECLINED
+        assert (trust.decided_by, trust.decided_by_name, trust.decided_at) == (UUID(decider), "Ada", now)
+        assert trust.model_dump(by_alias=True)["decidedByName"] == "Ada"
 
 
 class TestIProjectResponseSchema:
@@ -154,7 +159,7 @@ class TestIReturnedProjectSchema:
             creation_timestamp=now,
             status=ProjectStatus.APPROVED,
             owner_email="owner@example.com",
-            approved_trusts=[IApprovedTrust(id=uuid4(), name="T1", approved=True)],
+            approved_trusts=[IApprovedTrust(id=uuid4(), name="T1", status=TrustApprovalStatus.APPROVED)],
             query=IProjectQuery(id=str(uuid4()), name="Q", query="QT"),
             users=[user1, user2],
         )

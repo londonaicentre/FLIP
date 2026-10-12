@@ -1,0 +1,11 @@
+schema_type: dataframe
+columns:
+  concept_class_id:
+    dtype: string[python]
+    unique: true
+  concept_class_name:
+    dtype: string[python]
+  concept_class_concept_id:
+    dtype: int64
+strict: true
+drop_invalid_rows: false

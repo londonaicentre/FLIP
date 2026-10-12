@@ -154,8 +154,6 @@ def get_model() -> nn.Module:
             projector_features=ark_cfg.get("PROJECTOR_FEATURES", 1376),
             use_mlp=bool(ark_cfg.get("USE_MLP", False)),
             pretrained_weights=pretrained_weights,
-            pretrained_key=None,
-            load_backbone_only=bool(ark_cfg.get("LOAD_BACKBONE_ONLY", False)),
         )
         ark_model = arkplus_flat_models.build_omni_model(args, num_classes_list=num_classes_list)
         return ArkPlusNVFlareWrapper(

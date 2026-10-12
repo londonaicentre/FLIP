@@ -40,5 +40,9 @@ jobs:
       - name: Install uv (if used for dependency management)
         run: pip install uv
 
+      # The conf.py build hook renders the Central Hub AWS diagram with graphviz; without `dot` the build fails.
+      - name: Install graphviz
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+
       - name: Make docs
         run: make docs

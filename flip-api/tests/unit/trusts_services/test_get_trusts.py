@@ -44,7 +44,7 @@ def _make_trust(name: str = "GSTT", code: str = "GST", region: str = "London") -
         name=name,
         code=code,
         region=region,
-        api_key_hash="hash",
+        api_key_hash="hash",  # pragma: allowlist secret
         created_at=datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
     )
 

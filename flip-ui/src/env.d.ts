@@ -23,9 +23,16 @@ interface Window {
     Cypress: Cypress;
     pinia: Pinia;
     AWS_BASE_URL: string;
+    // Which identity provider the hub runs (FLIP#919): "cognito" (default when
+    // unset/empty) or "keycloak". The AWS_* values feed the Cognito provider,
+    // the KEYCLOAK_* values the Keycloak one; the unused set is emitted empty.
+    AUTH_BACKEND: string;
     AWS_USER_POOL_ID: string;
     AWS_CLIENT_ID: string;
     AWS_REGION: string;
+    KEYCLOAK_URL: string;
+    KEYCLOAK_REALM: string;
+    KEYCLOAK_CLIENT_ID: string;
     BLACKLISTED_MODEL_FILES: string;
     RELEASE_VERSION: string;
 }

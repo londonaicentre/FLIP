@@ -43,8 +43,8 @@ export const IS_DEMO = import.meta.env.VITE_DEMO === "true";
  */
 const DEMO_ASSETS = "/ark_demo/assets";
 export const DEMO_MODEL_FILES_ZIP_URLS: Record<string, string> = {
-    // Fine-tuning run
-    "24985ec3-3349-435b-afcd-f38972d8695d": `${DEMO_ASSETS}/model-24985ec3-3349-435b-afcd-f38972d8695d-files.zip`,
+    // Fine-tuning run (re-captured post-FLIP#821 — see ark-plus-register.ts)
+    "31569b0b-7698-4bf4-a446-59643c6674e0": `${DEMO_ASSETS}/model-31569b0b-7698-4bf4-a446-59643c6674e0-files.zip`,
     // Evaluation: single-model baseline
     "db780699-61a9-4701-990f-8f43ac03f4ab": `${DEMO_ASSETS}/model-db780699-61a9-4701-990f-8f43ac03f4ab-files.zip`,
     // Evaluation: pretrained-vs-finetuned comparison

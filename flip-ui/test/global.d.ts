@@ -28,6 +28,15 @@ declare namespace Cypress {
     */
     interface ApplicationWindow {
         pinia: Pinia;
+        /**
+         * Build-gated (VITE_E2E) hook from src/utils/auth.ts: the live session
+         * in provider-neutral form after a REAL sign-in — `token` is null until
+         * the provider has one. Used by the demo recorder's cy.demoLogin.
+         */
+        __cypressGetAuthUser?: () => Promise<{
+            token: string | null;
+            user: { sub: string; email: string; username: string } | null;
+        }>;
     }
 
     /**

@@ -92,45 +92,52 @@ def run_jobs_core(db: Session) -> None:
         job = check_for_queued_jobs(scheduler.id, db)
 
         if not job or not job.id:
-            logger.info({
-                "message": "No jobs waiting, will check again soon... 🔃",
-                "net": scheduler.netId,
-            })
+            logger.info(
+                {
+                    "message": "No jobs waiting, will check again soon... 🔃",
+                    "net": scheduler.netId,
+                }
+            )
             return
 
         # The pickup just advanced every remaining queued model one place.
         log_queue_positions(db)
 
         # Step 3: Prepare and start training
-        logger.info({
-            "message": "About to prepare & start training... 📦",
-            "net": scheduler.netId,
-            "job": job.id,
-            "model": job.model_id,
-        })
+        logger.info(
+            {
+                "message": "About to prepare & start training... 📦",
+                "net": scheduler.netId,
+                "job": job.id,
+                "model": job.model_id,
+            }
+        )
 
         started = prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
         if started:
-            logger.info({
-                "message": "Training started successfully! 🚀",
-                "net": scheduler.netId,
-                "job": job.id,
-                "model": job.model_id,
-            })
+            logger.info(
+                {
+                    "message": "Training started successfully! 🚀",
+                    "net": scheduler.netId,
+                    "job": job.id,
+                    "model": job.model_id,
+                }
+            )
         else:
-            logger.info({
-                "message": "Job aborted before submission; net released. 🛑",
-                "net": scheduler.netId,
-                "job": job.id,
-                "model": job.model_id,
-            })
+            logger.info(
+                {
+                    "message": "Job aborted before submission; net released. 🛑",
+                    "net": scheduler.netId,
+                    "job": job.id,
+                    "model": job.model_id,
+                }
+            )
         return
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"An error occurred while running jobs: {str(e)}"
-        )
+        logger.exception("Error while running jobs")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e
 
 
 def run_jobs_scheduled_task() -> None:
@@ -146,6 +153,5 @@ def run_jobs_scheduled_task() -> None:
         with Session(get_engine()) as db:
             run_jobs_core(db)
     except Exception as e:
-        error_message = f"Error in scheduled run_jobs execution: {str(e)}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Error in scheduled run_jobs execution")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

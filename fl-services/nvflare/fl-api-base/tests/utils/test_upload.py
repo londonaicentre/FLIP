@@ -418,8 +418,8 @@ def test_upload_app_rejects_non_https_bundle_url():
 
 
 def test_upload_app_rejects_disallowed_bundle_host(monkeypatch):
-    """When BUNDLE_URL_ALLOWED_HOSTS is set, off-origin bundle URLs are rejected."""
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal")
+    """When BUNDLE_URL_ALLOWED_ORIGINS is set, off-origin bundle URLs are rejected."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://objectstore.internal")
     body = UploadAppRequest(
         bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/app/custom/trainer.py"],
         project_id="123456789",

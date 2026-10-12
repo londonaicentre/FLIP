@@ -42,7 +42,7 @@ def _register_trust(session, name: str, api_key: str) -> UUID:
 
 def test_trust_with_spaced_name_authenticates_and_heartbeats(client, session):
     """A trust whose name contains spaces and parens heartbeats successfully."""
-    api_key = "integration-test-trust-key"
+    api_key = "integration-test-trust-key"  # pragma: allowlist secret
     trust = Trust(
         name="(Mock) Guys and St Thomas NHS Trust",
         api_key_hash=hashlib.sha256(api_key.encode()).hexdigest(),
@@ -82,7 +82,7 @@ def test_invalid_api_key_returns_401(client):
 def test_heartbeat_body_round_trips_jsonb_and_is_server_stamped(client, session):
     """A snapshot body survives the JSONB round-trip; services_health_at is stamped
     on receipt — the payload's own (year 2020) collected_at is never trusted."""
-    api_key = "integration-test-snapshot-key"
+    api_key = "integration-test-snapshot-key"  # pragma: allowlist secret
     trust_id = _register_trust(session, "Snapshot Trust", api_key)
     services = {
         "trust-api": {"status": "healthy", "version": "0.3.0", "response_ms": None},
@@ -115,7 +115,7 @@ def test_heartbeat_body_round_trips_jsonb_and_is_server_stamped(client, session)
 
 def test_bodyless_heartbeat_leaves_services_columns_null(client, session):
     """A pre-collector trust-api (no body) stamps last_heartbeat only."""
-    api_key = "integration-test-bodyless-key"
+    api_key = "integration-test-bodyless-key"  # pragma: allowlist secret
     trust_id = _register_trust(session, "Legacy Trust", api_key)
 
     header = get_settings().TRUST_API_KEY_HEADER
@@ -132,7 +132,7 @@ def test_bodyless_heartbeat_leaves_services_columns_null(client, session):
 
 def test_heartbeat_rejects_invalid_snapshot_and_persists_nothing(client, session):
     """An invalid snapshot 422s and neither timestamp nor services move."""
-    api_key = "integration-test-invalid-key"
+    api_key = "integration-test-invalid-key"  # pragma: allowlist secret
     trust_id = _register_trust(session, "Invalid Snapshot Trust", api_key)
 
     header = get_settings().TRUST_API_KEY_HEADER

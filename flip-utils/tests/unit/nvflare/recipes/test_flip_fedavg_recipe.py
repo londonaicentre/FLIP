@@ -32,23 +32,23 @@ class TestFlipFedAvgRecipe:
     def test_builds_fed_job_with_flip_components(self):
         """A default recipe should construct a FedJob with the FLIP server + client wiring."""
         recipe = FlipFedAvgRecipe()
-        assert recipe.job is not None
-        assert recipe.job.name == "flip_fedavg"
+        assert recipe._job is not None
+        assert recipe._job.name == "flip_fedavg"
         # min_clients propagates through to the underlying FedJobConfig.
-        assert recipe.job.job.min_clients == 1
+        assert recipe._job.job.min_clients == 1
 
     def test_meta_props_carry_model_id_into_custom_props(self):
         """The FedJob's meta carries the FLIP model_id into custom_props so server/client
         components can resolve it lazily at first task."""
         recipe = FlipFedAvgRecipe()
-        meta = recipe.job.job.meta_props
+        meta = recipe._job.job.meta_props
         assert FLIP_CUSTOM_PROPS_KEY in meta
         assert meta[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == _DEV_MODEL_ID
 
     def test_custom_model_id_propagates_to_meta_props(self):
         custom_id = "abcdef01-2345-6789-abcd-ef0123456789"
         recipe = FlipFedAvgRecipe(model_id=custom_id)
-        assert recipe.job.job.meta_props[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == custom_id
+        assert recipe._job.job.meta_props[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == custom_id
 
     def test_train_script_normalisation(self):
         """Bare ``trainer.py`` is rewritten to ``custom/trainer.py``; explicit prefix kept."""
@@ -102,7 +102,7 @@ class TestFlipFedAvgRecipe:
             recipe = FlipFedAvgRecipe()
             recipe.export(tmp_path)
 
-            job_dir = tmp_path / recipe.job.name
+            job_dir = tmp_path / recipe._job.name
             assert (job_dir / "meta.json").exists()
             # Server + client share the same config under a single ``app/`` since the recipe
             # treats all clients uniformly. FedJob picks this layout automatically.
@@ -143,7 +143,7 @@ class TestFlipFedAvgRecipe:
             recipe = FlipFedAvgRecipe(submit_model_task_name="custom_submit")
             recipe.export(tmp_path)
 
-            config_dir = tmp_path / recipe.job.name / "app" / "config"
+            config_dir = tmp_path / recipe._job.name / "app" / "config"
             server_cfg = json.loads((config_dir / "config_fed_server.json").read_text())
             client_cfg = json.loads((config_dir / "config_fed_client.json").read_text())
 
@@ -174,7 +174,7 @@ class TestFlipFedAvgRecipe:
             recipe = FlipFedAvgRecipe()
             recipe.export(tmp_path)
             server_cfg = json.loads(
-                (tmp_path / recipe.job.name / "app" / "config" / "config_fed_server.json").read_text()
+                (tmp_path / recipe._job.name / "app" / "config" / "config_fed_server.json").read_text()
             )
             persistor = next(c for c in server_cfg["components"] if c["id"] == "persistor")
             assert persistor["path"].endswith("InitialCheckpointPTModelPersistor")
@@ -207,7 +207,7 @@ class TestFlipFedAvgRecipeAggregateOnly:
         try:
             recipe = FlipFedAvgRecipe(**kwargs)
             recipe.export(tmp_path)
-            base = tmp_path / recipe.job.name / "app" / "config"
+            base = tmp_path / recipe._job.name / "app" / "config"
             return (
                 json.loads((base / "config_fed_server.json").read_text()),
                 json.loads((base / "config_fed_client.json").read_text()),
@@ -258,7 +258,7 @@ class TestFlipFedAvgRecipeBestModel:
         try:
             recipe = FlipFedAvgRecipe(**kwargs)
             recipe.export(tmp_path)
-            base = tmp_path / recipe.job.name / "app" / "config"
+            base = tmp_path / recipe._job.name / "app" / "config"
             return json.loads((base / "config_fed_server.json").read_text())
         finally:
             sys.modules["models"].get_model = lambda: object()

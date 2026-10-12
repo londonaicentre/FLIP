@@ -99,7 +99,7 @@ class ScatterAndGatherLDM(ScatterAndGather):
         self._num_rounds_dm = num_rounds_dm
         self._fatal_error_delay = fatal_error_delay
         self.model_locator_id = model_locator_id
-        self.model_locator = None
+        self.model_locator: ModelLocator | None = None
         # FedJob/recipe serialisation omits args equal to their declared defaults, but the
         # fl-server's deploy-time configure_server can only override workflow args that EXIST in
         # the exported config — min_clients must always be emitted or a deployed job silently runs
@@ -160,7 +160,10 @@ class ScatterAndGatherLDM(ScatterAndGather):
         # (_current_round is not None) so restored global weights are not overwritten.
         if self.train_task_name == "train_dm" and self._current_round is None:
             try:
-                model_name = self.model_locator.get_model_names(fl_ctx)[0]
+                model_locator = self.model_locator
+                if model_locator is None:
+                    raise RuntimeError("model locator not resolved; start_controller has not run")
+                model_name = model_locator.get_model_names(fl_ctx)[0]
                 if model_name != PTConstants.PTServerName:
                     raise RuntimeError(f"unexpected server model name {model_name!r}")
                 server_run_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
