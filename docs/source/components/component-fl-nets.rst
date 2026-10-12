@@ -83,6 +83,23 @@ Each net trains one job at a time; the queue is first-come, first-served, and a 
 shown in the UI while it waits. The backend of each net (NVFLARE or Flower) is recorded on the hub when the
 nets are seeded and decides which template is bundled: a deployment chooses the backend, a model does not.
 
+GPU on demand on Kubernetes (NVFLARE job pods)
+==============================================
+
+A Trust running the ``flip-trust`` Helm chart can run each NVFLARE job in its own pod
+(``flClient.nvflare.jobPods.enabled``). The FL client stays a small parent pod that keeps the site
+registered, and NVFLARE's Kubernetes job launcher starts one pod per job. That pod asks Kubernetes for the
+GPUs the job requests, so a Trust can put its GPUs on a node pool that scales from zero and pay for a GPU
+only while a job trains.
+
+From the hub's side nothing changes: a job's GPU request reaches the site in its ``resource_spec``, and a
+site that cannot meet it holds the job in NVFLARE's queue, as on any other trust. The site declares how
+many GPUs it lends at once (``jobPods.maxGpus``). A job that arrives while the pool's node is still booting
+waits for it, up to ``jobPods.pendingTimeout``, and then trains as usual.
+
+Set-up, prerequisites and trade-offs (cold start, the images volume, NetworkPolicy) are in the chart's
+README, under "NVFLARE job pods". Flower Trusts are not covered.
+
 Deployment mode (quiescing the nets)
 ====================================
 
