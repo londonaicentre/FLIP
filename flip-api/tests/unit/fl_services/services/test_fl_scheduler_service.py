@@ -112,9 +112,7 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
         mock_release.assert_called_once_with(model_id, fake_session)
 
 
-def test_prepare_and_start_training_transient_client_availability_failure_requeues(
-    fake_session, model_id, fl_job_id
-):
+def test_prepare_and_start_training_transient_client_availability_failure_requeues(fake_session, model_id, fl_job_id):
     """A transient availability failure requeues the job and leaves the model alone."""
     with (
         patch(
@@ -130,9 +128,7 @@ def test_prepare_and_start_training_transient_client_availability_failure_requeu
         patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
         patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
         patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
-        patch(
-            "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
-        ) as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
     ):
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
 
@@ -170,9 +166,7 @@ def test_prepare_and_start_training_transient_submit_failure_requeues(fake_sessi
         patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
         patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
         patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
-        patch(
-            "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
-        ) as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
     ):
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
 
@@ -210,9 +204,7 @@ def test_prepare_and_start_training_fatal_submit_error_still_errors(fake_session
         patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
         patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
         patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
-        patch(
-            "flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"
-        ) as mock_release,
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model") as mock_release,
     ):
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
 
