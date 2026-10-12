@@ -233,11 +233,13 @@ e2e_smoke_ehr: e2e_smoke
 # on the T2W series. Prereqs: `make -C fl-tutorials download-prostate-data FOLDS=0` (the labels +
 # zonal labels; the images are only needed to build the dataset) and XNAT_USER / XNAT_PASS.
 # Pair with FL_BACKEND=flower. EXTRA_ARGS="--stop-after-enrichment" verifies the data path alone.
+# --require-full-coverage makes the enrichment step fail unless every scan in the project got its
+# masks, so a partly labelled cohort stops here instead of training on the studies that were.
 PROSTATE_ENRICHMENT_CWD := ../fl-tutorials/datasets/prostate
 PROSTATE_XNAT_URLS ?= $(SPLEEN_XNAT_URLS)
 PROSTATE_LABELS_DIR ?= $(abspath ../fl-tutorials/data/prostate/labels)
 PROSTATE_ZONAL_LABELS_DIR ?= $(abspath ../fl-tutorials/data/prostate/zonal_labels)
-PROSTATE_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_prostate_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(PROSTATE_LABELS_DIR) --zonal-labels-dir $(PROSTATE_ZONAL_LABELS_DIR) $(foreach url,$(PROSTATE_XNAT_URLS),--xnat-url $(url))
+PROSTATE_ENRICHMENT_CMD := uv run --no-project --with $(abspath ../flip-utils) python upload_prostate_labels_to_xnat.py --flip-project-id $$FLIP_PROJECT_ID --labels-dir $(PROSTATE_LABELS_DIR) --zonal-labels-dir $(PROSTATE_ZONAL_LABELS_DIR) $(foreach url,$(PROSTATE_XNAT_URLS),--xnat-url $(url)) --require-full-coverage
 PROSTATE_ENRICHMENT_ARGS := --data-enrichment-cwd $(PROSTATE_ENRICHMENT_CWD) --data-enrichment-cmd '$(PROSTATE_ENRICHMENT_CMD)'
 
 e2e_smoke_prostate: MODEL_FILES_DIR := ../fl-tutorials/flower/3d_prostate_segmentation/app

@@ -1049,6 +1049,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
     if args.model_files_dir is None and not args.stop_after_enrichment:
         parser.error("--model-files-dir is required unless --stop-after-enrichment")
+    # --stop-after-enrichment exists to verify the data path up to the labels; without an enrichment
+    # command there is nothing to verify, and the run would still report "enrichment done".
+    if args.stop_after_enrichment and not args.data_enrichment_cmd:
+        parser.error("--stop-after-enrichment needs --data-enrichment-cmd (and --data-enrichment-cwd)")
 
     return args
 
