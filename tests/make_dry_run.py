@@ -107,6 +107,7 @@ def run_target(
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "flip-api/Makefile",
             "trust/Makefile",
             "trust/xnat/Makefile",
         ):

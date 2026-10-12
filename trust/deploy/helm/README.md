@@ -210,6 +210,11 @@ volume is read-only and NVFLARE writes into `local/`, `startup/` and `transfer/`
 uid 1000 (NVFLARE) or makes the Flower key readable by gid 49999. That volume lives as long as the
 pod, so anything NVFLARE leaves in `transfer/` goes with it.
 
+`NO_VOCAB_LOAD=1` keeps the chart's S3 vocabulary hook out, so the trust runs without the OMOP vocabulary
+until one is loaded another way. Cohort queries that name concepts through `omop.concept` then return
+nothing; the x-ray tutorial ships `query_no_vocab.sql` for exactly this, and `make e2e_smoke NO_VOCAB=1`
+smokes such a trust with it.
+
 ### 5. Install / upgrade the chart
 
 ```bash

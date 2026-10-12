@@ -50,7 +50,7 @@ Cross-cutting guards that assert a property across several source files
 `test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
 `test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
 `test_fl_tutorials_make_targets.py`, `test_sim_tutorial_stale_guard.py`,
-`test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
+`test_sim_tutorial_exit_status.py`, `test_xray_no_vocab_query.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 Tutorial-app tests that cover one app file mirror its path the same way:
@@ -147,6 +147,7 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_every_flower_tutorial_has_a_simulator_data_mapping` | Every `fl-tutorials/flower/<tutorial>/app` is named in the script's data-mapping `case`. |
 | `test_main_flow_*` | The script end to end against the fakes (`flwr run` faked too, `pgrep` shimmed away from real processes, a synthetic `SIM_DATA_ROOT`): a completed run passes and the EHR mapping exports exactly `DEV_DATAFRAME` (no images dir); a failed run, a failed submission (`flwr run` non-zero) and a missing run id each fail with the right status. |
 | `test_app_loads_checkpoints_weights_only` (in `test_offline_apps.py`) | Every `torch.load` in a shipped app dir passes `weights_only=True` explicitly — an implicit default or `weights_only=False` unpickles arbitrary objects from the checkpoint. Host-side `process_tools/` conversions are outside the walked app dirs and stay exempt. |
+| `test_the_no_vocab_query_hands_the_app_the_same_cohort` (in `test_xray_no_vocab_query.py`) | The x-ray tutorials' `query_no_vocab.sql` (for a trust deployed with the Helm chart's `NO_VOCAB_LOAD=1`) returns the same studies, findings and `person_id`s as `query.sql`, both run in SQLite against one synthetic OMOP database: with the vocabulary for `query.sql`, without it for the copy. Its neighbours pin that `query.sql` really is empty without a vocabulary, that the two backends ship the same copy, and that the fixture covers Yes, No and an unrecorded answer for every finding. |
 
 Three design points are load-bearing, and each is itself asserted rather than assumed:
 

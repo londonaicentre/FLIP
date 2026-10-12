@@ -155,6 +155,7 @@ make e2e_smoke                                  # defaults track FL_BACKEND (def
 make e2e_smoke FL_BACKEND=flower
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>" # reuse an approved project, skip the ~6 min re-pull
 make e2e_smoke EXTRA_ARGS="--no-imaging"        # tabular-only project (has_imaging=false, FLIP#1071)
+make e2e_smoke NO_VOCAB=1 EXTRA_ARGS="--trusts <CODE>"  # trust without the OMOP vocabulary (Helm NO_VOCAB_LOAD=1)
 ```
 
 The spleen tutorials additionally need a **data-enrichment** step (label upload to XNAT) between the
