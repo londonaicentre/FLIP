@@ -786,8 +786,9 @@ xnat:
       image: python:3.12-slim
       # These URLs are the single source of the plugin roster: the download
       # init-container derives each jar's filename from the URL, so a version
-      # bump is a one-line change here. Keep them in step with the Swarm roster
-      # baked by trust/xnat/xnat/Dockerfile — the chart mounts an emptyDir over
+      # bump is a one-line change here. Keep them identical to the plugin lines of
+      # trust/xnat/artifacts.manifest, which the Swarm image is built from (pinned by
+      # trust/xnat/tests/test_artifacts.py) — the chart mounts an emptyDir over
       # ${XNAT_HOME}/plugins, so these downloads REPLACE the image's plugins
       # rather than adding to them, and the XNAT_VERSION compatibility matrices
       # apply to whatever is listed here.

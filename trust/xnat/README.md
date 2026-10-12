@@ -240,36 +240,34 @@ the script refuses and exits 1 rather than remove a real PACS the operator never
 
 ## Plugins
 
-Plugins and the XNAT WAR are stored in S3 as a **version-keyed artifact set**:
-`s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/xnat-web-<version>.war` plus
-`.../xnat-<version>/plugins/*.jar` (e.g. `xnat-1.10.0/`). Each XNAT version needs a matching plugin
-roster, and keying the whole set by version lets branches on different XNAT versions (e.g. `main` vs
-`develop` across an upgrade) build without clobbering each other. The CI workflows and
-`make build` download the set for the `XNAT_VERSION` in `.env` and bake it into the Docker image.
+The XNAT WAR and plugins are third-party, public upstream downloads that FLIP does not redistribute.
+[`artifacts.manifest`](artifacts.manifest) lists each one for the `XNAT_VERSION` in `.env`: its kind
+(`war` or `plugin`), its SHA-256 and its upstream URL. That one file serves every path that needs them:
 
-Development additionally bind-mounts the gitignored `xnat/plugins/` directory over the image's plugins. Therefore a
-fresh checkout must set `FLIP_ARTIFACTS_BUCKET_NAME` to a real bucket (the shipped `<your-...>` placeholder is
-rejected) and have AWS access for its first start. `make up` runs `xnat-plugins-download` before stopping any existing
-XNAT: a complete cache stamped with the current versioned S3 prefix skips AWS, while a missing or mismatched cache is
-downloaded and revalidated. A failed download leaves the currently running XNAT untouched.
+- **Development** bind-mounts the gitignored `xnat/plugins/` directory over the image's plugins, so a dev trust needs
+  that cache filled before its first start. Prepare it once, and again after a pull that changes the manifest:
 
-That automatic fill is **development-only**, because only the development stack mounts the directory. On stag, prod,
-EC2 and on-prem, `make up` neither needs nor fetches the host cache — those stacks run the plugins baked in at image
-build, which is where `make build` (above) puts them. An operator who wants a host-side cache there anyway — to
-inspect the jars, or to build offline later — populates it explicitly with
-`make -C trust/xnat xnat-plugins-download`, which needs `FLIP_ARTIFACTS_BUCKET_NAME` and AWS access.
+  ```bash
+  make -C trust prepare-artifacts                          # downloads from the upstream URLs
+  make -C trust prepare-artifacts ARTIFACTS_DIR=/path/to/dir   # no internet route: copy from a directory
+  ```
 
-> The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
-> still builds 1.9.3; delete it once this upgrade reaches `main`.
+  Neither needs AWS access, a bucket or the `aws` CLI. `make up` only **checks** the cache (`xnat-plugins-check`),
+  before it stops any running XNAT. A cold cache, a jar with the wrong checksum or a jar the manifest does not list
+  fails there, naming the prep step, and leaves the running stack untouched.
+- **Image builds** (`make build` and the CI workflow `docker_build_xnat_web.yml`) download the WAR and plugins the
+  same way and bake them into the image.
+- **Stag, prod, EC2 and on-prem** stacks run the plugins baked into the image, so `make up` neither needs nor checks
+  the host cache there.
+- **Helm** downloads the same plugin URLs at pod start (`trust/deploy/helm/values.yaml` `xnat.web.plugins.urls`).
+  `tests/test_artifacts.py` fails if the chart and the manifest disagree, or if the WAR line is not the `.env`
+  version.
 
-`xnat-plugins-download` delegates the presence check and the sync to
-[`scripts/ensure_plugins.sh`](scripts/ensure_plugins.sh), which matches plugin *families* by filename
-prefix (versions are whatever the S3 prefix holds) and records the prefix it synced from in a
-`.s3-prefix` stamp beside the jars — a mismatched or absent stamp forces a `--delete` re-sync, so an
-XNAT-version change can never bake a developer's stale jars into the new image.
-`make -C trust/xnat xnat-war-download` is the WAR half of the same idea: it fetches
-`xnat-<version>/xnat-web-<version>.war` into `xnat/build-artifacts/`, skipping S3 when the file is
-already there.
+[`scripts/xnat_artifacts.sh`](scripts/xnat_artifacts.sh) does the work. `fetch` keeps every file whose checksum
+already matches, downloads the rest to a temporary name, verifies the checksum and only then moves the file into
+place. A changed or truncated upstream file therefore fails the fetch instead of landing in the cache or an image.
+For plugins it also removes any jar the manifest does not list: XNAT loads every jar in the directory, so a stale
+version beside the new one would load both. `check` verifies the same rules and never downloads.
 
 ### Other Make targets
 
@@ -279,7 +277,8 @@ already there.
 | `xnat-configure XNAT_PROJECT=xnat<N>` | Re-run `configure-xnat.sh` + `configure-dcm2niix.sh` against a **live** instance, without resetting its data. |
 | `create-xnat-network KIT=<CODE>` | Ensure this trust's attachable overlay network exists (run for you by `up-xnat`). |
 | `xnat-stack-down STACK=<stack>` | `docker stack rm` one stack and **block** until its containers have stopped — `docker stack rm` is asynchronous, and `xnat-reset` must not delete bind-mount sources still held by a running container. Times out at 120s. |
-| `xnat-war-download` / `xnat-plugins-download` | Fill the local build-artifact / plugin caches from S3 (see above). |
+| `xnat-war-download` / `xnat-plugins-download` | Fill the build-context WAR / dev plugin cache from the manifest's upstream URLs (or `ARTIFACTS_DIR=<dir>`), verifying checksums (see above). |
+| `xnat-plugins-check` | Verify the dev plugin cache against the manifest without downloading; run by `up-xnat` in development. |
 | `test` / `unit_test` / `local_test` | The anonymization-script test pack in [`tests/`](./tests/) — pure Python, no XNAT or Docker. |
 
 ### Plugin compatibility
@@ -327,24 +326,18 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
 DQR fix if this 1.10 upgrade stalls.
 
-The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0 +
-OHIF viewer 3.8.0) is uploaded and CI-verified. All four upgraded artifacts are public downloads, no
-account needed:
-the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`,
-DQR from
-`https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
-(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), CS from
-`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`,
-and the viewer from `https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar` (the
-same URL the Helm chart downloads at pod start).
-Local builds skip S3 when the files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
+The 1.10.0 artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0 + OHIF viewer
+3.8.0) is pinned in [`artifacts.manifest`](artifacts.manifest). Every file is a public download that needs no
+account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8 fallback.
 
 ### Adding or updating a plugin
 
-1. Upload the new `.jar` file to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/plugins/` for the
-   XNAT version it targets (removing the JAR it replaces — the sync bakes every JAR in the prefix).
-2. Update the plugin compatibility table above.
-3. Trigger the CI workflows (push or `gh workflow run`) to rebuild the image with the new plugin.
+1. Replace the plugin's line in [`artifacts.manifest`](artifacts.manifest) with the new upstream URL and its
+   SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
+   plus `XNAT_VERSION` in `.env`.
+2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
+3. Update the plugin compatibility table above.
+4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 
@@ -383,9 +376,17 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
 
 ## Troubleshooting
 
-- **Missing plugins or an S3/AWS error before startup** — confirm `FLIP_ARTIFACTS_BUCKET_NAME`, renew the selected AWS
-  SSO session, then run `make -C trust/xnat xnat-plugins-download` from the repository root. The command must find the
-  batch-launch, container-service, DICOM Query-Retrieve and OHIF viewer plugin families before startup can continue.
+- **`The XNAT plugin cache ... is not ready` before startup** — run `make -C trust prepare-artifacts` from the
+  repository root (add `ARTIFACTS_DIR=<dir>` on a host with no internet route), then `make up` again. The message lists
+  each file that is missing, has the wrong checksum or is not in the manifest.
+
+- **`Download failed` or a checksum mismatch from `xnat_artifacts.sh`** — the WAR and plugins come straight from
+  their upstream hosts (api.bitbucket.org, xnat.org, GitHub), with no FLIP mirror in between, so an upstream outage or a
+  re-published file stops `prepare-artifacts`, the local image build and the CI `xnat-web` build alike. Open the URL from
+  the message: if the host is down, retry later (in CI, re-run the workflow). Locally, a copy of the files from another
+  machine works now: `make -C trust prepare-artifacts ARTIFACTS_DIR=<dir>`, still checked against the manifest. A
+  checksum mismatch means the upstream file changed; do not edit the manifest to match until the new file is
+  confirmed to be the intended release.
 
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
   `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with

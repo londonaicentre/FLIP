@@ -44,17 +44,23 @@ file into the Kubernetes Secret over kubectl's TLS channel. The generated
 override file (``k8s-trust-*.yaml``) is gitignored and contains no secrets.
 
 Usage:
-  python3 sync_k8s_kit.py --kit Trust_K8s --env stag
-  python3 sync_k8s_kit.py --kit Trust_2          # env auto-detected from $PROD
+  python3 sync_k8s_kit.py --kit Trust_K8s --env lza-stag
+  python3 sync_k8s_kit.py --kit Trust_2                 # no PROD set: the development kit
+
+``--env`` is the ``trust/.env.<KIT>.<suffix>`` token. ``deploy/env_mode.mk`` is the only
+place that maps ``PROD`` to it, and the chart Makefile passes the result as ``--env``; with
+``PROD`` set and no ``--env`` this script refuses rather than keep a second copy of the map.
 """
 
 import argparse
 import base64
+import functools
 import hashlib
 import importlib.util
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -288,6 +294,383 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], 
 
     print(f"  ✓ {verb} Kubernetes Secret entries (Helm-owned by release '{release_name}').")
     print("    Plaintext values went straight to Kubernetes — not persisted to disk.")
+
+
+#: The generated Helm secrets values file, alongside the chart. It is the OTHER writer of
+#: the same Secret keys (scripts/generate_values.py renders it from the kit), which is what
+#: makes `align_values_secrets` necessary — see its docstring.
+VALUES_SECRETS_NAME = "values-secrets.yaml"  # pragma: allowlist secret
+
+
+@functools.cache
+def _generate_values() -> ModuleType:
+    """``scripts/generate_values.py``, loaded by path — it is a script, not an installed module.
+
+    ``values-secrets.yaml`` has two writers: that script renders the whole file from the kit,
+    and ``align_values_secrets`` patches the kit-owned slots in place. Sharing its
+    ``yaml_quote`` keeps both writers quoting and escaping identically, so a value carrying a
+    quote or a backslash cannot produce YAML one writer accepts and the other mangles.
+    """
+    path = Path(__file__).resolve().parent / "scripts" / "generate_values.py"
+    spec = importlib.util.spec_from_file_location("_flip_generate_values", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load the values generator from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def yaml_quote(value: str) -> str:
+    """``generate_values.yaml_quote`` — the one quoting rule both writers of the file use."""
+    quoted: str = _generate_values().yaml_quote(value)
+    return quoted
+
+
+class ValuesSecretsError(RuntimeError):
+    """``values-secrets.yaml`` is a shape this script cannot realign safely.
+
+    Raised instead of writing a file whose parsed result would not be the one slot the
+    chart renders — a duplicate key, or a slot whose value continues on the lines below it.
+    Silence there is
+    the worst outcome: the operator is told the realign succeeded, and the next
+    ``helm upgrade`` still dies on the SSA conflict (or, worse, deploys a wrong credential).
+    """
+
+
+def _is_comment(line: str) -> bool:
+    """A whole-line YAML comment. These never end a block — they sit inside one."""
+    return line.lstrip().startswith("#")
+
+
+def _slot_pattern(secret_key: str) -> re.Pattern[str]:
+    """The key's own line in ``secrets.data``.
+
+    ``(\\s.*)?$`` rather than ``\\s.*$``: a hand-filled file routinely carries an EMPTY slot
+    (``trust-api-key:`` with nothing after the colon), which the stricter form did not match
+    — so the key was treated as absent, a second copy was inserted above it, and
+    ``yaml.safe_load`` then read the *last* one: ``None``.
+    """
+    return re.compile(rf"^(\s*){re.escape(secret_key)}:(\s.*)?$")
+
+
+@functools.cache
+def _yaml() -> ModuleType:
+    """PyYAML, imported on use — the realign is verified by parsing, not by more regex.
+
+    The rest of this script is stdlib-only and runs under a bare ``python3``. This one step
+    needs a real parser: the only trustworthy statement about a hand-edited file is what
+    ``yaml.safe_load`` makes of it, because that is what Helm reads. Without it we cannot
+    tell whether the file we are about to write says what we meant, so we refuse rather than
+    write an unverified credentials file.
+    """
+    try:
+        import yaml
+    except ModuleNotFoundError as e:  # pragma: no cover - environment-dependent
+        raise ValuesSecretsError(
+            f"{VALUES_SECRETS_NAME} cannot be verified: PyYAML is not installed. The realign is "
+            "checked by parsing the result (not by matching lines), so without it this script "
+            "will not write the file. Install it (`pip install pyyaml`) and re-run."
+        ) from e
+    return yaml
+
+
+def _continues_below(lines: list[str], i: int, end: int) -> bool:
+    """Does the slot at ``lines[i]`` carry its value on the lines below it?
+
+    A single-line rewrite of such a slot orphans the continuation, which then parses as a
+    sibling mapping, as part of the *new* value, or as a syntax error — in every case the
+    file says something we did not mean, and the operator is told "Realigned".
+
+    Indentation is the whole test, deliberately: it holds for block scalars with any
+    indicator or tag (``|``, ``>-``, ``|2-``, ``!!str |``) and for continued quoted or plain
+    scalars alike, so there is no list of forms to keep widening. Blank lines and comments
+    are skipped — they belong to whatever follows them, not to this slot.
+    """
+    for j in range(i + 1, end):
+        if not lines[j].strip() or _is_comment(lines[j]):
+            continue
+        slot_indent = len(lines[i]) - len(lines[i].lstrip())
+        return (len(lines[j]) - len(lines[j].lstrip())) > slot_indent
+    return False
+
+
+def _data_mapping_node(text: str) -> object | None:
+    """The composed ``secrets.data`` mapping node — duplicate keys still present.
+
+    ``safe_load`` applies YAML's last-one-wins and so cannot report a duplicate; the node
+    tree ``compose`` returns keeps every key, which is what makes the occurrence count
+    below a fact about the file rather than about our own regex.
+    """
+    yaml = _yaml()
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(root, yaml.MappingNode):
+        return None
+    for key, value in root.value:
+        if getattr(key, "value", None) == "secrets" and isinstance(value, yaml.MappingNode):
+            for inner_key, inner_value in value.value:
+                if getattr(inner_key, "value", None) == "data" and isinstance(inner_value, yaml.MappingNode):
+                    return inner_value
+    return None
+
+
+def _verify_realigned(path: Path, text: str, entries: dict[str, str]) -> None:
+    """Refuse unless the edited text *parses* as the values we meant to write.
+
+    This replaces the line-matching duplicate check, which could only ever see the shapes
+    its own pattern matched: a quoted key (``"trust-api-key": old``), a space before the
+    colon, or an explicit ``? key`` / ``: value`` pair all went unmatched, so a second copy
+    was inserted and YAML's last-one-wins handed the chart the stale value — the operator
+    reading "Realigned" while the next ``helm upgrade`` died on the same SSA conflict.
+
+    Parsing the result answers the only question that matters — *what will Helm read?* — in
+    one place, for every quoting, spacing and key style at once.
+
+    Raises:
+        ValuesSecretsError: The parse failed, the block went missing, a kit-owned key does
+            not read back as the value just patched, or a key appears more than once.
+    """
+    yaml = _yaml()
+    try:
+        parsed = yaml.safe_load(text)
+    except yaml.YAMLError as e:
+        raise ValuesSecretsError(f"{path}: the realigned file is not valid YAML ({e}). Nothing was written.") from e
+
+    data = (parsed or {}).get("secrets", {}).get("data") if isinstance(parsed, dict) else None
+    if not isinstance(data, dict):
+        raise ValuesSecretsError(
+            f"{path}: after the realign the file has no `secrets.data` mapping, so the chart would "
+            "render none of the keys just patched. Nothing was written."
+        )
+
+    node = _data_mapping_node(text)
+    occurrences: dict[str, int] = {}
+    if node is not None:
+        for key_node, _ in node.value:  # type: ignore[attr-defined]
+            name = getattr(key_node, "value", None)
+            if isinstance(name, str):
+                occurrences[name] = occurrences.get(name, 0) + 1
+
+    for secret_key, value in entries.items():
+        if occurrences.get(secret_key, 0) > 1:
+            raise ValuesSecretsError(
+                f"{path}: `{secret_key}` appears more than once under `secrets.data` (it parses as "
+                f"{occurrences[secret_key]} entries — quoting and spacing do not change that). YAML keeps "
+                "the last one, so the chart would render a value this sync did not set. Delete the "
+                "duplicate slots, leaving one, and re-run."
+            )
+        if data.get(secret_key) != value:
+            raise ValuesSecretsError(
+                f"{path}: after the realign `{secret_key}` does not parse as the value just patched into "
+                "the cluster, so the next `helm upgrade` would still conflict on it. Rewrite the slot as a "
+                "single-line `key: value` entry (the generated file always does) and re-run."
+            )
+
+
+def _secrets_data_block(lines: list[str]) -> tuple[int, int, str] | None:
+    """Locate the ``secrets:`` -> ``data:`` mapping in ``values-secrets.yaml``.
+
+    ``align_values_secrets`` must only ever touch that block. A key name such as
+    ``trust-api-key`` is free to appear elsewhere in the file (another top-level section, a
+    comment-led example), and a blind first-match regex would rewrite the wrong line — and
+    write a secret into a slot the chart does not read.
+
+    Comments are part of the block, not the end of it. A hand-edited file commonly carries a
+    note at column 0 (or at the ``data:`` indent) between the slots; treating it as a
+    boundary cut the block short, hid the real slot below it, and a duplicate was inserted
+    whose *stale* neighbour then won the parse. Trailing comments on the two header lines
+    (``secrets:  # generated``) are allowed for the same reason: without that, the whole
+    block went unfound and the realign silently did nothing.
+
+    Args:
+        lines: The file's lines.
+
+    Returns:
+        ``(start, end, indent)`` — the half-open line range of the block's entries and the
+        indent its existing entries use (so an inserted slot matches the file's own layout
+        rather than a hardcoded four spaces). ``None`` when the file carries no such block.
+    """
+    secrets_at = next((i for i, line in enumerate(lines) if re.match(r"^secrets:\s*(#.*)?$", line)), None)
+    if secrets_at is None:
+        return None
+    # The entries of `secrets:` are indented; the section ends at the next line at column 0 —
+    # a comment there is a note about the block, not the start of a new top-level key.
+    section_end = next(
+        (
+            i
+            for i in range(secrets_at + 1, len(lines))
+            if lines[i].strip() and not lines[i][:1].isspace() and not _is_comment(lines[i])
+        ),
+        len(lines),
+    )
+    data_match = next(
+        ((i, m) for i in range(secrets_at + 1, section_end) if (m := re.match(r"^(\s+)data:\s*(#.*)?$", lines[i]))),
+        None,
+    )
+    if data_match is None:
+        return None
+    data_at, m = data_match
+    data_indent = m.group(1)
+    # Entries of `data:` are indented deeper than `data:` itself; the block ends at the first
+    # non-blank, non-comment line that is not.
+    end = next(
+        (
+            i
+            for i in range(data_at + 1, section_end)
+            if lines[i].strip() and not _is_comment(lines[i]) and not lines[i].startswith(data_indent + " ")
+        ),
+        section_end,
+    )
+    entry_indents = [
+        re.match(r"^(\s+)", lines[i]).group(1)  # type: ignore[union-attr]
+        for i in range(data_at + 1, end)
+        if lines[i].strip() and not _is_comment(lines[i])
+    ]
+    indent = entry_indents[0] if entry_indents else data_indent + "  "
+    return data_at + 1, end, indent
+
+
+def _write_atomically(path: Path, text: str) -> None:
+    """Replace ``path`` in one step, never leaving a half-written credentials file.
+
+    ``path.write_text`` truncates and then writes, and this runs *after* the cluster has
+    been patched: an interruption in that window leaves the file empty, which is not a stale
+    file but no file at all — ``templates/secrets.yaml`` omits an empty slot, so the next
+    deploy would roll out pods with no trust credentials.
+
+    The temp file is created in the same directory (``os.replace`` is only atomic within a
+    filesystem) with mode 0600, carries over the original's mode, and is fsynced before the
+    rename so the rename cannot land ahead of the data. The parent directory is fsynced
+    after the rename too, so the rename itself survives a power loss rather than leaving the
+    old file behind while the operator has been told the realign is done.
+    """
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    dir_fd = os.open(str(path.parent), os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def align_values_secrets(path: Path, entries: dict[str, str]) -> list[str]:
+    """Write the kit's per-trust secrets into ``values-secrets.yaml`` as well (FLIP#1366).
+
+    Helm 4 applies the release server-side, and SSA raises a conflict when an apply would
+    *change* a field another manager owns. `patch-kit-secrets` writes
+    ``.data.{aes-key-base64,trust-api-key,trust-internal-service-key}`` with field manager
+    ``kubectl-patch``; the chart templates those same keys from ``values-secrets.yaml``. So
+    the next ``helm upgrade`` dies with::
+
+        Apply failed with 3 conflicts: conflict with "kubectl-patch" using v1: .data.trust-api-key
+
+    — but only when the two disagree. That conflict is therefore not noise: it is the API
+    server reporting that the cluster's live keys and the chart's rendered keys have drifted,
+    and the release stays on its last working revision rather than overwriting live
+    credentials. The fix is to remove the *disagreement*, not to silence the report:
+
+    * ``--force-conflicts`` on the upgrade would hand ownership back by overwriting the live
+      keys with whatever ``values-secrets.yaml`` holds — a stale value, or none at all, since
+      ``templates/secrets.yaml`` omits an empty slot. A redeploy would silently revert the
+      trust's API key and the trust would poll the hub with a dead credential.
+    * Re-patching with ``--field-manager=helm`` does NOT help: the patch is an *Update*
+      operation, a different managedFields entry from helm's *Apply*, so the conflict is
+      merely re-reported as ``conflict with "helm"`` (verified against Helm 4.3 on Kubernetes
+      1.37).
+    * ``kubectl apply --server-side`` of the three keys as ``helm`` is worse still: a partial
+      apply prunes every key that manager owns and did not list, emptying the XNAT/OMOP/
+      Orthanc slots out of the same Secret (also verified).
+
+    Keeping the generated values file in step with what we just patched means helm's apply
+    is a no-op on those fields, so SSA raises nothing, the kit stays the single source of
+    truth, and no redeploy can revert a key. Only the slots the kit owns are touched; every
+    other slot, comment and the file's 0600 mode are preserved.
+
+    Args:
+        path: Path to ``values-secrets.yaml``. A missing file is not an error — the chart
+            then renders ``secrets.create: false`` and manages no Secret of its own.
+        entries: Secret key -> plaintext value, as patched into the cluster.
+
+    Returns:
+        list[str]: The Secret key NAMES realigned (never values), for the operator log.
+
+    Raises:
+        ValuesSecretsError: The file cannot be realigned into a state the chart would render
+            as the values just patched — a slot whose value continues on the lines below it,
+            or a key that still parses as more than one entry (or as the wrong value)
+            afterwards. Nothing is written in that case.
+    """
+    if not path.exists():
+        return []
+    lines = path.read_text().splitlines()
+    block = _secrets_data_block(lines)
+    if block is None:
+        # Not an error (the operator may deliberately manage the Secret elsewhere), but it
+        # cannot pass silently either: the keys were just patched into the cluster, so the
+        # chart's rendered values now disagree with the live ones.
+        print(f"  ⚠  {path} has no `secrets:` -> `data:` block — nothing was realigned.")
+        print("     The keys just patched into the cluster are NOT in this file, so the next")
+        print("     `helm upgrade` will conflict on them (server-side apply). Regenerate it with")
+        print("     scripts/generate_values.py, or add the block by hand and re-run.")
+        return []
+    start, end, indent = block
+
+    aligned: list[str] = []
+    for secret_key, value in entries.items():
+        pattern = _slot_pattern(secret_key)
+        for i in range(start, end):
+            match = pattern.match(lines[i])
+            if match:
+                if _continues_below(lines, i, end):
+                    # The value runs on below this line — a block scalar with any indicator
+                    # or tag, or a continued quoted/plain scalar. Rewriting the line alone
+                    # orphans the rest, and the orphan parses as a sibling mapping, as part
+                    # of the new value, or as a syntax error. Refuse rather than guess how
+                    # far it runs.
+                    raise ValuesSecretsError(
+                        f"{path}: the `{secret_key}` slot's value continues on the line(s) below it "
+                        "(a block scalar, or a value wrapped across lines). Rewrite it as a single-line "
+                        "value (the generated file always does) and re-run."
+                    )
+                replacement = f"{match.group(1)}{secret_key}: {yaml_quote(value)}"
+                if lines[i] != replacement:
+                    lines[i] = replacement
+                    aligned.append(secret_key)
+                break
+        else:
+            # The slot is absent (an older generated file, or a kit that did not carry the
+            # key when it was generated). Add it under secrets.data rather than leaving the
+            # chart to render a Secret without it.
+            lines.insert(start, f"{indent}{secret_key}: {yaml_quote(value)}")
+            end += 1
+            aligned.append(secret_key)
+
+    # Everything above is a line edit; this is the check that it *means* what we intended.
+    # Parsing the result is the only statement about a hand-edited file that holds for every
+    # quoting, spacing and key style at once — a line-matching duplicate check could only
+    # ever see the shapes its own pattern matched. Run before anything is written.
+    text = "\n".join(lines) + "\n"
+    _verify_realigned(path, text, entries)
+
+    if aligned:
+        # Replace in one step, preserving the file's 0600 mode; never widen it.
+        _write_atomically(path, text)
+    return aligned
 
 
 def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
@@ -552,6 +935,28 @@ def main(
         if ns_present:
             print("🔐 Patching per-trust secrets into the Kubernetes Secret…")
             patch_k8s_secret(secret_name, namespace, entries, release_name)
+            # Keep the chart's own view of these keys identical, or the next Helm 4
+            # `upgrade` conflicts on them (server-side apply) — see align_values_secrets.
+            try:
+                realigned = align_values_secrets(output_dir / VALUES_SECRETS_NAME, entries)
+            except ValuesSecretsError as e:
+                print(f"❌ {e}")
+                print("   The cluster Secret WAS patched; only the values file was left untouched.")
+                print("   Fix the file and re-run this command — it is idempotent.")
+                sys.exit(1)
+            except OSError as e:
+                # The write itself failed (read-only mount, full disk, no permission). The
+                # same message matters even more here: the cluster is already patched, and
+                # a bare traceback would not say so.
+                print(f"❌ Could not write {output_dir / VALUES_SECRETS_NAME}: {e}")
+                print("   The cluster Secret WAS patched; only the values file was left untouched.")
+                print("   Fix the permissions or free the space and re-run — it is idempotent.")
+                sys.exit(1)
+            if realigned:
+                # Static message on purpose: CodeQL's clear-text-logging query treats anything
+                # derived from the secrets mapping, or a name containing "secret", as sensitive.
+                print("  ✓ Realigned the kit-owned slots in values-secrets.yaml")  # pragma: allowlist secret
+                print("    (so the next `helm upgrade` applies the same values and raises no SSA conflict)")
             print()
         else:
             print(f"ⓘ  Namespace '{namespace}' not found — skipping Secret patch.")
@@ -597,7 +1002,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--env",
         default=None,
-        help="Deployment env suffix (stag|production|development). Default: from $PROD.",
+        help="Deployment env suffix (the trust/.env.<KIT>.<suffix> token, e.g. production, "
+        "lza-stag). Required when PROD is set; the chart Makefile injects it from "
+        "deploy/env_mode.mk. Default without PROD: development.",
     )
     parser.add_argument("--namespace", default="flip-trust", help="Kubernetes namespace")
     parser.add_argument(
@@ -638,10 +1045,21 @@ if __name__ == "__main__":
     if args.kube_context:
         KUBECTL += ["--context", args.kube_context]
 
-    # Resolve env suffix the same way the rest of the tooling does.
+    # The kit-file env token comes from deploy/env_mode.mk via the Makefile, which passes it
+    # as `--env $(ENV)`. That is the only PROD -> token map; this script does not keep a
+    # second copy of it (two copies are how the LZA tokens drifted out of step), so PROD
+    # without --env is an error rather than a guess at a kit file that may not exist.
     if args.env is None:
         prod = os.environ.get("PROD", "")
-        env_suffix = "production" if prod == "true" else "stag" if prod == "stag" else "development"
+        if prod:
+            sys.exit(
+                f"❌ PROD={prod!r} is set but --env is not.\n"
+                "   PROD maps to the kit-file token in deploy/env_mode.mk only. Run this through\n"
+                "   the chart Makefile, which injects it:\n"
+                "       make -C trust/deploy/helm sync-kit KIT=<KIT> PROD=" + prod + "\n"
+                "   Or pass the token directly:  --env <token>"
+            )
+        env_suffix = "development"
     else:
         env_suffix = args.env
 
