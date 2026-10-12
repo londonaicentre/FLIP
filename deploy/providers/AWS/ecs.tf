@@ -44,15 +44,15 @@ resource "aws_ecs_cluster_capacity_providers" "flip" {
 
 resource "aws_cloudwatch_log_group" "ecs_flip_api" {
   name              = "/ecs/flip-api"
-  retention_in_days = 7
+  retention_in_days = local.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "ecs_fl_api_net_1" {
   name              = "/ecs/fl-api-net-1"
-  retention_in_days = 7
+  retention_in_days = local.log_retention_days
 }
 
 resource "aws_cloudwatch_log_group" "ecs_fl_server_net_1" {
   name              = "/ecs/fl-server-net-1"
-  retention_in_days = 7
+  retention_in_days = local.log_retention_days
 }

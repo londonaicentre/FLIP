@@ -12,6 +12,7 @@
 
 import json
 import os
+from typing import Any
 
 import torch
 from nvflare.apis.fl_context import FLContext
@@ -48,11 +49,25 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
     object), so it is a safe drop-in for the shared standard base app.
     """
 
-    def __init__(self, model: torch.nn.Module | None = None, model_id: str = "", **kwargs) -> None:
+    def __init__(
+        self,
+        model: torch.nn.Module | str | dict[str, Any] | None = None,
+        model_id: str = "",
+        **kwargs: Any,
+    ) -> None:
+        """
+        Args:
+            model: As for the stock persistor — a model object, a component id, or the
+                ``{"path": ..., "args": ...}`` component config a recipe passes (NVFLARE's
+                ComponentBuilder instantiates it before this persistor is built at run time).
+            model_id: FLIP model ID (legacy path); when empty it is resolved lazily from the job's
+                meta.json custom_props via ``get_flip_model_id``.
+            **kwargs: Passed through to ``PTFileModelPersistor``.
+        """
         super().__init__(model=model, **kwargs)
         self._model_id_arg = model_id
 
-    def _resolve_backbone(self, fl_ctx: FLContext):
+    def _resolve_backbone(self, fl_ctx: FLContext) -> str | None:
         """Locate the declared backbone checkpoint, or ``None`` if none is declared/found."""
         app_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
         config_path = os.path.join(app_dir, "custom", "config.json")
@@ -87,8 +102,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
 
         self.log_error(
             fl_ctx,
-            f"SERVER_CHECKPOINT '{checkpoint}' not found at '{bundled_path}' "
-            f"(LOCAL_DEV; shared-volume fetch skipped).",
+            f"SERVER_CHECKPOINT '{checkpoint}' not found at '{bundled_path}' (LOCAL_DEV; shared-volume fetch skipped).",
             fire_event=True,
         )
         return None

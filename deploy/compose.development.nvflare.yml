@@ -25,6 +25,11 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the
+      # FL API may download an app bundle from — the dev object store flip-api presigns bundle
+      # URLs against (AWS_ENDPOINT_URL_S3 in its service block; path-style URLs, host exactly
+      # object-store:9000). The two lines must move together, or every bundle download 400s.
+      - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job GPU request written into meta.json resource_spec by configure_meta. Default 0 =>
@@ -37,6 +42,10 @@ services:
       # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
       # who can reach it; see compose.development.yml's flip-api ports (FLIP#959).
       - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"
+    # Reads the host-provisioned 640 admin client.key through the host group (see the `provision`
+    # target in fl-services/nvflare/Makefile, FLIP#1384). No default: a guessed gid is either the
+    # wrong group for the key or someone else's group.
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -62,11 +71,15 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+      # Bundle-fetch origin allow-list: the dev object store, like fl-api-net-1 (FLIP#905, #1291).
+      - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
       - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
+    # The 640 admin client.key, through the host group (see fl-api-net-1).
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -98,38 +111,52 @@ services:
       # from here by the fl-server. The checkpoint is never in the NVFLARE job, so it is never
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image now runs as the non-root ${UNAME} user with
-      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
-      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
-      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      - AWS_PROFILE=${AWS_PROFILE}
+      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
+      # env is right here, the fl-server has no other AWS use. Same variables as the store.
+      - AWS_ENDPOINT_URL_S3=http://object-store:9000
+      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
+      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
-      - HOME=/home/${UNAME}
+      - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
+      # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
+      # and only falls back to pwd, so naming the image's user here keeps every
+      # getuser() caller working without mounting the host's passwd file (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
+    depends_on:
+      # The store must serve before the first results upload (FLIP#1291).
+      object-store:
+        condition: service_healthy
+    # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned
+    # NVFLARE kit mounted above is owned by whoever ran `make provision`, so only a
+    # matching uid can read and write it (the 0600 SSO token that once shared this
+    # rationale is gone: results go to the dev object store, FLIP#1291). The gid stays
+    # the image's so /app and /home/flip — group-writable in fl-base — remain writable for
+    # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
+    # 1000, so this resolves to the baked identity and nothing changes there; prod
+    # composes set no `user:` at all and keep running as `flip`.
+    user: "${UID:-1000}:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
-      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
-      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
-      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
-      # needed to read them; the entrypoint also chmods kit scripts it does not own
-      # (FOWNER). Without these the container crash-loops (FLIP#485).
-      - DAC_OVERRIDE
-      - FOWNER
+    # No cap_add. The previous CHOWN/DAC_OVERRIDE/FOWNER grants were inert and always
+    # had been: Docker gives effective capabilities only to uid 0, and this container
+    # is non-root, so they landed in the bounding set alone (verified in the running
+    # container: CapBnd 0xb, CapEff 0). They could not have been what made the
+    # host-owned mounts readable — a matching uid was, which is exactly what broke
+    # when the published images' uid stopped matching the developer's. Reading the
+    # mounts is now the `user:` override's job, honestly and least-privileged.
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
     # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
     # deliberately not on the FL net — see the networks block in compose.development.yml.
@@ -150,38 +177,52 @@ services:
       # from here by the fl-server. The checkpoint is never in the NVFLARE job, so it is never
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-2:/app/server-checkpoints
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image now runs as the non-root ${UNAME} user with
-      # HOME=/home/${UNAME} (GHSA-8465), so the mount lands under
-      # /home/${UNAME}/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
-      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
-      - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      - AWS_PROFILE=${AWS_PROFILE}
+      # Results go to the dev object store (FLIP#1291) with its static keys — generic AWS
+      # env is right here, the fl-server has no other AWS use. Same variables as the store.
+      - AWS_ENDPOINT_URL_S3=http://object-store:9000
+      - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
+      - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
+      - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
-      - HOME=/home/${UNAME}
+      - HOME=/home/flip
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises
+      # KeyError: 'getpwuid(): uid not found'. getpass.getuser() consults these first
+      # and only falls back to pwd, so naming the image's user here keeps every
+      # getuser() caller working without mounting the host's passwd file (FLIP#1171).
+      - USER=flip
+      - LOGNAME=flip
+    depends_on:
+      # The store must serve before the first results upload (FLIP#1291).
+      object-store:
+        condition: service_healthy
+    # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned
+    # NVFLARE kit mounted above is owned by whoever ran `make provision`, so only a
+    # matching uid can read and write it (the 0600 SSO token that once shared this
+    # rationale is gone: results go to the dev object store, FLIP#1291). The gid stays
+    # the image's so /app and /home/flip — group-writable in fl-base — remain writable for
+    # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
+    # 1000, so this resolves to the baked identity and nothing changes there; prod
+    # composes set no `user:` at all and keep running as `flip`.
+    user: "${UID:-1000}:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The container runs as the non-root ${UNAME} user (GHSA-8465), but its bind
-      # mounts (the provisioned NVFLARE kit with 0600 keys; on fl-server also the
-      # operator's 0600 AWS SSO token cache) are owned by the host uid. cap_drop: ALL
-      # strips the implicit DAC bypass root would otherwise have, so DAC_OVERRIDE is
-      # needed to read them; the entrypoint also chmods kit scripts it does not own
-      # (FOWNER). Without these the container crash-loops (FLIP#485).
-      - DAC_OVERRIDE
-      - FOWNER
+    # No cap_add. The previous CHOWN/DAC_OVERRIDE/FOWNER grants were inert and always
+    # had been: Docker gives effective capabilities only to uid 0, and this container
+    # is non-root, so they landed in the bounding set alone (verified in the running
+    # container: CapBnd 0xb, CapEff 0). They could not have been what made the
+    # host-owned mounts readable — a matching uid was, which is exactly what broke
+    # when the published images' uid stopped matching the developer's. Reading the
+    # mounts is now the `user:` override's job, honestly and least-privileged.
     # `default` is the hub-internal network — see fl-server-net-1 above.
     networks:
       - default

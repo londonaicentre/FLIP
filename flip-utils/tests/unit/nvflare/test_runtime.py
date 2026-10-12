@@ -10,6 +10,7 @@
 # limitations under the License.
 
 import json
+import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -79,6 +80,15 @@ def test_workspace_fallback_returns_empty_when_no_engine():
 def test_workspace_fallback_returns_empty_when_no_workspace():
     # _load_meta_from_workspace: engine present but workspace is None -> None -> {}
     assert get_job_custom_props(_ctx_workspace(workspace=False)) == {}
+
+
+@pytest.mark.parametrize("meta_path", [1, None], ids=["fd-like int", "bare MagicMock"])
+def test_workspace_fallback_never_opens_a_non_path_as_a_file_descriptor(meta_path):
+    # open() accepts any __index__-able object as a file descriptor — an int, or a MagicMock (whose
+    # __index__ is 1) — which would wrap stdout and close it on exit. A workspace answering with a
+    # non-path must fall through to {} and leave fd 1 untouched.
+    assert get_job_custom_props(_ctx_workspace(meta_path=meta_path)) == {}
+    os.fstat(1)  # raises EBADF if the fallback closed stdout
 
 
 def test_workspace_fallback_reads_custom_props_from_meta_json(tmp_path):

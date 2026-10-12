@@ -12,7 +12,8 @@
  */
 
 /**
- * Fails a NON-demo build whose output still carries the Ark+ demo register.
+ * Fails a NON-demo build whose output still carries the Ark+ demo register or
+ * the MirageJS mock stack.
  *
  * scripts/check-build-flags.mjs inspects the *environment* — it proves the
  * build was invoked without VITE_DEMO. This script inspects the *artefact*,
@@ -20,7 +21,10 @@
  * register once shipped inside the public production entry chunk from a build
  * whose environment was entirely clean, because the branch guarding it was a
  * cross-module const that rolldown could not fold away (FLIP#794 review). Only
- * an output check catches that class of regression.
+ * an output check catches that class of regression. The Mirage sentinels guard
+ * the same class for the mock servers themselves (FLIP#1041): the
+ * `flip-ui/no-static-mirage` lint block stops a static re-import at source, but
+ * only this check would see a folded branch that stops folding.
  *
  * Runs from `postbuild:deploy`, i.e. on exactly the build `make deploy-ui`
  * publishes to the production CloudFront origin. It deliberately does NOT run
@@ -56,10 +60,11 @@ export function demoUserId() {
 }
 
 /**
- * Strings that exist ONLY in the recorded register, each standing in for one
- * class of leaked content. Model and project ids are deliberately absent: they
- * are public URL path segments carried by src/demo/bootstrap.ts (the demo
- * download map), which every build legitimately contains.
+ * Strings that must not appear in a deploy build, each standing in for one
+ * class of leaked content: recorded register data, the demo boot branch, or the
+ * Mirage/Pretender library code itself. Model and project ids are deliberately
+ * absent: they are public URL path segments carried by src/demo/bootstrap.ts
+ * (the demo download map), which every build legitimately contains.
  */
 export function sentinels() {
     return [
@@ -67,7 +72,14 @@ export function sentinels() {
         { label: "recorded OMOP cohort SQL", needle: "WITH project_images AS" },
         { label: "recorded trust roster", needle: "Bangkok Dusit Medical Services" },
         { label: "recorded trust roster", needle: "AI Centre Private" },
-        { label: "demo-mode boot branch", needle: "Running in Ark+ demo mode" }
+        { label: "demo-mode boot branch", needle: "Running in Ark+ demo mode" },
+        // Mirage itself, not just the register (FLIP#1041): mocks/server (the
+        // VITE_LOCAL dev mock) carries no register data, so a static re-import
+        // of it — or a mock branch that stops folding — ships Mirage/Pretender
+        // without touching any needle above. These literals live in the
+        // libraries' own code and survive minification.
+        { label: "MirageJS library code", needle: "Mirage: Passthrough request for " },
+        { label: "Pretender library code", needle: "Pretender intercepted" }
     ];
 }
 
@@ -127,7 +139,7 @@ export function runCli(argv, io) {
     }
 
     if (result.hits.length > 0) {
-        io.error("assert-no-demo-artefacts: FAILED — Ark+ demo register found in a non-demo build.\n");
+        io.error("assert-no-demo-artefacts: FAILED — demo/mock artefacts found in a non-demo build.\n");
 
         for (const { file, label, needle } of result.hits) {
             io.error(`  ${file}\n    ${label}: ${JSON.stringify(needle)}`);
@@ -135,9 +147,11 @@ export function runCli(argv, io) {
 
         io.error(
             "\nThis output is published unauthenticated to the production CloudFront origin.\n"
-            + "Cause is almost always a demo branch guarded by a value rolldown cannot fold at\n"
-            + "build time — gate on the `import.meta.env.VITE_DEMO === \"true\"` literal in the\n"
-            + "same module, never on a const imported from another one. See src/main.ts.\n"
+            + "Cause is almost always a mock branch guarded by a value rolldown cannot fold at\n"
+            + "build time — gate on the `import.meta.env.VITE_DEMO === \"true\"` / VITE_LOCAL\n"
+            + "literal in the same module, never on a const imported from another one — or a\n"
+            + "static import of a mock server, which the flip-ui/no-static-mirage lint block\n"
+            + "flags at source. See src/main.ts.\n"
         );
         io.exit(1);
 

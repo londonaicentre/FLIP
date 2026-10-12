@@ -50,6 +50,12 @@
             >
                 {{ item.name }}
                 <span
+                    v-if="item.badge"
+                    data-test="nav-badge"
+                    class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[11px] font-bold bg-primary-500 text-white"
+                    :aria-label="`${item.badge} awaiting your decision`"
+                >{{ item.badge }}</span>
+                <span
                     v-if="item.current"
                     aria-hidden="true"
                     class="absolute left-3 right-3 -bottom-px h-[3px] bg-primary-500 rounded-t"
@@ -139,6 +145,10 @@
                                         @click="close"
                                     >
                                         {{ item.name }}
+                                        <span
+                                            v-if="item.badge"
+                                            class="ml-1.5 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[11px] font-bold bg-primary-500 text-white"
+                                        >{{ item.badge }}</span>
                                     </router-link>
                                 </div>
                             </div>

@@ -157,10 +157,7 @@ def test_stage_project_not_unstaged_status(app_fixture, client, test_user_id, te
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     # ProjectStatus is a StrEnum, so interpolating ProjectStatus.UNSTAGED into the error message renders the
     # bare value "UNSTAGED", not "ProjectStatus.UNSTAGED" as the old (str, Enum) did. Expected, not a regression.
-    assert (
-        response.json()["detail"]
-        == f"Project with ID: {test_project_id} is not 'UNSTAGED' and cannot be staged."
-    )
+    assert response.json()["detail"] == f"Project with ID: {test_project_id} is not 'UNSTAGED' and cannot be staged."
 
 
 def test_stage_project_no_query(app_fixture, client, test_user_id, test_project_id, stage_request_payload):
@@ -220,9 +217,7 @@ def test_stage_project_invalid_trusts_queried(
     assert response.json()["detail"] == expected_detail
 
 
-def test_stage_project_rejects_trust_not_in_cohort_query(
-    app_fixture, client, test_user_id, test_project_id
-):
+def test_stage_project_rejects_trust_not_in_cohort_query(app_fixture, client, test_user_id, test_project_id):
     """A trust that joined the platform after the cohort query was submitted
     has no QueryResult row, so its UUID is missing from queried_trust_ids.
     Staging against it must 400 — staging without a cohort count for that
@@ -252,9 +247,7 @@ def test_stage_project_rejects_trust_not_in_cohort_query(
     mock_stage.assert_not_called()
 
 
-def test_stage_project_rejects_errored_trust(
-    app_fixture, client, test_user_id, test_project_id
-):
+def test_stage_project_rejects_errored_trust(app_fixture, client, test_user_id, test_project_id):
     """A trust that responded with an error has a QueryResult row but no
     usable count. Staging against it must 400 — otherwise the project commits
     to data we never received."""
@@ -284,9 +277,7 @@ def test_stage_project_rejects_errored_trust(
     mock_stage.assert_not_called()
 
 
-def test_stage_project_rejects_empty_cohort_trust(
-    app_fixture, client, test_user_id, test_project_id
-):
+def test_stage_project_rejects_empty_cohort_trust(app_fixture, client, test_user_id, test_project_id):
     """A trust that responded with 0 records — a genuine zero match or a
     privacy-suppressed below-threshold count (#519) — has no cohort to build an
     imaging project against. Staging against it must 400."""
@@ -317,9 +308,7 @@ def test_stage_project_rejects_empty_cohort_trust(
     mock_stage.assert_not_called()
 
 
-def test_stage_project_rejects_never_responded_trust(
-    app_fixture, client, test_user_id, test_project_id
-):
+def test_stage_project_rejects_never_responded_trust(app_fixture, client, test_user_id, test_project_id):
     """A trust that was dispatched but never posted a QueryResult has no
     cohort count. Staging against it must 400 — otherwise the project
     commits to data we never received."""
@@ -385,9 +374,7 @@ def test_stage_project_generic_exception(
     with (
         patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
-        patch(
-            "flip_api.project_services.stage_project.stage_project_service", side_effect=Exception("Database error")
-        ),
+        patch("flip_api.project_services.stage_project.stage_project_service", side_effect=Exception("Database error")),
     ):
         # Act
         response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)

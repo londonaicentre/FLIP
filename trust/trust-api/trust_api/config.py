@@ -79,9 +79,13 @@ class Settings(BaseSettings):
     HEALTH_COLLECT_INTERVAL_SECONDS: int = 30  # How often to probe the trust services (seconds)
     HEALTH_PROBE_DEGRADED_MS: int = 1000  # Successful probe slower than this reports "degraded"
     XNAT_URL: str = "http://xnat-web:8080"
-    PACS_ID: int = 1  # XNAT DQR PACS id used for the ping_pacs deep probe (matches imaging-api's default)
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432
+    # The fl-client image tag this deployment configured (compose: DOCKER_FL_TAG; the K8s
+    # chart: the tag flip-trust.imageTag resolves for the fl-client — its pin, else
+    # global.image.tag, else flClient.image.tag). The fl-client has no health endpoint, so this is how its
+    # build reaches the hub's Connection Status (FLIP#1204). Empty = not reported.
+    FL_CLIENT_IMAGE_TAG: str = ""
 
 
 # Eager load once (for app use)

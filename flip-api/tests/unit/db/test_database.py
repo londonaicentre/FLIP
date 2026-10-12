@@ -33,7 +33,7 @@ def _fake_settings(**overrides: object) -> SimpleNamespace:
         "DB_HOST": "db.example.com",
         "DB_PORT": 5432,
         "AWS_REGION": "eu-west-2",
-        "POSTGRES_PASSWORD": "devpass",
+        "POSTGRES_PASSWORD": "devpass",  # pragma: allowlist secret
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -111,7 +111,7 @@ def test_build_engine_dev_uses_env_password():
         engine = database._build_engine()
 
     assert engine.url.username == "local_user"
-    assert engine.url.password == "devpass"
+    assert engine.url.password == "devpass"  # pragma: allowlist secret
     assert engine.url.host == "db.example.com"
     assert engine.url.database == "flip"
     assert not event.contains(engine, "do_connect", database._do_connect_listener)
@@ -175,7 +175,7 @@ def test_do_connect_listener_injects_iam_token():
     with patch.object(database, "_generate_db_auth_token", return_value="iam-token-xyz"):
         database._do_connect_listener(object(), object(), [], cparams)
 
-    assert cparams["password"] == "iam-token-xyz"
+    assert cparams["password"] == "iam-token-xyz"  # pragma: allowlist secret
 
 
 def test_do_connect_listener_mints_fresh_token_each_call():
@@ -187,8 +187,8 @@ def test_do_connect_listener_mints_fresh_token_each_call():
         database._do_connect_listener(object(), object(), [], second_params)
 
     assert mock_mint.call_count == 2
-    assert first_params["password"] == "tok-1"
-    assert second_params["password"] == "tok-2"
+    assert first_params["password"] == "tok-1"  # pragma: allowlist secret
+    assert second_params["password"] == "tok-2"  # pragma: allowlist secret
 
 
 def test_generate_db_auth_token_calls_rds_client():

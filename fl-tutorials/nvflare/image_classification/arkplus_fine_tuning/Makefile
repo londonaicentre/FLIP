@@ -25,7 +25,7 @@ UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 # make comment inside the `export` directive and silently un-export every variable listed after it.
 ifneq ("$(wildcard .env.app)","")
 include ./.env.app
-export $(shell sed -e '/^[[:space:]]*#/d' -e 's/=.*//' ./.env.app)
+export $(shell sed -e '/^[[:space:]]*\#/d' -e 's/=.*//' ./.env.app)
 endif
 
 # --- Local-run knobs ---
@@ -35,6 +35,13 @@ endif
 # submit time and overrides whatever the recipe baked in.
 NUM_ROUNDS ?= 3
 N_CLIENTS ?= 2
+
+# Simulator-only cap on the dataframe rows each simulated site reads (a deterministic, class-balanced
+# subset; see cap_dataframe in app_files/data_utils.py). The default makes a plain `make sim` a quick
+# smoke test of the whole round-trip; `make sim MAX_SAMPLES=0` (or empty) trains on the full ~1,900
+# studies per site. Only the LOCAL_DEV dataframe path reads it — a deployed job's cohort comes from
+# the trust and is never capped, and nothing here reaches the exported job config.
+MAX_SAMPLES ?= 128
 
 # Simulator workspace + metrics output. WORKSPACE matches job.py's default and is deliberately
 # per-tutorial: `make round-metrics` auto-discovers the log with the most round events under the
@@ -144,7 +151,8 @@ export: prepare-checkpoint
 # resolved to absolute paths above so the simulator's client workers (which run from the workspace dir,
 # not here) find the LOCAL_DEV dataset. FLIP-specific values come from FLIP_PROJECT_ID / FLIP_QUERY.
 sim:
-	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
+	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS), max_samples=$(or $(MAX_SAMPLES),0) (0 = full dataset)"
+	MAX_SAMPLES="$(MAX_SAMPLES)" \
 	DEV_IMAGES_DIR="$(DEV_IMAGES_DIR)" DEV_DATAFRAME="$(DEV_DATAFRAME)" \
 	SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
 	SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" SITE2_DATAFRAME="$(SITE2_DATAFRAME)" \
@@ -165,7 +173,7 @@ round-metrics:
 # --- One-shot cross-site overhead reproduction (no hub / AWS access needed) ---
 # Everything a collaborating site needs to reproduce the simulator baseline and send the results
 # back: fetch the HF tutorial data (~6.3 GB) and the Ark+ checkpoint when missing, run the
-# full-length simulator replica (OVERHEAD_ROUNDS, default 50), then extract the round metrics
+# full-length, full-dataset simulator replica (OVERHEAD_ROUNDS, default 50; MAX_SAMPLES=0), then extract the round metrics
 # and pack metrics + simulator logs + host/provenance info into a single archive in this
 # directory. Requires Linux, uv, and an NVIDIA GPU (pick one with CUDA_VISIBLE_DEVICES).
 reproduce-overhead:
@@ -181,7 +189,7 @@ reproduce-overhead:
 		$(MAKE) --no-print-directory download-raw-checkpoint; \
 	fi
 	@$(MAKE) --no-print-directory prepare-checkpoint
-	@$(MAKE) --no-print-directory sim NUM_ROUNDS="$(OVERHEAD_ROUNDS)"
+	@$(MAKE) --no-print-directory sim NUM_ROUNDS="$(OVERHEAD_ROUNDS)" MAX_SAMPLES=0
 	@$(MAKE) --no-print-directory package-overhead-bundle
 
 # Extract metrics from the last simulator run and bundle them with the workspace logs (model

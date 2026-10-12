@@ -179,7 +179,9 @@ class TestSaveIndividualResult:
             _save_individual_result(mock_db_session, sample_cohort_payload)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Error saving cohort results" in exc_info.value.detail
+        # The domain message (which query) stays; the exception text does not (#906).
+        assert exc_info.value.detail == f"Error saving cohort results: {sample_cohort_payload.query_id}"
+        assert "Some generic DB error" not in exc_info.value.detail
         mock_db_session.commit.assert_not_called()
         mock_db_session.rollback.assert_called_once()
 
@@ -248,7 +250,8 @@ class TestAggregateAndSaveResults:
             _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Failed to save aggregated stats" in exc_info.value.detail
+        assert exc_info.value.detail == f"Error during aggregation for query_id {query_id_for_agg}"
+        assert "Failed to save aggregated stats" not in exc_info.value.detail
         mock_db_session.commit.assert_called_once()
         mock_db_session.rollback.assert_called_once()
 
@@ -259,12 +262,11 @@ class TestAggregateAndSaveResults:
             _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "DB error on SELECT" in exc_info.value.detail
+        assert exc_info.value.detail == f"Error during aggregation for query_id {query_id_for_agg}"
+        assert "DB error on SELECT" not in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
 
-    def test_aggregate_includes_per_trust_record_counts(
-        self, mock_db_session: MagicMock, query_id_for_agg: UUID
-    ):
+    def test_aggregate_includes_per_trust_record_counts(self, mock_db_session: MagicMock, query_id_for_agg: UUID):
         """The saved QueryStats JSON must include ``trust_record_counts`` so the
         UI can show "0" for trusts whose count was privacy-suppressed instead of
         leaving them stuck on "running"."""
@@ -300,9 +302,7 @@ class TestAggregateAndSaveResults:
             str(trust_c_id): 0,
         }
 
-    def test_aggregate_flags_suppressed_trusts(
-        self, mock_db_session: MagicMock, query_id_for_agg: UUID
-    ):
+    def test_aggregate_flags_suppressed_trusts(self, mock_db_session: MagicMock, query_id_for_agg: UUID):
         """A privacy-suppressed trust still counts as "responded" (count 0 in
         trust_record_counts) but is also listed in ``trust_suppressed`` so the UI
         renders a "suppressed" chip instead of a literal 0 (#519)."""
@@ -332,9 +332,7 @@ class TestAggregateAndSaveResults:
         assert saved["trust_record_counts"] == {str(trust_a_id): 7, str(trust_b_id): 0}
         assert saved["trust_suppressed"] == [str(trust_b_id)]
 
-    def test_aggregate_surfaces_trust_errors(
-        self, mock_db_session: MagicMock, query_id_for_agg: UUID
-    ):
+    def test_aggregate_surfaces_trust_errors(self, mock_db_session: MagicMock, query_id_for_agg: UUID):
         """Errored trusts go into ``trust_errors`` (not ``trust_record_counts``)
         so the UI can show a red "error" chip instead of "running"."""
         trust_a_id = uuid.uuid4()
@@ -369,18 +367,14 @@ class TestAggregateAndSaveResults:
         # Unknown raw text collapses to ``internal_error``.
         assert saved["trust_errors"] == {str(trust_b_id): "internal_error"}
 
-    def test_aggregate_passes_through_known_error_categories(
-        self, mock_db_session: MagicMock, query_id_for_agg: UUID
-    ):
+    def test_aggregate_passes_through_known_error_categories(self, mock_db_session: MagicMock, query_id_for_agg: UUID):
         """A trust-side error that already arrives as one of the known
         categories (``query_failed`` / ``query_timeout`` / ``internal_error``)
         is preserved verbatim — no information loss when the source is
         already redacted.
         """
         trust_id = uuid.uuid4()
-        trust_data = TrustSpecificData(
-            record_count=0, data=[], error="query_failed"
-        ).model_dump_json()
+        trust_data = TrustSpecificData(record_count=0, data=[], error="query_failed").model_dump_json()
         existing_stats_mock = MagicMock()
         mock_db_session.exec.return_value.all.return_value = [("T", trust_id, trust_data)]
         mock_db_session.exec.return_value.first.return_value = existing_stats_mock
@@ -397,9 +391,7 @@ class TestAggregateAndSaveResults:
         The redactor must recognise the trailing category and keep it.
         """
         trust_id = uuid.uuid4()
-        trust_data = TrustSpecificData(
-            record_count=0, data=[], error="500: query_failed"
-        ).model_dump_json()
+        trust_data = TrustSpecificData(record_count=0, data=[], error="500: query_failed").model_dump_json()
         existing_stats_mock = MagicMock()
         mock_db_session.exec.return_value.all.return_value = [("T", trust_id, trust_data)]
         mock_db_session.exec.return_value.first.return_value = existing_stats_mock

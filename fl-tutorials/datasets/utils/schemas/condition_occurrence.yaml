@@ -1,0 +1,59 @@
+schema_type: dataframe
+columns:
+  condition_occurrence_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  condition_concept_id:
+    dtype: int64
+  condition_start_date:
+    dtype: datetime64[ns]
+  condition_start_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  condition_end_date:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  condition_end_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  condition_type_concept_id:
+    dtype: int64
+  condition_status_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  stop_reason:
+    dtype: string[python]
+    nullable: true
+    required: false
+  provider_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_occurrence_id:
+    dtype: int64
+    nullable: true
+    required: false
+  visit_detail_id:
+    dtype: int64
+    nullable: true
+    required: false
+  condition_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  condition_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  condition_status_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

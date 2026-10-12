@@ -17,7 +17,10 @@
 #
 # Users continue to hit the canonical subdomain
 # (stag.flip.aicentre.co.uk / app.flip.aicentre.co.uk); that A-record
-# (aws_route53_record.alb in main.tf) aliases this CloudFront distribution.
+# (aws_route53_record.alb in main.tf) aliases this CloudFront distribution —
+# until RELEASE_WEB_ALIAS hands the name to another estate's edge, after which
+# the record still points here but this distribution no longer answers for the
+# name and serves only *.cloudfront.net. See local.serves_public_name.
 #
 # CloudFront serves the UI static bundle from S3 (default behavior) and
 # forwards /api/* to the (internal) ALB via aws_cloudfront_vpc_origin —
@@ -45,8 +48,14 @@ provider "aws" {
 ############################
 # CloudFront viewer cert (us-east-1)
 ############################
+#
+# Skipped when var.manage_dns is false (the zone-less first LZA bring-up,
+# FLIP#749): the viewer cert can't be DNS-validated without the zone, and a
+# custom viewer cert is pointless anyway while the distribution has no aliases
+# — it serves the default *.cloudfront.net domain with the default cert.
 
 resource "aws_acm_certificate" "flip_cloudfront" {
+  count             = var.manage_dns ? 1 : 0
   provider          = aws.us_east_1
   domain_name       = var.flip_alb_subdomain
   validation_method = "DNS"
@@ -62,7 +71,7 @@ resource "aws_acm_certificate" "flip_cloudfront" {
 
 resource "aws_route53_record" "cloudfront_cert_validation" {
   for_each = {
-    for dvo in tolist(aws_acm_certificate.flip_cloudfront.domain_validation_options) : dvo.domain_name => {
+    for dvo in var.manage_dns ? tolist(aws_acm_certificate.flip_cloudfront[0].domain_validation_options) : [] : dvo.domain_name => {
       name   = dvo.resource_record_name
       record = dvo.resource_record_value
       type   = dvo.resource_record_type
@@ -74,13 +83,27 @@ resource "aws_route53_record" "cloudfront_cert_validation" {
   records         = [each.value.record]
   ttl             = 60
   type            = each.value.type
-  zone_id         = data.aws_route53_zone.subdomain.zone_id
+  zone_id         = data.aws_route53_zone.subdomain[0].zone_id
 }
 
 resource "aws_acm_certificate_validation" "flip_cloudfront" {
+  count                   = var.manage_dns ? 1 : 0
   provider                = aws.us_east_1
-  certificate_arn         = aws_acm_certificate.flip_cloudfront.arn
+  certificate_arn         = aws_acm_certificate.flip_cloudfront[0].arn
   validation_record_fqdns = [for record in aws_route53_record.cloudfront_cert_validation : record.fqdn]
+}
+
+# State migration for the counts added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Safe to remove once
+# every live state file has been migrated.
+moved {
+  from = aws_acm_certificate.flip_cloudfront
+  to   = aws_acm_certificate.flip_cloudfront[0]
+}
+
+moved {
+  from = aws_acm_certificate_validation.flip_cloudfront
+  to   = aws_acm_certificate_validation.flip_cloudfront[0]
 }
 
 ############################
@@ -94,14 +117,28 @@ resource "aws_acm_certificate_validation" "flip_cloudfront" {
 ############################
 
 resource "aws_cloudfront_vpc_origin" "flip_api" {
+  # Gated off on LZA (FLIP#749): the GRCLOUDFRONTVPCORIGIN SCP denies
+  # cloudfront:CreateVpcOrigin in workload accounts -- deliberately, since a
+  # VPC origin reaches the ALB inside the VPC and bypasses the TGW + central
+  # firewall. On LZA the networking account's edge distribution is the front
+  # door (aicentre-lza-iac); the LZA relay path terminates on the internal
+  # NLB's web listener instead (fl_ingress_lza.tf), so neither this VPC
+  # origin nor the SG rule below exist there.
+  count = var.lza_managed_network ? 0 : 1
+
   vpc_origin_endpoint_config {
     # CloudFront VPC origin names accept only alphanumerics, dashes, and
     # underscores — the subdomain contains dots, so replace them with dashes.
-    name                   = "flip-api-vpc-origin-${replace(var.flip_alb_subdomain, ".", "-")}"
-    arn                    = module.alb.arn
-    http_port              = 80
+    name = "flip-api-vpc-origin-${replace(var.flip_alb_subdomain, ".", "-")}"
+    arn  = module.alb.arn
+    # Without a hosted zone the ALB cannot carry an ISSUED cert, so the private
+    # VPC-origin leg falls back to plain HTTP until DNS lands (FLIP#749; see the
+    # ALB listeners comment in main.tf). The ALB's main listener then serves
+    # plain HTTP on ALB_HTTPS_PORT, so the HTTP port follows it there. Viewer
+    # traffic stays HTTPS either way.
+    http_port              = var.manage_dns ? 80 : var.ALB_HTTPS_PORT
     https_port             = 443
-    origin_protocol_policy = "https-only"
+    origin_protocol_policy = var.manage_dns ? "https-only" : "http-only"
 
     origin_ssl_protocols {
       items    = ["TLSv1.2"]
@@ -123,8 +160,9 @@ resource "aws_cloudfront_vpc_origin" "flip_api" {
 # checks against the service-managed SG (or the CloudFront managed prefix
 # list), not the ENI source IP.
 data "aws_security_group" "cloudfront_vpcorigins_service" {
+  count  = var.lza_managed_network ? 0 : 1
   name   = "CloudFront-VPCOrigins-Service-SG"
-  vpc_id = module.flip_vpc.vpc_id
+  vpc_id = local.vpc_id
 
   depends_on = [aws_cloudfront_vpc_origin.flip_api]
 }
@@ -135,13 +173,32 @@ data "aws_security_group" "cloudfront_vpcorigins_service" {
 # lookup needs the VPC origin. Attaching the rule outside the module keeps the
 # chain linear.
 resource "aws_security_group_rule" "alb_ingress_https_from_cloudfront" {
+  count                    = var.lza_managed_network ? 0 : 1
   description              = "HTTPS from the CloudFront-VPCOrigins-Service-SG (Option 2 in AWS VPC origins docs)"
   type                     = "ingress"
   from_port                = var.ALB_HTTPS_PORT
   to_port                  = var.ALB_HTTPS_PORT
   protocol                 = "tcp"
   security_group_id        = module.alb_security_group.security_group.id
-  source_security_group_id = data.aws_security_group.cloudfront_vpcorigins_service.id
+  source_security_group_id = data.aws_security_group.cloudfront_vpcorigins_service[0].id
+}
+
+# State migration for the counts added above (FLIP#749 WP3): keeps existing
+# legacy states aligned without a manual `terraform state mv`. Safe to remove
+# once every live state file has been migrated.
+moved {
+  from = aws_cloudfront_vpc_origin.flip_api
+  to   = aws_cloudfront_vpc_origin.flip_api[0]
+}
+
+moved {
+  from = aws_security_group_rule.alb_ingress_https_from_cloudfront
+  to   = aws_security_group_rule.alb_ingress_https_from_cloudfront[0]
+}
+
+moved {
+  from = aws_cloudfront_distribution.flip_ui
+  to   = aws_cloudfront_distribution.flip_ui[0]
 }
 
 ############################
@@ -154,6 +211,10 @@ resource "aws_security_group_rule" "alb_ingress_https_from_cloudfront" {
 ############################
 
 resource "aws_s3_bucket" "cloudfront_logs" {
+  # Legacy only: the LZA edge distribution lives in the networking account and
+  # logs there (aicentre-lza-iac), so no name override is needed here — the
+  # derived name is never contested on the accounts that create this bucket.
+  count  = var.lza_managed_network ? 0 : 1
   bucket = "flip-cf-logs-${var.flip_alb_subdomain}"
 
   tags = {
@@ -162,15 +223,17 @@ resource "aws_s3_bucket" "cloudfront_logs" {
 }
 
 resource "aws_s3_bucket_ownership_controls" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
   rule {
     object_ownership = "BucketOwnerPreferred"
   }
 }
 
 resource "aws_s3_bucket_acl" "cloudfront_logs" {
-  depends_on = [aws_s3_bucket_ownership_controls.cloudfront_logs]
-  bucket     = aws_s3_bucket.cloudfront_logs.id
+  count      = var.lza_managed_network ? 0 : 1
+  depends_on = [aws_s3_bucket_ownership_controls.cloudfront_logs[0]]
+  bucket     = aws_s3_bucket.cloudfront_logs[0].id
 
   access_control_policy {
     owner {
@@ -201,7 +264,8 @@ resource "aws_s3_bucket_acl" "cloudfront_logs" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
 
   rule {
     id     = "expire-cf-logs-after-30-days"
@@ -216,7 +280,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "cloudfront_logs" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "cloudfront_logs" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -230,7 +295,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "cloudfront_logs" 
 # Neither is "public" under PAB semantics, so blocking public ACLs and
 # policies is safe regardless of which delivery mechanism is in use.
 resource "aws_s3_bucket_public_access_block" "cloudfront_logs" {
-  bucket                  = aws_s3_bucket.cloudfront_logs.id
+  count                   = var.lza_managed_network ? 0 : 1
+  bucket                  = aws_s3_bucket.cloudfront_logs[0].id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
@@ -240,7 +306,8 @@ resource "aws_s3_bucket_public_access_block" "cloudfront_logs" {
 # Enforce HTTPS-only access to the CloudFront logs bucket.
 # CloudFront log delivery uses HTTPS only, so this is safe.
 resource "aws_s3_bucket_policy" "cloudfront_logs_https_only" {
-  bucket = aws_s3_bucket.cloudfront_logs.id
+  count  = var.lza_managed_network ? 0 : 1
+  bucket = aws_s3_bucket.cloudfront_logs[0].id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -250,8 +317,8 @@ resource "aws_s3_bucket_policy" "cloudfront_logs_https_only" {
       Principal = "*"
       Action    = "s3:*"
       Resource = [
-        aws_s3_bucket.cloudfront_logs.arn,
-        "${aws_s3_bucket.cloudfront_logs.arn}/*",
+        aws_s3_bucket.cloudfront_logs[0].arn,
+        "${aws_s3_bucket.cloudfront_logs[0].arn}/*",
       ]
       Condition = {
         Bool = {
@@ -315,25 +382,55 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
 # drop ALL public access — CloudFront reads it via OAC, exactly like the
 # flip-ui bucket.
 #
-# The bucket is deliberately not Terraform-managed: its lifecycle is manual
-# (bundles are staged by hand per demo release) and it must survive
-# `make destroy`. Terraform manages the access edges only: the
-# public-access block, the OAC-scoped bucket policy, and the CloudFront
-# origin + /ark_demo/assets/* behavior on the main distribution.
-# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty.
+# Two shapes, by estate (FLIP#1199):
+#
+#   * LEGACY (self-contained account) — the bucket is NOT Terraform-managed.
+#     It predates this stack, its lifecycle is manual (bundles are staged by
+#     hand per demo release) and it must survive `make destroy`, so it is
+#     adopted through a `data` lookup and Terraform manages only the access
+#     edges: the public-access block, the OAC-scoped bucket policy, and the
+#     CloudFront origin + /ark_demo/assets/* behavior on the in-account
+#     distribution.
+#
+#   * LZA (platform-managed estate) — there is no bucket to adopt and no
+#     in-account CloudFront to attach an origin to (the workload distribution
+#     is gated off; the web edge lives in the networking account). Terraform
+#     therefore CREATES the bucket through the same `flip_s3_bucket` module as
+#     every other FLIP bucket (`module.flip_demo_assets_bucket`, services.tf)
+#     — versioned, access-logged, prevent_destroy, public access blocked —
+#     and grants `s3:GetObject` on `ark_demo/assets/*` to the edge
+#     distribution via cross-account OAC, exactly as the flip-ui bucket does.
+#     The OAC, the response-headers policies and the cache behaviours are the
+#     edge stack's to declare (aicentre-lza-iac); none of them can be created
+#     in this account, so all five resources below stay legacy-only there.
+#
+# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty in both
+# shapes. Note the asymmetry when it is cleared: on legacy that silently
+# removes four access-edge resources; on LZA it would propose destroying a
+# managed bucket, which `prevent_destroy` turns into a loud apply failure.
+#
+# No live estate runs the legacy shape any more — aws-prod was repointed at
+# LZA prod on 2026-10-06 and the legacy prod account (which held
+# flipprod-demo-assets) was closed the same day. The branch stays because
+# lza_managed_network = false remains the self-contained shape a standalone
+# account gets; collapsing the two onto flip_s3_bucket is a follow-up.
 ############################
 
 locals {
   demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""
+  # The bucket already exists and is adopted, not created: legacy only.
+  demo_assets_external = local.demo_assets_enabled && !var.lza_managed_network
+  # Terraform creates and owns the bucket: LZA only. Consumed by services.tf.
+  demo_assets_managed = local.demo_assets_enabled && var.lza_managed_network
 }
 
 data "aws_s3_bucket" "demo_assets" {
-  count  = local.demo_assets_enabled ? 1 : 0
+  count  = local.demo_assets_external ? 1 : 0
   bucket = var.DEMO_ASSETS_BUCKET_NAME
 }
 
 resource "aws_cloudfront_origin_access_control" "demo_assets" {
-  count                             = local.demo_assets_enabled ? 1 : 0
+  count                             = local.demo_assets_external ? 1 : 0
   name                              = "demo-assets-${var.flip_alb_subdomain}"
   description                       = "OAC for the Ark+ demo assets S3 bucket"
   origin_access_control_origin_type = "s3"
@@ -345,7 +442,7 @@ resource "aws_cloudfront_origin_access_control" "demo_assets" {
 # any more — a leftover public-read policy (how the demo assets were served
 # before this behavior existed) is replaced by aws_s3_bucket_policy below.
 resource "aws_s3_bucket_public_access_block" "demo_assets" {
-  count                   = local.demo_assets_enabled ? 1 : 0
+  count                   = local.demo_assets_external ? 1 : 0
   bucket                  = data.aws_s3_bucket.demo_assets[0].id
   block_public_acls       = true
   block_public_policy     = true
@@ -358,7 +455,7 @@ resource "aws_s3_bucket_public_access_block" "demo_assets" {
 # anything else staged in the bucket stays private. No s3:ListBucket: a
 # missing key returns 403 instead of an XML key listing.
 resource "aws_s3_bucket_policy" "demo_assets" {
-  count  = local.demo_assets_enabled ? 1 : 0
+  count  = local.demo_assets_external ? 1 : 0
   bucket = data.aws_s3_bucket.demo_assets[0].id
 
   policy = jsonencode({
@@ -370,8 +467,12 @@ resource "aws_s3_bucket_policy" "demo_assets" {
       Action    = "s3:GetObject"
       Resource  = "${data.aws_s3_bucket.demo_assets[0].arn}/ark_demo/assets/*"
       Condition = {
+        # Legacy-only resource (see demo_assets_external above), so this is the
+        # in-account distribution unconditionally. The LZA equivalent — the
+        # cross-account grant to the edge distribution — is carried by
+        # module.flip_demo_assets_bucket's own policy in services.tf.
         StringEquals = {
-          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui.arn
+          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui[0].arn
         }
       }
     }]
@@ -434,6 +535,31 @@ resource "aws_cloudfront_function" "spa_rewrite" {
 locals {
   cloudfront_policy_caching_optimized = "658327ea-f89d-4fab-a63d-7e88639e58f6"
   cloudfront_policy_caching_disabled  = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+
+  # Browser-facing origin of the UI, consumed by the S3 bucket CORS rules and
+  # the Cognito URLs in services.tf. With DNS managed it is the canonical
+  # subdomain (legacy shape, unchanged); on the zone-less first bring-up
+  # (FLIP#749) it is the CloudFront default domain, so uploads/downloads and
+  # sign-in keep working before any DNS exists. No dependency cycle: the
+  # distribution references neither the app buckets' CORS nor Cognito.
+  # On LZA the workload distribution is gated off -- the UI origin is the
+  # networking account's edge distribution (FLIP#749 WP3).
+  #
+  # Deliberately NOT keyed to local.serves_public_name below: after the alias is
+  # released the browser origin is still the public name, the other estate's
+  # edge just serves it. Keying this to the gate would rewrite the Cognito
+  # callback URLs and the bucket CORS to *.cloudfront.net mid-cutover and break
+  # sign-in, with nothing red in Terraform. Guarded in
+  # tests/test_web_alias_release.py.
+  ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : var.lza_managed_network ? "https://${var.lza_web_edge_domain}" : "https://${aws_cloudfront_distribution.flip_ui[0].domain_name}"
+
+  # Whether THIS account's distribution still answers for the public name.
+  # Alternate domain names are unique across every AWS account and an exact
+  # alias beats a wildcard, so this flag — not DNS — decides who serves the name
+  # while two estates overlap. The viewer certificate follows it rather than
+  # manage_dns: CloudFront permits a custom certificate only alongside an alias.
+  # Runbook: README.md, "Handing the public name over".
+  serves_public_name = var.manage_dns && !var.release_web_alias
 }
 
 # Custom origin-request policy for /api/*. The managed AllViewer policy
@@ -496,6 +622,7 @@ resource "aws_cloudfront_origin_request_policy" "flip_api" {
 # with no false positives, flip its `override_action` (for managed groups)
 # or `action` (for the custom rate-limit) to `block` / `none` + `block`.
 resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
+  count = var.lza_managed_network ? 0 : 1
   # checkov:skip=CKV_AWS_192:AWSManagedRulesKnownBadInputsRuleSet (the Log4j AMR) is attached; count-mode rollout is deliberate — flip to block after sampled-traffic review
   provider = aws.us_east_1
   name     = "flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
@@ -609,15 +736,17 @@ resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
 # WAF logging destination. Name MUST start with `aws-waf-logs-` per AWS —
 # otherwise PutLoggingConfiguration rejects it.
 resource "aws_cloudwatch_log_group" "flip_ui_waf" {
+  count             = var.lza_managed_network ? 0 : 1
   provider          = aws.us_east_1
   name              = "aws-waf-logs-flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
-  retention_in_days = 30
+  retention_in_days = local.log_retention_days
 }
 
 resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
+  count                   = var.lza_managed_network ? 0 : 1
   provider                = aws.us_east_1
-  resource_arn            = aws_wafv2_web_acl.flip_ui_cloudfront.arn
-  log_destination_configs = [aws_cloudwatch_log_group.flip_ui_waf.arn]
+  resource_arn            = aws_wafv2_web_acl.flip_ui_cloudfront[0].arn
+  log_destination_configs = [aws_cloudwatch_log_group.flip_ui_waf[0].arn]
 }
 
 ############################
@@ -633,12 +762,14 @@ resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
 # one-way door across every subdomain of the apex and belongs in its own
 # coordinated PR, not here.
 #
-# CSP ships in report-only initially so legitimate violations surface in
-# browser console + `Content-Security-Policy-Report-Only` response headers
-# without blocking traffic. After one release cycle with no real-user
-# violations, move the policy body from `content_security_policy_report_only`
-# to `content_security_policy` (enforcing). Tracked in
-# https://github.com/londonaicentre/FLIP/issues/417.
+# CSP is ENFORCING (FLIP#417 stage 2). It shipped report-only from the
+# original pen-test remediation (§4.7) so violations could surface first; no
+# `report-uri` was ever configured, so there was never a violation corpus to
+# wait for, and the promotion was de-risked instead by auditing the built
+# bundle for inline-style sinks (see style-src below). Pinned by
+# tests/test_csp_enforcing.py. Verify after deploy:
+#   curl -sI https://<domain>/ | grep -i content-security-policy
+# (the `-Report-Only` suffix must be absent)
 resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
   name    = "flip-ui-spa-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
@@ -665,37 +796,58 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
       frame_option = "DENY"
       override     = true
     }
-    # `security_headers_config.content_security_policy` is enforce-only; we
-    # ship CSP as `Content-Security-Policy-Report-Only` below in
-    # custom_headers_config until a release cycle confirms no false
-    # positives, then move the body here and delete the custom header.
-    #
-    # Stage 1 of GHSA-vp94-g35p-29w8: unsafe-inline removed from style-src
-    # while staying in report-only. Stage 2 (enforcing) tracked in
-    # https://github.com/londonaicentre/FLIP/issues/417.
-  }
-
-  custom_headers_config {
-    items {
-      header = "Content-Security-Policy-Report-Only"
-      value = join(" ", [
+    content_security_policy {
+      content_security_policy = join(" ", [
         "default-src 'self';",
         # CSP source expressions only allow wildcards in the leftmost
         # position (`*.amazonaws.com` OK, `cognito-idp.*.amazonaws.com`
         # is not — the browser silently drops invalid entries). Pin to
         # the deployed region so we keep the allowlist tight; update if
         # the pool is moved to a different region.
-        "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com;",
+        # The S3 entry is the model-file transfer origin: the SPA fetch()es
+        # presigned URLs directly (model-service.ts upload POST,
+        # file-service.ts config/metrics GET). flip-api presigns against
+        # AWS_ENDPOINT_URL_S3 = https://${local.s3_regional_endpoint_host}
+        # (locals.tf), which makes every presigned URL PATH-STYLE — bucket
+        # in the path, host exactly that — so the one exact origin admits
+        # both buckets and nothing else. Derived from the same local so the
+        # policy cannot drift from what flip-api signs.
+        "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com https://${local.s3_regional_endpoint_host};",
         "img-src 'self' data:;",
-        # unsafe-inline removed from style-src per GHSA-vp94-g35p-29w8:
-        # Vue+TailwindCSS generated CSS is bundled as static files, not
-        # inline styles. Dynamic style bindings were found to be replaceable
-        # with utility classes. If new violations surface during the
-        # report-only cycle, audit and fix at the source rather than relaxing.
-        "style-src 'self';",
+        # 'unsafe-inline' here is a deliberate, scoped regression of
+        # GHSA-vp94-g35p-29w8 stage 1 (which dropped it while nothing was yet
+        # enforced): `codemirror-editor-vue3` runs a styleInject() at module
+        # load that creates a <style> element, so `style-src 'self'` strips the
+        # cohort-query SQL editor. A `vite build` audit found that the ONLY
+        # runtime style injection in the bundle — every other stylesheet is a
+        # static .css file — so this buys back one dependency and nothing else.
+        # Removal at source is FLIP#1200; test_csp_enforcing.py bounds this
+        # directive to {'self', 'unsafe-inline'} so the carve-out cannot spread.
+        "style-src 'self' 'unsafe-inline';",
+        # The substantive XSS control, and the actual §4.7 remediation.
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
+        # Neither directive touches a current flow, and the audit behind that —
+        # repeat it before trusting the claim again, the way the style-src
+        # carve-out above rests on a `vite build` audit:
+        #
+        #   * base-uri: flip-ui/index.html carries no <base> tag.
+        #   * form-action governs where a form SUBMISSION may navigate, and the
+        #     SPA never navigates one. `grep -rn "<form[ >]" flip-ui/src` finds
+        #     no raw <form> outside tests; the elements that do render come from
+        #     vee-validate's <Form> (18 components), which preventDefault()s the
+        #     submit event and hands the values to a JS handler, and none of them
+        #     sets an action attribute. The one multipart POST — model-service.ts
+        #     building FormData for a presigned S3 upload — goes out through
+        #     fetch(), so connect-src governs it, not form-action.
+        #
+        # 'self' rather than the demo's 'none' so a same-origin POST stays
+        # possible; it still blocks a form retargeted at an external host.
+        # test_csp_enforcing.py bounds form-action to {'self', 'none'}, so this
+        # cannot widen without the audit above being redone.
+        "base-uri 'none';",
+        "form-action 'self';",
       ])
       override = true
     }
@@ -742,16 +894,13 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
 # 'none'` costs no demo functionality — confirmed by the PR's Chrome net-log
 # audit (no egress besides 127.0.0.1) and by the mocks/__tests__ egress spec.
 #
-# Shipped enforcing (not report-only), unlike flip_ui_spa's CSP: every resource
-# the demo loads is 'self' (no third-party CDN that could break
-# unpredictably), and there is no established live-traffic population to observe
-# for false positives the way the real app's CSP rollout needed. Note the demo
-# therefore enforces `style-src 'self'` while the real app still runs that
-# report-only — worth an eyeball on any page that injects a runtime <style>
-# (CodeMirror does, on the cohort-query page) before a public launch.
+# Stricter than flip_ui_spa on purpose (`style-src 'self'`, `connect-src 'none'`,
+# `form-action 'none'`): the demo is a static, self-contained bundle with no
+# CodeMirror dependency, so nothing here needs the app's style-src carve-out.
+# Do not relax it to match; tests/test_csp_enforcing.py pins the difference.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
-  count   = local.demo_assets_enabled ? 1 : 0
+  count   = local.demo_assets_external ? 1 : 0
   name    = "flip-ui-ark-demo-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo SPA at ${var.flip_alb_subdomain}/ark_demo/"
 
@@ -789,10 +938,8 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
-        # Extra hardening not yet applied to the real app's (report-only,
-        # in-progress) CSP: safe to ship immediately here since the demo is
-        # a static, self-contained bundle with no legitimate use for a
-        # <base> tag or a form POST target.
+        # 'none' rather than the app's form-action 'self': the demo has no form
+        # POST target at all.
         "base-uri 'none';",
         "form-action 'none';",
       ])
@@ -811,7 +958,7 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
 # rendered as a document on the same origin as the real app.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_assets" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
-  count   = local.demo_assets_enabled ? 1 : 0
+  count   = local.demo_assets_external ? 1 : 0
   name    = "flip-ui-ark-demo-assets-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo download bundles at ${var.flip_alb_subdomain}/ark_demo/assets/"
 
@@ -878,14 +1025,28 @@ resource "aws_cloudfront_response_headers_policy" "flip_api" {
 
 resource "aws_cloudfront_distribution" "flip_ui" {
   # checkov:skip=CKV2_AWS_47:the attached ACL carries AWSManagedRulesKnownBadInputsRuleSet (Log4j AMR); count-mode rollout is deliberate — see the web ACL above
+  # Gated off on LZA with the VPC origin above and the WAF: the networking
+  # account's edge distribution serves the UI (cross-account OAC on
+  # aws_s3_bucket.flip_ui), relays /api/* and carries its own WAF -- see
+  # aicentre-lza-iac. The OAC, function and response-headers policies below
+  # stay standing unused on LZA to keep this diff and the legacy state churn
+  # minimal.
+  count = var.lza_managed_network ? 0 : 1
+
   enabled             = true
   is_ipv6_enabled     = true
   http_version        = "http2"
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
-  aliases             = [var.flip_alb_subdomain]
-  comment             = "flip-ui at ${var.flip_alb_subdomain}"
-  web_acl_id          = aws_wafv2_web_acl.flip_ui_cloudfront.arn
+  # No aliases without DNS (FLIP#749): CloudFront only allows the default
+  # viewer cert when no aliases are set, and an alias without a record pointing
+  # at it is unreachable anyway. The distribution serves *.cloudfront.net until
+  # MANAGE_DNS flips to true — and gives the name up again when
+  # RELEASE_WEB_ALIAS flips to true, which is how the name moves to another
+  # estate's distribution (see local.serves_public_name).
+  aliases    = local.serves_public_name ? [var.flip_alb_subdomain] : []
+  comment    = "flip-ui at ${var.flip_alb_subdomain}"
+  web_acl_id = aws_wafv2_web_acl.flip_ui_cloudfront[0].arn
 
   origin {
     domain_name              = aws_s3_bucket.flip_ui.bucket_regional_domain_name
@@ -903,14 +1064,14 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     origin_id   = "alb-api-origin"
 
     vpc_origin_config {
-      vpc_origin_id = aws_cloudfront_vpc_origin.flip_api.id
+      vpc_origin_id = aws_cloudfront_vpc_origin.flip_api[0].id
     }
   }
 
   # Ark+ demo download assets (see the demo-assets section above). Present
   # only when DEMO_ASSETS_BUCKET_NAME is set.
   dynamic "origin" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       domain_name              = data.aws_s3_bucket.demo_assets[0].bucket_regional_domain_name
       origin_id                = "s3-demo-assets"
@@ -957,7 +1118,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # every demo-assets download would be swallowed by the SPA behavior and
   # served (wrongly) from the flip-ui bucket instead of the assets bucket.
   dynamic "ordered_cache_behavior" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       path_pattern               = "/ark_demo/assets/*"
       target_origin_id           = "s3-demo-assets"
@@ -977,7 +1138,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # prefix-aware spa_rewrite function for deep-link fallback. Must be
   # listed after "/ark_demo/assets/*" — see the precedence note above.
   dynamic "ordered_cache_behavior" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       path_pattern               = "/ark_demo/*"
       target_origin_id           = "s3-flip-ui"
@@ -1002,15 +1163,23 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   }
 
   logging_config {
-    bucket          = aws_s3_bucket.cloudfront_logs.bucket_domain_name
+    bucket          = aws_s3_bucket.cloudfront_logs[0].bucket_domain_name
     include_cookies = false
     prefix          = "standard-logs/"
   }
 
+  # Keyed to local.serves_public_name, not manage_dns: CloudFront permits a
+  # custom viewer certificate only while the distribution carries an alias, so
+  # releasing the alias has to take the certificate with it in the same apply.
+  # The certificate resource itself stays — it is gated on manage_dns and is
+  # what makes putting the alias back a single re-apply rather than a re-issue.
   viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate_validation.flip_cloudfront.certificate_arn
-    ssl_support_method       = "sni-only"
-    minimum_protocol_version = "TLSv1.2_2021"
+    acm_certificate_arn            = local.serves_public_name ? aws_acm_certificate_validation.flip_cloudfront[0].certificate_arn : null
+    cloudfront_default_certificate = local.serves_public_name ? null : true
+    ssl_support_method             = local.serves_public_name ? "sni-only" : null
+    # AWS forces TLSv1 while the default *.cloudfront.net certificate is in
+    # use; pinning TLSv1.2_2021 there would just plan perpetual drift.
+    minimum_protocol_version = local.serves_public_name ? "TLSv1.2_2021" : "TLSv1"
   }
 
   tags = {
@@ -1032,7 +1201,7 @@ resource "aws_s3_bucket_policy" "flip_ui" {
         Resource  = "${aws_s3_bucket.flip_ui.arn}/*"
         Condition = {
           StringEquals = {
-            "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui.arn
+            "AWS:SourceArn" = var.lza_managed_network ? var.lza_web_edge_distribution_arn : aws_cloudfront_distribution.flip_ui[0].arn
           }
         }
       },
@@ -1073,15 +1242,72 @@ resource "aws_s3_bucket_logging" "flip_ui" {
 
 output "CloudfrontDistributionId" {
   description = "CloudFront distribution ID for flip-ui (used by make deploy-ui for cache invalidation)"
-  value       = aws_cloudfront_distribution.flip_ui.id
+  value       = one(aws_cloudfront_distribution.flip_ui[*].id)
 }
 
 output "CloudfrontDistributionDomain" {
   description = "CloudFront distribution CloudFront-assigned domain (*.cloudfront.net). Use for pre-cutover smoke tests."
-  value       = aws_cloudfront_distribution.flip_ui.domain_name
+  value       = one(aws_cloudfront_distribution.flip_ui[*].domain_name)
 }
 
 output "FlipUiBucketName" {
   description = "S3 bucket holding the UI static assets"
   value       = aws_s3_bucket.flip_ui.bucket
+}
+
+# State migration for the counts added above (FLIP#749): keeps existing legacy
+# states aligned without a manual `terraform state mv`. Adding `count` renames
+# each resource from X to X[0], which Terraform would otherwise plan as
+# destroy-and-recreate — harmless on LZA where these are orphans, destructive on
+# legacy where the WAF fronts live production traffic and the log bucket holds
+# real objects under a 30-day lifecycle. Safe to remove once every live state
+# file has been migrated.
+moved {
+  from = aws_wafv2_web_acl.flip_ui_cloudfront
+  to   = aws_wafv2_web_acl.flip_ui_cloudfront[0]
+}
+
+moved {
+  from = aws_wafv2_web_acl_logging_configuration.flip_ui_cloudfront
+  to   = aws_wafv2_web_acl_logging_configuration.flip_ui_cloudfront[0]
+}
+
+moved {
+  from = aws_cloudwatch_log_group.flip_ui_waf
+  to   = aws_cloudwatch_log_group.flip_ui_waf[0]
+}
+
+moved {
+  from = aws_s3_bucket.cloudfront_logs
+  to   = aws_s3_bucket.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_ownership_controls.cloudfront_logs
+  to   = aws_s3_bucket_ownership_controls.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_acl.cloudfront_logs
+  to   = aws_s3_bucket_acl.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_lifecycle_configuration.cloudfront_logs
+  to   = aws_s3_bucket_lifecycle_configuration.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_server_side_encryption_configuration.cloudfront_logs
+  to   = aws_s3_bucket_server_side_encryption_configuration.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_public_access_block.cloudfront_logs
+  to   = aws_s3_bucket_public_access_block.cloudfront_logs[0]
+}
+
+moved {
+  from = aws_s3_bucket_policy.cloudfront_logs_https_only
+  to   = aws_s3_bucket_policy.cloudfront_logs_https_only[0]
 }

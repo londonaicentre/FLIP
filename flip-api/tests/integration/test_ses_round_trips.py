@@ -46,19 +46,17 @@ from flip_api.db.models.main_models import (
 from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
 from flip_api.utils.constants import (
     ACCESS_REQUEST_TEMPLATE_NAME,
-    IMAGING_CREDENTIALS_TEMPLATE_NAME,
+    IMAGING_INVITE_TEMPLATE_NAME,
     IMAGING_PROJECT_ACCESS_TEMPLATE_NAME,
 )
-from flip_api.utils.encryption import encrypt
+from flip_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT, encrypt
 
 # ---------------------------------------------------------------------------
 # POST /api/users/access  (access_request)
 # ---------------------------------------------------------------------------
 
 
-def test_request_access_dispatches_templated_email_to_admin(
-    client: TestClient, ses_send_email_recorder
-):
+def test_request_access_dispatches_templated_email_to_admin(client: TestClient, ses_send_email_recorder):
     """Access-request endpoint sends one templated email to the admin."""
     response = client.post(
         "/api/users/access",
@@ -110,23 +108,25 @@ def _seed_completed_imaging_task(session, trust_id: UUID, project_id: UUID) -> T
     """Create a CREATE_IMAGING task with a populated result block.
 
     Result mirrors what trust-api returns when an XNAT project is created:
-    one newly created user (gets a credentials email) and one already-
-    existing user being added to the project (gets a project-access
+    one newly created user (gets an invite email with a set-password link) and
+    one already-existing user being added to the project (gets a project-access
     notification).
     """
-    encrypted_password = encrypt("hunter2-the-password")  # pragma: allowlist secret
+    encrypted_setup_path = encrypt(
+        "/app/template/XDATScreen_UpdateUser.vm?a=alias&s=secret", context=XNAT_SETUP_PATH_CONTEXT
+    )
     payload = {"project_id": str(project_id)}
     # The result schema is the trust-side ``ICreatedImagingProject``, which the
     # parser deserialises with ``ID`` -> ``imaging_project_id``. Both
     # ``created_users`` and ``added_users`` need a structured user shape with
-    # email + (encrypted) password where applicable.
+    # email + (encrypted) setup path where applicable.
     result = {
         "ID": str(uuid4()),
         "name": "ICU-Imaging-Project",
         "created_users": [
             {
                 "username": "newbie@example.com",
-                "encrypted_password": encrypted_password,
+                "encrypted_setup_path": encrypted_setup_path,
                 "email": "newbie@example.com",
             }
         ],
@@ -164,7 +164,7 @@ def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
     handle_imaging_task_completed(task, session)
 
     template_names = [c["Content"]["Template"]["TemplateName"] for c in ses_send_email_recorder]
-    assert template_names.count(IMAGING_CREDENTIALS_TEMPLATE_NAME) == 1
+    assert template_names.count(IMAGING_INVITE_TEMPLATE_NAME) == 1
     assert template_names.count(IMAGING_PROJECT_ACCESS_TEMPLATE_NAME) == 1
 
     # Status row: persisted exactly once.
@@ -178,9 +178,7 @@ def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
     assert statuses[0].retrieve_image_status == XNATImageStatus.CREATED
 
 
-def test_handle_imaging_task_idempotent_on_status_row(
-    session, ses_send_email_recorder, trust_factory, project_factory
-):
+def test_handle_imaging_task_idempotent_on_status_row(session, ses_send_email_recorder, trust_factory, project_factory):
     """Re-running for the same trust+project must not double-insert the status row.
 
     Locks in the explicit "skip if already exists from a prior attempt"

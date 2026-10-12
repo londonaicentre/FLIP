@@ -257,9 +257,7 @@ def build_project(
             client, headers, project_id, timeout_s=300, required_trust_ids={str(t["id"]) for t in trusts}
         )
         trust_ids = [t["id"] for t in trusts]
-        _ensure_ok(
-            _post(client, f"/projects/{project_id}/stage/", {"trusts": trust_ids}, headers), "stage project"
-        )
+        _ensure_ok(_post(client, f"/projects/{project_id}/stage/", {"trusts": trust_ids}, headers), "stage project")
         _log("    ✅ staged")
 
     if rung >= STATE_LADDER.index("approved"):
@@ -296,9 +294,7 @@ def cleanup(client: requests.Session, headers: dict[str, str]) -> int:
     failures = 0
     for record in records:
         project_id = record.get("project_id")
-        resp = client.delete(
-            f"{constants.BASE_URL}/projects/{project_id}", headers=headers, timeout=60
-        )
+        resp = client.delete(f"{constants.BASE_URL}/projects/{project_id}", headers=headers, timeout=60)
         if resp.status_code < 300 or resp.status_code == 404:
             _log(f"🗑️  deleted {record.get('name')} ({project_id})")
         else:

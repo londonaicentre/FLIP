@@ -11,14 +11,17 @@
 #
 
 import os
+from typing import get_type_hints
 from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
 
 # Import from the new flip package
+from flip.constants import flip_constants
 from flip.constants.flip_constants import (
     DevSettings,
+    FlipConstants,
     FlipEvents,
     FlipMetricsLabel,
     FlipTasks,
@@ -26,6 +29,7 @@ from flip.constants.flip_constants import (
     ProdSettings,
     ResourceType,
     _Common,
+    _FlipConstantsProxy,
 )
 
 
@@ -37,7 +41,6 @@ class TestDevSettings:
         with patch.dict(os.environ, {"DEV_DATAFRAME": "/test/df.csv", "DEV_IMAGES_DIR": "/test/images"}):
             settings = DevSettings()
             assert settings.LOCAL_DEV is True
-            assert settings.MIN_CLIENTS == 1
 
     def test_dev_settings_uses_default_dataframe_path(self):
         """DevSettings should use empty string default for DEV_DATAFRAME if not provided."""
@@ -59,13 +62,11 @@ class TestDevSettings:
         env = {
             "DEV_DATAFRAME": "/custom/dataframe.csv",
             "DEV_IMAGES_DIR": "/custom/images",
-            "MIN_CLIENTS": "3",
         }
         with patch.dict(os.environ, env, clear=True):
             settings = DevSettings()
             assert settings.DEV_DATAFRAME == "/custom/dataframe.csv"
             assert settings.DEV_IMAGES_DIR == "/custom/images"
-            assert settings.MIN_CLIENTS == 3
 
 
 class TestProdSettings:
@@ -115,6 +116,14 @@ class TestProdSettings:
             with pytest.raises(ValidationError, match="Invalid S3 URL"):
                 ProdSettings()
 
+    def test_prod_settings_rejects_empty_s3_bucket(self):
+        """An empty (compose-rendered unset) required prod setting must still fail, not fall back to its default."""
+        env = self.get_valid_prod_env()
+        env["UPLOADED_FEDERATED_DATA_BUCKET"] = ""
+        with patch.dict(os.environ, env, clear=True):
+            with pytest.raises(ValidationError, match="Invalid S3 URL"):
+                ProdSettings()
+
     def test_prod_settings_accepts_valid_s3_bucket(self):
         """ProdSettings should accept valid S3 bucket URL."""
         env = self.get_valid_prod_env()
@@ -144,26 +153,44 @@ class TestCommonSettings:
     def test_common_uses_default_local_dev(self):
         """_Common should default LOCAL_DEV to True if not set (dev mode by default)."""
         # Explicitly test with minimal environment
-        env = {"MIN_CLIENTS": "1"}  # Don't include LOCAL_DEV to test default
-        with patch.dict(os.environ, env, clear=True):
+        with patch.dict(os.environ, {}, clear=True):  # Don't include LOCAL_DEV to test default
             settings = _Common()
             assert settings.LOCAL_DEV is True
 
-    def test_common_min_clients_default(self):
-        """_Common should default MIN_CLIENTS to 1."""
-        with patch.dict(os.environ, {"LOCAL_DEV": "true"}, clear=True):
+    def test_common_ignores_legacy_min_clients_env(self):
+        """A stale MIN_CLIENTS in the environment is ignored: the per-job quorum comes from fl-api (FLIP#1230)."""
+        with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": ""}, clear=True):
             settings = _Common()
-            assert settings.MIN_CLIENTS == 1
+            assert not hasattr(settings, "MIN_CLIENTS")
 
-    def test_common_min_clients_must_be_positive(self):
-        """_Common should reject non-positive MIN_CLIENTS."""
-        with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": "0"}, clear=True):
-            with pytest.raises(ValidationError):
-                _Common()
 
-        with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": "-1"}, clear=True):
-            with pytest.raises(ValidationError):
-                _Common()
+class TestFlipConstantsProxy:
+    """Test the lazily-forwarding FlipConstants proxy."""
+
+    def test_annotations_mirror_the_settings_fields(self):
+        """The proxy declares exactly the union of the settings fields, each with the field's own type.
+
+        The annotations are what mypy sees for ``FlipConstants.<NAME>``; this pins them to the
+        settings classes so adding or retyping a field cannot leave the proxy stale.
+        """
+        expected = {
+            name: field.annotation
+            for settings_cls in (DevSettings, ProdSettings)
+            for name, field in settings_cls.model_fields.items()
+        }
+        assert get_type_hints(_FlipConstantsProxy) == expected
+
+    def test_forwards_the_active_settings_only(self):
+        """Reads resolve on the active settings instance; the other environment's fields are absent."""
+        env = {"LOCAL_DEV": "true", "DEV_DATAFRAME": "/data/df.csv", "DEV_IMAGES_DIR": "/data/images"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.object(flip_constants, "_flip_constants_instance", DevSettings()),
+        ):
+            assert FlipConstants.LOCAL_DEV is True
+            assert FlipConstants.DEV_DATAFRAME == "/data/df.csv"
+            with pytest.raises(AttributeError):
+                _ = FlipConstants.NET_ID
 
 
 class TestResourceType:

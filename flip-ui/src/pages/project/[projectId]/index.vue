@@ -18,8 +18,11 @@
 
 <template>
     <div v-if="project" class="relative flex flex-col h-full overflow-hidden">
-        <div class="flex-grow h-full overflow-y-auto">
-            <header class="px-6 pt-4">
+        <!-- Page column. Below lg it is the page scroller (stacked, content-height
+             cards, exactly as before); at lg+ it is a fixed-height flex column so the
+             three cards can fill the viewport and own their own scrollbars. -->
+        <div class="flex flex-col flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
+            <header class="px-6 pt-4 shrink-0">
                 <router-link
                     to="/projects"
                     class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-300 dark:hover:text-primary-300"
@@ -78,7 +81,12 @@
                                 />
                             </template>
                         </AiGuard>
-                        <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isViewer">
+                        <!-- A Trust Admin reading a project staged at their trust (FLIP#1258) cannot edit it. -->
+                        <AiGuard
+                            v-if="!readsOnlyAsTrustAdmin(project)"
+                            :permissions="editProjectPermissions"
+                            :bypass="isOwnerOrHasAccess() || isViewer"
+                        >
                             <AiButton
                                 light
                                 data-test="edit-project-btn"
@@ -95,51 +103,69 @@
                 </div>
             </header>
 
-            <div class="relative grid items-start grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)] xl:p-4">
-                <div class="lg:col-span-3">
-                    <!-- my-4 on top of the grid's gap/padding gives the lifecycle ~32px of
-                         breathing room above and below, matching the model page. -->
-                    <LifecycleTrack :steps="steps" class="my-4" />
-                </div>
+            <!-- Lifecycle lifted out of the card grid so the grid can be the single
+                 flex-1 row. The 32px above the track is this pt-4 plus the track's my-4;
+                 the 32px below is the track's my-4 plus the grid's own p-4 (what the
+                 grid's gap-4 used to add), so no bottom padding here. -->
+            <div class="px-4 pt-4 shrink-0">
+                <LifecycleTrack :steps="steps" class="my-4" />
+            </div>
 
-                <div class="grid grid-cols-1 gap-4 lg:sticky top-16">
-                    <QueryDetails :query-details="project.query" />
+            <div
+                data-test="project-workspace"
+                :class="[
+                    'relative grid grid-cols-1 gap-4 p-4 lg:flex-1 lg:min-h-0 lg:items-stretch',
+                    hasImaging
+                        ? 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)]'
+                        : 'lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,2.25fr)]'
+                ]"
+            >
+                <div class="flex flex-col gap-4 lg:min-h-0">
+                    <div class="shrink-0">
+                        <QueryDetails :query-details="project.query" />
+                    </div>
 
                     <Transition name="slidedown" mode="out-in">
                         <template v-if="isProjectUnstaged()">
-                            <ProjectStaging
-                                :has-query="!!project.query"
-                                :stageable-trust-ids="stageableTrustIds"
-                                :project-staged="isProjectStaged()"
-                                :staging="stagingProject"
-                                @staged="stageProject"
-                            />
+                            <div class="lg:flex-1 lg:min-h-0">
+                                <ProjectStaging
+                                    :has-query="!!project.query"
+                                    :stageable-trust-ids="stageableTrustIds"
+                                    :project-staged="isProjectStaged()"
+                                    :staging="stagingProject"
+                                    @staged="stageProject"
+                                />
+                            </div>
                         </template>
                         <template v-else>
-                            <ProjectApproval
-                                :approved-trusts="project.approvedTrusts ?? []"
-                                :has-query="!!project.query"
-                                :project-approved="projectApproved"
-                                :approving="approvingProject"
-                                :can-approve="isProjectStaged()"
-                                @approve-project="approveProjectEvent"
-                            />
+                            <div class="lg:flex-1 lg:min-h-0">
+                                <ProjectApproval
+                                    :approved-trusts="project.approvedTrusts ?? []"
+                                    :has-query="!!project.query"
+                                    :project-approved="projectApproved"
+                                    :approving="approvingProject"
+                                    :can-approve="isProjectStaged() || projectApproved"
+                                    @approve-project="approveProjectEvent"
+                                />
+                            </div>
                         </template>
                     </Transition>
                 </div>
 
-                <div class="lg:sticky top-16">
+                <div v-if="hasImaging" class="lg:min-h-0">
                     <ProjectStatus
                         :can-load="projectApproved"
                         :cohort-size="project.query?.totalCohort"
                     />
                 </div>
 
-                <!-- Stretched cell + absolutely positioned card: the model list can't
-                     inflate the row, so the card matches the height the imaging
-                     project status card defines and scrolls internally instead. -->
-                <div class="relative lg:self-stretch">
-                    <LatestModels class="lg:absolute lg:inset-0" />
+                <!-- No absolute-position or sticky variant either way now: the grid is the
+                     page's single flex-1 row, so the cell's height comes from the viewport
+                     rather than from whatever sibling card happens to define the row. That
+                     holds with the imaging status card present and, on a tabular-only
+                     project (FLIP#1071), with nothing in its place. -->
+                <div class="lg:min-h-0">
+                    <LatestModels />
                 </div>
             </div>
         </div>
@@ -151,6 +177,7 @@
             :project-unstaged="isProjectUnstaged() && !isViewer"
             :description="project.description"
             :dicom-to-nifti="project.dicom_to_nifti ?? true"
+            :has-imaging="hasImaging"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
             @close="closeEditProjectDrawer"
@@ -177,7 +204,12 @@ import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import ProjectApproval from "@/partials/projects/ProjectApproval.vue";
 import ProjectStaging from "@/partials/projects/ProjectStaging.vue";
 import ProjectStatus from "@/partials/projects/ProjectStatus.vue";
-import { approveProject, editProject, stageProject as stageProjectWithTrusts, unstageProject } from "@/services/project-service";
+import { projectHasImaging } from "@/partials/projects/projectType";
+import { approveProject,
+    editProject,
+    ITrustDecisions,
+    stageProject as stageProjectWithTrusts,
+    unstageProject } from "@/services/project-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useProjectStore } from "@/store/project";
@@ -202,15 +234,15 @@ const projectUpdating = ref(false);
 const approvingProject = ref(false);
 const unstagingProject = ref(false);
 
-// Most-recent per-trust approval (sourced server-side from
-// project_trust_intersect.approved_at) doubles as the project-level
-// approval date in the lifecycle bar.
+// Trust decisions freeze once the project is approved, so the most recent one (sourced server-side from
+// project_trust_intersect.decided_at) is the save that approved it — the project-level approval date in the
+// lifecycle bar. Undated until then, like the Staged step.
 const latestTrustApprovalAt = computed<string | null>(() => {
-    const trusts = (project?.value?.approvedTrusts ?? []).filter(t => t.approved && t.approvedAt);
-    if (!trusts.length) return null;
+    if (project?.value?.status !== "APPROVED") return null;
 
-    return trusts
-        .map(t => t.approvedAt as string)
+    return (project?.value?.approvedTrusts ?? [])
+        .filter(t => t.status !== "PENDING" && t.decidedAt)
+        .map(t => t.decidedAt as string)
         .sort()
         .at(-1) ?? null;
 });
@@ -253,7 +285,10 @@ const { project } = storeToRefs(projectStore);
 // Admin-only and bypasses the per-project check on the server.
 const editProjectPermissions: UserPermissions[] = ["CanCreateProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
-const { isViewer, canCreateProjects } = usePermissions();
+const { isViewer, canCreateProjects, readsOnlyAsTrustAdmin } = usePermissions();
+
+// Creation-time flag (FLIP#1071). Absent on a hub predating it, which means imaging.
+const hasImaging = computed(() => projectHasImaging(project.value));
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
@@ -330,29 +365,84 @@ const updateProjectEvent = async (update: IEditProject) => {
     projectUpdating.value = false;
 };
 
-const approveProjectEvent = async (ids: string[]) => {
+// The hub's own explanation of a refused save (e.g. another approver finished first). Only 400s are shown
+// verbatim — other statuses can carry internal detail.
+const getRefusalReason = (error: unknown): string | undefined => {
+    const response = (error as { response?: { status?: number, data?: { detail?: unknown } } })?.response;
+
+    if (response?.status !== 400) return undefined;
+
+    return typeof response.data?.detail === "string" ? response.data.detail : undefined;
+};
+
+const approveProjectEvent = async (decisions: ITrustDecisions) => {
     approvingProject.value = true;
 
     const { name } = { ...project?.value };
+    // Trusts decide one at a time (FLIP#1258): whether this save approved the project, joined a trust to an
+    // approved one, or left every trust declined depends on what was recorded before it.
+    const wasApproved = projectApproved.value;
+    const declinedNow = new Set(decisions.declined);
+    const staged = project?.value?.approvedTrusts ?? [];
+    const everyTrustDeclined = staged.length > 0
+        && staged.every(t => t.status === "DECLINED" || declinedNow.has(t.id));
 
     try {
-        // If it is only one trust, add to an array
-        const arr: string[] = [];
-        const trustList = arr.concat(ids);
+        const response = await approveProject(`/step/project/${route.params.projectId}/approve`, decisions);
 
-        await approveProject(`/step/project/${route.params.projectId}/approve`, trustList);
-
-        Snackbar.success({
-            title: "Project Approved",
-            text: `${name} has been approved.`
-        });
+        if (response.projectStatus === "APPROVED" && !decisions.approved.length) {
+            Snackbar.success({
+                title: "Trust decisions saved",
+                text: `The decision on ${name} has been recorded.`
+            });
+        }
+        else if (response.projectStatus === "APPROVED") {
+            // The approval is committed even when imaging could not be started at a trust, so this is a
+            // warning, not an error — but it must name the trust, as nothing else will.
+            const failed = (response.details ?? []).filter(d => !d.success).map(d => d.trust);
+            if (response.successful === false && failed.length) {
+                Snackbar.warning({
+                    title: wasApproved ? "Trust approved, imaging not started" : "Project approved, imaging not started everywhere",
+                    text: `${name} has been approved, but imaging could not be started at ${failed.join(", ")}.`
+                });
+            }
+            else if (wasApproved) {
+                Snackbar.success({
+                    title: "Trust approved",
+                    text: `The newly approved trust joins ${name}.`
+                });
+            }
+            else {
+                Snackbar.success({
+                    title: "Project Approved",
+                    text: `${name} has been approved.`
+                });
+            }
+        }
+        else if (response.projectStatus === "STAGED" && everyTrustDeclined) {
+            Snackbar.success({
+                title: "All trusts declined",
+                text: `${name} stays staged. Unstage it to reconsider, or change a decision.`
+            });
+        }
+        else if (response.projectStatus === "STAGED") {
+            Snackbar.success({
+                title: "Trust decisions saved",
+                text: `${name} stays staged until a trust approves it.`
+            });
+        }
+        else {
+            throw new Error(`Unexpected project status after saving trust decisions: ${response.projectStatus}`);
+        }
 
         emit("UpdateProject");
     }
-    catch {
+    catch (error) {
+        console.error(error);
         Snackbar.error({
-            title: "Unable to approve project",
-            text: `${name} has not been approved.`
+            title: "Unable to save trust decisions",
+            text: getRefusalReason(error)
+                ?? `The trust decisions for ${name} could not be saved. Reload the project to check its status.`
         });
 
         errorStore.setError();

@@ -13,49 +13,56 @@
 
 # Deployment Providers
 
-A **provider** provisions the *infrastructure* a FLIP component runs on — an AWS account, an on-prem host, a
-Kubernetes cluster. It does not define the container stack itself; that lives in the compose files described
-in [`../README.md#where-things-live`](../README.md#where-things-live).
+A **provider** is the Terraform (and host bootstrap) that provisions cloud infrastructure for a FLIP component.
+It does not define the container stack or configure a site-owned host — both live under
+[`trust/deploy/`](../../trust/deploy/README.md), by the rule in [`../README.md#where-things-live`](../README.md#where-things-live).
 
-| Provider | Deploys | Entry point |
-| -------- | ------- | ----------- |
+| Provider | Provisions | Entry point |
+| -------- | ---------- | ----------- |
 | [`AWS/`](AWS/README.md) | **Hub + optional cloud trust** — ECS Fargate, RDS + Proxy, ALB/NLB, CloudFront, Cognito, SES, and a trust EC2 host **unless `DEPLOY_TRUST_EC2=false`** (it defaults to `true`, and is settable from the env file as well as the CLI) | `make -C deploy/providers/AWS full-deploy KIT=<CODE> PROD=<stag\|true>`<br>hub-only: `full-deploy-hub-only PROD=<stag\|true>` |
-| [`kubernetes/`](kubernetes/README.md) | **Trust only** — Helm chart `flip-trust` | `make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=<stag\|true>` |
-| [`local/`](local/README.md) | **Trust only** — Ansible provisioning of an on-prem Ubuntu host | `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> PROD=<stag\|true>` |
 
 `KIT=<CODE>` names the trust whose kit file (`trust/.env.<CODE>.<env>`) the target reads; `PROD` selects
-that file's environment suffix. **The two Makefiles derive the suffix differently, so always spell `PROD`
-out:** `deploy/providers/AWS/Makefile`'s `KIT_ENV_SUFFIX` is two-valued — `production` when `PROD=true`,
-`stag` otherwise — while `deploy/providers/kubernetes/Makefile`'s `ENV` is three-valued: `production`,
-`stag`, and **`development` when `PROD` is unset**.
+that file's environment suffix. `KIT` is load-bearing, and omitting it costs a *partial* run rather than a
+clean failure: `full-deploy` pulls in `deploy-trust` → `seed-trust-data`, whose `KIT is required` guard fires
+only after `plan`, `apply`, `deploy-centralhub` and `register-trusts` have all run. Deploying the hub alone
+needs no `KIT`: use `full-deploy-hub-only`.
 
-`KIT` is load-bearing on every row, and omitting it costs a *partial* run rather than a clean failure:
+## How a trust node is deployed: shape × infrastructure
 
-- `provision-local-trust` resolves `FL_KIT_SLOT` out of the kit file and aborts at the FL kit download —
-  after the Ansible play has already run.
-- `full-deploy` pulls in `deploy-trust` → `seed-trust-data`, whose `KIT is required` guard fires only after
-  `plan`, `apply`, `deploy-centralhub` and `register-trusts` have all run. Deploying the hub alone needs no
-  `KIT`: use `full-deploy-hub-only`.
+A trust node is one container stack in two shapes, and either shape can run on infrastructure a provider
+created or on infrastructure the site already has. Keep the two axes apart when reading the tree:
 
-## Why two of three are trust-only
+| Node shape | Defined in | Installed by | Infrastructure it runs on |
+| ---------- | ---------- | ------------ | ------------------------- |
+| **Compose on a host** | [`trust/deploy/compose_trust.*.yml`](../../trust/deploy/README.md) | [`trust/deploy/ansible/onprem.yml`](../../trust/deploy/ansible/README.md) (site-owned host) or [`AWS/site.yml`](AWS/site.yml) (EC2), then `make up-onprem-trust` / `make -C trust up-trust-ec2` | an on-prem Ubuntu box, or the EC2 trust this provider creates |
+| **Helm on Kubernetes** | [`trust/deploy/helm/`](../../trust/deploy/helm/README.md) (chart `flip-trust`) | `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<stag\|true>` | a site-managed cluster (k3s, on-prem) or a managed one (AKS, EKS) |
 
-Deployment variability is almost entirely trust-side. A **trust** can run on AWS EC2, an on-prem Ubuntu box,
-or a Kubernetes cluster — three targets, hence three provider recipes. The **Central Hub** has exactly one
-supported production target, AWS ECS Fargate (hub-on-EC2 was deprecated in
+**Spell `PROD` out** on either row: `deploy/providers/AWS/Makefile`'s `KIT_ENV_SUFFIX` is two-valued
+(`production` when `PROD=true`, `stag` otherwise), while `trust/deploy/helm/Makefile`'s `ENV` is three-valued
+(`production`, `stag`, and **`development` when `PROD` is unset**).
+
+The **Central Hub** has exactly one supported production target, AWS ECS Fargate (hub-on-EC2 was deprecated in
 [#936](https://github.com/londonaicentre/FLIP/issues/936); `deploy/compose.production.yml` is a local
-prod-image harness, not a deploy target). One target needs no abstraction, so there is no hub-only provider.
+prod-image harness, not a deploy target). One target needs no abstraction, so there is no hub-only provider,
+and the hub's Terraform is simply the `AWS/` root.
 
 ## AWS is the orchestrator
 
-The three providers are siblings, but the AWS provider drives the other two — it owns the Terraform outputs
-(VPC, NLB security-group rules, FL participant kits in S3) that an on-prem or K8s trust needs in order to
-reach the hub:
+Whatever shape and infrastructure a trust uses, it joins a hub that lives in AWS, so the AWS provider owns the
+outputs every trust needs in order to reach it — the NLB security-group rules and the FL participant kits in
+S3 — and its Makefile carries the targets that hand them over:
 
-- `make -C deploy/providers/AWS provision-local-trust` runs `local/site_local_trust.yml`
-- `make -C deploy/providers/AWS full-deploy-with-k8s` calls `$(MAKE) -C ../kubernetes sync-kit / up / status`
+- `provision-local-trust` runs `trust/deploy/ansible/onprem.yml` on the host and stages the FL kit from S3.
+  This is the one known exception to the rule above: the play itself needs nothing from AWS, but its driver
+  lives in this Makefile, which parses the hub env file at load and so cannot run on a host that holds only
+  its kit file. Splitting the two halves is tracked under [#1213](https://github.com/londonaicentre/FLIP/issues/1213).
+- `full-deploy-with-k8s` calls the chart's `sync-kit` / `up` / `status` targets (`make -C trust/deploy/helm …`)
+- `allow-local-trust-nlb` / `add-k8s-trust` open the FL-server NLB to a trust's public IP
 
-So a trust-only provider is not hub-independent: whichever one you use, the trust is still registered on the
-hub (`make register-trust KIT=<CODE>`) and still receives its kit file from the hub admin.
+So neither node shape is hub-independent: the trust is still registered on the hub
+(`make -C deploy/providers/AWS register-trusts KIT=<CODE>` — the AWS provider's
+ECS-aware target; the root `make register-trust` is the dev-only, local-container form) and
+still receives its kit file from the hub admin.
 
 ## Note on the AWS Terraform root
 
@@ -63,4 +70,5 @@ hub (`make register-trust KIT=<CODE>`) and still receives its kit file from the 
 The cloud trust is instantiated from that same root (`AWS/main.tf`, `module "trust_ec2"`) and consumes
 hub-owned resources — the hub's VPC subnets, security group, key pair and IAM instance profile. The cloud
 trust runs *inside the hub's VPC*. It is therefore not separable into hub and trust halves without splitting
-Terraform state; treat `AWS/` as one indivisible unit.
+Terraform state; treat `AWS/` as one indivisible unit. A second cloud provider should be its own root with its
+own state, not a module of this one.

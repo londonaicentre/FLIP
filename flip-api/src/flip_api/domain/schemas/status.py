@@ -130,6 +130,33 @@ class ProjectStatus(StrEnum):
     APPROVED = "APPROVED"
 
 
+class TrustApprovalStatus(StrEnum):
+    """Decision on a staged project at one trust. Every trust starts PENDING when the project is staged."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    DECLINED = "DECLINED"
+
+
+class DecisionMaker(StrEnum):
+    """Who recorded a trust's decision on a project: the hub admin, or the trust's own Trust Admin (FLIP#1258)."""
+
+    HUB = "HUB"
+    SITE = "SITE"
+
+
+class ProjectType(StrEnum):
+    """Kind of project, for the projects-list filter (FLIP#1071): imaging, or tabular-only."""
+
+    IMAGING = "imaging"
+    OMOP_ONLY = "omop_only"
+
+    @property
+    def has_imaging(self) -> bool:
+        """The ``Projects.has_imaging`` value this kind corresponds to."""
+        return self is ProjectType.IMAGING
+
+
 class AccessRequestStatus(StrEnum):
     """Lifecycle state of a platform access request.
 

@@ -138,9 +138,7 @@ def test_s3_client_list_objects_returns_full_paths_with_scheme(s3_buckets):
 # ---------------------------------------------------------------------------
 
 
-def test_post_presigned_url_endpoint_returns_working_upload_policy(
-    client: TestClient, session, s3_buckets
-):
+def test_post_presigned_url_endpoint_returns_working_upload_policy(client: TestClient, session, s3_buckets):
     """Endpoint returns a presigned POST policy; the policy actually accepts an upload.
 
     Build the policy via the endpoint, sign it with moto's signing path, send
@@ -219,10 +217,7 @@ def test_post_presigned_url_policy_carries_size_cap_and_content_type_lock(
     # whole encoded request body (multipart framing), not just the file part.
     expected_cap = 64 + _MULTIPART_OVERHEAD_BUFFER_BYTES
     assert ["content-length-range", 0, expected_cap] in conditions
-    assert any(
-        isinstance(c, dict) and c.get("Content-Type") == "application/octet-stream"
-        for c in conditions
-    )
+    assert any(isinstance(c, dict) and c.get("Content-Type") == "application/octet-stream" for c in conditions)
 
 
 def test_post_presigned_url_endpoint_404_for_unknown_model(client: TestClient, session, s3_buckets):
@@ -267,9 +262,7 @@ def _object_keys(bucket: str, prefix: str) -> list[str]:
     return [obj["Key"] for obj in listing.get("Contents", [])]
 
 
-def test_process_scanned_file_promotes_clean_file_to_scanned_prefix(
-    client: TestClient, session, s3_buckets
-):
+def test_process_scanned_file_promotes_clean_file_to_scanned_prefix(client: TestClient, session, s3_buckets):
     """The end-to-end quarantine boundary: a clean upload is registered,
     scanned, copied to the scanned prefix, and removed from staging.
 
@@ -408,9 +401,7 @@ def test_presigned_url_endpoint_rejects_disallowed_extension(client: TestClient,
 # ---------------------------------------------------------------------------
 
 
-def test_retrieve_model_files_list_categorises_monai_files(
-    client: TestClient, session, s3_buckets
-):
+def test_retrieve_model_files_list_categorises_monai_files(client: TestClient, session, s3_buckets):
     """The endpoint categorises by the well-known monai suffixes the FL server expects.
 
     ``retrieve_model_files_list`` matches keys ending in ``monaialgo.py`` →
@@ -473,9 +464,7 @@ def test_download_file_returns_working_presigned_url(client: TestClient, session
     bucket, prefix = _bucket_and_prefix(settings.SCANNED_MODEL_FILES_BUCKET)
     file_name = "weights.bin"
     payload = bytes(range(256)) * 4
-    boto3.client("s3").put_object(
-        Bucket=bucket, Key=f"{prefix}/{model_id}/{file_name}", Body=payload
-    )
+    boto3.client("s3").put_object(Bucket=bucket, Key=f"{prefix}/{model_id}/{file_name}", Body=payload)
     session.add(
         UploadedFiles(
             id=uuid4(),

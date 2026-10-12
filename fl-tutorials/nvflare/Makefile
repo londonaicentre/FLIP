@@ -26,7 +26,7 @@
 # Discover tutorials: any <category>/<name>/ that carries a .env.app.
 TUTORIAL_DIRS := $(sort $(patsubst %/,%,$(dir $(wildcard */*/.env.app))))
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials
+.PHONY: list-tutorials run-tutorial sim-tutorial run-all-tutorials
 
 list-tutorials:
 	@echo "Available NVFLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
@@ -42,9 +42,13 @@ run-tutorial:
 	echo "🚀 Running NVFLARE tutorial '$(TUTORIAL)' ($$dir)"; \
 	$(MAKE) -C "$$dir" run
 
+# NVFLARE tutorials only ever run on the simulator (each tutorial's `run` target is an alias
+# for `sim`), so this is run-tutorial under the name the Flower harness uses for its simulator
+# path. Having both on both backends means `sim-tutorial` always means "no containers".
+sim-tutorial: run-tutorial
+
 run-all-tutorials:
 	@for d in $(TUTORIAL_DIRS); do \
 		echo "🚀 Running NVFLARE tutorial $$(basename $$d)"; \
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done
-

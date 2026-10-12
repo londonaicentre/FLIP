@@ -16,6 +16,7 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import TrainingOptions from "@/partials/models/TrainingOptions.vue";
+import type { IProjectTrust } from "@/services/project-service";
 
 // AiSwitch is the vee-validate field; we stub it to expose the `name` and `value`
 // it is bound to, so we can assert the trust is selected by its UUID id (not name).
@@ -26,8 +27,9 @@ const aiSwitchStub = {
 };
 
 function mountTrainingOptions(
-    approvedTrusts: { name: string; id: string; approved: boolean; code?: string | null }[],
-    disabled = false
+    approvedTrusts: IProjectTrust[],
+    disabled = false,
+    hasImaging: boolean | undefined = undefined
 ) {
     return mount(TrainingOptions, {
         global: {
@@ -35,7 +37,14 @@ function mountTrainingOptions(
                 createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false,
-                    initialState: { project: { project: { approvedTrusts } } }
+                    initialState: {
+                        project: {
+                            project: {
+                                approvedTrusts,
+                                has_imaging: hasImaging
+                            }
+                        }
+                    }
                 })
             ],
             stubs: { AiSwitch: aiSwitchStub }
@@ -48,24 +57,31 @@ function mountTrainingOptions(
 }
 
 describe("TrainingOptions trust selection", () => {
-    const trusts = [
+    const trusts: IProjectTrust[] = [
         {
             name: "Beta Trust",
             id: "id-beta",
             code: "BETA",
-            approved: true
+            status: "APPROVED"
         },
         {
             name: "Alpha Trust",
             id: "id-alpha",
             code: "ALPHA",
-            approved: true
+            status: "APPROVED"
         },
         {
             name: "Gamma Trust",
             id: "id-gamma",
             code: "GAMMA",
-            approved: false
+            status: "DECLINED"
+        },
+        {
+            // Left out of an approval made before FLIP#1318, so migrated to PENDING, not DECLINED.
+            name: "Delta Trust",
+            id: "id-delta",
+            code: "DELTA",
+            status: "PENDING"
         }
     ];
 
@@ -90,15 +106,16 @@ describe("TrainingOptions trust selection", () => {
         }
     });
 
-    it("labels each trust with its code, and excludes un-approved trusts", () => {
+    it("labels each trust with its code, and excludes trusts that are not approved", () => {
         const wrapper = mountTrainingOptions(trusts);
         const text = wrapper.text();
 
         // Names are admin-chosen and non-unique, so the code disambiguates them.
         expect(text).toContain("Alpha Trust (ALPHA)");
         expect(text).toContain("Beta Trust (BETA)");
-        // Gamma is not approved, so it must not be offered for training.
+        // Gamma declined and Delta was never decided, so neither may be offered for training.
         expect(text).not.toContain("Gamma Trust");
+        expect(text).not.toContain("Delta Trust");
     });
 
     it("falls back to the bare name when a trust carries no code", () => {
@@ -107,12 +124,12 @@ describe("TrainingOptions trust selection", () => {
                 name: "Alpha Trust",
                 id: "id-alpha",
                 code: null,
-                approved: true
+                status: "APPROVED"
             },
             {
                 name: "Beta Trust",
                 id: "id-beta",
-                approved: true
+                status: "APPROVED"
             }
         ]);
         const text = wrapper.text();
@@ -129,13 +146,13 @@ describe("TrainingOptions trust selection", () => {
                 name: "Beta Trust",
                 id: "id-beta",
                 code: "AAA",
-                approved: true
+                status: "APPROVED"
             },
             {
                 name: "Alpha Trust",
                 id: "id-alpha",
                 code: "ZZZ",
-                approved: true
+                status: "APPROVED"
             }
         ]);
         const labels = wrapper.findAll("dt").map(dt => dt.text());
@@ -163,10 +180,10 @@ describe("TrainingOptions trust selection", () => {
 });
 
 describe("TrainingOptions disabled", () => {
-    const trust = [{
+    const trust: IProjectTrust[] = [{
         name: "Alpha Trust",
         id: "id-alpha",
-        approved: true
+        status: "APPROVED"
     }];
 
     it("locks every control once the run is under way, so the choices stay readable", () => {
@@ -181,5 +198,23 @@ describe("TrainingOptions disabled", () => {
         const comp = mountTrainingOptions(trust);
 
         expect(comp.findAll("button").every((s) => s.attributes("disabled") === undefined)).toBe(true);
+    });
+});
+
+describe("TrainingOptions enrichment copy", () => {
+    it("asks to confirm dataset enrichment for an imaging project", () => {
+        const wrapper = mountTrainingOptions([], false, true);
+        expect(wrapper.text()).toContain("Confirm your dataset has been enriched as required before training");
+    });
+
+    it("keeps the imaging copy when the hub omits has_imaging (a hub predating the flag)", () => {
+        const wrapper = mountTrainingOptions([], false);
+        expect(wrapper.text()).toContain("Confirm your dataset has been enriched as required before training");
+    });
+
+    it("explains there is no imaging to enrich for a tabular-only project", () => {
+        const wrapper = mountTrainingOptions([], false, false);
+        expect(wrapper.text()).toContain("This project has no imaging to enrich");
+        expect(wrapper.find("[data-test=data-enrichment-btn]").exists()).toBe(true); // the gate itself stays
     });
 });

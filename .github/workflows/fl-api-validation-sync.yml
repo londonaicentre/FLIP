@@ -40,9 +40,15 @@ permissions:
 
 jobs:
   check-validation-sync:
-    runs-on: ubuntu-latest
+    # macOS too: contributors run this check locally, and macOS's /bin/bash is 3.2
+    # (no mapfile), which the Linux runner's bash 5 cannot catch.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
       - name: Run check_fl_api_validation_sync.sh
-        run: bash scripts/check_fl_api_validation_sync.sh
+        run: /bin/bash scripts/check_fl_api_validation_sync.sh

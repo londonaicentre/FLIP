@@ -84,9 +84,7 @@ def retrieve_model_status_from_logs(
         # Manager value — keep it in the log, never in a response body reachable by any user with
         # model access.
         logger.exception("Elasticsearch query for model status failed")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from exc
 
     logs = response.json().get("hits", {}).get("hits", [])
     if not logs:
@@ -118,13 +116,15 @@ def retrieve_model_status_from_logs(
 
         # Prepare insert values
         values.append(f"(:model{counter}, :date{counter}, :success{counter}, :trust{counter}, :log{counter})")
-        params.append({
-            f"model{counter}": source["model"],
-            f"date{counter}": ts,
-            f"success{counter}": message != "returned status: dead",
-            f"trust{counter}": trust or "",
-            f"log{counter}": message,
-        })
+        params.append(
+            {
+                f"model{counter}": source["model"],
+                f"date{counter}": ts,
+                f"success{counter}": message != "returned status: dead",
+                f"trust{counter}": trust or "",
+                f"log{counter}": message,
+            }
+        )
         counter += 1
 
     if values:

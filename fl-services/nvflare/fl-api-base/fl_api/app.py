@@ -26,11 +26,13 @@ from fl_api.utils.exception_handlers import (
     value_error_handler,
 )
 from fl_api.utils.logger import logger
+from fl_api.utils.validation import warn_if_bundle_url_allow_list_empty
+from fl_api.utils.version import build_identity
 
 app = FastAPI(
     title="FLIP FL API (FLARE)",
     description="FL API for FLARE deployment runtime.",
-    version="0.1.0",
+    version=build_identity() or "unknown",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -57,5 +59,7 @@ app.include_router(system.router, tags=["System"])
 def on_startup() -> None:
     """FL API startup event: initializes the FL session."""
     logger.info("Running FL startup initialization...")
+    # Report an empty bundle-fetch allow-list where an operator looks first: the boot log (FLIP#905).
+    warn_if_bundle_url_allow_list_empty()
     app.state.session = create_fl_session()
     logger.info("FL session initialized successfully.")

@@ -16,84 +16,13 @@ import torch
 import torch.nn as nn
 
 
-def _normalise_checkpoint_state_dict(checkpoint, pretrained_key=None):
-    if pretrained_key:
-        if pretrained_key not in checkpoint:
-            raise KeyError(
-                f"PRETRAINED_KEY={pretrained_key!r} not found in checkpoint. "
-                f"Available keys: {list(checkpoint.keys())[:20]}"
-            )
-        state_dict = checkpoint[pretrained_key]
-    elif isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
-    elif isinstance(checkpoint, dict) and "model" in checkpoint:
-        state_dict = checkpoint["model"]
-    else:
-        state_dict = checkpoint
+def _load_pretrained_weights(model, pretrained_weights):
+    """Load the backbone-only state dict `make prepare-checkpoint` derived from the raw Ark6 file.
 
-    if any("module." in k for k in state_dict.keys()):
-        state_dict = {k.replace("module.", "", 1): v for k, v in state_dict.items() if k.startswith("module.")}
-    return state_dict
-
-
-# def _remap_scale_up_downsample_keys_for_timm(state_dict, model):
-#     """Map Ark+ scale_up checkpoint downsample keys to installed timm Swin keys.
-#
-#     The Ark+ checkpoint stores downsample modules on layers.0/1/2, while the
-#     timm SwinTransformer available in this environment stores the same tensors
-#     on layers.1/2/3. Shapes verify the one-stage shift.
-#     """
-#     model_state = model.state_dict()
-#     remapped = {}
-#     used_sources = set()
-#     for key, value in state_dict.items():
-#         new_key = key
-#         for src, dst in (
-#             ("layers.0.downsample.", "layers.1.downsample."),
-#             ("layers.1.downsample.", "layers.2.downsample."),
-#             ("layers.2.downsample.", "layers.3.downsample."),
-#         ):
-#             if key.startswith(src):
-#                 candidate = dst + key[len(src) :]
-#                 if candidate in model_state and tuple(value.shape) == tuple(model_state[candidate].shape):
-#                     new_key = candidate
-#                     used_sources.add(key)
-#                 break
-#         remapped[new_key] = value
-#
-#     if used_sources:
-#         print(f"Remapped {len(used_sources)} Ark+ scale_up downsample tensors for installed timm Swin layout.")
-#     return remapped
-
-
-# def _filter_state_dict_for_model(model, state_dict, load_backbone_only=False):
-#     state_dict = _remap_scale_up_downsample_keys_for_timm(state_dict, model)
-#
-#     if load_backbone_only:
-#         state_dict = {k: v for k, v in state_dict.items() if not k.startswith("omni_heads.")}
-#
-#     model_state = model.state_dict()
-#     compatible = {}
-#     skipped = []
-#     for key, value in state_dict.items():
-#         if "attn_mask" in key:
-#             skipped.append(key)
-#             continue
-#         if key not in model_state:
-#             skipped.append(key)
-#             continue
-#         if tuple(value.shape) != tuple(model_state[key].shape):
-#             skipped.append(key)
-#             continue
-#         compatible[key] = value
-#
-#     print(f"Loading {len(compatible)} compatible pretrained tensors; skipped {len(skipped)} tensors.")
-#     if skipped:
-#         print(f"Skipped pretrained keys sample: {skipped[:20]}")
-#     return compatible
-
-
-def _load_pretrained_weights(model, pretrained_weights, pretrained_key=None, load_backbone_only=False):
+    Prefix stripping and the timm downsample-key remap happen there, host-side
+    (process_tools/checkpoint_utils.py), and preprocess_checkpoints.py strips `omni_heads.*` before
+    saving; the file the app ships is plain tensors, so it loads weights-only with no reshaping.
+    """
     if not pretrained_weights:
         return model
 
@@ -101,13 +30,6 @@ def _load_pretrained_weights(model, pretrained_weights, pretrained_key=None, loa
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Pretrained checkpoint not found: {checkpoint_path}")
     checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=True)
-
-    # state_dict = _normalise_checkpoint_state_dict(checkpoint, pretrained_key=pretrained_key)
-    # state_dict = _filter_state_dict_for_model(
-    #     model,
-    #     state_dict,
-    #     load_backbone_only=load_backbone_only,
-    # )
     msg = model.load_state_dict(checkpoint, strict=False)
     print(f"Loaded pretrained checkpoint with msg: {msg}")
     return model
@@ -228,11 +150,6 @@ def build_omni_model(args, num_classes_list):
             depths=(2, 2, 18, 2),
             num_heads=(6, 12, 24, 48),
         )
-    model = _load_pretrained_weights(
-        model,
-        getattr(args, "pretrained_weights", None),
-        pretrained_key=getattr(args, "pretrained_key", None),
-        load_backbone_only=bool(getattr(args, "load_backbone_only", False)),
-    )
+    model = _load_pretrained_weights(model, getattr(args, "pretrained_weights", None))
 
     return model

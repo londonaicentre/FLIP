@@ -41,6 +41,14 @@ describe("FLIP demo — follow training progress", () => {
         cy.demoCaption("Live metrics stream back from every trust as the rounds progress", 600);
         cy.get("canvas").first().scrollIntoView();
         cy.get("canvas").first().should("be.visible");
+        cy.demoPause(2500);
+
+        // The grid shows every metric at once rather than one plot at a time, which reads far
+        // better on camera than clicking through them: the viewer sees the whole picture of what
+        // federated training reports back, per trust, in a single frame.
+        cy.demoCaption("Every metric at once — each trust reporting its own curve", 600);
+        cy.getBySel("metrics-view-grid").demoClick();
+        cy.getBySel("metrics-grid").should("be.visible");
         cy.demoPause(7000);
     });
 });

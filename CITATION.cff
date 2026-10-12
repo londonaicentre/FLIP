@@ -1,0 +1,75 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cff-version: 1.2.0
+message: "If you use FLIP in your work, please cite the paper below."
+title: "FLIP: Federated Learning Interoperability Platform"
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/londonaicentre/FLIP"
+url: "https://londonaicentreflip.readthedocs.io/en/latest/"
+authors:
+  - name: "London AI Centre for Value Based Healthcare"
+preferred-citation:
+  type: article
+  title: "Making Cross-Continental Federated Learning Repeatable with FLIP: a Multi-Application Study"
+  year: 2026
+  url: "https://arxiv.org/abs/2609.36001"
+  identifiers:
+    - type: other
+      value: "arXiv:2609.36001"
+  authors:
+    - family-names: Garcia-Dias
+      given-names: Rafael
+    - family-names: Triay Bagur
+      given-names: Alexandre
+    - family-names: Tangwiriyasakul
+      given-names: Chayanin
+    - family-names: Fernandez
+      given-names: Virginia
+    - family-names: Esmaeili
+      given-names: Parhom
+    - family-names: Ittichaiwong
+      given-names: Piyalitt
+    - family-names: Li
+      given-names: Yang
+    - family-names: Adams
+      given-names: Lawrence
+    - family-names: Buncharoen
+      given-names: Wason
+    - family-names: Chapman
+      given-names: Martin
+    - family-names: Chayanond
+      given-names: Benjamaporn
+    - family-names: Chunrod
+      given-names: Sadthavud
+    - family-names: Fongsri
+      given-names: Tanawat
+    - family-names: Gibson
+      given-names: Kass
+    - family-names: Plungprasertkul
+      given-names: Supat
+    - family-names: Tangpanithandee
+      given-names: Supawit
+    - family-names: Veerakanjana
+      given-names: Kanyakorn
+    - family-names: Goh
+      given-names: Vicky
+    - family-names: Antonelli
+      given-names: Michela
+    - family-names: Zhang
+      given-names: Joe
+    - family-names: Kespechara
+      given-names: Kongkiat
+    - family-names: Ourselin
+      given-names: Sebastien
+    - family-names: Cardoso
+      given-names: M. Jorge

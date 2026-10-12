@@ -21,7 +21,7 @@
 <script lang="ts" setup>
 import { useDark } from "@vueuse/core";
 import useSWRV from "swrv";
-import { watch } from "vue";
+import { onMounted, watch } from "vue";
 
 import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
@@ -34,6 +34,7 @@ import { getTrusts } from "./services/trust-service";
 import { useHealthcheckStore } from "./store/healthcheck";
 import { useSiteDetailsStore } from "./store/siteDetailsStore";
 import { useTrustStore } from "./store/trusts";
+import { replayPostSignOutNotice } from "./utils/session-teardown";
 
 // The literal, not the cross-module `IS_DEMO` — same tree-shaking contract as
 // src/main.ts. DemoBanner statically imports mocks/demo/ark-plus-register.ts
@@ -46,6 +47,12 @@ const healthStore = useHealthcheckStore();
 const trustStore = useTrustStore();
 const detailsStore = useSiteDetailsStore();
 useThemeColorMeta(useDark());
+
+// Ending a session discards the whole document (utils/session-teardown.ts), so any
+// "you've been signed out" notice is queued in sessionStorage on the way out and
+// shown here, once, by the fresh instance. Runs on every boot; a normal boot finds
+// nothing and does nothing.
+onMounted(replayPostSignOutNotice);
 
 const { data: health } = useSWRV(
     "/trust/health",

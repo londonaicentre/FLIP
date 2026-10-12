@@ -56,7 +56,7 @@ trap cleanup EXIT INT TERM
 
 echo "🔀 Opening SSM port forwards to Trust EC2 ($INSTANCE_ID)..."
 echo ""
-forward 8104 8104 "XNAT"            "http://localhost:8104"
+forward 8105 8105 "XNAT"            "http://localhost:8105"
 forward 8042 8042 "Orthanc"         "http://localhost:8042"
 forward 8020 8020 "trust-api"       "http://localhost:8020/docs"
 forward 8001 8001 "imaging-api"     "http://localhost:8001/docs"

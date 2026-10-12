@@ -65,6 +65,16 @@ its SELECT-only grants are the database half of that API's SQL-injection
 defence-in-depth (see
 `trust/data-access-api/data_access_api/services/cohort.py`).
 
+It is also the file the Kubernetes trust chart runs, from the copy the image
+ships at `/flip/omop/create_readonly_users.sql`, on **every** omop-db pod start
+(a PVC restored from a pgdata snapshot skips `/docker-entrypoint-initdb.d`, so
+the chart cannot rely on init — FLIP#904). So it has to stay safe to re-run
+against a cluster that already holds the roles, and converge an existing
+`data_analyst_reader` on the same membership and limits rather than skip it;
+`tests/unit/test_create_readonly_users_sql.py` asserts both, and this
+service's CI (`test_trust_omop_db.yml`) asserts every published image carries
+the file.
+
 ### Rotating the data analyst password
 
 The `data_analyst_reader` password is **not baked into the image**: the init

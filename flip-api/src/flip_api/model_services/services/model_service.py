@@ -367,9 +367,7 @@ def validate_trust_ids(model_id: UUID, trust_ids: list[UUID], session: Session) 
         bool: True if every id is associated with the model, False otherwise.
     """
     associated = set(
-        session.exec(
-            select(ModelTrustIntersect.trust_id).where(ModelTrustIntersect.model_id == model_id)
-        ).all()
+        session.exec(select(ModelTrustIntersect.trust_id).where(ModelTrustIntersect.model_id == model_id)).all()
     )
     missing = set(trust_ids) - associated
     if missing:
@@ -555,9 +553,7 @@ def get_all_models_service(
         base_conditions.append(or_(Projects.owner_id == user_id, ProjectUserAccess.user_id == user_id))
     if paging.search_str:
         pattern = f"%{paging.search_str.lower()}%"
-        base_conditions.append(
-            or_(func.lower(Model.name).like(pattern), func.lower(Projects.name).like(pattern))
-        )
+        base_conditions.append(or_(func.lower(Model.name).like(pattern), func.lower(Projects.name).like(pattern)))
     if project_id is not None:
         base_conditions.append(Model.project_id == project_id)
 
@@ -567,9 +563,7 @@ def get_all_models_service(
 
     # LEFT JOIN ProjectUserAccess pinned to this user (mirrors get_projects_paginated_orm) so the
     # access OR-clause can match a granted project without fanning the row out per access record.
-    access_join = and_(
-        col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id
-    )
+    access_join = and_(col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id)
 
     rows_query = (
         select(Model, Projects.name, UserProfile.name)  # type: ignore[call-overload]
@@ -646,9 +640,7 @@ def get_models_project_options_service(session: Session, user_id: UUID | None) -
 
     # Same pinned LEFT JOIN as the list query, so a granted project matches once rather than once
     # per access row.
-    access_join = and_(
-        col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id
-    )
+    access_join = and_(col(ProjectUserAccess.project_id) == Projects.id, ProjectUserAccess.user_id == user_id)
 
     query = (
         select(Projects.id, Projects.name, Projects.status)  # type: ignore[call-overload]

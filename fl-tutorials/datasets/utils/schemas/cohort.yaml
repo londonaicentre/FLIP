@@ -1,0 +1,12 @@
+schema_type: dataframe
+columns:
+  cohort_definition_id:
+    dtype: int64
+  subject_id:
+    dtype: int64
+  cohort_start_date:
+    dtype: datetime64[ns]
+  cohort_end_date:
+    dtype: datetime64[ns]
+strict: true
+drop_invalid_rows: false

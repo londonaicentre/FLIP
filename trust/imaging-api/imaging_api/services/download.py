@@ -25,9 +25,9 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 from imaging_api.utils.logger import logger
+from imaging_api.utils.xnat_url import xnat_url
 
 # Get download directory
-XNAT_URL = get_settings().XNAT_URL
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
 
@@ -62,8 +62,8 @@ async def download_and_unzip_images(
         accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label.
         net_id (str): The ID of the FL net that will run the training.
         assessor_type (str): The type of assessor to use for the download ("scan" or "assessor").
-        resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
-        allowed if researcher has added their own custom XNAT resource type into scans.
+        resource_type (str): XNAT resource type, one of DICOM, NIFTI, SEG or ALL (the router's ``ResourceType``
+        Literal; custom values are rejected there). ALL will download all resources.
         headers (dict[str, str]): XNAT authentication headers.
         force_refresh (bool): Re-download even when a completed cached copy exists. The sentinel is
         removed before the re-download starts, so a crash mid-refresh can never leave a stale
@@ -227,6 +227,8 @@ def format_download_url(
     """
     Formats the XNAT API URL to download experiment scan images.
 
+    Identifiers are quoted at this boundary even when a caller bypasses request validation.
+
     Args:
         project_id (str): XNAT project ID.
         subject_id (str): XNAT subject ID.
@@ -236,14 +238,24 @@ def format_download_url(
 
     Returns:
         str: Formatted URL for downloading images.
+
+    Raises:
+        ValueError: If an identifier is empty or a dot-segment.
     """
     assert assessor_type.lower() in [
         "scan",
         "assessor",
     ], "Type must be 'scan' or 'assessor'"
-    base = (
-        f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
-        f"experiments/{experiment_id_or_label}/{assessor_type.lower()}s/ALL"
+    segments = (
+        "data",
+        "projects",
+        project_id,
+        "subjects",
+        subject_id,
+        "experiments",
+        experiment_id_or_label,
+        f"{assessor_type.lower()}s",
+        "ALL",
     )
     # resource_type=ALL means "every resource on the scan". XNAT has no literal ALL
     # resource label — /resources/ALL/files 404s — so drop the resources segment and
@@ -251,8 +263,8 @@ def format_download_url(
     # whose resource XNAT labels other than "DICOM" (e.g. "secondary" for
     # Secondary Capture SOP classes, as produced by synthetic datasets).
     if resource_type.upper() == "ALL":
-        return f"{base}/files?format=zip"
-    return f"{base}/resources/{resource_type}/files?format=zip"
+        return xnat_url(*segments, "files", query={"format": "zip"})
+    return xnat_url(*segments, "resources", resource_type, "files", query={"format": "zip"})
 
 
 def download_file(url: str, destination_path: str, headers: dict[str, str]) -> str:
@@ -289,9 +301,7 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
     try:
         os.makedirs(parent_dir, exist_ok=True)
     except OSError as e:
-        raise LocalStorageError(
-            f"Cannot create parent directory {parent_dir!r} for downloaded file: {e}"
-        ) from e
+        raise LocalStorageError(f"Cannot create parent directory {parent_dir!r} for downloaded file: {e}") from e
 
     try:
         with open(destination_path, "wb") as file:
@@ -300,9 +310,7 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
     except OSError as e:
         # Permission denied, disk full, bind mount stale, etc. These are all
         # trust-host problems — not "the remote URL is missing".
-        raise LocalStorageError(
-            f"Failed to write downloaded file to {destination_path!r}: {e}"
-        ) from e
+        raise LocalStorageError(f"Failed to write downloaded file to {destination_path!r}: {e}") from e
 
     return destination_path
 

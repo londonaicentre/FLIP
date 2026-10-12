@@ -96,6 +96,5 @@ def invoke_model_status_update_endpoint(
         raise
 
     except Exception as e:
-        error_message = f"Unexpected error while updating model status: {str(e)}"
-        logger.error(error_message, exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+        logger.exception("Unexpected error while updating model status")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

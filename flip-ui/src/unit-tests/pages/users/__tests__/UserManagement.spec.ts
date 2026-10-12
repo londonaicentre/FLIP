@@ -63,7 +63,10 @@ vi.mock("@/services/user-service", () => ({
     updateUserRoles: (...args: unknown[]) => mockUpdateUserRoles(...args)
 }));
 
-vi.mock("@/services/role-service", () => ({ getRoles: (...args: unknown[]) => mockGetRoles(...args) }));
+vi.mock("@/services/role-service", () => ({
+    getRoles: (...args: unknown[]) => mockGetRoles(...args),
+    TRUST_ADMIN_ROLE_NAME: "Trust Admin"
+}));
 
 const mockRouteNotAllowed = vi.fn();
 const mockViewProjects = vi.fn();
@@ -343,7 +346,7 @@ describe("User Management", () => {
             await wrapper.find("[data-test='save-user-btn']").trigger("click");
             await flushPromises();
 
-            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"]);
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"], null);
             expect(mockSnackbarSuccess).toHaveBeenCalledWith({
                 text: "The user has been updated.",
                 title: "User updated"
@@ -359,7 +362,7 @@ describe("User Management", () => {
             await wrapper.find("[data-test='save-user-btn']").trigger("click");
             await flushPromises();
 
-            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"]);
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"], null);
             expect(mockSnackbarError).toHaveBeenCalledWith({
                 text: "The user could not be updated, please try again.",
                 title: "Update failed"

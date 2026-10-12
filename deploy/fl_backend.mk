@@ -57,7 +57,7 @@ endif
 # unconditionally welded two absolute paths together:
 #   FL_PROVISIONED_DIR=/opt/kits  ->  /path/to/repo/opt/kits
 # which surfaced as a misleading "workspace not provisioned" naming a path the caller never
-# asked for, even though CLAUDE.md advertises the CLI override. Applied by the root Makefile
+# asked for, even though AGENTS.md advertises the CLI override. Applied by the root Makefile
 # and trust/Makefile, which anchor on different bases (repo root vs trust/..).
 abs_or_relative_to = $(abspath $(if $(filter /%,$(1)),$(1),$(2)/$(1)))
 

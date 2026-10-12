@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from sqlmodel import Session
+from sqlmodel import Session, col
 
 from flip_api.db.models.main_models import Projects
 from flip_api.db.models.user_models import PermissionRef
@@ -58,6 +58,7 @@ def test_get_projects_paginated_orm_some_results(user_id):
         owner_id=user_id,
         status=ProjectStatus.APPROVED,
         creation_timestamp=datetime.utcnow(),
+        has_imaging=False,  # FLIP#1071: a tabular-only project
     )
     # get_projects_paginated_orm fires six SELECTs when projects exist:
     # projects (LEFT-joined to UserProfile so owner_name comes back in
@@ -94,6 +95,8 @@ def test_get_projects_paginated_orm_some_results(user_id):
 
     assert len(project_response.data) == 2
     assert project_response.total_rows == 2
+    # The list carries the type so the UI can render the chip + filter without a per-row round-trip.
+    assert [p.has_imaging for p in project_response.data] == [True, False]
 
 
 def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
@@ -129,10 +132,17 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     # (Queries.id, project_id, name, query, created, UserProfile.name, queried_trust_ids)
     # `queried_trust_ids` is the persisted dispatched set — drives PerTrustResponse visibility.
     trust_never_responded = uuid.uuid4()
-    queries_call.all.return_value = [(
-        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None,
-        [trust_a, trust_b, trust_never_responded],
-    )]
+    queries_call.all.return_value = [
+        (
+            query_id,
+            project_id,
+            "Q",
+            "SELECT 1",
+            datetime.utcnow(),
+            None,
+            [trust_a, trust_b, trust_never_responded],
+        )
+    ]
     pair_rows_call = MagicMock()
     # (query_id, trust_id, data) — trust_b errored, trust_a succeeded, the
     # never-responded one has no QueryResult row.
@@ -143,6 +153,7 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     pending_rows_call = MagicMock()
     # (query_id, trust_id, status) — never-responded trust's task is PENDING.
     from flip_api.domain.schemas.status import TaskStatus
+
     pending_rows_call.all.return_value = [(query_id, trust_never_responded, TaskStatus.PENDING)]
     stats_call = MagicMock()
     stats_call.all.return_value = []
@@ -267,9 +278,21 @@ def test_get_projects_paginated_orm_reads_total_cohort_from_query_stats(user_id)
     projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
     count_call = MagicMock(one_or_none=MagicMock(return_value=1))
     trusts_call = MagicMock(all=MagicMock(return_value=[]))
-    queries_call = MagicMock(all=MagicMock(return_value=[(
-        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None, [],
-    )]))
+    queries_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (
+                    query_id,
+                    project_id,
+                    "Q",
+                    "SELECT 1",
+                    datetime.utcnow(),
+                    None,
+                    [],
+                )
+            ]
+        )
+    )
     pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
     pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
     stats_call = MagicMock(all=MagicMock(return_value=[(query_id, '{"TotalCount": 42}')]))
@@ -318,17 +341,33 @@ def test_get_projects_paginated_orm_skips_malformed_query_stats_json(user_id):
     projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
     count_call = MagicMock(one_or_none=MagicMock(return_value=1))
     trusts_call = MagicMock(all=MagicMock(return_value=[]))
-    queries_call = MagicMock(all=MagicMock(return_value=[(
-        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None, [],
-    )]))
+    queries_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (
+                    query_id,
+                    project_id,
+                    "Q",
+                    "SELECT 1",
+                    datetime.utcnow(),
+                    None,
+                    [],
+                )
+            ]
+        )
+    )
     pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
     pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
     # Malformed JSON + a row with empty stats string + a row with a valid payload.
-    stats_call = MagicMock(all=MagicMock(return_value=[
-        (query_id, "not-a-json-blob"),
-        (query_id, ""),
-        (None, '{"record_count": 99}'),  # None query_id → skipped by the guard
-    ]))
+    stats_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (query_id, "not-a-json-blob"),
+                (query_id, ""),
+                (None, '{"record_count": 99}'),  # None query_id → skipped by the guard
+            ]
+        )
+    )
     stage_audit_call = MagicMock(all=MagicMock(return_value=[]))
     user_counts_call = MagicMock(all=MagicMock(return_value=[]))
     session.exec.side_effect = [
@@ -414,11 +453,15 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
     queries_call = MagicMock(all=MagicMock(return_value=[]))
     # Rows arrive sorted desc by audit_date — the helper's "in latest" check
     # must keep only the first (newer) one, plus a None row is dropped.
-    stage_audit_call = MagicMock(all=MagicMock(return_value=[
-        (project_id, newer),
-        (project_id, older),
-        (None, datetime.utcnow()),
-    ]))
+    stage_audit_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (project_id, newer),
+                (project_id, older),
+                (None, datetime.utcnow()),
+            ]
+        )
+    )
     user_counts_call = MagicMock(all=MagicMock(return_value=[]))
     session.exec.side_effect = [
         projects_call,
@@ -440,3 +483,37 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
     # `Z`-suffixed so the browser parses the naive UTC audit_date as UTC, matching creation_timestamp.
     assert response.data[0].staged_at == newer.isoformat(timespec="milliseconds") + "Z"
     assert response.data[0].staged_at.endswith("Z")
+
+
+def test_get_projects_paginated_orm_applies_project_type_filter(user_id):
+    """FLIP#1071: ``projectType`` narrows the WHERE clause on ``has_imaging`` — with the right polarity.
+
+    Asserted against the condition the code builds rather than the compiled SQL text: the rendering of
+    ``.is_(True)`` belongs to SQLAlchemy and the dialect, so matching on it fails the build when neither
+    the filter nor its polarity has changed. ``test_project_db_flow`` proves the rows this selects.
+    """
+    session = MagicMock(spec=Session)
+    session.exec.return_value.all.return_value = []
+    session.exec.return_value.one_or_none.return_value = None
+
+    def conditions_for(project_type: str | None) -> list:
+        session.exec.reset_mock()
+        params: dict[str, str | uuid.UUID] = {"projectType": project_type} if project_type else {}
+        get_projects_paginated_orm(
+            session=session,
+            user_id=user_id,
+            paging_details=paging_details,
+            filter_details=get_filter_details(params),
+        )
+        where = session.exec.call_args_list[0].args[0].whereclause
+        return list(getattr(where, "clauses", [where]))
+
+    def selects_on_has_imaging(project_type: str | None, expected: bool) -> bool:
+        wanted = col(Projects.has_imaging).is_(expected)
+        return any(condition.compare(wanted) for condition in conditions_for(project_type))
+
+    assert selects_on_has_imaging("omop_only", False)
+    assert selects_on_has_imaging("imaging", True)
+    # No projectType filter: neither polarity is constrained.
+    assert not selects_on_has_imaging(None, True)
+    assert not selects_on_has_imaging(None, False)

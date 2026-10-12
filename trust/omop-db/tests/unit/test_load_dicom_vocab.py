@@ -17,7 +17,15 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from omop_db_tools.load_dicom_vocab import REQUIRED_VOCAB_FILES, ensure_vocab_dir, safe_insert
+from omop_db_tools.load_dicom_vocab import (
+    DICOM_VOCABULARY_CONCEPT_ID,
+    REQUIRED_VOCAB_FILES,
+    dicom_vocabulary_loaded,
+    ensure_vocab_dir,
+    load_vocabulary_metadata,
+    main,
+    safe_insert,
+)
 
 
 class TestSafeInsert:
@@ -48,6 +56,28 @@ class TestSafeInsert:
         engine, _ = self._engine([])
         with pytest.raises(ValueError, match="Unsafe SQL identifier"):
             safe_insert("CONCEPT", pd.DataFrame({"Unnamed: 0": [1]}), engine)
+
+
+class TestVocabularyMetadata:
+    """The scaffolding the DICOM vocabulary hangs off; its first concept is what the already-loaded guard probes."""
+
+    def test_inserts_the_scaffolding_concepts_then_the_vocabulary_and_its_classes(self, monkeypatch):
+        inserted = []
+        monkeypatch.setattr(
+            "omop_db_tools.load_dicom_vocab.safe_insert", lambda table, df, engine: inserted.append((table, df))
+        )
+
+        load_vocabulary_metadata(MagicMock())
+
+        assert [table for table, _ in inserted] == ["CONCEPT", "VOCABULARY", "CONCEPT_CLASS"]
+        concepts, vocabulary, classes = (df for _, df in inserted)
+        assert concepts["concept_id"].tolist() == [DICOM_VOCABULARY_CONCEPT_ID, 2128000001, 2128000002]
+        assert vocabulary["vocabulary_id"].tolist() == ["DICOM"]
+        assert vocabulary["vocabulary_concept_id"].tolist() == [DICOM_VOCABULARY_CONCEPT_ID]
+        assert dict(zip(classes["concept_class_id"], classes["concept_class_concept_id"], strict=True)) == {
+            "DICOM Attributes": 2128000001,
+            "DICOM Value Sets": 2128000002,
+        }
 
 
 class TestEnsureVocabDir:
@@ -94,3 +124,40 @@ class TestEnsureVocabDir:
             ensure_vocab_dir(tmp_path / "bundle")
 
         assert not (tmp_path.parent / "evil.csv").exists()
+
+
+class TestAlreadyLoadedGuard:
+    """concept_relationship has no unique key, so a second load must be refused, not deduplicated."""
+
+    def _engine(self, first_row):
+        engine = MagicMock()
+        conn = engine.connect.return_value.__enter__.return_value
+        conn.execute.return_value.first.return_value = first_row
+        return engine, conn
+
+    def test_loaded_means_the_scaffolding_concept_exists(self):
+        engine, conn = self._engine((1,))
+        assert dicom_vocabulary_loaded(engine) is True
+        params = conn.execute.call_args.args[1]
+        assert params == {"cid": DICOM_VOCABULARY_CONCEPT_ID}
+        assert DICOM_VOCABULARY_CONCEPT_ID == 2128000000
+
+    def test_not_loaded_on_a_fresh_database(self):
+        engine, _ = self._engine(None)
+        assert dicom_vocabulary_loaded(engine) is False
+
+    def test_skip_if_loaded_touches_nothing_when_present(self, monkeypatch, tmp_path, capsys):
+        engine, _ = self._engine((1,))
+        monkeypatch.setattr("omop_db_tools.load_dicom_vocab.create_engine", lambda *a, **k: engine)
+        monkeypatch.setattr("omop_db_tools.load_dicom_vocab.get_settings", lambda: MagicMock())
+        loaded = MagicMock()
+        monkeypatch.setattr("omop_db_tools.load_dicom_vocab.load_vocabulary_metadata", loaded)
+
+        main(["--vocab-dir", str(tmp_path / "absent"), "--skip-if-loaded"])
+
+        loaded.assert_not_called()
+        assert "already loaded" in capsys.readouterr().out
+
+    def test_skip_if_loaded_and_force_are_exclusive(self, tmp_path):
+        with pytest.raises(SystemExit):
+            main(["--vocab-dir", str(tmp_path), "--skip-if-loaded", "--force"])

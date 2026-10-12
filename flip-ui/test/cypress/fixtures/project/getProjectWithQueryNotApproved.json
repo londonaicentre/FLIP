@@ -10,19 +10,19 @@
             "name": "Kings College Hospital",
             "id": "SOMEIDFORKCH",
             "requested": true,
-            "approved": false
+            "status": "PENDING"
         },
         {
             "name": "University College London Hospitals",
             "id": "SOMEIDFORUCLH",
             "requested": true,
-            "approved": true
+            "status": "PENDING"
         },
         {
             "name": "Guy's and St Thomas'",
             "id": "SOMEIDFORKINGS",
             "requested": true,
-            "approved": false
+            "status": "PENDING"
         }
     ],
     "status": "STAGED",

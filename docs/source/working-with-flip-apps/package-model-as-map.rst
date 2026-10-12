@@ -109,8 +109,8 @@ Where the boundary sits
                                             postprocessing
                                             DICOM SEG / DICOM SR output
 
-The aggregated model exists only on the Central Hub; each Trust holds only its own
-``local_model.pt``. Export therefore runs hub-side, where the weights have already arrived
+The aggregated model exists only on the Central Hub; a Trust only ever holds the local
+weights it trained itself, never the aggregate. Export therefore runs hub-side, where the weights have already arrived
 legitimately, so packaging adds no new data egress from a Trust.
 
 **Packaging is deliberately a separate step from training, not a stage inside it.** A training run
@@ -454,9 +454,9 @@ your application and ``--out`` can point anywhere — including inside your own 
 .. note::
 
    **Why not** ``torch.export``\ **?** Because nothing downstream can read it. PyTorch has
-   TorchScript on a removal path — deprecated on Python 3.12, and reporting itself *"not supported
-   in Python 3.14+ and may break"* — and points users at ``torch.export``. But no released
-   ``monai-deploy-app-sdk`` can load an ``ExportedProgram``: the bundle inference operator loads
+   TorchScript on a removal path — deprecated since torch 2.5 on every Python version, and reporting
+   itself *"not supported in Python 3.14+ and may break"* — and points users at ``torch.export``. But no
+   ``monai-deploy-app-sdk`` release through 4.0.0, the version the MAP templates pin, can load an ``ExportedProgram``: the bundle inference operator loads
    ``.ts`` and ``.pt``, and nothing else. So the escape hatch from ``torch.jit`` is the directory
    form above, not a new artefact format. MONAI core tracks its own TorchScript retirement in
    `Project-MONAI/MONAI#8632 <https://github.com/Project-MONAI/MONAI/issues/8632>`_; when MONAI

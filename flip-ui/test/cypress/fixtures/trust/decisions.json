@@ -1,0 +1,40 @@
+[
+    {
+        "projectId": "3b4a5c6d-7e8f-4a1b-9c2d-3e4f5a6b7c8d",
+        "projectName": "Spleen segmentation v2",
+        "description": "Federated spleen segmentation on portal-venous CT.",
+        "ownerName": "Researcher User",
+        "projectStatus": "STAGED",
+        "hasImaging": true,
+        "stagedAt": "2026-09-25T10:00:00.000Z",
+        "query": "SELECT p.person_id FROM omop.person p LIMIT 500",
+        "cohort": {
+            "recordCount": 142,
+            "suppressed": false,
+            "error": null
+        },
+        "status": "PENDING",
+        "decidedByName": null,
+        "decidedAt": null,
+        "decidedAs": null
+    },
+    {
+        "projectId": "9a8b7c6d-5e4f-4a3b-8c1d-0e9f8a7b6c5d",
+        "projectName": "EHR risk prediction",
+        "description": "Tabular 1-year readmission risk from OMOP conditions.",
+        "ownerName": "Researcher User",
+        "projectStatus": "APPROVED",
+        "hasImaging": false,
+        "stagedAt": "2026-09-01T09:00:00.000Z",
+        "query": "SELECT person_id FROM omop.condition_occurrence LIMIT 1000",
+        "cohort": {
+            "recordCount": 812,
+            "suppressed": false,
+            "error": null
+        },
+        "status": "APPROVED",
+        "decidedByName": "Trust Admin User",
+        "decidedAt": "2026-09-02T12:00:00.000Z",
+        "decidedAs": "SITE"
+    }
+]

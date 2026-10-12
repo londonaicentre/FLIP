@@ -105,4 +105,6 @@ def test_cohort_query_unexpected_exception(mock_save, mock_get_project, cohort_q
     response = client.post("/api/step/cohort", json=cohort_query_input)
 
     assert response.status_code == 500
-    assert "Failed to process cohort query" in response.json()["detail"]
+    # Equality: `in` would also pass against the leaking "…: Database error" form (#906).
+    assert response.json()["detail"] == "Internal server error"
+    assert "Database error" not in response.json()["detail"]

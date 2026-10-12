@@ -127,9 +127,7 @@ class TestLocalDpConfig:
                 CONFIG_DELTA: 1e-3,
             }
         )
-        assert config == LocalDpConfig(
-            enabled=False, clipping_norm=2.5, sensitivity=0.5, epsilon=3.0, delta=1e-3
-        )
+        assert config == LocalDpConfig(enabled=False, clipping_norm=2.5, sensitivity=0.5, epsilon=3.0, delta=1e-3)
 
     def test_from_run_config_falls_back_per_key(self):
         """An app that declares only some keys still gets the defaults for the rest — DP stays on."""

@@ -78,9 +78,7 @@ def compose_stack() -> Generator[DockerCompose, None, None]:
 @pytest.fixture(scope="session")
 def data_access_api_url(compose_stack: DockerCompose) -> str:
     """Resolve the ephemeral host URL where the data-access-api is reachable."""
-    host, port = compose_stack.get_service_host_and_port(
-        _DATA_ACCESS_SERVICE, _DATA_ACCESS_INTERNAL_PORT
-    )
+    host, port = compose_stack.get_service_host_and_port(_DATA_ACCESS_SERVICE, _DATA_ACCESS_INTERNAL_PORT)
     return f"http://{host}:{port}"
 
 
@@ -126,11 +124,13 @@ class _StubHubHandler(http.server.BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length", "0") or "0")
         body = self.rfile.read(length) if length > 0 else b""
-        _StubHubHandler.received.append({
-            "path": self.path,
-            "headers": {k: v for k, v in self.headers.items()},
-            "body": body.decode("utf-8", errors="replace"),
-        })
+        _StubHubHandler.received.append(
+            {
+                "path": self.path,
+                "headers": {k: v for k, v in self.headers.items()},
+                "body": body.decode("utf-8", errors="replace"),
+            }
+        )
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -193,6 +193,4 @@ def _patch_endpoints(
     hub_host = str(stub_hub_server.server_address[0])
     hub_port = stub_hub_server.server_address[1]
     monkeypatch.setattr(task_handlers, "DATA_ACCESS_API_URL", data_access_api_url)
-    monkeypatch.setattr(
-        task_handlers, "CENTRAL_HUB_API_URL", f"http://{hub_host}:{hub_port}"
-    )
+    monkeypatch.setattr(task_handlers, "CENTRAL_HUB_API_URL", f"http://{hub_host}:{hub_port}")

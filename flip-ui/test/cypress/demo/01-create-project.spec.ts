@@ -53,6 +53,11 @@ describe("FLIP demo — create project", () => {
         const projectName = requireEnv("DEMO_PROJECT_NAME");
         const projectDescription = requireEnv("DEMO_PROJECT_DESCRIPTION");
         const queryFile = requireEnv("DEMO_QUERY_FILE");
+        // Required, not defaulted. Cypress.expose() reads an allowlist in plugins/index.ts, so a
+        // variable the recorder sets but the allowlist omits reads as undefined — and a default of
+        // "true" would silently create an imaging project for a tabular tutorial, which is exactly
+        // how this went unnoticed once already. Fail here instead, where the cause is legible.
+        const hasImaging = requireEnv("DEMO_HAS_IMAGING");
 
         cy.visit("/auth/login");
         cy.demoCaption("A researcher signs in to FLIP — the Federated Learning Interoperability Platform", 1400);
@@ -91,6 +96,28 @@ describe("FLIP demo — create project", () => {
         cy.get("[role=dialog]").within(() => {
             cy.getBySel("project-name").demoType(projectName);
             cy.getBySel("project-description").demoType(projectDescription, { delay: 15 });
+            // "Includes imaging data" defaults on, which is right for the imaging tutorials and
+            // wrong for a tabular one: with it left on the hub dispatches CREATE_IMAGING and each
+            // trust queues a pull per cohort row that can never resolve, so the run dies at the
+            // image-pull wait or at the XNAT segment. The app profile decides.
+            if (hasImaging === "false") {
+                cy.demoCaption("This study is EHR-only — no imaging leaves the trust", 600);
+                // Pace the switch-off so the viewer actually sees it: clicking the toggle and
+                // then Create back-to-back left "Enabled" on screen for the whole dwell and the
+                // off state for a few frames, which read as an imaging project being created.
+                // Wait for the switch to render its off state (the NIfTI option is only shown
+                // while imaging is on, so its disappearance is the visible proof), then hold.
+                cy.getBySel("has-imaging-toggle").demoHover();
+                cy.demoPause(700);
+                cy.getBySel("has-imaging-toggle").demoClick();
+                // Assert on what is drawn — the label and the option that only exists while
+                // imaging is on — rather than on aria-checked, so the recording checks what the
+                // viewer sees. (aria-checked now follows the value too; it used to report the
+                // inverse when AiSwitch left the Headless UI Switch uncontrolled.)
+                cy.contains("Includes imaging data").parent().contains("Disabled").should("be.visible");
+                cy.contains("Convert DICOMs to NIfTI").should("not.exist");
+                cy.demoCaption("Imaging turned off — the hub creates no XNAT project and pulls nothing from PACS", 1800);
+            }
             cy.getBySel("create-project-btn").demoClick();
         });
 

@@ -42,16 +42,16 @@ import httpx
 from trust_api.config import get_settings
 from trust_api.services.task_handlers import trust_internal_headers
 from trust_api.utils.logger import logger
-from trust_api.utils.version import service_version
+from trust_api.utils.version import build_identity
 
 DATA_ACCESS_API_URL = get_settings().DATA_ACCESS_API_URL
 IMAGING_API_URL = get_settings().IMAGING_API_URL
 XNAT_URL = get_settings().XNAT_URL
-PACS_ID = get_settings().PACS_ID
 OMOP_DB_HOST = get_settings().OMOP_DB_HOST
 OMOP_DB_PORT = get_settings().OMOP_DB_PORT
 HEALTH_COLLECT_INTERVAL_SECONDS = get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
 HEALTH_PROBE_DEGRADED_MS = get_settings().HEALTH_PROBE_DEGRADED_MS
+FL_CLIENT_IMAGE_TAG = get_settings().FL_CLIENT_IMAGE_TAG
 
 _PROBE_TIMEOUT_SECONDS = 5.0
 _TEARDOWN_TIMEOUT_SECONDS = 1.0
@@ -204,7 +204,10 @@ async def _probe_dicom(client: httpx.AsyncClient) -> dict:
         dict: Wire-shaped entry. ``unknown`` when the prober chain (imaging-api → XNAT)
         itself fails, ``down`` only when XNAT reports the DIMSE echo failed.
     """
-    url = f"{IMAGING_API_URL}/imaging/ping_pacs/{PACS_ID}"
+    # No id in the path: imaging-api resolves the registered PACS from XNAT. Pinning one here
+    # made trust-api a second source of truth for an id XNAT assigns at registration — a
+    # re-registered PACS reported permanently down while imports kept working (FLIP#993).
+    url = f"{IMAGING_API_URL}/imaging/ping_pacs"
     start = time.monotonic()
     try:
         response = await client.get(url, headers=trust_internal_headers())
@@ -305,15 +308,20 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
         _entry_or_unknown(result, service)
         for result, service in zip(results, ("imaging-api", "data-access-api", "xnat", "dicom", "omop"), strict=True)
     )
+    services = {
+        "trust-api": _entry("healthy", build_identity()),
+        "imaging-api": imaging,
+        "data-access-api": data_access,
+        "xnat": xnat,
+        "dicom": dicom,
+        "omop": omop,
+    }
+    if FL_CLIENT_IMAGE_TAG:
+        # An identity, not a probe: the fl-client has no health endpoint (its liveness is the
+        # FL server's business), but which build it runs is what a release audit needs (FLIP#1204).
+        services["fl-client"] = _entry("unknown", FL_CLIENT_IMAGE_TAG)
     return {
-        "services": {
-            "trust-api": _entry("healthy", service_version()),
-            "imaging-api": imaging,
-            "data-access-api": data_access,
-            "xnat": xnat,
-            "dicom": dicom,
-            "omop": omop,
-        },
+        "services": services,
         "collected_at": datetime.now(timezone.utc).isoformat(),
     }
 

@@ -100,74 +100,94 @@ def ensure_vocab_dir(vocab_dir: Path) -> None:
         )
 
 
+# The scaffolding concept the loader inserts first (the DICOM vocabulary itself); its presence is
+# the "already loaded" signal.
+DICOM_VOCABULARY_CONCEPT_ID = 2128000000
+
+
+def dicom_vocabulary_loaded(engine: Engine) -> bool:
+    """Whether the DICOM vocabulary has been loaded into this database."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT 1 FROM omop.concept WHERE concept_id = :cid"), {"cid": DICOM_VOCABULARY_CONCEPT_ID}
+        ).first()
+    return row is not None
+
+
 def load_vocabulary_metadata(engine: Engine) -> None:
     """Insert the DICOM VOCABULARY / CONCEPT_CLASS scaffolding concepts (2128000000-2)."""
     print("Ensuring DICOM vocabulary and concept class concepts exist (2128000000-2)...")
-    df_vocab_concept = pd.DataFrame([
-        {
-            "concept_id": 2128000000,
-            "concept_name": "Digital Imaging and Communications in Medicine (DICOM)",
-            "domain_id": "Metadata",
-            "vocabulary_id": "Vocabulary",
-            "concept_class_id": "Vocabulary",
-            "standard_concept": None,
-            "concept_code": "DICOM",
-            "valid_start_date": date(1970, 1, 1),
-            "valid_end_date": date(2099, 12, 31),
-            "invalid_reason": None,
-        },
-        {
-            "concept_id": 2128000001,
-            "concept_name": "DICOM Attributes",
-            "domain_id": "Metadata",
-            "vocabulary_id": "Concept Class",
-            "concept_class_id": "Concept Class",
-            "standard_concept": None,
-            "concept_code": "DICOM",
-            "valid_start_date": date(1970, 1, 1),
-            "valid_end_date": date(2099, 12, 31),
-            "invalid_reason": None,
-        },
-        {
-            "concept_id": 2128000002,
-            "concept_name": "DICOM Value Sets",
-            "domain_id": "Metadata",
-            "vocabulary_id": "Concept Class",
-            "concept_class_id": "Concept Class",
-            "standard_concept": None,
-            "concept_code": "DICOM",
-            "valid_start_date": date(1970, 1, 1),
-            "valid_end_date": date(2099, 12, 31),
-            "invalid_reason": None,
-        },
-    ])
+    df_vocab_concept = pd.DataFrame(
+        [
+            {
+                "concept_id": 2128000000,
+                "concept_name": "Digital Imaging and Communications in Medicine (DICOM)",
+                "domain_id": "Metadata",
+                "vocabulary_id": "Vocabulary",
+                "concept_class_id": "Vocabulary",
+                "standard_concept": None,
+                "concept_code": "DICOM",
+                "valid_start_date": date(1970, 1, 1),
+                "valid_end_date": date(2099, 12, 31),
+                "invalid_reason": None,
+            },
+            {
+                "concept_id": 2128000001,
+                "concept_name": "DICOM Attributes",
+                "domain_id": "Metadata",
+                "vocabulary_id": "Concept Class",
+                "concept_class_id": "Concept Class",
+                "standard_concept": None,
+                "concept_code": "DICOM",
+                "valid_start_date": date(1970, 1, 1),
+                "valid_end_date": date(2099, 12, 31),
+                "invalid_reason": None,
+            },
+            {
+                "concept_id": 2128000002,
+                "concept_name": "DICOM Value Sets",
+                "domain_id": "Metadata",
+                "vocabulary_id": "Concept Class",
+                "concept_class_id": "Concept Class",
+                "standard_concept": None,
+                "concept_code": "DICOM",
+                "valid_start_date": date(1970, 1, 1),
+                "valid_end_date": date(2099, 12, 31),
+                "invalid_reason": None,
+            },
+        ]
+    )
     safe_insert("CONCEPT", df_vocab_concept, engine)
 
     print("Loading DICOM VOCABULARY...")
-    df_vocab = pd.DataFrame([
-        {
-            "vocabulary_id": "DICOM",
-            "vocabulary_name": "Digital Imaging and Communications in Medicine (NEMA)",
-            "vocabulary_reference": "https://www.dicomstandard.org/current",
-            "vocabulary_version": "NEMA Standard PS3",
-            "vocabulary_concept_id": 2128000000,
-        }
-    ])
+    df_vocab = pd.DataFrame(
+        [
+            {
+                "vocabulary_id": "DICOM",
+                "vocabulary_name": "Digital Imaging and Communications in Medicine (NEMA)",
+                "vocabulary_reference": "https://www.dicomstandard.org/current",
+                "vocabulary_version": "NEMA Standard PS3",
+                "vocabulary_concept_id": 2128000000,
+            }
+        ]
+    )
     safe_insert("VOCABULARY", df_vocab, engine)
 
     print("Loading DICOM CONCEPT_CLASS...")
-    df_classes = pd.DataFrame([
-        {
-            "concept_class_id": "DICOM Attributes",
-            "concept_class_name": "DICOM Attributes",
-            "concept_class_concept_id": 2128000001,
-        },
-        {
-            "concept_class_id": "DICOM Value Sets",
-            "concept_class_name": "DICOM Value Sets",
-            "concept_class_concept_id": 2128000002,
-        },
-    ])
+    df_classes = pd.DataFrame(
+        [
+            {
+                "concept_class_id": "DICOM Attributes",
+                "concept_class_name": "DICOM Attributes",
+                "concept_class_concept_id": 2128000001,
+            },
+            {
+                "concept_class_id": "DICOM Value Sets",
+                "concept_class_name": "DICOM Value Sets",
+                "concept_class_concept_id": 2128000002,
+            },
+        ]
+    )
     safe_insert("CONCEPT_CLASS", df_classes, engine)
 
 
@@ -233,11 +253,24 @@ def main(argv: list[str] | None = None) -> None:
         default=DEFAULT_VOCAB_DIR,
         help="Directory holding the DICOM vocab CSVs (a sibling <dir>.zip is auto-extracted).",
     )
+    guard = parser.add_mutually_exclusive_group()
+    guard.add_argument(
+        "--skip-if-loaded",
+        action="store_true",
+        help="Do nothing when the DICOM vocabulary is already present (its scaffolding concept "
+        f"{DICOM_VOCABULARY_CONCEPT_ID} exists) — the safe mode for a database that may have been seeded "
+        "already, since concept_relationship has no unique key and a re-run would duplicate its rows.",
+    )
+    guard.add_argument("--force", action="store_true", help="Load even if the vocabulary is present.")
     args = parser.parse_args(argv)
+
+    engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
+    if args.skip_if_loaded and dicom_vocabulary_loaded(engine):
+        print(f"⏭️  DICOM vocabulary already loaded (concept {DICOM_VOCABULARY_CONCEPT_ID} present) — skipping.")
+        return
 
     print("🩻 Loading DICOM vocabulary tables...")
     ensure_vocab_dir(args.vocab_dir)
-    engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
 
     load_vocabulary_metadata(engine)
     load_concepts(engine, args.vocab_dir)

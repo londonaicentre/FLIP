@@ -32,7 +32,7 @@ IMAGE="ghcr.io/londonaicentre/xnat-dcm2niix"
 # Every file that pins the image by its full `<image>:<tag>` string.
 REFERENCES=(
     "trust/xnat/xnat/config/dcm2niix_command.json"
-    "deploy/providers/kubernetes/templates/xnat-init-job.yaml"
+    "trust/deploy/helm/templates/xnat-init-job.yaml"
     "trust/imaging-api/imaging_api/config.py"
 )
 

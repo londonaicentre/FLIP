@@ -12,8 +12,8 @@
 -->
 
 <template>
-    <AiCard>
-        <div class="p-4 space-y-4">
+    <AiCard class="flex flex-col h-full">
+        <div class="p-4 shrink-0">
             <h2 class="text-lg font-semibold font-heading grow leading-loose">
                 Project Staging
             </h2>
@@ -23,41 +23,48 @@
             v-slot="{errors}"
             :validation-schema="schema"
             :initial-values="{ trusts: [] }"
+            class="flex flex-col flex-1 min-h-0"
             @submit="stageProject"
         >
-            <div v-if="hasQuery" class="w-full gap-3 text-sm">
-                <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-dark-border dark:divide-dark-border">
-                    <li v-for="trust in trustsToStage" :key="trust.id">
-                        <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-dark-surface group">
-                            <div class="flex items-center flex-1 px-4 grow">
-                                <div class="flex-1 min-w-0">
-                                    <div>
-                                        <p
-                                            class="text-sm font-semibold truncate text-primary-600 dark:text-primary-200"
-                                            :title="trust.name"
-                                        >
-                                            {{ trust.code || trust.name }}
-                                        </p>
+            <!-- Same fill-height contract as ProjectApproval, which swaps into this slot
+                 once the project is staged: the roster scrolls, Stage Project stays pinned
+                 to the card bottom. The scroller wraps the <ul> rather than being the <ul>,
+                 so its border-y stays pinned at the top of the scroll area. -->
+            <div v-if="hasQuery" class="flex flex-col flex-1 min-h-0 w-full text-sm">
+                <div class="w-full flex-1 min-h-0 overflow-y-auto">
+                    <ul role="list" class="border-gray-200 divide-y divide-gray-200 border-y dark:border-dark-border dark:divide-dark-border">
+                        <li v-for="trust in trustsToStage" :key="trust.id">
+                            <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-dark-surface group">
+                                <div class="flex items-center flex-1 px-4 grow">
+                                    <div class="flex-1 min-w-0">
+                                        <div>
+                                            <p
+                                                class="text-sm font-semibold truncate text-primary-600 dark:text-primary-200"
+                                                :title="trust.name"
+                                            >
+                                                {{ trust.code || trust.name }}
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
+                                <div class="px-4">
+                                    <AiSwitch
+                                        name="trusts"
+                                        :data-test="`${trust.name}-selector`"
+                                        :value="trust.id"
+                                        :disabled="staging"
+                                        hide-error
+                                        :label="{ enabled: 'Trust Included', disabled: 'Trust Excluded' }"
+                                    />
+                                </div>
                             </div>
-                            <div class="px-4">
-                                <AiSwitch
-                                    name="trusts"
-                                    :data-test="`${trust.name}-selector`"
-                                    :value="trust.id"
-                                    :disabled="staging"
-                                    hide-error
-                                    :label="{ enabled: 'Trust Included', disabled: 'Trust Excluded' }"
-                                />
-                            </div>
+                        </li>
+                        <div v-if="errors.trusts" class="px-4 py-2 text-sm text-right text-red-600 dark:text-red-400">
+                            {{ errors.trusts }}
                         </div>
-                    </li>
-                    <div v-if="errors.trusts" class="px-4 py-2 text-sm text-right text-red-600 dark:text-red-400">
-                        {{ errors.trusts }}
-                    </div>
-                </ul>
-                <div class="p-4">
+                    </ul>
+                </div>
+                <div class="p-4 shrink-0 mt-auto">
                     <div class="inline-flex justify-end w-full space-x-4">
                         <AiButton
                             v-if="!isViewer"
@@ -75,10 +82,13 @@
                 </div>
             </div>
             <template v-if="!hasQuery">
+                <!-- No m-auto: it would centre the alert in the fill-height flex column
+                     (the same fix ProjectStatus and LatestModels carry for their copy). -->
                 <AiAlert
+                    data-test="query-required-alert"
                     text="A cohort query is required before staging a project"
                     variant="info"
-                    class="m-auto text-base"
+                    class="text-base shrink-0"
                     :rounded="false"
                     :bordered="false"
                     :close="true"

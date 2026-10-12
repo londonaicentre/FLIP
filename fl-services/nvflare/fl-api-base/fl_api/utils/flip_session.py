@@ -81,6 +81,9 @@ class FLIP_Session(Session):
             command (str): The command to be executed.
             *args (Any): Positional arguments forwarded to the base implementation.
             **kwargs (Any): Keyword arguments forwarded to the base implementation.
+
+        Returns:
+            Any: The base implementation's result for the command.
         """
         try:
             return super()._do_command(command, *args, **kwargs)
@@ -116,11 +119,11 @@ class FLIP_Session(Session):
         Check status of every client or specific clients.
 
         Args:
-            target (List[str]): list of client names to check status for. If empty, all clients will be returned.
+            target (list[str] | None): list of client names to check status for. If empty, all clients will be
+                returned.
 
         Returns:
-            List[fl_api.utils.schemas.ClientInfoModel]: a list of ClientInfoModel objects containing name, last connect
-            time, and status.
+            list[ClientInfoModel]: a list of ClientInfoModel objects containing name, last connect time, and status.
         """
         system_info = self.get_system_info()
         if target:

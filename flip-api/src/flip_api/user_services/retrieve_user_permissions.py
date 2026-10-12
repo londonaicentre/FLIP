@@ -19,6 +19,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.user_models import Permission, RolePermission, UserRole
 from flip_api.domain.schemas.users import UserPermissionsResponse
+from flip_api.user_services.trust_admin_grants import get_trust_admin_of
 from flip_api.utils.formatters import to_pascal_case
 from flip_api.utils.logger import logger
 
@@ -27,33 +28,43 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 def has_role(user_id: UUID, db: Session) -> bool:
     """
-    Check if a user has at least one role assigned.
+    Check if a user has at least one GLOBAL role assigned.
+
+    Trust-scoped grants (FLIP#1260) do not count: this gates platform onboarding. A Trust Admin
+    passes through their global Researcher row (FLIP#1258).
 
     Args:
         user_id (UUID): The unique identifier of the user.
         db (Session): The database session.
 
     Returns:
-        bool: True if the user has at least one role, False otherwise.
+        bool: True if the user has at least one global role, False otherwise.
     """
-    statement = select(UserRole).where(UserRole.user_id == user_id)
+    statement = select(UserRole).where(UserRole.user_id == user_id).where(col(UserRole.trust_id).is_(None))
     user_role = db.exec(statement).first()
     return user_role is not None
 
 
 def get_user_permissions(user_id: UUID, db: Session) -> list[Permission]:
     """
-    Retrieve all permissions for a given user based on their roles.
+    Retrieve all permissions for a given user based on their GLOBAL roles.
+
+    Trust-scoped grants (``user_role.trust_id`` set, FLIP#1260) are excluded: they confer
+    authority at one trust only, and folding them into the platform-wide permission list
+    would present a Trust Admin as holding those rights everywhere. Trust authority is
+    answered by ``auth_utils.has_trust_permissions``.
 
     Args:
         user_id (UUID): The unique identifier of the user.
         db (Session): The database session.
 
     Returns:
-        list[Permission]: A list of Permission objects associated with the user's roles.
+        list[Permission]: A list of Permission objects associated with the user's global roles.
     """
     # Get user roles
-    user_roles = db.exec(select(UserRole).where(col(UserRole.user_id) == user_id)).all()
+    user_roles = db.exec(
+        select(UserRole).where(col(UserRole.user_id) == user_id).where(col(UserRole.trust_id).is_(None))
+    ).all()
 
     # Get all permissions for these roles
     user_permissions: list[Permission] = []
@@ -127,7 +138,10 @@ def retrieve_user_permissions(
         permissions_list = get_user_permissions(user_id, db)
         logger.info(f"Successfully retrieved permissions for user {user_id}")
 
-        return UserPermissionsResponse(permissions=[to_pascal_case(p.permission_name) for p in permissions_list])
+        return UserPermissionsResponse(
+            permissions=[to_pascal_case(p.permission_name) for p in permissions_list],
+            trust_admin_of=get_trust_admin_of(user_id, db),
+        )  # type: ignore[call-arg]
 
     except HTTPException as http_exc:
         # Re-raise known HTTP exceptions

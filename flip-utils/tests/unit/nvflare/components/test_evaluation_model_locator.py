@@ -25,6 +25,9 @@ def _fl_ctx_for(tmpdir: str) -> MagicMock:
     fl_ctx.get_peer_context.return_value = None
     workspace = MagicMock()
     workspace.get_app_dir.return_value = tmpdir
+    # A real (absent) path, as NVFLARE's Workspace answers — never a bare MagicMock, which open()
+    # would take for file descriptor 1.
+    workspace.get_job_meta_path.return_value = os.path.join(tmpdir, "meta.json")
     fl_ctx.get_engine.return_value.get_workspace.return_value = workspace
     fl_ctx.get_job_id.return_value = "job-123"
     return fl_ctx

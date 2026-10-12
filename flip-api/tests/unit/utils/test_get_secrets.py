@@ -24,7 +24,7 @@ from flip_api.utils.get_secrets import get_secrets
 def mock_settings():
     """Mock settings for AWS region."""
     with patch("flip_api.utils.get_secrets.get_settings") as mock_get_settings:
-        mock_get_settings.return_value.AWS_SECRET_NAME = "MY_SECRET"
+        mock_get_settings.return_value.AWS_SECRET_NAME = "MY_SECRET"  # pragma: allowlist secret
         mock_get_settings.return_value.AWS_REGION = "test-west-1"
         yield mock_get_settings
 

@@ -12,15 +12,25 @@
 
 from uuid import UUID
 
-from sqlmodel import Session, select
+from sqlalchemy import ColumnElement
+from sqlmodel import Session, col, select
 
-from flip_api.db.models.user_models import PermissionRef, Role, RolePermission, UserRole
+from flip_api.db.models.user_models import (
+    TRUST_SCOPED_PERMISSIONS,
+    PermissionRef,
+    RolePermission,
+    UserRole,
+)
 from flip_api.utils.logger import logger
 
 
 def _user_permission_ids(user_id: UUID, db: Session) -> set[UUID]:
     """
-    Collect the IDs of every permission granted to a user through their roles.
+    Collect the IDs of every permission granted to a user through their GLOBAL roles.
+
+    Only platform-wide grants count here (``user_role.trust_id IS NULL``). Trust-scoped
+    grants are deliberately excluded: a Trust Admin's authority over their own trust must
+    not leak into platform-wide checks. Use :func:`has_trust_permissions` for those.
 
     Raises rather than swallowing DB errors: each caller converts a failure into a deny, so the
     fail-closed behaviour stays visible at the point where the access decision is made.
@@ -30,18 +40,52 @@ def _user_permission_ids(user_id: UUID, db: Session) -> set[UUID]:
         db (Session): The database session to query user roles and permissions.
 
     Returns:
-        set[UUID]: The permission IDs granted by the user's roles.
+        set[UUID]: The permission IDs granted by the user's global roles.
     """
-    # Get user roles
-    user_roles = db.exec(select(Role).join(UserRole).where(UserRole.user_id == user_id)).all()
+    return _permission_ids(user_id, col(UserRole.trust_id).is_(None), db)
 
-    # Get all permissions for these roles
-    user_permission_ids: set[UUID] = set()
-    for role in user_roles:
-        role_permissions = db.exec(select(RolePermission.permission_id).where(RolePermission.role_id == role.id)).all()
-        user_permission_ids.update(role_permissions)
 
-    return user_permission_ids
+def _user_trust_permission_ids(user_id: UUID, trust_id: UUID, db: Session) -> set[UUID]:
+    """
+    Collect the permission IDs a user holds AT a specific trust.
+
+    Matches only rows whose ``trust_id`` equals the given trust. Global roles
+    (``trust_id IS NULL``) are not considered — see :func:`has_trust_permissions`.
+
+    Args:
+        user_id (UUID): The ID of the user to collect permissions for.
+        trust_id (UUID): The trust the permissions must be held against.
+        db (Session): The database session to query user roles and permissions.
+
+    Returns:
+        set[UUID]: The permission IDs granted by the user's roles at that trust.
+    """
+    return _permission_ids(user_id, col(UserRole.trust_id) == trust_id, db)
+
+
+def _permission_ids(user_id: UUID, scope: ColumnElement[bool], db: Session) -> set[UUID]:
+    """
+    Collect the permission IDs granted by those of a user's roles that ``scope`` selects, in one query.
+
+    Every permission check pays this lookup, so it joins ``user_role`` to ``role_permission`` rather
+    than querying once per role.
+
+    Args:
+        user_id (UUID): The ID of the user to collect permissions for.
+        scope (ColumnElement[bool]): The condition on ``user_role`` rows that decides which grants count.
+        db (Session): The database session to query user roles and permissions.
+
+    Returns:
+        set[UUID]: The permission IDs granted by the selected roles.
+    """
+    return set(
+        db.exec(
+            select(RolePermission.permission_id)
+            .join(UserRole, col(UserRole.role_id) == col(RolePermission.role_id))
+            .where(UserRole.user_id == user_id)
+            .where(scope)
+        ).all()
+    )
 
 
 def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db: Session) -> bool:
@@ -106,4 +150,61 @@ def has_any_permission(user_id: UUID, permissions: list[PermissionRef], db: Sess
 
     except Exception as e:
         logger.error(f"Error checking any-of permissions for user {user_id}: {str(e)}")
+        return False
+
+
+def has_trust_permissions(
+    user_id: UUID,
+    required_permissions: list[PermissionRef],
+    trust_id: UUID,
+    db: Session,
+) -> bool:
+    """
+    Check if a user has ALL of the required permissions AT a specific trust.
+
+    The trust-scoped counterpart to :func:`has_permissions`. Use it wherever the question is
+    "may this user do X *at trust Y*" — approving or declining a project for that trust.
+
+    **A global role does not satisfy this check.** Only ``user_role`` rows whose ``trust_id``
+    matches are considered, so platform-wide Admin grants confer no authority over a trust's
+    data. That is the whole point of the function, and it is load-bearing: ``db.seed.role_permissions``
+    grants Admin *every* permission in :class:`PermissionRef`, so a check that accepted global
+    grants would hand every hub administrator approval rights over every trust — the hole
+    FLIP#1258 exists to close. The exclusion is enforced twice over, here and by keeping
+    trust-scoped permissions out of the Admin seed (:data:`TRUST_SCOPED_PERMISSIONS`).
+
+    An empty list grants nothing, matching :func:`has_permissions` — the same fail-open trap
+    applies, since ``all()`` over an empty sequence is True.
+
+    Args:
+        user_id (UUID): The ID of the user to check permissions for.
+        required_permissions (list[PermissionRef]): Permissions the user must hold at the trust.
+        trust_id (UUID): The trust the permissions must be held against.
+        db (Session): The database session to query user roles and permissions.
+
+    Returns:
+        bool: True if the user holds all required permissions at that trust, False otherwise.
+    """
+    # Deny before touching the DB, mirroring has_permissions.
+    if not required_permissions:
+        logger.error(f"Refusing to authorize user {user_id} at trust {trust_id} against an empty permission list")
+        return False
+
+    # A caller asking for a global permission at trust scope is a bug: it would let a Trust
+    # Admin grant stand in for a platform-wide one. Deny loudly rather than answering it.
+    non_scoped = [p.name for p in required_permissions if p.value not in TRUST_SCOPED_PERMISSIONS]
+    if non_scoped:
+        logger.error(
+            f"Refusing to authorize user {user_id} at trust {trust_id}: "
+            f"{sorted(non_scoped)} are not trust-scoped permissions"
+        )
+        return False
+
+    try:
+        user_permission_ids = _user_trust_permission_ids(user_id, trust_id, db)
+
+        return all(permission.value in user_permission_ids for permission in required_permissions)
+
+    except Exception as e:
+        logger.error(f"Error checking trust permissions for user {user_id} at trust {trust_id}: {str(e)}")
         return False

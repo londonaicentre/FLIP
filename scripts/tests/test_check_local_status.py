@@ -46,6 +46,7 @@ from check_local_status import (  # noqa: E402
     discover_trust_kits,
     instance_prefix,
     parse_compose_containers,
+    unexpected_exits,
 )
 
 PASS = 0
@@ -89,17 +90,31 @@ def test_discovers_code_kits() -> None:
         IMAGING_API_PORT=8001,
         DATA_ACCESS_API_PORT=8010,
     )
-    _write_kit(
-        trust, "GSTT", "development", TRUST_NAME="GSTT", FL_KIT_SLOT_NUMBER=2, XNAT_PORT=8104, PACS_UI_PORT=8042
-    )
+    _write_kit(trust, "GSTT", "development", TRUST_NAME="GSTT", FL_KIT_SLOT_NUMBER=2, XNAT_PORT=8104, PACS_UI_PORT=8042)
     kits = discover_trust_kits(trust, "development")
     _assert(len(kits) == 2, "discovers both CODE kits", f"got {len(kits)}")
     by_code = {k.code: k for k in kits}
     _assert("KCH" in by_code and "GSTT" in by_code, "keyed by CODE", f"got {sorted(by_code)}")
     kch = by_code.get("KCH", TrustKit("", "", None, None, None, None, None, None))
     _assert(kch.slot_number == 1, "reads FL_KIT_SLOT_NUMBER", f"got {kch.slot_number!r}")
-    _assert(kch.xnat_port == "8106" and kch.pacs_ui_port == "8044", "reads XNAT/PACS ports")
+    _assert(kch.xnat_web_port == "8106" and kch.pacs_ui_port == "8044", "reads XNAT/PACS ports")
     _assert(kch.trust_api_port == "8020", "reads TRUST_API_PORT", f"got {kch.trust_api_port!r}")
+
+
+def test_web_port_prefers_xnat_web_port() -> None:
+    """The web UI moved off XNAT_PORT in FLIP#993; probing the DICOM port would report it down."""
+    trust = _trust_dir()
+    _write_kit(trust, "GSTT", "development", TRUST_NAME="GSTT", XNAT_PORT=8104, XNAT_WEB_PORT=8080)
+    kits = discover_trust_kits(trust, "development")
+    _assert(kits[0].xnat_web_port == "8080", "XNAT_WEB_PORT wins over XNAT_PORT", f"got {kits[0].xnat_web_port!r}")
+
+
+def test_web_port_falls_back_to_xnat_port() -> None:
+    """A kit predating the split sets only XNAT_PORT, and still publishes the web UI there."""
+    trust = _trust_dir()
+    _write_kit(trust, "GSTT", "development", TRUST_NAME="GSTT", XNAT_PORT=8104)
+    kits = discover_trust_kits(trust, "development")
+    _assert(kits[0].xnat_web_port == "8104", "falls back to XNAT_PORT", f"got {kits[0].xnat_web_port!r}")
 
 
 def test_ignores_examples_and_other_envs() -> None:
@@ -204,11 +219,13 @@ def test_parse_compose_containers() -> None:
     the container name it maps to is not, which is the whole point of resolving instead of
     spelling one out.
     """
-    rows = "\n".join((
-        "flip-api\tb-deploy-flip-api-1\tUp 3 hours (healthy)",
-        "fl-api-net-1\tb-deploy-fl-api-net-1-1\tUp 3 hours",
-        "fl-server-net-2\tb-deploy-fl-server-net-2-1\tExited (1) 2 minutes ago",
-    ))
+    rows = "\n".join(
+        (
+            "flip-api\tb-deploy-flip-api-1\tUp 3 hours (healthy)",
+            "fl-api-net-1\tb-deploy-fl-api-net-1-1\tUp 3 hours",
+            "fl-server-net-2\tb-deploy-fl-server-net-2-1\tExited (1) 2 minutes ago",
+        )
+    )
     parsed = parse_compose_containers(rows)
     _assert(sorted(parsed) == ["fl-api-net-1", "fl-server-net-2", "flip-api"], "keyed by service name")
     _assert(
@@ -226,16 +243,30 @@ def test_parse_compose_containers() -> None:
     _assert(parse_compose_containers("") == {}, "empty output -> empty map")
 
 
+def test_a_completed_governance_extract_is_not_an_unexpected_exit() -> None:
+    """fl-governance-init is a one-shot that exits 0 by design (FLIP#1259); only a failed one, or
+    any other exited container, is worth a warning."""
+    listing = "\n".join(
+        [
+            "trust1-fl-governance-init-1\tExited (0) 3 minutes ago",
+            "trust2-fl-governance-init-1\tExited (1) 3 minutes ago",
+            "deploy-fl-server-net-2-1\tExited (137) 2 minutes ago",
+        ]
+    )
+    names = unexpected_exits(listing)
+    _assert("trust1-fl-governance-init-1" not in names, "a completed extract is expected", str(names))
+    _assert("trust2-fl-governance-init-1" in names, "a failed extract is reported", str(names))
+    _assert("deploy-fl-server-net-2-1" in names, "any other exit is reported", str(names))
+
+
 def main() -> None:
-    for test in (
-        test_discovers_code_kits,
-        test_ignores_examples_and_other_envs,
-        test_missing_slot_and_name_fallback,
-        test_missing_dir_returns_empty,
-        test_instance_prefix,
-        test_compose_project,
-        test_parse_compose_containers,
-    ):
+    # Discovered rather than listed: the hand-maintained tuple this replaced meant a new test
+    # function ran nowhere and the suite still reported green.
+    tests = [v for k, v in list(globals().items()) if k.startswith("test_") and callable(v)]
+    if not tests:
+        print("no tests discovered")
+        sys.exit(1)
+    for test in tests:
         print(f"\n{test.__name__}")
         test()
     print(f"\n{PASS} passed, {FAIL} failed")

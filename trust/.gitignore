@@ -39,11 +39,17 @@ imaging-api/app/routers/example_get_experiment_response.json
 
 # Trust
 orthanc/orthanc-storage-*
+# The seed marker written beside each storage dir by `make seed-orthanc` (FLIP#1187).
+orthanc/.orthanc-storage-*.seeded
 xnat/plugins/*.jar
-xnat/plugins/.s3-prefix
+xnat/plugins/.*.part
 .env.*
 # ...but the omop-db build-pipeline template is documentation, not a live env file.
 !omop-db/.env.build.example
+# A trust's own governance document (FLIP#1259) is site configuration, like its kit file;
+# only the worked example is tracked.
+governance.*.toml
+!governance.example.toml
 
 # Image data folder
 data/**/*.dcm

@@ -8,7 +8,8 @@ Networking
 
 All trust communication is **outbound** — trusts poll the Central Hub for tasks over HTTPS
 (via the ALB), and FL clients connect outbound to the FL server via the NLB. The hub never
-makes inbound connections to trusts, so no inbound firewall rules or port forwarding are
+makes inbound connections to trusts, so no inbound firewall rules or port forwarding from the
+internet are
 required on trust hosts. Operator access is via AWS Systems Manager Session Manager
 (SSH-over-SSM); XNAT, Orthanc, and the trust-api Swagger docs are reachable only through SSM
 port forwarding (``make forward-trust``). Orthanc additionally requires HTTP basic auth — log in
@@ -36,18 +37,18 @@ opened.
    * - Description
      - Inbound
      - Outbound
-   * - DICOM ingestion from local PACS into the trust XNAT
+   * - DICOM query/retrieve from the local PACS (XNAT → PACS)
      -
-     - local PACS DICOM ports
+     - local PACS query/retrieve port
+   * - DICOM C-STORE return leg (PACS → XNAT)
+     - XNAT DICOM port (``XNAT_PORT``, 8104 by default)
+     -
    * - Trust → Central Hub task polling (HTTPS)
      -
      - 443
    * - FL client → FL server (via NLB)
      -
      - configured ``FL_SERVER_PORT``
-   * - FL client per-run dependency install, Flower backend (HTTPS)
-     -
-     - 443 to PyPI (``pypi.org``, ``files.pythonhosted.org``) and ``download.pytorch.org``
    * - Operator access to trust host
      - none (SSM Session Manager)
      -
@@ -92,4 +93,4 @@ Access to FLIP is granted by a FLIP administrator.
 
 Access to FLIP will be reviewed annually, with dormant accounts being removed.
 
-FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Viewer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.
+FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has four access profiles: **Admin**, **Researcher**, **Viewer** and **Trust Admin** (a Researcher who also approves or declines projects for one Trust). For full details of permissions assigned to each role, see :ref:`rbac-roles`.

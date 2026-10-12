@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import trust_api.utils.version as version_module
-from trust_api.utils.version import service_version
+from trust_api.utils.version import build_identity, service_version
 
 
 @pytest.fixture(autouse=True)
@@ -35,6 +35,28 @@ def _pyproject_version() -> str:
 
 def test_reads_the_version_from_the_projects_pyproject():
     assert service_version() == _pyproject_version()
+
+
+def test_build_identity_is_the_baked_release_when_the_image_carries_one(monkeypatch):
+    """CI bakes FLIP_RELEASE (v<X.Y.Z> or sha-<short7>) so /health names the build (FLIP#1204)."""
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    assert build_identity() == "v9.9.9"
+
+
+@pytest.mark.parametrize("value", [None, ""], ids=["unset", "empty"])
+def test_build_identity_falls_back_to_the_pyproject_version(monkeypatch, value):
+    """A local build passes no FLIP_RELEASE (the Dockerfile defaults it to empty)."""
+    if value is None:
+        monkeypatch.delenv("FLIP_RELEASE", raising=False)
+    else:
+        monkeypatch.setenv("FLIP_RELEASE", value)
+    assert build_identity() == _pyproject_version()
+
+
+def test_build_identity_is_none_when_neither_source_is_available(monkeypatch):
+    monkeypatch.delenv("FLIP_RELEASE", raising=False)
+    monkeypatch.setattr(version_module, "_PYPROJECT_PATH", Path("/nonexistent/pyproject.toml"))
+    assert build_identity() is None
 
 
 @pytest.mark.parametrize(

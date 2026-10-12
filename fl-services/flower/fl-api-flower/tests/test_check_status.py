@@ -76,10 +76,14 @@ def test_check_client_status_all_online(client, src_root, mock_flwr_run):
     app_module._node_trust_mapping["111"] = "Trust_1"
     app_module._node_trust_mapping["222"] = "Trust_2"
 
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "111", "owner": "none", "status": "online"},
-        {"node_id": "222", "owner": "none", "status": "online"},
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "111", "owner": "none", "status": "online"},
+                {"node_id": "222", "owner": "none", "status": "online"},
+            ]
+        )
+    )
 
     response = client.get("/check_client_status")
 
@@ -97,10 +101,14 @@ def test_check_client_status_mixed_health(client, src_root, mock_flwr_run):
     app_module._node_trust_mapping["111"] = "Trust_1"
     app_module._node_trust_mapping["222"] = "Trust_2"
 
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "111", "owner": "none", "status": "online"},
-        {"node_id": "222", "owner": "none", "status": "offline"},
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "111", "owner": "none", "status": "online"},
+                {"node_id": "222", "owner": "none", "status": "offline"},
+            ]
+        )
+    )
 
     response = client.get("/check_client_status")
 
@@ -115,10 +123,14 @@ def test_check_client_status_node_missing_from_federation(client, src_root, mock
     app_module._node_trust_mapping["111"] = "Trust_1"
     app_module._node_trust_mapping["222"] = "Trust_2"
 
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "111", "owner": "none", "status": "online"},
-        # Trust_2 (node 222) is not in the list at all
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "111", "owner": "none", "status": "online"},
+                # Trust_2 (node 222) is not in the list at all
+            ]
+        )
+    )
 
     response = client.get("/check_client_status")
 
@@ -132,10 +144,14 @@ def test_check_client_status_with_targets(client, src_root, mock_flwr_run):
     app_module._node_trust_mapping["111"] = "Trust_1"
     app_module._node_trust_mapping["222"] = "Trust_2"
 
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "111", "owner": "none", "status": "online"},
-        {"node_id": "222", "owner": "none", "status": "online"},
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "111", "owner": "none", "status": "online"},
+                {"node_id": "222", "owner": "none", "status": "online"},
+            ]
+        )
+    )
 
     response = client.get("/check_client_status", params=[("targets", "Trust_2")])
 
@@ -150,9 +166,13 @@ def test_check_client_status_unknown_target(client, src_root, mock_flwr_run):
     app_module._node_trust_mapping.clear()
     app_module._node_trust_mapping["111"] = "Trust_1"
 
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "111", "owner": "none", "status": "online"},
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "111", "owner": "none", "status": "online"},
+            ]
+        )
+    )
 
     response = client.get("/check_client_status", params={"targets": ["Trust_Missing"]})
 
@@ -164,9 +184,13 @@ def test_check_client_status_empty_mapping(client, src_root, mock_flwr_run):
     """When no nodes have registered, the response is an empty list."""
     app_module._node_trust_mapping.clear()
 
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "111", "owner": "none", "status": "online"},
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "111", "owner": "none", "status": "online"},
+            ]
+        )
+    )
 
     response = client.get("/check_client_status")
 
@@ -185,10 +209,14 @@ def test_check_client_status_with_preregistered_nodes(client, src_root, mock_flw
     client.post("/register_node", json={"name": "Trust_2", "node_id": "888"})
 
     # Now the federation list reports those nodes as online
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "999", "owner": "none", "status": "online"},
-        {"node_id": "888", "owner": "none", "status": "online"},
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "999", "owner": "none", "status": "online"},
+                {"node_id": "888", "owner": "none", "status": "online"},
+            ]
+        )
+    )
 
     response = client.get("/check_client_status")
 
@@ -205,9 +233,13 @@ def test_check_client_status_preregistered_partial_online(client, src_root, mock
     client.post("/register_node", json={"name": "Trust_2", "node_id": "888"})
 
     # Only Trust_1's node is online; Trust_2 hasn't connected yet
-    mock_flwr_run(stdout=_federation_json([
-        {"node_id": "999", "owner": "none", "status": "online"},
-    ]))
+    mock_flwr_run(
+        stdout=_federation_json(
+            [
+                {"node_id": "999", "owner": "none", "status": "online"},
+            ]
+        )
+    )
 
     response = client.get("/check_client_status")
 

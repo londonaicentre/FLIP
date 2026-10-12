@@ -15,16 +15,15 @@ import "tippy.js/dist/tippy.css";
 import "tippy.js/themes/material.css";
 import "./assets/styles/main.css";
 
-import { Amplify } from "aws-amplify";
 import { createPinia } from "pinia";
 import { createApp } from "vue";
 import VueTippy from "vue-tippy";
 
-import { makeServer } from "../mocks/server";
 import App from "./App.vue";
+import { getAuthProvider } from "./auth";
 import { seedDemoAuth } from "./demo/bootstrap";
 import router from "./router";
-import { authConfig } from "./utils/auth";
+import { handleSessionExpired } from "./utils/auth";
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -43,12 +42,17 @@ const isE2E = import.meta.env.VITE_E2E === "true";
 // imported from another module does not propagate far enough for that fold.
 const isDemoBuild = import.meta.env.VITE_DEMO === "true";
 
-// Amplify must not be configured in the demo: it would bind the demo to the
-// REAL Cognito pool/client (same localStorage namespace on a same-origin
-// deployment), so the demo's own Sign Out would issue a global sign-out
-// against a genuine signed-in session in the same browser (FLIP#794 review).
+// The identity provider must not be configured in the demo: it would bind
+// the demo to the REAL Cognito pool/client (same localStorage namespace on a
+// same-origin deployment), so the demo's own Sign Out would issue a global
+// sign-out against a genuine signed-in session in the same browser
+// (FLIP#794 review). The backend is chosen from window.AUTH_BACKEND
+// (src/auth/index.ts); its session-expiry signal is wired to the same
+// teardown the router guard and the 401 interceptor use.
 if (!isDemoBuild) {
-    Amplify.configure(authConfig);
+    const authProvider = getAuthProvider();
+    authProvider.configure();
+    authProvider.onSessionExpired(handleSessionExpired);
 }
 
 /**
@@ -66,14 +70,24 @@ if (!isDemoBuild) {
  * Behind a dynamic import the reference disappears with the branch, so no
  * fixture chunk is emitted at all.
  *
+ * `mocks/server` (the VITE_LOCAL dev mock) is loaded the same way, for the same
+ * reason. It was a static import until FLIP#1041: the VITE_LOCAL branch folded
+ * correctly, but miragejs patches Error.prototype at module scope, so rolldown
+ * kept the module anyway and shipped ~230 modules — Mirage, Pretender,
+ * route-recognizer, inflected and all of lodash — in the production entry
+ * chunk of every build. Neither mock server may be imported statically here.
+ *
  * Mounting waits for that install: Mirage patches XHR globally when it is
  * constructed, and the app issues its first requests during mount. Mounting
  * first would let those escape to the network before the mock exists. In a
  * non-demo build the whole branch folds away, leaving no `await` before the
  * mount, so production boot stays synchronous.
  *
- * Keep `assert-no-demo-artefacts` (npm postbuild:deploy) as the backstop for
- * all of the above — it inspects the built artefact, not the source.
+ * Both halves are enforced: the `flip-ui/no-static-mirage` ESLint block rejects
+ * a static import of either mock server (or miragejs/pretender) from src/, and
+ * `assert-no-demo-artefacts` (npm postbuild:deploy) backstops it at the
+ * artefact level — it inspects the built output, not the source, so it also
+ * catches a branch that stops folding.
  */
 async function bootstrap(): Promise<void> {
     if (isDemoBuild) {
@@ -89,6 +103,7 @@ async function bootstrap(): Promise<void> {
     }
     else if (import.meta.env.VITE_LOCAL === "true" && !isE2E) {
         console.info("Running locally, will use mocked API.");
+        const { makeServer } = await import("../mocks/server");
         makeServer();
     }
 

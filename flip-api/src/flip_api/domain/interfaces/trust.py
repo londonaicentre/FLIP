@@ -16,6 +16,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from flip_api.domain.schemas.private import ServiceHealthEntry
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus
 from flip_api.domain.schemas.users import CognitoUser
 
 # Interfaces
@@ -115,10 +116,14 @@ class ICreateImagingProject(BaseModel):
 
 
 class ICreatedImagingUser(BaseModel):
-    """Represents a user created on XNAT. Used to be called IImageUser in the old repo."""
+    """Represents a user created on XNAT. Used to be called IImageUser in the old repo.
+
+    Carries the AES-encrypted, host-less setup path (an XNAT alias-token link) the new user follows
+    to set their own password — never a password. See FLIP-PT-079.
+    """
 
     username: str
-    encrypted_password: str
+    encrypted_setup_path: str
     email: EmailStr
 
 
@@ -130,7 +135,13 @@ class IAddedImagingUser(BaseModel):
 
 
 class ICreatedImagingProject(BaseModel):
-    """Represents a project created on XNAT. Used to be called IImageId in the old repo."""
+    """Represents a project created on XNAT. Used to be called IImageId in the old repo.
+
+    ``created_users`` are the users to invite: accounts the trust created this run, plus existing
+    accounts that have never logged in (a lost or expired first invite), which the trust re-invites
+    with a fresh set-password path. ``added_users`` are existing accounts that have logged in
+    before and only need the added-to-project notice. A user is in exactly one of the two.
+    """
 
     imaging_project_id: UUID
     name: str
@@ -139,11 +150,13 @@ class ICreatedImagingProject(BaseModel):
 
 
 class ISesTemplateData(BaseModel):
+    """Template data for the XNAT invite email: a host-less setup link, never a password (FLIP-PT-079)."""
+
     trust_name: str
     project_name: str
     project_id: UUID
     username: str
-    password: str
+    setup_path: str
 
 
 class ISesProjectAccessTemplateData(BaseModel):
@@ -153,3 +166,35 @@ class ISesProjectAccessTemplateData(BaseModel):
     project_name: str
     project_id: UUID
     username: str
+
+
+class ITrustCohortCount(BaseModel):
+    """A trust's latest cohort-query answer for a project, as its Trust Admin sees it (FLIP#1258)."""
+
+    record_count: int | None = Field(default=None, alias="recordCount")
+    # True when the trust withheld a below-threshold count (reported as 0).
+    suppressed: bool = False
+    error: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ITrustDecision(BaseModel):
+    """A project staged at a trust, with that trust's decision on it — one row of the My Trust page (FLIP#1258)."""
+
+    project_id: UUID = Field(alias="projectId")
+    project_name: str = Field(alias="projectName")
+    description: str
+    owner_name: str | None = Field(default=None, alias="ownerName")
+    project_status: ProjectStatus = Field(alias="projectStatus")
+    has_imaging: bool = Field(alias="hasImaging")
+    staged_at: str | None = Field(default=None, alias="stagedAt")
+    query: str | None = None
+    # None when the trust never answered the latest cohort query (or the project has none).
+    cohort: ITrustCohortCount | None = None
+    status: TrustApprovalStatus
+    decided_by_name: str | None = Field(default=None, alias="decidedByName")
+    decided_at: str | None = Field(default=None, alias="decidedAt")
+    decided_as: DecisionMaker | None = Field(default=None, alias="decidedAs")
+
+    model_config = ConfigDict(populate_by_name=True)

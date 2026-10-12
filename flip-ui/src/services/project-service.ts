@@ -19,12 +19,23 @@ import type { IProjectUser } from "@/services/user-service";
 
 export type { IProjectUser };
 
+// A trust's decision on a staged project. Every trust starts PENDING when the project is staged.
+export type TrustApprovalStatus = "PENDING" | "APPROVED" | "DECLINED";
+
 export interface IProjectTrust {
     name: string;
     id: string;
     code?: string | null;
-    approved: boolean;
-    approvedAt?: string | null;
+    status: TrustApprovalStatus;
+    // Who made the current decision (user id + display name) and when. All null while PENDING;
+    // the decider is also null on approvals recorded before decisions were attributed (FLIP#1318).
+    decidedBy?: string | null;
+    decidedByName?: string | null;
+    decidedAt?: string | null;
+    // HUB or SITE: whether the hub admin or the trust's own Trust Admin decided (FLIP#1258).
+    decidedAs?: "HUB" | "SITE" | null;
+    // True when the trust has a Trust Admin, so only they decide it.
+    hasTrustAdmin?: boolean;
 }
 
 export interface IProjectQuery {
@@ -83,6 +94,11 @@ export type IProject = {
     // immutable thereafter. Only the project-detail endpoint surfaces it, so
     // it's optional (the list endpoint omits it).
     dicom_to_nifti?: boolean;
+    // Whether the project has an imaging stage at all. Set at creation and immutable
+    // thereafter (FLIP#1071). Off = tabular-only cohort: no XNAT project, no image
+    // pull, no imaging status card. Unlike dicom_to_nifti the list endpoint does return
+    // it; optional only because a hub predating the flag omits it (absent = imaging).
+    has_imaging?: boolean;
 }
 
 export interface IProjectCreate {
@@ -90,6 +106,7 @@ export interface IProjectCreate {
     description: string;
     users?: string[];
     dicom_to_nifti?: boolean;
+    has_imaging?: boolean;
 }
 
 export interface ICreateProjectResponse {
@@ -153,8 +170,32 @@ export async function unstageProject(url: string): Promise<void> {
     await _http.post<never>(url);
 }
 
-export async function approveProject(url: string, trusts: string[]): Promise<void> {
-    await _http.post<never>(url, { trusts: trusts });
+export interface ITrustDecisions {
+    approved: string[];
+    declined: string[];
+}
+
+export interface IImagingDispatchResult {
+    trust: string;
+    success: boolean;
+    message: string;
+}
+
+export interface IApproveProjectResponse {
+    // APPROVED once every trust has a decision and at least one approved; otherwise the project stays STAGED.
+    projectStatus: ProjectStatus;
+    // Present once the project is APPROVED: whether imaging started at every approved trust, and per trust.
+    successful?: boolean;
+    details?: IImagingDispatchResult[];
+}
+
+export async function approveProject(url: string, decisions: ITrustDecisions): Promise<IApproveProjectResponse> {
+    const response = await _http.post<IApproveProjectResponse>(url, {
+        trusts: decisions.approved,
+        declined: decisions.declined
+    });
+
+    return response.data;
 }
 
 export async function deleteProject(url: string): Promise<void> {

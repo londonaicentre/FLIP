@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Generic, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlmodel import SQLModel
 
 from flip_api.domain.schemas.status import XNATImageStatus
@@ -98,7 +98,21 @@ class XnatProjectStatusInfo(BaseModel):
 
 
 class ApproveProjectBodyPayload(BaseModel):
-    trusts: list[UUID] = Field(..., description="List of Trust IDs to approve for the project.")
+    trusts: list[UUID] = Field(
+        ...,
+        description="Trust IDs that approve the project. A staged trust named in neither list keeps its decision.",
+    )
+    declined: list[UUID] = Field(
+        default_factory=list,
+        description="Trust IDs that decline the project. A staged trust named in neither list keeps its decision.",
+    )
+
+    @model_validator(mode="after")
+    def _no_trust_both_approved_and_declined(self) -> "ApproveProjectBodyPayload":
+        both = set(self.trusts) & set(self.declined)
+        if both:
+            raise ValueError(f"A trust cannot be both approved and declined: {sorted(str(t) for t in both)}")
+        return self
 
 
 class ProjectDetails(BaseModel, from_attributes=True):
@@ -106,6 +120,8 @@ class ProjectDetails(BaseModel, from_attributes=True):
     description: str | None = Field(max_length=250, default=None)
     users: list[UUID] = Field(default_factory=list)
     dicom_to_nifti: bool = Field(default=True)
+    # Creation-time only, like dicom_to_nifti: False = tabular-only cohort with no imaging stage (FLIP#1071).
+    has_imaging: bool = Field(default=True)
 
     @field_validator("description")
     @classmethod
@@ -120,6 +136,7 @@ class ProjectDetails(BaseModel, from_attributes=True):
                 "name": "Cardiovascular Research Initiative",
                 "description": "A project to study cardiovascular diseases using federated learning.",
                 "users": ["05137965-8f5a-4752-b07f-d986289eac14", "ddde758d-d51e-4d50-bc3d-c639eb3775f0"],
+                "has_imaging": True,
             }
         }
     )

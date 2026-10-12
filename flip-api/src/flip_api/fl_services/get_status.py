@@ -140,7 +140,5 @@ def get_status_endpoint(
         return net_statuses
 
     except Exception as e:
-        logger.error(f"Error while retrieving net statuses: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Error while retrieving net statuses: {str(e)}"
-        )
+        logger.exception("Error while retrieving net statuses")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

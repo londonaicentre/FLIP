@@ -13,9 +13,10 @@
 
 # Trust Compose Stack
 
-> **Deploys: trust only.** These files define the trust-side container stack. The Central Hub stack lives in
-> [`deploy/`](../../deploy/README.md) at the repo root; infrastructure provisioning (AWS / on-prem / K8s)
-> lives in [`deploy/providers/`](../../deploy/providers/README.md).
+> **Deploys: trust only.** The trust-side container stack as Docker Compose, with its two siblings
+> [`helm/`](helm/README.md) (the same stack for Kubernetes) and [`ansible/`](ansible/README.md) (prepares a
+> site-owned host for these files). The Central Hub stack lives in [`deploy/`](../../deploy/README.md); see
+> [where things live](../../deploy/README.md#where-things-live) for the rule behind the layout.
 
 Do not run these files directly — they are driven by [`trust/Makefile`](../Makefile), which selects the right
 combination for the environment, FL backend, GPU availability and kit slot. Start here instead:

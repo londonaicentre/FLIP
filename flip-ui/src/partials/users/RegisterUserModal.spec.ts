@@ -18,7 +18,7 @@ import { mount } from "@vue/test-utils";
 import { vi } from "vitest";
 import { nextTick } from "vue";
 
-import { IOption } from "@/components/AiSelect/interfaces";
+import { IOption } from "@/interfaces/select";
 import RegisterUserModal from "@/partials/users/RegisterUserModal.vue";
 import { IRole } from "@/services/role-service";
 
@@ -95,9 +95,10 @@ describe("Register User Modal", () => {
                 })]
             }
         });
-        // AiChipSelect tags its trigger with data-test="chip-select"; the new
-        // single-select tags its trigger with data-test="role-select".
-        expect(component.find("[data-test=\"chip-select\"]").exists()).toBe(false);
+        // The role chooser is a single-select Listbox, tagged data-test="role-select".
+        // (It was a multi-select AiChipSelect until 84a2004f; that component was
+        // deleted as dead code in FLIP#1063, so the old negative assertion against
+        // data-test="chip-select" could no longer fail and has been dropped.)
         expect(component.find("[data-test=\"role-select\"]").exists()).toBe(true);
         component.unmount();
     });
@@ -271,6 +272,78 @@ describe("Register User Modal", () => {
                 roles: [roleA.id]
             });
             component.unmount();
+        });
+
+        describe("as a Trust Admin", () => {
+            const trustAdminRole: IRole = {
+                id: "3",
+                rolename: "Trust Admin",
+                roledescription: "Researcher access, plus one trust's decisions"
+            };
+            const trusts = [
+                {
+                    id: "trust-a",
+                    name: "Decision Trust A",
+                    code: "DTA"
+                }
+            ];
+
+            const openAsTrustAdmin = async () => {
+                mockRegisterUser.mockResolvedValue({ email: "ta@example.test" });
+                const component = mountAndOpen({
+                    roles: [roleA, trustAdminRole],
+                    trusts
+                });
+                await component.setProps({ dialog: true });
+                const setupState = setupStateOf(component);
+                setupState.setFieldValue("name", "Trust Admin Person");
+                setupState.setFieldValue("email", "ta@example.test");
+                setupState.setFieldValue("organisation", "Decision Trust A");
+                setupState.selectedOption = {
+                    id: trustAdminRole.id,
+                    description: trustAdminRole.rolename
+                };
+                await nextTick();
+
+                return {
+                    component,
+                    setupState
+                };
+            };
+
+            it("asks which trust they administer", async () => {
+                const { component } = await openAsTrustAdmin();
+
+                const options = document.body.querySelectorAll("[data-test='register-trust-select'] option:not([disabled])");
+                expect(Array.from(options).map(o => o.textContent?.trim())).toEqual(["Decision Trust A (DTA)"]);
+                component.unmount();
+            });
+
+            it("will not register a Trust Admin without a trust", async () => {
+                const { component, setupState } = await openAsTrustAdmin();
+
+                await setupState.submitAction();
+
+                expect(mockRegisterUser).not.toHaveBeenCalled();
+                expect(setupState.errors.trust).toBe("Please select a trust");
+                component.unmount();
+            });
+
+            it("registers a Trust Admin with the trust they administer", async () => {
+                const { component, setupState } = await openAsTrustAdmin();
+                setupState.setFieldValue("trust", "trust-a");
+
+                await setupState.submitAction();
+
+                expect(mockRegisterUser).toHaveBeenCalledWith({
+                    name: "Trust Admin Person",
+                    organisation: "Decision Trust A",
+                    email: "ta@example.test",
+                    roles: [trustAdminRole.id],
+                    trustId: "trust-a"
+                });
+                component.unmount();
+            });
         });
 
         it("does not call registerUser when required fields are missing", async () => {

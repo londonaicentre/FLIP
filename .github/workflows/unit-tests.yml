@@ -49,6 +49,14 @@ jobs:
             - name: Run linter
               run: uv run ruff check .
 
+            - name: Check formatting
+              run: uv run ruff format --check .
+
+            - name: Run mypy
+              # Static, so one gate is enough: this job already installs --all-groups --extra full
+              # (torch + nvflare + flwr), the same dependency set the heavy job sees.
+              run: uv run mypy . --ignore-missing-imports
+
             - name: Run tests with coverage (skip heavy NVFLARE tests)
               # NVFLARE tests import torch transitively; skip them in default job to keep CI fast.
               run: |

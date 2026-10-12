@@ -1,0 +1,22 @@
+[project]
+name = "synthea-dataset-tools"
+version = "0.1.0"
+description = "Local uv environment for the Synthea-in-OMOP EHR dataframe build (ehr_risk_prediction)."
+requires-python = ">=3.12,<3.14"
+# The narrowest of the dataset projects: build_synthea_dataframe.py needs only pandas (the download
+# is urllib, the tables are three small CSVs). The project exists so that tests/datasets/synthea/
+# runs in an environment declaring exactly what the script imports, like spleen's and cxr's do
+# (see fl-tutorials/tests/README.md), rather than borrowing flip-utils'.
+dependencies = [
+    "pandas>=2.3.2",
+]
+
+[dependency-groups]
+# Test-only: fl-tutorials/tests/datasets/synthea runs in this project's environment. The
+# query.sql parity test needs nothing beyond the standard library's sqlite3.
+dev = [
+    "pytest>=8.4.2",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,45 @@
+schema_type: dataframe
+columns:
+  episode_id:
+    dtype: int64
+    unique: true
+  person_id:
+    dtype: int64
+  episode_concept_id:
+    dtype: int64
+  episode_start_date:
+    dtype: datetime64[ns]
+  episode_start_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  episode_end_date:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  episode_end_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  episode_parent_id:
+    dtype: int64
+    nullable: true
+    required: false
+  episode_number:
+    dtype: int64
+    nullable: true
+    required: false
+  episode_object_concept_id:
+    dtype: int64
+  episode_type_concept_id:
+    dtype: int64
+  episode_source_value:
+    dtype: string[python]
+    nullable: true
+    required: false
+  episode_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

@@ -50,6 +50,15 @@ class TestProjectDetailsSchema:
         assert details.name == "Project With No Users"
         assert details.users == []
 
+    def test_has_imaging_defaults_to_true(self):
+        details = ProjectDetails(name="Imaging by default", users=[])
+        assert details.has_imaging is True
+        assert details.model_dump()["has_imaging"] is True
+
+    def test_has_imaging_can_be_switched_off_at_creation(self):
+        details = ProjectDetails(name="Tabular only", users=[], has_imaging=False)
+        assert details.has_imaging is False
+
     def test_valid_project_details_no_description(self):
         details = ProjectDetails(name="Project No Desc", users=users)
         assert details.description is None  # Optional field defaults to None

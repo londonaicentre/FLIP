@@ -54,7 +54,7 @@ def test_empty_key_rejected():
 def test_invalid_key_rejected():
     with _patch_key(VALID_KEY):
         with pytest.raises(HTTPException) as exc_info:
-            authenticate_internal_service(api_key="wrong-key")
+            authenticate_internal_service(api_key="wrong-key")  # pragma: allowlist secret
         assert exc_info.value.status_code == 401
         assert "invalid" in exc_info.value.detail.lower()
 

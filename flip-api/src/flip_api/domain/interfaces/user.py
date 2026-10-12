@@ -19,6 +19,13 @@ class IRoles(BaseModel):
     """Model for user roles."""
 
     roles: list[UUID] = Field(..., description="List of role GUIDs assigned to the user")
+    trust_id: UUID | None = Field(
+        default=None,
+        alias="trustId",
+        description="The trust a Trust Admin administers; required with the Trust Admin role, refused with any other.",
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class IUserProfileData(BaseModel):
@@ -52,3 +59,4 @@ class IRegisterUserDto(BaseModel):
     name: str = Field(..., description="User's display name")
     organisation: str = Field(..., description="User's organisation")
     roles: list[UUID] = Field(..., description="List of role GUIDs assigned to the user")
+    trust_id: UUID | None = Field(default=None, description="The trust a Trust Admin administers")

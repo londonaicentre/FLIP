@@ -22,7 +22,7 @@ CloudFront edge CSP for HTML assets.
 
 import logging
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 
@@ -68,15 +68,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     # OpenAPI schema endpoint is included so the docs UIs can fetch it.
     DOCS_PATHS = ("/api/docs", "/api/redoc", "/api/openapi.json")
 
-    CSP = (
-        "default-src 'self';"
-        " style-src 'self';"
-        " script-src 'self';"
-        " object-src 'none';"
-        " frame-ancestors 'none';"
-    )
+    CSP = "default-src 'self'; style-src 'self'; script-src 'self'; object-src 'none'; frame-ancestors 'none';"
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Apply security headers to every response.
 
         Wraps ``call_next`` in try/except so that security headers are

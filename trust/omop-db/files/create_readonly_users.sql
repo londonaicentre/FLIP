@@ -18,6 +18,18 @@
 -- This script is invoked by create_readonly_users.sh, which passes the
 -- data analyst password as a psql variable (-v data_analyst_password=...).
 -- Running it directly with psql requires the same -v flag.
+--
+-- It is the ONE definition of the data_analyst_reader grants for every
+-- deployment path. The Compose trust runs it once, from
+-- /docker-entrypoint-initdb.d at first initdb; the Kubernetes trust chart runs
+-- the copy the image ships at /flip/omop/create_readonly_users.sql from its
+-- omop-db postStart hook on EVERY pod start, because a PVC restored from a
+-- pgdata snapshot skips /docker-entrypoint-initdb.d altogether (FLIP#904). So
+-- everything below must be safe to re-run against a cluster that already holds
+-- the roles, and must converge an existing role on the same grants rather than
+-- skip it — the chart's former inline copy left a role holding pg_read_all_data
+-- and no base-role membership, and an upgrade has to narrow that, not merely
+-- stop widening it.
 -- =============================================================================
 -- Create read-only role template (reusable for multiple users)
 DO $$
@@ -70,12 +82,17 @@ SELECT EXISTS (
 \else
 CREATE ROLE data_analyst_reader WITH
     LOGIN
-    PASSWORD :'data_analyst_password'
-    CONNECTION LIMIT 5;
-GRANT omop_readonly_base TO data_analyst_reader;
-ALTER ROLE data_analyst_reader SET statement_timeout = '300s';
+    PASSWORD :'data_analyst_password';
 \echo 'Created data analyst read-only user: data_analyst_reader'
 \endif
+
+-- Applied on every run, not only at creation, so a role that already existed —
+-- restored with a snapshot, or created by an older provisioning path without
+-- them — converges on the same membership and limits as a fresh one. All three
+-- are idempotent: re-granting a membership is a NOTICE, not an error.
+GRANT omop_readonly_base TO data_analyst_reader;
+ALTER ROLE data_analyst_reader CONNECTION LIMIT 5;
+ALTER ROLE data_analyst_reader SET statement_timeout = '300s';
 
 -- =============================================================================
 -- Revoke dangerous permissions explicitly (defense in depth)
@@ -100,7 +117,23 @@ BEGIN
         
         -- Revoke table modification rights (should not be needed, but explicit is better)
         EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA omop FROM %I', readonly_user);
-        
+
+        -- Revoke membership of the predefined all-schemas read role (FLIP#904). It
+        -- carries SELECT on every table in every schema, present and future — exactly
+        -- the scope the omop-only grant above exists to withhold — and was only ever
+        -- granted by the Kubernetes chart's former inline copy of this provisioning.
+        -- Guarded on direct membership so a role that never held it stays silent
+        -- (an unconditional REVOKE would emit a WARNING on every first init).
+        IF EXISTS (
+            SELECT FROM pg_auth_members am
+            JOIN pg_roles granted ON granted.oid = am.roleid
+            JOIN pg_roles member ON member.oid = am.member
+            WHERE granted.rolname = 'pg_read_all_data' AND member.rolname = readonly_user
+        ) THEN
+            EXECUTE format('REVOKE pg_read_all_data FROM %I', readonly_user);
+            RAISE NOTICE 'Revoked pg_read_all_data from %', readonly_user;
+        END IF;
+
         RAISE NOTICE 'Ensured read-only restrictions for user: %', readonly_user;
     END LOOP;
 END

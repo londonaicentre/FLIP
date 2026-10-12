@@ -47,13 +47,13 @@ def test_register_trust_creates_trust_and_claims_slot(mock_gen_key):
     assert result.trust.name == "GSTT"
     assert result.trust.code == "GSTT"
     assert result.trust.region == "London"
-    assert result.trust.api_key_hash == "hash-api"
+    assert result.trust.api_key_hash == "hash-api"  # pragma: allowlist secret
     # The slot is now bound to the new trust, with an assignment timestamp.
     assert slot.assigned_to_trust_id == result.trust.id
     assert slot.assigned_at is not None
     # Plaintext keys come out exactly once.
-    assert result.trust_api_key == "plain-api"
-    assert result.trust_internal_service_key == "plain-internal"
+    assert result.trust_api_key == "plain-api"  # pragma: allowlist secret
+    assert result.trust_internal_service_key == "plain-internal"  # pragma: allowlist secret
     assert result.fl_kit_slot.slot_name == "Trust_007"
     # Atomic: one commit covering the trust insert + the audit row write.
     # Two flushes: one to populate trust.id before slot binding, one inside
@@ -77,9 +77,7 @@ def test_register_trust_writes_audit_row_with_user_id(mock_gen_key):
 
     register_trust(name="GSTT", code="GSTT", region=None, session=session, audit_user_id=admin_id)
 
-    audit_calls = [
-        call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
-    ]
+    audit_calls = [call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)]
     assert len(audit_calls) == 1
     audit_row = audit_calls[0].args[0]
     assert audit_row.action == TrustAuditAction.REGISTERED
@@ -100,9 +98,7 @@ def test_register_trust_writes_audit_row_with_null_user_for_cli(mock_gen_key):
 
     register_trust(name="GSTT", code="GSTT", region=None, session=session)
 
-    audit_calls = [
-        call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
-    ]
+    audit_calls = [call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)]
     assert len(audit_calls) == 1
     assert audit_calls[0].args[0].modified_by_user_id is None
 

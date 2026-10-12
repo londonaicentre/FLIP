@@ -19,6 +19,7 @@
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.shareable import Shareable
@@ -100,9 +101,7 @@ class TestAcceptTrainResult:
         aggregator.accept = MagicMock(return_value=True)
         controller.aggregator = aggregator
 
-        result = DXO(
-            data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}
-        ).to_shareable()
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}).to_shareable()
         result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
 
         accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
@@ -261,6 +260,77 @@ class TestZeroAcceptancePanic:
         with patch.object(NVFlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         controller.system_panic.assert_not_called()
+
+    @pytest.mark.parametrize("start_round", [0, 3])
+    def test_no_panic_for_a_finished_sibling_controller_from_any_start_round(self, start_round):
+        """The finished-controller exemption is relative to _start_round, not to zero.
+
+        Parametrised because every other test here leaves _start_round at the constructor default,
+        so nothing pinned that term: dropping it entirely from the comparison still passed the
+        whole suite, while making a start_round=3 job read as 'finished' during its very first
+        round — silently disarming the zero-acceptance guard it must preserve.
+        """
+        controller = self._controller(round_no=start_round + 1)
+        controller._start_round = start_round
+        controller._num_rounds = 1
+        controller._round_acceptances[start_round] = {"site-1", "site-2"}
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_not_called()
+
+    @pytest.mark.parametrize("start_round", [0, 3])
+    def test_still_panics_on_an_empty_round_from_any_start_round(self, start_round):
+        """Companion to the above: the guard must still fire mid-loop whatever _start_round is."""
+        controller = self._controller(round_no=start_round)
+        controller._start_round = start_round
+        controller._num_rounds = 3
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_called_once()
+        assert "accepted 0 of 2" in controller.system_panic.call_args.args[0]
+
+    def test_no_panic_for_a_finished_sibling_controller(self):
+        """A controller that has completed its round loop must not panic on a sibling's round.
+
+        Stock's loop is ``while self._current_round < self._start_round + self._num_rounds`` with a
+        post-increment, so a FINISHED controller is left holding one round PAST the last it ran —
+        a round its ``_round_acceptances`` can never have a key for. In the two-phase LDM job the
+        finished ``train_ae`` controller still receives ``train_dm``'s BEFORE_AGGREGATION, looked
+        its own stale round up, found nothing, and aborted the whole run (FLIP#1177).
+        """
+        controller = self._controller(round_no=1)
+        controller._start_round = 0
+        controller._num_rounds = 1
+        # It ran round 0 and accepted both clients; the loop then left _current_round at 1.
+        controller._round_acceptances[0] = {"site-1", "site-2"}
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_not_called()
+        controller.flip.send_handled_exception.assert_not_called()
+
+    def test_still_panics_on_a_genuinely_empty_round_mid_loop(self):
+        """The finished-controller exemption must not disarm the guard it exists for: a controller
+        INSIDE its loop with a real zero-acceptance round still aborts.
+
+        The guard was added by commit fee560241 and carries no issue number; it is cited by commit
+        here rather than by number, because an earlier revision of this test misattributed it to
+        FLIP#1001, which is an unrelated Flower run-visibility bug.
+        """
+        controller = self._controller(round_no=1)
+        controller._start_round = 0
+        controller._num_rounds = 3  # round 1 of 3 — still running
+
+        with patch.object(NVFlareScatterAndGather, "handle_event"):
+            controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
+
+        controller.system_panic.assert_called_once()
+        assert "accepted 0 of 2" in controller.system_panic.call_args.args[0]
 
     def test_relay_failure_still_panics(self):
         controller = self._controller()
@@ -482,9 +552,7 @@ class TestClientResultTelemetry:
         result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
         result.set_header("exception", "boom")
 
-        with patch.object(
-            NVFlareScatterAndGather, "_accept_train_result", return_value=False
-        ):
+        with patch.object(NVFlareScatterAndGather, "_accept_train_result", return_value=False):
             controller._accept_train_result(client_name="Trust_1", result=result, fl_ctx=_ctx())
 
         controller.flip.send_event.assert_not_called()

@@ -50,9 +50,7 @@ def get_details(db: Session = Depends(get_session), user_id: UUID = Depends(veri
         raise
     except Exception as e:
         logger.exception("Error fetching site details")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e
 
 
 # [#114] ✅
@@ -89,6 +87,4 @@ def update_details(
         raise
     except Exception as e:
         logger.exception("Error updating site details")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
-        ) from e
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error") from e

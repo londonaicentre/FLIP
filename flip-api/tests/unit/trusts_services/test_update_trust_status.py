@@ -178,7 +178,8 @@ def test_update_status_error(mock_mode, mock_request, mock_can_access_model, moc
 
     # Assert
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Error updating trust status: Database error" in exc_info.value.detail
+    assert exc_info.value.detail == "Internal server error"
+    assert "Database error" not in exc_info.value.detail
 
 
 # ------ Test cases for when the model or trust does not exist -------

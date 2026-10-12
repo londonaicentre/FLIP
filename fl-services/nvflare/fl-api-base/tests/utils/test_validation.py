@@ -10,9 +10,14 @@
 # limitations under the License.
 #
 
+import ipaddress
+import logging
+import socket
+
 import pytest
 from fastapi import HTTPException
 
+from fl_api.utils import validation
 from fl_api.utils.validation import (
     safe_join,
     validate_bundle_url,
@@ -41,7 +46,9 @@ def test_validate_bundle_url_accepts_https():
     assert validate_bundle_url(url) == url
 
 
-@pytest.mark.parametrize("bad", ["http://test.local/x", "http://169.254.169.254/latest/meta-data/", "file:///etc/passwd"])
+@pytest.mark.parametrize(
+    "bad", ["http://test.local/x", "http://169.254.169.254/latest/meta-data/", "file:///etc/passwd"]
+)
 def test_validate_bundle_url_rejects_non_https(bad):
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url(bad)
@@ -49,7 +56,7 @@ def test_validate_bundle_url_rejects_non_https(bad):
 
 
 def test_validate_bundle_url_enforces_host_allow_list(monkeypatch):
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal, s3.eu-west-2.amazonaws.com")
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://objectstore.internal, https://s3.eu-west-2.amazonaws.com")
     assert validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url("https://evil.example.com/key")
@@ -90,12 +97,12 @@ def test_validate_bundle_url_accepts_explicit_443():
 @pytest.mark.parametrize(
     ("host", "resolves_to"),
     [
-        ("2130706433", "127.0.0.1"),      # packed decimal
-        ("0x7f000001", "127.0.0.1"),      # hex
-        ("017700000001", "127.0.0.1"),    # octal
-        ("127.1", "127.0.0.1"),           # short form
-        ("0", "0.0.0.0"),                 # unspecified
-        ("167772165", "10.0.0.5"),        # packed decimal, private range
+        ("2130706433", "127.0.0.1"),  # packed decimal
+        ("0x7f000001", "127.0.0.1"),  # hex
+        ("017700000001", "127.0.0.1"),  # octal
+        ("127.1", "127.0.0.1"),  # short form
+        ("0", "0.0.0.0"),  # unspecified
+        ("167772165", "10.0.0.5"),  # packed decimal, private range
     ],
 )
 def test_validate_bundle_url_rejects_numeric_encoded_private_hosts(host, resolves_to):
@@ -106,11 +113,12 @@ def test_validate_bundle_url_rejects_numeric_encoded_private_hosts(host, resolve
 
 @pytest.mark.parametrize("host", ["test.local", "s3.eu-west-2.amazonaws.com", "1.1.1.1"])
 def test_validate_bundle_url_still_accepts_public_hosts(host):
-    """The second parser must not turn a DNS name into a rejection, or resolve anything.
+    """The second parser must not turn a DNS name into a rejection.
 
-    ``test.local`` deliberately does not resolve: if this function ever starts calling
-    getaddrinfo, this case fails and the network dependency is caught here rather than in
-    production.
+    ``test.local`` deliberately does not resolve: the DNS names here reach the resolver seam, which the
+    conftest stubs to a public answer for every test, so a real ``getaddrinfo`` call would fail this case
+    here rather than in production (FLIP#893 kept resolution out entirely; FLIP#905 moved it behind the
+    seam). ``1.1.1.1`` is an IP literal and never reaches the seam at all.
     """
     url = f"https://{host}/bundle/app/custom/train.py"
     assert validate_bundle_url(url) == url
@@ -126,3 +134,325 @@ def test_validate_bundle_url_rejects_hosts_with_embedded_nul(host):
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url(f"https://{host}/bundle/app/custom/train.py")
     assert exc.value.status_code == 400
+
+
+# FLIP#905 (review finding M-5): a DNS name is resolved and every answer is held to the same range check as
+# an IP literal, failing closed on a resolver error; the allow-list is consulted before any lookup and is
+# populated per deployment from AWS_REGION. None of these tests performs a real lookup: the conftest stubs
+# the resolver seam for every test, and the cases below re-patch it with the answer they need.
+
+
+def _resolver(monkeypatch, *answers, error=None):
+    """Patch the resolver seam to answer ``answers`` (parsed) or raise ``error``, recording each lookup.
+
+    ``raising=False`` so that, run against a validator without the seam, a case fails as ``DID NOT RAISE``
+    rather than erroring on the missing attribute — the shape that shows the resolution check is what
+    rejects the URL.
+    """
+    calls = []
+
+    def fake(hostname):
+        calls.append(hostname)
+        if error is not None:
+            raise error
+        return [ipaddress.ip_address(answer) for answer in answers]
+
+    monkeypatch.setattr(validation, "resolve_bundle_host", fake, raising=False)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "resolved",
+    [
+        "127.0.0.1",  # loopback
+        "10.0.0.5",  # private
+        "169.254.169.254",  # link-local: the metadata endpoint behind a public-looking name
+        "0.0.0.0",  # unspecified
+        "::1",  # IPv6 loopback
+        "fd00::1",  # IPv6 unique-local
+        "::ffff:127.0.0.1",  # IPv4-mapped loopback
+        "100.64.0.1",  # carrier-grade NAT: no ipaddress flag, routable inside a carrier/cloud network
+        "100.127.255.254",  # last address of the CGNAT block
+        "fec0::1",  # IPv6 site-local: deprecated, no ipaddress flag, still resolvable where configured
+        "::ffff:100.64.0.1",  # IPv4-mapped CGNAT, judged by the wrapped address
+    ],
+)
+def test_validate_bundle_url_rejects_name_resolving_to_non_public_address(monkeypatch, resolved):
+    """``metadata.internal.attacker.example`` is a public name; what it points at is not."""
+    calls = _resolver(monkeypatch, resolved)
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url("https://metadata.internal.attacker.example/bundle/app/custom/train.py")
+    assert exc.value.status_code == 400
+    assert "resolves to a non-public address" in exc.value.detail
+    assert calls == ["metadata.internal.attacker.example"]
+
+
+def test_validate_bundle_url_rejects_mixed_public_and_private_answers(monkeypatch):
+    """One private answer among public ones is enough: the fetch may connect to any of them."""
+    _resolver(monkeypatch, "52.95.150.1", "2600:1f18::1", "10.0.0.5")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url("https://s3.evil.example.com/bucket/key")
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        socket.gaierror(-2, "Name or service not known"),
+        OSError("resolver unreachable"),
+        UnicodeError("label empty or too long"),  # getaddrinfo's IDNA encode step; not an OSError
+    ],
+    ids=["nxdomain", "oserror", "idna"],
+)
+def test_validate_bundle_url_fails_closed_on_resolution_error(monkeypatch, error):
+    """A resolver error is "could not verify", which must not mean "allowed"; the fetch would have failed too."""
+    _resolver(monkeypatch, error=error)
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url("https://does-not-resolve.example/bundle/app/custom/train.py")
+    assert exc.value.status_code == 400
+    assert "could not be resolved" in exc.value.detail
+
+
+def test_validate_bundle_url_fails_closed_on_empty_answer(monkeypatch):
+    _resolver(monkeypatch)  # a resolver that returns no addresses at all
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url("https://empty-answer.example/bundle/app/custom/train.py")
+    assert exc.value.status_code == 400
+
+
+def test_validate_bundle_url_accepts_name_resolving_to_public_addresses(monkeypatch):
+    calls = _resolver(monkeypatch, "52.95.150.1", "2600:1f18::1")
+    url = "https://s3.eu-west-2.amazonaws.com/bucket/key"
+    assert validate_bundle_url(url) == url
+    assert calls == ["s3.eu-west-2.amazonaws.com"]
+
+
+def test_validate_bundle_url_accepts_public_ip_literal_without_resolving(monkeypatch):
+    """An IP literal is judged in full by the range check; the resolver is never consulted for it."""
+    calls = _resolver(monkeypatch, error=AssertionError("resolver must not be called for an IP literal"))
+    url = "https://1.1.1.1/bundle/app/custom/train.py"
+    assert validate_bundle_url(url) == url
+    assert calls == []
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "2130706433", "[::1]", "[::ffff:169.254.169.254]", "localhost"])
+def test_validate_bundle_url_rejects_non_public_ip_literal_without_resolving(monkeypatch, host):
+    """The FLIP#893 literal rejections stand on their own and still cost no lookup."""
+    calls = _resolver(monkeypatch, error=AssertionError("resolver must not be called for an IP literal"))
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py")
+    assert exc.value.status_code == 400
+    assert calls == []
+
+
+def test_validate_bundle_url_resolves_nothing_when_allow_list_set(monkeypatch):
+    """With the list set no name is ever resolved: an off-list origin is refused without a lookup, so an
+    attacker-chosen name never reaches the resolver (the resolver query itself is the out-of-band signal
+    of a blind SSRF), and a listed origin is operator-declared — the dev store resolves to a private
+    docker address by design, so a recheck would refuse exactly the origin the operator admitted."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com, http://object-store:9000")
+    calls = _resolver(monkeypatch, "10.0.0.5")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url("https://exfil.attacker.example/bundle/app/custom/train.py")
+    assert exc.value.status_code == 400
+    assert validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
+    assert validate_bundle_url("http://object-store:9000/bucket/key")
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("origin", "url"),
+    [
+        ("http://object-store:9000", "http://object-store:9000/bucket/key"),  # the dev compose store
+        ("https://s3.eu-west-2.amazonaws.com", "https://s3.eu-west-2.amazonaws.com:443/bucket/key"),
+        ("https://s3.eu-west-2.amazonaws.com:443", "https://s3.eu-west-2.amazonaws.com/bucket/key"),
+        ("http://object-store:80", "http://object-store/bucket/key"),
+    ],
+)
+def test_validate_bundle_url_allow_list_admits_the_origin_triple(monkeypatch, origin, url):
+    """An entry is a (scheme, host, port) triple: a missing port is the scheme's default on either side."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", origin)
+    assert validate_bundle_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://object-store:9000/bucket/key",  # scheme differs
+        "http://object-store:9001/bucket/key",  # port differs
+        "http://object-store/bucket/key",  # default port is not the listed one
+        "http://object-store.attacker.example:9000/bucket/key",  # host differs
+    ],
+)
+def test_validate_bundle_url_allow_list_rejects_a_near_miss_origin(monkeypatch, url):
+    """Scheme, host and port must all match: an http origin does not admit https, nor one port another."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "http://object-store:9000")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(url)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "10.0.0.5", "169.254.169.254", "localhost", "[::1]"])
+def test_validate_bundle_url_rejects_non_public_ip_literal_even_when_listed(monkeypatch, host):
+    """The IP-literal range check is unconditional: listing a loopback or private address does not admit it."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", f"http://{host}:9000")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(f"http://{host}:9000/bucket/key")
+    assert exc.value.status_code == 400
+
+
+def test_validate_bundle_url_answers_500_on_a_malformed_allow_list(monkeypatch):
+    """The startup hook refuses to boot on a malformed list; a process that bypassed it answers 500, not 400."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
+    assert exc.value.status_code == 500
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "s3.eu-west-2.amazonaws.com.attacker.example",  # listed host as a prefix
+        "evil-s3.eu-west-2.amazonaws.com",  # listed host as a suffix
+        "s3.eu-west-1.amazonaws.com",  # another region
+        "bucket.s3.eu-west-2.amazonaws.com",  # virtual-hosted form: a suffix match would admit any bucket
+    ],
+)
+def test_validate_bundle_url_allow_list_match_is_exact(monkeypatch, host):
+    """No suffix or wildcard form: the presigned origin is one exact host, s3.<region>.amazonaws.com."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(f"https://{host}/bucket/key")
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("host", ["S3.EU-WEST-2.AMAZONAWS.COM", "s3.eu-west-2.amazonaws.com."])
+def test_validate_bundle_url_allow_list_ignores_case_and_root_label(monkeypatch, host):
+    """Case and a trailing root label are spelling, not identity: neither dodges nor defeats the list."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", " https://s3.eu-west-2.amazonaws.com. ")
+    url = f"https://{host}/bucket/key"
+    assert validate_bundle_url(url) == url
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("", set()),
+        (" , ,", set()),
+        ("https://A.Example., http://b.example:9000", {("https", "a.example", 443), ("http", "b.example", 9000)}),
+        ("https://h:443, https://h", {("https", "h", 443)}),
+    ],
+)
+def test_bundle_url_allowed_origins_parsing(monkeypatch, raw, expected):
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", raw)
+    assert validation.bundle_url_allowed_origins() == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "s3.eu-west-2.amazonaws.com",  # the pre-#1291 bare-host form: no scheme
+        "ftp://h",
+        "https://",
+        "https://h/bucket",
+        "https://h/",
+        "https://h?x=1",
+        "https://user@h",
+        "https://h:bad",
+        "https://h:99999",
+        "https://ok.example, h",  # one bad entry poisons the list
+    ],
+)
+def test_bundle_url_allowed_origins_rejects_malformed_entries(monkeypatch, raw):
+    """A malformed entry raises rather than being skipped, so the startup hook fails the boot on it."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", raw)
+    with pytest.raises(ValueError, match="not a bare scheme://host"):
+        validation.bundle_url_allowed_origins()
+
+
+_S3 = ("https", "s3.eu-west-2.amazonaws.com", 443)
+
+
+@pytest.mark.parametrize(
+    ("hosts", "origins", "expected"),
+    [
+        ("s3.eu-west-2.amazonaws.com", "", {_S3}),
+        ("s3.eu-west-2.amazonaws.com", "https://s3.eu-west-2.amazonaws.com", {_S3}),
+        (
+            " A.Example. , b.example",
+            "http://object-store:9000",
+            {("https", "a.example", 443), ("https", "b.example", 443), ("http", "object-store", 9000)},
+        ),
+    ],
+)
+def test_bundle_url_allowed_origins_reads_the_legacy_hosts_as_https_origins(monkeypatch, hosts, origins, expected):
+    """An image/environment skew across the #1291 rename must not fail open: the old name still pins the list."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", hosts)
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", origins)
+    assert validation.bundle_url_allowed_origins() == expected
+    monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
+    validation.warn_if_bundle_url_allow_list_empty()
+    assert validation._warned_empty_allow_list is False
+
+
+def test_warn_if_bundle_url_allow_list_empty_parses_before_the_once_only_gate(monkeypatch):
+    """A process that already warned still refuses a malformed list: parsing is not behind the flag."""
+    monkeypatch.setattr(validation, "_warned_empty_allow_list", True)
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
+    with pytest.raises(ValueError, match="not a bare scheme://host"):
+        validation.warn_if_bundle_url_allow_list_empty()
+
+
+def test_resolve_bundle_host_returns_every_answer_in_both_families(monkeypatch, stub_public_resolver):
+    """The real seam asks getaddrinfo for TCP/443 and parses every sockaddr, IPv4 and IPv6 alike."""
+    seen = {}
+
+    def fake_getaddrinfo(host, port, **kwargs):
+        seen.update(host=host, port=port, **kwargs)
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("52.95.150.1", 443)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2600:1f18::1", 443, 0, 0)),
+        ]
+
+    monkeypatch.setattr(validation.socket, "getaddrinfo", fake_getaddrinfo)
+    real_resolve_bundle_host = stub_public_resolver
+    assert real_resolve_bundle_host("s3.eu-west-2.amazonaws.com") == [
+        ipaddress.ip_address("52.95.150.1"),
+        ipaddress.ip_address("2600:1f18::1"),
+    ]
+    assert seen == {"host": "s3.eu-west-2.amazonaws.com", "port": 443, "type": socket.SOCK_STREAM}
+
+
+def _allow_list_warnings(caplog):
+    return [record for record in caplog.records if "BUNDLE_URL_ALLOWED_ORIGINS" in record.getMessage()]
+
+
+def test_warn_if_bundle_url_allow_list_empty_logs_once_per_process(monkeypatch, caplog):
+    monkeypatch.delenv("BUNDLE_URL_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
+    with caplog.at_level(logging.WARNING, logger=validation.logger.name):
+        validation.warn_if_bundle_url_allow_list_empty()
+        validation.warn_if_bundle_url_allow_list_empty()
+    (warning,) = _allow_list_warnings(caplog)
+    assert warning.levelno == logging.WARNING
+    assert "ANY public https host" in warning.getMessage()
+    assert "https://s3.<AWS_REGION>.amazonaws.com" in warning.getMessage()
+    assert "http://object-store:9000" in warning.getMessage()
+
+
+def test_warn_if_bundle_url_allow_list_empty_is_silent_when_set(monkeypatch, caplog):
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com")
+    monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
+    with caplog.at_level(logging.WARNING, logger=validation.logger.name):
+        validation.warn_if_bundle_url_allow_list_empty()
+    assert _allow_list_warnings(caplog) == []
+
+
+def test_validate_bundle_url_warns_on_first_validation_when_allow_list_empty(monkeypatch, caplog):
+    """The fallback for a process that reached a fetch without the startup hook: warn on the first URL only."""
+    monkeypatch.delenv("BUNDLE_URL_ALLOWED_ORIGINS", raising=False)
+    monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
+    with caplog.at_level(logging.WARNING, logger=validation.logger.name):
+        validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
+        validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/other-key")
+    assert len(_allow_list_warnings(caplog)) == 1

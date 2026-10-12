@@ -10,19 +10,19 @@
             "name": "KCH",
             "id": "SOMEIDFORKCH",
             "requested": true,
-            "approved": true
+            "status": "APPROVED"
         },
         {
             "name": "UCLH",
             "id": "SOMEIDFORUCLH",
             "requested": true,
-            "approved": false
+            "status": "DECLINED"
         },
         {
             "name": "Guy's and St Thomas'",
             "id": "SOMEIDFORKINGS",
             "requested": true,
-            "approved": false
+            "status": "DECLINED"
         }
     ],
     "users": [

@@ -11,16 +11,15 @@
 # limitations under the License.
 #
 
-"""quickstart-monai: A Flower / MONAI evaluation-only app."""
+"""3d-spleen-segmentation-evaluation: evaluation-only Flower / MONAI ClientApp for 3D spleen segmentation."""
 
-import os
 from logging import INFO
 
 import torch
-from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flip.flower.identity import check_splits_are_populated, client_identity, partition_cohort, partition_count
+from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
-from flwr.common.record import ConfigRecord
 from monai.data import DataLoader, Dataset
 
 from app.data_loading import FLIP_BASE
@@ -39,7 +38,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     run_config = context.run_config
 
     # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     # Configure FLIP
     flip_utils = FLIP_BASE()
@@ -47,7 +46,19 @@ def evaluate(msg: Message, context: Context) -> Message:
     flip_utils.query = run_config.get("flip-cohort-query", "*")
     log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
+    # Slice the shared dev cohort so the simulated sites really differ; a no-op off LOCAL_DEV.
+    flip_utils.dataframe = partition_cohort(flip_utils.dataframe, context)
     log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    # Evaluation-only, so the whole partition is the test set. Checked here, before the datalist
+    # is built, because get_test_data_list() already refuses an empty datalist — but blaming a
+    # missing label enrichment ("0 accession(s), none with a matching label_*.nii.gz"), which is
+    # the wrong cause when the partition itself is starved.
+    check_splits_are_populated(
+        {"test": len(flip_utils.dataframe)},
+        cohort_rows=len(flip_utils.dataframe),
+        client_name=client_name,
+        num_partitions=partition_count(context),
+    )
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

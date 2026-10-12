@@ -20,7 +20,7 @@ from imaging_api.utils.xnat_token import XnatTokenFactory
 
 URL = "http://localhost:8080"
 USERNAME = "admin"
-PASSWORD = "secret"
+PASSWORD = "secret"  # pragma: allowlist secret
 
 
 @pytest.fixture

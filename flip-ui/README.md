@@ -36,8 +36,11 @@ or as part of the full platform:
 make up
 ```
 
-The UI is accessible at the port defined by `UI_PORT` in [`.env.development.example`](../.env.development.example)
-(default: `443`): `https://localhost`.
+The UI is accessible over plain HTTP at the port defined by `UI_PORT` in
+[`.env.development.example`](../.env.development.example): `http://localhost:<UI_PORT>`. Only a port the
+dev Cognito client registers as a browser origin works — take one from 44350–44359, since the shipped
+`443` is registered for `https` only and the dev server serves no TLS. See "Browser-usable UI ports" in
+[deploy/providers/AWS/dev/README.md](../deploy/providers/AWS/dev/README.md).
 
 ### Staging and production (AWS)
 
@@ -111,16 +114,35 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 
 | Variable | Description |
 | --- | --- |
-| `AWS_COGNITO_USER_POOL_ID` | Cognito User Pool ID |
-| `AWS_COGNITO_APP_CLIENT_ID` | Cognito App Client ID |
+| `AUTH_BACKEND` | Identity provider the hub runs: `cognito` (default when unset — stag/prod) or `keycloak` (the dev stack). Must match flip-api's `AUTH_BACKEND`. |
+| `AWS_COGNITO_USER_POOL_ID` | Cognito User Pool ID (required when `AUTH_BACKEND=cognito`) |
+| `AWS_COGNITO_APP_CLIENT_ID` | Cognito App Client ID (required when `AUTH_BACKEND=cognito`) |
 | `AWS_REGION` | AWS region hosting the pool (default `eu-west-2`) |
+| `KEYCLOAK_PUBLIC_URL` | Base URL of Keycloak as the **browser** reaches it, e.g. `http://localhost:8081` (required when `AUTH_BACKEND=keycloak`; emitted as `window.KEYCLOAK_URL`) |
+| `KEYCLOAK_REALM` | Keycloak realm (required when `AUTH_BACKEND=keycloak`) |
+| `KEYCLOAK_CLIENT_ID` | Keycloak public client the UI signs in with (required when `AUTH_BACKEND=keycloak`) |
 | `CENTRAL_HUB_API_URL` | Full base URL of the flip-api backend, including `/api` |
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
 | `VITE_DEMO` | Selects the public Ark+ demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
 
-Authentication is handled through [AWS Cognito](https://docs.aws.amazon.com/cognito/). A valid Cognito User Pool and
-Client ID are required for a production deployment.
+Authentication sits behind a provider seam ([`src/auth/`](src/auth/), FLIP#919): the store, router guard, axios
+interceptor and auth pages speak only the `AuthProvider` contract in `src/auth/provider.ts`, and `getAuthProvider()`
+picks the implementation once at boot from `window.AUTH_BACKEND`.
+
+- **Cognito** (`src/auth/cognito-provider.ts`, stag/prod) — [AWS Cognito](https://docs.aws.amazon.com/cognito/) through
+  `aws-amplify`, the only file allowed to import it (enforced by the `flip-ui/no-amplify-outside-provider` ESLint block).
+  A valid Cognito User Pool and Client ID are required for a production deployment. Every capability is on: temporary-
+  password change, TOTP challenge and in-app enrolment, code-by-email password reset, admin-triggered reset, global
+  sign-out.
+- **Keycloak** (`src/auth/keycloak-provider.ts`, the dev stack) — the OIDC Resource Owner Password grant against the
+  realm's token endpoint, no SDK and no redirect, so the same username/password form works. Tokens live in
+  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are all off by
+  design: the password grant cannot run Keycloak's required actions (forced password update, TOTP enrolment are
+  browser flows in Keycloak's own UI), and Keycloak answers a wrong password and a missing OTP with the same
+  `invalid_grant`, so an in-app TOTP step cannot be offered honestly. The pages link out to the Keycloak console
+  instead ("Forgot password?" on the login page, the admin "Reset Password" tooltip), and an account with a pending
+  required action gets a "Finish setting up your account in Keycloak" notice with a link.
 
 > **`VITE_LOCAL=true` and `VITE_DEMO=true` must never reach a production build.** Both flags are inlined by Vite at
 > build time and short-circuit the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enable a
@@ -129,6 +151,55 @@ Client ID are required for a production deployment.
 > [`scripts/check-build-flags.mjs`](scripts/check-build-flags.mjs) and a belt-and-braces check in
 > [`vite.config.mts`](vite.config.mts)). Use `VITE_LOCAL` only with `npm run dev` against a mocked API, and never
 > set `VITE_DEMO` at all — the demo build gets it from `--mode demo`. Keep both out of CI and deploy environments.
+
+### Dependency scoping
+
+**Production source may not import a package that is only declared in `devDependencies`, nor one that is
+declared nowhere and resolves through npm's hoisting of a parent's tree.** "Production source" is everything
+the deployed bundles reach: `src/`, minus its test files, plus `mocks/` — which `build:demo` pulls into the
+public `/ark_demo` bundle.
+
+This is enforced, not just documented: the `flip-ui/dependency-scoping` block in
+[`eslint.config.mjs`](eslint.config.mjs) runs `import-x/no-extraneous-dependencies` over exactly that file
+set, so `npm run lint` fails in CI the moment an import lands in the wrong stanza.
+
+The rule exists for **Dependabot**, not the build. `vite build` tree-shakes from the entry points and bundles
+whatever they reach whichever stanza a package sits in, and every install path in the repo (`npm ci` in CI,
+the Dockerfile, `make deploy-ui`) installs both stanzas — so a wrong stanza breaks nothing and is invisible
+until it matters. What it changes is the **scope label on a security alert**: a package that ships to users
+but sits in `devDependencies` produces an alert labelled "Development", which reads as *not in the production
+bundle* and invites a wrongly-dismissed alert on code CloudFront is serving. FLIP#1041 corrected 19
+packages: 16 moved out of `devDependencies`, two that were declared nowhere at all (`codemirror`,
+`tippy.js` — they resolved only by hoisting), and `husky`, which had drifted the other way. Correct scoping
+is also the precondition for ever adopting `npm ci --omit=dev` here.
+
+Note the rule keys off the **import graph, not the bundle**: a package imported by production source is a
+`dependency` even if tree-shaking currently drops it. What production code imports is stable, whereas what
+survives tree-shaking silently flips the correct answer whenever an unrelated component starts or stops being
+used. (`@popperjs/core` was the worked example of this until FLIP#1063 removed its only importer along with
+the dead `AiSelect`/`AiChipSelect` components, at which point it left the manifest entirely — the honest
+resolution, and the one a lint rule cannot reach, since nothing flags an import that is merely unreachable.)
+
+Two traps when auditing this by hand:
+
+- **A `from "..."` grep under-reports.** `highlight.js` is loaded lazily via
+  `import("highlight.js/lib/core")` and `import("highlight.js/lib/languages/json")` in
+  [`src/utils/highlightJson.ts`](src/utils/highlightJson.ts), and is correctly a `dependency` despite having
+  no static import. Test files also live under `src/` (most under `__tests__/` directories, plus two flat
+  `*.spec.ts` and the `src/unit-tests/` tree), and their imports — `vitest`, `@vue/test-utils`,
+  `@pinia/testing` — are genuinely dev-only.
+- **A static import of a side-effecting module is never dropped, even from a branch that folds.** Neither
+  mock server may be imported statically from [`src/main.ts`](src/main.ts); both are loaded through dynamic
+  `import()` inside their own folded branch. `mocks/server` was static until FLIP#1041 and shipped ~230
+  modules — Mirage, Pretender, route-recognizer, inflected and all of lodash — in the production entry
+  chunk of every build, because miragejs patches `Error.prototype` at module scope. Making it dynamic cut
+  the entry chunk from 331 KB to 182 KB. See the comment above `bootstrap()`. This is enforced twice, because
+  `miragejs` is a legitimate `dependency` (the demo bundle ships it) and so invisible to the scoping rule
+  above: the `flip-ui/no-static-mirage` block in [`eslint.config.mjs`](eslint.config.mjs) fails `npm run
+  lint` on any static import of `miragejs`/`pretender`/the mock servers from `src/` (dynamic `import()`
+  stays legal), and [`scripts/assert-no-demo-artefacts.mjs`](scripts/assert-no-demo-artefacts.mjs) carries
+  Mirage/Pretender sentinels so the built artefact is checked too — the only guard that also catches a
+  folded branch that stops folding.
 
 ## Testing
 

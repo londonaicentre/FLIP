@@ -36,7 +36,6 @@ def pytest_sessionstart(session):
 
     # Set environment variables for local development (fallback if .env.test not loaded)
     os.environ.setdefault("LOCAL_DEV", "true")
-    os.environ.setdefault("MIN_CLIENTS", "1")
     os.environ.setdefault("DEV_DATAFRAME", "/data/local_dev/dev_dataframe.csv")
     os.environ.setdefault("DEV_IMAGES_DIR", "/data/local_dev/dev_images")
 

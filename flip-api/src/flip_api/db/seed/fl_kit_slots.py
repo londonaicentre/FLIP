@@ -121,13 +121,9 @@ def insert_missing_slots(session: Session, slot_names: list[str]) -> list[str]:
     """
     inserted: list[str] = []
     for slot_name in slot_names:
-        existing = session.exec(
-            select(FLKitSlot).where(FLKitSlot.slot_name == slot_name)
-        ).first()
+        existing = session.exec(select(FLKitSlot).where(FLKitSlot.slot_name == slot_name)).first()
         if existing is None:
-            session.add(
-                FLKitSlot(slot_name=slot_name, slot_number=_slot_number(slot_name))
-            )
+            session.add(FLKitSlot(slot_name=slot_name, slot_number=_slot_number(slot_name)))
             inserted.append(slot_name)
     return inserted
 

@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -38,8 +39,7 @@ class TestFormatDownloadUrl:
     def test_scan_type(self):
         url = format_download_url("PROJ1", "SUBJ1", "EXP1", assessor_type="scan", resource_type="NIFTI")
         expected = (
-            f"{XNAT_URL}/data/projects/PROJ1/subjects/SUBJ1/"
-            "experiments/EXP1/scans/ALL/resources/NIFTI/files?format=zip"
+            f"{XNAT_URL}/data/projects/PROJ1/subjects/SUBJ1/experiments/EXP1/scans/ALL/resources/NIFTI/files?format=zip"
         )
         assert url == expected
 
@@ -404,9 +404,7 @@ class TestDownloadAndUnzipImages:
         net_dir.mkdir()
         with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
             with pytest.raises(ValueError, match="Path traversal detected in accession_id"):
-                await download_and_unzip_images(
-                    "hub-proj-1", "../../etc/passwd", "net1", "scan", "NIFTI", headers
-                )
+                await download_and_unzip_images("hub-proj-1", "../../etc/passwd", "net1", "scan", "NIFTI", headers)
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")
@@ -426,13 +424,9 @@ class TestDownloadAndUnzipImages:
             mock_unzip.return_value = os.path.join(expected_net_dir, "ACC1")
 
             with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", tmp):
-                await download_and_unzip_images(
-                    "hub-proj-1", "ACC1", "net-never-seen-before", "scan", "NIFTI", headers
-                )
+                await download_and_unzip_images("hub-proj-1", "ACC1", "net-never-seen-before", "scan", "NIFTI", headers)
 
-            assert os.path.isdir(expected_net_dir), (
-                f"download_and_unzip_images should have created {expected_net_dir}"
-            )
+            assert os.path.isdir(expected_net_dir), f"download_and_unzip_images should have created {expected_net_dir}"
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.os.makedirs", side_effect=PermissionError("read-only fs"))
@@ -442,9 +436,7 @@ class TestDownloadAndUnzipImages:
         LocalStorageError with a pointer to the offending path — not as a 404
         with an XNAT URL."""
         with pytest.raises(LocalStorageError, match="Cannot create image download directory"):
-            await download_and_unzip_images(
-                "hub-proj-1", "ACC1", "some-net", "scan", "NIFTI", headers
-            )
+            await download_and_unzip_images("hub-proj-1", "ACC1", "some-net", "scan", "NIFTI", headers)
 
 
 # ── download cache (FLIP#953) ──
@@ -519,8 +511,15 @@ class TestDownloadCache:
     @patch("imaging_api.services.download.get_experiment", return_value={})
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_sentinel_is_exact_match_per_resource_type(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip,
-        requested_resource, headers, tmp_path
+        self,
+        mock_get_project,
+        mock_get_exp,
+        mock_get_subj,
+        mock_download,
+        mock_unzip,
+        requested_resource,
+        headers,
+        tmp_path,
     ):
         """A cached NIFTI download must not satisfy a DICOM request, nor an ALL request —
         sentinels match exactly per (assessor, resource)."""
@@ -655,3 +654,28 @@ class TestDownloadFileLocalWriteFailure:
 
         with pytest.raises(NotFoundError, match="No data found at"):
             download_file("http://xnat/missing", "/tmp/irrelevant.zip", {})
+
+
+def test_identifiers_stay_in_one_segment_at_http_boundary(xnat_path_segment, tmp_path, sent_xnat_requests):
+    raw, encoded = xnat_path_segment
+    url = format_download_url(raw, raw, raw, resource_type=raw)
+    download_file(url, str(tmp_path / "images.zip"), {"X-Request-ID": "trace-1"})
+
+    assert len(sent_xnat_requests) == 1
+    request = sent_xnat_requests[0]
+    parsed = urlsplit(request.url)
+    assert parsed.path == (
+        f"/data/projects/{encoded}/subjects/{encoded}/experiments/{encoded}/scans/ALL/resources/{encoded}/files"
+    )
+    assert parsed.query == "format=zip"
+    assert parsed.fragment == ""
+    assert request.headers["X-Request-ID"] == "trace-1"
+
+
+@pytest.mark.parametrize("invalid", ["", ".", ".."])
+@pytest.mark.parametrize("field", ["project_id", "subject_id", "experiment_id_or_label", "resource_type"])
+def test_empty_and_dot_segments_fail_before_http(field, invalid, sent_xnat_requests):
+    kwargs = {"project_id": "PROJ", "subject_id": "SUBJ", "experiment_id_or_label": "EXP", field: invalid}
+    with pytest.raises(ValueError, match="empty or a dot-segment"):
+        format_download_url(**kwargs)
+    assert sent_xnat_requests == []

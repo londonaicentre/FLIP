@@ -12,4 +12,11 @@
 SELECT *
 FROM omop.image_occurrence
 WHERE modality_concept_id = 4300757
+-- Load-bearing, not cosmetic: without it the LIMIT below picks an unspecified 50 studies in an
+-- unspecified order, so the same cohort can disagree with itself between approval, the imaging
+-- pull and training -- the app can then be handed a study whose DICOM was never fetched. Ordered
+-- on the primary key rather than accession_id, which carries no unique constraint and so is not a
+-- total order.
+ORDER BY
+    image_occurrence_id
 LIMIT 50

@@ -133,6 +133,24 @@ def check_command(command: str) -> bool:
         return False
 
 
+def unexpected_exits(listing: str) -> list[str]:
+    """Names of exited containers worth a warning, from ``docker ps --format '{{.Names}}\t{{.Status}}'``.
+
+    A trust's ``fl-governance-init`` is a one-shot that exits 0 once it has extracted the
+    fl-clients' section of the governance document (FLIP#1259); a completed one is expected, a
+    failed one is not.
+    """
+    names = []
+    for line in listing.splitlines():
+        name, _, status = line.partition("\t")
+        if not name.strip():
+            continue
+        if "fl-governance-init" in name and status.startswith("Exited (0)"):
+            continue
+        names.append(name.strip())
+    return names
+
+
 def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
     """Run a shell command.
 
@@ -420,15 +438,17 @@ def discover_compose_containers(project: str) -> dict[str, ComposeContainer]:
     Returns:
         dict[str, ComposeContainer]: One entry per compose service; empty when nothing is up.
     """
-    success, output = run_command([
-        "docker",
-        "ps",
-        "-a",
-        "--filter",
-        f"label=com.docker.compose.project={project}",
-        "--format",
-        '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
-    ])
+    success, output = run_command(
+        [
+            "docker",
+            "ps",
+            "-a",
+            "--filter",
+            f"label=com.docker.compose.project={project}",
+            "--format",
+            '{{.Label "com.docker.compose.service"}}\t{{.Names}}\t{{.Status}}',
+        ]
+    )
     return parse_compose_containers(output) if success else {}
 
 
@@ -441,7 +461,10 @@ class TrustKit:
         name (str): TRUST_NAME for display; falls back to the CODE when absent.
         slot_number (int | None): Assigned FL kit slot number (FL_KIT_SLOT_NUMBER).
             Drives the XNAT stack name (xnat<N>) and which trust exposes host APIs.
-        xnat_port (str | None): Host port for the trust's XNAT web UI.
+        xnat_web_port (str | None): Host port for the trust's XNAT web UI. Read from
+            XNAT_WEB_PORT, falling back to XNAT_PORT — the same precedence trust/xnat/Makefile
+            applies. Those were one variable until FLIP#993 split the DICOM listener off; a kit
+            that sets only XNAT_PORT still publishes the web UI there.
         pacs_ui_port (str | None): Host port for the trust's Orthanc PACS UI.
         trust_api_port (str | None): Host port for trust-api (slot-1 trust only).
         imaging_api_port (str | None): Host port for imaging-api (slot-1 trust only).
@@ -451,7 +474,7 @@ class TrustKit:
     code: str
     name: str
     slot_number: int | None
-    xnat_port: str | None
+    xnat_web_port: str | None
     pacs_ui_port: str | None
     trust_api_port: str | None
     imaging_api_port: str | None
@@ -502,7 +525,7 @@ def discover_trust_kits(trust_dir: Path, env: str) -> list[TrustKit]:
                 code=code,
                 name=env_vars.get("TRUST_NAME") or code,
                 slot_number=slot_number,
-                xnat_port=env_vars.get("XNAT_PORT"),
+                xnat_web_port=env_vars.get("XNAT_WEB_PORT") or env_vars.get("XNAT_PORT"),
                 pacs_ui_port=env_vars.get("PACS_UI_PORT"),
                 trust_api_port=env_vars.get("TRUST_API_PORT"),
                 imaging_api_port=env_vars.get("IMAGING_API_PORT"),
@@ -578,8 +601,7 @@ def main(
     if INSTANCE_PREFIX:
         print_status(
             "INFO",
-            f"FLIP_INSTANCE set — inspecting compose project '{COMPOSE_PROJECT}' "
-            f"and networks named {INSTANCE_PREFIX}*",
+            f"FLIP_INSTANCE set — inspecting compose project '{COMPOSE_PROJECT}' and networks named {INSTANCE_PREFIX}*",
         )
 
     # Resolved once, up here rather than inside the --skip-docker branch: the later `docker exec`
@@ -634,26 +656,27 @@ def main(
                     if hub_container is None:
                         print_status("FAIL", f"Service '{service}' has no container in project '{COMPOSE_PROJECT}'")
                     elif hub_container.running:
-                        print_status(
-                            "PASS", f"Container '{hub_container.name}' is running ({hub_container.status})"
-                        )
+                        print_status("PASS", f"Container '{hub_container.name}' is running ({hub_container.status})")
                     else:
                         print_status(
                             "FAIL", f"Container '{hub_container.name}' is not running ({hub_container.status})"
                         )
 
                 # Check for any exited containers
-                success, exited = run_command([
-                    "docker",
-                    "ps",
-                    "-a",
-                    "--filter",
-                    "status=exited",
-                    "--format",
-                    "{{.Names}}",
-                ])
-                if success and exited:
-                    print_status("WARN", f"Exited containers found: {exited}")
+                success, exited = run_command(
+                    [
+                        "docker",
+                        "ps",
+                        "-a",
+                        "--filter",
+                        "status=exited",
+                        "--format",
+                        "{{.Names}}\t{{.Status}}",
+                    ]
+                )
+                unexpected = unexpected_exits(exited) if success else []
+                if unexpected:
+                    print_status("WARN", f"Exited containers found: {' '.join(unexpected)}")
         except Exception as e:
             print_status("FAIL", f"Could not check Docker containers: {e}")
 
@@ -677,14 +700,16 @@ def main(
                             print_status("PASS", f"XNAT stack '{stack_name}' is deployed")
 
                             # Check services in the stack
-                            success, services = run_command([
-                                "docker",
-                                "stack",
-                                "services",
-                                stack_name,
-                                "--format",
-                                "{{.Name}}:{{.Replicas}}",
-                            ])
+                            success, services = run_command(
+                                [
+                                    "docker",
+                                    "stack",
+                                    "services",
+                                    stack_name,
+                                    "--format",
+                                    "{{.Name}}:{{.Replicas}}",
+                                ]
+                            )
                             if success:
                                 for service_line in services.split("\n"):
                                     if service_line:
@@ -926,8 +951,8 @@ def main(
         for kit in trust_kits:
             slot = f" slot {kit.slot_number}" if kit.slot_number else ""
             # 127.0.0.1 (not localhost) avoids IPv6 routing issues with Docker Swarm.
-            if kit.xnat_port:
-                xnat_url = f"http://127.0.0.1:{kit.xnat_port}"
+            if kit.xnat_web_port:
+                xnat_url = f"http://127.0.0.1:{kit.xnat_web_port}"
                 check_http_endpoint(xnat_url, f"XNAT {kit.name}{slot} Web UI", [200, 302])
             if kit.pacs_ui_port:
                 pacs_url = f"http://localhost:{kit.pacs_ui_port}"

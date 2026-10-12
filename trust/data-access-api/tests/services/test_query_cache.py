@@ -55,6 +55,28 @@ class TestMakeCacheKey:
         key2 = _make_cache_key("SELECT * FROM table_b")
         assert key1 != key2
 
+    def test_same_query_different_params_different_keys(self):
+        """Bind parameters are part of the identity of a query.
+
+        The subject-count and modality lookups run one fixed SQL text per cohort, differing only in
+        the bound accession list; keyed on text alone, the second cohort would be gated on the
+        first cohort's count.
+        """
+        query = "SELECT COUNT(*) FROM omop.image_occurrence WHERE accession_id IN :accession_ids"
+        key1 = _make_cache_key(query, {"accession_ids": ["ACC1", "ACC2"]})
+        key2 = _make_cache_key(query, {"accession_ids": ["ACC1", "ACC3"]})
+        assert key1 != key2
+
+    def test_param_and_list_order_do_not_matter(self):
+        """The same set of ids in a different order is the same lookup."""
+        query = "SELECT 1 WHERE a IN :a AND b = :b"
+        key1 = _make_cache_key(query, {"a": ["x", "y"], "b": 1})
+        key2 = _make_cache_key(query, {"b": 1, "a": ["y", "x"]})
+        assert key1 == key2
+
+    def test_no_params_and_empty_params_share_a_key(self):
+        assert _make_cache_key("SELECT 1") == _make_cache_key("SELECT 1", {})
+
 
 class TestGetCachedResult:
     @patch("data_access_api.services.query_cache.get_settings")

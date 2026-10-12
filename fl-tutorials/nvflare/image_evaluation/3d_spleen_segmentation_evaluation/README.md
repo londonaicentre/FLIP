@@ -24,7 +24,7 @@ This tutorial is designed for `JOB_TYPE=evaluation`.
 
 - Python 3.12+, plus (for the SimEnv run) a GPU.
 - The reference spleen dataset (shared with the segmentation tutorial — see
-  [../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup](../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup)).
+  [../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup-local-runs](../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup-local-runs)).
 
 ## Checkpoint setup
 

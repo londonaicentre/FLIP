@@ -106,15 +106,17 @@ class FLIPStandardProd(FLIPBase):
         - ``update_status()`` — update model training status
         - ``send_metrics()`` — forward per-client training/evaluation metrics
         - ``send_handled_exception()`` — forward client exception logs
+        - ``send_event()`` — forward structured FL log events
         - ``upload_results_to_s3()`` — upload trained model to S3
+        - ``cleanup()`` — remove a local path after upload
 
     **Client-only** (fl-client on trust side → calls local trust APIs):
         - ``get_dataframe()`` — fetch cohort data from data-access-api
-        - ``get_images()`` — download images from imaging-api
-        - ``download_data_from_s3()`` — download federated data from S3
+        - ``get_by_accession_number()`` — download a study's images/resources from imaging-api
+        - ``add_resource()`` — stage a per-accession resource under the client's images dir
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._name = self.__class__.__name__
         self.logger = logging.getLogger(self._name)
@@ -132,7 +134,8 @@ class FLIPStandardProd(FLIPBase):
             query (str): SQL query
 
         Returns:
-            pd.DataFrame: Dataframe containing the resulting accession ids and additional data.
+            pd.DataFrame: The cohort rows the trust's query projects — accession ids plus any other
+            columns for an imaging cohort, whatever the query selects for a tabular-only one.
         """
         self.check_query(query)
         self.check_project_id(project_id)
@@ -582,7 +585,7 @@ class FLIPStandardProd(FLIPBase):
 class FLIPStandardDev(FLIPBase):
     """Development implementation of FLIP for standard job types."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._name = self.__class__.__name__
         self.logger = logging.getLogger(self._name)
@@ -604,10 +607,9 @@ class FLIPStandardDev(FLIPBase):
         self.check_project_id(project_id)
         self.check_query(query)
 
+        # No accession_id requirement (FLIP#1071): a tabular-only cohort has none, and the prod
+        # client never checked — it returns whatever columns the trust's cohort query projects.
         df = pd.read_csv(FlipConstants.DEV_DATAFRAME)
-
-        if "accession_id" not in df.columns:
-            raise ValueError("The provided dataframe does not contain an 'accession_id' column.")
 
         self.logger.info("Successfully fetched dataframe")
 

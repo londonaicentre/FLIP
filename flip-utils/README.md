@@ -26,9 +26,7 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
-Paths like `tutorials/` referenced in older sections of this README refer to the now-sibling top-level
-[`../fl-tutorials/`](../fl-tutorials/) tree, and Make targets called out below run from the `flip-utils/` directory
-unless otherwise noted.
+Make targets called out below run from the `flip-utils/` directory unless otherwise noted.
 
 ## Table of Contents
 
@@ -43,9 +41,8 @@ unless otherwise noted.
   - [App / Tutorial Compatibility](#app--tutorial-compatibility)
 - [FL Services API](#fl-services-api)
   - [Prerequisites](#prerequisites)
-  - [Provisioning a Network](#provisioning-a-network)
-  - [Running the Network](#running-the-network)
-  - [Integration Testing](#integration-testing)
+  - [Provisioning the 2 Networks](#provisioning-the-2-networks)
+  - [Running a Network](#running-a-network)
   - [CI/CD](#cicd)
   - [Makefile Reference](#makefile-reference)
 - [Security](#security)
@@ -79,26 +76,38 @@ flip/
 ├── core/         # FLIPBase, FLIPStandardProd/Dev implementations, FLIP() factory
 ├── constants/    # FlipConstants (pydantic-settings), enums, PTConstants
 ├── utils/        # General utilities: Utils, model weight helpers
-├── nvflare/      # NVFLARE-specific logic and components
-│   ├── controllers/  # FLIP workflows (ScatterAndGather, BroadcastTask, …)
-│   ├── components/   # Event handlers, persistors, privacy filters, locators, …
-│   ├── recipes/      # High-level NVFLARE job recipes
-│   ├── runtime.py    # Runtime helpers for NVFLARE apps
-│   └── metrics.py    # Metrics collection and reporting
-└── flower/       # Flower-specific server-side helpers
-    ├── metrics.py    # handle_client_metrics / handle_client_exception
-    ├── progress.py   # RoundTelemetry + typed round events
-    ├── selection.py  # BestModelSelector + best-model run-config parsing
-    └── strategy.py   # FlipFedAvg (hub telemetry + best-model wiring; needs flwr)
+├── schemas.py    # Shared Pydantic schemas
+├── exceptions.py # Package-level exception types
+├── xnat/         # XNAT protocol client and enrichment helpers (also exposed as the `flip-xnat` CLI)
+├── export/       # Model-export bundling (`python -m flip.export`; see map-apps/README.md)
+├── nvflare/           # NVFLARE-specific logic and components
+│   ├── controllers/   # FLIP workflows (ScatterAndGather, BroadcastTask, …)
+│   ├── components/    # Event handlers, persistors, privacy filters, locators, …
+│   ├── recipes/       # High-level NVFLARE job recipes
+│   ├── runtime.py     # Runtime helpers for NVFLARE apps
+│   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
+│   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars at container start
+│   └── metrics.py     # Metrics collection and reporting
+└── flower/       # Flower helpers (mix of server-side and client-side modules)
+    ├── identity.py   # Client-side: partition-id + SUPERNODE_NAME site-identity fallback
+    ├── metrics.py    # Server-side: handle_client_metrics / handle_client_exception (hub only)
+    ├── privacy.py    # Client-side: flip_local_dp_mod (Flower local DP mod: clipping + Gaussian noise)
+    ├── progress.py   # Server-side: RoundTelemetry + typed round events
+    ├── selection.py  # Server-side: BestModelSelector + best-model run-config parsing
+    └── strategy.py   # Server-side: FlipFedAvg (hub telemetry + best-model wiring; needs flwr)
 ```
 
 The `FLIP()` factory selects `FLIPStandardDev` (local CSV/filesystem) or `FLIPStandardProd` (FLIP platform APIs) based
 on the `LOCAL_DEV` environment variable.
 
-The `flip.flower` sub-package is intended **only for fl-server code**. Its helpers forward per-client metrics and
-crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.aggregate_train` /
-`aggregate_evaluate` — to the Central Hub. fl-client containers must never import it and must never hold the
-`INTERNAL_SERVICE_KEY` credential. For the NVFLARE equivalent, see `flip.nvflare.metrics`.
+Most of `flip.flower` is server-side only: the `metrics`, `progress`, `selection` and `strategy` modules forward
+per-client metrics and crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.aggregate_train` /
+`aggregate_evaluate` — to the Central Hub, and fl-client containers must never import those and must never hold the
+`INTERNAL_SERVICE_KEY` credential. Two modules are legitimately client-side and imported by fl-client Flower apps
+(not every app — some pull only one, and the `fl-apps/flower/` templates pull neither):
+`flip.flower.identity` (partition-id / `SUPERNODE_NAME` site-identity resolver) and `flip.flower.privacy`
+(`flip_local_dp_mod`, the local-DP mod attached to each client). For the NVFLARE equivalents of the hub-side
+helpers, see `flip.nvflare.metrics`.
 
 `FlipFedAvg` also owns opt-in **best-global-model selection**: constructed with `best_model_metric` (and
 `best_model_metric_minimize` for loss-like metrics), it scores each round's freshly aggregated model on the
@@ -128,7 +137,7 @@ directly.
 | `trainer.py` | Training logic — a plain `nvflare.client` script (`flare.init`/`receive`/`send`) |
 | `validator.py` | Extra validation module where the job type requires one (`diffusion_model`) |
 | `models.py` | Model definitions — must export `get_model()` function |
-| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE`; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
+| `config.json` | Job configuration — only `job_type` is required; platform keys such as `LOCAL_ROUNDS` are defaulted when absent, and app settings such as `LEARNING_RATE` are passed through untouched; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
 | `transforms.py` | Data transforms (optional) |
 
 ### Best-Model Selection (optional)
@@ -184,9 +193,17 @@ deploying. The runnable tutorials live in [`../fl-tutorials/`](../fl-tutorials/)
 carries a `.env.app` (`JOB_TYPE`, `DEV_IMAGES_DIR`, `DEV_DATAFRAME`) and a `job.py` that
 drives a FLIP recipe on the NVFLARE simulator (SimEnv) from the flip-utils venv.
 
-1. Get the tutorial's dataset. The xray tutorial pulls a reference dataset from Hugging
-   Face (`make -C fl-tutorials download-xray-data`); the spleen tutorials generate their
-   own data via the segmentation tutorial's `utils/` scripts (see each tutorial's README).
+1. Get the tutorial's dataset. Datasets are managed under `fl-tutorials/datasets/` with
+   dedicated Make targets forwarded from `fl-tutorials/`. Only the tutorial-facing ones:
+   `make -C fl-tutorials download-xray-data` (Hugging Face reference dataset, xray_classification),
+   `make -C fl-tutorials download-spleen-data` (spleen segmentation tutorials),
+   `make -C fl-tutorials download-synthea-data` (EHR risk-prediction tutorials),
+   `make -C fl-tutorials download-arkplus-finetuning-data` (Ark+ TRAIN splits, arkplus_fine_tuning),
+   `make -C fl-tutorials download-arkplus-eval-data` (Ark+ HOLD-OUT splits, the two arkplus evaluation
+   tutorials). For spleen and brain_mri the **DICOM sets are regenerated locally** from a public MSD
+   download and are not republished (their converters are deterministic); the **OMOP tables and metadata
+   table are published** to HF and fetched by the `reproduce-<dataset>-omop` chain. See
+   `fl-tutorials/AGENTS.md` and `fl-tutorials/datasets/README.md`.
 
 2. Adapt the tutorial's `app_files/` as needed; on the platform they are merged onto the
    matching `fl-apps/nvflare/<JOB_TYPE>/app` template at submit time.
@@ -203,7 +220,9 @@ drives a FLIP recipe on the NVFLARE simulator (SimEnv) from the flip-utils venv.
 ### Unit Tests
 
 ```bash
-make unit-test
+make unit-test        # ruff --fix, ruff format --check, then mypy, then pytest with coverage
+make mypy             # type check only
+make format           # apply ruff format (make format-check only checks)
 # or
 uv run pytest -s -vv
 ```
@@ -218,14 +237,22 @@ The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use examp
 
 ### App / Tutorial Compatibility
 
-Paths below are relative to `../fl-tutorials/nvflare/` (the NVFLARE tutorials tree):
+Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 
-| App | Tutorial |
-|-----|----------|
-| `standard` | `image_classification/xray_classification` |
-| `standard` | `image_segmentation/3d_spleen_segmentation` |
-| `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
-| `diffusion_model` | `image_synthesis/latent_diffusion_model` |
+| Backend | App | Tutorial |
+|---------|-----|----------|
+| nvflare | `standard` | `nvflare/image_classification/xray_classification` |
+| nvflare | `standard` | `nvflare/image_classification/arkplus_fine_tuning` |
+| nvflare | `standard` | `nvflare/image_segmentation/3d_spleen_segmentation` |
+| nvflare | `standard` | `nvflare/tabular_classification/ehr_risk_prediction` |
+| nvflare | `evaluation` | `nvflare/image_evaluation/3d_spleen_segmentation_evaluation` |
+| nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_baseline_classification_evaluation` |
+| nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_multimodel_classification_evaluation` |
+| nvflare | `diffusion_model` | `nvflare/image_synthesis/latent_diffusion_model` |
+| flower | `standard` | `flower/xray_classification` |
+| flower | `standard` | `flower/3d_spleen_segmentation` |
+| flower | `standard` | `flower/ehr_risk_prediction` |
+| flower | `evaluation` | `flower/3d_spleen_segmentation_evaluation` |
 
 The plain job-type names (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) are the
 Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
@@ -257,7 +284,7 @@ This uses the network-specific provisioning project files (`fl-services/nvflare/
 
 ### Provisioning Networks for Staging/Production
 
-Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
+Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `fl.stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
 clients won't be on the same Docker network as the FL server (as they are in development) and won't be able to resolve internal Docker hostnames.
 
 Run:
@@ -277,7 +304,7 @@ make -C fl-services/nvflare provision NET_NUMBER=3
 ### Running a Network
 
 From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets — the
-``flip-utils/`` directory itself only ships ``unit-test``):
+``flip-utils/`` directory itself only ships ``lint``, ``mypy`` and ``unit-test``):
 
 ```bash
 make build                # Build the :dev FL images (flare-fl-{base,server,client,api})
@@ -300,7 +327,7 @@ make -C fl-tutorials run-all-tutorials
 
 GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
-The base FL application templates (this `fl-apps/` tree) are **no longer published to S3**. They are
+The base FL application templates ([`../fl-apps/`](../fl-apps/)) are **no longer published to S3**. They are
 baked into the flip-api image at build time and read from a local directory (`FL_APP_BASE_DIR`,
 default `/app/fl-apps`); flip-api validates job types and bundles applications straight from that
 tree (FLIP#724). Two CI checks still guard the templates on every PR:
@@ -331,18 +358,34 @@ means edits take effect immediately without a rebuild. A new job type needs no S
 
 | Command | Description |
 | --------- | ------------- |
-| `make unit-test` | Run pytest unit tests for flip python package |
+| `make unit-test` | Run ruff (lint + format check), mypy and the pytest unit tests for the flip python package |
+| `make mypy` | Type-check the flip python package only |
+| `make format` / `make format-check` | Apply / check ruff formatting for the flip python package |
 
 #### Running tutorials (from the repo root)
 
+`fl-tutorials/Makefile` forwards tutorial targets to the per-backend Makefile selected by `FL_BACKEND`
+(default `nvflare`) and dataset targets to `fl-tutorials/datasets/Makefile`. Common entry points:
+
 | Command | Description |
 | --------- | ------------- |
-| `make -C fl-tutorials download-xray-data` | Fetch the xray_classification dataset from Hugging Face |
-| `make -C fl-tutorials list-tutorials` | List the runnable NVFLARE tutorials |
+| `make -C fl-tutorials list-tutorials` | List the runnable tutorials for the current `FL_BACKEND` |
 | `make -C fl-tutorials run-tutorial TUTORIAL=<name>` | Run one tutorial on the local simulator |
+| `make -C fl-tutorials sim-tutorial TUTORIAL=<name> FL_BACKEND=flower` | Simulator, no containers |
 | `make -C fl-tutorials run-all-tutorials` | Run every tutorial (heavy; stops on first failure) |
+| `make -C fl-tutorials download-xray-data` | Fetch the xray_classification dataset from Hugging Face |
+| `make -C fl-tutorials download-spleen-data` | Fetch the spleen segmentation dataset |
+| `make -C fl-tutorials download-synthea-data` | Fetch the Synthea EHR dataset (EHR risk-prediction tutorials) |
+| `make -C fl-tutorials download-arkplus-finetuning-data` | Fetch the Ark+ TRAIN splits |
+| `make -C fl-tutorials download-arkplus-eval-data` | Fetch the Ark+ HOLD-OUT splits |
+| `make -C fl-tutorials download-brain-mri-data` | Fetch the brain MRI dataset (trust seeding only; no tutorial consumes it) |
+| `make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> …` | Enrich XNAT with spleen labels |
+| `make -C fl-tutorials reproduce-<dataset>-omop` | Rebuild + verify the dataset's OMOP tables against the published copy |
+| `make -C fl-tutorials seed-spleen KIT=<CODE>` / `seed-brain-mri KIT=<CODE>` | Seed a running dev trust from the local tree (cxr uses `make -C trust seed PROJECTS=cxr_project`) |
+| `make -C fl-tutorials test` | ruff + both CPU-only pytest suites (tutorial-app + per-dataset) |
 
-Each tutorial's dataset is downloaded per-tutorial — see the tutorial's own README.
+The full dataset-tooling reference lives in
+[`../fl-tutorials/datasets/README.md`](../fl-tutorials/datasets/README.md).
 
 ---
 

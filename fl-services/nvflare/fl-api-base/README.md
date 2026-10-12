@@ -55,8 +55,9 @@ The Hub drives a net **only** through these endpoints
 | `/check_server_status` | GET | FLARE server status. |
 | `/check_client_status` | GET | Per-client status; `?targets=<name>` (repeatable) to filter, otherwise all clients. |
 
-All of these wrap `FLIP_Session` except `upload_app` (file/config staging only). `/health/` (also
-served at `/`) reports liveness for container health checks — it is not called by the Hub.
+All of these wrap `FLIP_Session` except `upload_app` (file/config staging only). `/health/` reports
+liveness for container health checks, and `version` — the build the container runs: the baked
+`FLIP_RELEASE` image tag, or the pyproject version for a local build. It is not called by the Hub.
 
 ### Debug / admin endpoints
 
@@ -68,6 +69,46 @@ see `/docs` for their signatures.
 
 When a job is running, the user's training code reaches the Central Hub through the `flip` package
 ([`flip-utils/flip/`](../../../flip-utils/flip/)) **directly**, not through this API.
+
+## Bundle-fetch origin allow-list (`BUNDLE_URL_ALLOWED_ORIGINS`)
+
+`/upload_app/{model_id}` fetches every `bundle_urls` entry **server-side**, and the FL API
+authenticates no caller of its own — so an unchecked URL is a blind SSRF from anything that can
+reach the API (a compromised trust container, an SSM port-forward). `validate_bundle_url` in
+[`fl_api/utils/validation.py`](./fl_api/utils/validation.py) guards the fetch in layers:
+
+1. **`BUNDLE_URL_ALLOWED_ORIGINS` — the primary control.** A comma-separated list of the only
+   origins a bundle may be fetched from, each a bare `scheme://host[:port]` matched exactly as a
+   (scheme, host, port) triple (host case-insensitive, trailing root label ignored, a missing port
+   is the scheme's default; no suffix or wildcard form — a suffix would admit any bucket in the
+   region). A malformed entry fails the boot. It is checked *before* any name is resolved, so an
+   off-list origin never causes a DNS query — the resolver query itself is the out-of-band signal
+   of a blind SSRF — and a listed origin is operator-declared, so it is not resolved either (the
+   dev compose store resolves to a private docker address by design). **Every hub deployment sets
+   it from the object store the hub presigns against, not by hand:** on AWS, flip-api pins
+   `AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`, which makes boto3 presign
+   *path-style* URLs — bucket in the path, host exactly `s3.<AWS_REGION>.amazonaws.com` — so
+   `https://s3.<AWS_REGION>.amazonaws.com` is the value, set in
+   `deploy/compose.production.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
+   the same local as flip-api's endpoint (a static test in `deploy/providers/AWS/tests/` holds both
+   fl-api task families to it); the dev compose lists its RustFS service, `http://object-store:9000`
+   (FLIP#1291). Moving the presign endpoint without the allow-list 400s every bundle download, i.e.
+   every training run.
+2. **Without a list: https on 443 plus resolve-and-recheck — defence in depth.** Always: no
+   private / loopback / link-local / reserved IP literal in any spelling (FLIP#893) and no
+   `localhost`, listed or not. With the list empty the URL must also be https on the default port,
+   and a DNS name is resolved with every returned address, both families, held to the same range
+   check — failing closed on a resolver error (FLIP#905). This is a resolve-then-fetch pair: the
+   fetch resolves the name again through `requests`, so a DNS-rebinding attacker answering public
+   to the check and private to the fetch wins that race. Pinning the connection to the checked
+   address would need a custom transport and is deliberately not built; the allow-list is the
+   control that matters. Redirects are refused on the fetch itself.
+
+**Empty is loud, not fatal.** The standalone harness in [`../compose.dev.yml`](../compose.dev.yml)
+has no hub and leaves the variable unset — nothing presigns bundle URLs for it — and the API logs a
+`WARNING` naming the variable once at startup (and again on the first validation if startup was
+bypassed) saying exactly what is disabled: fetches from *any* public https host, with only the
+range check and its rebinding window left. On a hub deployment that warning is a wiring regression.
 
 ## Testing
 

@@ -1,0 +1,53 @@
+schema_type: dataframe
+columns:
+  note_nlp_id:
+    dtype: int64
+    unique: true
+  note_id:
+    dtype: int64
+  section_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  snippet:
+    dtype: string[python]
+    nullable: true
+    required: false
+  offset:
+    dtype: string[python]
+    nullable: true
+    required: false
+  lexical_variant:
+    dtype: string[python]
+  note_nlp_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  note_nlp_source_concept_id:
+    dtype: int64
+    nullable: true
+    required: false
+  nlp_system:
+    dtype: string[python]
+    nullable: true
+    required: false
+  nlp_date:
+    dtype: datetime64[ns]
+  nlp_datetime:
+    dtype: datetime64[ns]
+    nullable: true
+    required: false
+  term_exists:
+    dtype: string[python]
+    nullable: true
+    required: false
+  term_temporal:
+    dtype: string[python]
+    nullable: true
+    required: false
+  term_modifiers:
+    dtype: string[python]
+    nullable: true
+    required: false
+strict: true
+drop_invalid_rows: false

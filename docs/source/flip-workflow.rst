@@ -17,12 +17,18 @@ Once a user has access to FLIP, they can construct a project, add project member
 Project Approval
 ****************
 
-Once a sufficient cohort of data has been identified, the Model Developer indicates which Trusts' data they require and 'stages' the project, awaiting approval from a FLIP administrator. Once the project is approved, FLIP executes the cohort query at each of the selected Trusts to determine the DICOM series associated with the cohort and begins copying the images from the Trust PACS system to the local XNAT cache.
+Once a sufficient cohort of data has been identified, the Model Developer indicates which Trusts' data they require and 'stages' the project, awaiting approval. Each staged Trust is approved or declined in its own time — by a FLIP administrator, or by the Trust's own Trust Admin when it has one — and FLIP keeps who made each decision and when. The project is approved as soon as one Trust approves; a Trust that approves later joins it then, and declined Trusts take no further part. If every Trust declines, the project stays staged and can be unstaged to be reconsidered.
+
+Once the project is approved, FLIP executes the cohort query at each of the approved Trusts to determine the DICOM series associated with the cohort and begins copying the images from the Trust PACS system to the local XNAT cache.
 
 .. figure:: assets/support/flip_walkthrough-approve_project.png
    :align: center
 
    Approved project.
+
+.. note::
+
+   A project created with 'Includes imaging data' turned off — a tabular-only cohort — skips the imaging stages that follow. Approval creates no XNAT project at any Trust and pulls nothing from PACS, there are no images to enrich, and training reads the OMOP cohort dataframe alone. The 'Dataset enriched' confirmation before training still has to be switched on; it is reworded to a confirmation that the data is ready. Like 'Convert DICOMs to NIfTI', the option is fixed when the project is created.
 
 ******************
 Image Enrichment
