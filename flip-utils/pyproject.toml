@@ -112,13 +112,13 @@ constraint-dependencies = [
     "pillow>=12.3.0",            # CVE-2026-42311/42310/42309/42308/40192/25990
     "protobuf>=6.33.5",          # CVE-2026-0994
     "pygments>=2.20.0",          # CVE-2026-4539
-    "pyjwt>=2.12.0",             # CVE-2026-32597
+    "pyjwt>=2.15.0",             # GHSA-42vr-xj54-vc7v, GHSA-x33g-cr3x-6449, CVE-2026-32597
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
     "setuptools>=83.0.0",        # CVE-2026-59890
     "soupsieve>=2.9.0",          # CVE-2026-85999, CVE-2026-86000
-    "urllib3>=2.7.0",            # CVE-2026-44431, CVE-2025-66471/66418
-    "werkzeug>=3.1.6",           # CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
+    "urllib3>=2.8.0",            # GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw, CVE-2026-44431, CVE-2025-66471/66418
+    "werkzeug>=3.1.9",           # GHSA-g6x2-hccm-hh4m, CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
 # flwr (dev-group only) pins cryptography<47.0.0 even in its latest release, which
 # collides with the constraint floor above (GHSA-537c-gmf6-5ccf needs >=48.0.1).

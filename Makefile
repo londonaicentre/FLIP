@@ -192,10 +192,11 @@ _ensure-fl-jobs-dir:
 # Fail fast (NVFLARE) when the per-net startup kits are missing — delegated to
 # scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
 # come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
-# for non-NVFLARE backends.
+# for non-NVFLARE backends. In development it also checks that the NVFLARE FL API can read its
+# admin key through the host group (FL_API_KEY_GID, FLIP#1384).
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
-		scripts/check-fl-provisioned.sh
+		FL_API_KEY_GID='$(if $(filter development,$(ENV)),$(DOCKER_GID))' scripts/check-fl-provisioned.sh
 
 # Minimal $(MAKE) up
 up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
@@ -335,7 +336,11 @@ restart: down up
 #       1000) then cannot mkdir inside it. The failure surfaces four layers away as a 500 on
 #       /upload_app and an opaque model ERROR, with the PermissionError only in the FL API's
 #       own log — so a tree that has never run `make up` fails every FL job until this runs.
-restart-fl: _ensure-fl-jobs-dir
+# NOTE: _ensure-object-store-dir likewise (FLIP#1402). On Flower, step 4's register-supernode-keys
+#       services depend on object-store, so compose recreates it from this tree; without
+#       ./object-store the bind mount is refused and make stops after step 1 has removed every
+#       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
+restart-fl: _ensure-fl-jobs-dir _ensure-object-store-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients

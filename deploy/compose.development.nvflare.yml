@@ -42,6 +42,10 @@ services:
       # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
       # who can reach it; see compose.development.yml's flip-api ports (FLIP#959).
       - "127.0.0.1:${FL_API_DEBUG_PORT:-5679}:5679"
+    # Reads the host-provisioned 640 admin client.key through the host group (see the `provision`
+    # target in fl-services/nvflare/Makefile, FLIP#1384). No default: a guessed gid is either the
+    # wrong group for the key or someone else's group.
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -74,6 +78,8 @@ services:
       # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
       - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
+    # The 640 admin client.key, through the host group (see fl-api-net-1).
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     security_opt:
       - no-new-privileges:true
     cap_drop:

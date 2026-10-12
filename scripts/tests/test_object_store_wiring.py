@@ -115,6 +115,24 @@ def test_ensure_object_store_dir_guards_the_bucket_names() -> None:
         env_file.unlink()
 
 
+def test_every_bring_up_target_prepares_the_store_dir() -> None:
+    """``restart-fl`` recreates object-store on Flower (register-supernode-keys depends on it), so it
+    needs the host dir as much as ``up`` does; without it make stopped after removing every FL
+    client (FLIP#1402). Asserted on the prerequisite list rather than ``make -n restart-fl``, whose
+    ``$(MAKE) -C trust`` lines still run under ``-n`` and need the trust kits."""
+    print("test_every_bring_up_target_prepares_the_store_dir")
+    makefile = (REPO_ROOT / "Makefile").read_text()
+    for target in ("up", "up-no-trust", "restart-fl"):
+        match = re.search(rf"^{re.escape(target)}:([^\n=]*)$", makefile, re.M)
+        _assert(match is not None, f"{target} is a target in the root Makefile")
+        if match:
+            _assert(
+                "_ensure-object-store-dir" in match.group(1).split(),
+                f"{target} depends on _ensure-object-store-dir",
+                detail=match.group(1).strip(),
+            )
+
+
 def _compose_env(path: Path, service: str, key: str) -> list[str]:
     """Values of ``- KEY=value`` lines inside one service block of a compose file (comments skipped)."""
     text = path.read_text()
@@ -161,6 +179,7 @@ def test_prod_presign_origin_matches_every_fl_api() -> None:
 def main() -> None:
     test_clean_object_store_never_targets_the_checkout()
     test_ensure_object_store_dir_guards_the_bucket_names()
+    test_every_bring_up_target_prepares_the_store_dir()
     test_dev_presign_origin_matches_every_fl_api_and_fl_server()
     test_prod_presign_origin_matches_every_fl_api()
     print("—")

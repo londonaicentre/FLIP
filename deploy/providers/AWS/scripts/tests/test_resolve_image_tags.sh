@@ -47,12 +47,48 @@ mkdir -p "${MOCKBIN}"
 # which must never be read as "not published".
 cat >"${MOCKBIN}/docker" <<'MOCK_DOCKER'
 #!/usr/bin/env bash
+# `buildx imagetools inspect --format '{{.Manifest.Digest}}' <ref>` is what the
+# resolver uses to turn a release tag into the digest it pins — the TOP-LEVEL
+# descriptor, which is the only shape this reports (unlike `manifest inspect
+# --verbose`, whose per-platform entries are a different digest each).
+if [[ "$1" == "buildx" && "$2" == "imagetools" && "$3" == "inspect" ]]; then
+    shift 3
+    while [[ "$1" == --* ]]; do shift 2; done
+    ref="$1"
+    if [[ -s "${FIXTURE_DIR}/docker-error" ]]; then
+        cat "${FIXTURE_DIR}/docker-error" >&2
+        exit 1
+    fi
+    grep -Fxq "${ref}" "${FIXTURE_DIR}/published" 2>/dev/null || {
+        echo "ERROR: manifest unknown" >&2
+        exit 1
+    }
+    # Per-repository digests: `flare-fl-api:v1` and `flare-fl-server:v1` are
+    # different blobs, and the resolver must never carry one's digest onto the
+    # other. `digest.<repo-basename>` overrides the shared `digest` fixture.
+    repo="${ref%:*}"
+    repo="${repo##*/}"
+    digest="sha256:$(printf 'a%.0s' {1..64})"
+    [[ -s "${FIXTURE_DIR}/digest" ]] && digest="$(cat "${FIXTURE_DIR}/digest")"
+    [[ -s "${FIXTURE_DIR}/digest.${repo}" ]] && digest="$(cat "${FIXTURE_DIR}/digest.${repo}")"
+    printf '%s\n' "${digest}"
+    exit 0
+fi
 if [[ "$1" == "manifest" && "$2" == "inspect" ]]; then
+    verbose=""
+    if [[ "$3" == "--verbose" ]]; then
+        verbose=1
+        shift
+    fi
     if [[ -s "${FIXTURE_DIR}/docker-error" ]]; then
         cat "${FIXTURE_DIR}/docker-error" >&2
         exit 1
     fi
     if grep -Fxq "$3" "${FIXTURE_DIR}/published" 2>/dev/null; then
+        if [[ -n "${verbose}" ]]; then
+            echo '[{"Ref":"'"$3"'","Descriptor":{"digest":"sha256:deadbeef"}}]'
+            exit 0
+        fi
         echo '{"schemaVersion":2}'
         exit 0
     fi
@@ -138,17 +174,31 @@ SHA_TAG="sha-abc1234"
 #   $3  flip-api live image
 #   $4  fl-server-net-1 task-definition ARN
 #   $5  fl-server-net-1 live image
+#
+# The fl-api-net-1 service and the fl-api repository are mirrored from the
+# fl-server ones unless a case overrides the fixture files afterwards: the two FL
+# images are resolved independently (FLIP#1283) but move together in every
+# ordinary case, and mirroring keeps the pre-existing cases asserting exactly
+# what they asserted before.
 fixture() {
     FIXTURE_DIR="${TEST_ROOT}/fx-${RANDOM}"
     mkdir -p "${FIXTURE_DIR}"
-    printf '%s\n' "$1" >"${FIXTURE_DIR}/published"
+    {
+        printf '%s\n' "$1"
+        # Same tags, fl-api repository.
+        printf '%s\n' "$1" | sed -e 's/flare-fl-server:/flare-fl-api:/' -e 's/flower-superlink:/flower-fl-api:/'
+    } >"${FIXTURE_DIR}/published"
     printf '%s' "$2" >"${FIXTURE_DIR}/flip-api.taskdef"
     printf '%s' "$3" >"${FIXTURE_DIR}/flip-api.image"
     printf '%s' "$4" >"${FIXTURE_DIR}/fl-server-net-1.taskdef"
     printf '%s' "$5" >"${FIXTURE_DIR}/fl-server-net-1.image"
+    printf '%s' "${4:+fl-api-net-1:${4##*:}}" >"${FIXTURE_DIR}/fl-api-net-1.taskdef"
+    printf '%s' "$(printf '%s' "$5" | sed -e 's/flare-fl-server/flare-fl-api/' -e 's/flower-superlink/flower-fl-api/')" \
+        >"${FIXTURE_DIR}/fl-api-net-1.image"
     : >"${FIXTURE_DIR}/aws-exit"
     : >"${FIXTURE_DIR}/aws-failure-reason"
     : >"${FIXTURE_DIR}/docker-error"
+    : >"${FIXTURE_DIR}/digest"
     export FIXTURE_DIR
 }
 
@@ -316,10 +366,10 @@ ghcr.io/londonaicentre/flare-fl-server:${SHA_TAG}" \
     "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
     "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-9999999"
 run_resolve "stdout carries only KEY=value lines"
-if [[ "$(printf '%s\n' "${STDOUT}" | grep -cvE '^(DOCKER_TAG|DOCKER_FL_TAG)=')" -eq 0 ]]; then
-    ok "stdout is exactly the two assignments"
+if [[ "$(printf '%s\n' "${STDOUT}" | grep -cvE '^(DOCKER_TAG|DOCKER_FL_TAG|DOCKER_FL_API_TAG)=')" -eq 0 ]]; then
+    ok "stdout is exactly the three assignments"
 else
-    no "stdout is exactly the two assignments" "stdout: ${STDOUT}"
+    no "stdout is exactly the three assignments" "stdout: ${STDOUT}"
 fi
 
 # 11. FAIL CLOSED ON AN AWS ERROR. The invariant in the header only holds if
@@ -490,6 +540,347 @@ if [[ "${rc}" -ne 0 && "${out}" == *"RESOLVE_SHA_TAG"* ]]; then
 else
     no "rejects an unknown RESOLVE_SHA_TAG" "exit ${rc}: ${out}"
 fi
+
+# ---------------------------------------------------------------------------
+# RELEASE_TAG — the release-aware path (FLIP#1283). Everything below is new
+# behaviour that only engages when RELEASE_TAG is set; case 25 is the guard that
+# the unset path is still exactly what it was.
+# ---------------------------------------------------------------------------
+
+DIGEST="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+FL_DIGEST="sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+# 19. RELEASE SET AND PUBLISHED. Pin the DIGEST the release tag resolves to,
+#     carrying the release name with it: `:v<X.Y.Z>` is republished by design, so
+#     a bare tag pin would let a re-run change what production pulls with no
+#     apply (FLIP#751), while `v<X.Y.Z>@sha256:…` keeps the name legible and the
+#     content fixed.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf '%s' "${DIGEST}" >"${FIXTURE_DIR}/digest"
+run_resolve "RELEASE_TAG present — pinned by digest" RELEASE_TAG=v1.2.3
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+expect_tag DOCKER_FL_TAG "v1.2.3@${DIGEST}"
+
+# ...and the sha tag must not win even when it is also published — the whole
+# point is that the release build, not the branch build, is what gets deployed.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flip-api:${SHA_TAG}
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:${SHA_TAG}" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf '%s' "${DIGEST}" >"${FIXTURE_DIR}/digest"
+run_resolve "the release tag beats a published sha tag" RELEASE_TAG=v1.2.3
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+if [[ "${STDOUT}" == *"${SHA_TAG}"* ]]; then
+    no "never pins the sha build when a release was named" "stdout: ${STDOUT}"
+else
+    ok "never pins the sha build when a release was named"
+fi
+
+# 20. RELEASE SET AND MISSING. Fail closed. Every fallback is wrong here: the
+#     caller only sets RELEASE_TAG once the release builds concluded, so absence
+#     is a fault, and falling back would leave the environment on the PREVIOUS
+#     release while reporting success — a silent no-op release.
+fixture "ghcr.io/londonaicentre/flip-api:${SHA_TAG}" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+run_resolve "RELEASE_TAG absent from the registry is fatal" RELEASE_TAG=v9.9.9
+if [[ "${RC}" -ne 0 ]]; then
+    ok "exits non-zero when the release image is missing"
+else
+    no "exits non-zero when the release image is missing" "exit ${RC}, stdout: ${STDOUT}"
+fi
+if [[ -n "${STDOUT}" ]]; then
+    no "emits no tag at all on a missing release" "stdout: ${STDOUT}"
+else
+    ok "emits no tag at all on a missing release"
+fi
+if [[ "${STDERR}" == *"v9.9.9"* && "${STDERR}" == *"not published"* && "${STDERR}" == *"re-run"* ]]; then
+    ok "the error names the release and what to re-run"
+else
+    no "the error names the release and what to re-run" "stderr: ${STDERR}"
+fi
+
+# 21. A malformed RELEASE_TAG is rejected by name. Letting it through would
+#     produce "release image absent", which reads as a failed build and sends
+#     someone to re-run one that was fine.
+for bad in v1.2 1.2.3 v1.2.3-rc1 latest; do
+    fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+        "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+    run_resolve "malformed RELEASE_TAG '${bad}' is rejected" RELEASE_TAG="${bad}"
+    if [[ "${RC}" -ne 0 && "${STDERR}" == *"RELEASE_TAG"* ]]; then
+        ok "rejects RELEASE_TAG='${bad}'"
+    else
+        no "rejects RELEASE_TAG='${bad}'" "exit ${RC}, stderr: ${STDERR}"
+    fi
+done
+
+# 22. A registry that answers with something other than a positive absence is
+#     still fatal on the release path — same fail-closed rule as the sha probe,
+#     and here an outage read as "absent" would stop a release rather than
+#     mis-deploy it, but the message must still be the honest one.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf 'unauthorized: authentication required' >"${FIXTURE_DIR}/docker-error"
+run_resolve "a registry error on the release probe is fatal" RELEASE_TAG=v1.2.3
+if [[ "${RC}" -ne 0 && "${STDERR}" == *"without reporting the image as absent"* ]]; then
+    ok "a registry error is not read as a missing release"
+else
+    no "a registry error is not read as a missing release" "exit ${RC}, stderr: ${STDERR}"
+fi
+
+# 23. The release tag exists but the registry returns no usable digest. Pinning
+#     the bare tag instead would quietly reintroduce the mutability this path
+#     exists to remove, so it must stop.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf 'sha256:not-a-digest' >"${FIXTURE_DIR}/digest"
+run_resolve "an unusable digest is fatal, never a tag pin" RELEASE_TAG=v1.2.3
+if [[ "${RC}" -ne 0 && "${STDERR}" == *"no usable digest"* ]]; then
+    ok "refuses to fall back to a mutable tag pin"
+else
+    no "refuses to fall back to a mutable tag pin" "exit ${RC}, stderr: ${STDERR}"
+fi
+
+# 24. PLAN / DRIFT WITH A DIGEST-PINNED SERVICE. Once a release apply has written
+#     `repo:v<X.Y.Z>@sha256:…`, plan and drift must read that reference back
+#     WHOLE. Returning just `v1.2.3` would un-pin the digest on the next
+#     infrastructure-only apply; returning nothing would report a permanent,
+#     unclearable diff (and hold every apply on the FL gate) and leave
+#     rollback-centralhub without a reference point.
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:v1.2.3@${DIGEST}" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:v1.2.3@${FL_DIGEST}"
+run_resolve "plan reads a digest-pinned service" RESOLVE_SHA_TAG=false
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+expect_tag DOCKER_FL_TAG "v1.2.3@${FL_DIGEST}"
+
+# ...and the same on an apply where nothing new was published: the running
+# digest pin is reused rather than discarded.
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:v1.2.3@${DIGEST}" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:v1.2.3@${FL_DIGEST}"
+run_resolve "an infra-only apply keeps the digest pin"
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "v1.2.3@${DIGEST}"
+
+# ...while a BARE digest reference still yields nothing: ecs_tasks.tf builds
+# `"${registry}<image>:${tag}"`, so there is no tag string that can express it,
+# and inventing one would mint an unpullable reference. (Case 6 covers the
+# short-digest form; this is the well-formed one.)
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api@${DIGEST}" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+run_resolve "a bare digest reference has no tag to reuse" RESOLVE_SHA_TAG=false
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "stag"
+
+# 25. SHIPS DARK. With RELEASE_TAG unset — and explicitly set to the empty string,
+#     which is what an unset workflow_dispatch input expands to — the output is
+#     exactly what it was before FLIP#1283.
+fixture "ghcr.io/londonaicentre/flip-api:${SHA_TAG}
+ghcr.io/londonaicentre/flip-api:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+run_resolve "RELEASE_TAG unset — unchanged behaviour"
+BASELINE="${STDOUT}"
+expect_tag DOCKER_TAG "${SHA_TAG}"
+expect_tag DOCKER_FL_TAG "sha-8888888"
+run_resolve "RELEASE_TAG empty is the same as unset" RELEASE_TAG=
+if [[ "${RC}" -eq 0 && "${STDOUT}" == "${BASELINE}" ]]; then
+    ok "an empty RELEASE_TAG takes the pre-FLIP#1283 path byte for byte"
+else
+    no "an empty RELEASE_TAG takes the pre-FLIP#1283 path byte for byte" \
+        "exit ${RC}" "got: ${STDOUT}" "want: ${BASELINE}"
+fi
+
+# ---------------------------------------------------------------------------
+# 26. EVERY IMAGE GETS ITS OWN DIGEST (FLIP#1283 review). A digest belongs to one
+#     repository: `flare-fl-api:v1.2.3` and `flare-fl-server:v1.2.3` are
+#     different blobs. Carrying the server's digest onto the API mints
+#     `flare-fl-api:v1.2.3@sha256:<fl-server digest>`, which ECS pulls BY DIGEST
+#     — a CannotPullContainer on fl-api-net-1 after a green resolve and a green
+#     apply. Distinct digests per repository here is the assertion that catches
+#     it; a shared fixture cannot.
+# ---------------------------------------------------------------------------
+API_DIGEST="sha256:3333333333333333333333333333333333333333333333333333333333333333"
+HUB_DIGEST="sha256:4444444444444444444444444444444444444444444444444444444444444444"
+
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf '%s' "${HUB_DIGEST}" >"${FIXTURE_DIR}/digest.flip-api"
+printf '%s' "${FL_DIGEST}" >"${FIXTURE_DIR}/digest.flare-fl-server"
+printf '%s' "${API_DIGEST}" >"${FIXTURE_DIR}/digest.flare-fl-api"
+run_resolve "each repository is pinned with its OWN digest" RELEASE_TAG=v1.2.3
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "v1.2.3@${HUB_DIGEST}"
+expect_tag DOCKER_FL_TAG "v1.2.3@${FL_DIGEST}"
+expect_tag DOCKER_FL_API_TAG "v1.2.3@${API_DIGEST}"
+
+# ...and the same under flower, where the two FL repositories are
+# flower-superlink and flower-fl-api.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flower-superlink:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flower-superlink:sha-8888888"
+printf '%s' "${FL_DIGEST}" >"${FIXTURE_DIR}/digest.flower-superlink"
+printf '%s' "${API_DIGEST}" >"${FIXTURE_DIR}/digest.flower-fl-api"
+FL_BACKEND_UNDER_TEST=flower run_resolve "flower pins flower-fl-api separately" RELEASE_TAG=v1.2.3
+expect_tag DOCKER_FL_TAG "v1.2.3@${FL_DIGEST}"
+expect_tag DOCKER_FL_API_TAG "v1.2.3@${API_DIGEST}"
+
+# 27. "Dies if the release image is absent" has to cover the FL API too — it was
+#     the half of the FL set nobody checked. The fl-server release is published
+#     here and the fl-api one is not, which is exactly the shape of a half-failed
+#     release build.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+# Drop the mirrored fl-api entry the fixture helper added.
+grep -v 'flare-fl-api' "${FIXTURE_DIR}/published" >"${FIXTURE_DIR}/published.tmp"
+mv "${FIXTURE_DIR}/published.tmp" "${FIXTURE_DIR}/published"
+run_resolve "a missing FL API release image is fatal" RELEASE_TAG=v1.2.3
+if [[ "${RC}" -ne 0 && "${STDERR}" == *"flare-fl-api:v1.2.3"* ]]; then
+    ok "names the absent fl-api release image"
+else
+    no "names the absent fl-api release image" "exit ${RC}, stderr: ${STDERR}"
+fi
+
+# 28. The FL API resolves from its OWN service, not fl-server's. A merge that
+#     rebuilt only fl-api must pin the sha tag there and leave the server where
+#     it is, and vice versa.
+fixture "ghcr.io/londonaicentre/flare-fl-api:${SHA_TAG}" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf 'ghcr.io/londonaicentre/flare-fl-api:sha-7777777' >"${FIXTURE_DIR}/fl-api-net-1.image"
+run_resolve "only the FL API image published"
+expect_tag DOCKER_FL_TAG "sha-8888888"
+expect_tag DOCKER_FL_API_TAG "${SHA_TAG}"
+
+# ...and a running fl-api on a different tag from fl-server is reported as it is,
+# rather than inheriting the server's.
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf 'ghcr.io/londonaicentre/flare-fl-api:sha-7777777' >"${FIXTURE_DIR}/fl-api-net-1.image"
+run_resolve "the FL API reuses its own live tag"
+expect_tag DOCKER_FL_TAG "sha-8888888"
+expect_tag DOCKER_FL_API_TAG "sha-7777777"
+
+# 29. A missing fl-api service falls back on its own terms, and an AWS error
+#     reading it is still fatal — the fail-closed rule applies to the third
+#     lookup exactly as to the first two.
+fixture "" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+: >"${FIXTURE_DIR}/fl-api-net-1.taskdef"
+run_resolve "an absent FL API service takes the configured tag"
+expect_rc 0 "exits 0"
+expect_tag DOCKER_FL_TAG "sha-8888888"
+expect_tag DOCKER_FL_API_TAG "stag"
+
+# 30. A RELEASE_TAG with surrounding whitespace, or spelled as a git ref, is a
+#     named error rather than a confusing "release image absent" — the review
+#     asked for both shapes explicitly.
+for bad in " v1.2.3" "v1.2.3 " "refs/tags/v1.2.3" "V1.2.3" "v1.2.3.4"; do
+    fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+        "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+    run_resolve "RELEASE_TAG '${bad}' is rejected" RELEASE_TAG="${bad}"
+    if [[ "${RC}" -ne 0 && "${STDERR}" == *"RELEASE_TAG"* ]]; then
+        ok "rejects RELEASE_TAG='${bad}'"
+    else
+        no "rejects RELEASE_TAG='${bad}'" "exit ${RC}, stderr: ${STDERR}"
+    fi
+done
+
+# 31. RESOLVE_SHA_TAG=false IGNORES RELEASE_TAG. Plan and drift must read what is
+#     deployed: probing the release would both report a diff no apply has written
+#     and re-impose a registry login on paths that have none. The claim was in
+#     the header but untested.
+fixture "ghcr.io/londonaicentre/flip-api:v1.2.3
+ghcr.io/londonaicentre/flare-fl-server:v1.2.3" \
+    "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+printf '%s' "${DIGEST}" >"${FIXTURE_DIR}/digest"
+run_resolve "plan ignores RELEASE_TAG" RESOLVE_SHA_TAG=false RELEASE_TAG=v1.2.3
+expect_rc 0 "exits 0"
+expect_tag DOCKER_TAG "sha-9999999"
+expect_tag DOCKER_FL_TAG "sha-8888888"
+# fl-api is resolved separately but from the same running pair, so plan/drift must
+# report its live tag too — the review's point was that it was never asserted.
+expect_tag DOCKER_FL_API_TAG "sha-8888888"
+if [[ "${STDOUT}" == *"v1.2.3"* ]]; then
+    no "never pins the release on a plan/drift run" "stdout: ${STDOUT}"
+else
+    ok "never pins the release on a plan/drift run"
+fi
+
+# ...and it still needs no docker: the same `env -i` PATH as case 16, now with
+# RELEASE_TAG set. A release probe here would fail the case outright.
+echo ""
+echo "-- RESOLVE_SHA_TAG=false with RELEASE_TAG needs no docker"
+if [[ -x "${NO_DOCKER}/bash" && -x "${NO_DOCKER}/jq" ]]; then
+    out="$(env -i PATH="${NO_DOCKER}" FIXTURE_DIR="${FIXTURE_DIR}" \
+        GIT_SHA="${GIT_SHA}" DOCKER_REGISTRY="ghcr.io/londonaicentre/" \
+        FALLBACK_DOCKER_TAG=stag FALLBACK_DOCKER_FL_TAG=stag FL_BACKEND=nvflare \
+        RESOLVE_SHA_TAG=false RELEASE_TAG=v1.2.3 \
+        "${NO_DOCKER}/bash" "${SCRIPT}" 2>"${TEST_ROOT}/err")"
+    rc=$?
+    if [[ "${rc}" -eq 0 && "${out}" == *"DOCKER_TAG=sha-9999999"* ]]; then
+        ok "a plan with RELEASE_TAG set touches no registry"
+    else
+        no "a plan with RELEASE_TAG set touches no registry" "exit ${rc}: ${out}" \
+            "stderr: $(cat "${TEST_ROOT}/err")"
+    fi
+else
+    no "a plan with RELEASE_TAG set touches no registry" "could not build a minimal PATH for the case"
+fi
+
+# 32. A MISSING RELEASE IMAGE DOES NOT WAIT. The caller sets RELEASE_TAG only
+#     after the release builds concluded, so absence is already a certain
+#     failure; burning the full GHCR_WAIT_SECONDS only delays it. Timed with a
+#     real budget — the other release cases run at GHCR_WAIT_SECONDS=0, where a
+#     wait and a single probe are indistinguishable.
+fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:sha-8888888"
+started="$(date +%s)"
+run_resolve "a missing release image fails immediately" \
+    RELEASE_TAG=v9.9.9 GHCR_WAIT_SECONDS=6 GHCR_POLL_SECONDS=2
+elapsed=$(($(date +%s) - started))
+if [[ "${RC}" -ne 0 && "${elapsed}" -lt 4 ]]; then
+    ok "probes once instead of waiting the budget (${elapsed}s)"
+else
+    no "probes once instead of waiting the budget" "exit ${RC} after ${elapsed}s"
+fi
+
+# 33. THE TWO FL IMAGES SHARE ONE WAIT BUDGET. fl-server and fl-api are published
+#     by one workflow, so once fl-server has waited GHCR_WAIT_SECONDS out in full,
+#     fl-api probes once rather than spending a second full budget — otherwise an
+#     apply that touches only hub code waits 3x the advertised half hour.
+fixture "" "flip-api:41" "ghcr.io/londonaicentre/flip-api:sha-9999999" \
+    "fl-server-net-1:12" "ghcr.io/londonaicentre/flare-fl-server:stag"
+started="$(date +%s)"
+run_resolve "the FL images share one wait budget" GHCR_WAIT_SECONDS=6 GHCR_POLL_SECONDS=2
+elapsed=$(($(date +%s) - started))
+# flip-api and fl-server each wait the full 6s; fl-api must not add a third.
+if [[ "${RC}" -eq 0 && "${elapsed}" -lt 17 ]]; then
+    ok "fl-api probes once after fl-server's wait (${elapsed}s)"
+else
+    no "fl-api probes once after fl-server's wait" "exit ${RC} after ${elapsed}s"
+fi
+expect_tag DOCKER_FL_API_TAG "stag"
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

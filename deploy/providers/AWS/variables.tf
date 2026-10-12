@@ -194,13 +194,32 @@ variable "docker_image_tag" {
 }
 
 variable "flip_fl_image_tag" {
-  description = "Docker image tag for FL services (fl-api, fl-server, fl-client)"
+  description = "Docker image tag for the FL server (fl-server-net-*), and the default for the FL API"
   type        = string
   default     = ""
 
   validation {
     condition     = lower(var.flip_fl_image_tag) != "latest" && !endswith(lower(var.flip_fl_image_tag), "-latest")
     error_message = "flip_fl_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
+  }
+}
+
+# Separate from flip_fl_image_tag because a release pin is `v<X.Y.Z>@sha256:…`
+# and a digest belongs to ONE repository (FLIP#1283). Sharing one variable across
+# both FL images pinned fl-api with fl-server's digest, which ECS pulls by digest
+# — fl-api-net-1 then fails with CannotPullContainer after a green apply.
+#
+# Empty means "whatever flip_fl_image_tag says", which is correct for every
+# caller that does not pin by digest (a laptop apply, an env file, a plain
+# sha-tag CI apply). CI's resolve-image-tags.sh sets it explicitly.
+variable "fl_api_image_tag" {
+  description = "Docker image tag for the FL API (fl-api-net-*). Empty falls back to flip_fl_image_tag."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = lower(var.fl_api_image_tag) != "latest" && !endswith(lower(var.fl_api_image_tag), "-latest")
+    error_message = "fl_api_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
   }
 }
 

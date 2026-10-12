@@ -120,7 +120,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 20s
+      # A fresh container builds its schema on first boot (start-dev keeps it in the
+      # container), which can take ~3 min on a loaded host — past 20s + 30 x 5s, which
+      # fails flip-api's service_healthy dependency (FLIP#1384). Probes failing inside
+      # start_period don't count and the first passing one ends it, so a fast host waits
+      # no longer.
+      start_period: 300s
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped

@@ -105,6 +105,11 @@ spec:
           env:
             - name: XNAT_URL
               value: "http://xnat-web:8080"
+            # One admin-password probe round per run: restartPolicy: OnFailure already retries
+            # this container, and in-script retries on top would multiply the failed logins a
+            # wrong password costs toward XNAT's ~20-login lockout (FLIP#1384).
+            - name: XNAT_AUTH_PROBE_ATTEMPTS
+              value: "1"
             - name: XNAT_ADMIN_USER
               value: {{ .Values.xnat.web.adminUser | quote }}
             # Both map to the same secret key, matching the xnat-web deployment: on a fresh install

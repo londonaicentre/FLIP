@@ -42,7 +42,7 @@ orthanc/orthanc-storage-*
 # The seed marker written beside each storage dir by `make seed-orthanc` (FLIP#1187).
 orthanc/.orthanc-storage-*.seeded
 xnat/plugins/*.jar
-xnat/plugins/.s3-prefix
+xnat/plugins/.*.part
 .env.*
 # ...but the omop-db build-pipeline template is documentation, not a live env file.
 !omop-db/.env.build.example

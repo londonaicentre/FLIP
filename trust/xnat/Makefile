@@ -11,7 +11,7 @@
 #
 
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-shell xnat-stack-down clean \
-	xnat-war-download xnat-plugins-download xnat-reset xnat-configure \
+	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
@@ -20,9 +20,8 @@
 # XNAT_ACTIVEMQ_PASSWORD — minted by `make register-trust`) are pulled from the
 # kit file via `-include $(KIT_FILE)` below; non-secret XNAT-internal config
 # (XNAT_VERSION, datasource driver/URL/usernames, XNAT_SMTP_*, heap, paths) comes
-# from trust/xnat/.env. Passwords are runtime env only — never build args. The dev-admin build path (xnat-war-download /
-# xnat-plugins-download) needs FLIP_ARTIFACTS_BUCKET_NAME — pass it on the
-# CLI if invoking those targets directly.
+# from trust/xnat/.env. Passwords are runtime env only — never build args. The WAR and plugins come
+# from the public upstream URLs pinned with their checksums in artifacts.manifest (FLIP#1292).
 
 # Load XNAT-specific .env file
 ifneq ("$(wildcard .env)","")
@@ -221,9 +220,8 @@ endef
 export XNAT_PATH=$(realpath .)
 
 # XNAT_PLUGINS_FROM_HOST tracks STACK_FILES deliberately: only the development stack bind-mounts
-# xnat/plugins over the image, so only development needs the host-side plugin cache (and the S3
-# bucket and AWS credentials that populate it). Production bakes plugins into the image, and a
-# trust host has neither FLIP_ARTIFACTS_BUCKET_NAME nor a reason to reach S3 for them.
+# xnat/plugins over the image, so only development needs the host-side plugin cache. Production
+# bakes plugins into the image, so a trust host has no reason to hold or check one.
 ifneq ($(IS_DEPLOYED),)
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
 XNAT_PLUGINS_FROM_HOST =
@@ -289,8 +287,8 @@ define require_xnat_passwords
 	fi
 endef
 
-# Build XNAT Docker images locally (mirrors CI workflow)
-# Requires AWS CLI access to download WAR and plugins from S3
+# Build XNAT Docker images locally (mirrors CI workflow). Downloads the WAR and plugins from
+# upstream on first use (or copies them from ARTIFACTS_DIR=<dir>), verifying the pinned checksums.
 build:
 	@echo "🔧 Building XNAT Docker images..."
 	$(MAKE) xnat-war-download
@@ -334,15 +332,15 @@ up:
 # Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
 # trust/Makefile's up-trust calls this so a trust comes up complete.
 #
-# In development, validate the version-matched, gitignored plugin cache before tearing down a
-# working XNAT: a fresh clone downloads it here, a warm cache skips AWS, and a failure leaves the
-# running stack untouched. Skipped outside development, where plugins come baked into the image
-# (see XNAT_PLUGINS_FROM_HOST above).
+# In development, check the gitignored plugin cache against artifacts.manifest before tearing down
+# a working XNAT. The check never downloads: a cold or stale cache fails here, naming the prep step
+# (`make -C trust prepare-artifacts`), and leaves the running stack untouched. Skipped outside
+# development, where plugins come baked into the image (see XNAT_PLUGINS_FROM_HOST above).
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
 ifdef XNAT_PLUGINS_FROM_HOST
-	$(MAKE) xnat-plugins-download
+	$(MAKE) xnat-plugins-check
 endif
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
@@ -527,39 +525,21 @@ xnat-stack-down:
 clean: down
 	docker system prune -f
 
-# Download XNAT WAR into the xnat-web Docker build context (skips if already present)
-xnat-war-download:
-	@mkdir -p xnat/build-artifacts
-	@if [ -f xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war ]; then \
-		echo "✅ XNAT WAR already exists locally."; \
-	else \
-		echo "📦 Downloading XNAT WAR from S3..."; \
-		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat-$(XNAT_VERSION)/xnat-web-$(XNAT_VERSION).war" \
-			"xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
-	fi
-
-# Ensure required XNAT plugins are present locally (skips S3 sync if all are available).
-# The S3 artifact set is keyed by XNAT version — s3://<bucket>/xnat-<version>/{xnat-web-<version>.war,
-# plugins/} — so different branches (e.g. main vs develop across an XNAT upgrade) can build against
-# different WAR + plugin rosters without clobbering each other.
+# The third-party artifact caches (FLIP#1292). scripts/xnat_artifacts.sh reads artifacts.manifest:
+# `fetch` keeps every file whose SHA-256 already matches and downloads the rest from the pinned
+# upstream URL (or copies it from ARTIFACTS_DIR=<dir> on a host with no internet route); `check`
+# only verifies and never downloads. No AWS access or bucket is involved: the files are public
+# upstream downloads that FLIP does not redistribute.
 #
-# A copied-but-unedited .env leaves the `<your-...>` placeholder in place, and a placeholder is not
-# empty: an emptiness check passes it straight to the S3 sync, which dies on an opaque AWS
-# bucket-name validation error instead of the actionable message below. Reject the placeholder shape
-# too — the same idea as XNAT_CREDENTIAL_PLACEHOLDER above and unset_or_placeholder in
-# deploy/providers/AWS/Makefile.
+# The WAR goes into the xnat-web Docker build context, the plugins into the dev bind-mount cache.
+xnat-war-download:
+	@./scripts/xnat_artifacts.sh fetch war xnat/build-artifacts
+
 xnat-plugins-download:
-	@case "$(FLIP_ARTIFACTS_BUCKET_NAME)" in \
-	  "") reason="is unset" ;; \
-	  "<"*">") reason="is still the .env placeholder ($(FLIP_ARTIFACTS_BUCKET_NAME))" ;; \
-	  *) reason="" ;; \
-	esac; \
-	[ -z "$$reason" ] || { \
-	  echo "❌ FLIP_ARTIFACTS_BUCKET_NAME $$reason — the host plugin cache cannot be filled."; \
-	  echo "   Set it in .env.development (see the 'S3 Buckets' block), or pass it on the command"; \
-	  echo "   line: make xnat-plugins-download FLIP_ARTIFACTS_BUCKET_NAME=<bucket>."; \
-	  exit 1; }
-	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)" "xnat-$(XNAT_VERSION)/plugins"
+	@./scripts/xnat_artifacts.sh fetch plugin xnat/plugins
+
+xnat-plugins-check:
+	@./scripts/xnat_artifacts.sh check plugin xnat/plugins
 
 # Creates the data-volume directory structure for one trust's XNAT stack and
 # wipes any previous data. Docker Swarm requires host directories to exist

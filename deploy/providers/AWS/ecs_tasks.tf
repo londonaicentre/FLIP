@@ -28,7 +28,11 @@
 # keys, startup files and transfer directories survive task restarts.
 
 locals {
-  fl_api_image    = "${var.docker_registry}${var.fl_api_name}:${var.flip_fl_image_tag}"
+  # A release apply pins `v<X.Y.Z>@sha256:…` per repository (FLIP#1283), so the
+  # two FL images carry different tags. fl_api_image_tag empty = "same as the
+  # server", which is every non-digest case.
+  fl_api_tag      = var.fl_api_image_tag != "" ? var.fl_api_image_tag : var.flip_fl_image_tag
+  fl_api_image    = "${var.docker_registry}${var.fl_api_name}:${local.fl_api_tag}"
   fl_server_image = "${var.docker_registry}${var.fl_server_name}:${var.flip_fl_image_tag}"
 
   # FL backend shape (#566): the same task FAMILIES (fl-api-net-1,
