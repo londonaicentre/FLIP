@@ -25,13 +25,21 @@ Three files in ``local/`` change:
   site's GPU pool (``FL_K8S_MAX_GPUS``) with ``ignore_host`` set, because the parent pod has no GPU to
   probe. A declared pool, rather than NVFLARE's always-yes ``PassthroughResourceManager``, keeps
   NVFLARE's queueing: a job asking for more GPUs than the pool holds waits in the scheduler, and FLIP's
-  scheduling reporter tells the hub. The GPU resource consumer goes, since it pins CUDA devices in the
-  parent's own process.
+  scheduling reporter tells the hub. The kit's GPU resource consumer becomes NVFLARE's passthrough one:
+  NVFLARE will not start a job without a consumer once GPUs are allocated, and the GPU consumer would
+  probe the parent's (absent) GPUs and set ``CUDA_VISIBLE_DEVICES`` in the parent's own process. The job
+  pod gets its GPU from its ``nvidia.com/gpu`` request.
 - ``comm_config.json``: job pods reach the parent through its Service (``FL_K8S_PARENT_SERVICE``).
 - ``study_runtime.yaml``: the default study, which every FLIP job lands in (FLIP jobs carry no study),
   gets the job image and the site's pod template. The template is where the chart puts what a job
   pod needs from the trust: its labels, the images volume, the trust-internal key and the FL server's
   host aliases. It is copied into ``local/pod_specs/``, the path NVFLARE resolves it from.
+
+NVFLARE hands each job pod the parent's workspace path, and the launcher mounts the job's (empty)
+workspace at that same path. The parent's workspace therefore cannot be a directory the job image needs:
+FLIP's process-mode client uses ``/app``, which is also where the image keeps its code and virtualenv, so
+the chart gives the parent its own workspace (``/var/tmp/nvflare/workspace``) in this mode, and the switch
+refuses a workspace that holds the interpreter it is running under.
 
 Stdlib-only, like ``site_policy``: it runs before NVFLARE and must not fail on a framework import.
 ``study_runtime.yaml`` is written as JSON, which is valid YAML. Any invalid setting or missing file
@@ -53,6 +61,9 @@ from typing import Any
 LAUNCHER_ID = "k8s_launcher"
 LAUNCHER_PATH = "nvflare.app_opt.job_launcher.k8s_launcher.ClientK8sJobLauncher"
 GPU_RESOURCE_MANAGER = "nvflare.app_common.resource_managers.gpu_resource_manager.GPUResourceManager"
+PASSTHROUGH_RESOURCE_CONSUMER = (
+    "nvflare.app_common.resource_consumers.passthrough_resource_consumer.PassthroughResourceConsumer"
+)
 # Every launcher id NVFLARE knows, so a kit prepared for another runtime cannot keep a second launcher.
 _REPLACED_COMPONENT_IDS = {
     "process_launcher",
@@ -138,8 +149,14 @@ def config_from_env(env: Mapping[str, str]) -> K8sJobMode:
     )
 
 
-def patch_resources(resources: Mapping[str, Any], mode: K8sJobMode) -> dict[str, Any]:
-    """Return ``resources.json`` with the K8s launcher and a declared GPU pool; the input is not changed."""
+def patch_resources(resources: Mapping[str, Any], mode: K8sJobMode, workspace: str) -> dict[str, Any]:
+    """Return ``resources.json`` with the K8s launcher and a declared GPU pool; the input is not changed.
+
+    Args:
+        resources: The kit's ``resources.json``.
+        mode: The cluster and GPU pool settings.
+        workspace: The parent's workspace root, where job pods mount theirs.
+    """
     patched = copy.deepcopy(dict(resources))
     components = patched.get("components") or []
     previous_manager: dict[str, Any] = next((c for c in components if c.get("id") == "resource_manager"), {})
@@ -157,6 +174,7 @@ def patch_resources(resources: Mapping[str, Any], mode: K8sJobMode) -> dict[str,
             },
         }
     )
+    kept.append({"id": "resource_consumer", "path": PASSTHROUGH_RESOURCE_CONSUMER, "args": {}})
     kept.append(
         {
             "id": LAUNCHER_ID,
@@ -167,6 +185,7 @@ def patch_resources(resources: Mapping[str, Any], mode: K8sJobMode) -> dict[str,
                 "namespace": mode.namespace,
                 "pending_timeout": mode.pending_timeout,
                 "default_python_path": sys.executable,
+                "workspace_mount_path": workspace,
             },
         }
     )
@@ -211,11 +230,17 @@ def apply(local_dir: Path, mode: K8sJobMode) -> None:
         OSError: a file is missing or cannot be written.
         ValueError: a file is not valid JSON.
     """
+    workspace = local_dir.resolve().parent
+    if Path(sys.executable).resolve().is_relative_to(workspace) or Path(sys.executable).is_relative_to(workspace):
+        raise ValueError(
+            f"job pods mount their workspace at the parent's, {workspace}, which would hide this image's Python "
+            f"({sys.executable}); give the client a workspace of its own, e.g. /var/tmp/nvflare/workspace"
+        )
     resources_path = local_dir / "resources.json"
     source = resources_path if resources_path.exists() else local_dir / "resources.json.default"
     if not source.exists():
         raise FileNotFoundError(f"no resources.json or resources.json.default in {local_dir}")
-    resources = patch_resources(_read_json(source), mode)
+    resources = patch_resources(_read_json(source), mode, str(workspace))
     comm_path = local_dir / "comm_config.json"
     comm_config = patch_comm_config(_read_json(comm_path) if comm_path.exists() else {}, mode)
     if mode.pod_template is not None and not mode.pod_template.is_file():

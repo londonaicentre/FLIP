@@ -23,6 +23,7 @@ from flip.nvflare import k8s_job_mode
 from flip.nvflare.k8s_job_mode import (
     GPU_RESOURCE_MANAGER,
     LAUNCHER_PATH,
+    PASSTHROUGH_RESOURCE_CONSUMER,
     config_from_env,
     main,
     patch_comm_config,
@@ -30,6 +31,7 @@ from flip.nvflare.k8s_job_mode import (
     study_runtime,
 )
 
+WORKSPACE = "/var/tmp/nvflare/workspace"
 ENV = {
     "FL_K8S_NAMESPACE": "flip-trust",
     "FL_K8S_PARENT_SERVICE": "flip-trust-fl-client-net-1-parent",
@@ -68,7 +70,7 @@ def _by_id(resources):
 
 
 def test_the_process_launcher_is_replaced_by_the_k8s_launcher():
-    patched = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV)))
+    patched = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))
 
     assert "process_launcher" not in patched
     launcher = patched["k8s_launcher"]
@@ -77,11 +79,13 @@ def test_the_process_launcher_is_replaced_by_the_k8s_launcher():
     assert launcher["args"]["pending_timeout"] == 900
     # The FLIP image's interpreter, not NVFLARE's /usr/local/bin/python3 default, which it does not have.
     assert launcher["args"]["default_python_path"] == sys.executable
+    # NVFLARE hands the job pod the parent's workspace path (-m), so the job's workspace mounts at that same path.
+    assert launcher["args"]["workspace_mount_path"] == WORKSPACE
 
 
 def test_the_site_declares_its_gpu_pool_without_probing_the_parent_host():
     """The parent pod has no GPU: probing it would refuse every GPU job, and passthrough would never queue one."""
-    patched = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV)))
+    patched = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))
 
     manager = patched["resource_manager"]
     assert manager["path"] == GPU_RESOURCE_MANAGER
@@ -89,12 +93,21 @@ def test_the_site_declares_its_gpu_pool_without_probing_the_parent_host():
     assert manager["args"]["mem_per_gpu_in_GiB"] == 7
     assert manager["args"]["ignore_host"] is True
     assert manager["args"]["expiration_period"] == 300, "the kit's reservation window carries over"
-    # The consumer pins CUDA devices in the parent's own process; the job pod gets its GPU from Kubernetes.
-    assert "resource_consumer" not in patched
+
+
+def test_allocated_gpus_are_consumed_by_kubernetes_not_the_parent():
+    """NVFLARE refuses to start a job without a consumer once the manager allocates GPUs.
+
+    The kit's GPUResourceConsumer probes the host's GPUs and sets CUDA_VISIBLE_DEVICES in the parent's own
+    process, which has no GPU; the job pod gets its GPU from its nvidia.com/gpu request instead.
+    """
+    consumer = _by_id(patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE))["resource_consumer"]
+
+    assert consumer == {"id": "resource_consumer", "path": PASSTHROUGH_RESOURCE_CONSUMER, "args": {}}
 
 
 def test_components_the_switch_does_not_own_are_kept_untouched():
-    patched = patch_resources(KIT_RESOURCES, config_from_env(ENV))
+    patched = patch_resources(KIT_RESOURCES, config_from_env(ENV), WORKSPACE)
 
     assert _by_id(patched)["site_log_streamer"] == _by_id(KIT_RESOURCES)["site_log_streamer"]
     assert patched["client"] == {"retry_timeout": 30}
@@ -103,9 +116,9 @@ def test_components_the_switch_does_not_own_are_kept_untouched():
 
 def test_patching_twice_gives_the_same_resources():
     mode = config_from_env(ENV)
-    once = patch_resources(KIT_RESOURCES, mode)
+    once = patch_resources(KIT_RESOURCES, mode, WORKSPACE)
 
-    assert patch_resources(once, mode) == once
+    assert patch_resources(once, mode, WORKSPACE) == once
 
 
 def test_job_pods_reach_the_parent_through_its_service():
@@ -229,6 +242,28 @@ def test_the_entrypoint_fails_closed_on_resources_that_are_not_an_object(tmp_pat
 
     assert "JSON object" in capsys.readouterr().err
     assert (local / "resources.json").read_text() == "[]"
+
+
+def test_the_entrypoint_mounts_job_workspaces_where_the_parent_keeps_its_own(tmp_path):
+    local = _kit(tmp_path)
+
+    assert main([str(local)], env=ENV) == 0
+
+    launcher = _by_id(json.loads((local / "resources.json").read_text()))["k8s_launcher"]
+    assert launcher["args"]["workspace_mount_path"] == str(tmp_path.resolve())
+
+
+def test_the_entrypoint_refuses_a_workspace_that_holds_the_image_python(tmp_path, monkeypatch, capsys):
+    """A job pod mounts an empty workspace at the parent's workspace path: /app would hide the FLIP image's code."""
+    local = _kit(tmp_path)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / ".venv" / "bin" / "python"))
+
+    assert main([str(local)], env=ENV) == 1
+
+    err = capsys.readouterr().err
+    assert str(tmp_path.resolve()) in err
+    assert "/var/tmp/nvflare/workspace" in err, "the error says what to do instead"
+    assert "process_launcher" in _by_id(json.loads((local / "resources.json").read_text())), "nothing was written"
 
 
 def test_the_entrypoint_fails_closed_when_the_pod_template_is_missing(tmp_path, capsys):
