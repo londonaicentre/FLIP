@@ -73,6 +73,11 @@ Issues = "https://github.com/londonaicentre/FLIP/issues"
 full = [
     "einops==0.8.1",
     "gdown>=5.2.2",
+    # NVFLARE's ClientK8sJobLauncher (FLIP#1428 job pods) imports it. Capped below 36: NVFLARE 2.9.0
+    # passes the GPU count as an int, and the 37.x client validates request bodies and rejects a
+    # non-string nvidia.com/gpu quantity, failing every GPU job at pod creation (NVFLARE itself
+    # excludes 36.0.0).
+    "kubernetes>=33.1.0,<36",
     "lpips==0.1.4",
     # monai[skimage,scipy,pyyaml] declares scikit-image / scipy / pyyaml at
     # MONAI-compatible versions (MONAI 1.5.x extras: skimage>=0.14.2,
