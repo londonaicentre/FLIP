@@ -1,0 +1,177 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- /*
+NVFLARE job pods (FLIP#1428): the fl-client stays a small parent that keeps the site registered, and
+NVFLARE's ClientK8sJobLauncher starts each FL job in its own pod, asking Kubernetes for the job's GPUs.
+This file renders what the launcher needs beside the fl-client Deployment (fl-client.yaml carries the
+switch itself): RBAC to manage job pods, the Service job pods reach the parent through, and the pod
+template every job pod starts from.
+*/}}
+
+{{- /*
+The job pod template. The launcher fills in the container NVFLARE names nvflare_job: image, command,
+the job workspace and startup-kit volumes, and resources (ephemeral storage plus nvidia.com/gpu from
+the job's resource_spec). Everything else a FLIP job needs from the trust comes from here, mirroring
+the fl-client container: its env, the trust-internal key, this net's images slice, /dev/shm and the FL
+server's host aliases (a job pod connects to the FL server itself, not only through the parent).
+Volumes, volumeMounts and env merge with the launcher's by name.
+*/}}
+{{- define "flip-trust.flJobPod" -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  labels:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-job
+    flip/network: {{ .Values.flClient.netId }}
+spec:
+  enableServiceLinks: false
+  {{- with .Values.flClient.hostAliases }}
+  hostAliases:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if .Values.imagePullSecrets }}
+  imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | indent 4 }}
+  {{- end }}
+  {{- with .Values.flClient.nvflare.jobPods.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.flClient.nvflare.jobPods.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- /* The same placement rule as the fl-client: both mount the shared images volume. */}}
+  {{- with .Values.flClient.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: nvflare_job
+      imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+      {{- with .Values.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      envFrom:
+        - configMapRef:
+            name: {{ include "flip-trust.fullname" . }}-fl-client
+      env:
+        {{- with .Values.uploadedFederatedDataBucket }}
+        - name: UPLOADED_FEDERATED_DATA_BUCKET
+          value: {{ . | quote }}
+        {{- end }}
+        - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+          valueFrom:
+            secretKeyRef:
+              name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+              key: trust-internal-service-key-header
+        - name: TRUST_INTERNAL_SERVICE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+              key: trust-internal-service-key
+      volumeMounts:
+        - name: images
+          mountPath: {{ .Values.flClient.imagesDir }}/{{ .Values.flClient.netId }}
+          subPath: {{ .Values.flClient.netId }}
+        - name: dshm
+          mountPath: /dev/shm
+  volumes:
+    - name: images
+{{- if .Values.sharedImagesPvc.enabled }}
+      persistentVolumeClaim:
+        claimName: {{ include "flip-trust.fullname" . }}-shared-images
+{{- else }}
+      emptyDir: {}
+{{- end }}
+    - name: dshm
+      emptyDir:
+        medium: Memory
+        sizeLimit: {{ .Values.flClient.shmSize }}
+{{- end }}
+
+{{- if and .Values.flClient.enabled (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}
+---
+# What ClientK8sJobLauncher does in this namespace: create, watch and delete the job pods; read their
+# events to tell "waiting for a GPU node" from a pod that can never start; and manage the Secrets it
+# mounts into each job pod (the startup kit, and a per-job credential Secret deleted with the job).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-launcher
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create", "delete", "get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "get", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-launcher
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "flip-trust.fullname" . }}-fl-client-launcher
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "flip-trust.fullname" . }}-fl-client
+    namespace: {{ include "flip-trust.namespace" . }}
+---
+# The parent's internal cell. Job pods connect back through it for the job workspace and the parent's
+# commands. It selects the parent alone: job pods carry component fl-job.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-{{ .Values.flClient.netId }}-parent
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+    flip/network: {{ .Values.flClient.netId }}
+  ports:
+    - name: fl-parent
+      port: {{ .Values.flClient.nvflare.jobPods.parentPort }}
+      targetPort: fl-parent
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+data:
+  job-pod.yaml: |
+    {{- include "flip-trust.flJobPod" . | nindent 4 }}
+{{- end }}
