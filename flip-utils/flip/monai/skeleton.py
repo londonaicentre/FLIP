@@ -127,7 +127,6 @@ def generate_skeleton(bundle_dir: str | Path, source: BundleSource | str = Bundl
     lines += [
         "",
         "flip:",
-        f'  query_ref: "{PLACEHOLDER_PREFIX}: path to the cohort .sql, e.g. query.sql>"  # EDITABLE',
         "  imaging:",
         f'    resource: "{PLACEHOLDER_PREFIX}: NIFTI | SEG | DICOM>"  # EDITABLE (the XNAT resource to read)',
         "    keys:  # EDITABLE (one entry per datalist key the bundle's configs read; 'image' is required)",

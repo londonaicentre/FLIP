@@ -12,7 +12,7 @@
 """The ``monai-flip.yaml`` overlay, schema v0.1 (FLIP#1105).
 
 The overlay is the one file a researcher adds to a MONAI training bundle to run it on FLIP. It binds
-the bundle to FLIP's data (a cohort query and an XNAT imaging resource), states what the federated
+the bundle to FLIP's imaging data (an XNAT resource and the datalist keys it fills), states what the federated
 exchange carries, and names the governance profile the bundle is checked against. Everything that
 carries clinical meaning stays in the bundle's own ``configs/``; the overlay never restates it.
 
@@ -20,6 +20,11 @@ Every model forbids unknown keys. The schema is a governance input, so a misspel
 must fail the load rather than be silently ignored (the same strictness the trust governance document
 applies, FLIP#1259). In particular, which class drives the round loop is an adapter detail settled by
 FLIP#1107; an overlay that tries to pin it (``client_algo``, ``stats_algo``) is rejected.
+
+The overlay carries no cohort query. On the platform the cohort is always the project's approved query,
+which the fl-server hands to every client; a bundle that named its own ``.sql`` would either be ignored
+or, if a later adapter read it, let the bundle choose its own cohort. ``flip.query_ref`` was therefore
+dropped from v0.1 and is rejected like any other unknown key.
 
 This module imports neither torch nor MONAI, so it can be used wherever flip-utils' base dependencies
 are installed.
@@ -209,18 +214,9 @@ class Governance(_Strict):
 class FlipSection(_Strict):
     """FLIP's half of the overlay: data binding, federated settings, governance."""
 
-    query_ref: str
     imaging: ImagingBinding
     fl: FLSettings = Field(default_factory=FLSettings)
     governance: Governance
-
-    @field_validator("query_ref")
-    @classmethod
-    def _check_query_ref(cls, value: str) -> str:
-        _relative_path(value, "flip.query_ref")
-        if PurePosixPath(value).suffix != ".sql":
-            raise ValueError(f"flip.query_ref must name a .sql file, got {value!r}")
-        return value
 
 
 class MonaiFlipOverlay(_Strict):
