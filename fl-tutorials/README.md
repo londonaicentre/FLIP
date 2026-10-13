@@ -77,6 +77,17 @@ different environments.
 It does not run the tutorials themselves: real training is what `run-all-tutorials` covers, on a GPU host, for both
 backends before a release is published. The record of that run is the *Release checks* section of the release notes.
 
+## Adding or changing a tutorial
+
+The tutorial contract — the file set per backend, the files that must stay byte-identical to the `fl-apps`
+templates, the hand-maintained lists a tutorial has to be added to, and the README shape (task figure, reference
+training curve, references, demo video) — is written down once, as the `new-tutorial` agent skill in
+[`.claude/skills/new-tutorial/`](../.claude/skills/new-tutorial/SKILL.md); its references read as plain Markdown
+without Claude Code. `bash .claude/skills/new-tutorial/scripts/check_tutorial.sh <name> [nvflare|flower|both]` runs the
+CPU-only part of that contract for one tutorial (discovery, required files, template parity, ruff, the guard tests,
+the sync script, a GPU-free NVFLARE job export) and lists the README and catalogue gaps; it does not run the
+simulator. See [#1444](https://github.com/londonaicentre/FLIP/issues/1444).
+
 For network provisioning and standalone service operation, use the
 [`fl-services/nvflare/`](../fl-services/nvflare/README.md) or
 [`fl-services/flower/`](../fl-services/flower/README.md) guide. For the files a user uploads through FLIP, see
