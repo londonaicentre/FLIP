@@ -14,7 +14,8 @@
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
-	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
+	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance \
+	restore-nifti-triggers
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the production compose) and the kit-file env token (ENV: stag stays distinct,
 # so a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production; the
@@ -580,6 +581,17 @@ reload-governance: check-governance
 	    case "$$line" in *"sha256=$$want"*) echo "✅ data-access-api enforces the document you validated (sha256 $$want…)$(if $(GOVERNANCE_INIT),; the fl-clients re-read its [fl_privacy.nvflare] section (their logs name it as '[site-privacy] …').)";; \
 	      *) echo "❌ data-access-api reports a different document than $$doc (sha256 $$want…)."; exit 1;; esac; \
 	  fi
+
+# Recreate the DICOM->NIfTI triggers a pre-FLIP#1451 XNAT configure deleted, active or inactive as
+# each project's hub-side setting says (the trust does not hold it). Report only without
+# ACTIVE/INACTIVE/REST; see trust/xnat/README.md, "Restoring missing DICOM->NIfTI triggers".
+restore-nifti-triggers:
+	$(require_kit_file)
+	@c=$(call trust_container,imaging-api); \
+	if [ -z "$$c" ]; then echo "❌ imaging-api for $(KIT) (compose project $(TRUST_PROJECT)) is not running."; exit 1; fi; \
+	docker exec "$$c" python -m imaging_api.scripts.restore_nifti_triggers \
+	  $(foreach id,$(ACTIVE),--active $(id)) $(foreach id,$(INACTIVE),--inactive $(id)) \
+	  $(if $(REST),--rest $(REST)) $(if $(DRY_RUN),--dry-run)
 
 down-trust:
 	$(require_kit)

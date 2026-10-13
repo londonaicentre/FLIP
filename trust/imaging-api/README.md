@@ -127,6 +127,23 @@ Create an XNAT project from a Central Hub project:
 }
 ```
 
+Creating the project also creates its DICOM->NIfTI trigger: an XNAT event subscription named
+`DICOM-NIfTI Conversion`, active when the project's `dicom_to_nifti` is set, whose action key is
+the one XNAT lists for the dcm2niix wrapper at `GET /xapi/events/allactions` (the key names the
+wrapper id, not the command id — FLIP#1451). The XNAT configure step finds FLIP's triggers by that
+name to repair them after a redeploy, so it is held equal across the three copies by
+`trust/xnat/tests/test_dcm2niix_registration.py`.
+
+#### Restoring triggers: `restore_nifti_triggers`
+
+`python -m imaging_api.scripts.restore_nifti_triggers` (inside the container; `make -C trust
+restore-nifti-triggers KIT=<CODE>` on Compose) lists every FLIP project and whether it has a
+trigger, and recreates missing ones through the same creation path, for the projects named with
+`--active` / `--inactive` (hub or XNAT project id) or covered by `--rest active|inactive`;
+`--dry-run` previews. It exists because XNAT configures before FLIP#1451 deleted Compose projects'
+triggers, and the trust cannot know which projects should convert: `dicom_to_nifti` reaches it only
+in the create task. See [`../xnat/README.md`](../xnat/README.md#restoring-missing-dicom-nifti-triggers).
+
 ### Retrieval
 
 Get import status or count for a project (queries the XNAT PostgreSQL database directly):

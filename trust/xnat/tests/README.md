@@ -40,6 +40,16 @@ protect the XNAT database credentials (FLIP-PT-056).
   lines, the WAR at the `.env` XNAT version, one jar per required plugin family, the same plugin
   URLs as the Helm chart) and executes `xnat_artifacts.sh` `check`/`fetch` against fixture
   manifests with a stubbed `curl` and an `aws` stub that must never run.
+- **dcm2niix registration and trigger repair** (`test_dcm2niix_registration.py`, FLIP#1451) —
+  runs both copies of the dcm2niix configure logic, `configure-dcm2niix.sh` (Compose) and the
+  chart's `configure-dcm2niix` container script (read from `xnat-init-job.yaml`), against
+  `fake_xnat.py`: a miniature XNAT behind a stubbed `curl` that keeps commands, wrapper
+  enablement and event subscriptions in a state file and judges a subscription valid the way
+  container-service 3.8.1 does. Pins that an existing command is updated in place (never
+  deleted, its command and wrapper ids kept, the pinned image carried), that a command is
+  registered only when none exists, that triggers left on a deleted wrapper are re-pointed to the
+  current one (and only FLIP's), that the Compose cleanup deletes only the legacy site-wide
+  subscription, and that the subscription name matches imaging-api's.
 - **Startup reliability** (`test_startup.py`) — executes the dev plugin-cache check ordering
   and authenticated plugin-readiness wait with stubbed curl commands,
   checks aggregate Make targets propagate failures, and pins root-relative paths

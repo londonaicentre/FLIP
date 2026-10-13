@@ -339,29 +339,61 @@ spec:
                 exit 1
               fi
 
+              # The command body sent both to register dcm2niix and to update it in place.
+              # One path, so both calls send the same body.
+              DCM2NIIX_COMMAND_JSON=/cs-config/dcm2niix_command.json
+              # imaging-api's name for every DICOM->NIfTI subscription it creates
+              # (DCM2NIIX_SUBSCRIPTION_NAME in imaging_api/services/projects.py).
+              DCM2NIIX_SUBSCRIPTION_NAME="DICOM-NIfTI Conversion"
+
+              # Update an existing dcm2niix command in place; register one only when there
+              # is none (FLIP#1451). This used to DELETE it and register it again on every
+              # install and upgrade. XNAT gives a new registration new ids, and each project's
+              # trigger names the dcm2niix wrapper by id, so every existing project's
+              # subscription went invalid and its scans stopped converting.
+              # POST /xapi/commands/{id} keeps the command id, and keeps the dcm2niix-scan
+              # wrapper's id (wrappers are matched by name), while still taking the new image.
+              # Source references for that, and for the trigger repair below, are in
+              # configure-dcm2niix.sh, which does the same on Compose. Keep the two in step.
               echo "Checking for an existing ${DCM2NIIX_NAME} command..."
               EXISTING=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}")
+              EXISTING_COUNT=$(printf '%s' "$EXISTING" | jq 'length')
+              if [ "${EXISTING_COUNT}" -gt 1 ]; then
+                echo "ERROR: ${EXISTING_COUNT} '${DCM2NIIX_NAME}' commands are registered ($(printf '%s' "$EXISTING" | jq -r '[.[] | "command \(.id) (wrapper \(.xnat[0].id // "none"))"] | join(", ")')); expected at most one." >&2
+                echo "  Compare those wrapper ids with the action-keys in GET /xapi/events/subscriptions, delete the command no subscription names, then re-run." >&2
+                exit 1
+              fi
               EXISTING_ID=$(printf '%s' "$EXISTING" | jq -r '.[0].id // empty')
               if [ -n "${EXISTING_ID}" ]; then
-                echo "Deleting existing command id=${EXISTING_ID}..."
-                xnat_curl -X DELETE "${XNAT_URL}/xapi/commands/${EXISTING_ID}" -u "${CREDS}" >/dev/null
+                echo "Updating existing command id=${EXISTING_ID} in place..."
+              else
+                echo "Registering ${DCM2NIIX_NAME} command..."
               fi
-
-              echo "Registering ${DCM2NIIX_NAME} command..."
-              xnat_curl -X POST "${XNAT_URL}/xapi/commands" \
+              xnat_curl -X POST "${XNAT_URL}/xapi/commands${EXISTING_ID:+/${EXISTING_ID}}" \
                 -u "${CREDS}" \
                 -H "Content-Type: application/json" \
-                -d @/cs-config/dcm2niix_command.json >/dev/null
+                -d @"${DCM2NIIX_COMMAND_JSON}" >/dev/null
 
-              echo "Looking up registered command id and wrapper name..."
+              echo "Looking up registered command id and wrapper..."
               RESPONSE=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}")
               CMD_ID=$(printf '%s' "${RESPONSE}" | jq -r '.[0].id // empty')
               WRAPPER_NAME=$(printf '%s' "${RESPONSE}" | jq -r '.[0].xnat[0].name // empty')
-              if [ -z "${CMD_ID}" ] || [ -z "${WRAPPER_NAME}" ]; then
-                echo "ERROR: ${DCM2NIIX_NAME} command not found after registration (id='${CMD_ID}' wrapper='${WRAPPER_NAME}')" >&2
+              WRAPPER_ID=$(printf '%s' "${RESPONSE}" | jq -r '.[0].xnat[0].id // empty')
+              if [ -z "${CMD_ID}" ] || [ -z "${WRAPPER_NAME}" ] || [ -z "${WRAPPER_ID}" ]; then
+                echo "ERROR: ${DCM2NIIX_NAME} command not found after registration (id='${CMD_ID}' wrapper='${WRAPPER_NAME}' wrapper id='${WRAPPER_ID}')" >&2
                 exit 1
               fi
-              echo "Command id=${CMD_ID}, wrapper=${WRAPPER_NAME}"
+              if [ -n "${EXISTING_ID}" ] && [ "${CMD_ID}" != "${EXISTING_ID}" ]; then
+                echo "ERROR: updating command ${EXISTING_ID} in place left it as id ${CMD_ID}" >&2
+                exit 1
+              fi
+              PINNED_IMAGE=$(jq -r '.image // empty' "${DCM2NIIX_COMMAND_JSON}")
+              REGISTERED_IMAGE=$(printf '%s' "${RESPONSE}" | jq -r '.[0].image // empty')
+              if [ "${REGISTERED_IMAGE}" != "${PINNED_IMAGE}" ]; then
+                echo "ERROR: command ${CMD_ID} runs '${REGISTERED_IMAGE}', not the pinned '${PINNED_IMAGE}'" >&2
+                exit 1
+              fi
+              echo "Command id=${CMD_ID}, wrapper=${WRAPPER_NAME} (id ${WRAPPER_ID}), image=${REGISTERED_IMAGE}"
               echo "Enabling ${DCM2NIIX_NAME} command site-wide..."
               xnat_curl -X PUT "${XNAT_URL}/xapi/commands/${CMD_ID}/wrappers/${WRAPPER_NAME}/enabled" \
                 -u "${CREDS}" >/dev/null
@@ -371,6 +403,86 @@ spec:
                 -u "${CREDS}" \
                 -H "Content-Type: application/json" \
                 -d '{"enabled": true}' >/dev/null
+
+              SUBS=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/events/subscriptions")
+              PROJECTS_JSON=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/data/projects?format=json")
+
+              # Re-point the project triggers an earlier install or upgrade left on a deleted
+              # dcm2niix wrapper (FLIP#1451): each of FLIP's subscriptions that names any other
+              # wrapper. Enable the current wrapper for the project first, because XNAT
+              # validates the subscription on update and the project's old enablement belongs
+              # to the deleted wrapper. A subscription whose project is gone is skipped. The
+              # action key is the one XNAT lists for this wrapper, not one built here.
+              ALL_ACTIONS=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/events/allactions")
+              CURRENT_ACTION_KEY=$(printf '%s' "${ALL_ACTIONS}" | jq -r --arg w "${WRAPPER_NAME}" --arg id "${WRAPPER_ID}" '
+                [(. // [])[]
+                 | select(.["display-name"] == $w and ((.["action-key"] // "") | split(":") | last) == $id)
+                 | .["action-key"]]
+                | if length == 1 then .[0] else empty end')
+              if [ -z "${CURRENT_ACTION_KEY}" ]; then
+                echo "ERROR: XNAT lists no single event-service action for wrapper '${WRAPPER_NAME}' (id ${WRAPPER_ID})." >&2
+                echo "  body: ${ALL_ACTIONS}" >&2
+                exit 1
+              fi
+              ACTION_PROVIDER_PREFIX="${CURRENT_ACTION_KEY%:*}:"
+              echo "Current ${DCM2NIIX_NAME} action key: ${CURRENT_ACTION_KEY}"
+              echo "Checking project DICOM->NIfTI triggers for a stale ${DCM2NIIX_NAME} wrapper id..."
+              STALE_SUBS=$(printf '%s' "${SUBS}" | jq -c --arg name "${DCM2NIIX_SUBSCRIPTION_NAME}" \
+                --arg prefix "${ACTION_PROVIDER_PREFIX}" --arg key "${CURRENT_ACTION_KEY}" --argjson projects "${PROJECTS_JSON}" '
+                [($projects.ResultSet.Result // [])[].ID] as $known
+                | (. // [])[]
+                | select(.name == $name)
+                | select((.["action-key"] // "") | startswith($prefix))
+                | select(.["action-key"] != $key)
+                | select((.["event-filter"]["project-ids"] // []) | length > 0)
+                | . + {missing: [.["event-filter"]["project-ids"][] | select(. as $p | $known | index($p) | not)]}')
+              REPAIRED=0
+              while IFS= read -r sub; do
+                [ -n "$sub" ] || continue
+                sub_id=$(printf '%s' "$sub" | jq -r '.id')
+                old_wrapper_id=$(printf '%s' "$sub" | jq -r --arg prefix "${ACTION_PROVIDER_PREFIX}" '.["action-key"] | ltrimstr($prefix)')
+                missing=$(printf '%s' "$sub" | jq -r '.missing | join(" ")')
+                if [ -n "$missing" ]; then
+                  echo "Skipped subscription ${sub_id} (wrapper ${old_wrapper_id}): its project no longer exists in XNAT: ${missing}"
+                  continue
+                fi
+                projects=$(printf '%s' "$sub" | jq -r '.["event-filter"]["project-ids"][]')
+                for project in $projects; do
+                  xnat_curl -X PUT "${XNAT_URL}/xapi/projects/${project}/commands/${CMD_ID}/wrappers/${WRAPPER_NAME}/enabled" \
+                    -u "${CREDS}" >/dev/null
+                done
+                update=$(printf '%s' "$sub" | jq -c --arg key "${CURRENT_ACTION_KEY}" \
+                  '{"action-key": $key, "active": .active, "act-as-event-user": (.["act-as-event-user"] // false), "attributes": (.attributes // {})}')
+                xnat_curl -X PUT "${XNAT_URL}/xapi/events/subscription/${sub_id}" \
+                  -u "${CREDS}" \
+                  -H "Content-Type: application/json" \
+                  -d "$update" >/dev/null
+                for project in $projects; do
+                  echo "Repaired the DICOM->NIfTI trigger of project ${project}: subscription ${sub_id} now runs wrapper ${WRAPPER_ID} (was ${old_wrapper_id})."
+                done
+                REPAIRED=$((REPAIRED + 1))
+              done <<EOF
+              ${STALE_SUBS}
+              EOF
+              echo "Project triggers repaired: ${REPAIRED}."
+
+              # Name each FLIP project with no trigger at all (an XNAT first configured by the
+              # Compose script before this fix lost them all). Not recreated here: whether a
+              # project converts is its hub-side dicom_to_nifti setting. imaging-api's
+              # restore-nifti-triggers recreates them (TROUBLESHOOTING 2.3d).
+              printf '%s' "${PROJECTS_JSON}" | jq -r --argjson subs "${SUBS}" --arg name "${DCM2NIIX_SUBSCRIPTION_NAME}" '
+                [($subs // [])[] | select(.name == $name) | (.["event-filter"]["project-ids"] // [])[]] as $covered
+                | (.ResultSet.Result // [])[]
+                | select((.secondary_ID // "") | test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
+                | select(.ID as $id | ($covered | index($id)) == null)
+                | "WARNING: project \(.ID) (hub project \(.secondary_ID)) has no DICOM->NIfTI trigger, so its scans are not converted. Restore it with restore-nifti-triggers (TROUBLESHOOTING 2.3d)."' >&2
+
+              # A warning, not a failure: a trigger can be invalid for a reason this job does
+              # not own, and failing would block every later upgrade on it.
+              xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/events/subscriptions" \
+                | jq -r --arg name "${DCM2NIIX_SUBSCRIPTION_NAME}" '(. // [])[]
+                  | select(.name == $name and .valid != true)
+                  | "WARNING: invalid DICOM->NIfTI trigger: subscription \(.id) (\(.["action-key"])) for project(s) \((.["event-filter"]["project-ids"] // []) | join(", ")): \(.["validation-message"] // "no message")"' >&2
 
               echo "Container Service + dcm2niix configuration complete."
           env:

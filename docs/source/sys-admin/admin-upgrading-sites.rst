@@ -159,6 +159,26 @@ follow.
    FLIP admin sees the same versions in *Connection Status → trust drawer*, with an amber
    ``≠ hub`` pill on any container still on another build.
 
+6. **Check every project still converts DICOM to NIfTI** (once, when upgrading *from* a
+   release before FLIP#1451). Those releases re-registered dcm2niix on every configure pass, and
+   on Compose also deleted every project's DICOM->NIfTI trigger. The configure pass now repairs
+   the triggers it can and names, in its log, each project left with none:
+
+   .. code-block:: text
+
+      WARNING: project <id> (hub project <id>) has no DICOM->NIfTI trigger, so its scans are not converted.
+
+   Whether a project converts is its *DICOM to NIfTI* setting on the hub (each project's page
+   shows it; the default is on), which the trust does not hold. Ask the FLIP admin for it, then:
+
+   .. code-block:: bash
+
+      sudo -E make -C trust restore-nifti-triggers KIT=<slot>              # report only
+      sudo -E make -C trust restore-nifti-triggers KIT=<slot> ACTIVE="<hub project id> ..." INACTIVE="<hub project id> ..."
+
+   Projects that still have a trigger are left alone. On Kubernetes the same command runs in the
+   imaging-api pod (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).
+
 Kubernetes
 ==========
 
