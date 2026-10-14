@@ -148,7 +148,8 @@ The first download of an accession's resources for a net pulls the study out of 
 under that net's slice of the images directory; the ``imaging-api`` records completion with a sentinel file
 per (assessor type, resource type) and serves later requests — the same fetch loop in the next FL round, the
 next job on Flower — from disk. Training code should therefore call ``flip.get_by_accession_number`` every
-round without its own caching; ``force_refresh=true`` re-downloads after the content changed in XNAT, and
+round without its own caching; each hit checks the study's file counts and sizes in XNAT and downloads it again
+if they changed, and
 uploads through ``flip.add_resource`` invalidate the entry automatically. Each FL client mounts only its own
 net's slice, so a job cannot read another net's cached studies.
 

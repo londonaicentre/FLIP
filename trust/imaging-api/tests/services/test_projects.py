@@ -30,6 +30,7 @@ from imaging_api.services.projects import (
     get_all_projects,
     get_command_info,
     get_experiment,
+    get_experiment_field,
     get_experiments,
     get_project,
     get_project_from_central_hub_project_id,
@@ -900,6 +901,11 @@ def test_get_subject_id_from_experiment_response_success():
 def test_get_subject_id_from_experiment_response_bad_data():
     with pytest.raises(Exception, match="Failed to parse XNAT experiment data"):
         get_subject_id_from_experiment_response({})
+
+
+def test_get_experiment_field_reads_the_experiment_id():
+    response = {"items": [{"data_fields": {"ID": "XNAT_E00004", "label": "FAK74558244"}}]}
+    assert get_experiment_field(response, "ID") == "XNAT_E00004"
 
 
 def test_identifiers_stay_in_one_segment_at_http_boundary(xnat_path_segment, sent_xnat_requests):

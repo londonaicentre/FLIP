@@ -72,13 +72,29 @@ is its one exemption.
 
 Downloads are cached on the trust host. Extraction lands in
 `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel
-(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction. When the
-sentinel is present the cached folder is returned without contacting XNAT, so FL training code that fetches the
-cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
+(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction, so FL training
+code that fetches the cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
 (assessor, resource); the per-project path segment keeps projects that share an accession from being served each
-other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload), by
-`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
-NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
+other's copies.
+
+The sentinel records XNAT's experiment ID and the resource stats (scan, label, resource ID, file count, size) read
+just before the download. A hit makes one call, `GET /data/experiments/{id}/scans/ALL/resources?format=json`, and
+compares them:
+- **Unchanged:** the cached folder is returned.
+- **Changed, or the experiment gone:** that resource's cached files (`scans/*/resources/<R>/`, or all of `scans/` for
+  `ALL`) and the sentinels covering them are deleted, then it is downloaded again. Deleting rather than merging keeps
+  files XNAT has since deleted off disk; other resource types stay cached. This is how labels uploaded straight to
+  XNAT (`flip.xnat` enrichment, the UI) and a NIfTI conversion that finished after an `ALL` download are seen.
+- **XNAT cannot answer:** the cached copy is served with a warning. The request's session check passed moments
+  before, and a failure would make an FL client skip the accession for that round.
+- **Not seen:** a file replaced by one of the same name and size (file digests are empty on FLIP's XNAT, whose
+  `checksums` setting is off); `force_refresh=true` covers it. Assessor (`SEG`) downloads are not checked, as XNAT
+  has no `assessors/ALL/resources` listing.
+- **A sentinel from an older imaging-api** holds no record; its copy is downloaded again once XNAT answers the lookups.
+
+`force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
+imaging-api changes the accession (see Upload), and — on the NVFLARE backend — by `CleanupImages`, which empties the
+whole net directory at job start and end.
 
 The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
 which FLIP sets to the accession id at import, so a study extracts as

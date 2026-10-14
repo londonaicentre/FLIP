@@ -369,9 +369,10 @@ These calls - among others - communicate with the Imaging API and retrieve the d
 
 The first ``get_by_accession_number`` call per (project, accession, resource type) is a full study download out of
 XNAT onto the trust host. The Imaging API caches it there, so later calls — e.g. the same fetch loop running again on
-the next FL round — return the local copy without touching XNAT. Training code can therefore call it every round
-without penalty and should not build its own on-disk guards around it; to force a re-download after the accession's
-content changed in XNAT, the Imaging API's download route accepts ``force_refresh=true`` (uploads through
+the next FL round — return the local copy after one small XNAT check, which downloads it again if the study changed
+there. Training code can therefore call it every round
+without penalty and should not build its own on-disk guards around it; to force a re-download (e.g. a file replaced
+by one of the same size), the Imaging API's download route accepts ``force_refresh=true`` (uploads through
 ``flip.add_resource`` invalidate the cache automatically).
 
 For communication with the Central Hub:

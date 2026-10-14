@@ -785,8 +785,24 @@ def get_subject_id_from_experiment_response(experiment_response: dict[str, Any])
     Raises:
         Exception: If there is an error during the parsing of the experiment response JSON.
     """
+    return get_experiment_field(experiment_response, "subject_ID")
+
+
+def get_experiment_field(experiment_response: dict[str, Any], field: str) -> str:
+    """
+    Reads one field of the experiment (``items[0].data_fields``) from the XNAT experiment response JSON.
+
+    Args:
+        experiment_response (dict[str, Any]): XNAT experiment response JSON.
+        field (str): The field, e.g. ``ID`` (XNAT's experiment ID) or ``subject_ID``.
+
+    Returns:
+        str: The field's value.
+
+    Raises:
+        Exception: If there is an error during the parsing of the experiment response JSON.
+    """
     try:
-        subject_id = experiment_response["items"][0]["data_fields"]["subject_ID"]
-        return subject_id
+        return experiment_response["items"][0]["data_fields"][field]
     except Exception as e:
         raise Exception(f"Failed to parse XNAT experiment data JSON: {str(e)}")

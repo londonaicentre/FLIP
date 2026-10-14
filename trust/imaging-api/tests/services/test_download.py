@@ -10,25 +10,40 @@
 # limitations under the License.
 #
 
+import asyncio
+import logging
 import os
 import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import requests
 
 from imaging_api.config import get_settings
 from imaging_api.services.download import (
     download_and_unzip_images,
     download_file,
     format_download_url,
+    get_resource_stats,
     unzip_file,
 )
+from imaging_api.services.image_cache import CachedDownload, read_sentinel, write_sentinel
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatFetchError
 
 XNAT_URL = get_settings().XNAT_URL
+
+EXPERIMENT_RESPONSE = {"items": [{"data_fields": {"ID": "XNAT_E00001", "subject_ID": "SUBJ1"}}]}
+STATS = [["173680", "NIFTI", "82", "1", "183823"]]
+
+
+@pytest.fixture(autouse=True)
+def resource_stats():
+    """Stands in for XNAT's resource listing; tests of get_resource_stats import the real function."""
+    with patch("imaging_api.services.download.get_resource_stats", return_value=STATS) as mock:
+        yield mock
 
 
 # ── format_download_url ──
@@ -272,7 +287,7 @@ class TestDownloadAndUnzipImages:
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
     @patch(
         "imaging_api.services.download.get_experiment",
-        return_value={"items": [{"data_fields": {"subject_ID": "SUBJ1"}}]},
+        return_value=EXPERIMENT_RESPONSE,
     )
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     @patch("imaging_api.services.download.os.walk", return_value=[])
@@ -333,7 +348,7 @@ class TestDownloadAndUnzipImages:
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_download_failure(self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers):
         mock_get_project.return_value = MagicMock(ID="PROJ1")
@@ -345,7 +360,7 @@ class TestDownloadAndUnzipImages:
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_download_not_found(self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers):
         mock_get_project.return_value = MagicMock(ID="PROJ1")
@@ -359,7 +374,7 @@ class TestDownloadAndUnzipImages:
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_local_storage_error_propagates_unwrapped(
         self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers
@@ -381,7 +396,7 @@ class TestDownloadAndUnzipImages:
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_accession_id_path_traversal_is_rejected(
         self, mock_get_project, mock_get_exp, mock_get_subj, headers, tmp_path
@@ -398,7 +413,7 @@ class TestDownloadAndUnzipImages:
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file")
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
     async def test_net_id_directory_is_created_on_demand(
@@ -430,18 +445,19 @@ class TestDownloadAndUnzipImages:
 # ── download cache (FLIP#953) ──
 
 
-def _seed_cached_download(base, net_id, project, accession, assessor="scan", resource="NIFTI"):
-    """Materialises a completed cached download: accession dir + payload + completeness sentinel."""
+def _seed_cached_download(base, net_id, project, accession, assessor="scan", resource="NIFTI", stats=STATS):
+    """Materialises a completed cached download: one file in the resource's folder + its sentinel."""
     accession_dir = os.path.realpath(os.path.join(base, net_id, project, accession))
-    os.makedirs(accession_dir, exist_ok=True)
-    Path(accession_dir, "scan.nii").write_text("nifti-data")
-    Path(accession_dir, f".flip_complete-{assessor}-{resource}").touch()
+    image = Path(accession_dir, f"{assessor}s", "1-x", "resources", resource, "files", "image")
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_text("cached")
+    write_sentinel(accession_dir, assessor, resource, CachedDownload("XNAT_E00001", stats))
     return accession_dir
 
 
 class TestDownloadCache:
     """A completed (net, project, accession, assessor, resource) download is served from local
-    disk without touching XNAT; the completeness sentinel — not file presence — is the key,
+    disk after one XNAT stats check; the completeness sentinel — not file presence — is the key,
     because extraction merges member-by-member and a crash can leave a partial folder."""
 
     @pytest.mark.asyncio
@@ -450,8 +466,16 @@ class TestDownloadCache:
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response")
     @patch("imaging_api.services.download.get_experiment")
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_cache_hit_skips_xnat_entirely(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip, headers, tmp_path
+    async def test_cache_hit_makes_one_stats_call_and_no_download(
+        self,
+        mock_get_project,
+        mock_get_exp,
+        mock_get_subj,
+        mock_download,
+        mock_unzip,
+        headers,
+        tmp_path,
+        resource_stats,
     ):
         accession_dir = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
 
@@ -459,6 +483,7 @@ class TestDownloadCache:
             result = await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
 
         assert result == accession_dir
+        resource_stats.assert_called_once_with("XNAT_E00001", "NIFTI", headers)
         for xnat_mock in (mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip):
             xnat_mock.assert_not_called()
 
@@ -466,7 +491,7 @@ class TestDownloadCache:
     @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
     @patch("imaging_api.services.download.download_file", side_effect=lambda url, dest, headers: dest)
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_cache_miss_downloads_then_writes_sentinel(
         self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip, headers, tmp_path
@@ -489,7 +514,7 @@ class TestDownloadCache:
     @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
     @patch("imaging_api.services.download.download_file", side_effect=lambda url, dest, headers: dest)
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_sentinel_is_exact_match_per_resource_type(
         self,
@@ -516,7 +541,7 @@ class TestDownloadCache:
     @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
     @patch("imaging_api.services.download.download_file", side_effect=lambda url, dest, headers: dest)
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_sentinel_is_per_project(
         self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, mock_unzip, headers, tmp_path
@@ -535,7 +560,7 @@ class TestDownloadCache:
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.unzip_file", side_effect=_fake_unzip)
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_force_refresh_invalidates_before_redownload(
         self, mock_get_project, mock_get_exp, mock_get_subj, mock_unzip, headers, tmp_path
@@ -566,7 +591,7 @@ class TestDownloadCache:
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_real_default_layout_zip_is_extracted_and_marked_complete(
         self, mock_get_project, mock_get_exp, mock_get_subj, headers, tmp_path
@@ -590,7 +615,7 @@ class TestDownloadCache:
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_mislaid_zip_is_refused_and_never_cached(
         self, mock_get_project, mock_get_exp, mock_get_subj, headers, tmp_path
@@ -614,7 +639,7 @@ class TestDownloadCache:
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.download_file", side_effect=Exception("connection reset"))
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_failed_download_leaves_no_sentinel(
         self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers, tmp_path
@@ -638,6 +663,262 @@ class TestDownloadCache:
                 await download_and_unzip_images("../../escape", "ACC1", "net1", "scan", "NIFTI", headers)
 
         mock_get_project.assert_not_called()
+
+
+# ── a hit is checked against XNAT (FLIP#1456 F1) ──
+
+ENRICHED = [["173680", "NIFTI", "82", "3", "400113"]]  # STATS after two label files were uploaded
+DICOM_STATS = [["173680", "DICOM", "3", "1", "263410"]]
+
+
+@pytest.fixture
+def xnat(tmp_path):
+    """The miss path against a stand-in XNAT: the download writes a default-layout zip of ``xnat.members``."""
+    state = MagicMock(members=[XNAT_DEFAULT_MEMBER])
+    with (
+        patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
+        patch("imaging_api.services.download.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
+        patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE) as state.get_experiment,
+        patch(
+            "imaging_api.services.download.download_file",
+            side_effect=lambda url, dest, h: _write_zip(dest, state.members),
+        ) as state.download,
+    ):
+        yield state
+
+
+def _fetch(headers, net="net1", assessor="scan", resource="NIFTI", **kwargs):
+    return asyncio.run(download_and_unzip_images("hub-proj-1", "ACC123", net, assessor, resource, headers, **kwargs))
+
+
+def _file(accession_dir, resource):
+    return Path(accession_dir, "scans", "1-x", "resources", resource, "files", "image")
+
+
+class TestHitCheckedAgainstXnat:
+    def test_a_change_replaces_only_that_resource(self, headers, tmp_path, xnat, resource_stats):
+        """flip.get_by_accession_number([DICOM, NIFTI]) fetches each type into one folder: a stale NIFTI
+        must not take the DICOM copy with it."""
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123", resource="DICOM", stats=DICOM_STATS)
+        _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123", resource="ALL")
+        _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        resource_stats.side_effect = lambda e, r, h: DICOM_STATS if r == "DICOM" else ENRICHED
+
+        assert _fetch(headers, resource="DICOM") == acc
+        assert _fetch(headers, resource="NIFTI") == acc
+
+        xnat.download.assert_called_once()
+        assert not _file(acc, "NIFTI").exists()  # deleted, not merged into
+        assert (tmp_path / "net1" / "hub-proj-1" / XNAT_DEFAULT_MEMBER).is_file()
+        assert read_sentinel(acc, "scan", "NIFTI").resource_stats == ENRICHED
+        assert read_sentinel(acc, "scan", "ALL") is None  # covered the NIFTI files
+        assert _file(acc, "DICOM").is_file()
+        assert read_sentinel(acc, "scan", "DICOM").resource_stats == DICOM_STATS
+
+        _fetch(headers, resource="DICOM")
+        _fetch(headers, resource="NIFTI")
+        xnat.download.assert_called_once()  # both hits now
+
+    def test_other_nets_and_projects_are_left_alone(self, headers, tmp_path, xnat, resource_stats):
+        _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        others = [
+            _seed_cached_download(str(tmp_path), *where, "ACC123") for where in (("net2", "hub-proj-1"), ("net1", "p2"))
+        ]
+        resource_stats.return_value = ENRICHED
+
+        _fetch(headers)
+
+        for acc in others:
+            assert _file(acc, "NIFTI").is_file()
+            assert read_sentinel(acc, "scan", "NIFTI").resource_stats == STATS
+
+    def test_a_deleted_experiment_is_looked_up_again_by_label(self, headers, tmp_path, xnat, resource_stats):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        resource_stats.side_effect = [NotFoundError("gone"), STATS]
+
+        assert _fetch(headers) == acc
+
+        xnat.get_experiment.assert_called_once_with(project_id="P", experiment_id_or_label="ACC123", headers=headers)
+        xnat.download.assert_called_once()
+
+    def test_a_study_gone_from_xnat_is_gone_from_the_cache(self, headers, tmp_path, xnat, resource_stats):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        resource_stats.side_effect = NotFoundError("gone")
+        xnat.get_experiment.side_effect = NotFoundError("gone")
+
+        with pytest.raises(NotFoundError):
+            _fetch(headers)
+
+        assert not _file(acc, "NIFTI").exists()
+        assert read_sentinel(acc, "scan", "NIFTI") is None
+
+    @pytest.mark.parametrize("failure", [requests.ConnectionError("refused"), XnatFetchError("502")])
+    def test_xnat_unable_to_answer_serves_the_copy_with_a_warning(
+        self, headers, tmp_path, xnat, resource_stats, caplog, failure
+    ):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        resource_stats.side_effect = failure
+
+        with caplog.at_level(logging.WARNING, logger="imaging_api.utils.logger"):
+            assert _fetch(headers) == acc
+
+        xnat.download.assert_not_called()
+        assert _file(acc, "NIFTI").is_file()
+        assert "could not check XNAT" in caplog.text
+
+    def test_a_stale_copy_is_never_served_even_when_the_lookups_fail(self, headers, tmp_path, xnat, resource_stats):
+        _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        resource_stats.return_value = ENRICHED
+        xnat.get_experiment.side_effect = Exception("connection refused")
+
+        with pytest.raises(Exception, match="connection refused"):
+            _fetch(headers)
+
+    def test_an_older_sentinel_is_replaced_once_xnat_answers(self, headers, tmp_path, xnat, resource_stats):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        Path(acc, ".flip_complete-scan-NIFTI").write_text("")  # what imaging-api wrote before the record
+
+        _fetch(headers)
+
+        xnat.download.assert_called_once()
+        assert not _file(acc, "NIFTI").exists()
+        assert read_sentinel(acc, "scan", "NIFTI") == CachedDownload("XNAT_E00001", STATS)
+
+    def test_an_older_sentinel_is_served_when_xnat_cannot_answer(self, headers, tmp_path, xnat, caplog):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        Path(acc, ".flip_complete-scan-NIFTI").write_text("")
+        xnat.get_experiment.side_effect = Exception("connection refused")
+
+        with caplog.at_level(logging.WARNING, logger="imaging_api.utils.logger"):
+            assert _fetch(headers) == acc
+
+        xnat.download.assert_not_called()
+        assert _file(acc, "NIFTI").is_file()
+        assert "could not check XNAT" in caplog.text
+
+    def test_a_malformed_record_is_refreshed_not_a_500(self, headers, tmp_path, xnat, resource_stats):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123", stats=[["1"]])
+
+        _fetch(headers)
+
+        assert read_sentinel(acc, "scan", "NIFTI").resource_stats == STATS
+
+    def test_an_assessor_download_is_not_checked(self, headers, tmp_path, xnat, resource_stats):
+        """XNAT 1.10 answers 404 for assessors/ALL/resources, so an assessor download records no stats."""
+        _fetch(headers, assessor="assessor", resource="SEG")
+        _fetch(headers, assessor="assessor", resource="SEG")
+
+        resource_stats.assert_not_called()
+        xnat.download.assert_called_once()
+
+    def test_the_miss_reads_the_stats_before_the_download(self, headers, tmp_path, xnat, resource_stats):
+        """Read after the zip, a change landing in between would be marked current for good."""
+        calls = []
+        resource_stats.side_effect = lambda *a: calls.append("stats") or STATS
+        download_zip = xnat.download.side_effect
+        xnat.download.side_effect = lambda *a: calls.append("download") or download_zip(*a)
+
+        _fetch(headers)
+
+        assert calls == ["stats", "download"]
+
+    def test_a_failed_refresh_leaves_no_sentinel(self, headers, tmp_path, xnat, resource_stats):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        resource_stats.return_value = ENRICHED
+        xnat.download.side_effect = Exception("connection reset")
+
+        with pytest.raises(Exception, match="Failed to download file"):
+            _fetch(headers)
+
+        assert read_sentinel(acc, "scan", "NIFTI") is None
+
+    def test_a_copy_that_cannot_be_deleted_is_a_storage_error(self, headers, tmp_path, xnat, resource_stats):
+        _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+        resource_stats.return_value = ENRICHED
+
+        with (
+            patch("imaging_api.services.download.clear_resource", side_effect=PermissionError("denied")),
+            pytest.raises(LocalStorageError, match="Cannot delete the stale cached copy"),
+        ):
+            _fetch(headers)
+
+        xnat.download.assert_not_called()
+
+    def test_force_refresh_clears_then_downloads(self, headers, tmp_path, xnat, resource_stats):
+        acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
+
+        _fetch(headers, force_refresh=True)
+
+        resource_stats.assert_called_once()  # the miss path's; no hit check
+        xnat.download.assert_called_once()
+        assert not _file(acc, "NIFTI").exists()
+
+
+RESOURCE_ROWS = [
+    {"cat_id": "1", "label": "NIFTI", "xnat_abstractresource_id": "82", "file_count": "1", "file_size": "18"},
+    {"cat_id": "1", "label": "DICOM", "xnat_abstractresource_id": "3", "file_count": "1", "file_size": "26"},
+    {"cat_id": "2", "label": "secondary", "xnat_abstractresource_id": 7, "file_count": None, "file_size": 5},
+]
+
+
+def _listing(status_code=200, body=None):
+    response = MagicMock(status_code=status_code, text="body")
+    response.json.return_value = {"ResultSet": {"Result": RESOURCE_ROWS}} if body is None else body
+    return response
+
+
+class TestGetResourceStats:
+    @patch("imaging_api.services.download.requests.get")
+    def test_asks_for_the_experiments_scan_resources_with_a_short_timeout(self, mock_get):
+        mock_get.return_value = _listing()
+
+        get_resource_stats("XNAT_E00004", "NIFTI", {"Cookie": "c"})
+
+        (url,), kwargs = mock_get.call_args
+        assert urlsplit(url).path == "/data/experiments/XNAT_E00004/scans/ALL/resources"
+        assert parse_qs(urlsplit(url).query) == {"format": ["json"]}
+        assert kwargs == {"headers": {"Cookie": "c"}, "timeout": 5}
+
+    @pytest.mark.parametrize(
+        ("resource_type", "expected"),
+        [
+            ("NIFTI", [["1", "NIFTI", "82", "1", "18"]]),
+            ("nifti", []),  # XNAT's label lookup is exact
+            (
+                "ALL",
+                [["1", "DICOM", "3", "1", "26"], ["1", "NIFTI", "82", "1", "18"], ["2", "secondary", "7", "None", "5"]],
+            ),
+        ],
+    )
+    @patch("imaging_api.services.download.requests.get")
+    def test_keeps_the_rows_the_download_covers(self, mock_get, resource_type, expected):
+        mock_get.return_value = _listing()
+
+        assert get_resource_stats("XNAT_E00004", resource_type, {}) == expected
+
+    @pytest.mark.parametrize(
+        ("response", "error"),
+        [
+            (_listing(404), NotFoundError),
+            (_listing(500), XnatFetchError),
+            (_listing(body={"items": []}), XnatFetchError),
+        ],
+    )
+    @patch("imaging_api.services.download.requests.get")
+    def test_failures(self, mock_get, response, error):
+        mock_get.return_value = response
+
+        with pytest.raises(error):
+            get_resource_stats("XNAT_E00004", "NIFTI", {})
+
+
+def test_resource_stats_experiment_id_stays_in_one_segment(xnat_path_segment, sent_xnat_requests):
+    raw, encoded = xnat_path_segment
+    with pytest.raises(XnatFetchError):  # the stub answers `{}`, which is not a listing
+        get_resource_stats(raw, "NIFTI", {})
+
+    (request,) = sent_xnat_requests
+    assert urlsplit(request.url).path == f"/data/experiments/{encoded}/scans/ALL/resources"
 
 
 class TestDownloadFileLocalWriteFailure:
