@@ -170,6 +170,8 @@ that step. Configuration waits up to 15 minutes for an authenticated DQR plugin 
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
 tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
 
+When `make` configures XNAT (the `xnat-configure` recipe), that wait also checks XNAT loaded every plugin its jars declare (`GET /xapi/plugins`; see `xnat/config/wait-for-xnat-plugins.sh`).
+
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
@@ -358,8 +360,10 @@ account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8
    SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
    plus `XNAT_VERSION` in `.env`.
 2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
-3. Update the plugin compatibility table above.
-4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
+3. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
+   `trust/deploy/helm/check_status.py`; its test fails until you do.
+4. Update the plugin compatibility table above.
+5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 

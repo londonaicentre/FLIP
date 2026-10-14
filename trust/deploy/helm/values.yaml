@@ -820,6 +820,8 @@ xnat:
       # key with the jars on the pod by exactly that shape; a key spelled otherwise still
       # deploys fine, but a version skew under it reports as a missing download rather
       # than a stale jar, sending the operator to init-container logs that are clean.
+      # A new plugin also needs its XNAT plugin id in check_status.py's XNAT_PLUGIN_IDS
+      # (README "Verify the DICOM ingest path"); its test fails until it has one.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"

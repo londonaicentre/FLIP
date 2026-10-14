@@ -27,7 +27,7 @@ WHAT IT CHECKS:
   ✓ Pod readiness (all trust-side services)
   ✓ GPU allocation (fl-client)
   ✓ PersistentVolumeClaims
-  ✓ XNAT plugin roster (running pod vs xnat.web.plugins.urls)
+  ✓ XNAT plugin roster (running pod's jars, and what XNAT loaded, vs xnat.web.plugins.urls)
   ✓ HTTP endpoints (trust-api, imaging-api, data-access-api, Orthanc)
   ✓ MinIO S3 store (FL participant kits)
   ✓ System resources (disk, memory on the node)
@@ -158,8 +158,12 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
         )
         return True, result.stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        error_output = e.stderr if hasattr(e, "stderr") else str(e)
-        return False, error_output
+        # A timeout carries None or bytes here even with text=True, so normalise before callers
+        # treat it as text — a wedged cluster is exactly when this script must not crash.
+        err = e.stderr
+        if isinstance(err, bytes):
+            err = err.decode(errors="replace")
+        return False, err or str(e)
     except FileNotFoundError as e:
         # A tool this host lacks (macOS has no `free`) is a check that cannot run, not a crash.
         return False, str(e)
@@ -389,6 +393,57 @@ def compare_plugin_roster(
     return missing, stale
 
 
+# The id GET /xapi/plugins lists each xnat.web.plugins.urls key under — the `id=` in the jar's
+# META-INF/xnat/*-plugin.properties, read from the jars and the API on XNAT 1.10.0. A new plugin
+# needs an entry; tests/test_plugin_roster_and_timeout.py fails until it has one.
+XNAT_PLUGIN_IDS = {
+    "batch-launch": "batchLaunchPlugin",
+    "container-service": "containers",
+    "dicom-query-retrieve": "dicom-query-retrieve",
+    "ohif-viewer": "ohifViewerPlugin",
+}
+
+# Runs in the xnat-web pod as the FLIP service account. The credential is the pod's own
+# (XNAT_SERVICE_USER/PASSWORD from the release Secret) and reaches curl on stdin (`-K -`), so it is
+# in no argv here or in the pod. Prints the body, then the HTTP status on its own line.
+_FETCH_LOADED_PLUGINS = r"""
+[ -n "${XNAT_SERVICE_USER:-}" ] && [ -n "${XNAT_SERVICE_PASSWORD:-}" ] || {
+  echo "XNAT_SERVICE_USER / XNAT_SERVICE_PASSWORD are not set in this container" >&2; exit 3; }
+token=$(printf '%s:%s' "$XNAT_SERVICE_USER" "$XNAT_SERVICE_PASSWORD" | base64 | tr -d '\n')
+printf 'header = "Authorization: Basic %s"\n' "$token" \
+  | curl -sS --connect-timeout 5 --max-time 20 -K - -w '\n%{http_code}' http://localhost:8080/xapi/plugins
+"""
+
+
+def loaded_plugin_ids(pod: str, namespace: str) -> tuple[set[str] | None, str]:
+    """Ask a pod's XNAT which plugins it loaded (GET /xapi/plugins).
+
+    Args:
+        pod: Pod resource name.
+        namespace: Kubernetes namespace.
+
+    Returns:
+        ``(plugin ids, "")``, or ``(None, why not)`` when XNAT could not be asked.
+    """
+    success, output = run_command(
+        ["kubectl", "exec", pod, "-n", namespace, "--", "sh", "-c", _FETCH_LOADED_PLUGINS], timeout=45
+    )
+    if not success:
+        # kubectl names the defaulted container on every exec into xnat-web; that is not the error.
+        lines = [line for line in output.splitlines() if line.strip() and not line.startswith("Defaulted container")]
+        return None, " ".join(lines)[:200]
+    body, _, status = output.rpartition("\n")
+    if status.strip() != "200":
+        return None, f"GET /xapi/plugins answered HTTP {status.strip() or '(none)'}"
+    try:
+        listing = json.loads(body)
+    except json.JSONDecodeError:
+        listing = None
+    if not isinstance(listing, dict):
+        return None, "GET /xapi/plugins did not answer a JSON object"
+    return set(listing), ""
+
+
 class RosterLookup(StrEnum):
     """Outcome of asking the live release what plugin jars it wants.
 
@@ -477,13 +532,15 @@ def expected_plugin_jars(helm_release: str, namespace: str) -> PluginRoster:
 
 
 def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
-    """Assert the running xnat-web pod carries the jars its values ask for.
+    """Assert the running xnat-web pod carries the jars its values ask for, and XNAT loaded them.
 
     The plugins live in an emptyDir refilled by an init container on every pod creation,
     so a pod whose roster disagrees with the values has a pod SPEC older than the values —
     i.e. no upgrade since the roster changed ever completed far enough to roll the
     Deployment. Nothing else in this script can see that: the release reports deployed,
     the pod reports Ready, and XNAT answers HTTP. It only surfaces on the DICOM path.
+    A plugin that loads can still fail at run time (one built for another XNAT core aborts
+    every C-STORE, FLIP#1228), so this does not replace ``make smoke-cstore``.
 
     Args:
         helm_release: Helm release name.
@@ -546,6 +603,7 @@ def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
 
     inspected: list[str] = []
     clean: list[str] = []
+    unasked: list[str] = []
     for pod in pods:
         success, listing = run_command(
             ["kubectl", "exec", pod, "-n", namespace, "--", "ls", "-1", XNAT_PLUGIN_DIR],
@@ -573,13 +631,37 @@ def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
                 f"XNAT plugin '{key}': {jar} is not in {XNAT_PLUGIN_DIR} on '{pod}' — the "
                 "download-plugins init container did not fetch it (check its logs for a failed download).",
             )
-        if not missing and not stale:
+
+        # The one thing the filenames cannot show: a jar on disk that XNAT did not load (unreadable,
+        # e.g. a truncated download). The emptyDir is filled before Tomcat starts, so a stale pod is
+        # already caught above.
+        loaded, why = loaded_plugin_ids(pod, namespace)
+        unloaded = []
+        if loaded is None:
+            print_status("WARN", f"Could not ask XNAT on '{pod}' which plugins it loaded ({why}) — jars on disk only")
+            unasked.append(pod)
+        else:
+            for key, jar in sorted(roster.jars.items()):
+                plugin_id = XNAT_PLUGIN_IDS.get(key)
+                if plugin_id is None:
+                    print_status("WARN", f"XNAT plugin '{key}': no plugin id known (add it to XNAT_PLUGIN_IDS)")
+                elif jar in found and plugin_id not in loaded:
+                    unloaded.append(key)
+                    print_status(
+                        "FAIL",
+                        f"XNAT plugin '{key}' on '{pod}': {jar} is present on disk but not loaded "
+                        f"(GET /xapi/plugins lists no '{plugin_id}') — see the tomcat container's startup log.",
+                    )
+        if not missing and not stale and not unloaded:
             clean.append(pod)
 
     if inspected and len(clean) == len(inspected):
         jars = ", ".join(sorted(roster.jars.values()))
         where = clean[0] if len(clean) == 1 else f"all {len(clean)} running pods"
-        print_status("PASS", f"XNAT plugin roster matches values on {where} ({len(roster.jars)} jars: {jars})")
+        loaded_too = "" if unasked else ", and XNAT loaded them all"
+        print_status(
+            "PASS", f"XNAT plugin roster matches values on {where} ({len(roster.jars)} jars: {jars}){loaded_too}"
+        )
 
 
 def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:

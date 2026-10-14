@@ -40,6 +40,8 @@ from pathlib import Path
 
 import pytest
 
+from plugin_fixtures import declared_ids, plugins_listing, xnat_home
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIGURE_XNAT = REPO_ROOT / "trust/xnat/xnat/config/configure-xnat.sh"
 PLUGIN_WAIT = REPO_ROOT / "trust/xnat/xnat/config/wait-for-xnat-plugins.sh"
@@ -88,8 +90,9 @@ def test_plugin_wait_runs_before_any_plugin_dependent_call() -> None:
     )
 
 
+@pytest.mark.parametrize("roster", ["1", ""], ids=["roster", "dqr-route-only"])
 @pytest.mark.parametrize("redirect_status", ["301", "302", "307"])
-def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str) -> None:
+def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str, roster: str) -> None:
     """A redirect means "site not initialized" — never "plugin still loading".
 
     Waiting cannot clear it, so the script must exit non-zero straight away rather
@@ -98,14 +101,15 @@ def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str) ->
     """
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
-    # -w '%{http_code}' asks for the status; -w '%{redirect_url}' asks for the target. The stub
-    # answers whichever this invocation requested, so the script's own error path works too.
+    # -w '\n%{http_code}' asks for the body and then the status; -w '%{redirect_url}' asks for the
+    # target. The stub answers whichever this invocation requested, so the script's own error path
+    # works too.
     (stub_bin / "curl").write_text(
         "#!/bin/sh\n"
         'for arg in "$@"; do\n'
         '  case "$arg" in\n'
         "    '%{redirect_url}') printf 'http://xnat-web:8080/setup'; exit 0 ;;\n"
-        f"    '%{{http_code}}') printf '{redirect_status}'; exit 0 ;;\n"
+        f"    *'%{{http_code}}') printf '\\n{redirect_status}'; exit 0 ;;\n"
         "  esac\n"
         "done\n"
         f"printf '{redirect_status}'\n"
@@ -114,6 +118,10 @@ def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str) ->
 
     env = {
         "PATH": f"{stub_bin}:/usr/bin:/bin",
+        # With the roster the wait reads which plugins to expect from the jars here before its first
+        # probe; without it, it probes the DQR route alone. Both must fail fast.
+        "XNAT_HOME": str(xnat_home(tmp_path)),
+        "XNAT_PLUGIN_READINESS_ROSTER": roster,
         "XNAT_ADMIN_USER": "admin",
         "XNAT_ADMIN_INITIAL_PASSWORD": "initial",  # pragma: allowlist secret
         "XNAT_ADMIN_PASSWORD": "rotated",  # pragma: allowlist secret
@@ -137,23 +145,30 @@ def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str) ->
         "the error must name site initialization as the cause — a bare 'DQR not ready' sends "
         f"the reader after a plugin that is fine. Got:\n{combined}"
     )
-    assert "DQR not ready yet" not in combined, (
+    assert "retrying" not in combined, (
         "the script polled on a redirect instead of failing fast; it would burn the whole "
         f"timeout budget. Got:\n{combined}"
     )
 
 
 def test_probe_still_succeeds_on_2xx(tmp_path: Path) -> None:
-    """The happy path is untouched — a ready plugin route still ends the wait."""
+    """The happy path is untouched — every plugin listed and the DQR route answering ends the wait."""
     stub_bin = tmp_path / "bin"
     stub_bin.mkdir()
-    (stub_bin / "curl").write_text("#!/bin/sh\nprintf '200'\n")
+    # GET /xapi/plugins lists every plugin the fixture jars declare; GET /xapi/dqr/settings answers.
+    listing = plugins_listing(declared_ids())
+    (stub_bin / "curl").write_text(
+        "#!/bin/sh\n"
+        f"""case "$*" in *'/xapi/plugins'*) printf '%s\\n200' '{listing}' ;; *) printf '{{}}\\n200' ;; esac\n"""
+    )
     (stub_bin / "curl").chmod(0o755)
 
     result = subprocess.run(
         ["bash", str(PLUGIN_WAIT)],
         env={
             "PATH": f"{stub_bin}:/usr/bin:/bin",
+            "XNAT_HOME": str(xnat_home(tmp_path)),
+            "XNAT_PLUGIN_READINESS_ROSTER": "1",  # as the Compose xnat-configure recipe runs it
             "XNAT_ADMIN_USER": "admin",
             "XNAT_ADMIN_INITIAL_PASSWORD": "initial",  # pragma: allowlist secret
             "XNAT_ADMIN_PASSWORD": "rotated",  # pragma: allowlist secret
@@ -166,7 +181,7 @@ def test_probe_still_succeeds_on_2xx(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, f"a 200 must satisfy the wait. Got:\n{result.stdout}{result.stderr}"
-    assert "is ready" in result.stdout
+    assert "XNAT plugins are ready" in result.stdout
 
 
 def test_shellcheck_clean_if_available() -> None:

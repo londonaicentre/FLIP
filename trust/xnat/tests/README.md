@@ -44,7 +44,7 @@ protect the XNAT database credentials (FLIP-PT-056).
   runs `configure-dcm2niix.sh` for both Container Service backends against `fake_xnat.py`, a
   miniature XNAT behind a stubbed `curl`, and checks what XNAT ends up holding.
 - **Startup reliability** (`test_startup.py`) — executes the dev plugin-cache check ordering
-  and authenticated plugin-readiness wait with stubbed curl commands,
+  and authenticated plugin-readiness wait with stubbed curl commands and fixture jars (`plugin_fixtures.py`),
   checks aggregate Make targets propagate failures, and pins root-relative paths
   passed to the end-to-end smoke test.
 

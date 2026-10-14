@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from plugin_fixtures import declared_ids, plugins_listing, xnat_home
+
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "xnat" / "config"
 SCRIPT = CONFIG_DIR / "configure-xnat.sh"
 
@@ -155,6 +157,10 @@ case "$url" in
     [ "$method" = "DELETE" ] && edit "$SCP_STATE" --argjson id "$id" 'map(select(.id != $id))'
     body=$(cat "$SCP_STATE")
     ;;
+  *"/xapi/plugins")
+    # The plugin-readiness wait's first probe: every plugin the fixture jars in XNAT_HOME declare.
+    body="$PLUGINS_JSON"
+    ;;
 esac
 
 # Lets a test make one specific call fail, to exercise the error paths.
@@ -189,9 +195,9 @@ BASE_ENV = {
     "XNAT_SERVICE_USER": "flipServiceAccount",
     "XNAT_SERVICE_PASSWORD": "service",  # pragma: allowlist secret
     "XNAT_PORT": "8104",
-    # The plugin-readiness wait polls until a DQR route answers, bounded only by wall clock. With
-    # sleep stubbed out, a test that makes that route fail would spin at full speed for the default
-    # 900s budget rather than failing; cap it so the harness can never hang on one.
+    # The plugin-readiness wait polls until XNAT lists every plugin and a DQR route answers, bounded
+    # only by wall clock. With sleep stubbed out, a test that makes either fail would spin at full
+    # speed for the default 900s budget rather than failing; cap it so the harness can never hang.
     "XNAT_PLUGIN_READINESS_TIMEOUT_SECONDS": "5",
     "XNAT_PLUGIN_READINESS_POLL_SECONDS": "0",
 }
@@ -287,6 +293,11 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         "SCP_STATE": str(scp_file),
         "CREDS_LOG": str(tmp_path / "creds.txt"),
         "UNREADY_COUNT": str(tmp_path / "unready-count.txt"),
+        # As the Compose xnat-configure recipe runs it: the plugin-readiness wait reads which plugins
+        # to expect from the jars in XNAT_HOME, and the stub's GET /xapi/plugins lists all of them.
+        "XNAT_PLUGIN_READINESS_ROSTER": "1",
+        "XNAT_HOME": str(xnat_home(tmp_path)),
+        "PLUGINS_JSON": plugins_listing(declared_ids()),
         **(env_overrides or {}),
     }
 

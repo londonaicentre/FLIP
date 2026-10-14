@@ -27,11 +27,16 @@ Three things therefore have to stay true, and none is visible in a rendered char
   versions.
 """
 
+import base64
 import importlib.util
+import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 MAKEFILE = CHART_DIR / "Makefile"
@@ -524,18 +529,203 @@ def test_an_exec_failure_leaves_the_roster_unverified_rather_than_passing(
     )
 
 
-def test_a_single_matching_pod_passes(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
-    """The happy path still reports PASS, naming the jars it matched."""
-    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+def _xapi_plugins(*plugin_ids: str, status: str = "200") -> str:
+    """What the in-pod fetch prints: the GET /xapi/plugins body, a newline, the HTTP status."""
+    return json.dumps({pid: {"id": pid, "version": "1.0"} for pid in plugin_ids}) + f"\n{status}"
+
+
+def _pod(monkeypatch: pytest.MonkeyPatch, listing: str, fetched: str | None) -> None:
+    """One running xnat-web pod: its plugin-dir listing, and the /xapi/plugins fetch (None: exec fails)."""
+
+    def fake_run(args: list[str], **_kwargs: object) -> tuple[bool, str]:
+        if "ls" in args:
+            return True, listing
+        return (True, fetched) if fetched is not None else (False, "error: unable to upgrade connection")
+
     monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
-    monkeypatch.setattr(
-        check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar\nREADME")
-    )
+    monkeypatch.setattr(check_status, "run_command", fake_run)
+
+
+def test_a_single_matching_pod_passes(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
+    """The happy path still reports PASS, naming the jars it matched and that XNAT loaded them."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    _pod(monkeypatch, "dicom-query-retrieve-3.0.0-xpl.jar\nREADME", _xapi_plugins("dicom-query-retrieve"))
 
     check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
 
     assert [status for status, _ in reported] == ["PASS"]
     assert "dicom-query-retrieve-3.0.0-xpl.jar" in reported[0][1]
+    assert "XNAT loaded them all" in reported[0][1]
+
+
+# ── What XNAT loaded: GET /xapi/plugins ──────────────────────────────────────────────
+
+
+def test_every_plugin_in_the_values_has_its_xnat_plugin_id() -> None:
+    """The ids are not the keys, so the pairing is written down — and must cover the roster."""
+    urls = yaml.safe_load((CHART_DIR / "values.yaml").read_text())["xnat"]["web"]["plugins"]["urls"]
+
+    assert set(urls) == set(check_status.XNAT_PLUGIN_IDS), "add the new plugin's `id=` to XNAT_PLUGIN_IDS"
+    # As read from each jar's META-INF/xnat/*-plugin.properties and from /xapi/plugins (XNAT 1.10.0).
+    assert check_status.XNAT_PLUGIN_IDS == {
+        "batch-launch": "batchLaunchPlugin",
+        "container-service": "containers",
+        "dicom-query-retrieve": "dicom-query-retrieve",
+        "ohif-viewer": "ohifViewerPlugin",
+    }
+
+
+def test_a_jar_on_disk_that_xnat_did_not_load_fails(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """The new catch: the filename matches, so only XNAT's own list shows the jar was not loaded."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    _pod(monkeypatch, "dicom-query-retrieve-3.0.0-xpl.jar", _xapi_plugins("containers"))
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["FAIL"]
+    assert "dicom-query-retrieve-3.0.0-xpl.jar is present on disk but not loaded" in reported[0][1]
+
+
+@pytest.mark.parametrize(
+    ("fetched", "reason"),
+    [
+        (_xapi_plugins(status="401"), "HTTP 401"),
+        ("<html>ok</html>\n200", "JSON object"),
+        ('["containers"]\n200', "JSON object"),
+        (None, "unable to upgrade connection"),
+    ],
+)
+def test_when_xnat_cannot_be_asked_the_disk_check_still_runs(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]], fetched: str | None, reason: str
+) -> None:
+    """Unreadable is never "nothing loaded": the stale-jar catch still runs, and the run says it was weaker."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    _pod(monkeypatch, "dicom-query-retrieve-2.3.2-xpl.jar", fetched)
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    statuses = [status for status, _ in reported]
+    assert statuses == ["FAIL", "WARN"], reported
+    assert "2.3.2" in reported[0][1], "the stale jar was not reported"
+    assert reason in reported[1][1]
+
+
+def test_a_pass_without_xnats_answer_does_not_claim_it_loaded_anything(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    _pod(monkeypatch, "dicom-query-retrieve-3.0.0-xpl.jar", None)
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN", "PASS"]
+    assert "loaded" not in reported[1][1]
+
+
+def test_a_failed_exec_keeps_the_error_not_kubectls_container_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """kubectl names the defaulted container on every exec into xnat-web; that is not the failure."""
+    stderr = 'Defaulted container "tomcat" out of: tomcat, download-plugins (init)\nerror: container not found\n'
+    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (False, stderr))
+
+    assert check_status.loaded_plugin_ids("pod/xnat-1", "flip-trust") == (None, "error: container not found")
+
+
+@pytest.mark.parametrize("stderr", [None, b"partial \xff stderr"], ids=["none", "bytes"])
+def test_a_timed_out_command_reports_text_rather_than_crashing(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]], stderr: bytes | None
+) -> None:
+    """On a timeout ``e.stderr`` is None or bytes even with text=True; a wedged cluster must get a WARN.
+
+    Driven through the real ``run_command``: the plugin dir lists, then the /xapi/plugins exec times
+    out — the path that used to raise on ``None.splitlines()`` / ``bytes.startswith(str)``.
+    """
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        if "ls" in args:
+            return subprocess.CompletedProcess(args, 0, stdout="dicom-query-retrieve-3.0.0-xpl.jar\n", stderr="")
+        raise subprocess.TimeoutExpired(args, 45, output=None, stderr=stderr)
+
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
+    monkeypatch.setattr(check_status.subprocess, "run", run)
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN", "PASS"], reported
+    assert "Could not ask XNAT" in reported[0][1]
+
+
+def test_a_real_timeout_is_reported_as_text() -> None:
+    ok, message = check_status.run_command(["sleep", "5"], timeout=0.2)
+
+    assert ok is False
+    assert "timed out" in message
+
+
+def test_the_fetch_puts_no_credential_in_any_argv(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The credential is the pod's own, read in the pod and handed to curl on stdin.
+
+    The kubectl argv is captured, then its in-pod part run here for real under ``sh`` with a stub
+    ``curl`` that records its argv and stdin: the password is in neither kubectl's argv (it is never
+    known on this side) nor curl's.
+    """
+    seen: list[list[str]] = []
+    monkeypatch.setattr(check_status, "run_command", lambda args, **_k: (seen.append(args), (True, _xapi_plugins()))[1])
+    check_status.loaded_plugin_ids("pod/xnat-1", "flip-trust")
+    (argv,) = seen
+    assert argv[:7] == ["kubectl", "exec", "pod/xnat-1", "-n", "flip-trust", "--", "sh"]
+
+    stub = tmp_path / "curl"
+    stub.write_text(
+        f'#!/bin/sh\nprintf \'%s\\n\' "$*" > "{tmp_path}/argv"\ncat > "{tmp_path}/stdin"\nprintf \'{{}}\\n200\'\n'
+    )
+    stub.chmod(0o755)
+    secret = "s3cret-pass"  # pragma: allowlist secret
+    result = subprocess.run(
+        argv[6:],
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "XNAT_SERVICE_USER": "svc",
+            "XNAT_SERVICE_PASSWORD": secret,
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not any(secret in arg for arg in argv)
+    curl_argv = (tmp_path / "argv").read_text()
+    assert secret not in curl_argv, "the password reached curl's argv"
+    assert "-K -" in curl_argv, "curl no longer reads its config (the credential) from stdin"
+    header = re.search(r'Authorization: Basic ([A-Za-z0-9+/=]+)"', (tmp_path / "stdin").read_text())
+    assert header, "curl was not handed the credential on stdin"
+    assert base64.b64decode(header.group(1)).decode() == f"svc:{secret}"
+
+
+def test_the_fetch_refuses_without_the_pods_service_credential(tmp_path: Path) -> None:
+    """No credential in the pod means no request at all, not an anonymous one that 401s."""
+    stub = tmp_path / "curl"
+    stub.write_text(f'#!/bin/sh\ntouch "{tmp_path}/called"\n')
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("XNAT_SERVICE_")}
+
+    result = subprocess.run(
+        ["sh", "-c", check_status._FETCH_LOADED_PLUGINS],
+        env={**env, "PATH": f"{tmp_path}:{env['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "XNAT_SERVICE_PASSWORD" in result.stderr
+    assert not (tmp_path / "called").exists()
 
 
 def test_the_smoke_fails_a_curl_rather_than_reading_an_error_body() -> None:

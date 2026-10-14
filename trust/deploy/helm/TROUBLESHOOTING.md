@@ -851,8 +851,13 @@ kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
 # expect dicom-query-retrieve-3.0.0-xpl.jar and container-service-3.8.1-fat.jar,
 # and NO 2.3.2-xpl / 3.8.0-fat
 
+# What XNAT loaded (plugin ids, not jar names); the pod's own credential goes to curl on stdin
+kubectl exec -n flip-trust "$xnat_pod" -- sh -c 'printf "header = \"Authorization: Basic %s\"\n" \
+  "$(printf "%s:%s" "$XNAT_SERVICE_USER" "$XNAT_SERVICE_PASSWORD" | base64 | tr -d "\n")" \
+  | curl -s -K - http://localhost:8080/xapi/plugins' | jq -r 'to_entries[] | "\(.key) \(.value.version)"'
+
 # The same comparison, automated against the release's own values
-make -C trust/deploy/helm status        # FAILs naming both the expected and the found version
+make -C trust/deploy/helm status        # FAILs naming both versions, or a jar present on disk but not loaded
 
 # Exercise the path the roster is on, rather than just the socket
 make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then checks XNAT's prearchive

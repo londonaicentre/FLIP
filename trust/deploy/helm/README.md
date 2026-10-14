@@ -329,10 +329,17 @@ make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then checks XNAT's pr
 against the release's own `xnat.web.plugins.urls`, failing with both versions named when
 they disagree. They disagree when the **pod spec** is older than the values — the plugins
 live in an emptyDir refilled by an init container on every pod creation, so a mismatch
-means no upgrade has rolled `xnat-web` since the roster changed. A plugin built for a
-different XNAT core aborts every C-STORE in the importer, which is why `smoke-cstore`
-stores a real object through the PACS rather than trusting a C-ECHO: C-ECHO never reaches
-the importer and passes throughout.
+means no upgrade has rolled `xnat-web` since the roster changed. It then asks XNAT which plugins
+it **loaded** (`GET /xapi/plugins`, inside the pod as the service account, the credential on
+curl's stdin) and fails a jar that is **present on disk but not loaded** — unreadable, typically
+a truncated download; see the `tomcat` container's startup log. XNAT lists plugins by id, not by
+these keys (`container-service` is `containers`), hence `XNAT_PLUGIN_IDS` in `check_status.py`;
+when XNAT cannot be asked, `status` warns and checks the jars alone. This is the chart's only
+check of what XNAT loaded: the `xnat-init` readiness wait runs in its own pod, whose jars are the
+image's rather than this pod's, so it waits for the DQR route alone. A plugin built for a
+different XNAT core loads and then aborts every C-STORE in the importer, which is why
+`smoke-cstore` stores a real object through the PACS rather than trusting `status` or a C-ECHO:
+C-ECHO never reaches the importer and passes throughout.
 
 `smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
 evidence that the object landed — polled, strongest first: a new prearchive object carrying the
