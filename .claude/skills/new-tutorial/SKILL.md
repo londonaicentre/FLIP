@@ -34,6 +34,46 @@ changes the file set:
    folding it in silently.
 5. **Platform wiring.** Should `make e2e_smoke_<name>` exist? Only possible when the cohort is
    seeded on the dev trusts.
+6. **Data access tier.** Ask what the source data's licence allows, because it decides what the
+   dataset target may do:
+   - *Public* (MSD, Synthea, Hugging Face snapshots): a download script, as today.
+   - *Access-controlled* (ADNI, UK Biobank, PI-CAI's clinical extras, anything behind a Data Use
+     Agreement or an application): **nothing derived from it enters the repository** — no rows,
+     no per-subject tables, no per-site splits, no figure drawn from subject-level values, and no
+     fixture built by thinning the real tables. Decide with the user whether readers are expected
+     to hold the licence themselves (ADNI: an application most researchers can make) — then the
+     dataset target is the **converter alone**, no synthetic stand-in, and the README's figures and
+     reference numbers are *summary results* of a real run (edge frequencies, metrics), which such
+     licences allow; the CPU tests use invented, source-shaped fixtures. Generate a synthetic
+     stand-in (a seeded generator calibrated only to *published* summary statistics) only when the
+     licence is out of most readers' reach. Either way the README documents the real-data path as
+     **numbered steps a reader can follow end to end**: how to apply (where, what the application
+     asks, how long review takes),
+     the exact source tables to download (names, menu path, columns), a committed converter they
+     run locally against that download (`make convert-<dataset>-cohort`, code only — it reads the
+     source's public file and column names, writes the `query.sql` column contract to the
+     gitignored data root — the target refuses a path inside the repository that git does not
+     ignore — and prints counts, never a row), and the run
+     command with `DEV_DATAFRAME` / `SITE{N}_DATAFRAME` (or `SIM_DATA_ROOT` on Flower) pointing at
+     the result. Read the licence itself before writing this: say which results it allows to be
+     reported (ADNI: summary results only, with its acknowledgement and the download date) and
+     whether it restricts AI tools (ADNI's clause 4 does — the converter and simulator must run
+     outside a coding assistant's view of the data). Say in the README which numbers are from the
+     synthetic set and which (if any) from a real run the author did under their own access.
+   - *Private* (a trust's own cohort): simulator path on a synthetic stand-in as above; the real
+     cohort is only ever reached through `query.sql` on the platform.
+   The same rule applies to the per-site partition: a modulo split of a real access-controlled
+   table may not be committed either, so the generator writes the `site1/`/`site2/` splits.
+7. **Prior work.** Before designing the federated loop, search for existing work that federates
+   this kind of workflow (the method name plus "federated", the task plus "federated learning",
+   and the obvious acronyms), fetch the papers and any released code, and read the mechanism:
+   what each client sends, how the server combines it, which assumptions it adds (IID, discrete
+   variables, equal site sizes, a trusted server), and what the authors compared against. Build
+   on the closest one rather than re-inventing it, cite it in the README's `## References`, and
+   state in the README where the tutorial departs from it and why (FLIP's FedAvg-only plumbing,
+   the privacy filters, cohort shape). A method that cannot be expressed as weighted averaging of
+   client arrays needs a design note before any code — the Flower template `server_app.py` /
+   `strategy.py` are fixed and the NVFLARE recipes aggregate by weighted mean only.
 
 ## 2. Build it by copying the nearest tutorial
 
