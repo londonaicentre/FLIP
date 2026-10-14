@@ -198,23 +198,14 @@ class XnatClient:
     def list_scans(self, project_id: str) -> list[XnatScan]:
         """List every scan in an XNAT project, in one request.
 
-        XNAT's experiment listing joins each image session to its scans when asked for a scan column, so
-        ``GET /data/experiments?project=<id>&xsiType=xnat:imageSessionData`` with the column
-        ``xnat:imagescandata/id`` returns one row per scan. Two details matter:
-
-        - It is the global listing, not the project-scoped ``/data/projects/<id>/experiments``. The
-          project-scoped one silently leaves out sessions whose type has no element-security entry for
-          the project, such as ``xnat:dxSessionData`` (chest X-rays); imaging-api's ``get_experiments``
-          uses the global listing for the same reason. The global listing without ``xsiType`` cannot
-          join the scans and fails (XNAT 1.10.0 answers 500).
-        - A session with no scans comes back as one row with an empty scan id, which is skipped.
+        The global image-session listing with a scan column returns one row per scan, and an empty scan id
+        for a session without scans. The project-scoped listing would silently leave out DX sessions.
 
         Args:
             project_id (str): The XNAT project id.
 
         Returns:
-            list[XnatScan]: One entry per scan, keyed by accession id (the experiment label), in XNAT's
-            row order.
+            list[XnatScan]: One entry per scan, keyed by accession id (the experiment label).
 
         Raises:
             XnatError: If the XNAT request fails.

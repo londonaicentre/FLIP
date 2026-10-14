@@ -124,25 +124,8 @@ def scan_listing(rows: list[tuple[str, str, str, str]]) -> FakeResponse:
     Returns:
         FakeResponse: The listing.
     """
-    return FakeResponse(
-        payload={
-            "ResultSet": {
-                "Result": [
-                    {
-                        "ID": experiment_id,
-                        "label": label,
-                        "subject_ID": subject_id,
-                        "xnat:imagescandata/id": scan_id,
-                        "session_ID": experiment_id,
-                        "xsiType": "xnat:crSessionData",
-                        "project": "PROJ",
-                        "URI": f"/data/experiments/{experiment_id}",
-                    }
-                    for experiment_id, label, subject_id, scan_id in rows
-                ]
-            }
-        }
-    )
+    columns = ("ID", "label", "subject_ID", "xnat:imagescandata/id")
+    return FakeResponse(payload={"ResultSet": {"Result": [dict(zip(columns, row)) for row in rows]}})
 
 
 def project_routes(files: list[str]) -> dict[str, FakeResponse]:
