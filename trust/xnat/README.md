@@ -168,7 +168,9 @@ HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack
 bring-up — the log is written host-side), instead of silently skipping
 that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
-tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
+tolerated and converges it onto the kit: the existing service account is left as-is, the DICOM SCP receiver and the
+PACS registration are each updated in place if a kit-managed field drifted, and the PACS availability schedule is
+brought into line with the kit (see [PACS configuration](#pacs-configuration)).
 
 When `make` configures XNAT (the `xnat-configure` recipe), that wait also checks XNAT loaded every plugin its jars declare (`GET /xapi/plugins`; see `xnat/config/wait-for-xnat-plugins.sh`).
 
@@ -222,10 +224,10 @@ rather than silently falling back.
 | `PACS_QR_PORT` | `4242` | The PACS query/retrieve port XNAT dials. Must be reachable **from the XNAT container** — not a host-published port. |
 | `PACS_LABEL` | `Test PACS instance` | Display label for the registration in the DQR UI. |
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
-| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. |
-| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end. |
-| `PACS_THREADS` | `1` | Concurrent retrieval threads. |
-| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use. |
+| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
+| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. The start must come before the end, so the window cannot cross midnight (see below). |
+| `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
+| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
 | `DQR_RETRY_WAIT_SECONDS` | `300` | Wait between those retries. |
 
@@ -260,6 +262,22 @@ query/retrieve PACS — which is why imaging-api needs no PACS id: its queries n
 that default, and each import reads the default's id back from XNAT. The delete is conditional: if
 foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
 the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
+
+**The availability schedule is set from the kit.** Each configure run (`xnat-configure`,
+`upgrade-xnat`, or the chart's `xnat-init` hook on `helm upgrade`) converges DQR's schedule for the
+registered PACS onto the kit's one window per listed day. It updates drifted intervals in place,
+creates missing days, and removes the days no longer listed and any extra interval on a listed day.
+An unchanged schedule is not written. Removals run first, so a run that fails part-way leaves less
+retrieval scheduled than agreed, and the schedule is read back after any write. A change made in
+XNAT's DQR admin page is therefore reverted on the next run, and each overwrite is logged with what
+it replaced, so put a window agreed with the PACS manager in the kit.
+
+**A window cannot cross midnight (FLIP#1465).** DQR runs a window whose start is not before its end
+inverted, during the day (`19:00`–`07:00` retrieves from 07:00 to 19:00), and it only looks at the
+current weekday. So the configure step refuses `PACS_AVAILABILITY_START` ≥ `PACS_AVAILABILITY_END`,
+with an end of `24:00` meaning the end of the day. For out-of-hours retrieval use `19:00`–`24:00`,
+`00:00`–`07:00`, or whole days in `PACS_AVAILABILITY_DAYS`. Like every schedule value, this is checked
+before XNAT is contacted.
 
 ## Plugins
 

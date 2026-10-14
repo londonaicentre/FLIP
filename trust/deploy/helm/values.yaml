@@ -983,6 +983,8 @@ pacs:
   supportsExtendedNegotiations: true
   # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
+  # Every helm upgrade sets XNAT's schedule from these, reverting edits made in XNAT's UI. The window
+  # must not cross midnight (FLIP#1465): for out-of-hours use 19:00-24:00, 00:00-07:00 or whole days.
   availability:
     days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
     start: "00:00"

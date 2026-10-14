@@ -55,6 +55,14 @@ follow.
    ``FL_KIT_DIR``) and Trust-local credentials stay as they are — do not copy the whole file
    over yours.
 
+   .. important::
+
+      **Put any agreed PACS retrieval window in the kit first.** The upgrade sets XNAT's PACS
+      availability schedule from the kit (``PACS_AVAILABILITY_*``, ``PACS_THREADS``,
+      ``PACS_UTILIZATION_PERCENT``), reverting a window changed in XNAT's DQR admin page, which
+      earlier docs said to use. A kit window that crosses midnight (``19:00``–``07:00``) is
+      refused (FLIP#1465): use ``19:00``–``24:00``, ``00:00``–``07:00`` or whole days.
+
 3. **Move your FLIP checkout to the release.** The images are only half of a release: the
    compose files, the Makefiles, the XNAT stack files and the upgrade command itself all come
    from the git checkout on your host, not from the images, and they change between releases.
@@ -134,8 +142,9 @@ follow.
      — only a complete dump is kept, and without one (a failed dump, or no running ``xnat-db``
      to take it from) the upgrade stops before XNAT is touched — then the Swarm stack
      redeployed onto the new image (XNAT migrates its own schema on boot), then the configure
-     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, Container Service
-     backend, dcm2niix command — against the live instance.
+     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, PACS availability
+     schedule (from the kit, see step 2), Container Service backend, dcm2niix command — against
+     the live instance.
 
    It never runs ``ensure-seeded`` or ``xnat-reset``. Those belong to
    ``make up-onprem-trust`` / ``make -C trust up-trust``, the **first-install** verbs, which

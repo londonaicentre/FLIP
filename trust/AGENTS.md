@@ -189,7 +189,10 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
 - `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are
-  agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
+  agreed with the trust's PACS manager. Defaults are all week, all day, one thread. The kit owns
+  the schedule: `configure-xnat.sh` converges DQR's onto it on every run, so a change made in XNAT's
+  UI is reverted (FLIP#1455), and a window that crosses midnight is refused (FLIP#1465). Detail in
+  [`trust/xnat/README.md`](xnat/README.md#pacs-configuration).
 
 ## Trust-internal Service Authentication
 
