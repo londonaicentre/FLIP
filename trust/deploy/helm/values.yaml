@@ -804,7 +804,10 @@ xnat:
       # id — not by these keys (container-service is `containers`) — so check_status.py
       # pairs each key with its id in XNAT_PLUGIN_IDS, and reads the expected version off
       # the jar name by that shape. It then reports each plugin as loaded at the expected
-      # version, loaded at the wrong one, present on disk but not loaded, or not present.
+      # version, loaded at the wrong one, loaded from a stale jar (the same release, another
+      # build), present on disk but not loaded, or not present. Only `make status` checks
+      # this list: the xnat-init job's readiness wait runs outside this pod, sees the image's
+      # baked jars rather than these, and so waits for DQR's route alone.
       # Adding a plugin here therefore means adding its id there too (the `id=` in the
       # jar's META-INF/xnat/*-plugin.properties); its test fails until you do. A key
       # spelled otherwise still deploys, but the check cannot read its version and says so.

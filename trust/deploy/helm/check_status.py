@@ -454,6 +454,17 @@ def loaded_plugins_command(pod: str, namespace: str) -> list[str]:
     return ["kubectl", "exec", pod, "-n", namespace, "--", "sh", "-c", _FETCH_LOADED_PLUGINS, "sh", XNAT_PLUGINS_URL]
 
 
+def exec_error(stderr: str, limit: int = 200) -> str:
+    """A failed kubectl exec's stderr, cut to fit one status line.
+
+    kubectl prints ``Defaulted container "tomcat" out of: …`` to stderr whenever a pod has init
+    containers, which xnat-web always does. It says nothing about the failure and used to fill half
+    the budget, so it is dropped before the cut.
+    """
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    return " ".join(line for line in lines if not line.startswith("Defaulted container "))[:limit]
+
+
 @dataclass(frozen=True)
 class LoadedPlugins:
     """What XNAT says it loaded, or why that could not be read.
@@ -506,6 +517,7 @@ class PluginLoad(StrEnum):
 
     LOADED = "loaded"
     WRONG_VERSION = "wrong-version"
+    STALE_JAR = "stale-jar"
     NOT_LOADED = "not-loaded"
     NOT_PRESENT = "not-present"
     UNMAPPED = "unmapped"
@@ -569,7 +581,16 @@ def compare_loaded_plugins(
             state = PluginLoad.UNMAPPED
         elif plugin_id in loaded:
             same_release = not expected_version or _release(loaded_version) == _release(expected_version)
-            state = PluginLoad.LOADED if same_release else PluginLoad.WRONG_VERSION
+            if not same_release:
+                state = PluginLoad.WRONG_VERSION
+            elif on_disk is False:
+                # The release matches once the packaging classifier is set aside, but the jar the
+                # values name is not the one on the pod — ohif-viewer-3.8.0.jar where the values ask
+                # for ohif-viewer-3.8.0-fat.jar. That is a pod spec older than the values all the
+                # same, which the filename comparison always called stale (FLIP#1228).
+                state = PluginLoad.STALE_JAR
+            else:
+                state = PluginLoad.LOADED
         elif on_disk is False:
             state = PluginLoad.NOT_PRESENT
         else:
@@ -608,6 +629,16 @@ def _report_verdict(verdict: PluginVerdict, pod: str) -> bool:
             f"XNAT loaded {v.plugin_id} {v.loaded_version}{elsewhere}. The pod spec predates the values — no helm "
             "upgrade has rolled xnat-web since the roster changed. Redeploy (make deploy-trust-k8s KIT=<KIT> "
             "HELM_TIMEOUT=45m) and re-check; a plugin/core mismatch aborts every C-STORE while C-ECHO still passes.",
+        )
+    elif v.state is PluginLoad.STALE_JAR:
+        carried = ", ".join(v.other_builds) if v.other_builds else "no build of it"
+        print_status(
+            "FAIL",
+            f"XNAT plugin '{v.key}' on '{pod}': stale jar — values ask for {v.jar}, the pod carries {carried}. "
+            f"XNAT loaded {v.plugin_id} {v.loaded_version}, the same release once the packaging suffix is set "
+            "aside, but not the build the values name. The pod spec predates the values — no helm upgrade has "
+            "rolled xnat-web since the roster changed. Redeploy (make deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m) "
+            "and re-check.",
         )
     elif v.state is PluginLoad.NOT_LOADED:
         where = (
@@ -814,7 +845,7 @@ def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
         )
         found = [line.strip() for line in listing.splitlines() if line.strip().endswith(".jar")] if listed else None
         answered, output = run_command(loaded_plugins_command(pod, namespace), timeout=45)
-        loaded = parse_loaded_plugins(output) if answered else LoadedPlugins(None, output.strip()[:200])
+        loaded = parse_loaded_plugins(output) if answered else LoadedPlugins(None, exec_error(output))
 
         if loaded.versions is None:
             if found is None:

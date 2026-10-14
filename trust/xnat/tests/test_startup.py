@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from plugin_fixtures import PLUGIN_JARS, declared_ids, plugins_listing, xnat_home
+from plugin_fixtures import PLUGIN_JARS, declared_ids, fake_proc, plugins_listing, write_plugin_jar, xnat_home
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
@@ -67,6 +67,7 @@ def _readiness_env(
     rotated_password: str = "test-password",
     jars: dict[str, str | None] | None = None,
     listed: list[str] | None = None,
+    tomcat: str = "beside",
 ) -> dict[str, str]:
     """Environment for one run of the wait against the stub XNAT.
 
@@ -78,6 +79,9 @@ def _readiness_env(
         rotated_password: The kit's configured admin password.
         jars: Fixture plugin jars in the XNAT home ({filename: declared id or None}).
         listed: The plugin ids GET /xapi/plugins lists; defaults to every id ``jars`` declares.
+        tomcat: ``beside`` — a Tomcat in the wait's PID namespace loads this XNAT home, as in
+            Compose; ``elsewhere`` — a Tomcat is visible but loads another home; ``none`` — no
+            Tomcat at all, as in the chart's xnat-init pod.
     """
     jars = PLUGIN_JARS if jars is None else jars
     bin_dir = tmp_path / "bin"
@@ -85,10 +89,20 @@ def _readiness_env(
     counts = tmp_path / "curl-counts"
     counts.mkdir()
     _write_executable(bin_dir / "curl", READINESS_CURL.replace("__BEHAVIOUR__", behaviour))
+    home = xnat_home(tmp_path, jars)
+    tomcat_home: Path | None = None
+    if tomcat == "beside":
+        tomcat_home = home
+    elif tomcat == "elsewhere":
+        # A home holding the very same jars, so only the directory's identity differs.
+        tomcat_home = xnat_home(tmp_path / "other", jars)
+    else:
+        assert tomcat == "none", tomcat
     return {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "XNAT_HOME": str(xnat_home(tmp_path, jars)),
+        "XNAT_HOME": str(home),
+        "XNAT_PLUGIN_READINESS_PROC_DIR": str(fake_proc(tmp_path, tomcat_home)),
         "PLUGINS_JSON": plugins_listing(declared_ids(jars) if listed is None else listed),
         "CURL_LOG": str(tmp_path / "curl-log"),
         "CURL_COUNTS": str(counts),
@@ -193,19 +207,115 @@ def test_an_empty_plugin_directory_fails_before_any_login(tmp_path: Path) -> Non
     assert result.returncode != 0
     assert "no XNAT plugin jars found in" in result.stderr
     assert str(tmp_path / "xnat-home" / "plugins") in result.stderr
+    # The hint covers every shape, not just the Compose dev cache: a Helm operator who lands here
+    # (exec'd into xnat-web) gets the plugins from xnat.web.plugins.urls, not prepare-artifacts.
+    assert "prepare-artifacts" in result.stderr
+    assert "xnat.web.plugins.urls" in result.stderr
     assert not _requests(tmp_path), "the wait logged in although it had nothing to wait for"
 
 
 def test_an_unreadable_jar_fails_naming_it_before_any_login(tmp_path: Path) -> None:
-    """A truncated download is a jar XNAT cannot load either; which plugin it was is unknowable."""
+    """A failed download saved as a jar is one XNAT cannot load either; which plugin it was is unknowable."""
     env = _readiness_env(tmp_path)
-    (Path(env["XNAT_HOME"]) / "plugins" / "truncated-1.0.jar").write_bytes(b"<html>503</html>")
+    (Path(env["XNAT_HOME"]) / "plugins" / "error-page-1.0.jar").write_bytes(b"<html>503</html>")
 
     result = _run_readiness(env)
 
     assert result.returncode != 0
-    assert "truncated-1.0.jar is not a readable jar" in result.stderr
+    assert "error-page-1.0.jar is not a readable jar" in result.stderr
     assert not _requests(tmp_path)
+
+
+def test_a_truncated_jar_fails_naming_it_before_any_login(tmp_path: Path) -> None:
+    """A real jar cut short has no central directory: unzip exits 9, and Java cannot load it either."""
+    env = _readiness_env(tmp_path)
+    jar = Path(env["XNAT_HOME"]) / "plugins" / "ohif-viewer-3.8.0-fat.jar"
+    whole = jar.read_bytes()
+    jar.write_bytes(whole[: len(whole) // 2])
+
+    result = _run_readiness(env)
+
+    assert result.returncode != 0
+    assert "ohif-viewer-3.8.0-fat.jar is not a readable jar (unzip exit 9" in result.stderr, result.stderr
+    assert not _requests(tmp_path)
+
+
+def test_a_jar_unzip_only_warns_about_is_still_read(tmp_path: Path) -> None:
+    """unzip exits 1 on an archive it reads despite a defect, such as bytes prepended; Java loads it too.
+
+    Its declared id must therefore be expected like any other, not rejected as unreadable.
+    """
+    env = _readiness_env(tmp_path, timeout="0")
+    sound = write_plugin_jar(tmp_path, "prefixed-1.0.jar", "prefixedPlugin").read_bytes()
+    (Path(env["XNAT_HOME"]) / "plugins" / "prefixed-1.0.jar").write_bytes(b"#!/bin/sh\nexit 0\n" + sound)
+
+    result = _run_readiness(env)
+
+    assert "not a readable jar" not in result.stderr
+    assert "XNAT has not loaded: prefixedPlugin\n" in result.stderr, result.stderr
+
+
+# ── Away from XNAT: the chart's xnat-init job ─────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("tomcat", ["none", "elsewhere"])
+def test_away_from_xnat_the_wait_takes_the_dqr_route_alone(tmp_path: Path, tomcat: str) -> None:
+    """The xnat-init pod sees the image's baked jars, which the running XNAT never loads.
+
+    The dangerous direction is a plugin the image carries but xnat.web.plugins.urls does not: a
+    roster read from disk would wait out the whole budget for it on every install and upgrade. The
+    same jars beside XNAT time out naming it (``test_readiness_expects_a_plugin_because_a_jar_declares_it``).
+    ``elsewhere`` is a Tomcat that is visible but loads a different directory holding the same jars.
+    """
+    jars = {**PLUGIN_JARS, "baked-only-1.0.jar": "bakedOnlyPlugin"}
+
+    result = _run_readiness(_readiness_env(tmp_path, jars=jars, listed=declared_ids(), tomcat=tomcat))
+
+    assert result.returncode == 0, result.stderr
+    assert "No Tomcat beside this script loads" in result.stdout, "the fallback must say why it was taken"
+    assert "XNAT DQR plugin is ready (HTTP 200)." in result.stdout
+    assert not _requests(tmp_path, "plugins"), "with no roster to check, there is nothing to ask XNAT for"
+    assert len(_requests(tmp_path, "dqr")) == 1
+
+
+def test_away_from_xnat_no_jar_is_read(tmp_path: Path) -> None:
+    """An image with no baked jars, or a bad one, says nothing about the XNAT that is running."""
+    env = _readiness_env(tmp_path, jars={}, tomcat="none")
+    (Path(env["XNAT_HOME"]) / "plugins" / "error-page-1.0.jar").write_bytes(b"<html>503</html>")
+
+    result = _run_readiness(env)
+
+    assert result.returncode == 0, result.stderr
+    assert "XNAT DQR plugin is ready" in result.stdout
+
+
+def test_away_from_xnat_the_dqr_wait_stays_bounded_and_fail_loud(tmp_path: Path) -> None:
+    result = _run_readiness(
+        _readiness_env(tmp_path, 'if [ "$route" = dqr ]; then status=404; fi', timeout="0", tomcat="none")
+    )
+
+    assert result.returncode != 0
+    assert "endpoint:   http://xnat-web:8080/xapi/dqr/settings" in result.stderr
+    assert "last HTTP status: 404" in result.stderr
+
+
+def test_away_from_xnat_the_rotated_password_is_reached_on_the_first_rejection(tmp_path: Path) -> None:
+    """The credential handling is the same whichever probes run."""
+    result = _run_readiness(
+        _readiness_env(
+            tmp_path,
+            'case "$creds" in *:rotated) ;; *) status=401 ;; esac',
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
+            tomcat="none",
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "XNAT DQR plugin is ready (HTTP 200, configured admin password)." in result.stdout
+    probes = _requests(tmp_path, "dqr")
+    assert sum("admin:initial" in line for line in probes) == 1
+    assert sum("admin:rotated" in line for line in probes) == 1
 
 
 def test_readiness_still_requires_the_dqr_route_once_every_plugin_is_listed(tmp_path: Path) -> None:

@@ -73,6 +73,38 @@ def xnat_home(tmp_path: Path, jars: Mapping[str, str | None] = PLUGIN_JARS) -> P
     return home
 
 
+TOMCAT_BOOTSTRAP = "org.apache.catalina.startup.Bootstrap"
+
+
+def fake_proc(tmp_path: Path, tomcat_home: Path | None) -> Path:
+    """A stand-in for /proc, for the wait's ``XNAT_PLUGIN_READINESS_PROC_DIR`` seam.
+
+    The wait reads its roster from the jars only when a Tomcat in its PID namespace loads that very
+    directory. The CI runner has no Tomcat and macOS has no /proc, so every test says which world it
+    is in instead of inheriting the host's.
+
+    Args:
+        tmp_path: Per-test directory to build it in.
+        tomcat_home: The ``-Dxnat.home`` of a Tomcat process to fake (its ``root`` resolves to ``/``,
+            as a process in the same container's does), or None for no Tomcat at all.
+
+    Returns:
+        The directory to pass as ``XNAT_PLUGIN_READINESS_PROC_DIR``.
+    """
+    proc = tmp_path / "proc"
+    # A process that is not Tomcat but shares the filesystem, as the wait's own shell does in the
+    # xnat-init pod: the scan must tell processes apart, not take any process that sees the jars.
+    (proc / "7").mkdir(parents=True)
+    (proc / "7" / "cmdline").write_bytes(b"/bin/bash\0wait-for-xnat-plugins.sh\0")
+    (proc / "7" / "root").symlink_to("/")
+    if tomcat_home is not None:
+        (proc / "1").mkdir()
+        argv = ["/opt/java/openjdk/bin/java", f"-Dxnat.home={tomcat_home}", "-cp", "x.jar", TOMCAT_BOOTSTRAP, "start"]
+        (proc / "1" / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+        (proc / "1" / "root").symlink_to("/")
+    return proc
+
+
 def plugins_listing(plugin_ids: Iterable[str]) -> str:
     """A ``GET /xapi/plugins`` body listing ``plugin_ids``: a JSON object keyed by plugin id."""
     return json.dumps({plugin_id: {"id": plugin_id, "version": "1.0"} for plugin_id in plugin_ids})

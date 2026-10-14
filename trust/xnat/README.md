@@ -170,7 +170,12 @@ the earlier Tomcat login page as proof that plugins are ready: XNAT must list ev
 route must answer — the listing alone does not prove a plugin's routes are registered, and that route is the one
 configuration writes to next. The expected plugins are read from the installed jars themselves (each declares its
 id in `META-INF/xnat/*-plugin.properties`), so there is no second roster to keep in step with `artifacts.manifest`.
-On timeout it names the plugin(s) XNAT has not loaded. Re-running against an already-configured instance is
+On timeout it names the plugin(s) XNAT has not loaded. That roster check runs only beside the XNAT that loads those
+jars — a Tomcat in the wait's own container whose plugin directory is the same one — which is every Compose path,
+since all of them `docker exec` into `xnat-web`. The Helm chart's `xnat-init` job runs in its own pod, where the jars
+on disk are the image's baked ones and not what the running XNAT loaded (that pod downloads
+`xnat.web.plugins.urls`), so there the wait checks the DQR route alone, says so in one line, and
+`make -C trust/deploy/helm status` checks the loaded roster. Re-running against an already-configured instance is
 tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
@@ -347,7 +352,7 @@ account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8
 3. For a **new** plugin (not a version bump), add its XNAT plugin id — the `id=` in the jar's
    `META-INF/xnat/*-plugin.properties`, which is how `GET /xapi/plugins` names it — to `XNAT_PLUGIN_IDS` in
    `trust/deploy/helm/check_status.py`, so `make -C trust/deploy/helm status` can check XNAT loaded it; its test
-   fails until you do. The configure-time readiness wait needs nothing: it reads the id from the jar.
+   fails until you do. The Compose readiness wait needs nothing: it reads the id from the jar.
 4. Update the plugin compatibility table above.
 5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 

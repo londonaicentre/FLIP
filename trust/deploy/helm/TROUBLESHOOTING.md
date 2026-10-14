@@ -683,7 +683,8 @@ kubectl exec -n flip-trust "$xnat_pod" -- sh -c \
 # batchLaunchPlugin 0.9.0-xpl, ohifViewerPlugin 3.8.0
 
 # Both, automated against the release's own values. FAILs naming the version XNAT loaded
-# and the one the values ask for, or a jar "present on disk but not loaded", or "not present"
+# and the one the values ask for, a "stale jar" (same release, another build), a jar "present
+# on disk but not loaded", or "not present"
 make -C trust/deploy/helm status
 
 # Exercise the path the roster is on, rather than just the socket. Still needed when status

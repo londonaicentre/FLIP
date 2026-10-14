@@ -515,6 +515,59 @@ def test_a_jar_on_disk_that_xnat_did_not_load_fails_as_such(reported: list[tuple
     assert "ohifViewerPlugin" in message
 
 
+def test_the_same_release_from_a_different_jar_is_stale(reported: list[tuple[str, str]]) -> None:
+    """Versions that match once ``-fat`` is set aside do not make another build the one asked for.
+
+    The pod carries ohif-viewer-3.8.0.jar where the values name ohif-viewer-3.8.0-fat.jar: a pod
+    spec older than the values, which the filename comparison always called stale (FLIP#1228).
+    """
+    jars = _values_jars()
+    on_disk = [*(jar for jar in jars.values() if not jar.startswith("ohif-viewer")), "ohif-viewer-3.8.0.jar"]
+
+    verdicts = check_status.compare_loaded_plugins(jars, XNAT_1_10_LOADED, on_disk)
+    (stale,) = [v for v in verdicts if v.state is not check_status.PluginLoad.LOADED]
+
+    assert (stale.key, stale.state) == ("ohif-viewer", check_status.PluginLoad.STALE_JAR)
+    assert check_status._report_verdict(stale, "pod/xnat-1") is False
+    ((status, message),) = reported
+    assert status == "FAIL"
+    assert "stale jar" in message
+    assert "values ask for ohif-viewer-3.8.0-fat.jar, the pod carries ohif-viewer-3.8.0.jar" in message
+
+
+def test_a_loaded_plugin_whose_jar_is_gone_from_disk_is_stale(reported: list[tuple[str, str]]) -> None:
+    """Loaded, but no build of it on disk: still not the jar the values name, so not a pass."""
+    jars = {"ohif-viewer": "ohif-viewer-3.8.0-fat.jar"}
+
+    (verdict,) = check_status.compare_loaded_plugins(jars, XNAT_1_10_LOADED, [])
+
+    assert verdict.state is check_status.PluginLoad.STALE_JAR
+    check_status._report_verdict(verdict, "pod/xnat-1")
+    assert "the pod carries no build of it" in reported[0][1]
+
+
+def test_a_loaded_plugin_passes_when_the_directory_could_not_be_listed() -> None:
+    """With no listing there is nothing to call stale; what XNAT loaded is the evidence left."""
+    jars = {"ohif-viewer": "ohif-viewer-3.8.0-fat.jar"}
+
+    (verdict,) = check_status.compare_loaded_plugins(jars, XNAT_1_10_LOADED, None)
+
+    assert verdict.state is check_status.PluginLoad.LOADED
+
+
+def test_a_failed_exec_keeps_the_error_not_kubectls_container_notice() -> None:
+    """kubectl names the defaulted container on every exec into xnat-web; that is not the failure."""
+    stderr = (
+        'Defaulted container "tomcat" out of: tomcat, wait-for-xnat-db (init), download-plugins (init)\n'
+        'error: unable to upgrade connection: container not found ("tomcat")\n'
+    )
+
+    detail = check_status.exec_error(stderr)
+
+    assert detail == 'error: unable to upgrade connection: container not found ("tomcat")'
+    assert len(check_status.exec_error("x" * 500)) == 200
+
+
 def test_a_plugin_neither_loaded_nor_on_disk_is_not_present(reported: list[tuple[str, str]]) -> None:
     """A failed download: nothing on disk and nothing loaded, which sends the operator to the init logs."""
     jars = _values_jars()

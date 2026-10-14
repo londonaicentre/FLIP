@@ -40,7 +40,7 @@ from pathlib import Path
 
 import pytest
 
-from plugin_fixtures import declared_ids, plugins_listing, xnat_home
+from plugin_fixtures import declared_ids, fake_proc, plugins_listing, xnat_home
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CONFIGURE_XNAT = REPO_ROOT / "trust/xnat/xnat/config/configure-xnat.sh"
@@ -90,8 +90,9 @@ def test_plugin_wait_runs_before_any_plugin_dependent_call() -> None:
     )
 
 
+@pytest.mark.parametrize("tomcat_beside", [True, False], ids=["roster", "dqr-route-only"])
 @pytest.mark.parametrize("redirect_status", ["301", "302", "307"])
-def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str) -> None:
+def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str, tomcat_beside: bool) -> None:
     """A redirect means "site not initialized" — never "plugin still loading".
 
     Waiting cannot clear it, so the script must exit non-zero straight away rather
@@ -115,10 +116,13 @@ def test_probe_fails_fast_on_a_redirect(tmp_path: Path, redirect_status: str) ->
     )
     (stub_bin / "curl").chmod(0o755)
 
+    home = xnat_home(tmp_path)
     env = {
         "PATH": f"{stub_bin}:/usr/bin:/bin",
-        # The wait reads which plugins to expect from the jars here before its first probe.
-        "XNAT_HOME": str(xnat_home(tmp_path)),
+        # The wait reads which plugins to expect from the jars here, when a Tomcat beside it loads
+        # them, before its first probe; with none it probes the DQR route alone. Both must fail fast.
+        "XNAT_HOME": str(home),
+        "XNAT_PLUGIN_READINESS_PROC_DIR": str(fake_proc(tmp_path, home if tomcat_beside else None)),
         "XNAT_ADMIN_USER": "admin",
         "XNAT_ADMIN_INITIAL_PASSWORD": "initial",  # pragma: allowlist secret
         "XNAT_ADMIN_PASSWORD": "rotated",  # pragma: allowlist secret
@@ -159,12 +163,15 @@ def test_probe_still_succeeds_on_2xx(tmp_path: Path) -> None:
         f"""case "$*" in *'/xapi/plugins'*) printf '%s\\n200' '{listing}' ;; *) printf '{{}}\\n200' ;; esac\n"""
     )
     (stub_bin / "curl").chmod(0o755)
+    home = xnat_home(tmp_path)
 
     result = subprocess.run(
         ["bash", str(PLUGIN_WAIT)],
         env={
             "PATH": f"{stub_bin}:/usr/bin:/bin",
-            "XNAT_HOME": str(xnat_home(tmp_path)),
+            "XNAT_HOME": str(home),
+            # A Tomcat beside the wait loads these jars, so the roster is checked (as under Compose).
+            "XNAT_PLUGIN_READINESS_PROC_DIR": str(fake_proc(tmp_path, home)),
             "XNAT_ADMIN_USER": "admin",
             "XNAT_ADMIN_INITIAL_PASSWORD": "initial",  # pragma: allowlist secret
             "XNAT_ADMIN_PASSWORD": "rotated",  # pragma: allowlist secret
