@@ -156,10 +156,8 @@ Upload files to an XNAT experiment:
 `exist_ok` (default `false`): `true` replaces a file of the same name already in the resource, `false`
 leaves it in place and fails the request.
 
-Neither the scan nor the resource has to exist. XNAT creates a missing resource with the first file. A
-`scan_id` the session does not hold yet is created first, with the session's own scan type (an
-`xnat:crScanData` in an `xnat:crSessionData`, for example; see `xsi_type_for_new_scan` in
-`services/upload.py`). An existing scan is left as it is.
+A missing resource is created with the first file, and a missing `scan_id` with the type of the session's first
+scan; in a session with no scans, the upload fails.
 
 ### Users
 

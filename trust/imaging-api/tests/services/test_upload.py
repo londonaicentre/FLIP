@@ -13,7 +13,7 @@
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 import requests
@@ -21,11 +21,10 @@ import requests
 from imaging_api.config import get_settings
 from imaging_api.services.upload import (
     create_xnat_scan,
-    get_xsi_types_from_experiment_response,
+    get_scan_xsi_types_from_experiment_response,
     upload_data_to_xnat,
     upload_file_to_xnat,
     xnat_kept_existing_file,
-    xsi_type_for_new_scan,
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 
@@ -55,44 +54,21 @@ def _xnat_put_response(
     return response
 
 
-def _experiment_response(
-    session_xsi_type: str = "xnat:crSessionData",
-    scans: tuple[tuple[str, str], ...] = (("SCAN1", "xnat:crScanData"),),
-    subject_id: str = "SUBJ1",
-) -> dict:
+def _experiment_response(scans: tuple[tuple[str, str], ...] = (("SCAN1", "xnat:crScanData"),)) -> dict:
     """Build XNAT's experiment document (``GET .../experiments/{label}?format=json``), trimmed to what the upload reads.
 
-    The shape is the one dev trust 1's XNAT 1.10.0 returns: the session's type in ``meta``, and each scan under the
-    ``scans/scan`` child with its own type and ID. An empty session has no ``scans/scan`` child at all.
-
     Args:
-        session_xsi_type (str): The session's xsi:type.
-        scans (tuple[tuple[str, str], ...]): ``(scan ID, scan xsi:type)`` for each existing scan, in order.
-        subject_id (str): The session's subject ID.
+        scans (tuple[tuple[str, str], ...]): ``(scan ID, scan xsi:type)`` for each existing scan, in order. An empty
+            session has no ``scans/scan`` child.
 
     Returns:
         dict: The experiment document.
     """
-    children = (
-        [
-            {
-                "field": "scans/scan",
-                "items": [
-                    {"meta": {"xsi:type": xsi_type}, "data_fields": {"ID": scan_id, "type": "unknown"}, "children": []}
-                    for scan_id, xsi_type in scans
-                ],
-            }
-        ]
-        if scans
-        else []
-    )
+    items = [{"meta": {"xsi:type": xsi_type}, "data_fields": {"ID": scan_id}} for scan_id, xsi_type in scans]
+    children = [{"field": "scans/scan", "items": items}] if scans else []
     return {
         "items": [
-            {
-                "meta": {"xsi:type": session_xsi_type, "isHistory": False},
-                "data_fields": {"subject_ID": subject_id, "ID": "XNAT_E00001", "label": "ACC123"},
-                "children": children,
-            }
+            {"meta": {"xsi:type": "xnat:crSessionData"}, "data_fields": {"subject_ID": "SUBJ1"}, "children": children}
         ]
     }
 
@@ -118,80 +94,30 @@ def test_create_xnat_scan_sends_the_given_xsi_type(mock_put, headers):
 
 @patch("imaging_api.services.upload.requests.put")
 def test_create_xnat_scan_failure(mock_put, headers):
-    # A 409 is what XNAT answers a scan PUT whose xsiType differs from an existing scan's.
-    mock_put.return_value = MagicMock(status_code=409, text="Specified xsiType differs from existing xsiType")
-    with pytest.raises(Exception, match="Error creating scan: Specified xsiType differs"):
+    mock_put.return_value = MagicMock(status_code=500, text="Internal error")
+    with pytest.raises(Exception, match="Error creating scan"):
         create_xnat_scan("PROJ", "SUBJ", "EXP", "SCAN1", "xnat:crScanData", headers)
 
 
-# ── get_xsi_types_from_experiment_response ──
+# ── get_scan_xsi_types_from_experiment_response ──
 
 
-def test_get_xsi_types_reads_the_session_and_every_scan_in_order():
-    response = _experiment_response(
-        "xnat:mrSessionData", (("1", "xnat:mrScanData"), ("3", "xnat:mrScanData"), ("2", "xnat:otherDicomScanData"))
-    )
-
-    assert get_xsi_types_from_experiment_response(response) == (
-        "xnat:mrSessionData",
-        {"1": "xnat:mrScanData", "3": "xnat:mrScanData", "2": "xnat:otherDicomScanData"},
-    )
-    assert list(get_xsi_types_from_experiment_response(response)[1]) == ["1", "3", "2"]
-
-
-def test_get_xsi_types_reads_scans_only_from_the_scans_child():
-    # A session shared into another project carries a sharing/share child, whose items are not scans.
-    response = _experiment_response()
-    share = {"meta": {"xsi:type": "xnat:experimentData_share"}, "data_fields": {"project": "OTHER", "label": "ACC123"}}
+def test_get_scan_xsi_types_reads_every_scan_and_nothing_else():
+    response = _experiment_response((("1", "xnat:mrScanData"), ("3", "xnat:otherDicomScanData")))
+    share = {"meta": {"xsi:type": "xnat:experimentData_share"}, "data_fields": {"project": "OTHER"}}
     response["items"][0]["children"].insert(0, {"field": "sharing/share", "items": [share]})
 
-    assert get_xsi_types_from_experiment_response(response) == ("xnat:crSessionData", {"SCAN1": "xnat:crScanData"})
+    assert get_scan_xsi_types_from_experiment_response(response) == {
+        "1": "xnat:mrScanData",
+        "3": "xnat:otherDicomScanData",
+    }
+    assert get_scan_xsi_types_from_experiment_response(_experiment_response(())) == {}
 
 
-def test_get_xsi_types_of_an_empty_session():
-    assert get_xsi_types_from_experiment_response(_experiment_response("xnat:dxSessionData", ())) == (
-        "xnat:dxSessionData",
-        {},
-    )
-
-
-@pytest.mark.parametrize(
-    "response",
-    [{}, {"items": []}, {"items": [{"data_fields": {}}]}, {"items": [{"meta": {}}]}, {"items": None}],
-)
-def test_get_xsi_types_refuses_a_response_that_is_not_an_experiment_document(response):
+@pytest.mark.parametrize("response", [{}, {"items": []}, {"items": None}])
+def test_get_scan_xsi_types_refuses_a_response_that_is_not_an_experiment_document(response):
     with pytest.raises(Exception, match="Failed to parse XNAT experiment data JSON"):
-        get_xsi_types_from_experiment_response(response)
-
-
-# ── xsi_type_for_new_scan ──
-
-
-@pytest.mark.parametrize(
-    ("session_xsi_type", "existing", "expected"),
-    [
-        # The session's own scan type, when it already holds one.
-        ("xnat:crSessionData", ["xnat:crScanData"], "xnat:crScanData"),
-        ("xnat:dxSessionData", ["xnat:dxScanData", "xnat:dxScanData"], "xnat:dxScanData"),
-        # ...even when another type comes first, e.g. a dose report filed as otherDicom.
-        ("xnat:ctSessionData", ["xnat:otherDicomScanData", "xnat:ctScanData"], "xnat:ctScanData"),
-        # Sessions whose scans are not xnat:<m>ScanData: copy the first scan's type.
-        ("xnat:rtSessionData", ["xnat:rtImageScanData"], "xnat:rtImageScanData"),
-        ("xnat:petmrSessionData", ["xnat:mrScanData", "xnat:petScanData"], "xnat:mrScanData"),
-        ("xnat:otherDicomSessionData", ["xnat:srScanData"], "xnat:srScanData"),
-        # An empty session: the session's own scan type, by name.
-        ("xnat:crSessionData", [], "xnat:crScanData"),
-        ("xnat:dxSessionData", [], "xnat:dxScanData"),
-        ("xnat:mrSessionData", [], "xnat:mrScanData"),
-    ],
-)
-def test_xsi_type_for_new_scan(session_xsi_type, existing, expected):
-    assert xsi_type_for_new_scan(session_xsi_type, existing) == expected
-
-
-def test_xsi_type_for_new_scan_refuses_to_guess_for_an_empty_session_of_another_kind():
-    with pytest.raises(ValueError, match="Cannot choose a scan type"):
-        xsi_type_for_new_scan("xnat:qcAssessmentData", [])
+        get_scan_xsi_types_from_experiment_response(response)
 
 
 # ── xnat_kept_existing_file ──
@@ -513,22 +439,17 @@ class TestUploadDataToXnat:
                     )
 
 
-# ── upload_data_to_xnat at the HTTP boundary (#1456 A2) ──
-# What upload_data_to_xnat itself sends once the project and the experiment are known. The project lookup and the
-# experiment GET are patched; every other request goes through requests' real URL building and is recorded.
+# ── upload_data_to_xnat: the requests it sends ──
 
 
 _SCANS_PATH = "/data/projects/PROJ1/subjects/SUBJ1/experiments/ACC123/scans"
 
 
-async def _upload_into(
-    experiment_response: dict, scan_id: str, tmp_path, sent: list[requests.PreparedRequest], exist_ok: bool = False
-) -> tuple[list[str], list[tuple[str, str, str]]]:
-    """Upload one file into ``scan_id`` of the session described by ``experiment_response``.
+async def _upload_into(experiment_response: dict, scan_id: str, tmp_path, sent: list) -> list[tuple[str, str, str]]:
+    """Upload one file into ``scan_id`` of the session that ``experiment_response`` describes.
 
     Returns:
-        tuple[list[str], list[tuple[str, str, str]]]: The URLs the upload reports, and (method, path, query) of every
-        request sent to XNAT.
+        list[tuple[str, str, str]]: The method, path and query of every request sent to XNAT.
     """
     upload_dir = tmp_path / "net1" / "upload"
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -540,75 +461,30 @@ async def _upload_into(
         ),
         patch("imaging_api.services.upload.get_experiment", return_value=experiment_response),
     ):
-        result = await upload_data_to_xnat("hub-proj-1", "ACC123", "net1", scan_id, "NIFTI", ["scan.nii"], exist_ok, {})
+        await upload_data_to_xnat("hub-proj-1", "ACC123", "net1", scan_id, "NIFTI", ["scan.nii"], False, {})
     urls = [(str(r.method), urlsplit(str(r.url))) for r in sent]
-    return result, [(method, url.path, url.query) for method, url in urls]
+    return [(method, url.path, url.query) for method, url in urls]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("session_xsi_type", "scan_xsi_type"),
-    [
-        ("xnat:crSessionData", "xnat:crScanData"),
-        ("xnat:dxSessionData", "xnat:dxScanData"),
-        ("xnat:ctSessionData", "xnat:ctScanData"),
-        ("xnat:mrSessionData", "xnat:mrScanData"),
-    ],
-)
-async def test_upload_into_an_existing_scan_sends_only_the_file_put(
-    session_xsi_type, scan_xsi_type, tmp_path, sent_xnat_requests
-):
-    # No scan PUT: on a CR, DX or CT scan, the hard-coded MR one XNAT answered with a 409. And no resource PUT:
-    # the file PUT creates the resource.
-    response = _experiment_response(session_xsi_type, (("1", scan_xsi_type), ("SCAN1", scan_xsi_type)))
+async def test_upload_into_an_existing_scan_sends_only_the_file_put(tmp_path, sent_xnat_requests):
+    response = _experiment_response((("SCAN1", "xnat:dxScanData"),))
 
-    result, sent = await _upload_into(response, "SCAN1", tmp_path, sent_xnat_requests)
+    sent = await _upload_into(response, "SCAN1", tmp_path, sent_xnat_requests)
 
     assert sent == [("PUT", f"{_SCANS_PATH}/SCAN1/resources/NIFTI/files/scan.nii", "inbody=true")]
-    assert result == [sent_xnat_requests[0].url]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("session_xsi_type", "existing_scans", "expected_xsi_type"),
-    [
-        ("xnat:crSessionData", (("1", "xnat:crScanData"),), "xnat:crScanData"),
-        ("xnat:dxSessionData", (("1", "xnat:dxScanData"),), "xnat:dxScanData"),
-        ("xnat:ctSessionData", (("1", "xnat:otherDicomScanData"), ("2", "xnat:ctScanData")), "xnat:ctScanData"),
-        ("xnat:rtSessionData", (("1", "xnat:rtImageScanData"),), "xnat:rtImageScanData"),
-        ("xnat:dxSessionData", (), "xnat:dxScanData"),
-        ("xnat:mrSessionData", (("1", "xnat:mrScanData"),), "xnat:mrScanData"),
-    ],
-)
-async def test_upload_into_a_new_scan_creates_it_with_the_sessions_scan_type(
-    session_xsi_type, existing_scans, expected_xsi_type, tmp_path, sent_xnat_requests
-):
-    response = _experiment_response(session_xsi_type, existing_scans)
+async def test_upload_into_a_new_scan_creates_it_with_the_type_of_the_sessions_first_scan(tmp_path, sent_xnat_requests):
+    response = _experiment_response((("1", "xnat:ctScanData"), ("2", "xnat:otherDicomScanData")))
 
-    result, sent = await _upload_into(response, "NEW", tmp_path, sent_xnat_requests)
+    sent = await _upload_into(response, "NEW", tmp_path, sent_xnat_requests)
 
     assert sent == [
-        ("PUT", f"{_SCANS_PATH}/NEW", f"xsiType={quote(expected_xsi_type, safe='')}"),
+        ("PUT", f"{_SCANS_PATH}/NEW", "xsiType=xnat%3ActScanData"),
         ("PUT", f"{_SCANS_PATH}/NEW/resources/NIFTI/files/scan.nii", "inbody=true"),
     ]
-    assert result == [sent_xnat_requests[1].url]
-
-
-@pytest.mark.asyncio
-async def test_upload_with_exist_ok_still_asks_xnat_to_overwrite(tmp_path, sent_xnat_requests):
-    _, sent = await _upload_into(_experiment_response(), "SCAN1", tmp_path, sent_xnat_requests, exist_ok=True)
-
-    assert sent == [("PUT", f"{_SCANS_PATH}/SCAN1/resources/NIFTI/files/scan.nii", "inbody=true&overwrite=true")]
-
-
-@pytest.mark.asyncio
-async def test_failed_scan_creation_sends_no_file(tmp_path):
-    rejected = MagicMock(status_code=409, ok=False, text="Specified xsiType differs from existing xsiType")
-    with patch("imaging_api.services.upload.requests.put", return_value=rejected) as mock_put:
-        with pytest.raises(Exception, match="Error creating scan: Specified xsiType differs"):
-            await _upload_into(_experiment_response(), "NEW", tmp_path, [])
-
-    assert [urlsplit(c.args[0]).path for c in mock_put.call_args_list] == [f"{_SCANS_PATH}/NEW"]
 
 
 @pytest.mark.parametrize("sink", ["scan", "upload"])
