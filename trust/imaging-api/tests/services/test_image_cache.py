@@ -25,6 +25,7 @@ from imaging_api.services.image_cache import (
 
 def _seed_sentinel(base, net_id, project, accession, assessor="scan", resource="NIFTI"):
     accession_dir = os.path.join(str(base), net_id, project, accession)
+    os.makedirs(accession_dir, exist_ok=True)
     write_sentinel(accession_dir, assessor, resource)
     return os.path.join(accession_dir, f"{SENTINEL_PREFIX}{assessor}-{resource}")
 
@@ -64,13 +65,22 @@ class TestSentinelPath:
 
 
 class TestWriteRemoveSentinel:
-    def test_write_creates_directory_and_dotfile(self, tmp_path):
+    def test_write_creates_dotfile_in_extracted_directory(self, tmp_path):
         accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
+        os.makedirs(accession_dir)
         write_sentinel(accession_dir, "scan", "NIFTI")
         assert os.path.isfile(os.path.join(accession_dir, f"{SENTINEL_PREFIX}scan-NIFTI"))
 
+    def test_write_refuses_a_missing_accession_directory(self, tmp_path):
+        """No extracted folder means the download produced nothing: never mark that complete."""
+        accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
+        with pytest.raises(FileNotFoundError, match="refusing to mark the download complete"):
+            write_sentinel(accession_dir, "scan", "NIFTI")
+        assert not os.path.exists(accession_dir)
+
     def test_remove_is_idempotent(self, tmp_path):
         accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
+        os.makedirs(accession_dir)
         write_sentinel(accession_dir, "scan", "NIFTI")
         remove_sentinel(accession_dir, "scan", "NIFTI")
         remove_sentinel(accession_dir, "scan", "NIFTI")  # second removal must not raise

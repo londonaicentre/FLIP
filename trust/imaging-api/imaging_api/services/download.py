@@ -12,7 +12,6 @@
 
 import os
 import zipfile
-from pathlib import Path
 
 import requests
 
@@ -23,7 +22,7 @@ from imaging_api.services.projects import (
     get_project_from_central_hub_project_id,
     get_subject_id_from_experiment_response,
 )
-from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
+from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatZipLayoutError
 from imaging_api.utils.logger import logger
 from imaging_api.utils.xnat_url import xnat_url
 
@@ -84,7 +83,7 @@ async def download_and_unzip_images(
     # Concurrency invariant: this coroutine contains no `await`, and imaging-api runs one uvicorn
     # worker (`fastapi run`/`fastapi dev`, never --workers — the entrypoint.sh command carries the
     # matching warning), so concurrent calls for the same key serialise end-to-end and cannot race
-    # on the shared zip path or its rename below. Introducing an await here, extra workers, or a
+    # on the shared zip path or its extraction below. Introducing an await here, extra workers, or a
     # threadpool offload voids that and needs an explicit per-(net, project, accession) lock — or
     # download-to-temp-dir-then-rename — instead. FLIP#1026 tracks the temp-dir staging; this
     # comment (and the entrypoint one) go when it lands.
@@ -195,7 +194,9 @@ async def download_and_unzip_images(
         raise Exception(f"Failed to download file from {download_url}: {str(e)}")
     logger.info(f"Downloaded file: {downloaded_file}")
 
-    # Unzip file and rename the folder
+    # Extract into the per-project dir. XNAT roots the zip at the session label, which is the
+    # accession id, so the study lands in accession_dir_abs; unzip_file refuses a zip laid out any
+    # other way before extracting anything, so the sentinel below never marks a mis-laid download.
     extracted_folder = unzip_file(downloaded_file, project_dir_abs, accession_id)
     logger.debug(f"Extracted folder: {extracted_folder}")
 
@@ -228,6 +229,14 @@ def format_download_url(
     Formats the XNAT API URL to download experiment scan images.
 
     Identifiers are quoted at this boundary even when a caller bypasses request validation.
+
+    The zip layout is pinned with ``structure=default`` (XNAT's own default, ``FileList.java``) rather
+    than left to the server: the cache and every FL app depend on it. Each member sits under
+    ``<session label>/scans/<scan id>-<description>/resources/<resource>/files/``, and FLIP relabels
+    every session to its accession id at import, so the study extracts into ``<accession_id>/``.
+    The tutorials search under that folder, and the prostate one reads the
+    ``<scan id>-<description>`` folder name. ``improved`` drops the session folder, and
+    ``simplified`` and ``legacy`` keep it but reshape the folders below it.
 
     Args:
         project_id (str): XNAT project ID.
@@ -262,9 +271,10 @@ def format_download_url(
     # let XNAT return files across all resource labels. This also covers DICOM series
     # whose resource XNAT labels other than "DICOM" (e.g. "secondary" for
     # Secondary Capture SOP classes, as produced by synthetic datasets).
+    query = {"format": "zip", "structure": "default"}
     if resource_type.upper() == "ALL":
-        return xnat_url(*segments, "files", query={"format": "zip"})
-    return xnat_url(*segments, "resources", resource_type, "files", query={"format": "zip"})
+        return xnat_url(*segments, "files", query=query)
+    return xnat_url(*segments, "resources", resource_type, "files", query=query)
 
 
 def download_file(url: str, destination_path: str, headers: dict[str, str]) -> str:
@@ -315,51 +325,77 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
     return destination_path
 
 
-def unzip_file(zip_path: str, extract_dir: str, new_name: str) -> str:
+def unzip_file(zip_path: str, extract_dir: str, expected_root: str) -> str:
     """
-    Extracts a ZIP file and renames the directory.
+    Extracts an XNAT download zip whose every member sits under ``expected_root``.
+
+    XNAT's ``structure=default`` zip (pinned by ``format_download_url``) is rooted at the session
+    label, which FLIP sets to the accession id at import. Extraction merges member by member into
+    ``<extract_dir>/<expected_root>/``. Same-name files are overwritten, and files the zip no longer
+    holds are left in place (#1026).
+
+    The whole member list is checked before anything is written. A zip with no files, or with any
+    member outside ``expected_root``, is refused. Checking only that ``<extract_dir>/<expected_root>``
+    exists after extraction would not do: on a re-download that folder is already populated, so a
+    zip laid out differently would extract beside it and still pass, and the cache would mark the
+    stale copy complete.
 
     Args:
         zip_path (str): Path to the ZIP file.
-        extract_dir (str): Directory to extract the contents.
-        new_name (str): New name for the extracted directory.
+        extract_dir (str): Directory to extract the contents into.
+        expected_root (str): The top-level folder every member must sit under (the accession id).
 
     Returns:
-        str: Path to the renamed directory.
+        str: Absolute path of ``<extract_dir>/<expected_root>``.
 
     Raises:
         FileNotFoundError: If the ZIP file does not exist.
-        ValueError: If the ZIP file contains path traversal entries (zip slip),
-            or if new_name attempts path traversal outside extract_dir.
+        ValueError: If the ZIP file contains path traversal entries (zip slip), or if expected_root
+            attempts path traversal outside extract_dir.
+        imaging_api.utils.exceptions.XnatZipLayoutError: If the zip holds no files, or holds a member
+            outside ``expected_root``. Nothing is extracted and the zip is left in place.
     """
     if not os.path.exists(zip_path):
         raise FileNotFoundError(f"ZIP file not found: {zip_path}")
 
     extract_dir_abs = os.path.realpath(extract_dir)
+    # expected_root is user-controlled (it comes from accession_id), so it must stay a direct
+    # child of extract_dir_abs.
+    root_abs = os.path.realpath(os.path.join(extract_dir_abs, expected_root))
+    if not root_abs.startswith(extract_dir_abs + os.sep):
+        raise ValueError(f"Path traversal detected in expected root: {expected_root}")
 
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        # Validate each member and extract immediately within the same loop
-        # iteration so CodeQL's taint-flow analysis can see that extraction
-        # is gated on the realpath boundary check (py/zipslip).
-        for member in zip_ref.namelist():
-            member_path = os.path.realpath(os.path.join(extract_dir_abs, member))
+        members = zip_ref.infolist()
+        member_paths = [os.path.realpath(os.path.join(extract_dir_abs, m.filename)) for m in members]
+        for member, member_path in zip(members, member_paths):
             if not member_path.startswith(extract_dir_abs + os.sep):
-                raise ValueError(f"Attempted path traversal in ZIP entry: {member}")
-            zip_ref.extract(member, extract_dir_abs)
+                raise ValueError(f"Attempted path traversal in ZIP entry: {member.filename}")
 
-    # Rename the extracted directory. new_name is user-controlled (it comes
-    # from accession_id), so we must validate that the renamed path stays
-    # within extract_dir_abs to prevent path traversal.
-    extracted_dir = os.path.join(extract_dir_abs, Path(zip_path).stem)
-    renamed_dir_candidate = os.path.join(extract_dir_abs, new_name)
-    renamed_dir = os.path.realpath(renamed_dir_candidate)
-    if not renamed_dir.startswith(extract_dir_abs + os.sep):
-        raise ValueError(f"Path traversal detected in new_name: {new_name}")
+        outside = [
+            m.filename
+            for m, p in zip(members, member_paths)
+            if not (p.startswith(root_abs + os.sep) or (p == root_abs and m.is_dir()))
+        ]
+        if outside:
+            raise XnatZipLayoutError(
+                f"XNAT zip {os.path.basename(zip_path)} is not rooted at {expected_root}/: "
+                f"{len(outside)} of {len(members)} member(s) outside it, e.g. {outside[0]!r}. "
+                "The download URL pins structure=default; has XNAT's zip layout changed?"
+            )
+        if not any(not m.is_dir() for m in members):
+            raise XnatZipLayoutError(f"XNAT zip {os.path.basename(zip_path)} holds no files ({len(members)} member(s))")
 
-    if os.path.exists(extracted_dir):
-        os.rename(extracted_dir, renamed_dir)
+        # Re-check each member right before extracting it, in the same loop iteration, so
+        # CodeQL's taint-flow analysis can see that extraction is gated on the realpath
+        # boundary check (py/zipslip).
+        for member_name in zip_ref.namelist():
+            member_path = os.path.realpath(os.path.join(extract_dir_abs, member_name))
+            if not member_path.startswith(extract_dir_abs + os.sep):
+                raise ValueError(f"Attempted path traversal in ZIP entry: {member_name}")
+            zip_ref.extract(member_name, extract_dir_abs)
 
     # Delete the original ZIP file
     os.remove(zip_path)
 
-    return renamed_dir
+    return root_abs

@@ -80,6 +80,12 @@ other's copies. The cache is invalidated when an upload changes the accession's 
 `force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
 NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
 
+The zip layout is pinned with `structure=default` on the download URL. Every member sits under the session label,
+which FLIP sets to the accession id at import, so a study extracts as
+`<accession_id>/scans/<scan id>-<description>/resources/<resource>/files/…`, the layout FL apps read. A zip with no
+files, or with any member outside `<accession_id>/`, is refused before anything is extracted (HTTP 500,
+`XnatZipLayoutError`) and never marked complete.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
