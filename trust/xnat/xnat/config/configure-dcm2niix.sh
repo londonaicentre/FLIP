@@ -40,13 +40,26 @@ DCM2NIIX_NAME="dcm2niix"
 DCM2NIIX_SUBSCRIPTION_NAME="DICOM-NIfTI Conversion"
 
 case "$XNAT_CS_BACKEND" in
-  docker) : "${DATA_PATH:?DATA_PATH is required for the docker backend}" ;;
-  kubernetes) : "${XNAT_CS_PVC_NAME:?XNAT_CS_PVC_NAME is required for the kubernetes backend}" ;;
+  docker) backend_setting=DATA_PATH ;;
+  kubernetes) backend_setting=XNAT_CS_PVC_NAME ;;
   *)
     echo "ERROR: XNAT_CS_BACKEND must be docker or kubernetes, not '$XNAT_CS_BACKEND'" >&2
     exit 1
     ;;
 esac
+# An explicit check, not ${VAR:?}: under the EXIT trap below, bash 3.2 exits 0 after an expansion
+# error, which would report a refused run as a success.
+if [[ -z "${!backend_setting:-}" ]]; then
+  echo "ERROR: $backend_setting is required for the $XNAT_CS_BACKEND backend" >&2
+  exit 1
+fi
+
+# Scratch files for this run, removed however it ends. XNAT's listings go through files rather than
+# command-line arguments: Linux caps a single argument at 128 KiB (MAX_ARG_STRLEN), which a
+# subscription or project listing passes at a few hundred entries, and jq then dies with "Argument
+# list too long" on every deploy.
+WORK_DIR=$(mktemp -d)
+trap 'rm -rf "$WORK_DIR"' EXIT
 
 # Wait for XNAT to be available (wall-clock bounded, and each probe carries
 # its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
@@ -188,8 +201,7 @@ if [[ "$XNAT_CS_BACKEND" == kubernetes ]]; then
   # this body too: it nulls any resource key the body leaves out (CommandEntity.java:116-118), so it
   # is also what moves an existing command off them. On Docker the same keys are container limits,
   # and the file goes unchanged.
-  DCM2NIIX_COMMAND_JSON=$(mktemp)
-  trap 'rm -f "$DCM2NIIX_COMMAND_JSON"' EXIT
+  DCM2NIIX_COMMAND_JSON="$WORK_DIR/dcm2niix_command.json"
   jq 'del(."reserve-memory", ."limit-memory", ."limit-cpu")' dcm2niix_command.json >"$DCM2NIIX_COMMAND_JSON"
 fi
 
@@ -340,13 +352,15 @@ xnat_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # controlled by the dicom_to_nifti flag. This ensures dcm2niix only auto-triggers
 # for projects that have opted in to DICOM-to-NIfTI conversion.
 
-# Every subscription and every project XNAT holds, read once for the repair, the report and the
-# cleanup below. A subscription has no top-level project field: its projects are
-# event-filter.project-ids (xnat-web 1.10.0 Subscription.java:18-34, EventFilter.java:23). The
-# subscription listing is null while the Event Service is off (EventServiceImpl.java:153-157),
-# hence `// []`; it was switched on just above.
-SUBS=$(xnat_curl "$XNAT_URL/xapi/events/subscriptions")
-PROJECTS_JSON=$(xnat_curl "$XNAT_URL/data/projects?format=json")
+# Every subscription and every project XNAT holds, read once into files for the repair and the
+# report below (never into a command-line argument: see WORK_DIR). A subscription has no top-level
+# project field: its projects are event-filter.project-ids (xnat-web 1.10.0 Subscription.java:18-34,
+# EventFilter.java:23). The subscription listing is null while the Event Service is off
+# (EventServiceImpl.java:153-157), hence `// []`; it was switched on just above.
+SUBS_FILE="$WORK_DIR/subscriptions.json"
+PROJECTS_FILE="$WORK_DIR/projects.json"
+xnat_curl "$XNAT_URL/xapi/events/subscriptions" >"$SUBS_FILE"
+xnat_curl "$XNAT_URL/data/projects?format=json" >"$PROJECTS_FILE"
 
 # Repair the project triggers an earlier configure left on a deleted dcm2niix wrapper (the
 # delete-and-register above, before FLIP#1451): re-point each of FLIP's subscriptions (named
@@ -366,7 +380,9 @@ PROJECTS_JSON=$(xnat_curl "$XNAT_URL/data/projects?format=json")
 #
 # A subscription whose project is no longer in XNAT's project listing is skipped: the enable call
 # would fail for it, and it can never fire. Validity is recomputed on every read, so the repaired
-# ones read valid:true straight away (EventSubscriptionEntityServiceImpl.java:430-438).
+# ones read valid:true straight away (EventSubscriptionEntityServiceImpl.java:430-438). A repair XNAT
+# refuses (its owner account cannot be loaded, say) is a warning and the run goes on: one broken
+# subscription must not fail every later deploy, and the invalid-trigger report below names it again.
 #
 # The action key is XNAT's, not built here: GET /xapi/events/allactions lists one action per command
 # wrapper, its display-name the wrapper's name and its key "<provider class>:<wrapper id>"
@@ -389,15 +405,16 @@ echo "Current $DCM2NIIX_NAME action key: $DCM2NIIX_ACTION"
 echo "Checking project DICOM->NIfTI triggers for a stale $DCM2NIIX_NAME wrapper id..."
 # One line per stale subscription: the subscription, plus `missing`, its projects XNAT no longer has.
 STALE_SUBS=$(jq -c --arg name "$DCM2NIIX_SUBSCRIPTION_NAME" --arg prefix "$ACTION_PROVIDER_PREFIX" \
-  --arg key "$DCM2NIIX_ACTION" --argjson projects "$PROJECTS_JSON" '
-  [($projects.ResultSet.Result // [])[].ID] as $known
+  --arg key "$DCM2NIIX_ACTION" --slurpfile projects "$PROJECTS_FILE" '
+  [($projects[0].ResultSet.Result // [])[].ID] as $known
   | (. // [])[]
   | select(.name == $name)
   | select((.["action-key"] // "") | startswith($prefix))
   | select(.["action-key"] != $key)
   | select((.["event-filter"]["project-ids"] // []) | length > 0)
-  | . + {missing: [.["event-filter"]["project-ids"][] | select(. as $p | $known | index($p) | not)]}' <<<"$SUBS")
+  | . + {missing: [.["event-filter"]["project-ids"][] | select(. as $p | $known | index($p) | not)]}' <"$SUBS_FILE")
 REPAIRED=0
+REPAIR_FAILED=0
 while IFS= read -r sub; do
   [[ -n "$sub" ]] || continue
   sub_id=$(jq -r '.id' <<<"$sub")
@@ -408,50 +425,58 @@ while IFS= read -r sub; do
     continue
   fi
   projects=$(jq -r '.["event-filter"]["project-ids"][]' <<<"$sub")
+  # xnat_curl reports each refusal itself; inside `if` it returns instead of aborting the run.
+  failed=""
   for project in $projects; do
-    xnat_curl -X PUT "$XNAT_URL/xapi/projects/$project/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null
+    if ! xnat_curl -X PUT "$XNAT_URL/xapi/projects/$project/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null; then
+      failed="enabling wrapper $WRAPPER_ID for project $project"
+      break
+    fi
   done
-  update=$(jq -c --arg key "$DCM2NIIX_ACTION" \
-    '{"action-key": $key, "active": .active, "act-as-event-user": (.["act-as-event-user"] // false), "attributes": (.attributes // {})}' \
-    <<<"$sub")
-  xnat_curl -X PUT "$XNAT_URL/xapi/events/subscription/$sub_id" \
-    -H "Content-Type: application/json" \
-    -d "$update" >/dev/null
+  if [[ -z "$failed" ]]; then
+    update=$(jq -c --arg key "$DCM2NIIX_ACTION" \
+      '{"action-key": $key, "active": .active, "act-as-event-user": (.["act-as-event-user"] // false), "attributes": (.attributes // {})}' \
+      <<<"$sub")
+    if ! xnat_curl -X PUT "$XNAT_URL/xapi/events/subscription/$sub_id" \
+      -H "Content-Type: application/json" \
+      -d "$update" >/dev/null; then
+      failed="updating subscription $sub_id"
+    fi
+  fi
+  if [[ -n "$failed" ]]; then
+    echo "WARNING: could not repair the DICOM->NIfTI trigger of project(s) $(tr '\n' ' ' <<<"$projects")(subscription $sub_id, wrapper $old_wrapper_id): $failed was refused; see the error above." >&2
+    REPAIR_FAILED=$((REPAIR_FAILED + 1))
+    continue
+  fi
   for project in $projects; do
     echo "Repaired the DICOM->NIfTI trigger of project $project: subscription $sub_id now runs wrapper $WRAPPER_ID (was $old_wrapper_id)."
   done
   REPAIRED=$((REPAIRED + 1))
 done <<<"$STALE_SUBS"
-echo "Project triggers repaired: $REPAIRED."
+echo "Project triggers repaired: $REPAIRED; could not repair: $REPAIR_FAILED."
 
-# Name each FLIP project that has no DICOM->NIfTI trigger at all: the cleanup below used to delete
-# every one, so a site configured before FLIP#1451 has none. They are not recreated here, because
+# Name each FLIP project that has no DICOM->NIfTI trigger at all: the legacy cleanup this script
+# used to run deleted every one (see below), so a Compose site configured before FLIP#1451 has none. They are not recreated here, because
 # imaging-api creates a trigger active or inactive from the project's dicom_to_nifti setting, which
 # only the hub holds (it reaches the trust once, in the create task); a trigger made by this admin
 # script would also run as the admin, not the service account. imaging-api's restore-nifti-triggers
 # recreates them once the operator says which projects convert (trust/xnat/README.md). FLIP's XNAT
 # projects carry their hub project id, a UUID, as secondary_ID (imaging_api to_create_project).
-jq -r --argjson subs "$SUBS" --arg name "$DCM2NIIX_SUBSCRIPTION_NAME" '
-  [($subs // [])[] | select(.name == $name) | (.["event-filter"]["project-ids"] // [])[]] as $covered
+jq -r --slurpfile subs "$SUBS_FILE" --arg name "$DCM2NIIX_SUBSCRIPTION_NAME" '
+  [($subs[0] // [])[] | select(.name == $name) | (.["event-filter"]["project-ids"] // [])[]] as $covered
   | (.ResultSet.Result // [])[]
   | select((.secondary_ID // "") | test("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"))
   | select(.ID as $id | ($covered | index($id)) == null)
   | "WARNING: project \(.ID) (hub project \(.secondary_ID)) has no DICOM->NIfTI trigger, so its scans are not converted. Restore it with restore-nifti-triggers (trust/xnat/README.md)."' \
-  <<<"$PROJECTS_JSON" >&2
+  <"$PROJECTS_FILE" >&2
 
-# Clean up the legacy site-wide dcm2niix subscription (FLIP before 2026-03-24 created one, named
-# "DICOM-NifTi Conversion", that fired on every project). Site-wide means no event-filter
-# project-ids. This used to select `.["project-id"] == null`, a field no subscription has, so it
-# matched and DELETED every project's subscription on every configure (FLIP#1451).
-echo "Cleaning up legacy site-wide event subscriptions..."
-SITE_SUB_IDS=$(jq -r '(. // [])[]
-  | select(.name == "DICOM-NifTi Conversion")
-  | select((.["event-filter"]["project-ids"] // []) | length == 0)
-  | .id' <<<"$SUBS")
-for SUB_ID in $SITE_SUB_IDS; do
-  echo "Deleting site-wide subscription $SUB_ID..."
-  xnat_curl -X DELETE "$XNAT_URL/xapi/events/subscription/$SUB_ID" >/dev/null
-done
+# This script deliberately DELETES NO EVENT SUBSCRIPTIONS. Do not add a cleanup step here.
+#
+# It used to carry one, for the site-wide subscription versions before 88adb78b (2026-03-24) created.
+# Nothing has created that since, and the chart never did, so the step had nothing legitimate left to
+# find. Its selector, `.["project-id"] == null`, named a field no subscription has, so it matched,
+# and deleted, every project's subscription on every configure (FLIP#1451). It is removed rather
+# than narrowed: a cleanup for something nothing creates can only misfire. FLIP#945 removes it too.
 
 # ----------------------------------------------------------------
 # VALIDATION

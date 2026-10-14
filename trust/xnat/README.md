@@ -388,9 +388,14 @@ XNAT's own action listing (`GET /xapi/events/allactions`). So the id must surviv
 - It then **re-points** any `DICOM-NIfTI Conversion` subscription that names another wrapper (left
   by a configure from before the fix, which deleted and re-registered the command) at the current
   one, enabling the wrapper for that project first, and logs one line per project repaired.
-- The legacy site-wide cleanup now deletes only FLIP's old site-wide subscription. It used to
-  select a `project-id` field that no subscription has, and so deleted **every** project's
-  subscription on every `up-trust` and `upgrade-xnat`.
+- A repair XNAT refuses (the subscription's owner cannot be loaded, say) is a warning, and the
+  run goes on; the closing count says how many could not be repaired.
+- The script **deletes no event subscription**. Its legacy site-wide cleanup is gone: it selected
+  a `project-id` field that no subscription has, and so deleted **every** project's subscription
+  on every `up-trust` and `upgrade-xnat`, while the site-wide subscription it was written for has
+  not been created since 2026-03-24 (FLIP#945 removes it too).
+- XNAT's listings reach jq through files, never as an argument: Linux caps one argument at
+  128 KiB, which a few hundred projects or subscriptions exceed.
 
 ### Restoring missing DICOM->NIfTI triggers
 

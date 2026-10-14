@@ -131,7 +131,7 @@ def xnat_state(
     site_enabled: list[int] | None = None,
     project_enabled: dict[str, list[int]] | None = None,
     projects: dict[str, str] | None = None,
-    faults: dict[str, bool] | None = None,
+    faults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ids = [c["id"] for c in commands]
     wrapper_ids = [w["id"] for c in commands for w in c.get("xnat", [])]
@@ -489,13 +489,17 @@ def test_flip_projects_with_no_trigger_are_named(tmp_path: Path, backend: str) -
 
 
 # --------------------------------------------------------------------------------------------------
-# The legacy cleanup
+# No subscription is ever deleted; listings of any size; refused repairs
 # --------------------------------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_the_cleanup_deletes_only_the_legacy_site_wide_subscription(tmp_path: Path, backend: str) -> None:
-    """It selected on `project-id`, which no subscription has, so it deleted every project's trigger."""
+def test_the_script_deletes_no_subscription(tmp_path: Path, backend: str) -> None:
+    """The legacy cleanup selected on `project-id`, which no subscription has, so it deleted every trigger.
+
+    It is gone rather than narrowed: nothing has created the site-wide subscription it was for since
+    2026-03-24, so even FLIP's own old one, if a site still had it, is left for a person (FLIP#945 agrees).
+    """
     state = xnat_state(
         [command(4, 4)],
         subscriptions=[
@@ -508,8 +512,63 @@ def test_the_cleanup_deletes_only_the_legacy_site_wide_subscription(tmp_path: Pa
     run = configure(tmp_path, backend, state)
 
     assert run.code == 0, run.output
-    assert [r["path"] for r in run.made("DELETE", r"/xapi/events/subscription/\d+")] == ["/xapi/events/subscription/2"]
-    assert {s["id"] for s in run.state["subscriptions"]} == {1, 3}
+    assert not run.made("DELETE", r"/xapi/(projects/[^/]+/)?events/subscription/\d+")
+    assert {s["id"] for s in run.state["subscriptions"]} == {1, 2, 3}
+
+
+def _big_state(stale: int = 1) -> dict[str, Any]:
+    """An XNAT whose subscription and project listings are each over 1 MiB.
+
+    Linux refuses any single command-line argument over 128 KiB (MAX_ARG_STRLEN) and macOS a whole
+    argument list over 1 MiB, so a listing passed to jq as an argument fails on either. Live XNAT
+    answers ~520 B per subscription and ~400 B per project, so this is a site of 3,500 projects.
+    """
+    projects = {f"P{i:05d}": f"{i:08x}-1d2f-4a5b-8c6d-7e8f9a0b1c2d" for i in range(3500)}
+    subscriptions = [subscription(i, 5, [pid]) for i, pid in enumerate(projects, start=100)]
+    for sub in subscriptions[:stale]:
+        sub["action-key"] = f"{PROVIDER}4"
+    return xnat_state(
+        [command(5, 5, image=pinned_image())],
+        subscriptions=subscriptions,
+        project_enabled={pid: [5] for pid in projects},
+        projects=projects,
+    )
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_listings_over_the_argument_limit_still_configure(tmp_path: Path, backend: str) -> None:
+    """At a few hundred projects the listings passed jq's --argjson and every deploy failed (FLIP#1451)."""
+    state = _big_state()
+    for path in ("/xapi/events/subscriptions", "/data/projects"):
+        _, body = fake_xnat.handle(copy.deepcopy(state), fake_xnat.Request([f"http://xnat-web:8080{path}"]))
+        # Over macOS's 1 MiB argument-list limit too, so the test fails on a laptop as it would on Linux.
+        assert len(body) > 1024 * 1024, f"fixture: {path} is only {len(body)} bytes"
+    del state["subscriptions"][-1]  # one FLIP project left with no trigger, for the report
+    run = configure(tmp_path, backend, state)
+
+    assert run.code == 0, run.output[-2000:]
+    assert run.subscription(100)["action-key"] == f"{PROVIDER}5", "the one stale trigger was not repaired"
+    assert "Project triggers repaired: 1; could not repair: 0." in run.output
+    assert "WARNING: project P03499 " in run.output, "the missing-trigger report did not run"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_repair_xnat_refuses_is_a_warning_and_the_rest_go_on(tmp_path: Path, backend: str) -> None:
+    """One subscription XNAT will not update (its owner cannot be loaded) must not fail every deploy."""
+    state = xnat_state(
+        [command(5, 5, image=pinned_image())],
+        subscriptions=[subscription(1, 4, ["P"]), subscription(3, 4, ["Q"])],
+        project_enabled={"P": [4], "Q": [4]},
+        faults={"reject_subscription_update": [1]},
+    )
+    run = configure(tmp_path, backend, state)
+
+    assert run.code == 0, run.output
+    assert "WARNING: could not repair the DICOM->NIfTI trigger of project(s) P (subscription 1" in run.output
+    assert run.subscription(1)["action-key"] == f"{PROVIDER}4"
+    assert run.subscription(3)["action-key"] == f"{PROVIDER}5"
+    assert "Project triggers repaired: 1; could not repair: 1." in run.output
+    assert "WARNING: invalid DICOM->NIfTI trigger: subscription 1" in run.output, "named again by the report"
 
 
 # --------------------------------------------------------------------------------------------------
@@ -528,6 +587,29 @@ def test_the_configure_script_never_deletes_a_command() -> None:
     code = _code(SCRIPT.read_text())
     assert "/xapi/commands" in code, "guard the guard: the script no longer talks to the command API"
     assert not DELETE_COMMAND.search(code), "configure-dcm2niix.sh deletes a dcm2niix command again (FLIP#1451)"
+
+
+def test_the_configure_script_never_deletes_a_subscription() -> None:
+    """The same rule FLIP#945 pins: per-project triggers are indistinguishable from any site-wide one."""
+    code = _code(SCRIPT.read_text())
+    offending = [line for line in code.splitlines() if "events/subscription" in line and "DELETE" in line]
+    assert not offending, "configure-dcm2niix.sh deletes an event subscription again:\n" + "\n".join(offending)
+
+
+def test_no_listing_reaches_jq_as_an_argument() -> None:
+    """--argjson / --arg carry a whole value in argv, which Linux caps at 128 KiB per argument."""
+    code = _code(SCRIPT.read_text())
+    assert "--argjson" not in code, "pass a listing to jq with --slurpfile or on stdin, never --argjson"
+    for variable in ("SUBS_FILE", "PROJECTS_FILE"):
+        assert f'"${variable}"' in code, f"guard the guard: {variable} is no longer read from its file"
+
+
+def test_the_chart_refuses_an_xnat_image_whose_script_predates_the_backend_switch() -> None:
+    """The chart greps the image's script for its marker; renaming the switch would refuse every image."""
+    container = _init_job_dcm2niix_container()
+    marker = re.search(r"grep -q (\S+) configure-dcm2niix\.sh", container)
+    assert marker, "the chart no longer checks the image's configure-dcm2niix.sh before running it"
+    assert marker.group(1) in _code(SCRIPT.read_text())
 
 
 def _init_job_dcm2niix_container() -> str:

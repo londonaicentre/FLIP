@@ -439,8 +439,14 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 place and re-points every `DICOM-NIfTI Conversion` subscription that names another
 wrapper at the current one, after enabling that wrapper for the project, logging
 one `Repaired the DICOM->NIfTI trigger of project <id>` line per project. It
-leaves a subscription whose project no longer exists alone, and warns about any
-trigger XNAT still calls invalid.
+leaves a subscription whose project no longer exists alone, warns about a repair
+XNAT refuses and carries on (the closing `could not repair: N` counts them), and
+warns about any trigger XNAT still calls invalid.
+
+The Job runs `configure-dcm2niix.sh` from the xnat-web image. If `xnat.image.pin`
+(the kit's `XNAT_TAG`) holds that image before FLIP#1451, the Job stops with
+`xnat-web image <image> predates FLIP#1451`: unpin it, or pin an image from the
+release that ships this chart or later.
 
 A project with **no** subscription at all is named in the Job log
 (`WARNING: project <id> (hub project <id>) has no DICOM->NIfTI trigger`) but not

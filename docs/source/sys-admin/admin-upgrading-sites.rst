@@ -210,6 +210,12 @@ for that one image. That is the only way to move a Kubernetes site to a ``sha-``
 them was never built at — a StatefulSet rolled onto a tag that does not exist stays down — and
 a release tag never needs one.
 
+Since FLIP#1451 the chart's ``xnat-init`` Job runs ``configure-dcm2niix.sh`` from the xnat-web
+image, so ``xnat.image.pin`` (the kit's ``XNAT_TAG``) also picks the configure script. An xnat-web
+image built before FLIP#1451 (v0.12.0, for one) carries a Docker-only script: the Job refuses it,
+naming the image, rather than letting ``helm upgrade`` fail on its own. Hold XNAT back only on an
+xnat-web image from the release that ships the chart, or later.
+
 Cloud (EC2) trust
 =================
 

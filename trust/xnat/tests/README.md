@@ -49,9 +49,10 @@ protect the XNAT database credentials (FLIP-PT-056).
   (image host on docker only, the resource keys stripped on Kubernetes), that an existing command
   is updated in place (never deleted, its command and wrapper ids kept, the pinned image carried),
   that a command is registered only when none exists, that triggers left on a deleted wrapper are
-  re-pointed to the current one (and only FLIP's), that the cleanup deletes only the legacy
-  site-wide subscription, that the chart sets every variable the Kubernetes path reads, and that
-  the subscription name matches imaging-api's.
+  re-pointed to the current one (and only FLIP's), that a repair XNAT refuses is a warning, that
+  the script deletes no subscription, that listings over the 128 KiB argument limit still work
+  (they reach jq through files), that the chart sets every variable the Kubernetes path reads and
+  refuses an image without the backend switch, and that the subscription name matches imaging-api's.
 - **Startup reliability** (`test_startup.py`) — executes the dev plugin-cache check ordering
   and authenticated plugin-readiness wait with stubbed curl commands,
   checks aggregate Make targets propagate failures, and pins root-relative paths
