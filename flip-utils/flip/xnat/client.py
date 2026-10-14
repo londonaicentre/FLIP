@@ -270,20 +270,13 @@ class XnatClient:
             resource (str): Resource name, e.g. ``NIFTI``.
             local_path (Path): The file to upload.
             target_filename (str): Name the file should take in XNAT.
-            overwrite (bool): Replace an existing file of that name, by sending XNAT's
-                ``overwrite=true``. Off by default so a re-run never silently rewrites enrichment
-                that is already in place: without the flag XNAT keeps the existing file and
-                reports it as a duplicate, which this method raises on.
+            overwrite (bool): Replace an existing file of that name. Off by default so a re-run
+                never silently rewrites enrichment that is already in place.
 
         Raises:
-            XnatError: If the upload fails, if the file exists and ``overwrite`` is False, or if
-                ``overwrite`` is True and XNAT still kept the existing file.
+            XnatError: If the upload fails, or if XNAT kept an existing file of that name.
         """
-        # XNAT replaces an existing file only when the request carries overwrite=true. A bare PUT
-        # keeps the old file and still answers 200, listing the file under "duplicates" in the body
-        # (xnat-web 1.10.0 FileList.java:295 and :345-349, CatalogUtils.java:1764). So the PUT itself
-        # says whether it wrote, and there is no pre-check: asking first would only leave a window
-        # for another writer between the two requests.
+        # The PUT is its own existence check: see _kept_existing_file.
         query = "inbody=true&overwrite=true" if overwrite else "inbody=true"
 
         # Escape the caller-supplied path segments. A "/" would redirect the write to another
@@ -306,42 +299,28 @@ class XnatClient:
         except OSError as err:
             raise XnatError(f"Could not read {local_path}: {err}") from err
 
-        # XNAT 1.10 reports a duplicate as a 200 (below), not a 409, on this endpoint. The 409 branch
-        # stays so that a server or proxy that does reject the write says so clearly.
-        if response.status_code == 409:
-            raise XnatError(f"File already exists on XNAT: {target_filename}")
         if response.status_code not in (200, 201):
             raise XnatError(f"Upload of {local_path} returned {response.status_code}: {response.text}")
-
-        # A 200 is not proof of a write: XNAT keeps an existing file and lists it under "duplicates".
-        duplicates = _upload_duplicates(response)
-        if duplicates:
-            if not overwrite:
-                raise XnatError(f"File already exists on XNAT: {target_filename}")
-            raise XnatError(
-                f"XNAT kept the existing {target_filename} instead of replacing it (duplicates: {duplicates})"
-            )
+        if _kept_existing_file(response):
+            raise XnatError(f"File already exists on XNAT: {target_filename}")
 
         logger.info(f"Uploaded {local_path.name} as {target_filename} to scan {scan.scan_id} ({scan.accession_id})")
 
 
-def _upload_duplicates(response: requests.Response) -> list[str]:
-    """Return the files XNAT reports it kept instead of writing, from a file PUT's response body.
+def _kept_existing_file(response: requests.Response) -> bool:
+    """Whether XNAT kept an existing file instead of writing the upload.
 
-    XNAT answers a PUT that would replace an existing file without ``overwrite=true`` with HTTP 200
-    and ``{"duplicates": [...]}``, and writes nothing. A clean write answers 200 with an empty body.
-    XNAT serves the ``duplicates`` body as ``text/html``, so the body is parsed as JSON whatever the
-    Content-Type says, and an empty or non-JSON body means nothing was reported.
+    Without ``overwrite=true``, XNAT keeps an existing file and still answers 200, naming it under
+    ``duplicates`` in a JSON body that it serves as ``text/html``.
 
     Args:
         response (requests.Response): XNAT's response to a file PUT.
 
     Returns:
-        list[str]: The duplicate file paths XNAT reported, or an empty list if the file was written.
+        bool: True if the body lists a duplicate, False for a clean write (an empty or non-JSON body).
     """
     try:
         body = json.loads(response.content)
     except ValueError:
-        return []
-    duplicates = body.get("duplicates") if isinstance(body, dict) else None
-    return [str(duplicate) for duplicate in duplicates] if isinstance(duplicates, list) else []
+        return False
+    return isinstance(body, dict) and bool(body.get("duplicates"))

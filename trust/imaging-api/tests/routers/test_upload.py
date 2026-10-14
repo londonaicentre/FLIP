@@ -197,9 +197,7 @@ def test_upload_data_rejected_xnat_put_is_an_error_not_a_url(client, tmp_path):
 
 
 def test_upload_data_file_xnat_kept_is_an_error_and_leaves_the_download_cache(client, tmp_path):
-    # End to end through the real service: XNAT answers a file it kept instead of writing with a 200
-    # and {"duplicates": [...]} (#1454). That must surface as an error, and must not clear the
-    # download cache, since nothing in XNAT changed.
+    # A file XNAT kept is an error, and leaves the download cache alone since nothing in XNAT changed.
     upload_dir = tmp_path / "net1" / "upload"
     upload_dir.mkdir(parents=True)
     (upload_dir / "scan.nii").write_bytes(b"nifti-data")

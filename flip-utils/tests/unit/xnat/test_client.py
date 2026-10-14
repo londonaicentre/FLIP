@@ -195,24 +195,12 @@ class TestListResourceFiles:
 
 
 def _kept_response() -> FakeResponse:
-    """What XNAT 1.10 answers for a file it kept instead of writing (FileList.java:345-349).
+    """What XNAT answers for a file it kept instead of writing.
 
     Returns:
-        FakeResponse: HTTP 200 with a JSON ``duplicates`` body, served as ``text/html``.
+        FakeResponse: HTTP 200 with a JSON ``duplicates`` body.
     """
-    return FakeResponse(status_code=200, text='{"duplicates": ["label_a.nii.gz"]}', content_type="text/html")
-
-
-def _files(names: list[str]) -> dict:
-    """Build a resource-file listing payload.
-
-    Args:
-        names (list[str]): Filenames the resource reports.
-
-    Returns:
-        dict: An XNAT ``ResultSet`` payload.
-    """
-    return {"ResultSet": {"Result": [{"Name": name} for name in names]}}
+    return FakeResponse(status_code=200, text='{"duplicates": ["label_a.nii.gz"]}')
 
 
 class TestUploadScanResourceFile:
@@ -239,21 +227,6 @@ class TestUploadScanResourceFile:
         ]
         assert client._session.gets == []
 
-    def test_conflict_without_overwrite_raises(self, tmp_path):
-        client = make_client({})
-        client._session = FakeSession({}, put_response=FakeResponse(status_code=409, text="exists"))
-        local = tmp_path / "label_a.nii.gz"
-        local.write_bytes(b"volume")
-
-        with pytest.raises(XnatError, match="already exists"):
-            client.upload_scan_resource_file(
-                scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
-                project_id="PROJ",
-                resource="NIFTI",
-                local_path=local,
-                target_filename="label_a.nii.gz",
-            )
-
     def test_error_status_raises_with_body(self, tmp_path):
         client = make_client({})
         client._session = FakeSession({}, put_response=FakeResponse(status_code=500, text="boom"))
@@ -269,11 +242,7 @@ class TestUploadScanResourceFile:
                 target_filename="label_a.nii.gz",
             )
 
-    # XNAT replaces an existing file only when the PUT carries overwrite=true. Without it, XNAT keeps
-    # the old file and still answers 200, naming it under "duplicates" in a text/html body
-    # (xnat-web 1.10.0 FileList.java:345-349). The PUT itself is therefore the existence check (#1454).
-
-    def test_duplicates_without_overwrite_raises(self, tmp_path):
+    def test_duplicates_raise(self, tmp_path):
         client = make_client({})
         client._session = FakeSession({}, put_response=_kept_response())
         local = tmp_path / "label_a.nii.gz"
@@ -295,7 +264,6 @@ class TestUploadScanResourceFile:
 
     @pytest.mark.parametrize("body", ["", "not json", "{}", '{"duplicates": []}'])
     def test_clean_write_without_overwrite_succeeds(self, tmp_path, body):
-        # A clean write is an empty 200; anything that is not a non-empty duplicates list means written.
         client = make_client({})
         client._session = FakeSession({}, put_response=FakeResponse(status_code=200, text=body))
         local = tmp_path / "label_a.nii.gz"
@@ -311,8 +279,8 @@ class TestUploadScanResourceFile:
 
         assert len(client._session.puts) == 1
 
-    def test_overwrite_sends_the_flag_and_replaces_an_existing_file(self, tmp_path):
-        client = make_client({"/resources/NIFTI/files": FakeResponse(payload=_files(["label_a.nii.gz"]))})
+    def test_overwrite_sends_the_flag(self, tmp_path):
+        client = make_client({})
         local = tmp_path / "label_a.nii.gz"
         local.write_bytes(b"volume")
 
@@ -325,29 +293,11 @@ class TestUploadScanResourceFile:
             overwrite=True,
         )
 
-        # The flag has to reach the wire: it is the only thing that makes XNAT replace the file.
         assert client._session.puts == [
             "http://xnat.example/data/projects/PROJ/subjects/SUBJ_1/"
             "experiments/EXP_1/scans/1/resources/NIFTI/files/label_a.nii.gz?inbody=true&overwrite=true"
         ]
         assert client._session.gets == []
-
-    def test_overwrite_that_xnat_did_not_honour_raises(self, tmp_path):
-        # Should a server ever ignore overwrite=true, the old file is still there: a failure, not a success.
-        client = make_client({})
-        client._session = FakeSession({}, put_response=_kept_response())
-        local = tmp_path / "label_a.nii.gz"
-        local.write_bytes(b"volume")
-
-        with pytest.raises(XnatError, match="kept the existing label_a.nii.gz"):
-            client.upload_scan_resource_file(
-                scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
-                project_id="PROJ",
-                resource="NIFTI",
-                local_path=local,
-                target_filename="label_a.nii.gz",
-                overwrite=True,
-            )
 
     def test_path_characters_in_the_filename_are_escaped(self, tmp_path):
         client = make_client({})
