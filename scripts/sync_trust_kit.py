@@ -93,10 +93,14 @@ def main() -> None:
     if os.environ.get("TRUST_FL_SERVER_PORT"):
         new_values["FL_SERVER_PORT"] = os.environ["TRUST_FL_SERVER_PORT"]
     # Most site images were never built at a sha- tag (path-filtered CI, see site_upgrade.py):
-    # use its release, else the stag/prod branch tag every image carries.
+    # use its release, else (staging only; prod sites pin releases) the stag tag every image carries.
     for key in ("DOCKER_TAG", "DOCKER_FL_TAG"):
-        if new_values[key].startswith("sha-"):
-            new_values[key] = site_upgrade.release_for_sha(new_values[key]) or args.env_class
+        tag = new_values[key]
+        if tag.startswith("sha-"):
+            release = site_upgrade.release_for_sha(tag)
+            if not release and args.env_class == "prod":
+                die(f"❌ {key}={tag} is not a release: deploy the hub at one, or check out the release it is from.")
+            new_values[key] = release or "stag"
 
     # Surface the source env file + destination URL up-front — doubles as a
     # footgun guard: an on-prem-pointed kit accidentally synced without HUB=prod

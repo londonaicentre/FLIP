@@ -69,7 +69,9 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
         FAIL += 1
 
 
-def _run(repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None, env_class: str = "stag"
+) -> subprocess.CompletedProcess[str]:
     """Run sync_trust_kit.py against a temp repo root, return CompletedProcess."""
     env = {**HUB_SHARED_DEFAULTS, **(env_overrides or {}), "PATH": os.environ.get("PATH", "")}
     # Copy the script into the temp repo (symlinking won't work — the script
@@ -86,7 +88,7 @@ def _run(repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None)
         shutil.copy2(LIB_SCRIPT, lib_copy)
         shutil.copy2(UPGRADE_SCRIPT, scripts_dir / "site_upgrade.py")
     return subprocess.run(
-        ["uv", "run", "--no-config", str(copy), "--env-class", "stag", kit],
+        ["uv", "run", "--no-config", str(copy), "--env-class", env_class, kit],
         cwd=repo_root,
         env=env,
         capture_output=True,
@@ -272,6 +274,22 @@ def test_8_site_facing_port_and_tag() -> None:
         _assert("DOCKER_FL_TAG=v0.12.0" in content, "a release tag passes through")
 
 
+def test_9_prod_refuses_a_sha_tag_without_its_release() -> None:
+    """A prod site pins a release, so a sha- tag this checkout cannot map to one is refused."""
+    print("▶ sync for a prod hub refuses a sha- tag with no release")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "trust").mkdir()
+        kit = root / "trust" / ".env.Trust_1"
+        kit.write_text("TRUST_API_KEY=preserved\n")
+
+        result = _run(root, "Trust_1", env_overrides={"DOCKER_TAG": "sha-3e4fd83"}, env_class="prod")
+
+        _assert(result.returncode != 0, "exit non-zero")
+        _assert("DOCKER_TAG=sha-3e4fd83" in result.stderr, "stderr names the tag", result.stderr)
+        _assert("DOCKER_TAG=" not in kit.read_text(), "kit file not mutated")
+
+
 def main() -> None:
     if not SYNC_SCRIPT.is_file():
         sys.exit(f"❌ {SYNC_SCRIPT} not found")
@@ -285,6 +303,7 @@ def main() -> None:
     test_5_in_place_replacement_on_template()
     test_6_optional_key_absent_is_tolerated()
     test_8_site_facing_port_and_tag()
+    test_9_prod_refuses_a_sha_tag_without_its_release()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
