@@ -106,7 +106,14 @@ class XnatTokenFactory:
             return False
 
         if response.text.strip() != self.username:
-            logger.debug("XNAT session check named a user other than the configured service user, logging in again")
+            # A warning, not a debug line: if XNAT_SERVICE_USER differs from the XNAT username at all (letter
+            # case, stray whitespace), every request logs in again and sessions pile up, and this line is the
+            # only sign of why. It names neither user, and never the token.
+            logger.warning(
+                "XNAT session check: the session belongs to a different user than XNAT_SERVICE_USER, logging in "
+                "again. If this repeats on every request, check that XNAT_SERVICE_USER matches the XNAT username "
+                "exactly (letter case, whitespace)."
+            )
             return False
 
         logger.debug("XNAT session check passed, reusing the cached session")

@@ -212,3 +212,40 @@ class TestSessionTokenIsNeverLogged:
         for token in (CACHED_TOKEN, NEW_TOKEN):
             # The previous code logged the first ten characters; any six would already be a leak.
             assert not any(token[i : i + 6] in caplog.text for i in range(len(token) - 5))
+
+    @patch("imaging_api.utils.xnat_token.requests.get")
+    def test_a_session_for_another_user_warns_without_naming_either_user(self, mock_get, factory, caplog):
+        """A mismatch makes every request log in again, so it must be visible: one WARNING, no names, no token."""
+        caplog.set_level(logging.DEBUG)
+        mock_get.return_value = _response(200, "another-user")
+
+        assert factory.is_token_valid(CACHED_TOKEN) is False
+
+        warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+        assert len(warnings) == 1
+        assert "a different user than XNAT_SERVICE_USER" in warnings[0]
+        assert USERNAME not in caplog.text
+        assert "another-user" not in caplog.text
+        assert not any(CACHED_TOKEN[i : i + 6] in caplog.text for i in range(len(CACHED_TOKEN) - 5))
+
+    @pytest.mark.parametrize(
+        "session_check",
+        [
+            pytest.param(_response(200, USERNAME), id="valid"),
+            pytest.param(_response(401, "Unauthorized"), id="401"),
+            pytest.param(requests.exceptions.ConnectionError("connection refused"), id="connection-error"),
+        ],
+    )
+    @patch("imaging_api.utils.xnat_token.requests.get")
+    def test_an_expired_or_unreachable_session_stays_at_debug(self, mock_get, factory, session_check, caplog):
+        """An expired session or a blip is routine, so only the user mismatch warns."""
+        caplog.set_level(logging.DEBUG)
+        if isinstance(session_check, Exception):
+            mock_get.side_effect = session_check
+        else:
+            mock_get.return_value = session_check
+
+        factory.is_token_valid(CACHED_TOKEN)
+
+        assert "XNAT session check" in caplog.text
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
