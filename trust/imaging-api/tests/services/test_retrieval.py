@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from collections.abc import Iterator
 from datetime import datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -25,12 +26,19 @@ from imaging_api.services.retrieval import (
     select_study_for_accession,
 )
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT
-from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
+from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError, XnatFetchError
 
 
 @pytest.fixture
 def headers():
     return {}
+
+
+@pytest.fixture(autouse=True)
+def default_pacs() -> Iterator[MagicMock]:
+    """XNAT has a default query/retrieve PACS unless a test says otherwise (FLIP#1456 E1)."""
+    with patch("imaging_api.services.retrieval.resolve_default_pacs_id", return_value=1) as resolved:
+        yield resolved
 
 
 def _make_study(accession_number: str = "ACC1", uid: str = "1.2.3.4") -> Study:
@@ -981,3 +989,85 @@ async def test_retry_requeues_terminal_failures_end_to_end(
     assert result is True
     mock_query.assert_called_once_with("ACC_FAIL", headers)
     assert mock_queue.call_args[0][0].studies[0].accession_number == "ACC_FAIL"
+
+
+# ===========================================================================
+# A missing default query/retrieve PACS ends the run before its queries (FLIP#1456 E1)
+# ===========================================================================
+
+UNRESOLVABLE_PACS = [
+    NotFoundError("XNAT has no PACS flagged as the default query/retrieve PACS"),
+    XnatFetchError("Could not list the PACS registered in XNAT: HTTP 503"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", UNRESOLVABLE_PACS, ids=["no default", "listing failed"])
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retrieve_images_without_a_default_pacs_logs_why_and_queries_nothing(
+    mock_get_project, mock_encrypt, mock_get_accession_ids, mock_query, mock_queue, error, default_pacs, headers, caplog
+):
+    """Otherwise every C-FIND is DQR's 404 and the run ends "No studies found": a data problem in disguise."""
+    mock_get_accession_ids.return_value = ["ACC1", "ACC2"]
+    default_pacs.side_effect = error
+
+    assert await retrieve_images_for_project("proj1", "SELECT *", headers) is False
+
+    assert f"Not importing images for project proj1: {error}" in caplog.text
+    assert not mock_query.called
+    assert not mock_queue.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", UNRESOLVABLE_PACS, ids=["no default", "listing failed"])
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_import_status", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.get_project")
+async def test_retry_without_a_default_pacs_logs_why_and_queries_nothing(
+    mock_get_project, mock_get_status, mock_query, mock_queue, error, default_pacs, headers, caplog
+):
+    mock_get_status.return_value = ImportStatus(failed=["ACC1"], queue_failed=["ACC2"])
+    default_pacs.side_effect = error
+
+    assert await retry_retrieve_images_for_project("proj1", "SELECT *", headers) is False
+
+    assert f"Not importing images for project proj1: {error}" in caplog.text
+    assert not mock_query.called
+    assert not mock_queue.called
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.queue_image_import_request")
+@patch("imaging_api.services.retrieval.query_by_accession_number")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+@patch("imaging_api.services.retrieval.get_project")
+async def test_the_default_pacs_is_checked_once_per_run_not_per_accession(
+    mock_get_project, mock_encrypt, mock_get_accession_ids, mock_query, mock_queue, default_pacs, headers
+):
+    accessions = ["ACC1", "ACC2", "ACC3"]
+    mock_get_accession_ids.return_value = accessions
+    mock_query.side_effect = [[_make_study(a, f"1.2.3.{n}")] for n, a in enumerate(accessions)]
+    mock_queue.return_value = [_make_import_response(a) for a in accessions]
+
+    assert await retrieve_images_for_project("proj1", "SELECT *", headers) is True
+
+    default_pacs.assert_called_once_with(headers)
+    assert mock_query.call_count == 3
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_import_status", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.get_project")
+async def test_a_retry_with_nothing_to_retry_does_not_look_up_the_pacs(
+    mock_get_project, mock_get_status, default_pacs, headers
+):
+    mock_get_status.return_value = ImportStatus(successful=["ACC1"])
+
+    assert await retry_retrieve_images_for_project("proj1", "SELECT *", headers) is True
+    assert not default_pacs.called

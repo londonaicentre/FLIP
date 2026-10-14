@@ -91,6 +91,16 @@ receiver port (`8104`/`8106`) and serves no HTTP.
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project
 
+There is no PACS id to configure. A query sends no `pacsId`, so DQR runs it against the PACS XNAT
+flags as its default query/retrieve PACS — the one registration `configure-xnat.sh` keeps, with that
+flag set. DQR's import does not default the same way, so each import reads that PACS's id from
+`GET /xapi/pacs?queryable=true` (one call per import, never cached) and fails, naming what XNAT
+reported, when no PACS or more than one is flagged. An import run checks that PACS once before its
+C-FINDs and, without it, logs that message and stops, rather than every query failing 404 and the
+run ending "No studies found to import". Re-running XNAT's configure step restores a missing flag; a
+PACS disabled in DQR's admin page has to be re-enabled there. `GET /imaging/ping_pacs` without an id
+pings the same PACS, resolved the same way on every call.
+
 Example DQR import request:
 
 ```json
@@ -194,7 +204,6 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `XNAT_URL` | URL of the XNAT instance (default `http://xnat-web:8080` — a compose-topology constant, not a kit field) |
 | `XNAT_PORT` | **Required.** XNAT's DICOM SCP receiver port. Paired with `XNAT_AETITLE` as the C-MOVE destination handed to the PACS, so it must be the receiver port, not the web-UI `XNAT_WEB_PORT` |
 | `XNAT_AETITLE` | XNAT's own AE title (default `XNAT`). Must match `XNAT_AETITLE` in `configure-xnat.sh`: DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title **and** port |
-| `PACS_ID` | Fallback PACS id (default `1`). A trust XNAT retrieves from exactly one PACS and `configure-xnat.sh` enforces that, so the id is normally resolved from XNAT at runtime; this value is used only as a fallback, when XNAT cannot be reached or reports no registered PACS (both logged at error) |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
 | `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |

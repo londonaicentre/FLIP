@@ -588,8 +588,10 @@ else
   # and keeps the old flag forever, exactly the silently-ignored kit change the in-place update
   # exists to prevent. Comparison against the desired payload rather than the env vars keeps type
   # handling in jq (port and the flag are JSON number/boolean in both documents, not strings).
+  # The two DQR flags are compared too: imaging-api's queries need the default one, and a PACS
+  # registered by hand (the admin UI's "Default Q/R AE" starts at No) is adopted without it.
   pacs_drift=$(jq -cn --argjson entry "$pacs_entry" --argjson desired "$pacs_payload" \
-    '[("host","queryRetrievePort","label","supportsExtendedNegotiations")
+    '[("host","queryRetrievePort","label","supportsExtendedNegotiations","defaultQueryRetrievePacs","queryable")
       | select($entry[.] != $desired[.])]')
 
   if [[ "$pacs_drift" == "[]" ]]; then
@@ -607,8 +609,8 @@ fi
 # The availability schedule below is written against the registered PACS, so resolve its id whether
 # it was just created or already existed.
 PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs" \
-  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae)) | .[0].id // empty')
-: "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered after configuration}"
+  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae and .defaultQueryRetrievePacs and .queryable)) | .[0].id // empty')
+: "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered as the DQR default queryable PACS after configuration}"
 
 # Configure the PACS availability schedule — the throttle for a production PACS, which may refuse
 # further associations after a certain volume, and which a trust may want restricted to out-of-hours

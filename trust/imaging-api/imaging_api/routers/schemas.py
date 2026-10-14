@@ -19,7 +19,6 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 from imaging_api.config import get_settings
 
-PACS_ID = get_settings().PACS_ID
 XNAT_PORT = get_settings().XNAT_PORT
 XNAT_AETITLE = get_settings().XNAT_AETITLE
 
@@ -265,10 +264,14 @@ class Study(BaseModel):
 
 
 class StudyQuery(BaseModel):
-    """Represents a study query for PACS through XNAT DQR."""
+    """Represents a study query for PACS through XNAT DQR.
+
+    ``pacs_id`` is optional. Left unset and serialised with ``exclude_none=True``, the query carries no
+    ``pacsId`` and DQR runs it against its default query/retrieve PACS; set, it names that registration.
+    """
 
     accession_number: str = Field(..., alias="accessionNumber")
-    pacs_id: int = Field(default=PACS_ID, alias="pacsId")
+    pacs_id: int | None = Field(default=None, alias="pacsId")
     modality: str | None = Field(default="", alias="modality")
 
 
@@ -305,12 +308,13 @@ class ImportStudy(BaseModel):
 class ImportStudyRequest(BaseModel):
     """Represents an image import request for DQR."""
 
-    # Resolved from XNAT at request time and overwritten in services/imaging.py before the request
-    # is sent, so a caller-supplied value has no effect. Kept on the model because the resolved id
-    # is assigned here and serialised onward to DQR; the description says so in the OpenAPI schema
-    # rather than leaving a knob that silently does nothing.
-    pacs_id: int = Field(
-        default=PACS_ID,
+    # Resolved from XNAT at request time (the default query/retrieve PACS) and overwritten in
+    # services/imaging.py before the request is sent, so a caller-supplied value has no effect. Kept on
+    # the model because the resolved id is assigned here and serialised onward to DQR, whose import —
+    # unlike its query — does not fall back to the default PACS; the description says so in the
+    # OpenAPI schema rather than leaving a knob that silently does nothing.
+    pacs_id: int | None = Field(
+        default=None,
         alias="pacsId",
         description="Resolved from XNAT server-side; any value supplied here is ignored.",
     )

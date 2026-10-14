@@ -109,7 +109,7 @@ services:
     cap_add:
       - CHOWN
     environment:
-      # XNAT_URL, PACS_ID, XNAT_DATABASE_URL, DATA_ACCESS_API_URL and
+      # XNAT_URL, XNAT_DATABASE_URL, DATA_ACCESS_API_URL and
       # TRUST_INTERNAL_SERVICE_KEY_HEADER are internal-topology constants and now
       # default in imaging_api/config.py — do not inject them (an empty ${VAR}
       # from a kit that omits them would override the code default).

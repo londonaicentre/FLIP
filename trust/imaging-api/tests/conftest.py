@@ -19,7 +19,6 @@ import tempfile
 # is imported.  These are only used in tests; real values come from Docker
 # Compose environment or .env files in deployed environments.
 _TEST_ENV_DEFAULTS = {
-    "PACS_ID": "1",
     "XNAT_URL": "http://localhost:8080",
     "XNAT_SERVICE_USER": "test_user",
     "XNAT_SERVICE_PASSWORD": "test_password",  # pragma: allowlist secret

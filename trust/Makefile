@@ -155,11 +155,11 @@ endef
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
 # --env-file <kit> hands compose the kit file so ${POLL_INTERVAL_SECONDS},
-# ${PACS_ID}, ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds +
+# ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds +
 # tunables that aren't in TRUST_VARS) resolve at YAML-substitution time.
-# Without it compose silently uses empty strings → trust-api/imaging-api
-# boot fails with pydantic int-parse errors on POLL_INTERVAL_SECONDS /
-# PACS_ID. Build/test targets that don't set KIT leave the flag empty
+# Without it compose silently uses empty strings → trust-api boot fails
+# with pydantic int-parse errors on POLL_INTERVAL_SECONDS. Build/test
+# targets that don't set KIT leave the flag empty
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)

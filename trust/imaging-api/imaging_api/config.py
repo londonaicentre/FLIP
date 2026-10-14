@@ -44,10 +44,10 @@ class Settings(BaseSettings):
     # the C-MOVE destination handed to the PACS and DQR matches it against a registered SCP receiver
     # by exact AE title and port (FLIP#993).
     XNAT_AETITLE: str = "XNAT"
-    # A trust XNAT retrieves from exactly one PACS, and configure-xnat.sh enforces that, so the id
-    # is resolved at runtime as "the registered one" rather than assumed. This value is only the
-    # fallback for when XNAT cannot be reached: historically XNAT registered one PACS as id 1.
-    PACS_ID: int = 1
+    # No PACS id setting. Queries name no PACS, so DQR uses its default query/retrieve PACS, and each
+    # import reads that PACS's id from XNAT (services/imaging.py) — the id is XNAT's to assign, so a
+    # configured one could only be a guess. A PACS_ID still set in an older kit or Helm values file is
+    # ignored, not an error.
 
     # Internal trust-network URLs: docker service name + the service's container
     # port. Fixed by the compose topology, so they default here rather than being

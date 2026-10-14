@@ -28,7 +28,11 @@ from imaging_api.routers.schemas import (
     ImportStudyRequest,
     Study,
 )
-from imaging_api.services.imaging import query_by_accession_number, queue_image_import_request
+from imaging_api.services.imaging import (
+    query_by_accession_number,
+    queue_image_import_request,
+    resolve_default_pacs_id,
+)
 from imaging_api.services.projects import get_experiments, get_project
 from imaging_api.services_external.data_access import get_accession_ids
 from imaging_api.utils.auth import get_xnat_auth_headers
@@ -90,6 +94,28 @@ def select_study_for_accession(accession_number: str, studies_found: list[Study]
     return None
 
 
+def has_default_pacs(project_id: str, headers: dict[str, str]) -> bool:
+    """Whether XNAT has the default query/retrieve PACS that an import run's C-FINDs depend on.
+
+    Without it DQR answers every query 404, and the run would end "No studies found to import", which
+    reads as a data problem. Logged rather than raised, like a cohort below the threshold, because the
+    run is a background task.
+
+    Args:
+        project_id (str): The imaging project the run imports into, for the log line.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        bool: True when the PACS resolves; False, with the reason logged, otherwise.
+    """
+    try:
+        resolve_default_pacs_id(headers)
+    except Exception as e:
+        logger.error(f"Not importing images for project {project_id}: {e}")
+        return False
+    return True
+
+
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
     """
     Queues an import request for the images associated with the given project.
@@ -138,6 +164,9 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
             f"Not importing images for project {project_id}: the cohort is below the trust's "
             "minimum size, so the Data Access API withheld its accession IDs."
         )
+        return False
+
+    if not has_default_pacs(project_id, headers):
         return False
 
     studies_list: list[ImportStudy] = []
@@ -376,6 +405,9 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     # Create list of accession numbers that have failed
     failed_accession_numbers = import_status.failed + import_status.queue_failed
     logger.info(f"Retrying import for {len(failed_accession_numbers)} failed accession numbers")
+
+    if not has_default_pacs(project_id, headers):
+        return False
 
     # For each accession ID, unencrypt it and find the study
     studies_list: list[ImportStudy] = []

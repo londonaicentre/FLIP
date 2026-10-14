@@ -176,8 +176,12 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
   did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
-  port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
-  `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
+  port drift, keeps exactly one registration and flags it `defaultQueryRetrievePacs` (a re-run
+  restores that flag, and `queryable`, on a registration that lacks them). imaging-api has
+  no PACS id setting: its C-FINDs send no `pacsId`, so DQR queries that default PACS itself, and each
+  import — DQR's import does not default — reads the default PACS's id from
+  `GET /xapi/pacs?queryable=true`, failing (rather than guessing an id) when none or more than one is
+  flagged.
 - `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` — whether the PACS supports relational queries / extended
   negotiation (default `true`). A capability of the PACS rather than a preference: one that does not
   support it rejects the association outright. Validated as literally `true` or `false` before it

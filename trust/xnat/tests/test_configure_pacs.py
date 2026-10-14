@@ -132,10 +132,12 @@ BASE_ENV = {
 
 # What the stub reports as already registered when a test does not say otherwise. Carries every
 # kit-managed field the drift check compares (a live XNAT GET /xapi/pacs returns them all), with
-# values matching the script's defaults so the entry reads as in-sync unless a test drifts one.
+# values matching the script's defaults so the entry reads as in-sync unless a test drifts one. The
+# two DQR flags are compared as well: imaging-api's queries rely on the default flag (FLIP#1456 E1).
 MOCK_PACS_REGISTRATION = (
     '[{"id":7,"aeTitle":"ORTHANC","host":"orthanc","queryRetrievePort":4242,'
-    '"label":"Test PACS instance","supportsExtendedNegotiations":true}]'
+    '"label":"Test PACS instance","supportsExtendedNegotiations":true,'
+    '"defaultQueryRetrievePacs":true,"queryable":true}]'
 )
 
 # The SCP receivers a test can seed XNAT with, one JSON object each — reclamation is scoped by what
@@ -351,12 +353,100 @@ def test_registration_updates_in_place_when_flags_drift(tmp_path):
     assert pacs["queryRetrievePort"] == 4242
 
 
+def pacs_writes(payloads: str) -> list[tuple[str, str]]:
+    """Every request that could change a PACS registration: POST/PUT/DELETE on /xapi/pacs[/<id>]."""
+    return [
+        (m, u)
+        for m, u in requests_made(payloads)
+        if m in ("POST", "PUT", "DELETE") and re.search(r"/xapi/pacs(/\d+)?$", u)
+    ]
+
+
 def test_matching_registration_is_left_alone(tmp_path):
-    """An unchanged registration must not be rewritten on every redeploy."""
+    """An unchanged registration — the DQR default flag included — must not be rewritten on every redeploy."""
     code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION)
     assert code == 0, output
     assert "already registered at orthanc:4242 — leaving as-is" in output
-    assert not [m for m, u in requests_made(payloads) if m in ("POST", "PUT") and u.endswith("/xapi/pacs")]
+    assert pacs_writes(payloads) == []
+
+
+@pytest.mark.parametrize("flag", ["defaultQueryRetrievePacs", "queryable"])
+def test_an_adopted_registration_without_a_dqr_flag_gets_it_back_in_place(tmp_path, flag):
+    """A PACS registered by hand matches every kit field but lacks the flag imaging-api relies on.
+
+    The admin UI's "Default Q/R AE" switch starts at No, and imaging-api's C-FINDs name no PACS
+    (FLIP#1456 E1), so leaving this "as-is" would answer every query 404. One PUT, same id, restores it.
+    """
+    registration = json.loads(MOCK_PACS_REGISTRATION)
+    registration[0][flag] = False
+
+    code, payloads, output = run_configure(tmp_path, pacs_state=json.dumps(registration))
+    assert code == 0, output
+    assert f"drifted on {flag}" in output
+    assert pacs_writes(payloads) == [("PUT", "http://xnat-web:8080/xapi/pacs/7")]
+    pacs = payload_for(payloads, "/xapi/pacs")
+    assert pacs["defaultQueryRetrievePacs"] is True
+    assert pacs["queryable"] is True
+
+
+@pytest.mark.parametrize("flag", ["defaultQueryRetrievePacs", "queryable"])
+def test_a_flag_restore_that_did_not_take_fails_the_run(tmp_path, flag):
+    """A 200 that stores nothing must fail the run, not leave every C-FIND answered 404 (the FLIP#822 class)."""
+    wrap = tmp_path / "wrap"
+    wrap.mkdir()
+    # Ahead of the stub on PATH: a PUT to a registration answers 200 and is dropped; the rest pass through.
+    (wrap / "curl").write_text(
+        '#!/bin/bash\nmethod=GET; url=""; prev=""\n'
+        'for a in "$@"; do [ "$prev" = "-X" ] && method="$a"; case "$a" in http*) url="$a";; esac; prev="$a"; done\n'
+        'if [ "$method" = PUT ] && [[ "$url" =~ /xapi/pacs/[0-9]+$ ]]; then printf "{}\\n200"; exit 0; fi\n'
+        'exec "$REAL_CURL" "$@"\n'
+    )
+    (wrap / "curl").chmod(0o755)
+    registration = json.loads(MOCK_PACS_REGISTRATION)
+    registration[0][flag] = False
+
+    code, _, output = run_configure(
+        tmp_path,
+        {"PATH": f"{wrap}:{tmp_path / 'bin'}:{os.environ['PATH']}", "REAL_CURL": str(tmp_path / "bin" / "curl")},
+        pacs_state=json.dumps(registration),
+    )
+    assert code != 0, "a flag that never reached XNAT was treated as configured"
+    assert "is not registered as the DQR default queryable PACS" in output
+
+
+def test_a_default_flag_taken_by_a_foreign_pacs_comes_back_to_ours(tmp_path):
+    """A default PACS added through the UI clears our flag; removing it as foreign must not leave us unflagged."""
+    ours = {
+        "id": 7,
+        "aeTitle": "SECTRA_QR",
+        "host": "10.0.0.10",
+        "queryRetrievePort": 8059,
+        "label": "Test PACS instance",
+        "supportsExtendedNegotiations": True,
+        "defaultQueryRetrievePacs": False,
+        "queryable": True,
+    }
+    foreign = {
+        "id": 8,
+        "aeTitle": "STRAY",
+        "host": "10.0.0.99",
+        "queryRetrievePort": 104,
+        "defaultQueryRetrievePacs": True,
+        "queryable": True,
+    }
+
+    code, payloads, output = run_configure(
+        tmp_path,
+        {"PACS_AETITLE": "SECTRA_QR", "PACS_HOST": "10.0.0.10", "PACS_QR_PORT": "8059"},
+        pacs_state=json.dumps([ours, foreign]),
+    )
+    assert code == 0, output
+    assert pacs_writes(payloads) == [
+        ("DELETE", "http://xnat-web:8080/xapi/pacs/8"),
+        ("PUT", "http://xnat-web:8080/xapi/pacs/7"),
+    ]
+    remaining = json.loads((tmp_path / "pacs.json").read_text())
+    assert [(p["id"], p["aeTitle"], p["defaultQueryRetrievePacs"]) for p in remaining] == [(7, "SECTRA_QR", True)]
 
 
 def test_availability_uses_the_resolved_pacs_id(tmp_path):
@@ -641,7 +731,7 @@ def test_a_registration_that_did_not_take_fails_rather_than_configuring_nothing(
 
 
 def test_drift_is_corrected_in_place_rather_than_re_created(tmp_path):
-    """A delete-and-recreate would change the PACS id under imaging-api's cache mid-flight."""
+    """A delete-and-recreate would change the PACS id under an import that has already resolved it."""
     code, payloads, output = run_configure(
         tmp_path,
         {"PACS_HOST": "10.0.0.10", "PACS_QR_PORT": "8059"},
