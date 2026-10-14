@@ -12,10 +12,10 @@
 """The XNAT paths FLIP requests with no credentials, pinned to the XNAT version they were checked at.
 
 XNAT decides which paths an anonymous request may reach in
-``WEB-INF/classes/META-INF/xnat/security/configured-urls.yaml`` inside its WAR. A path under
-``openUrls`` is anonymous for good. A path under ``initUrls`` is anonymous only until the site is
-initialised, which is why an anonymous kubelet-style GET of ``/xapi/siteConfig/initialized`` gets a
-401 on a running trust. Any other XAPI path needs a login.
+``WEB-INF/classes/META-INF/xnat/security/configured-urls.yaml`` inside its WAR. Only a path under
+``openUrls`` is anonymous. The neighbouring ``initUrls`` list is a different thing and does not open
+anything: ``/xapi/siteConfig/initialized`` sits there, and an anonymous kubelet-style GET of it got a
+401, both on a running trust and on a fresh Kubernetes install. Any other XAPI path needs a login.
 
 These tests cannot read the WAR (they download nothing), so this is a tripwire: bumping
 ``XNAT_VERSION`` fails it until someone has read the new WAR's list and recorded the version below.
