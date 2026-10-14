@@ -15,7 +15,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
-   - [2.3d Existing Projects Stopped Converting After a Redeploy (FLIP#1451)](#23d-existing-projects-stopped-converting-after-a-redeploy-flip1451)
+   - [2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)](#23e-existing-projects-stopped-converting-after-a-redeploy-flip1451)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -406,9 +406,9 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 with `POST /xapi/commands/{id}`, so its command and wrapper ids, and with them
 every project's trigger, survive (FLIP#1451). Then confirm the listing above
 names the image the trust's imaging-api requests. A chart older than FLIP#1451
-deleted and re-registered the command instead, which is how §2.3d happens.
+deleted and re-registered the command instead, which is how §2.3e happens.
 
-### 2.3d Existing Projects Stopped Converting After a Redeploy (FLIP#1451)
+### 2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)
 
 **Symptom:** after a `helm upgrade` (or, on Compose, `upgrade-xnat`), projects
 created *before* it archive DICOM but never get NIfTI; projects created after it

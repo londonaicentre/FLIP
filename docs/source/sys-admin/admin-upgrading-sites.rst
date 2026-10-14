@@ -177,7 +177,7 @@ follow.
       sudo -E make -C trust restore-nifti-triggers KIT=<slot> ACTIVE="<hub project id> ..." INACTIVE="<hub project id> ..."
 
    Projects that still have a trigger are left alone. On Kubernetes the same command runs in the
-   imaging-api pod (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).
+   imaging-api pod (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3e).
 
 Kubernetes
 ==========

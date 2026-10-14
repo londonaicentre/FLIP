@@ -416,7 +416,7 @@ Ids are hub project ids (as in the FLIP UI) or XNAT project IDs. The target runs
 `python -m imaging_api.scripts.restore_nifti_triggers` in the running imaging-api container, which
 creates each trigger through imaging-api's own project-creation path, owned by the service account;
 a project that still has a trigger is never touched. On an on-prem host prefix `sudo -E`. Kubernetes:
-`trust/deploy/helm/TROUBLESHOOTING.md` §2.3d. Scans archived while a project had no trigger are not
+`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e. Scans archived while a project had no trigger are not
 converted retroactively; run dcm2niix on them from the XNAT UI.
 
 ## Resource limits
