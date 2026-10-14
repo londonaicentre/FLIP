@@ -44,6 +44,12 @@ protect the XNAT database credentials (FLIP-PT-056).
   and authenticated plugin-readiness wait with stubbed curl commands,
   checks aggregate Make targets propagate failures, and pins root-relative paths
   passed to the end-to-end smoke test.
+- **Anonymous XNAT paths** (`test_anonymous_endpoints.py`) — the paths FLIP requests with no
+  credentials: `/xapi/siteConfig/buildInfo` (the Helm chart's xnat-web readiness probe and
+  trust-api's health check) and the login page the liveness probe is redirected to. Each must
+  be listed under `openUrls` in the WAR's `configured-urls.yaml`. The tests cannot read the WAR,
+  so they record the XNAT versions someone has checked and fail on an `XNAT_VERSION` bump until
+  the new version has been checked too.
 
 The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
 validate the FLIP-authored ruleset against synthetic studies; the guard-behaviour

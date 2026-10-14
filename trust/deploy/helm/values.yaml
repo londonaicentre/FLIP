@@ -773,6 +773,11 @@ xnat:
       limits:
         memory: "4Gi"
         cpu: "2"
+    # Timing only: the paths are fixed in templates/xnat-web.yaml, which explains them. Liveness
+    # gets `/` (redirected to the login page, which cannot answer 401), so it restarts XNAT only
+    # when that page stops answering. Readiness gets the anonymous GET /xapi/siteConfig/buildInfo,
+    # so the pod is Ready once XNAT's XAPI REST layer is serving. That is not the same as first boot
+    # having finished (FLIP#1384). Neither probe sends credentials.
     probes:
       liveness:
         initialDelaySeconds: 120

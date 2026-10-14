@@ -240,16 +240,38 @@ spec:
               subPath: prearchive
             - name: plugins
               mountPath: /data/xnat/home/plugins
+          # The two probes ask different questions, so they use different paths. XNAT is deployed as
+          # Tomcat's ROOT webapp, so there is no /xnat/ context: the old /xnat/ path only got the
+          # anonymous redirect to the login page, which proves Tomcat can render that page.
+          #
+          # Liveness asks whether a restart would help. It probes `/`, which XNAT redirects an
+          # anonymous request from to the login page (kubelet follows the redirect to a 200). That
+          # page cannot answer 401, because XNAT has to show it to anyone who is not logged in. A
+          # liveness path that can 401 starts a restart loop the day an XNAT release or a site's
+          # policy closes it.
+          #
+          # Readiness asks whether the Service should send traffic here. It probes
+          # /xapi/siteConfig/buildInfo, which trust-api's health check also calls. It answers once
+          # XNAT's XAPI REST layer is serving, which imaging-api, trust-api and the xnat-init Job all
+          # call. XNAT lists it in its built-in openUrls at the pinned version, and
+          # trust/xnat/tests/test_anonymous_endpoints.py fails on an XNAT bump until someone checks
+          # again. If a release closes it, the pod stays NotReady rather than restarting in a loop,
+          # and the xnat-init hook, which reaches XNAT through the Service, fails the deploy.
+          # Ready does not mean first boot has finished: XNAT answers on these paths while it still
+          # rejects the admin login, and the xnat-init Job retries through that window (FLIP#1384).
+          #
+          # No probe may carry credentials. A failing probe runs again every period, and XNAT locks
+          # an account after about 20 failed logins.
           livenessProbe:
             httpGet:
-              path: /xnat/
+              path: /
               port: tomcat
             initialDelaySeconds: {{ .Values.xnat.web.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.xnat.web.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.xnat.web.probes.liveness.timeoutSeconds }}
           readinessProbe:
             httpGet:
-              path: /xnat/
+              path: /xapi/siteConfig/buildInfo
               port: tomcat
             initialDelaySeconds: {{ .Values.xnat.web.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.xnat.web.probes.readiness.periodSeconds }}
