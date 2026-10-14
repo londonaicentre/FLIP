@@ -314,7 +314,7 @@
         fail_msg: >-
           a container on this host has {{ omop_dir }}/db_data open ({{ omop_dir_holders.stdout | trim }}):
           stop the trust stack first — DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2
-          KIT=<CODE> PROD=<env>, which is what deploy-trust runs before seeding — or remove a
+          KIT=<CODE> HUB=<env>, which is what deploy-trust runs before seeding — or remove a
           leftover throwaway with `docker rm -f omop-seed`; seeding over a live database would
           run crash recovery on it from a second postmaster.
 
@@ -344,7 +344,7 @@
           source_trust {{ seed_source_trust }} is not a partition of the dataset (it has
           {{ seed_num_trusts }}): this trust's FL kit slot number is being used as the default and
           exceeds it. Pick the partition this trust should receive and pass it explicitly, e.g.
-          make seed-trust-data KIT=<CODE> PROD=<env> SOURCE_TRUST=1
+          make seed-trust-data KIT=<CODE> HUB=<env> SOURCE_TRUST=1
 
     # omop-db's entrypoint takes ownership of its data dir itself (it runs as root with CHOWN);
     # Orthanc runs as uid 999 with no way to chown, so its directories must be 999-owned first.

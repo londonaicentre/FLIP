@@ -320,9 +320,9 @@ def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
     An on-prem or EC2 trust host never prepares the dev cache, so checking it there would fail a
     bring-up that has no use for it.
     """
-    for prod in ("true", "stag"):
-        stdout = _dry_run_up_xnat(PROD=prod).stdout
-        assert "xnat_artifacts.sh" not in stdout, f"PROD={prod} still reaches for the dev cache"
+    for hub in ("prod", "stag"):
+        stdout = _dry_run_up_xnat(HUB=hub).stdout
+        assert "xnat_artifacts.sh" not in stdout, f"HUB={hub} still reaches for the dev cache"
 
 
 def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:

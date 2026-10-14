@@ -546,6 +546,18 @@ class TestBuild:
         values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
         assert values["DEMO_ASSETS_BUCKET_NAME"] == "flip-lza-demo-assets"
 
+    def test_the_network_mode_is_recovered_from_the_platform_vpc_lookup(self, stub_aws):
+        # The Makefile refuses an env file without LZA_MANAGED_NETWORK, so a
+        # reconciled file has to carry it; only an LZA estate holds data.aws_vpc.lza.
+        stub_aws.update(_minimal_state(with_trust_host=False, demo_bucket=None))
+        values, _ = rce.build("prod", "prod", "eu-west-2", "flip-terraform-state-prod", "flip-cluster")
+        assert values["LZA_MANAGED_NETWORK"] == "false"
+        stub_aws["resources"].append(
+            {"mode": "data", "type": "aws_vpc", "name": "lza", "instances": [{"attributes": {"id": "vpc-1"}}]}
+        )
+        values, _ = rce.build("prod", "lza-prod", "eu-west-2", "flip-terraform-state-lza", "flip-cluster")
+        assert values["LZA_MANAGED_NETWORK"] == "true"
+
 
 class TestExpectedEmpty:
     def test_demo_bucket_may_be_empty_on_stag(self):
@@ -580,6 +592,27 @@ class TestMain:
         "SES_VERIFIED_EMAIL": "noreply@example.com",
         "DEMO_ASSETS_BUCKET_NAME": "",
     }
+
+    @pytest.mark.parametrize(
+        ("argv", "profile", "bucket"),
+        [
+            (("--env", "prod"), "lza-prod", "flip-terraform-state-lza"),
+            (("--env", "stag"), "lza-stag", "flip-terraform-state-lza-stag"),
+            # A self-contained estate points it elsewhere.
+            (("--env", "prod", "--profile", "prod", "--bucket", "own-state"), "prod", "own-state"),
+        ],
+    )
+    def test_env_defaults_to_the_lza_estates(self, monkeypatch, argv, profile, bucket):
+        seen = {}
+
+        def fake_build(env, profile, region, bucket, cluster):
+            seen.update(profile=profile, bucket=bucket)
+            return dict(self.BASE), {}
+
+        monkeypatch.setattr(rce, "build", fake_build)
+        monkeypatch.setattr(sys, "argv", ["reconcile_ci_env.py", *argv])
+        rce.main()
+        assert seen == {"profile": profile, "bucket": bucket}
 
     def test_prod_reports_an_absent_demo_bucket_as_not_recovered(self, monkeypatch, capsys):
         self._run(monkeypatch, "prod", self.BASE)

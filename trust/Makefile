@@ -15,13 +15,11 @@
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
-# PROD selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
-# runs the production compose) and the kit-file env token (ENV: stag stays distinct,
-# so a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production; the
-# LZA pair reads .lza-prod / .lza-stag, the files the AWS-side register-trusts
-# writes). Both come from the shared table in ../deploy/env_mode.mk — the one place
-# a new PROD value is added, so this Makefile can no longer be the copy that missed
-# it (PROD=lza-stag once fell through to the DEVELOPMENT compose here).
+# HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
+# runs the production compose) and the kit-file env token (ENV: .env.<CODE>.stag /
+# .prod, the files the AWS-side register-trusts writes). Both come from the shared
+# table in ../deploy/env_mode.mk, so this Makefile cannot be the copy that misses a
+# value and falls through to the DEVELOPMENT compose.
 include ../deploy/env_mode.mk
 
 # The trust stack runs against the per-trust kit file (trust/.env.<KIT>) as the
@@ -34,13 +32,14 @@ include ../deploy/env_mode.mk
 # etc.) — see HUB_SHARED_ENV_KEYS in flip-api/src/flip_api/scripts/register_trust.py.
 # Kit includes must come BEFORE fl_backend.mk so its $(FL_BACKEND)-derived
 # vars resolve against the kit's value, not fl_backend.mk's fallback default.
-# Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>. The
-# legacy fallback to .env.<KIT> keeps the not-yet-migrated EC2/on-prem path
-# (KIT=<slot>, no env suffix) working during the two-phase rollout; remove it
-# once the prod-deploy phase migrates those kits to the CODE+env naming.
-KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
+# Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>. A kit still
+# under its pre-FLIP#1479 name (.production, .lza-prod, .lza-stag, or a bare
+# .env.<KIT>) is found too, with a one-line rename hint, so a live site's next
+# upgrade does not break (env_mode.mk's kit_file).
+KIT_FILE := $(call kit_file,,$(KIT))
 -include $(KIT_FILE)
 KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
+$(if $(KIT),$(call old_kit_hint,$(KIT_FILE_LABEL)))
 
 # Dev only: the kit's Hub-shared block is commented out (inert) — those values
 # are inherited from the hub's .env.development (the single source) to avoid a
@@ -98,7 +97,7 @@ ORTHANC_CMD=make -C ./orthanc
 # /opt/flip/data/trust-<slot> (see compose_trust.production.yml), dev to ./data/<KIT>.
 # Must mirror the compose fallbacks exactly: pre-creating any other path leaves the real
 # mount source for Docker to root-create.
-IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
+IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
 
 # Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
 # compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
@@ -133,7 +132,7 @@ define ensure_net_dirs
 	@base="$(IMAGES_BASE)"; \
 	mkdir -p "$$base/net-1" "$$base/net-2"; \
 	if [ "$(FL_BACKEND)" = "flower" ]; then \
-	  owner="$$(stat -c '%u' "$$base"):$(if $(PROD),49999,$(DOCKER_GID))"; mode=775; \
+	  owner="$$(stat -c '%u' "$$base"):$(if $(IS_DEPLOYED),49999,$(DOCKER_GID))"; mode=775; \
 	else \
 	  owner="$$(stat -c '%u:%g' "$$base")"; mode=755; \
 	fi; \
@@ -202,7 +201,7 @@ endif
 # now flows into docker compose via the --env-file flag baked into
 # DOCKER_COMPOSE_CMD above. The kit file is authoritative — operators
 # customise paths/ports there, not via make-side overrides — so the
-# previous PROD-keyed fallbacks and per-key passthroughs are gone.
+# previous environment-keyed fallbacks and per-key passthroughs are gone.
 
 # Numeric suffix of the ASSIGNED FL kit slot (Trust_1 -> 1), read from the
 # included kit file — drives both the per-trust overlay network
@@ -427,7 +426,7 @@ build:
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
 onboard-onprem-trust:
-	@PROD="$(PROD)" uv run --no-config ../scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
+	@HUB="$(HUB)" uv run --no-config ../scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
 
 # Prepare the third-party artifacts a development trust needs before `make up` (FLIP#1292): the
 # XNAT plugins its dev stack bind-mounts. They are public upstream downloads, pinned with their
@@ -465,9 +464,9 @@ up-trust: require-xnat-aetitle create-networks
 	$(ensure_snapshot_dir)
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
-	$(MAKE) ensure-seeded KIT=$(KIT) PROD=$(PROD)
+	$(MAKE) ensure-seeded KIT=$(KIT) HUB=$(HUB)
 	@echo "🩻 Starting XNAT for $(KIT)..."
-	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
+	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB)
 
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
 # The services fail closed on an invalid policy, so an operator editing rules wants the
@@ -623,7 +622,7 @@ down-trust:
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
-	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
+	$(MAKE) -C xnat down-xnat KIT=$(KIT) HUB=$(HUB)
 
 restart-trust: down-trust up-trust
 
@@ -645,13 +644,13 @@ restart-trust: down-trust up-trust
 # overrides) — and rewrite DOCKER_TAG/DOCKER_FL_TAG in the kit; phase 2 is a sub-make
 # that re-reads the kit so every $(DOCKER_TAG) below is the new one. `docker compose`
 # itself reads the kit through --env-file, so the images it pulls are the new ones too.
-#   make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [FORCE=1] [YES=1]
+#   make -C trust upgrade-trust KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [FORCE=1] [YES=1]
 upgrade-trust: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
 	uv run --no-config ../scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
-	$(MAKE) _upgrade-trust-apply KIT=$(KIT) PROD=$(PROD) DEBUG=$(DEBUG)
+	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 
 # Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the
 # kit says, which is only right after phase 1 wrote it). No ensure_net_dirs: the net
@@ -667,7 +666,7 @@ _upgrade-trust-apply:
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
-	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) PROD=$(PROD)
+	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) HUB=$(HUB)
 	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
 
 # EC2 variant — no host-port override, --pull always. Networks and the trust's
@@ -700,7 +699,7 @@ up-trust-ec2: require-xnat-aetitle
 	$(ensure_snapshot_dir)
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
-	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
+	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB)
 
 down-trust-ec2:
 	$(require_kit)
@@ -708,7 +707,7 @@ down-trust-ec2:
 	@echo "🛑 Stopping Trust services on EC2 (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
-	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
+	$(MAKE) -C xnat down-xnat KIT=$(KIT) HUB=$(HUB)
 
 # Dev convenience: bring up every registered dev trust. The kit files
 # (trust/.env.<CODE>.$(ENV), written by `make register-trusts`) ARE the list —
@@ -817,13 +816,13 @@ ensure-seeded: wait-omop-db wait-pacs
 	if [ "$$(cat '$(OMOP_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
 	  echo "✅ OMOP ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
 	else \
-	  $(MAKE) seed-omop KIT=$(KIT) PROD=$(PROD) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) || exit 1; \
+	  $(MAKE) seed-omop KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) || exit 1; \
 	fi; \
 	if [ "$$(cat '$(ORTHANC_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
 	  echo "✅ PACS ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
 	else \
 	  clear=$$([ -f '$(ORTHANC_SEED_MARKER)' ] && echo 1); \
-	  $(MAKE) seed-orthanc KIT=$(KIT) PROD=$(PROD) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) $${clear:+CLEAR=1} || exit 1; \
+	  $(MAKE) seed-orthanc KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) $${clear:+CLEAR=1} || exit 1; \
 	fi
 
 # Load the public Synthea-in-OMOP EHR cohort into a running trust omop-db — the populate step for

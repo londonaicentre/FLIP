@@ -30,7 +30,7 @@ deep in the deploy chain:
 Exits 0 when every check passes (warnings are advisory), 1 otherwise.
 
 Usage:
-    uv run scripts/preflight_k8s_deploy.py [--prod stag|true] [--k8s-trust-ip <ip>]
+    uv run scripts/preflight_k8s_deploy.py --hub stag|prod [--k8s-trust-ip <ip>]
 """
 
 from __future__ import annotations
@@ -108,11 +108,9 @@ def render_check(c: Check, label_width: int) -> None:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def resolve_env_file(prod: str, repo_root: Path) -> Path:
-    """Return the active env file path for the given PROD value."""
-    if prod == "true":
-        return repo_root / ".env.production"
-    return repo_root / ".env.stag"
+def resolve_env_file(hub: str, repo_root: Path) -> Path:
+    """Return the hub env file for the given HUB value (deploy/env_mode.mk's ENV_FILE_NAME)."""
+    return repo_root / f".env.{hub}"
 
 
 def read_env_vars(env_file: Path) -> dict[str, str]:
@@ -325,7 +323,7 @@ def check_public_ip(provided_ip: str | None) -> Check:
         "cannot reach api.ipify.org — IP undetectable",
         hints=[
             "Provide the K8s node's public/egress IP explicitly:",
-            "  make full-deploy-with-k8s K8S_TRUST_IP=<ip> PROD=<env>",
+            "  make full-deploy-with-k8s K8S_TRUST_IP=<ip> HUB=<env>",
         ],
     )
 
@@ -335,8 +333,8 @@ def check_public_ip(provided_ip: str | None) -> Check:
 # ─────────────────────────────────────────────────────────────────────
 
 
-def run_checks(prod: str, k8s_trust_ip: str | None, repo_root: Path) -> list[Check]:
-    env_file = resolve_env_file(prod, repo_root)
+def run_checks(hub: str, k8s_trust_ip: str | None, repo_root: Path) -> list[Check]:
+    env_file = resolve_env_file(hub, repo_root)
     env_vars = read_env_vars(env_file)
     return [
         check_kit_slot(env_vars, env_file),
@@ -353,9 +351,10 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--prod",
-        default="stag",
-        help="PROD value (stag or true). Selects .env.stag or .env.production.",
+        "--hub",
+        required=True,
+        choices=("stag", "prod"),
+        help="HUB value. Selects .env.stag or .env.prod.",
     )
     parser.add_argument(
         "--k8s-trust-ip",
@@ -367,10 +366,10 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent
 
     print()
-    heading(f"Pre-flight checks — full-deploy-with-k8s  (PROD={args.prod})")
+    heading(f"Pre-flight checks — full-deploy-with-k8s  (HUB={args.hub})")
     print()
 
-    checks = run_checks(args.prod, args.k8s_trust_ip, repo_root)
+    checks = run_checks(args.hub, args.k8s_trust_ip, repo_root)
     label_width = max(len(c.label) + 1 for c in checks)
     for c in checks:
         render_check(c, label_width)

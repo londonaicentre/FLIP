@@ -86,14 +86,14 @@ VALUES_FILE ?= $(CHART_DIR)/values.yaml
 
 # REPO_ROOT is where scripts/site_upgrade.py and the shared make fragments live.
 REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
-# Kit-file env token (ENV) from PROD, derived once for every Makefile that reads PROD —
-# including lza / lza-stag, whose kits are trust/.env.<CODE>.lza-prod / .lza-stag.
+# Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
 include $(REPO_ROOT)/deploy/env_mode.mk
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
-# The trust kit this chart deployment was synced from (trust/.env.<CODE>.<env>), for the
-# release-upgrade path.
-KIT_FILE := $(REPO_ROOT)/trust/.env.$(KIT).$(ENV)
+# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or its
+# pre-FLIP#1479 name — env_mode.mk's kit_file), handed to every script that reads it.
+KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
+$(if $(KIT),$(call old_kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 
 # One budget governs every wait this Makefile performs on the XNAT init job, because
 # there is only one job and two ways of waiting for it: `deploy` waits on it as a
@@ -159,9 +159,9 @@ update-deps: ## Update Helm chart dependencies
 	$(HELM) dependency update $(CHART_DIR)
 
 preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
-	@PROD="$(PROD)" \
-	 KIT_ENV="$(ENV)" \
+	@HUB="$(HUB)" \
 	 KIT="$(KIT)" \
+	 KIT_FILE="$(KIT_FILE)" \
 	 NAMESPACE="$(NAMESPACE)" \
 	 RELEASE_NAME="$(RELEASE_NAME)" \
 	 OVERRIDES_FILE="$(OVERRIDES_FILE)" \
@@ -279,7 +279,7 @@ smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received i
 # populated data, and the API deployments roll onto the new images. The kit-side twin
 # of the compose path's `make -C trust upgrade-trust` — the resolver pins the kit too, so
 # the next `sync-kit` regenerates the same tag into the override rather than reverting it.
-#   make upgrade-trust-k8s KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [PROD=<env>] [KUBE_CONTEXT=<ctx>]
+#   make upgrade-trust-k8s KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=vX.Y.Z] [HUB=<env>] [KUBE_CONTEXT=<ctx>]
 # The chart templates come from this checkout, so a release TAG is refused unless the
 # checkout is at that tag (ALLOW_CHECKOUT_DRIFT=1 overrides — testing a branch).
 # TAG defaults to the release the hub runs (site_upgrade.py reads it from the kit's hub);
@@ -288,7 +288,7 @@ upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upg
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required"; exit 1; }
 	@[ -f "$(CHART_DIR)/k8s-trust-$(KIT).yaml" ] || { echo "❌ $(CHART_DIR)/k8s-trust-$(KIT).yaml not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
 	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
-	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) PROD=$(PROD)
+	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) HUB=$(HUB)
 
 # Phase 2: regenerate the override from the kit the resolver just pinned — that is how
 # global.image.tag and the per-image pins (omopDb/orthanc/xnat/flClient image.pin, from the
@@ -357,11 +357,11 @@ clean: ## Clean up rendered output
 
 # Registration is done ONCE on the hub, not here:
 #   make new-trust TRUST_CODE=<KIT> TRUST_NAME="..."
-#   make -C deploy/providers/AWS register-trusts KIT=<KIT> PROD=<env>
-#   make sync-trust-kit KIT=<KIT> PROD=<env>          # fills the Hub-shared block
+#   make -C deploy/providers/AWS register-trusts KIT=<KIT> HUB=<env>
+#   make sync-trust-kit KIT=<KIT> HUB=<env>           # fills the Hub-shared block
 # This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
-# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env auto-detected from $(PROD).
+# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
 xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
@@ -382,10 +382,11 @@ xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is
 	 exit 1)
 
 sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
-	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s PROD=stag"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s HUB=stag"; exit 1)
 	@python3 $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
+		--kit-file $(KIT_FILE) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \
@@ -394,10 +395,11 @@ sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit 
 		--no-apply-secret
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
-	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s PROD=stag"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s HUB=stag"; exit 1)
 	@python3 $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
+		--kit-file $(KIT_FILE) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \
@@ -412,10 +414,11 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 	done
 
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
-	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s PROD=stag"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s HUB=stag"; exit 1)
 	@python3 $(CHART_DIR)/sync_k8s_kit.py \
 		--kit $(KIT) \
 		--env $(ENV) \
+		--kit-file $(KIT_FILE) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--release-name $(RELEASE_NAME) \

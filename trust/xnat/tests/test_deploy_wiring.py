@@ -242,7 +242,7 @@ def dry_run_trust_up(tmp_path, kit_lines: str, *overrides: str) -> subprocess.Co
             "up-trust",
             "KIT=Probe",
             f"KIT_FILE={kit}",
-            "PROD=",
+            "HUB=",
             "MAIN_ENV_FILE=.env.absent-for-deploy-wiring-test",
             *overrides,
         ],

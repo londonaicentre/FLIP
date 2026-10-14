@@ -62,8 +62,8 @@ flBackend: "nvflare"
 #
 # Set it through the kit, not by hand: point ACCESS_POLICY_FILE at the document in
 # trust/.env.<CODE>.<env>, validate it, and deploy —
-#   make -C trust check-governance KIT=<CODE> PROD=<env>
-#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>   (or upgrade-trust-k8s)
+#   make -C trust check-governance KIT=<CODE> HUB=<env>
+#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>   (or upgrade-trust-k8s)
 # Both targets regenerate k8s-trust-<CODE>.yaml from the kit first (sync-kit), which embeds
 # the document, validates both halves with the services' own loaders, and writes
 # flPrivacyChecksum. A document passed with `helm upgrade --set-file governance.document=…`
@@ -605,7 +605,7 @@ omopDb:
   #
   # Use YOUR environment's own bucket — trust roles have no cross-account read
   # on another environment's bucket. `make -C trust/deploy/helm
-  # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
+  # sync-kit KIT=<CODE> HUB=<env>` writes this from the kit's
   # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
   # a hub-managed key — a kit scaffolded from trust/.env.example ships it commented
   # out, so the release loads no core vocabulary until it is set).

@@ -26,11 +26,11 @@
 # pushes the kit to the EC2 host; `make package-onprem-trust-kit` tarballs it
 # for an on-prem operator.
 #
-# Usage:
-#   KIT=<CODE> register-trusts.sh   # register one kit (trust/.env.<CODE>.<env>)
-#   register-trusts.sh              # register every live trust/.env.*.<env> kit
-# PROD=true selects .production kits, PROD=lza selects .lza-prod kits and
-# PROD=lza-stag selects .lza-stag kits (FLIP#749); anything else selects .stag.
+# Usage (via `make register-trusts [KIT=<CODE>] HUB=<env>`):
+#   KIT_FILES="<kit file>..." register-trusts.sh
+# The deploy Makefile resolves KIT_FILES — the one kit for KIT=<CODE>, else every live
+# trust/.env.*.<env> kit — through deploy/env_mode.mk's kit_file, so a kit still under
+# its pre-FLIP#1479 name is registered in place.
 
 set -eo pipefail
 # Default file mode 077 so any tempfile / redirect this script (or sourced
@@ -51,11 +51,10 @@ ECS_SERVICE="${ECS_SERVICE:-flip-api}"
 TASK_FAMILY="${TASK_FAMILY:-flip-api}"
 LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 
-# Kit-file env suffix (.production / .stag / .lza-prod / .lza-stag): handed in by
-# the deploy Makefile's register-trusts target as its KIT_ENV_SUFFIX — the same
-# token it reads the written kit back with — rather than re-derived from PROD here,
-# so there is exactly one PROD table (deploy/env_mode.mk).
-ENV_SUFFIX="${KIT_ENV_SUFFIX:?KIT_ENV_SUFFIX is required — run via \`make register-trusts\` / \`make register-trust KIT=<CODE>\`}"
+if [ -z "${KIT_FILES:-}" ]; then
+    log_warn "No trust/.env.*.${HUB:-<env>} kits found — scaffold one with 'make new-trust ... HUB=${HUB:-<env>}' first."
+    exit 0
+fi
 
 log_info "Discovering live $ECS_SERVICE service network config..."
 SVC_JSON="$(aws_cmd ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0]')"
@@ -190,37 +189,24 @@ register_one_kit() {
     fi
 
     # Write the kit back into its CODE-named file. The target is a
-    # .production/.stag kit, so distribute_trust_kits.py writes the hub-shared
+    # .prod/.stag kit, so distribute_trust_kits.py writes the hub-shared
     # block LIVE (the remote operator has no hub .env). Credentials are written
     # only on first registration; operator host-local edits are preserved.
     echo "$kit" | uv run --no-config "$REPO_ROOT/scripts/distribute_trust_kits.py" --target "$kit_file"
     log_success "Wrote kit for '$name' → $kit_file"
 }
 
-# Select kits: explicit KIT=<CODE> registers one; otherwise register every live
-# prod kit (trust/.env.*.<suffix>). .example templates are not matched by the
-# glob (they end in .example, not the env suffix).
+# `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,
+# then the script exits non-zero so a failure can never read as success.
 failed=0
-if [ -n "${KIT:-}" ]; then
-    kit_file="$REPO_ROOT/trust/.env.${KIT}.${ENV_SUFFIX}"
+# shellcheck disable=SC2086 # KIT_FILES is a space-separated list of paths
+for kit_file in ${KIT_FILES}; do
     if [ ! -f "$kit_file" ]; then
-        log_error "Kit $kit_file not found — scaffold it with 'make new-trust TRUST_CODE=${KIT} TRUST_NAME=... PROD=${PROD:-stag}' first."
+        log_error "Kit $kit_file not found — scaffold it with 'make new-trust TRUST_CODE=${KIT} TRUST_NAME=... HUB=${HUB:-<env>}' first."
         exit 1
     fi
     register_one_kit "$kit_file" || failed=1
-else
-    found=0
-    # `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,
-    # then the script exits non-zero so a failure can never read as success.
-    for kit_file in "$REPO_ROOT"/trust/.env.*."${ENV_SUFFIX}"; do
-        [ -e "$kit_file" ] || continue
-        found=1
-        register_one_kit "$kit_file" || failed=1
-    done
-    if [ "$found" != 1 ]; then
-        log_warn "No trust/.env.*.${ENV_SUFFIX} kits found — scaffold one with 'make new-trust ... PROD=${PROD:-stag}' first."
-    fi
-fi
+done
 
 if [ "$failed" != 0 ]; then
     log_error "register-trusts FAILED — at least one trust was not registered (see above)."

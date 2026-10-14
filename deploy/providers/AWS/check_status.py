@@ -598,7 +598,7 @@ else:
     elif code == 200 and "html" in ctype.lower():
         print_status("FAIL", "XNAT returned HTML (setup page?) — restart XNAT web container")
     elif code == 401:
-        print_status("FAIL", "XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in .env.stag")
+        print_status("FAIL", "XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in the hub env file")
     else:
         print_status("WARN", f"XNAT API returned HTTP {code}")
 
@@ -1020,9 +1020,8 @@ def main(
     os.chdir(terraform_dir)
 
     # Determine ALB subdomain from environment. ALB_SUBDOMAIN takes precedence;
-    # otherwise derive from PROD: 'true' → production domain, else → staging domain.
-    _prod_env = os.getenv("PROD", "")
-    _default_domain = "app.flip.aicentre.co.uk" if _prod_env == "true" else "stag.flip.aicentre.co.uk"
+    # otherwise derive from HUB: 'prod' → production domain, else → staging domain.
+    _default_domain = "app.flip.aicentre.co.uk" if os.getenv("HUB") == "prod" else "stag.flip.aicentre.co.uk"
     alb_subdomain = os.getenv("ALB_SUBDOMAIN", _default_domain)
 
     # Check prerequisites

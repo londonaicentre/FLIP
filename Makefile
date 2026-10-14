@@ -19,10 +19,11 @@
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak
 
-# What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
-# deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
+# What HUB means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
+# deploy/env_mode.mk, shared with every other Makefile that reads HUB. The kit-file
 # targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
-# token the AWS Makefile's KIT_ENV_SUFFIX and register-trusts.sh use.
+# name the AWS Makefile and register-trusts.sh use, and find a kit under its
+# pre-FLIP#1479 name too (env_mode.mk's kit_file).
 include deploy/env_mode.mk
 MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
@@ -239,10 +240,10 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 up-trust-ec2: create-networks
-	@echo "Hey! PROD="$(PROD)
+	@echo "Hey! HUB="$(HUB)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
-	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) HUB=${HUB}
 	@echo "✅ Trust services started successfully!"
 
 central-hub: _check-compose-project-owner create-networks-centralhub _ensure-object-store-dir
@@ -259,7 +260,7 @@ central-hub: _check-compose-project-owner create-networks-centralhub _ensure-obj
 up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
-	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
 
 # Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
 # trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
@@ -274,13 +275,13 @@ up-onprem-trust:
 upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
-	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
+	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
-# so an operator doesn't have to remember the -C trust path or PROD value.
+# so an operator doesn't have to remember the -C trust path or HUB value.
 down-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	$(MAKE) -C trust down-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+	$(MAKE) -C trust down-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
 
 # Readiness checklist for an on-prem trust. Prints the operator's public
 # IP + a row per precondition (kit file, swarm, Hub-shared block, Kit
@@ -304,7 +305,7 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) PROD=$(or $(PROD),true) ONBOARD_ARGS="$(ONBOARD_ARGS)"
+	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) HUB=$(or $(HUB),prod) ONBOARD_ARGS="$(ONBOARD_ARGS)"
 
 # Stop all containers
 down: _check-compose-project-owner
@@ -420,19 +421,19 @@ else
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
 endif
 ui: _check-compose-project-owner
-ifeq ($(strip $(PROD)),)
+ifeq ($(IS_DEPLOYED),)
 	@echo "🚀 Starting UI..."
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
-	@echo "ℹ️  flip-ui is served from S3 + CloudFront when PROD=$(PROD); no container to start."
-	@echo "    Run \`make -C deploy/providers/AWS deploy-ui PROD=$(PROD)\` to publish the bundle."
+	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
+	@echo "    Run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\` to publish the bundle."
 endif
 ui-off: _check-compose-project-owner
-ifeq ($(strip $(PROD)),)
+ifeq ($(IS_DEPLOYED),)
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
 else
-	@echo "ℹ️  No flip-ui container runs when PROD=$(PROD) (S3 + CloudFront)."
+	@echo "ℹ️  No flip-ui container runs when HUB=$(HUB) (S3 + CloudFront)."
 endif
 tests:
 	$(MAKE) -C flip-ui unit_test
@@ -640,10 +641,12 @@ register-trusts:
 	exit $$rc
 
 # Scaffold a new trust kit (trust/.env.<CODE>.<env>) from the base template.
-# e.g. make new-trust TRUST_CODE=KCL TRUST_NAME="Kings College" PROD=true
+# e.g. make new-trust TRUST_CODE=KCL TRUST_NAME="Kings College" HUB=prod
 new-trust:
 	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<code> required (e.g. TRUST_CODE=KCL)"; exit 1; }
 	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
+	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || [ ! -f "$$old" ] || \
+	  { echo "❌ $$old already exists under an old kit name — rename it to trust/.env.$(TRUST_CODE).$(ENV) instead."; exit 1; }
 	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
 		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
 
@@ -661,22 +664,14 @@ new-trust:
 # lookup — just a file→file copy keyed on KIT.
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
-	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(KIT).$(ENV)
+	@:$(call old_kit_hint,$(call kit_file,trust/,$(KIT)))
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
-# Sync every locally-present kit for this env. Globs trust/.env.*.$(ENV) and
-# drops the .example templates (which don't match the bare-env suffix).
+# Sync every locally-present kit for this env (old kit names included; the
+# .example templates never match).
 sync-trust-kits:
-	@found=0; \
-	for f in trust/.env.*.$(ENV); do \
-	    case "$$f" in *.example) continue;; esac; \
-	    [ -f "$$f" ] || continue; \
-	    code="$${f#trust/.env.}"; code="$${code%.$(ENV)}"; \
-	    found=$$((found + 1)); \
-	    $(MAKE) sync-trust-kit KIT="$$code"; \
-	done; \
-	if [ "$$found" = "0" ]; then \
-	    echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."; \
-	fi
+	@[ -n "$(call kit_codes,trust/)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."
+	@for code in $(call kit_codes,trust/); do $(MAKE) sync-trust-kit KIT="$$code"; done
 
 # ---------------------------------------------------------------------------
 # Kubernetes Helm chart targets
@@ -698,10 +693,9 @@ generate-xnat-credentials:
 	@if [ -n "$(ENV_FILE)" ]; then \
 	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(ENV_FILE) $(if $(FORCE),FORCE=$(FORCE)); \
 	elif [ -n "$(KIT)" ]; then \
-	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/trust/.env.$(KIT).$(ENV) $(if $(FORCE),FORCE=$(FORCE)); \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$(call kit_file,trust/,$(KIT)) $(if $(FORCE),FORCE=$(FORCE)); \
 	else \
-	  found=0; for kit in trust/.env.*.$(ENV); do \
-	    [ -e "$$kit" ] || continue; case "$$kit" in *.example) continue;; esac; \
+	  found=0; for kit in $(call kit_files,trust/); do \
 	    found=1; $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$$kit $(if $(FORCE),FORCE=$(FORCE)) || exit 1; \
 	  done; \
 	  [ "$$found" = 1 ] || echo "ℹ️  No trust/.env.<CODE>.$(ENV) kit files found — run 'make register-trusts' (or 'make register-trust KIT=<CODE>') first."; \

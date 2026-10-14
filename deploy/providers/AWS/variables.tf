@@ -27,7 +27,7 @@ variable "environment" {
 }
 
 variable "lza_managed_network" {
-  description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the legacy /flip/networking/* SSM params (fl_ingress_lza.tf publishes the LZA edge-handoff set under that prefix instead), and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
+  description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the legacy /flip/networking/* SSM params (fl_ingress_lza.tf publishes the LZA edge-handoff set under that prefix instead), and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: an LZA estate is staging or production by HUB, independently of this flag. Set from LZA_MANAGED_NETWORK in the env file."
   type        = bool
   default     = false
 }

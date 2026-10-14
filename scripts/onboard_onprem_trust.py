@@ -381,7 +381,7 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
     stale_hints = [
         "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
         (
-            "  make sync-trust-kit KIT=<CODE> PROD=<env>  →  "
+            "  make sync-trust-kit KIT=<CODE> HUB=<env>  →  "
             "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>"
         ),
         "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
@@ -751,8 +751,8 @@ def check_governance_document(
             f"make -C trust check-governance {quote_make_assignment('KIT', kit)} "
             f"{quote_make_assignment('KIT_FILE', kit_file)}"
         )
-        if prod := os.environ.get("PROD"):
-            command += f" {quote_make_assignment('PROD', prod)}"
+        if hub := os.environ.get("HUB"):
+            command += f" {quote_make_assignment('HUB', hub)}"
         return Check(
             label,
             Status.FAIL,
@@ -792,7 +792,7 @@ def check_unrotated_passwords(
         return Check("Trust-local passwords", Status.PENDING, "pending — needs kit file")
     # Use FL_KIT_SLOT (the canonical slot name minted by the hub) to find the
     # template — not the KIT argument. They CAN differ: a kit is named by its
-    # trust CODE (e.g. .env.<CODE>.production) while its FL_KIT_SLOT is the
+    # trust CODE (e.g. .env.<CODE>.prod) while its FL_KIT_SLOT is the
     # hub-assigned slot (e.g. Trust_2) — the two are independent.
     # Without this fall-through the check would silently skip on every
     # custom-named kit. Falls back to KIT when the slot isn't filled in yet
@@ -973,7 +973,7 @@ def main() -> None:
     print("  Send this to the FLIP admin so they can open the prod FL-server NLB")
     print(f"  (the admin runs this from {BOLD}deploy/providers/AWS{RESET}, with prod AWS creds):")
     print("      cd deploy/providers/AWS")
-    print(f"      AWS_PROFILE=prod make allow-local-trust-nlb LOCAL_TRUST_IP={ip or '<your-ip>'} PROD=true")
+    print(f"      make allow-local-trust-nlb LOCAL_TRUST_IP={ip or '<your-ip>'} HUB={os.environ.get('HUB') or 'prod'}")
     print()
     print(f"  {BOLD}Checks:{RESET}")
     print()
@@ -1008,9 +1008,9 @@ def main() -> None:
                 f"sudo -E make up-onprem-trust {quote_make_assignment('KIT', kit)} "
                 f"{quote_make_assignment('KIT_FILE', kit_file)}"
             )
-            prod = os.environ.get("PROD", "true")
-            if prod and prod != "true":
-                command += f" {quote_make_assignment('PROD', prod)}"
+            hub = os.environ.get("HUB", "prod")
+            if hub and hub != "prod":
+                command += f" {quote_make_assignment('HUB', hub)}"
             print(f"      {BOLD}{command}{RESET}")
         if n_warn:
             print(

@@ -47,20 +47,19 @@ export XNAT_TAG
 
 # ── Per-trust XNAT stack ──────────────────────────────────────────────────
 # KIT selects the trust — now the trust CODE; the kit file is
-# trust/.env.<CODE>.<env> (ENV derived from PROD, mirroring trust/Makefile),
-# with a legacy fallback to trust/.env.<KIT> for the not-yet-migrated
-# EC2/on-prem path (KIT=<slot>, no env suffix). That kit file carries this
+# trust/.env.<CODE>.<env> (ENV derived from HUB, mirroring trust/Makefile), or
+# the kit's pre-FLIP#1479 name (env_mode.mk's kit_file; trust/Makefile prints
+# the rename hint). That kit file carries this
 # trust's XNAT_PORT / PACS_UI_PORT (unsuffixed) and its hub-assigned
 # FL_KIT_SLOT_NUMBER — the same host-local profile trust/Makefile reads. KIT
 # has no default so non-KIT targets (build, test) don't spuriously -include a
 # file. The XNAT swarm stack name and overlay network are derived from the
 # assigned slot NUMBER (not the CODE), so XNAT co-resides on the same
 # deploy_trust-network-<N> as the slot-numbered trust core services.
-# ENV (the kit suffix) and IS_DEPLOYED (non-empty for every PROD value except
-# unset — the LZA pair takes the stag/prod paths and stack files below, with its
-# own kit suffix) come from the shared table in ../../deploy/env_mode.mk.
+# ENV (the kit suffix) and IS_DEPLOYED (non-empty whenever HUB is set) come from
+# the shared table in ../../deploy/env_mode.mk.
 include ../../deploy/env_mode.mk
-KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env.$(KIT))
+KIT_FILE := $(call kit_file,../,$(KIT))
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
 # deploy (unlike docker compose) has no --env-file flag; it substitutes
@@ -545,7 +544,7 @@ xnat-plugins-check:
 # wipes any previous data. Docker Swarm requires host directories to exist
 # before bind-mounting; the wipe avoids stale bind mounts from a prior run
 # (the second xnat-web otherwise crash-loops on a locked SQLite index).
-# Data dir defaults vary by PROD — see the XNAT_DATA_DIR comment above
+# Data dir defaults vary by HUB — see the XNAT_DATA_DIR comment above
 # for the resolution rule and how to override per-host.
 #
 # The two deployed branches provision under sudo. The development branch does too,

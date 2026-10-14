@@ -151,11 +151,12 @@ def _make_dry_run(
 
     MAIN_ENV_FILE points at a path that does not exist unless one is given, so a contributor's
     gitignored .env.stag (if any) cannot make a test pass for the wrong reason. Goal-like words
-    containing "=" are passed through as command-line variables.
+    containing "=" are passed through as command-line variables; HUB defaults to stag.
     """
     env = {"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", str(tmp_path)), **(extra_env or {})}
+    hub = [] if any(goal.startswith("HUB=") for goal in goals) else ["HUB=stag"]
     return subprocess.run(
-        ["make", "-n", "-s", *goals, f"MAIN_ENV_FILE={env_file or tmp_path / 'absent.env'}"],
+        ["make", "-n", "-s", *goals, *hub, f"MAIN_ENV_FILE={env_file or tmp_path / 'absent.env'}"],
         cwd=AWS_PROVIDER_DIR,
         env=env,
         capture_output=True,
@@ -168,8 +169,7 @@ COMPLETE_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
-    "LZA_AWS_PROFILE": "probe",
-    "LZA_STAG_AWS_PROFILE": "probe",
+    "LZA_MANAGED_NETWORK": "false",
     "LZA_VPC_NAME": "probe-vpc",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
@@ -190,10 +190,10 @@ def _env_file(tmp_path: Path, **changes: str | None) -> Path:
     return path
 
 
-@pytest.mark.parametrize("prod", ["", "true", "lza", "lza-stag"])
+@pytest.mark.parametrize("hub", ["", "stag", "prod"])
 @pytest.mark.parametrize("goal", ["lint", "fmt-check", "tflint-lint", "checkov-lint", "help"])
-def test_a_static_goal_needs_no_env_file(goal: str, prod: str, tmp_path: Path) -> None:
-    result = _make_dry_run(goal, f"PROD={prod}", tmp_path=tmp_path)
+def test_a_static_goal_needs_no_env_file(goal: str, hub: str, tmp_path: Path) -> None:
+    result = _make_dry_run(goal, f"HUB={hub}", tmp_path=tmp_path)
     assert result.returncode == 0, result.stderr
 
 
@@ -215,6 +215,8 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
     [
         ({"FLARE_KIT_DATE": None}, "FLARE_KIT_DATE"),
         ({"AWS_PROFILE": "someone-else"}, "AWS_PROFILE must be set"),
+        ({"LZA_MANAGED_NETWORK": None}, "LZA_MANAGED_NETWORK must be true"),
+        ({"LZA_MANAGED_NETWORK": "yes"}, "LZA_MANAGED_NETWORK must be true"),
         ({"FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": None}, "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME"),
         ({"FLIP_FL_RESULTS_BUCKET_NAME": None}, "FLIP_FL_RESULTS_BUCKET_NAME"),
         ({"FLIP_APP_BUNDLES_BUCKET_NAME": "<your-bundles-bucket>"}, "FLIP_APP_BUNDLES_BUCKET_NAME"),
@@ -230,8 +232,16 @@ def test_each_env_guard_still_refuses_a_real_goal(change: dict[str, str | None],
     assert named in result.stderr, result.stderr
 
 
+def test_an_unset_hub_refuses_a_real_goal(tmp_path: Path) -> None:
+    """No default estate any more (FLIP#1377): an unset HUB is development, which has none."""
+    result = _make_dry_run("plan", "HUB=", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode != 0
+    assert "HUB=stag or HUB=prod is required" in result.stderr, result.stderr
+
+
 def test_the_lza_staging_vpc_guard_still_refuses_a_real_goal(tmp_path: Path) -> None:
-    result = _make_dry_run("plan", "PROD=lza-stag", tmp_path=tmp_path, env_file=_env_file(tmp_path, LZA_VPC_NAME=None))
+    env_file = _env_file(tmp_path, LZA_MANAGED_NETWORK="true", LZA_VPC_NAME=None)
+    result = _make_dry_run("plan", tmp_path=tmp_path, env_file=env_file)
     assert result.returncode != 0
     assert "LZA_VPC_NAME must be set" in result.stderr, result.stderr
 

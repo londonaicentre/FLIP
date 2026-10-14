@@ -14,7 +14,7 @@ is_true() {
 }
 
 PRESERVE_VPC_FLAG="${PRESERVE_VPC:-false}"
-if [ "$PROD" = "true" ]; then
+if [ "${HUB:-}" = "prod" ]; then
   PRESERVE_VPC_FLAG="true"
 fi
 

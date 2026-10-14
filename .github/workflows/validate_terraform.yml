@@ -17,6 +17,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # The Makefile and test_env_mode.py read the HUB table.
+      - "deploy/env_mode.mk"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
@@ -31,6 +33,8 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # The Makefile and test_env_mode.py read the HUB table.
+      - "deploy/env_mode.mk"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.

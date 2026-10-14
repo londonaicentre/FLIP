@@ -1089,7 +1089,7 @@ def main(
         if found:
             # Downgrade to INFO when the only errors are about a missing hub URL —
             # that means CENTRAL_HUB_API_URL hasn't been configured yet (no KIT synced),
-            # not a broken service.  Run 'make sync-kit KIT=<KIT> PROD=<env>' to fix.
+            # not a broken service.  Run 'make sync-kit KIT=<KIT> HUB=<env>' to fix.
             hub_not_configured = all(
                 "Request URL is missing" in line or "hub" in line.lower()
                 for line in logs.splitlines()
@@ -1099,7 +1099,7 @@ def main(
                 print_status(
                     "INFO",
                     f"'{svc_name}' cannot reach hub (CENTRAL_HUB_API_URL not set) — "
-                    "run 'make sync-kit KIT=<KIT> PROD=<env>' to configure",
+                    "run 'make sync-kit KIT=<KIT> HUB=<env>' to configure",
                 )
             else:
                 print_status("WARN", f"'{svc_name}' has errors in logs: {', '.join(found)}")

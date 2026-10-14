@@ -12,7 +12,7 @@
 #
 # Package a ready-to-ship trust kit (env file + FL participant kit slice)
 # for an on-prem trust operator. The packager does NOT edit the kit file —
-# it only tarballs the existing trust/.env.<KIT> (already populated by the
+# it only tarballs the existing trust/.env.<KIT>.<env> (already populated by the
 # admin) together with the operator's slice of the FL participant kit S3
 # bucket.
 #
@@ -22,7 +22,7 @@
 #      TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER,
 #      EXPECTED_TRUST_ID) and paste them into trust/.env.<KIT>, replacing
 #      the <run-make-register-trusts> placeholders.
-#   2. Run `make sync-trust-kit KIT=<slot> PROD=true` (from the repo root) to
+#   2. Run `make sync-trust-kit KIT=<slot> HUB=prod` (from the repo root) to
 #      populate the Hub-shared block in trust/.env.<KIT>, replacing the
 #      <run-make-sync-trust-kit> placeholders.
 #
@@ -40,7 +40,7 @@
 #      deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 #
 # Operator post-steps (after receiving the tarball over encrypted channel):
-#   7. Extract, copy .env.<slot> into trust/, edit Host-local profile +
+#   7. Extract, copy .env.<slot>.<env> into trust/, edit Host-local profile +
 #      Trust-local credentials sections (set FL_KIT_DIR to the extracted
 #      fl-kit/ absolute path, override ports/dirs/passwords as needed for
 #      their host), then `sudo -E make up-onprem-trust KIT=<slot>` (sudo:
@@ -60,11 +60,13 @@ if [ -z "${KIT:-}" ]; then
     exit 1
 fi
 
-KIT_FILE="$REPO_ROOT/trust/.env.${KIT}"
+# The kit the deploy Makefile resolved (deploy/env_mode.mk's kit_file: trust/.env.<KIT>.<env>,
+# or the kit's pre-FLIP#1479 name). It ships under the current name either way.
+KIT_NAME=".env.${KIT}.${HUB:?HUB is required — run via make package-onprem-trust-kit KIT=<slot> HUB=<env>}"
+KIT_FILE="${KIT_FILE:-$REPO_ROOT/trust/$KIT_NAME}"
 if [ ! -f "$KIT_FILE" ]; then
     log_error "Kit file $KIT_FILE not found."
-    log_error "Copy the template and fill it in first:"
-    log_error "    cp trust/.env.${KIT}.production.example trust/.env.${KIT}"
+    log_error "Scaffold and register it first: make new-trust TRUST_CODE=${KIT} ... HUB=${HUB}"
     exit 1
 fi
 
@@ -78,7 +80,7 @@ if grep -qE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE"; then
     log_error "$KIT_FILE still has $n unfilled <run-make-…> placeholder(s)."
     log_error "Fill them in first:"
     log_error "  - Kit credentials (5 lines): UI → Add Trust → paste the modal output."
-    log_error "  - Hub-shared block (12 lines): run 'make sync-trust-kit KIT=<slot> PROD=true' from repo root."
+    log_error "  - Hub-shared block (12 lines): run 'make sync-trust-kit KIT=<slot> HUB=${HUB}' from repo root."
     exit 1
 fi
 
@@ -98,7 +100,7 @@ for k in FL_BACKEND FL_KIT_SLOT FL_KIT_SLOT_NUMBER; do
     if [ -z "$(get_var "$k")" ]; then
         log_error "$k is empty in $KIT_FILE — fill the kit file first:"
         log_error "  - UI → Add Trust → paste the 5 modal lines into the kit file."
-        log_error "  - Then run: make sync-trust-kit KIT=$KIT PROD=true (from repo root)."
+        log_error "  - Then run: make sync-trust-kit KIT=$KIT HUB=${HUB} (from repo root)."
         exit 1
     fi
 done
@@ -113,7 +115,7 @@ else
     date_var="FLOWER_KIT_DATE"
 fi
 if [ -z "$fl_kit_date" ]; then
-    log_error "$date_var is empty in $KIT_FILE — run 'make sync-trust-kit KIT=$KIT PROD=true' from repo root."
+    log_error "$date_var is empty in $KIT_FILE — run 'make sync-trust-kit KIT=$KIT HUB=${HUB}' from repo root."
     exit 1
 fi
 
@@ -132,13 +134,13 @@ fi
 # `deploy-trust` target pulls from it (`deploy/providers/AWS/Makefile`). It's
 # a hub-side value, not per-trust, so it lives in $(MAIN_ENV_FILE) — the AWS
 # Makefile `include`s + `export`s the env file, so it's in os.environ for
-# any recipe running from deploy/providers/AWS with PROD=true (or stag).
+# any recipe running from deploy/providers/AWS with HUB=prod (or stag).
 # Plain bucket name, no `s3://` prefix.
 if [ -z "${AICENTRE_BUCKET_NAME:-}" ]; then
     log_error "AICENTRE_BUCKET_NAME is unset in the environment."
     log_error "  This script reads it from the admin's \$(MAIN_ENV_FILE) — make sure"
-    log_error "  you ran make from deploy/providers/AWS with PROD=true (or stag)"
-    log_error "  and that the matching .env.production / .env.stag has it set."
+    log_error "  you ran make from deploy/providers/AWS with HUB=prod (or stag)"
+    log_error "  and that the matching .env.prod / .env.stag has it set."
     exit 1
 fi
 bucket_name="$AICENTRE_BUCKET_NAME"
@@ -166,7 +168,7 @@ if [ "$fl_backend" = "nvflare" ]; then
         log_error "  Source: s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/services/$slot/"
         log_error "  Verify the provisioner has uploaded this slot's kit:"
         log_error "    aws s3 ls s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/services/"
-        log_error "  Check FLARE_KIT_DATE in trust/.env.$KIT matches an actual S3 date prefix,"
+        log_error "  Check FLARE_KIT_DATE in $KIT_FILE matches an actual S3 date prefix,"
         log_error "  and confirm FL_KIT_SLOT='$slot' is one of the provisioned slot names."
         exit 1
     fi
@@ -183,7 +185,7 @@ else
     if [ -z "$(ls -A "$certs_target" 2>/dev/null)" ]; then
         log_error "Sync produced empty certificates at $certs_target."
         log_error "  Source: s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/certificates/"
-        log_error "  Verify FLOWER_KIT_DATE in trust/.env.$KIT matches an actual S3 date prefix:"
+        log_error "  Verify FLOWER_KIT_DATE in $KIT_FILE matches an actual S3 date prefix:"
         log_error "    aws s3 ls s3://$bucket_name/$fl_prefix/"
         exit 1
     fi
@@ -194,14 +196,14 @@ fi
 log_success "FL kit staged at $KIT_STAGE_DIR"
 
 # --- Copy the kit file as-is (operator edits Host-local on their end) ---
-cp "$KIT_FILE" "$STAGE_DIR/.env.${slot}"
-chmod 600 "$STAGE_DIR/.env.${slot}"
-log_info "Copied $KIT_FILE → $STAGE_DIR/.env.${slot} (unmodified)."
+cp "$KIT_FILE" "$STAGE_DIR/$KIT_NAME"
+chmod 600 "$STAGE_DIR/$KIT_NAME"
+log_info "Copied $KIT_FILE → $STAGE_DIR/$KIT_NAME (unmodified)."
 
 # --- Tarball ---
 tarball="$BUILD_DIR/flip-trust-kit-${slot}-${DATE}.tar.gz"
 log_info "Packaging tarball..."
-tar -C "$STAGE_DIR" -czf "$tarball" ".env.${slot}" fl-kit
+tar -C "$STAGE_DIR" -czf "$tarball" "$KIT_NAME" fl-kit
 chmod 600 "$tarball"
 log_success "Tarball written to $tarball"
 
@@ -214,7 +216,7 @@ cat <<EOF
 
   Tarball:  $tarball
   Size:     $(du -h "$tarball" | cut -f1)
-  Contains: .env.${slot}  (your filled-in trust/.env.${slot}, copied as-is)
+  Contains: ${KIT_NAME}  (your filled-in kit file, copied as-is)
             fl-kit/       (FL participant kit, only this slot's portion)
 
   SEND TO OPERATOR over an encrypted channel (Signal / Keybase / age-
@@ -232,9 +234,9 @@ cat <<EOF
 
   2. From your FLIP checkout, copy the env file in:
 
-       cp \$HOME/flip-trust-kit/.env.${slot} trust/.env.${slot}
+       cp \$HOME/flip-trust-kit/${KIT_NAME} trust/${KIT_NAME}
 
-  3. Edit trust/.env.${slot} — Host-local profile + Trust-local credentials
+  3. Edit trust/${KIT_NAME} — Host-local profile + Trust-local credentials
      sections only (managed blocks below them are already correct):
        - FL_KIT_DIR=\$HOME/flip-trust-kit/fl-kit
        - Adjust ports / bind-mount dirs to match your host
@@ -248,7 +250,7 @@ cat <<EOF
      not in the docker group; -E keeps your \$HOME so root's docker reuses
      your GHCR login from ~/.docker/config.json):
 
-       sudo -E make up-onprem-trust KIT=${slot}
+       sudo -E make up-onprem-trust KIT=${slot} HUB=${HUB}
 
 ════════════════════════════════════════════════════════════════════════
 

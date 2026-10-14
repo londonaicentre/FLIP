@@ -79,7 +79,7 @@ class UpgradeOnpremTrust(unittest.TestCase):
         gate = next(line for line in out.splitlines() if "onboard_onprem_trust.py" in line)
         assert "--gate" in gate, gate  # the gate must not suggest up-onprem-trust
         assert "--kit-file" in gate, gate
-        assert ".env.SCR.production" in gate, gate
+        assert ".env.SCR.prod" in gate, gate
         assert "_upgrade-trust-apply" in out, out
         assert_data_safe(out, "upgrade-onprem-trust")
 
@@ -103,11 +103,15 @@ class CentralHubNetworks(unittest.TestCase):
 
 
 ENVIRONMENTS = (
-    (None, "production"),
-    ("true", "production"),
+    (None, "prod"),
+    ("prod", "prod"),
     ("stag", "stag"),
-    ("lza", "lza-prod"),
-    ("lza-stag", "lza-stag"),
+)
+#: Kit names before FLIP#1479, by the HUB that still finds them (env_mode.mk's kit_file).
+OLD_KIT_NAMES = (
+    ("prod", ".env.SITE.production"),
+    ("prod", ".env.SITE.lza-prod"),
+    ("stag", ".env.SITE.lza-stag"),
 )
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
@@ -141,19 +145,21 @@ class MakeKitSelection(unittest.TestCase):
         uv.write_text(
             f"#!{sys.executable}\nimport json, os, sys\n"
             "with open(os.environ['ARGS_FILE'], 'w') as out: json.dump(sys.argv[1:], out)\n"
-            "with open(os.environ['PROD_FILE'], 'w') as out: out.write(os.environ.get('PROD', 'unset'))\n"
+            "with open(os.environ['HUB_FILE'], 'w') as out: out.write(os.environ.get('HUB', 'unset'))\n"
         )
         uv.chmod(0o755)
         self.args_file = self.root / "args.json"
-        self.prod_file = self.root / "prod.txt"
+        self.hub_file = self.root / "hub.txt"
         self.env = {
-            key: value for key, value in os.environ.items() if key not in {"PROD", "KIT", "KIT_FILE", "MAKEFLAGS"}
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PROD", "HUB", "KIT", "KIT_FILE", "MAKEFLAGS"}
         }
         self.env.update(
-            PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file), PROD_FILE=str(self.prod_file)
+            PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file), HUB_FILE=str(self.hub_file)
         )
 
-    def run_make(self, target, prod=None, *extra, dry=False, subdir="."):
+    def run_make(self, target, hub=None, *extra, dry=False, subdir="."):
         command = [
             "make",
             "--no-print-directory",
@@ -163,44 +169,54 @@ class MakeKitSelection(unittest.TestCase):
             target,
             "KIT=SITE",
         ]
-        if prod is not None:
-            command.append(f"PROD={prod}")
+        if hub is not None:
+            command.append(f"HUB={hub}")
         result = subprocess.run(command + list(extra), env=self.env, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stdout + result.stderr
         return result.stdout
 
-    def check_selected(self, expected, prod=None, *extra, subdir="."):
-        self.run_make("onboard-onprem-trust", prod, *extra, subdir=subdir)
+    def check_selected(self, expected, hub=None, *extra, subdir="."):
+        output = self.run_make("onboard-onprem-trust", hub, *extra, subdir=subdir)
         args = json.loads(self.args_file.read_text())
         assert args[:4] == ["run", "--no-config", "../scripts/onboard_onprem_trust.py", "SITE"], args
         assert Path(args[args.index("--kit-file") + 1]) == self.root / "trust" / expected, args
-        assert self.prod_file.read_text() == (prod or ("" if subdir == "trust" else "true"))
+        assert self.hub_file.read_text() == (hub or ("" if subdir == "trust" else "prod"))
+        return output
 
     def test_suffixed_kit_wins_over_legacy_in_every_onprem_environment(self):
         (self.root / "trust/.env.SITE").write_text(KIT)
-        for prod, suffix in ENVIRONMENTS:
-            with self.subTest(prod=prod):
+        for hub, suffix in ENVIRONMENTS:
+            with self.subTest(hub=hub):
                 filename = f".env.SITE.{suffix}"
                 (self.root / "trust" / filename).write_text(KIT)
-                self.check_selected(filename, prod)
+                self.check_selected(filename, hub)
 
     def test_legacy_kit_is_the_fallback_in_every_onprem_environment(self):
         (self.root / "trust/.env.SITE").write_text(KIT)
-        for prod, _ in ENVIRONMENTS:
-            with self.subTest(prod=prod):
-                self.check_selected(".env.SITE", prod)
+        for hub, _ in ENVIRONMENTS:
+            with self.subTest(hub=hub):
+                self.check_selected(".env.SITE", hub)
+
+    def test_old_kit_names_are_still_found_with_a_rename_hint(self):
+        """A live site's next upgrade must not break on a kit named before FLIP#1479."""
+        for hub, filename in OLD_KIT_NAMES:
+            with self.subTest(filename=filename):
+                (self.root / "trust" / filename).write_text(KIT)
+                output = self.check_selected(filename, hub)
+                assert f"trust/{filename} is an old kit name — rename it to trust/.env.SITE.{hub}" in output, output
+                (self.root / "trust" / filename).unlink()
 
     def test_a_missing_kit_is_still_passed_to_the_checklist_for_diagnostics(self):
-        self.check_selected(".env.SITE")
+        self.check_selected(".env.SITE.prod")
 
     def test_a_development_kit_cannot_override_the_onprem_production_default(self):
         (self.root / "trust/.env.SITE.development").write_text(KIT)
-        (self.root / "trust/.env.SITE.production").write_text(KIT)
-        self.check_selected(".env.SITE.production")
+        (self.root / "trust/.env.SITE.prod").write_text(KIT)
+        self.check_selected(".env.SITE.prod")
         self.check_selected(".env.SITE.development", subdir="trust")
 
     def test_explicit_kit_file_override_reaches_the_checklist(self):
-        (self.root / "trust/.env.SITE.production").write_text(KIT)
+        (self.root / "trust/.env.SITE.prod").write_text(KIT)
         (self.root / "trust/operator-kit").write_text(KIT)
         self.check_selected("operator-kit", None, "KIT_FILE=operator-kit")
 
@@ -240,10 +256,10 @@ with mock.patch.object(mod.subprocess, 'run', return_value=mod.subprocess.Comple
 hint = next(hint for hint in check.hints if 'check-governance' in hint)
 print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
 """
-        for prod in ("true", "stag", "lza", "lza-stag"):
+        for hub in ("prod", "stag"):
             generated = subprocess.run(
                 [sys.executable, "-c", code, str(selected)],
-                env={**self.env, "PYTHONPATH": str(REPO / "scripts"), "PROD": prod},
+                env={**self.env, "PYTHONPATH": str(REPO / "scripts"), "HUB": hub},
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -251,7 +267,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             assert generated.returncode == 0, generated.stdout + generated.stderr
             commands = json.loads(generated.stdout)
             for name, command in commands.items():
-                with self.subTest(prod=prod, command=name):
+                with self.subTest(hub=hub, command=name):
                     # Reuse the printed assignments, but run only the read-only checklist through stub uv.
                     assignments = shlex.split(command)[4:]
                     self.run_make(
@@ -262,10 +278,10 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     )
                     args = json.loads(self.args_file.read_text())
                     assert Path(args[args.index("--kit-file") + 1]) == selected, args
-                    assert self.prod_file.read_text() == prod
+                    assert self.hub_file.read_text() == hub
 
     def test_an_occupied_slot_allows_only_its_own_kit_for_absolute_and_relative_paths(self):
-        selected = self.root / "trust/.env.SITE.production"
+        selected = self.root / "trust/.env.SITE.prod"
         selected.write_text(KIT)
         calls_file = self.root / "docker-calls.jsonl"
         docker = self.root / "bin/docker"
@@ -297,7 +313,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             target = "down-fl-clients-kit" if requested in (selected.name, str(selected)) else "_test-slot-guard"
             for owner, allowed in (
                 (f"/previous/checkout/{Path(requested).name}", True),
-                ("/other/.env.OTHER.production", False),
+                ("/other/.env.OTHER.prod", False),
                 ("", False),
             ):
                 with self.subTest(requested=requested, owner=owner):
@@ -311,7 +327,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                             str(self.root / "trust"),
                             target,
                             "KIT=SITE",
-                            "PROD=true",
+                            "HUB=prod",
                             "FL_KIT_SLOT_NUMBER=9",
                             f"KIT_FILE={requested.replace('$', '$$')}",
                         ],
@@ -343,7 +359,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     str(self.root / "trust"),
                     "up-trust-ec2",
                     "KIT=SITE",
-                    "PROD=true",
+                    "HUB=prod",
                     f"KIT_FILE={requested}",
                 ],
                 env=self.env,
@@ -358,7 +374,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             assert "trust//" not in result.stdout, result.stdout
 
     def test_both_gate_callers_and_the_deployment_use_the_same_file(self):
-        for filename in (".env.SITE.production", ".env.SITE"):
+        for filename in (".env.SITE.prod", ".env.SITE.production", ".env.SITE"):
             with self.subTest(filename=filename):
                 kit_file = self.root / "trust" / filename
                 kit_file.write_text(KIT)
@@ -441,7 +457,7 @@ class HubProjectOwnerGuard(unittest.TestCase):
             "    for working_dir in json.loads(os.environ['WORKING_DIRS']): print(working_dir)\n"
         )
         docker.chmod(0o755)
-        excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "ALLOW_FOREIGN_PROJECT", "FORCE"}
+        excluded = {"MAKEFLAGS", "PROD", "HUB", "FLIP_INSTANCE", "ALLOW_FOREIGN_PROJECT", "FORCE"}
         self.env = {key: value for key, value in os.environ.items() if key not in excluded}
         self.env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", PROJECT="deploy")
 

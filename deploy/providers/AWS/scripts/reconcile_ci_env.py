@@ -14,7 +14,7 @@
 
 The Terraform CI pipeline (FLIP#962) needs every ``TF_VAR_*`` input present as a
 GitHub environment secret or variable. The nominal source is the operator's
-``.env.stag`` / ``.env.production``, but those files live on laptops, drift, and
+``.env.stag`` / ``.env.prod``, but those files live on laptops, drift, and
 in at least one observed case were months stale — a copy that still named a
 renamed S3 bucket, which plans as ``must be replaced`` on a bucket carrying
 ``prevent_destroy``. Seeding GitHub from a stale file would bake that drift into
@@ -34,9 +34,14 @@ Secret values are written to the output file but never printed: the summary
 shows a truncated SHA-256 so two copies can be compared without either being
 disclosed.
 
+``--env`` defaults to AI Centre's LZA estates (profile ``lza-<env>``, state bucket
+``flip-terraform-state-lza`` / ``flip-terraform-state-lza-stag``); a self-contained
+estate passes its own ``--profile`` and ``--bucket``.
+
 Usage:
-    scripts/reconcile_ci_env.py --env prod --profile prod --out ../../../.env.production
-    scripts/reconcile_ci_env.py --env stag --profile stag --compare ../../../.env.stag
+    scripts/reconcile_ci_env.py --env prod --out ../../../.env.prod
+    scripts/reconcile_ci_env.py --env stag --compare ../../../.env.stag
+    scripts/reconcile_ci_env.py --env prod --profile prod --bucket <state bucket> --compare ../../../.env.prod
 """
 
 from __future__ import annotations
@@ -294,6 +299,10 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
     return tag.partition("@")[0]
 
 
+# AI Centre's LZA estates' state buckets: the --bucket defaults.
+LZA_STATE_BUCKETS = {"prod": "flip-terraform-state-lza", "stag": "flip-terraform-state-lza-stag"}
+
+
 def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tuple[dict, dict]:
     """Return (values, sources) for every key the CI env file needs."""
     raw = subprocess.run(
@@ -357,6 +366,8 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
+        # The platform VPC lookup is in state only on an LZA estate (network_lza.tf).
+        "LZA_MANAGED_NETWORK": "true" if st.data_attrs("aws_vpc", "lza") else "false",
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
         # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
@@ -464,10 +475,13 @@ def read_env_file(path: str) -> dict[str, str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--env", required=True, choices=["stag", "prod"])
-    ap.add_argument("--profile", help="AWS profile (default: same as --env)")
+    ap.add_argument("--env", required=True, choices=["stag", "prod"], help="the hub, as HUB=stag|prod")
+    ap.add_argument("--profile", help="AWS profile (default: lza-<env>; a self-contained estate passes its own)")
     ap.add_argument("--region", default="eu-west-2")
-    ap.add_argument("--bucket", help="state bucket (default: flip-terraform-state-<env>)")
+    ap.add_argument(
+        "--bucket",
+        help="state bucket (default: the LZA estate's, flip-terraform-state-lza / flip-terraform-state-lza-stag)",
+    )
     ap.add_argument("--cluster", default="flip-cluster")
     ap.add_argument("--out", help="write the recovered values here (mode 0600); refuses to overwrite")
     ap.add_argument(
@@ -478,8 +492,8 @@ def main() -> None:
     ap.add_argument("--compare", help="report differences against an existing env file")
     args = ap.parse_args()
 
-    profile = args.profile or args.env
-    bucket = args.bucket or f"flip-terraform-state-{args.env}"
+    profile = args.profile or f"lza-{args.env}"
+    bucket = args.bucket or LZA_STATE_BUCKETS[args.env]
 
     print(f"🔎 Reading deployed configuration for '{args.env}' (profile {profile})…\n")
     values, sources = build(args.env, profile, args.region, bucket, args.cluster)

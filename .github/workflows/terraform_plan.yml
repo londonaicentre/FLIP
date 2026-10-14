@@ -111,18 +111,21 @@ jobs:
       # header, and `make print-tf-env` below.
       - name: Compose the Terraform env file
         env:
-          # Which mode this run composes for: the deploy/env_mode.mk token, taken
-          # from the TF_PROD variable on the environment (stag | true | lza-stag |
-          # lza). Unset keeps the legacy staging value, so a repository that has
-          # not set it behaves exactly as before. The script derives the env-file
-          # name, the AWS_PROFILE the Makefile's guard expects, and which keys are
-          # required — one token, one table.
-          PROD: ${{ vars.TF_PROD || 'stag' }}
+          # Which estate this run composes for: the TF_HUB variable on the
+          # environment (stag | prod). No fallback — an unset TF_HUB fails the
+          # compose step instead of composing some default estate. The script
+          # derives the env-file name, the AWS_PROFILE the Makefile's guard expects
+          # and which keys are required.
+          HUB: ${{ vars.TF_HUB }}
+          # The estate's network mode (true = LZA, platform-managed; false =
+          # self-contained), required as well. The script writes it into the env
+          # file, where the Makefile reads it.
+          LZA_MANAGED_NETWORK: ${{ vars.LZA_MANAGED_NETWORK }}
           # The class this run is allowed to compose, asserted by the script: this
-          # workflow declares `environment: aws-stag` unconditionally, so a TF_PROD
-          # on aws-stag naming a prod-grade estate (true / lza) is a mis-set
-          # variable, and the plan it would produce is one nobody asked for. Literal
-          # rather than ref-derived: plans are staging-only by construction.
+          # workflow declares `environment: aws-stag` unconditionally, so
+          # TF_HUB=prod on aws-stag is a mis-set variable, and the plan it would
+          # produce is one nobody asked for. Literal rather than ref-derived: plans
+          # are staging-only by construction.
           EXPECTED_ENV_CLASS: stag
           AWS_REGION: ${{ vars.AWS_REGION }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
@@ -151,13 +154,13 @@ jobs:
           K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
-          # The LZA keys (FLIP#749). Required when TF_PROD selects a
-          # platform-managed estate (lza-stag / lza), expected absent on the
-          # legacy tokens — see compose-ci-env.sh, which is the one place that
-          # decides. The last four have no `export TF_VAR_…` line in the Makefile,
-          # so the script writes them into the env file as raw exports. The two
-          # web-edge values are optional on purpose: the edge is built from this
-          # stack's outputs, so they are legitimately empty on a first apply.
+          # The LZA keys (FLIP#749). Required when LZA_MANAGED_NETWORK=true,
+          # expected absent on a self-contained estate — see compose-ci-env.sh,
+          # which is the one place that decides. The last four have no
+          # `export TF_VAR_…` line in the Makefile, so the script writes them into
+          # the env file as raw exports. The two web-edge values are optional on
+          # purpose: the edge is built from this stack's outputs, so they are
+          # legitimately empty on a first apply.
           ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
@@ -212,10 +215,10 @@ jobs:
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
         env:
-          # Same token as the compose step above, for the same reason: `make` is
+          # Same HUB as the compose step above, for the same reason: `make` is
           # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
           # it has to be looking at the environment this run composed for.
-          PROD: ${{ vars.TF_PROD || 'stag' }}
+          HUB: ${{ vars.TF_HUB }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 
       - name: Terraform plan

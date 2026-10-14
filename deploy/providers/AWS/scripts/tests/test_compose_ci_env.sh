@@ -56,11 +56,12 @@ no() {
 # A complete, valid value set. Cases copy this and mutate one key, so each test
 # asserts the effect of exactly one difference.
 #
-# PROD is the deploy/env_mode.mk token the script now takes (it used to be
-# TF_ENV). The LZA keys are deliberately absent here: absent is the correct value
-# on the legacy tokens, and the LZA cases below add them.
+# HUB and LZA_MANAGED_NETWORK select the estate. The LZA keys are deliberately
+# absent here: absent is the correct value on a self-contained estate, and the
+# LZA cases below add them.
 BASE_ENV=(
-    PROD=stag
+    HUB=stag
+    LZA_MANAGED_NETWORK=false
     AWS_REGION=eu-west-2
     FLIP_TFSTATE_BUCKET_NAME=flip-terraform-state-stag
     AICENTRE_BUCKET_NAME=aicentre-stag
@@ -96,7 +97,7 @@ BASE_ENV=(
 )
 
 # The keys a platform-managed (LZA) estate adds on top of BASE_ENV (FLIP#749).
-# Required on the two LZA tokens, expected absent on the legacy ones — see
+# Required with LZA_MANAGED_NETWORK=true, expected absent otherwise — see
 # section 14. Held here beside BASE_ENV because both the AWS_PROFILE cases and
 # the LZA section need a value set that composes.
 LZA_ENV=(
@@ -185,10 +186,10 @@ echo "==== compose-ci-env.sh ===="
 #    (FLIP_TFSTATE_BUCKET_NAME feeds `init -backend-config`).
 echo ""
 echo "-- manifest covers every TF_VAR input in the Makefile"
-# Derived inside deploy/fl_backend.mk from FL_BACKEND (the DOCKER_FL_* names) and
-# inside deploy/env_mode.mk from PROD (ENV_CLASS, IS_LZA), never stored.
-# HOME and PROD are supplied by the runner and by make itself.
-NOT_STORED='^(DOCKER_FL_API_NAME|DOCKER_FL_SERVER_NAME|DOCKER_FL_CLIENT_NAME|ENV_CLASS|IS_LZA|HOME|PROD)$'
+# Derived inside deploy/fl_backend.mk from FL_BACKEND (the DOCKER_FL_* names),
+# inside deploy/env_mode.mk from HUB (ENV_CLASS), and in the Makefile from
+# LZA_MANAGED_NETWORK (IS_LZA), never stored. HOME is supplied by the runner.
+NOT_STORED='^(DOCKER_FL_API_NAME|DOCKER_FL_SERVER_NAME|DOCKER_FL_CLIENT_NAME|ENV_CLASS|IS_LZA|HOME)$'
 # The manifest is the two array literals plus the per-backend `REQUIRED_KEYS+=(…)`
 # / `OPTIONAL_KEYS+=(…)` additions made once FL_BACKEND is known.
 manifest="$( {
@@ -217,7 +218,7 @@ fi
 #     Keys the workflow supplies by other means are excluded: the FL_KIT_DATE
 #     selectors are computed, and the apply workflow deliberately omits
 #     DOCKER_TAG / DOCKER_FL_TAG so the resolved sha tags from
-#     resolve-image-tags.sh are inherited rather than overridden (hazard A). PROD
+#     resolve-image-tags.sh are inherited rather than overridden (hazard A). HUB
 #     is not a manifest key at all — it is the selector, checked separately below.
 for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     echo ""
@@ -250,35 +251,34 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     fi
 done
 
-# 1c. EVERY WORKFLOW MUST READ THE MODE TOKEN IN BOTH STEPS THAT NEED IT.
+# 1c. EVERY WORKFLOW MUST READ TF_HUB, WITH NO FALLBACK, IN BOTH STEPS THAT NEED IT.
 #
-#     TF_PROD is the only mode input, and two steps consume it: the compose step
+#     TF_HUB is the only selector input, and two steps consume it: the compose step
 #     (which writes .env.<ENV>) and the make step that resolves TF_VAR_* (which
 #     includes .env.<ENV>). They have to agree, or a run composes one
 #     environment's file and then reads another's — and because the Makefile's
 #     env-file include is wildcard-guarded, a missing file is skipped silently
-#     and Terraform sees an empty input set. Two identical lines per workflow, and
-#     each must consult vars.TF_PROD.
+#     and Terraform sees an empty input set. Neither may fall back either: an unset
+#     TF_HUB must fail the compose step, not compose a default estate (FLIP#1377).
 echo ""
-echo "-- every workflow reads the mode token in both steps"
-token_offenders=""
+echo "-- every workflow reads TF_HUB, with no fallback, in both steps"
+hub_offenders=""
 for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     wf_path="${WORKFLOW_DIR}/${wf}"
     [[ -f "${wf_path}" ]] || continue
-    prod_lines="$(grep -oE '^[[:space:]]+PROD:[[:space:]]+.*$' "${wf_path}" | sed -E 's/^[[:space:]]+PROD:[[:space:]]+//')"
-    count="$(printf '%s\n' "${prod_lines}" | grep -c .)"
-    distinct="$(printf '%s\n' "${prod_lines}" | grep . | LC_ALL=C sort -u | wc -l)"
-    vars_refs="$(printf '%s\n' "${prod_lines}" | grep -c 'vars\.TF_PROD')"
-    if [[ "${count}" -ge 2 && "${distinct}" -eq 1 && "${vars_refs}" -eq "${count}" ]]; then
+    hub_lines="$(grep -oE '^[[:space:]]+HUB:[[:space:]]+.*$' "${wf_path}" | sed -E 's/^[[:space:]]+HUB:[[:space:]]+//')"
+    count="$(printf '%s\n' "${hub_lines}" | grep -c .)"
+    exact="$(printf '%s\n' "${hub_lines}" | grep -cxF '${{ vars.TF_HUB }}')"
+    if [[ "${count}" -ge 2 && "${exact}" -eq "${count}" ]] && ! grep -qE '^[[:space:]]+PROD:' "${wf_path}"; then
         continue
     fi
-    token_offenders="${token_offenders} ${wf}(lines=${count},distinct=${distinct},from-tf-prod=${vars_refs})"
+    hub_offenders="${hub_offenders} ${wf}(lines=${count},exact=${exact})"
 done
-if [[ -z "${token_offenders}" ]]; then
-    ok "all three select PROD from TF_PROD, identically in every step"
+if [[ -z "${hub_offenders}" ]]; then
+    ok "all three set HUB to exactly vars.TF_HUB in every step"
 else
-    no "all three select PROD from TF_PROD, identically in every step" \
-        "compose and make would disagree about the environment:" ${token_offenders}
+    no "all three set HUB to exactly vars.TF_HUB in every step" \
+        "a fallback composes a default estate; a mismatch has compose and make disagree:" ${hub_offenders}
 fi
 
 # 1d. EVERY WORKFLOW MUST RESOLVE THE IMAGE TAGS, AND NONE MAY OVERRIDE THEM.
@@ -372,32 +372,36 @@ else
 fi
 
 # 3. AWS_PROFILE is derived, not stored — this is what stops a mis-set GitHub
-#    variable from pointing a stag run at the prod account. The token-to-profile
-#    mapping is the one the Makefile's guard expects for that ENV.
+#    variable from pointing a stag run at the prod account. The mapping is the
+#    one the Makefile's guard expects: <hub>, or lza-<hub> on an LZA estate.
 if grep -qx 'AWS_PROFILE=stag' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=stag from the stag token"
+    ok "derives AWS_PROFILE=stag for self-contained stag"
 else
-    no "derives AWS_PROFILE=stag from the stag token" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+    no "derives AWS_PROFILE=stag for self-contained stag" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
 fi
-run_case "prod environment" PROD=true
+# The network mode reaches the file, where the Makefile reads it.
+if grep -qx 'LZA_MANAGED_NETWORK=false' "${OUT_FILE}"; then
+    ok "writes LZA_MANAGED_NETWORK into the file"
+else
+    no "writes LZA_MANAGED_NETWORK into the file" "file: $(grep '^LZA_MANAGED' "${OUT_FILE}")"
+fi
+run_case "prod environment" HUB=prod
 if grep -qx 'AWS_PROFILE=prod' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=prod from the true token"
+    ok "derives AWS_PROFILE=prod for self-contained prod"
 else
-    no "derives AWS_PROFILE=prod from the true token"
+    no "derives AWS_PROFILE=prod for self-contained prod"
 fi
-# The LZA pair: the LZA_AWS_PROFILE / LZA_STAG_AWS_PROFILE knobs in the Makefile,
-# so a JIT-bound run passes the same guard a laptop does.
-run_case "lza staging environment" PROD=lza-stag "${LZA_ENV[@]}"
+run_case "lza staging environment" LZA_MANAGED_NETWORK=true "${LZA_ENV[@]}"
 if grep -qx 'AWS_PROFILE=lza-stag' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=lza-stag from the lza-stag token"
+    ok "derives AWS_PROFILE=lza-stag for LZA stag"
 else
-    no "derives AWS_PROFILE=lza-stag from the lza-stag token" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+    no "derives AWS_PROFILE=lza-stag for LZA stag" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
 fi
-run_case "lza prod environment" PROD=lza "${LZA_ENV[@]}"
+run_case "lza prod environment" HUB=prod LZA_MANAGED_NETWORK=true "${LZA_ENV[@]}"
 if grep -qx 'AWS_PROFILE=lza-prod' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=lza-prod from the lza token"
+    ok "derives AWS_PROFILE=lza-prod for LZA prod"
 else
-    no "derives AWS_PROFILE=lza-prod from the lza token"
+    no "derives AWS_PROFILE=lza-prod for LZA prod"
 fi
 
 # 4. UNSET OPTIONAL KEYS ARE OMITTED, not written empty. The Makefile guards
@@ -532,26 +536,42 @@ expect_rc 0 "exits 0"
 run_case "unknown FL_BACKEND is rejected" FL_BACKEND=jax
 expect_rc 1 "exits 1"
 expect_stderr "must be 'nvflare' or 'flower'" "explains the valid set"
-run_case "unknown PROD token is rejected" PROD=dev
+run_case "an unknown HUB is rejected" HUB=true
 expect_rc 1 "exits 1"
-expect_stderr "PROD must be one of" "explains the valid set"
-# Unset is not a mode: it used to default to staging, which is exactly how a run
+expect_stderr "HUB must be stag or prod" "explains the valid set"
+# Unset is not an estate: it used to default to staging, which is exactly how a run
 # could compose for the wrong estate without anyone choosing one.
-run_case "an unset PROD is rejected rather than defaulted" PROD
+run_case "an unset HUB is rejected rather than defaulted" HUB
 expect_rc 1 "exits 1"
-expect_stderr "PROD is not set" "says so"
+expect_stderr "HUB is not set" "says so"
+expect_stderr "TF_HUB" "and names the GitHub variable"
+# The network mode does not default either: either default plans the other
+# estate's network.
+run_case "an unset LZA_MANAGED_NETWORK is rejected" LZA_MANAGED_NETWORK
+expect_rc 1 "exits 1"
+expect_stderr "LZA_MANAGED_NETWORK must be true" "says what it must be"
+run_case "LZA_MANAGED_NETWORK=yes is rejected" LZA_MANAGED_NETWORK=yes
+expect_rc 1 "exits 1"
+expect_stderr "got 'yes'" "names the bad value"
 
-# 14. THE LZA MODES (FLIP#749). Same three workflows and the same script — the
-#     token decides which keys a platform-managed estate needs, and the four that
-#     have no `export TF_VAR_…` line in the Makefile are written as raw exports.
+# 14. THE LZA ESTATES (FLIP#749). Same three workflows and the same script —
+#     LZA_MANAGED_NETWORK decides which keys a platform-managed estate needs, and
+#     the four that have no `export TF_VAR_…` line in the Makefile are written as
+#     raw exports.
 echo ""
-echo "-- the LZA tokens require the LZA keys"
-run_case "lza-stag composes with the LZA key set" PROD=lza-stag "${LZA_ENV[@]}"
+echo "-- an LZA estate requires the LZA keys"
+run_case "LZA stag composes with the LZA key set" LZA_MANAGED_NETWORK=true "${LZA_ENV[@]}"
 expect_rc 0 "exits 0"
 if grep -qxF 'AWS_PROFILE=lza-stag' "${OUT_FILE}"; then
-    ok "composes for the lza-stag environment"
+    ok "composes for the LZA stag estate"
 else
-    no "composes for the lza-stag environment" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+    no "composes for the LZA stag estate" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+fi
+got="$(make_value_of LZA_MANAGED_NETWORK "${OUT_FILE}")"
+if [[ "${got}" == "true" ]]; then
+    ok "make reads LZA_MANAGED_NETWORK=true back"
+else
+    no "make reads LZA_MANAGED_NETWORK=true back" "make saw: ${got}"
 fi
 # The raw-export form is what carries these to Terraform without a Makefile line
 # of their own; `make_value_of` reads the make variable back, which is exactly
@@ -580,30 +600,30 @@ fi
 # NETWORKING_INGRESS_CIDRS is not "no change", it is every rule the estate's edge
 # reaches the internal NLB through.
 for key in ACCESS_LOGS_BUCKET_NAME EFS_PROVISION_IMAGE LZA_VPC_NAME MANAGE_DNS LZA_ELB_ACCESS_LOGS_BUCKET NETWORKING_INGRESS_CIDRS; do
-    run_case "on lza-stag, ${key} is required" PROD=lza-stag "${LZA_ENV[@]}" "${key}"
+    run_case "on LZA, ${key} is required" LZA_MANAGED_NETWORK=true "${LZA_ENV[@]}" "${key}"
     expect_rc 1 "exits 1"
     expect_stderr "${key}" "names it"
 done
 
 # The two web-edge values are the opposite case: the edge is built from this
 # stack's outputs, so empty — omitted — is correct on a first apply.
-run_case "lza composes with the web-edge values empty" PROD=lza "${LZA_ENV[@]}"
+run_case "LZA prod composes with the web-edge values empty" HUB=prod LZA_MANAGED_NETWORK=true "${LZA_ENV[@]}"
 expect_rc 0 "exits 0"
 
-# Requiring them on every token would block a self-contained deployment that
-# shares this script, and the legacy value for all of them is absent.
-run_case "the legacy tokens do not require the LZA keys" PROD=stag
+# Requiring them everywhere would block a self-contained deployment that shares
+# this script, and the self-contained value for all of them is absent.
+run_case "a self-contained estate does not require the LZA keys"
 expect_rc 0 "exits 0"
 if grep -q 'TF_VAR_' "${OUT_FILE}"; then
-    no "writes no raw TF_VAR_ lines for a legacy environment" "file carries: $(grep 'TF_VAR_' "${OUT_FILE}")"
+    no "writes no raw TF_VAR_ lines for a self-contained estate" "file carries: $(grep 'TF_VAR_' "${OUT_FILE}")"
 else
-    ok "writes no raw TF_VAR_ lines for a legacy environment"
+    ok "writes no raw TF_VAR_ lines for a self-contained estate"
 fi
 
 # 15. THE ENV CLASS. The workflows state the class their ref implies and the script
-#     refuses a TF_PROD that names the other one. There is one freely settable
+#     refuses a TF_HUB that names the other one. There is one freely settable
 #     variable between a run and the account it shapes, and getting it wrong is not
-#     a wrong-looking plan: TF_PROD=stag on aws-prod composes a prod estate with
+#     a wrong-looking plan: TF_HUB=stag on aws-prod composes a prod estate with
 #     staging's destructive defaults — the RDS comes out with
 #     deletion_protection = false, skip_final_snapshot = true — inside an apply job
 #     nobody is watching. The compose step is the last cheap place to stop it.
@@ -640,21 +660,21 @@ else
 fi
 
 echo ""
-echo "-- a declared class that disagrees with the token is refused"
+echo "-- a declared class that disagrees with HUB is refused"
 run_case "a stag estate under a prod ref is refused" EXPECTED_ENV_CLASS=prod
 expect_rc 1 "exits 1"
-expect_stderr "PROD=stag" "names the token it composed for"
+expect_stderr "HUB=stag" "names the hub it composed for"
 expect_stderr "expects prod" "names the class the caller declared"
-run_case "a prod estate under a stag ref is refused" PROD=true EXPECTED_ENV_CLASS=stag
+run_case "a prod estate under a stag ref is refused" HUB=prod EXPECTED_ENV_CLASS=stag
 expect_rc 1 "exits 1"
-expect_stderr "PROD=true" "names the token"
+expect_stderr "HUB=prod" "names the hub"
 # A cross-check, not an input: a matching declaration composes the same target.
 run_case "a matching class composes" EXPECTED_ENV_CLASS=stag
 expect_rc 0 "exits 0"
 if grep -qxF 'AWS_PROFILE=stag' "${OUT_FILE}"; then
-    ok "and composes the target the token alone would have"
+    ok "and composes the target HUB alone would have"
 else
-    no "and composes the target the token alone would have" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+    no "and composes the target HUB alone would have" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
 fi
 
 echo ""

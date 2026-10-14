@@ -19,7 +19,7 @@ profile + mock-stack default credentials + ``<run-make-register-trust>``
 placeholders for the hub-managed blocks) and prepending the trust's identity
 (``TRUST_NAME`` / ``TRUST_CODE`` / ``TRUST_REGION``).
 
-The result is ready for ``make register-trust KIT=<CODE> PROD=<env>`` to fill
+The result is ready for ``make register-trust KIT=<CODE> HUB=<env>`` to fill
 in the credentials, FL kit slot, and hub-shared block. Refuses to overwrite an
 existing kit. Driven by ``make new-trust``.
 """
@@ -29,10 +29,6 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-
-# Kit-file env suffix → the PROD flag that selects it (root Makefile ENV / deploy
-# Makefile KIT_ENV_SUFFIX). Suffixes that spell their own flag are absent.
-_PROD_FLAG_FOR_ENV = {"production": "true", "lza-prod": "lza"}
 
 
 def main() -> None:
@@ -44,8 +40,8 @@ def main() -> None:
     parser.add_argument(
         "--env",
         required=True,
-        choices=("development", "stag", "production", "lza-prod", "lza-stag"),
-        help="Target env — the kit-file suffix (lza-prod / lza-stag = the LZA estate, FLIP#749).",
+        choices=("development", "stag", "prod"),
+        help="Target env — the kit-file suffix (deploy/env_mode.mk's ENV).",
     )
     parser.add_argument("--template", default=None, help="Base template (default trust/.env.example).")
     parser.add_argument("--trust-dir", default=None, help="Override the trust/ directory (testing).")
@@ -74,7 +70,8 @@ def main() -> None:
     target.write_text("\n".join(identity) + "\n" + template.read_text())
     target.chmod(0o600)
     print(f"✅ Scaffolded {target}")
-    print(f"   Next: make register-trust KIT={args.code} PROD={_PROD_FLAG_FOR_ENV.get(args.env, args.env)}")
+    hub = "" if args.env == "development" else f" HUB={args.env}"
+    print(f"   Next: make register-trust KIT={args.code}{hub}")
 
 
 if __name__ == "__main__":

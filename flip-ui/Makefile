@@ -14,13 +14,8 @@
 # sub-Makefile prepends its own `../`. Baking `../` in here instead would silently lose the file
 # whenever the value is overridden (`make up MAIN_ENV_FILE=.env.b.development` for a second
 # stack), because the include below is guarded by a wildcard and just skips a missing file.
-ifeq ($(PROD),true)
-MAIN_ENV_FILE ?= .env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE ?= .env.stag
-else
-MAIN_ENV_FILE ?= .env.development
-endif
+include ../deploy/env_mode.mk
+MAIN_ENV_FILE ?= $(ENV_FILE_NAME)
 
 $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 

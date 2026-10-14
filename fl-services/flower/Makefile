@@ -18,10 +18,9 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
-# Load the env file selected by PROD (dev by default), exactly as
-# fl-services/nvflare/Makefile does — with PROD=stag|true (or lza|lza-stag for
-# the LZA estate, FLIP#749) this brings in the upload vars (AICENTRE_BUCKET_NAME,
-# FLOWER_KIT_DATE) used by upload-creds-to-s3.
+# Load the env file selected by HUB (dev by default), exactly as
+# fl-services/nvflare/Makefile does — with HUB=stag|prod this brings in the upload
+# vars (AICENTRE_BUCKET_NAME, FLOWER_KIT_DATE) used by upload-creds-to-s3.
 include $(REPO_ROOT)/deploy/env_mode.mk
 MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
@@ -78,9 +77,9 @@ provision:
 # For a hub deployment the server cert must carry the ECS hostnames — e.g.:
 #   FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
 #     make provision NET_NUMBER=1
-#   make upload-creds-to-s3 NET_NUMBER=1 PROD=stag
+#   make upload-creds-to-s3 NET_NUMBER=1 HUB=stag
 upload-creds-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with HUB=stag|prod"; exit 1; }
 	@[ -n "$(FLOWER_KIT_DATE)" ] || { echo "❌ FLOWER_KIT_DATE not set — add it to the env file (e.g. 20260811)"; exit 1; }
 	@echo "⬆️  Uploading Flower creds (net-$(NET_NUMBER)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./provision/creds/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) --delete --exclude "certificates/ca.key" $(DRYRUN)

@@ -9,44 +9,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Single source of truth for what the PROD flag means (FLIP#749). Sibling of
-# instance.mk and fl_backend.mk, included by every Makefile that reads PROD —
-# root, deploy/providers/AWS, trust, trust/xnat, fl-services/{nvflare,flower} —
-# at the very top, BEFORE their env-file include: this file needs only PROD,
-# and the env file's name is one of the things it derives.
+# Single source of truth for what the HUB selector means (FLIP#1479). Sibling of
+# instance.mk and fl_backend.mk, included by every Makefile that reads HUB —
+# root, deploy/providers/AWS, trust, trust/xnat, trust/deploy/helm,
+# fl-services/{nvflare,flower} — at the very top, BEFORE their env-file include:
+# this file needs only HUB, and the env file's name is one of the things it derives.
 #
-#   PROD       ENV          .env file          compose      ENV_CLASS  IS_LZA
-#   (unset)    development  .env.development   development  stag       -
-#   stag       stag         .env.stag          production   stag       -
-#   true       production   .env.production    production   prod       -
-#   lza        lza-prod     .env.lza-prod      production   prod       yes
-#   lza-stag   lza-stag     .env.lza-stag      production   stag       yes
+#   HUB        ENV          .env file          compose      ENV_CLASS
+#   (unset)    development  .env.development   development  stag
+#   stag       stag         .env.stag          production   stag
+#   prod       prod         .env.prod          production   prod
 #
 # ENV is the token in every per-environment file name: the hub env file
-# .env.$(ENV) and the trust kit files trust/.env.<CODE>.$(ENV) that the AWS-side
-# register-trusts writes and trust/Makefile reads back. The LZA pair gets its
-# own tokens so the parallel-running legacy prod/stag kits are never touched
-# during the migration; everything else about it follows ENV_CLASS (prod-grade
-# hardening, which git ref deploys track, which CA workspace mints FL kits) or
-# IS_LZA (the platform-managed network).
-#
-# ENV_MODE_PROD is what is actually mapped. It defaults to PROD; the AWS
-# Makefile sets it to `stag` when PROD is unset, because there an unset PROD
-# has always meant "staging", not "development".
-ENV_MODE_PROD ?= $(PROD)
+# .env.$(ENV) and the trust kit files trust/.env.<CODE>.$(ENV). Whether the estate
+# runs on a self-contained or a platform-managed (LZA) network is not encoded here:
+# it is a property of the estate, set by LZA_MANAGED_NETWORK in its env file.
 
-ifeq ($(ENV_MODE_PROD),true)
-ENV := production
-else ifeq ($(ENV_MODE_PROD),stag)
+# PROD was the selector until FLIP#1479. Refused rather than ignored, so an old
+# command line cannot silently run against development.
+_HUB_FOR_PROD_true := use HUB=prod
+_HUB_FOR_PROD_lza := use HUB=prod
+_HUB_FOR_PROD_lza-stag := use HUB=stag
+_HUB_FOR_PROD_stag := PROD=stag selected the retired self-contained staging estate and is no longer supported (FLIP\#1377)
+ifneq ($(strip $(PROD)),)
+$(error PROD is replaced by HUB=stag|prod (FLIP#1479): $(or $(_HUB_FOR_PROD_$(strip $(PROD))),unset PROD and pass HUB) — got PROD='$(PROD)')
+endif
+
+ifeq ($(HUB),prod)
+ENV := prod
+else ifeq ($(HUB),stag)
 ENV := stag
-else ifeq ($(ENV_MODE_PROD),lza)
-ENV := lza-prod
-else ifeq ($(ENV_MODE_PROD),lza-stag)
-ENV := lza-stag
-else ifeq ($(strip $(ENV_MODE_PROD)),)
+else ifeq ($(strip $(HUB)),)
 ENV := development
 else
-$(error PROD must be unset, stag, true, lza or lza-stag — got '$(ENV_MODE_PROD)')
+$(error HUB must be unset, stag or prod — got '$(HUB)')
 endif
 
 # Repo-root-relative name of the hub env file; each Makefile prefixes its own
@@ -54,16 +50,24 @@ endif
 ENV_FILE_NAME := .env.$(ENV)
 # Compose-file suffix: every deployed environment runs the production compose.
 __DCKR_SUFFIX := $(if $(filter development,$(ENV)),development,production)
-# The four PROD values that name a deployed environment. IS_DEPLOYED is the
-# matched value (non-empty iff PROD is one of them) — usable in `ifneq` and in
-# recipe-level `[ -n "$(IS_DEPLOYED)" ]` tests alike.
-DEPLOYED_PROD_VALUES := true stag lza lza-stag
-IS_DEPLOYED := $(filter $(DEPLOYED_PROD_VALUES),$(ENV_MODE_PROD))
-# Non-empty for the two production-grade estates (legacy prod and LZA prod).
-IS_PROD_GRADE := $(filter true lza,$(ENV_MODE_PROD))
-# Non-empty for the two platform-managed (LZA) estates.
-IS_LZA := $(filter lza lza-stag,$(ENV_MODE_PROD))
+# Non-empty iff a hub is selected — usable in `ifneq` and in recipe-level
+# `[ -n "$(IS_DEPLOYED)" ]` tests alike.
+IS_DEPLOYED := $(strip $(HUB))
 # prod | stag — the environment class Terraform, the deploy git ref and the FL
-# kit CA workspace key on. Development counts as stag (the value every
-# consumer already fell through to).
-ENV_CLASS := $(if $(IS_PROD_GRADE),prod,stag)
+# kit CA workspace key on. Development counts as stag.
+ENV_CLASS := $(if $(filter prod,$(ENV)),prod,stag)
+
+# Kit files. A trust's kit is trust/.env.<CODE>.$(ENV). The names used before
+# FLIP#1479 — .production / .lza-prod for prod, .lza-stag for stag, and a bare
+# .env.<CODE> — are still found for one release so a live site's next upgrade
+# does not break; the Makefiles that find one print old_kit_hint.
+OLD_KIT_ENVS := $(if $(filter prod,$(ENV)),production lza-prod,$(if $(filter stag,$(ENV)),lza-stag))
+# $(call kit_file,<trust dir with trailing / or empty>,<CODE>): the first of those
+# names that exists, else the current one.
+kit_file = $(or $(firstword $(foreach f,$(1).env.$(2).$(ENV) $(foreach e,$(OLD_KIT_ENVS),$(1).env.$(2).$(e)) $(1).env.$(2),$(wildcard $(f)))),$(1).env.$(2).$(ENV))
+# $(call kit_codes,<trust dir>): the CODE of every kit present for this hub, old names included.
+kit_codes = $(sort $(foreach e,$(ENV) $(OLD_KIT_ENVS),$(patsubst $(1).env.%.$(e),%,$(wildcard $(1).env.*.$(e)))))
+# $(call kit_files,<trust dir>): every such kit file, as kit_file resolves it.
+kit_files = $(foreach c,$(call kit_codes,$(1)),$(call kit_file,$(1),$(c)))
+# $(call old_kit_hint,<kit file>): one line asking to rename a kit found under an old name.
+old_kit_hint = $(if $(filter-out %.$(ENV),$(1)),$(info ⚠️  $(1) is an old kit name — rename it to $(or $(firstword $(foreach e,$(OLD_KIT_ENVS),$(patsubst %.$(e),%.$(ENV),$(filter %.$(e),$(1))))),$(1).$(ENV))))

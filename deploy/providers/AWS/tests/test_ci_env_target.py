@@ -13,20 +13,20 @@
 #  limitations under the License.
 #
 
-"""The CI compose script's mode table must agree with ``deploy/env_mode.mk``.
+"""The CI compose script's table must agree with ``deploy/env_mode.mk`` and the Makefile.
 
 ``scripts/compose-ci-env.sh`` writes the env file that ``deploy/providers/AWS/Makefile``
-``include``s, and it names that file from the PROD token it is given. Two failures
-are possible and neither is loud:
+``include``s, and it names that file from the HUB it is given. Two failures are
+possible and neither is loud:
 
-* it writes ``.env.stag`` where the Makefile derives ``.env.lza-stag`` — the
-  include is wildcard-guarded, so a file that does not exist is skipped *silently*
-  and Terraform sees an empty input set rather than a missing one;
+* it writes a file the Makefile does not derive — the include is wildcard-guarded,
+  so a file that does not exist is skipped *silently* and Terraform sees an empty
+  input set rather than a missing one;
 * it exports an ``AWS_PROFILE`` the Makefile's account guard rejects, which at
   least fails loudly, but only in the deploy run.
 
-Both are checked here against a real ``make`` probe of the same token, so the two
-tables cannot drift apart without a red test. The shell harness
+Both are checked here against a real ``make`` probe of the same HUB and network mode,
+so the two tables cannot drift apart without a red test. The shell harness
 (``scripts/tests/test_compose_ci_env.sh``) covers the manifest and the key
 semantics; this file covers the target the run is aimed at.
 """
@@ -41,14 +41,13 @@ from make_probe import probe_make
 AWS_DIR = Path(__file__).resolve().parents[1]
 SCRIPT = AWS_DIR / "scripts" / "compose-ci-env.sh"
 
-# Every token deploy/env_mode.mk accepts, and therefore every token the script has
-# to answer for. Deliberately a literal list: a new PROD value must be added here,
-# which is the reminder to teach the CI path about it too.
-TOKENS = ["stag", "true", "lza-stag", "lza"]
+# Every (HUB, LZA_MANAGED_NETWORK) pair the script has to answer for. A literal list:
+# a new selector value must be added here, which is the reminder to teach CI about it.
+ESTATES = [("stag", "false"), ("prod", "false"), ("stag", "true"), ("prod", "true")]
 
-# The smallest env file the Makefile's parse-time guards accept (kit date, profile
-# pins, tenant bucket names, hub service key). Taken from
-# test_iam_permissions_boundary.py on purpose: one stub, one maintenance point.
+# The smallest env file the Makefile's parse-time guards accept (kit date, tenant
+# bucket names, hub service key). Taken from test_iam_permissions_boundary.py on
+# purpose: one stub, one maintenance point. LZA_MANAGED_NETWORK is added per case.
 STUB_ENV = {
     "LZA_VPC_NAME": "probe-vpc",
     "FLARE_KIT_DATE": "00000000",
@@ -61,6 +60,9 @@ STUB_ENV = {
     "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
 }
 
+# Selector inputs the caller's shell may carry; every run here states its own.
+_SELECTORS = {"GITHUB_ACTIONS", "EXPECTED_ENV_CLASS", "HUB", "PROD", "LZA_MANAGED_NETWORK"}
+
 
 def _script_env(**extra: str) -> dict[str, str]:
     """The environment to run the compose script in, independent of where this runs.
@@ -70,16 +72,26 @@ def _script_env(**extra: str) -> dict[str, str]:
     it in would make these probes assert the CI requirement instead of the table. The
     requirement has its own test below, which sets it deliberately.
     """
-    env = {k: v for k, v in os.environ.items() if k not in {"GITHUB_ACTIONS", "EXPECTED_ENV_CLASS", "PROD"}}
+    env = {k: v for k, v in os.environ.items() if k not in _SELECTORS}
     env.update(extra)
     return env
 
 
-def _script_target(token: str) -> dict[str, str]:
+def _make_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in _SELECTORS and not k.startswith("TF_VAR_")}
+
+
+def _env_file(tmp_path: Path, hub: str, lza: str) -> Path:
+    env_file = tmp_path / f".env.probe-{hub}-{lza}"
+    env_file.write_text("".join(f"{k}={v}\n" for k, v in {**STUB_ENV, "LZA_MANAGED_NETWORK": lza}.items()))
+    return env_file
+
+
+def _script_target(hub: str, lza: str) -> dict[str, str]:
     """Run the compose script's ``--print-env`` and parse its KEY=value output."""
     result = subprocess.run(
         [str(SCRIPT), "--print-env"],
-        env=_script_env(PROD=token),
+        env=_script_env(HUB=hub, LZA_MANAGED_NETWORK=lza),
         text=True,
         capture_output=True,
         check=True,
@@ -87,80 +99,57 @@ def _script_target(token: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
 
 
-def _env_mode(token: str, tmp_path: Path, extra: dict[str, str] | None = None) -> list[str]:
-    """Ask the real Makefile what ENV / env-file / class it derives for ``token``.
+@pytest.mark.parametrize(("hub", "lza"), ESTATES)
+def test_compose_target_matches_the_makefile(hub: str, lza: str, tmp_path: Path) -> None:
+    """ENV, env-file name, class and profile: the script's table against a real probe.
 
-    The probe has to hand the Makefile a profile it accepts — its guard runs at
-    parse time, before any target — so it passes the one the script derives. That
-    is not circular: which profile the script derives is asserted separately
-    (``test_compose_profile_satisfies_the_makefile_guard``), and this test is
-    about the env-file name.
+    The probe hands the Makefile the profile the script derives, so it parses only if
+    that profile passes the account guard — and EXPECTED_AWS_PROFILE is then asserted
+    equal to it, so neither side can drift alone.
     """
-    env_file = tmp_path / f".env.probe-{token}"
-    env_file.write_text("".join(f"{k}={v}\n" for k, v in {**STUB_ENV, **(extra or {})}.items()))
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
-    return probe_make(
+    script = _script_target(hub, lza)
+    env, env_file_name, env_class, expected_profile = probe_make(
         AWS_DIR,
-        ["$(ENV)", "$(ENV_FILE_NAME)", "$(ENV_CLASS)", "$(IS_LZA)"],
-        {
-            "PROD": token,
-            "MAIN_ENV_FILE": str(env_file),
-            "AWS_PROFILE": _script_target(token)["AWS_PROFILE"],
-        },
-        env=env,
+        ["$(ENV)", "$(ENV_FILE_NAME)", "$(ENV_CLASS)", "$(EXPECTED_AWS_PROFILE)"],
+        {"HUB": hub, "MAIN_ENV_FILE": str(_env_file(tmp_path, hub, lza)), "AWS_PROFILE": script["AWS_PROFILE"]},
+        env=_make_env(),
     )
-
-
-@pytest.mark.parametrize("token", TOKENS)
-def test_compose_target_matches_env_mode(token: str, tmp_path: Path) -> None:
-    script = _script_target(token)
-    env, env_file_name, env_class, is_lza = _env_mode(token, tmp_path)
     assert script["ENV"] == env
     assert script["ENV_FILE_NAME"] == env_file_name
-    assert bool(script.get("ENV_FILE_NAME", "").startswith(".env.lza-")) == bool(is_lza)
-    # The class the script asserts against is env_mode.mk's own derivation, not a
-    # second opinion about which estates are prod-grade: `true` and `lza` are prod,
-    # `stag` and `lza-stag` are not, and that mapping is the whole content of the
-    # class guard the workflows rely on.
+    # The class the script asserts against is env_mode.mk's own derivation: that
+    # mapping is the whole content of the class guard the workflows rely on.
     assert script["ENV_CLASS"] == env_class
+    assert script["AWS_PROFILE"] == expected_profile
 
 
-@pytest.mark.parametrize(
-    ("token", "expected"),
-    [
-        ("stag", "prod"),  # the dangerous direction: a stag estate under a prod ref
-        ("lza-stag", "prod"),
-        ("true", "stag"),  # and the mirror: prod composed for a staging run
-        ("lza", "stag"),
-    ],
-)
-def test_a_class_mismatch_is_refused(token: str, expected: str) -> None:
-    """``TF_PROD`` alone chooses the account shape, so the caller's class is asserted.
+@pytest.mark.parametrize(("hub", "expected"), [("stag", "prod"), ("prod", "stag")])
+def test_a_class_mismatch_is_refused(hub: str, expected: str) -> None:
+    """``TF_HUB`` alone chooses the estate, so the caller's class is asserted.
 
-    TF_PROD=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
+    TF_HUB=stag on aws-prod composes a prod-sized plan whose RDS is refreshed as
     ``deletion_protection = false``, ``skip_final_snapshot = true`` — and the apply
     job then applies it unattended. The compose step is the last place that can stop
     it cheaply.
     """
     result = subprocess.run(
         [str(SCRIPT), "--print-env"],
-        env=_script_env(PROD=token, EXPECTED_ENV_CLASS=expected),
+        env=_script_env(HUB=hub, LZA_MANAGED_NETWORK="true", EXPECTED_ENV_CLASS=expected),
         text=True,
         capture_output=True,
     )
     assert result.returncode != 0
     assert "but this run expects" in result.stderr
-    assert f"PROD={token}" in result.stderr
+    assert f"HUB={hub}" in result.stderr
 
 
-@pytest.mark.parametrize("token", TOKENS)
-def test_a_matching_class_composes_the_same_target(token: str) -> None:
-    plain = _script_target(token)
+@pytest.mark.parametrize(("hub", "lza"), ESTATES)
+def test_a_matching_class_composes_the_same_target(hub: str, lza: str) -> None:
+    plain = _script_target(hub, lza)
     declared = dict(
         line.split("=", 1)
         for line in subprocess.run(
             [str(SCRIPT), "--print-env"],
-            env=_script_env(PROD=token, EXPECTED_ENV_CLASS=plain["ENV_CLASS"]),
+            env=_script_env(HUB=hub, LZA_MANAGED_NETWORK=lza, EXPECTED_ENV_CLASS=plain["ENV_CLASS"]),
             text=True,
             capture_output=True,
             check=True,
@@ -179,7 +168,7 @@ def test_ci_runs_must_state_their_class() -> None:
     """
     missing = subprocess.run(
         [str(SCRIPT), "--print-env"],
-        env=_script_env(PROD="stag", GITHUB_ACTIONS="true"),
+        env=_script_env(HUB="stag", LZA_MANAGED_NETWORK="true", GITHUB_ACTIONS="true"),
         text=True,
         capture_output=True,
     )
@@ -188,7 +177,7 @@ def test_ci_runs_must_state_their_class() -> None:
 
     stated = subprocess.run(
         [str(SCRIPT), "--print-env"],
-        env=_script_env(PROD="stag", GITHUB_ACTIONS="true", EXPECTED_ENV_CLASS="stag"),
+        env=_script_env(HUB="stag", LZA_MANAGED_NETWORK="true", GITHUB_ACTIONS="true", EXPECTED_ENV_CLASS="stag"),
         text=True,
         capture_output=True,
         check=True,
@@ -196,51 +185,47 @@ def test_ci_runs_must_state_their_class() -> None:
     assert "ENV_CLASS=stag" in stated.stdout
 
 
-@pytest.mark.parametrize("token", TOKENS)
-def test_compose_profile_satisfies_the_makefile_guard(token: str, tmp_path: Path) -> None:
-    """The AWS_PROFILE the script writes must be the one the Makefile demands.
-
-    The Makefile refuses to parse unless ``AWS_PROFILE`` equals the profile knob
-    for that ENV, which is why the script derives it rather than storing it. A
-    mismatch here means every CI run composing this token dies at `make
-    print-tf-env`, after the env file has already been written.
-    """
-    profile = _script_target(token)["AWS_PROFILE"]
-    env_file = tmp_path / f".env.probe-{token}"
-    env_file.write_text("".join(f"{k}={v}\n" for k, v in STUB_ENV.items()))
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
-    probe_make(
-        AWS_DIR,
-        ["$(ENV)"],
-        {"PROD": token, "MAIN_ENV_FILE": str(env_file), "AWS_PROFILE": profile},
-        env=env,
-    )  # check=True inside probe_make: the guard passed
-
-
-@pytest.mark.parametrize("token", ["true", "lza-stag", "lza"])
-def test_the_wrong_profile_is_still_refused(token: str, tmp_path: Path) -> None:
-    """...and the guard is not vacuous: staging's profile is not accepted elsewhere."""
-    env_file = tmp_path / f".env.probe-{token}"
-    env_file.write_text("".join(f"{k}={v}\n" for k, v in STUB_ENV.items()))
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
+@pytest.mark.parametrize(("hub", "lza"), [("prod", "false"), ("stag", "true"), ("prod", "true")])
+def test_the_wrong_profile_is_still_refused(hub: str, lza: str, tmp_path: Path) -> None:
+    """...and the guard is not vacuous: self-contained staging's profile is not accepted elsewhere."""
     with pytest.raises(subprocess.CalledProcessError):
         probe_make(
             AWS_DIR,
             ["$(ENV)"],
-            {"PROD": token, "MAIN_ENV_FILE": str(env_file), "AWS_PROFILE": "stag"},
-            env=env,
+            {"HUB": hub, "MAIN_ENV_FILE": str(_env_file(tmp_path, hub, lza)), "AWS_PROFILE": "stag"},
+            env=_make_env(),
         )
 
 
-def test_an_unknown_token_is_refused_by_the_script() -> None:
+@pytest.mark.parametrize(
+    ("selectors", "message"),
+    [
+        ({"LZA_MANAGED_NETWORK": "true"}, "HUB is not set"),
+        ({"HUB": "true", "LZA_MANAGED_NETWORK": "true"}, "HUB must be stag or prod"),
+        ({"HUB": "stag"}, "LZA_MANAGED_NETWORK must be true"),
+        ({"HUB": "stag", "LZA_MANAGED_NETWORK": "yes"}, "LZA_MANAGED_NETWORK must be true"),
+    ],
+)
+def test_an_unset_or_unknown_selector_is_refused(selectors: dict[str, str], message: str) -> None:
+    """Neither input defaults: each default would compose some estate nobody chose."""
+    result = subprocess.run([str(SCRIPT), "--print-env"], env=_script_env(**selectors), text=True, capture_output=True)
+    assert result.returncode != 0
+    assert message in result.stderr
+
+
+def test_the_makefile_refuses_an_env_file_without_the_network_mode(tmp_path: Path) -> None:
+    """The Makefile is the other half: it reads LZA_MANAGED_NETWORK from the file the script writes."""
+    env_file = tmp_path / ".env.probe"
+    env_file.write_text("".join(f"{k}={v}\n" for k, v in STUB_ENV.items()))
     result = subprocess.run(
-        [str(SCRIPT), "--print-env"],
-        env=_script_env(PROD="prod"),
+        ["make", "-s", "-n", f"MAIN_ENV_FILE={env_file}", "HUB=stag", "AWS_PROFILE=stag", "print-tf-env"],
+        cwd=AWS_DIR,
+        env=_make_env(),
         text=True,
         capture_output=True,
     )
     assert result.returncode != 0
-    assert "PROD must be one of" in result.stderr
+    assert "LZA_MANAGED_NETWORK" in result.stderr
 
 
 # A complete value set for the one test that really composes. The shell harness
@@ -248,7 +233,7 @@ def test_an_unknown_token_is_refused_by_the_script() -> None:
 # case; this is only "enough keys to produce a file".
 COMPOSE_ENV = {
     "AWS_REGION": "eu-west-2",
-    "FLIP_TFSTATE_BUCKET_NAME": "flip-terraform-state-stag",
+    "FLIP_TFSTATE_BUCKET_NAME": "flip-terraform-state-lza-stag",
     "AICENTRE_BUCKET_NAME": "probe-aicentre",
     "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
@@ -285,8 +270,8 @@ COMPOSE_ENV = {
 }
 
 
-@pytest.mark.parametrize("token", TOKENS)
-def test_the_default_output_path_is_where_the_makefile_includes_it(token: str) -> None:
+@pytest.mark.parametrize("hub", ["stag", "prod"])
+def test_the_default_output_path_is_where_the_makefile_includes_it(hub: str) -> None:
     """The file the script writes by default has to be the file the Makefile reads.
 
     Writing it anywhere else is invisible: the include is wildcard-guarded, so a
@@ -299,18 +284,19 @@ def test_the_default_output_path_is_where_the_makefile_includes_it(token: str) -
     its own, which file it includes. Both sides are therefore the real thing: no
     second literal path in this test to drift.
     """
-    target = Path(_script_target(token)["OUT_FILE"])
+    script = _script_target(hub, "true")
+    target = Path(script["OUT_FILE"])
     if target.exists():
         # A checkout that carries an operator's env file: stand down rather than
-        # write over it. The remaining tokens still cover this, and CI has none.
+        # write over it. CI has none.
         pytest.skip(f"{target} exists — refusing to overwrite an operator's env file")
     try:
-        target.write_text("".join(f"{k}={v}\n" for k, v in STUB_ENV.items()))
+        target.write_text("".join(f"{k}={v}\n" for k, v in {**STUB_ENV, "LZA_MANAGED_NETWORK": "true"}.items()))
         (included,) = probe_make(
             AWS_DIR,
             ["$(abspath $(MAIN_ENV_FILE))"],
-            {"PROD": token, "AWS_PROFILE": _script_target(token)["AWS_PROFILE"]},
-            env={k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")},
+            {"HUB": hub, "AWS_PROFILE": script["AWS_PROFILE"]},
+            env=_make_env(),
         )
         assert included == str(target)
     finally:
@@ -320,22 +306,23 @@ def test_the_default_output_path_is_where_the_makefile_includes_it(token: str) -
 def test_a_real_compose_lands_on_that_default_path() -> None:
     """...and the write happens there, not only in the printed plan.
 
-    Composed for the LZA staging token alone: no checkout carries its env file, so
-    there is nothing to clobber. If one does exist it belongs to an operator and
-    the test stands down rather than overwriting it.
+    If a file already exists there it belongs to an operator, and the test stands
+    down rather than overwriting it.
     """
-    target = Path(_script_target("lza-stag")["OUT_FILE"])
+    target = Path(_script_target("stag", "true")["OUT_FILE"])
     if target.exists():
         pytest.skip(f"{target} exists — refusing to overwrite an operator's env file")
     try:
         subprocess.run(
             [str(SCRIPT)],
-            env=_script_env(**COMPOSE_ENV, PROD="lza-stag"),
+            env=_script_env(**COMPOSE_ENV, HUB="stag", LZA_MANAGED_NETWORK="true"),
             text=True,
             capture_output=True,
             check=True,
         )
         assert target.is_file()
-        assert "AWS_PROFILE=lza-stag" in target.read_text()
+        text = target.read_text()
+        assert "AWS_PROFILE=lza-stag" in text
+        assert "LZA_MANAGED_NETWORK=true" in text
     finally:
         target.unlink(missing_ok=True)
