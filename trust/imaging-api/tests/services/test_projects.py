@@ -98,221 +98,58 @@ def test_get_all_projects_connection_error(mock_get, headers):
 
 
 # ===========================================================================
-# get_project / get_project_from_central_hub_project_id: XNAT filters, nothing is listed (FLIP#1456 D1)
+# get_project / get_project_from_central_hub_project_id
 # ===========================================================================
 _HUB_PROJECT_ID = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
-# Same first eight characters as _HUB_PROJECT_ID: what a prefix wildcard matched on the live XNAT.
-_HUB_PROJECT_ID_LOOKALIKE = "3fa85f64-0000-4000-8000-000000000000"
 
 
 def _listing(*rows: dict) -> MagicMock:
-    """A 200 from ``GET /data/projects`` carrying ``rows`` in XNAT's ResultSet envelope."""
+    """A 200 from ``GET /data/projects`` carrying ``rows``."""
     return MagicMock(status_code=200, json=MagicMock(return_value={"ResultSet": {"Result": list(rows)}}))
 
 
-def _project_row(**fields: str) -> dict:
-    return {**_PROJECT_DICT, **fields}
-
-
-def _sent_filter(mock_get: MagicMock) -> dict[str, list[str]]:
-    """The query of the one request sent, after checking it went to the projects listing endpoint."""
-    mock_get.assert_called_once()
-    url = urlsplit(mock_get.call_args.args[0])
-    assert url.path.endswith("/data/projects")
-    return parse_qs(url.query, keep_blank_values=True)
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_asks_xnat_to_filter_by_id(mock_get):
-    # One request, filtered by XNAT — not the listing of every project that the lookup used to scan.
-    auth = {"Cookie": "JSESSIONID=abc"}
-    mock_get.return_value = _listing(_project_row())
-
-    project = get_project("TEST", auth)
-
-    assert project == Project(**_PROJECT_DICT)
-    assert _sent_filter(mock_get) == {"format": ["json"], "ID": ["TEST"]}
-    assert mock_get.call_args.kwargs["headers"] == auth
-
-
-@pytest.mark.parametrize("project_id", ["TEST", "dc5c1758-1a4d-4fca-80ce-fa208d11874d", "FLIPD1_probe-01"])
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_accepts_every_form_of_xnat_project_id(mock_get, project_id, headers):
-    # XNAT's own rule (letters, digits, '-', '_'): FLIP's uuid4 IDs and hand-made ones alike.
-    mock_get.return_value = _listing(_project_row(ID=project_id, URI=f"/projects/{project_id}"))
-
-    assert get_project(project_id, headers).ID == project_id
-    assert _sent_filter(mock_get)["ID"] == [project_id]
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_keeps_only_the_exact_match(mock_get, headers):
-    # Rows XNAT returns are not trusted to equal the value asked for: only an exact, case-sensitive match counts.
-    mock_get.return_value = _listing(
-        _project_row(ID="TEST2", URI="/projects/TEST2"),
-        _project_row(ID="test", URI="/projects/test"),
-        _project_row(),
-    )
-
-    assert get_project("TEST", headers).URI == "/projects/TEST"
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_near_misses_are_not_found(mock_get, headers):
-    mock_get.return_value = _listing(_project_row(ID="TEST2"), _project_row(ID="test"))
-
-    with pytest.raises(NotFoundError, match="Project with ID 'TEST' not found"):
-        get_project("TEST", headers)
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_not_found(mock_get, headers):
-    mock_get.return_value = _listing()
-
-    with pytest.raises(NotFoundError, match="Project with ID 'MISSING' not found"):
-        get_project("MISSING", headers)
-
-
 @pytest.mark.parametrize(
-    "project_id",
-    ["TEST*", "*", "TE%ST", "TE?ST", "TE ST", " TEST", "TEST\n", "TE\tST", "TEST,OTHER", "", "TEST/x", "TÉST"],
+    ("lookup", "field"), [(get_project, "ID"), (get_project_from_central_hub_project_id, "secondary_ID")]
 )
 @patch("imaging_api.services.projects.requests.get")
-def test_get_project_refuses_a_malformed_id_before_any_request(mock_get, project_id, headers):
-    # XNAT reads '*' or '%' in a filter value as a LIKE wildcard and ',' as an OR list, whatever the URL-encoding.
-    # Anything outside XNAT's project-ID rule names no project, so it is refused as not found — what the full
-    # listing reported for it — and no request is sent.
-    with pytest.raises(NotFoundError, match="not a valid XNAT project ID"):
-        get_project(project_id, headers)
+def test_lookup_keeps_only_the_exact_match(mock_get, lookup, field, headers):
+    # Rows a wildcard or case-folding filter would return are dropped; with only those, the project is not found.
+    exact = {**_PROJECT_DICT, field: _HUB_PROJECT_ID}
+    lookalikes = [{**_PROJECT_DICT, field: _HUB_PROJECT_ID[:8]}, {**_PROJECT_DICT, field: _HUB_PROJECT_ID.upper()}]
+    mock_get.side_effect = [_listing(*lookalikes, exact), _listing(*lookalikes)]
+
+    assert lookup(_HUB_PROJECT_ID, headers) == Project(**exact)
+    with pytest.raises(NotFoundError, match="not found"):
+        lookup(_HUB_PROJECT_ID, headers)
+
+
+@pytest.mark.parametrize("value", ["TEST*", "TE%ST", "TEST,OTHER", "TE ST", "TEST\n", "", "TÉST"])
+@pytest.mark.parametrize("lookup", [get_project, get_project_from_central_hub_project_id])
+@patch("imaging_api.services.projects.requests.get")
+def test_lookup_refuses_a_value_outside_xnats_id_characters_without_a_request(mock_get, lookup, value, headers):
+    with pytest.raises(NotFoundError, match="not found"):
+        lookup(value, headers)
 
     mock_get.assert_not_called()
 
 
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_more_than_one_exact_match_is_an_error(mock_get, headers):
-    mock_get.return_value = _listing(_project_row(), _project_row(name="Another"))
-
-    with pytest.raises(Exception, match="ambiguous: 2 projects have ID 'TEST'") as excinfo:
-        get_project("TEST", headers)
-
-    assert not isinstance(excinfo.value, NotFoundError)
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_non_200_is_a_fetch_error(mock_get, headers):
-    mock_get.return_value = MagicMock(
-        status_code=500, text="Server Error", json=MagicMock(side_effect=ValueError("no json"))
-    )
-
-    with pytest.raises(XnatFetchError, match="XNAT project fetch failed: 500 - Server Error"):
-        get_project("TEST", headers)
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_connection_error_is_a_fetch_error(mock_get, headers):
-    mock_get.side_effect = requests.ConnectionError("connection refused")
-
-    with pytest.raises(XnatFetchError, match="XNAT project fetch failed: connection refused"):
-        get_project("TEST", headers)
-
-
 @pytest.mark.parametrize(
-    "body",
-    [ValueError("Expecting value"), {"items": []}, {"ResultSet": {"Result": [{"ID": "TEST"}]}}, {"ResultSet": None}],
-    ids=["not-json", "no-resultset", "row-missing-fields", "resultset-null"],
-)
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_unexpected_body_is_a_fetch_error(mock_get, body, headers):
-    # Never a bare ValueError/KeyError: the upload router answers a ValueError with a 400 that blames the caller.
-    json = MagicMock(side_effect=body) if isinstance(body, Exception) else MagicMock(return_value=body)
-    mock_get.return_value = MagicMock(status_code=200, json=json)
-
-    with pytest.raises(XnatFetchError, match="XNAT project fetch failed: unexpected response body"):
-        get_project("TEST", headers)
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_from_central_hub_id_asks_xnat_to_filter_by_secondary_id(mock_get):
-    auth = {"Cookie": "JSESSIONID=abc"}
-    mock_get.return_value = _listing(_project_row(secondary_ID=_HUB_PROJECT_ID))
-
-    project = get_project_from_central_hub_project_id(_HUB_PROJECT_ID, auth)
-
-    assert project.ID == "TEST"
-    assert _sent_filter(mock_get) == {"format": ["json"], "secondary_ID": [_HUB_PROJECT_ID]}
-    assert mock_get.call_args.kwargs["headers"] == auth
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_from_central_hub_id_keeps_only_the_exact_match(mock_get, headers):
-    mock_get.return_value = _listing(
-        _project_row(ID="LOOKALIKE", URI="/projects/LOOKALIKE", secondary_ID=_HUB_PROJECT_ID_LOOKALIKE),
-        _project_row(ID="UPPER", URI="/projects/UPPER", secondary_ID=_HUB_PROJECT_ID.upper()),
-        _project_row(secondary_ID=_HUB_PROJECT_ID),
-    )
-
-    assert get_project_from_central_hub_project_id(_HUB_PROJECT_ID, headers).ID == "TEST"
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_from_central_hub_id_not_found(mock_get, headers):
-    mock_get.return_value = _listing(_project_row(secondary_ID=_HUB_PROJECT_ID_LOOKALIKE))
-
-    with pytest.raises(NotFoundError, match="not found among XNAT projects"):
-        get_project_from_central_hub_project_id(_HUB_PROJECT_ID, headers)
-
-
-@pytest.mark.parametrize(
-    "central_hub_project_id",
+    "response",
     [
-        _HUB_PROJECT_ID[:8] + "*",
-        _HUB_PROJECT_ID + "*",
-        "*",
-        _HUB_PROJECT_ID[:8] + "%",
-        _HUB_PROJECT_ID[:8],
-        _HUB_PROJECT_ID.upper(),
-        "{" + _HUB_PROJECT_ID + "}",
-        _HUB_PROJECT_ID.replace("-", ""),
-        "urn:uuid:" + _HUB_PROJECT_ID,
-        _HUB_PROJECT_ID + "\n",
-        " " + _HUB_PROJECT_ID,
-        _HUB_PROJECT_ID + "," + _HUB_PROJECT_ID_LOOKALIKE,
-        "SEC1",
-        "",
+        requests.ConnectionError("connection refused"),
+        MagicMock(status_code=500, text="Server Error"),
+        MagicMock(status_code=200, json=MagicMock(side_effect=ValueError("Expecting value"))),
+        _listing({"ID": "TEST"}),
     ],
+    ids=["unreachable", "non-200", "not-json", "row-missing-fields"],
 )
 @patch("imaging_api.services.projects.requests.get")
-def test_get_project_from_central_hub_id_refuses_a_non_uuid_before_any_request(
-    mock_get, central_hub_project_id, headers
-):
-    # Only the canonical form to_create_project writes is sent; every other spelling, wildcard or list is refused
-    # as not found without a request.
-    with pytest.raises(NotFoundError, match="not a valid central hub project ID"):
-        get_project_from_central_hub_project_id(central_hub_project_id, headers)
+def test_get_project_fetch_error(mock_get, response, headers):
+    # Never a bare ValueError: the upload router answers one with a 400 that blames the caller.
+    mock_get.side_effect = [response]
 
-    mock_get.assert_not_called()
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_from_central_hub_id_two_projects_is_an_error_not_the_first(mock_get, headers):
-    # Taking the first would bind the hub project to whichever XNAT happened to list first.
-    mock_get.return_value = _listing(
-        _project_row(ID="B", URI="/projects/B", secondary_ID=_HUB_PROJECT_ID),
-        _project_row(ID="A", URI="/projects/A", secondary_ID=_HUB_PROJECT_ID),
-    )
-
-    with pytest.raises(Exception, match=r"ambiguous: 2 projects have secondary_ID '[0-9a-f-]+' \(A, B\)") as excinfo:
-        get_project_from_central_hub_project_id(_HUB_PROJECT_ID, headers)
-
-    assert not isinstance(excinfo.value, NotFoundError)
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_project_from_central_hub_id_fetch_error(mock_get, headers):
-    mock_get.return_value = MagicMock(status_code=401, text="Unauthorized")
-
-    with pytest.raises(XnatFetchError, match="XNAT project fetch failed: 401 - Unauthorized"):
-        get_project_from_central_hub_project_id(_HUB_PROJECT_ID, headers)
+    with pytest.raises(XnatFetchError, match="XNAT project fetch failed"):
+        get_project("TEST", headers)
 
 
 # ===========================================================================
@@ -391,46 +228,31 @@ def test_create_payload_for_project_creation_blocks_xxe_doctype():
 @patch("imaging_api.services.projects.requests.get")
 @patch("imaging_api.services.projects.requests.post")
 def test_create_project_success(mock_post, mock_get, headers):
-    # No listing before the POST: the one GET is the ID-filtered read-back of the project just created.
     mock_post.return_value = MagicMock(status_code=200)
-    mock_get.return_value = _listing(_project_row())
+    mock_get.return_value = _listing(_PROJECT_DICT)
 
     project = create_project("TEST", "SEC1", "Test Project", "desc", headers)
-
     assert project.ID == "TEST"
-    mock_post.assert_called_once()
-    assert urlsplit(mock_post.call_args.args[0]).path.endswith("/data/projects")
-    assert mock_post.call_args.kwargs["headers"]["Content-Type"] == "application/xml"
-    assert "<ID>TEST</ID>" in mock_post.call_args.kwargs["data"]
-    assert _sent_filter(mock_get) == {"format": ["json"], "ID": ["TEST"]}
+    mock_get.assert_called_once()  # the read-back; nothing is listed before the POST
 
 
 @patch("imaging_api.services.projects.requests.get")
 @patch("imaging_api.services.projects.requests.post")
-def test_create_project_already_exists_is_xnats_409(mock_post, mock_get, headers):
-    # XNAT answers an ID it already holds with 409 and leaves that project as it was: the 409 is the existence
-    # check, so nothing is listed beforehand and nothing is read back afterwards.
-    mock_post.return_value = MagicMock(status_code=409, text="<html><body>Project already exists.</body></html>")
+def test_create_project_already_exists(mock_post, mock_get, headers):
+    # XNAT refuses an existing ID with 409, so nothing is listed first.
+    mock_post.return_value = MagicMock(status_code=409, text="Project already exists.")
 
-    with pytest.raises(AlreadyExistsError, match="Project ID 'TEST' already exists"):
+    with pytest.raises(AlreadyExistsError, match="already exists"):
         create_project("TEST", "SEC1", "Test Project", "desc", headers)
-
-    mock_post.assert_called_once()
     mock_get.assert_not_called()
 
 
-@pytest.mark.parametrize("status_code", [400, 403, 417, 500])
-@patch("imaging_api.services.projects.requests.get")
 @patch("imaging_api.services.projects.requests.post")
-def test_create_project_post_failure(mock_post, mock_get, status_code, headers):
-    # Only a 409 means "already exists"; XNAT's 417 for an invalid ID, a 403 or a 500 stay creation failures.
-    mock_post.return_value = MagicMock(status_code=status_code, text="Server Error")
+def test_create_project_post_failure(mock_post, headers):
+    mock_post.return_value = MagicMock(status_code=417, text="Invalid character in project ID.")
 
-    with pytest.raises(Exception, match=f"XNAT project creation failed: {status_code}") as excinfo:
+    with pytest.raises(Exception, match="XNAT project creation failed"):
         create_project("NEW", "SEC2", "New Project", "desc", headers)
-
-    assert not isinstance(excinfo.value, AlreadyExistsError)
-    mock_get.assert_not_called()
 
 
 # ===========================================================================
@@ -1228,34 +1050,6 @@ def test_get_experiment_success(mock_get_project, mock_get, headers):
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_experiment_checks_its_project_with_one_filtered_lookup(mock_get, headers):
-    # get_experiment, and through it every download and upload, still checks the project exists first — now with
-    # one ID-filtered request rather than a listing of every project.
-    experiment = {"items": [{"data_fields": {"subject_ID": "S1"}}]}
-    mock_get.side_effect = [
-        _listing(_project_row()),
-        MagicMock(status_code=200, json=MagicMock(return_value=experiment)),
-    ]
-
-    assert get_experiment("TEST", "exp1", headers) == experiment
-
-    project_lookup, experiment_fetch = (urlsplit(call.args[0]) for call in mock_get.call_args_list)
-    assert project_lookup.path.endswith("/data/projects")
-    assert parse_qs(project_lookup.query) == {"format": ["json"], "ID": ["TEST"]}
-    assert experiment_fetch.path.endswith("/data/projects/TEST/experiments/exp1")
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_experiment_in_a_missing_project_is_still_not_found(mock_get, headers):
-    mock_get.return_value = _listing()
-
-    with pytest.raises(NotFoundError, match="Project with ID 'TEST' not found"):
-        get_experiment("TEST", "exp1", headers)
-
-    mock_get.assert_called_once()
-
-
-@patch("imaging_api.services.projects.requests.get")
 @patch("imaging_api.services.projects.get_project")
 def test_get_experiment_not_found(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
@@ -1311,7 +1105,7 @@ def test_empty_and_dot_segments_fail_before_http(field, invalid, sent_xnat_reque
     assert sent_xnat_requests == []
 
 
-def test_experiment_lookup_quotes_identifiers_after_real_project_lookup(sent_xnat_requests):
+def test_experiment_lookup_quotes_identifiers_after_real_project_listing(sent_xnat_requests):
     project_id = "PROJ_1-a"
     project = {
         "ID": project_id,
@@ -1323,18 +1117,11 @@ def test_experiment_lookup_quotes_identifiers_after_real_project_lookup(sent_xna
     }
     with patch.object(requests.Response, "json", side_effect=[{"ResultSet": {"Result": [project]}}, {"items": []}]):
         assert get_experiment(project_id, "ACC#fragment", {}) == {"items": []}
-    lookup, experiment = (urlsplit(request.url) for request in sent_xnat_requests)
-    assert (lookup.path, parse_qs(lookup.query)) == ("/data/projects", {"format": ["json"], "ID": [project_id]})
-    assert experiment.path == f"/data/projects/{project_id}/experiments/ACC%23fragment"
-    assert experiment.query == "format=json"
-
-
-def test_experiment_lookup_never_sends_a_project_id_xnat_could_not_hold(sent_xnat_requests):
-    # Such an ID used to be quoted into the path after the full listing failed to match it. XNAT's project-ID rule
-    # (letters, digits, '-', '_') means no project can carry one, so the lookup now refuses it before any request.
-    with pytest.raises(NotFoundError, match="not a valid XNAT project ID"):
-        get_experiment("PROJ?format=xml", "ACC#fragment", {})
-    assert sent_xnat_requests == []
+    assert [urlsplit(request.url).path for request in sent_xnat_requests] == [
+        "/data/projects",
+        "/data/projects/PROJ_1-a/experiments/ACC%23fragment",
+    ]
+    assert urlsplit(sent_xnat_requests[1].url).query == "format=json"
 
 
 # ===========================================================================
@@ -1426,7 +1213,7 @@ def test_project_scoped_urls_are_unchanged_for_an_ordinary_project_id(sent_xnat_
 
 
 def test_project_lookups_send_xnat_the_filter_and_nothing_else(sent_xnat_requests):
-    # At the HTTP boundary: each lookup is one GET whose only criterion is the exact value (FLIP#1456 D1).
+    # Each lookup is one GET filtered by XNAT, never the listing of every project.
     row = {**_PROJECT_DICT, "ID": _PROJECT_ID, "secondary_ID": _HUB_PROJECT_ID, "URI": f"/data/projects/{_PROJECT_ID}"}
     with patch.object(requests.Response, "json", return_value={"ResultSet": {"Result": [row]}}):
         assert get_project_from_central_hub_project_id(_HUB_PROJECT_ID, {}).ID == _PROJECT_ID

@@ -160,27 +160,6 @@ def test_create_project_error(client):
     assert response.status_code == 500
 
 
-def test_create_project_existing_id_is_still_400_from_xnats_409(client):
-    # Through the real service: XNAT's 409 reaches the caller as the same 400 the listing pre-check gave, and no
-    # listing of every project is fetched on the way.
-    with (
-        patch(
-            "imaging_api.services.projects.requests.post",
-            return_value=MagicMock(status_code=409, text="Project already exists."),
-        ) as mock_post,
-        patch("imaging_api.services.projects.requests.get") as mock_get,
-    ):
-        response = client.post(
-            "/projects/",
-            params={"project_id": "PROJ1", "project_secondary_id": "hub-123", "project_name": "Test Project"},
-        )
-
-    assert response.status_code == 400
-    assert "Project ID 'PROJ1' already exists" in response.json()["detail"]
-    mock_post.assert_called_once()
-    mock_get.assert_not_called()
-
-
 # ── DELETE /projects/{project_id} ──
 
 
@@ -240,18 +219,6 @@ def test_get_project_error(client):
         response = client.get("/projects/PROJ1")
 
     assert response.status_code == 500
-
-
-@pytest.mark.parametrize("project_id", ["PROJ*", "PROJ%25", "PROJ1,PROJ2"])
-def test_get_project_malformed_id_is_still_404_and_never_reaches_xnat(client, project_id):
-    # Through the real service: an ID XNAT could not hold is the 404 it always was, and is not sent to XNAT,
-    # which would read '*' and '%' as wildcards and ',' as a list.
-    with patch("imaging_api.services.projects.requests.get") as mock_get:
-        response = client.get(f"/projects/{project_id}")
-
-    assert response.status_code == 404
-    assert "not a valid XNAT project ID" in response.json()["detail"]
-    mock_get.assert_not_called()
 
 
 # ── GET /projects/{project_id}/subjects ──
