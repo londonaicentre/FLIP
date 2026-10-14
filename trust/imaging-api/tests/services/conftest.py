@@ -13,7 +13,6 @@
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import patch
-from urllib.parse import urlsplit
 
 import pytest
 import requests
@@ -32,7 +31,7 @@ def sent_xnat_requests() -> Iterator[list[requests.PreparedRequest]]:
     def respond(request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:
         sent.append(request)
         response = requests.Response()
-        response.status_code = 404 if request.method == "GET" and urlsplit(request.url).query == "inbody=true" else 200
+        response.status_code = 200
         response._content = b"{}"
         setattr(response, "_content_consumed", True)  # private requests field, absent from the stubs
         response.request = request

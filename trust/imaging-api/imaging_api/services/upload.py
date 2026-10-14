@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 import os
 from pathlib import Path
 
@@ -259,19 +260,24 @@ def create_xnat_resource(
         raise Exception(f"Error creating resource: {response.text}")
 
 
-def check_file_exists_in_xnat(check_url: str, headers: dict[str, str]) -> bool:
+def xnat_kept_existing_file(response: requests.Response) -> bool:
     """
-    Checks if a file already exists in XNAT.
+    Whether XNAT kept an existing file instead of writing the upload.
+
+    Without ``overwrite=true``, XNAT keeps an existing file and still answers 200, naming it under ``duplicates``
+    in a JSON body that it serves as ``text/html``.
 
     Args:
-        check_url (str): The URL to check for the file.
-        headers (dict[str, str]): XNAT authentication headers.
+        response (requests.Response): XNAT's response to a file PUT.
 
     Returns:
-        bool: True if the file exists, False otherwise.
+        bool: True if the body lists a duplicate, False for a clean write (an empty or non-JSON body).
     """
-    response = requests.get(check_url, headers=headers)
-    return response.status_code == 200
+    try:
+        body = json.loads(response.content)
+    except ValueError:
+        return False
+    return isinstance(body, dict) and bool(body.get("duplicates"))
 
 
 def upload_file_to_xnat(
@@ -302,8 +308,7 @@ def upload_file_to_xnat(
 
     Raises:
         ValueError: If an identifier or filename is empty or a dot-segment.
-        AlreadyExistsError: If exist_ok is False and a file with the same name already exists in the specified XNAT
-        resource.
+        AlreadyExistsError: If XNAT kept a file with the same name in the specified resource instead of writing.
         Exception: If there is an error during the upload process.
     """
     file_name = Path(file_path).name
@@ -322,22 +327,18 @@ def upload_file_to_xnat(
         resource_id,
         "files",
         file_name,
-        query={"inbody": "true"},
+        query={"inbody": "true", "overwrite": "true"} if exist_ok else {"inbody": "true"},
     )
 
-    # Check if the file already exists if exist_ok is False
-    # If exist_ok is True, we will overwrite the file if it exists
-    if not exist_ok:
-        if check_file_exists_in_xnat(url, headers):
-            raise AlreadyExistsError(f"File already exists on XNAT: {url}")
-
-    # Upload the file
+    # Upload the file. The PUT is its own existence check: see xnat_kept_existing_file.
     with open(file_path, "rb") as file:
         response = requests.put(url, headers=headers, data=file)
 
     # XNAT may answer a file PUT with 200 or 201, so accept any 2xx
     if not response.ok:
         raise Exception(f"Error uploading file {file_path}: {response.status_code} {response.text}")
+    if xnat_kept_existing_file(response):
+        raise AlreadyExistsError(f"File already exists on XNAT: {url}")
 
     logger.info(f"Successfully uploaded file: {file_path}")
     return url

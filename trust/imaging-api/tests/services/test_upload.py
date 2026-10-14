@@ -16,18 +16,42 @@ from unittest.mock import MagicMock, patch
 from urllib.parse import urlsplit
 
 import pytest
+import requests
 
 from imaging_api.config import get_settings
 from imaging_api.services.upload import (
-    check_file_exists_in_xnat,
     create_xnat_resource,
     create_xnat_scan,
     upload_data_to_xnat,
     upload_file_to_xnat,
+    xnat_kept_existing_file,
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 
 XNAT_URL = get_settings().XNAT_URL
+
+# The body of XNAT's 200 for a file it kept instead of writing.
+_DUPLICATES_BODY = b'{"duplicates": ["scan.nii"]}'
+
+
+def _xnat_put_response(
+    status_code: int = 200, body: bytes = b"", content_type: str = "text/plain"
+) -> requests.Response:
+    """Build the response XNAT gives a file PUT. The defaults are a clean write: an empty 200.
+
+    Args:
+        status_code (int): HTTP status.
+        body (bytes): Raw response body.
+        content_type (str): Content-Type header.
+
+    Returns:
+        requests.Response: A real response object, so ``ok`` and the body behave as in production.
+    """
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = body
+    response.headers["Content-Type"] = content_type
+    return response
 
 
 # ── create_xnat_scan ──
@@ -86,19 +110,22 @@ def test_create_xnat_resource_success(mock_put, headers):
     create_xnat_resource("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", headers)
 
 
-# ── check_file_exists_in_xnat ──
+# ── xnat_kept_existing_file ──
 
 
-@patch("imaging_api.services.upload.requests.get")
-def test_check_file_exists_true(mock_get, headers):
-    mock_get.return_value = MagicMock(status_code=200)
-    assert check_file_exists_in_xnat("http://xnat/file", headers) is True
-
-
-@patch("imaging_api.services.upload.requests.get")
-def test_check_file_exists_false(mock_get, headers):
-    mock_get.return_value = MagicMock(status_code=404)
-    assert check_file_exists_in_xnat("http://xnat/file", headers) is False
+@pytest.mark.parametrize(
+    ("body", "content_type", "expected"),
+    [
+        (_DUPLICATES_BODY, "text/html", True),
+        (b"", "text/plain", False),
+        (b"not json", "text/html", False),
+        (b"{}", "application/json", False),
+        (b'{"duplicates": []}', "text/html", False),
+        (b'["scan.nii"]', "application/json", False),
+    ],
+)
+def test_xnat_kept_existing_file_parses_the_body_whatever_the_content_type(body, content_type, expected):
+    assert xnat_kept_existing_file(_xnat_put_response(body=body, content_type=content_type)) is expected
 
 
 # ── upload_file_to_xnat ──
@@ -122,11 +149,9 @@ def test_upload_nonexistent_file_to_xnat(headers):
     assert str(exc_info.value) == f"[Errno 2] No such file or directory: '{file_path}'"
 
 
-@patch("imaging_api.services.upload.check_file_exists_in_xnat")
 @patch("imaging_api.services.upload.requests.put")
-def test_upload_file_to_xnat(mock_put, mock_check_file_exists_in_xnat, headers):
-    mock_put.return_value = MagicMock(status_code=200)
-    mock_check_file_exists_in_xnat.return_value = False
+def test_upload_file_to_xnat(mock_put, headers):
+    mock_put.return_value = _xnat_put_response()
 
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(b"Hello, world!")
@@ -153,10 +178,9 @@ def test_upload_file_to_xnat(mock_put, mock_check_file_exists_in_xnat, headers):
         os.remove(temp_file_path)
 
 
-@patch("imaging_api.services.upload.check_file_exists_in_xnat", return_value=False)
 @patch("imaging_api.services.upload.requests.put")
-def test_upload_file_to_xnat_201_is_success(mock_put, mock_check, headers):
-    mock_put.return_value = MagicMock(status_code=201, ok=True)
+def test_upload_file_to_xnat_201_is_success(mock_put, headers):
+    mock_put.return_value = _xnat_put_response(status_code=201)
 
     with tempfile.NamedTemporaryFile(delete=False) as f:
         f.write(b"data")
@@ -172,9 +196,8 @@ def test_upload_file_to_xnat_201_is_success(mock_put, mock_check, headers):
 
 
 @pytest.mark.parametrize("status_code", [401, 403, 404, 413, 500])
-@patch("imaging_api.services.upload.check_file_exists_in_xnat", return_value=False)
 @patch("imaging_api.services.upload.requests.put")
-def test_upload_file_to_xnat_rejected_put_raises(mock_put, mock_check, status_code, headers):
+def test_upload_file_to_xnat_rejected_put_raises(mock_put, status_code, headers):
     # A PUT that XNAT rejects must raise rather than be reported as an uploaded file (#1387)
     mock_put.return_value = MagicMock(status_code=status_code, ok=False, text="rejected")
 
@@ -189,17 +212,35 @@ def test_upload_file_to_xnat_rejected_put_raises(mock_put, mock_check, status_co
         os.remove(temp_path)
 
 
-@patch("imaging_api.services.upload.check_file_exists_in_xnat", return_value=True)
-def test_upload_file_exist_ok_false_already_exists(mock_check, headers):
-    with tempfile.NamedTemporaryFile(delete=False) as f:
-        f.write(b"data")
-        temp_path = f.name
+@pytest.mark.parametrize(
+    ("exist_ok", "expected_query"),
+    [(True, "inbody=true&overwrite=true"), (False, "inbody=true")],
+)
+def test_upload_sends_overwrite_only_when_exist_ok_and_no_pre_check(
+    exist_ok, expected_query, tmp_path, sent_xnat_requests
+):
+    file_path = tmp_path / "scan.nii"
+    file_path.write_bytes(b"image-data")
 
-    try:
-        with pytest.raises(AlreadyExistsError, match="File already exists on XNAT"):
-            upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", temp_path, exist_ok=False, headers=headers)
-    finally:
-        os.remove(temp_path)
+    uploaded_url = upload_file_to_xnat(
+        "PROJ", "SUBJ", "EXP", "SCAN1", "NIFTI", str(file_path), exist_ok=exist_ok, headers={}
+    )
+
+    assert [request.method for request in sent_xnat_requests] == ["PUT"]
+    assert urlsplit(sent_xnat_requests[0].url).query == expected_query
+    assert uploaded_url == sent_xnat_requests[0].url
+
+
+@patch("imaging_api.services.upload.requests.put")
+def test_upload_file_exist_ok_false_already_exists(mock_put, headers, tmp_path):
+    mock_put.return_value = _xnat_put_response(body=_DUPLICATES_BODY, content_type="text/html")
+    file_path = tmp_path / "scan.nii"
+    file_path.write_bytes(b"data")
+
+    with pytest.raises(AlreadyExistsError, match="File already exists on XNAT"):
+        upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", str(file_path), exist_ok=False, headers=headers)
+
+    assert "overwrite" not in urlsplit(mock_put.call_args.args[0]).query
 
 
 # ── upload_data_to_xnat ──
@@ -452,10 +493,10 @@ def test_identifiers_stay_in_one_segment_at_http_boundary(sink, xnat_path_segmen
             "/files/image%20%3F%23%25%20%CE%B1.nii.gz"
         )
         expected_query = "inbody=true"
-        assert [request.method for request in sent_xnat_requests] == ["GET", "PUT"]
-        assert uploaded_url == sent_xnat_requests[0].url == sent_xnat_requests[1].url
+        assert [request.method for request in sent_xnat_requests] == ["PUT"]
+        assert uploaded_url == sent_xnat_requests[0].url
 
-    assert len(sent_xnat_requests) == (2 if sink == "upload" else 1)
+    assert len(sent_xnat_requests) == 1
     for request in sent_xnat_requests:
         parsed = urlsplit(request.url)
         assert parsed.path == expected_path

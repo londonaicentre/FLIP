@@ -188,7 +188,25 @@ class TestUploadEnrichmentFiles:
         summary = upload_enrichment_files(client, "PROJ", items, overwrite=True)
 
         assert summary.uploaded == ["FAK001"]
-        assert len(client._session.puts) == 1
+        assert client._session.puts == [
+            "http://xnat.example/data/projects/PROJ/subjects/SUBJ_1/experiments/EXP_1/scans/1/"
+            "resources/NIFTI/files/label_spleen_2.nii.gz?inbody=true&overwrite=true"
+        ]
+
+    def test_target_written_since_the_listing_is_a_failure_not_an_upload(self, tmp_path):
+        """The listing showed no label, but XNAT kept one that landed before the PUT."""
+        client = _client(
+            ["input_spleen_2.nii.gz"],
+            put_response=FakeResponse(status_code=200, text='{"duplicates": ["label_spleen_2.nii.gz"]}'),
+        )
+        items = [EnrichmentItem("FAK001", _label(tmp_path))]
+
+        summary = upload_enrichment_files(client, "PROJ", items)
+
+        assert summary.uploaded == []
+        assert summary.failed[0][0] == "FAK001"
+        assert "already exists" in summary.failed[0][1]
+        assert summary.ok is False
 
     def test_dry_run_reports_without_uploading(self, tmp_path):
         client = _client(["input_spleen_2.nii.gz"])

@@ -35,13 +35,18 @@ class FakeResponse:
         self.text = text
         self._payload = payload or {}
 
+    @property
+    def content(self) -> bytes:
+        """bytes: The raw body, which is ``text`` encoded. Upload responses are parsed from this."""
+        return self.text.encode()
+
     def json(self) -> dict[str, Any]:
         """dict[str, Any]: The JSON body."""
         return self._payload
 
 
 class FakeSession:
-    """Routes GETs by URL substring and records PUTs.
+    """Routes GETs by URL substring and records both GETs and PUTs.
 
     Routes are matched in insertion order, so register the most specific path first.
     """
@@ -55,6 +60,7 @@ class FakeSession:
         self.auth: tuple[str, str] | None = None
         self.routes = routes
         self.put_response = put_response or FakeResponse(status_code=200)
+        self.gets: list[str] = []
         self.puts: list[str] = []
         self.get_error: Exception | None = None
         self.put_error: Exception | None = None
@@ -75,6 +81,7 @@ class FakeSession:
         """
         if self.get_error is not None:
             raise self.get_error
+        self.gets.append(url)
         for pattern, response in self.routes.items():
             if pattern in url:
                 return response

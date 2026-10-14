@@ -175,6 +175,9 @@ Upload files to an XNAT experiment:
 }
 ```
 
+`exist_ok` (default `false`): `true` replaces a file of the same name already in the resource, `false`
+leaves it in place and fails the request.
+
 ### Users
 
 Create users, update user details, or add a user to an XNAT project.
