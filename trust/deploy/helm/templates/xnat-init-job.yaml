@@ -191,8 +191,10 @@ spec:
         # there is one script, covered for both backends by trust/xnat/tests/, and it updates the
         # command in place so every project's trigger keeps its wrapper id.
         #
-        # The image, and with it the script, follows xnat.web.image (and xnat.image.pin), so an
-        # XNAT held back on an older image also runs that image's older configure step.
+        # The image, and with it the script, follows xnat.web.image (and xnat.image.pin, the kit's
+        # XNAT_TAG). An image built before FLIP#1451 carries a Docker-only script that dies under
+        # `set -u` on DATA_PATH, which would surface as a bare failed helm upgrade, so the image is
+        # checked first and refused by name.
         - name: configure-dcm2niix
           image: "{{ .Values.xnat.web.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.web.image.tag) }}"
           imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
@@ -202,6 +204,11 @@ spec:
             - |
               set -euo pipefail
               cd /data/xnat/config
+              if ! grep -q XNAT_CS_BACKEND configure-dcm2niix.sh; then
+                echo "ERROR: xnat-web image {{ .Values.xnat.web.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.web.image.tag) }} predates FLIP#1451: its configure-dcm2niix.sh configures Docker only, not this chart's Kubernetes backend." >&2
+                echo "  xnat.image.pin (the kit's XNAT_TAG) or xnat.web.image.tag holds it back; use an xnat-web image from the release that ships this chart, or later." >&2
+                exit 1
+              fi
               bash configure-dcm2niix.sh
           env:
             - name: XNAT_URL

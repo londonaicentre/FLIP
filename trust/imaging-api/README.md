@@ -130,10 +130,12 @@ Create an XNAT project from a Central Hub project:
 Creating the project also creates its DICOM->NIfTI trigger: an XNAT event subscription named
 `DICOM-NIfTI Conversion`, active when the project's `dicom_to_nifti` is set.
 
-- The wrapper it launches (`dcm2niix-scan`) is found in the project's
-  `GET /xapi/projects/{project}/commands/available?xsiType=xnat:imageScanData`, whose row carries the
-  command id, the wrapper id and the image the command runs. A wrapper on another image than
-  `DCM2NIIX_IMAGE` is refused with both images named (FLIP#1456).
+- The wrapper it launches (`dcm2niix-scan`) is found in
+  `GET /xapi/commands/available/site?xsiType=xnat:imageScanData`, whose row carries the command id,
+  the wrapper id, the image the command runs and whether the site has enabled it. A wrapper on another
+  image than `DCM2NIIX_IMAGE`, or one the site has not enabled, is refused with both values named
+  (FLIP#1456). Not the project's own listing: it filters by the caller's permissions in the project,
+  and for a project just created it came back empty for the service account (dev trust 1, 14 Oct).
 - Its action key is the one XNAT lists for that wrapper at `GET /xapi/events/allactions`. The key names
   the wrapper id, not the command id (FLIP#1451).
 - The XNAT configure step finds FLIP's triggers by the subscription name to repair them after a

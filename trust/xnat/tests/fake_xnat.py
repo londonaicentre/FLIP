@@ -148,7 +148,7 @@ def validation_error(state: dict[str, Any], subscription: dict[str, Any]) -> str
     return None
 
 
-def _with_validity(state: dict[str, Any], subscription: dict[str, Any]) -> dict[str, Any]:
+def with_validity(state: dict[str, Any], subscription: dict[str, Any]) -> dict[str, Any]:
     error = validation_error(state, subscription)
     return {**subscription, "valid": error is None, "validation-message": error}
 
@@ -264,7 +264,7 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
     if path == "/xapi/events/subscriptions":
         if not state["events_enabled"]:
             return 200, "null"
-        return 200, json.dumps([_with_validity(state, s) for s in state["subscriptions"]])
+        return 200, json.dumps([with_validity(state, s) for s in state["subscriptions"]])
 
     match = re.fullmatch(r"/xapi/events/subscription/(\d+)", path)
     if match:
@@ -278,6 +278,9 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
         if method == "PUT":
             if not state["events_enabled"]:
                 return 500, '{"error":"event service disabled"}'
+            if subscription_id in state["faults"].get("reject_subscription_update", []):
+                # What XNAT answers when, say, the subscription's owner account cannot be loaded.
+                return 400, '{"error":"Could not load Subscription Owner"}'
             update = req.json_body()
             merged = dict(stored)
             merged["action-key"] = update["action-key"]
@@ -292,7 +295,19 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
             return ok_empty
 
     if path == "/data/projects":
-        rows = [{"ID": pid, "secondary_ID": secondary} for pid, secondary in state["projects"].items()]
+        # The fields XNAT 1.10 returns per project, so a large listing has a realistic size (~400 B a row).
+        rows = [
+            {
+                "ID": pid,
+                "secondary_ID": secondary,
+                "name": f"{secondary}:{secondary}-FL-Project",
+                "description": f"Project corresponding to central hub project {secondary}",
+                "pi_firstname": "",
+                "pi_lastname": "",
+                "URI": f"/data/projects/{pid}",
+            }
+            for pid, secondary in state["projects"].items()
+        ]
         return 200, json.dumps({"ResultSet": {"Result": rows}})
     match = re.fullmatch(r"/data/projects/([^/]+)", path)
     if match:

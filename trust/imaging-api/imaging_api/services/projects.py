@@ -341,12 +341,12 @@ def _listing_failed(project_id: str, status: int, text: str) -> str:
             "check this trust's XNAT_SERVICE_USER/XNAT_SERVICE_PASSWORD, then retry."
         )
     elif status == 403:
-        remedy = "XNAT answers 403 when the service account cannot read the project - check its access to it."
+        remedy = "XNAT answers 403 when the service account may not read the Container Service - check its roles."
     else:
         remedy = "Check that XNAT and its Container Service are up, then retry."
     return (
-        f"Error: listing the Container Service commands available in project '{project_id}' failed: "
-        f"{status} - {_bounded_body(text)}. {remedy}"
+        f"Error: listing the Container Service commands for project '{project_id}''s DICOM->NIfTI trigger "
+        f"failed: {status} - {_bounded_body(text)}. {remedy}"
     )
 
 
@@ -393,22 +393,25 @@ def get_wrapper_action_key(wrapper_id: int, wrapper_name: str, headers: dict[str
 
 
 def get_command_info(project_id: str, container: str, headers: dict[str, str]) -> CommandInfo:
-    """Finds the dcm2niix wrapper a project can launch, and checks it runs the pinned image.
+    """Finds the dcm2niix wrapper a project's trigger launches, and checks it runs the pinned image.
 
-    ``GET /xapi/projects/{project}/commands/available?xsiType=xnat:imageScanData`` (container-service
-    3.8.1 CommandRestApi.java:212-218, CommandServiceImpl.java:433-492) answers with one row per wrapper
-    of every command whose context matches and which the caller may launch in that project, carrying
-    the command id, the wrapper id and name, and the command's image. It lists a wrapper whether or not
-    it is enabled yet: ``enabled`` reports site *and* project enablement
-    (ContainerConfigServiceImpl.java:135-148), so for a project just created it reads false until
-    ``create_project_event_subscription`` enables it, which is why the lookup comes first.
+    ``GET /xapi/commands/available/site?xsiType=xnat:imageScanData`` (container-service 3.8.1
+    CommandRestApi.java:219-240, CommandServiceImpl.java:433-477) answers with one row per wrapper of
+    every command whose context matches, carrying the command id, the wrapper id and name, the
+    command's image, and ``enabled`` for the site. One row answers both questions the old
+    ``/xapi/commands?image=`` lookup could not: whether the dcm2niix wrapper exists at all, and which
+    image it actually runs, so a wrapper on another image (an XNAT whose registration predates the
+    current pin) is named with both images in hand.
 
-    One row answers both questions the old ``/xapi/commands?image=`` lookup could not: whether the
-    dcm2niix wrapper exists at all, and which image it actually runs. A wrapper on another image (an
-    XNAT whose registration predates the current pin) is named with both images in hand.
+    The site listing, not the project's (``/xapi/projects/{project}/commands/available``): the
+    project listing filters each wrapper by the caller's permissions in the project
+    (ContainerServicePermissionUtils.java:116-128), and for a project imaging-api has just created it
+    came back empty for the service account on dev trust 1 (14 Oct), while it listed the wrapper for
+    the trust's older projects. This lookup runs straight after project creation, so it cannot rely
+    on that.
 
     Args:
-        project_id (str): XNAT project ID the wrapper will run in.
+        project_id (str): XNAT project ID the trigger is for, named in the messages.
         container (str): The image the wrapper must run (typically ``Settings.DCM2NIIX_IMAGE``).
         headers (dict[str, str]): XNAT authentication headers.
 
@@ -421,12 +424,12 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
             relays to the hub.
     """
     response = requests.get(
-        xnat_url("xapi", "projects", project_id, "commands", "available", query={"xsiType": DCM2NIIX_CONTEXT}),
+        xnat_url("xapi", "commands", "available", "site", query={"xsiType": DCM2NIIX_CONTEXT}),
         headers=headers,
     )
     if response.status_code != 200:
         logger.error(
-            "Listing the commands available in project %r failed: HTTP %s; body: %s",
+            "Listing the Container Service commands for project %r failed: HTTP %s; body: %s",
             project_id,
             response.status_code,
             response.text,
@@ -434,23 +437,20 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
         raise Exception(_listing_failed(project_id, response.status_code, response.text))
     listing = response.json()
     if not isinstance(listing, list):
-        logger.error("Unexpected commands/available body for project %r: %s", project_id, response.text)
+        logger.error("Unexpected commands/available/site body for project %r: %s", project_id, response.text)
         raise Exception(
-            f"Error: the Container Service commands available in project '{project_id}' came back as "
-            f"{type(listing).__name__}, not a list - check what answers for XNAT at this URL."
+            f"Error: XNAT's Container Service command listing came back as {type(listing).__name__}, not a "
+            f"list, so project '{project_id}' gets no DICOM->NIfTI trigger - check what answers for XNAT."
         )
 
     rows = [row for row in listing if isinstance(row, dict) and row.get("wrapper-name") == DCM2NIIX_WRAPPER_NAME]
     if not rows:
-        logger.error(
-            "No %r wrapper among the commands available in project %r: %s", DCM2NIIX_WRAPPER_NAME, project_id, listing
-        )
+        logger.error("No %r wrapper among XNAT's Container Service commands: %s", DCM2NIIX_WRAPPER_NAME, listing)
         raise Exception(
-            f"No '{DCM2NIIX_WRAPPER_NAME}' wrapper is available for scans in project '{project_id}', so no "
-            f"DICOM->NIfTI trigger can be created. Either no dcm2niix command is registered on this XNAT - "
-            f"{_RERUN_CONFIGURE}, and check the admin holds ContainerManager (TROUBLESHOOTING 2.3a) - or the "
-            "service account cannot launch commands in the project. GET /xapi/commands?name=dcm2niix shows "
-            "what is registered."
+            f"No '{DCM2NIIX_WRAPPER_NAME}' wrapper is registered for scans on this XNAT, so project "
+            f"'{project_id}' gets no DICOM->NIfTI trigger. {_RERUN_CONFIGURE}, and check the admin holds "
+            "ContainerManager (TROUBLESHOOTING 2.3a): without it registration reports success having "
+            "registered nothing. GET /xapi/commands?name=dcm2niix shows what is registered."
         )
 
     pinned = [row for row in rows if row.get("image-name") == container]
@@ -467,19 +467,27 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
             f"command {row.get('command-id', '?')} on {row.get('image-name', '?')!r}" for row in rows[:5]
         )
         raise Exception(
-            f"{len(rows)} '{DCM2NIIX_WRAPPER_NAME}' wrappers are available in project '{project_id}' "
-            f"({described}), and {len(pinned)} run the pinned '{container}', so which one a trigger should "
-            "launch is ambiguous. Delete the dcm2niix command no subscription names, then re-run "
+            f"{len(rows)} '{DCM2NIIX_WRAPPER_NAME}' wrappers are registered on this XNAT ({described}), and "
+            f"{len(pinned)} run the pinned '{container}', so which one project '{project_id}''s trigger "
+            "should launch is ambiguous. Delete the dcm2niix command no subscription names, then re-run "
             "configure-dcm2niix.sh (compose) or the xnat-init job (k8s)."
         )
 
     (row,) = pinned
+    # A wrapper the site has not enabled cannot be enabled for a project, and XNAT would refuse the
+    # trigger as invalid; the configure step enables it, so its absence means that step did not finish.
+    if row.get("enabled") is False:
+        raise Exception(
+            f"XNAT's '{DCM2NIIX_WRAPPER_NAME}' wrapper (command {row.get('command-id', '?')}) is not enabled "
+            f"site-wide, so project '{project_id}''s DICOM->NIfTI trigger would be invalid. {_RERUN_CONFIGURE}, "
+            "which enables it."
+        )
     command_id, wrapper_id = row.get("command-id"), row.get("wrapper-id")
     # The subscription's action key names the wrapper id, so a guess here would create a trigger XNAT
     # reports invalid. XNAT always returns both; refuse rather than fall back to the command id.
     if type(command_id) is not int or type(wrapper_id) is not int:
         raise Exception(
-            f"XNAT's '{DCM2NIIX_WRAPPER_NAME}' wrapper in project '{project_id}' came back without numeric ids "
+            f"XNAT's '{DCM2NIIX_WRAPPER_NAME}' wrapper came back without numeric ids "
             f"(command {command_id!r}, wrapper {wrapper_id!r}), so no DICOM->NIfTI trigger can name it."
         )
     return CommandInfo(command_id=command_id, wrapper_name=DCM2NIIX_WRAPPER_NAME, wrapper_id=wrapper_id)
@@ -530,8 +538,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
     Raises:
         Exception: If the subscription creation fails.
     """
-    # Looked up before the project enable below: the listing includes wrappers the project has not
-    # enabled yet, and the enable call needs the command id it returns.
+    # Looked up first: the project enable below needs the command id it returns.
     command_id, wrapper_name, wrapper_id = get_command_info(project_id, container, headers)
 
     # Enable the command at the project level — required by XNAT to validate the action key

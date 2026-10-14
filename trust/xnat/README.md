@@ -388,9 +388,14 @@ XNAT's own action listing (`GET /xapi/events/allactions`). So the id must surviv
 - It then **re-points** any `DICOM-NIfTI Conversion` subscription that names another wrapper (left
   by a configure from before the fix, which deleted and re-registered the command) at the current
   one, enabling the wrapper for that project first, and logs one line per project repaired.
-- The legacy site-wide cleanup now deletes only FLIP's old site-wide subscription. It used to
-  select a `project-id` field that no subscription has, and so deleted **every** project's
-  subscription on every `up-trust` and `upgrade-xnat`.
+- A repair XNAT refuses (the subscription's owner cannot be loaded, say) is a warning, and the
+  run goes on; the closing count says how many could not be repaired.
+- The script **deletes no event subscription**. Its legacy site-wide cleanup is gone: it selected
+  a `project-id` field that no subscription has, and so deleted **every** project's subscription
+  on every `up-trust` and `upgrade-xnat`, while the site-wide subscription it was written for has
+  not been created since 2026-03-24 (FLIP#945 removes it too).
+- XNAT's listings reach jq through files, never as an argument: Linux caps one argument at
+  128 KiB, which a few hundred projects or subscriptions exceed.
 
 ### Restoring missing DICOM->NIfTI triggers
 
@@ -411,7 +416,7 @@ Ids are hub project ids (as in the FLIP UI) or XNAT project IDs. The target runs
 `python -m imaging_api.scripts.restore_nifti_triggers` in the running imaging-api container, which
 creates each trigger through imaging-api's own project-creation path, owned by the service account;
 a project that still has a trigger is never touched. On an on-prem host prefix `sudo -E`. Kubernetes:
-`trust/deploy/helm/TROUBLESHOOTING.md` §2.3d. Scans archived while a project had no trigger are not
+`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e. Scans archived while a project had no trigger are not
 converted retroactively; convert them as the next section describes.
 
 ### Converting scans archived without NIfTI
@@ -442,7 +447,7 @@ make -C trust reconvert-nifti KIT=<CODE> LAUNCH=1                 # every projec
   given up, 3 when the wait ended with conversions still running. Re-run the report to follow them.
 
 It runs `python -m imaging_api.scripts.reconvert_nifti` in the running imaging-api container. On an
-on-prem host prefix `sudo -E`. Kubernetes: `trust/deploy/helm/TROUBLESHOOTING.md` §2.3e. The XNAT UI
+on-prem host prefix `sudo -E`. Kubernetes: `trust/deploy/helm/TROUBLESHOOTING.md` §2.3f. The XNAT UI
 does the same launch by hand: the project's *Run Containers* bulk launcher, or the batch-launch
 plugin's Processing Dashboard, which hands its selection to it.
 

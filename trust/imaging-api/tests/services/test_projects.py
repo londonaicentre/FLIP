@@ -287,7 +287,7 @@ _PIN = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"
 
 
 def _available(command_id: int = 5, wrapper_id: int = 5, image: str = _PIN, extra: dict | None = None) -> dict:
-    """One row of GET /xapi/projects/{project}/commands/available, as AZ1 answered it on 13 Oct."""
+    """One row of GET /xapi/commands/available/site, as dev trust 1 answered it on 14 Oct."""
     row = {
         "command-id": command_id,
         "command-name": "dcm2niix",
@@ -296,20 +296,20 @@ def _available(command_id: int = 5, wrapper_id: int = 5, image: str = _PIN, extr
         "wrapper-contexts": ["xnat:imageScanData"],
         "image-name": image,
         "image-type": "docker",
-        "enabled": False,
+        "enabled": True,
         "root-element-name": "scan",
     }
     row.update(extra or {})
     return row
 
 
-def _listing(*rows) -> MagicMock:
+def _site_commands(*rows) -> MagicMock:
     return MagicMock(status_code=200, json=MagicMock(return_value=list(rows)))
 
 
 @patch("imaging_api.services.projects.requests.get")
 def test_get_command_info_takes_ids_from_the_projects_dcm2niix_row(mock_get, headers):
-    mock_get.return_value = _listing(
+    mock_get.return_value = _site_commands(
         _available(command_id=2, wrapper_id=9, extra={"wrapper-name": "other-scan"}),
         _available(command_id=1, wrapper_id=3),
     )
@@ -318,22 +318,26 @@ def test_get_command_info_takes_ids_from_the_projects_dcm2niix_row(mock_get, hea
 
     assert (command_id, wrapper_name, wrapper_id) == (1, "dcm2niix-scan", 3)
     url = urlsplit(mock_get.call_args[0][0])
-    assert url.path.endswith("/xapi/projects/TEST/commands/available")
+    # The site listing: the project's own filters by permissions it has not settled for a new project.
+    assert url.path.endswith("/xapi/commands/available/site")
     assert parse_qs(url.query) == {"xsiType": ["xnat:imageScanData"]}
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_takes_a_wrapper_the_project_has_not_enabled_yet(mock_get, headers):
-    """A new project lists the wrapper with enabled:false; create_project_event_subscription enables it next."""
-    mock_get.return_value = _listing(_available(extra={"enabled": False}))
+def test_get_command_info_refuses_a_wrapper_the_site_has_not_enabled(mock_get, headers):
+    """XNAT would refuse the trigger as invalid, so say why before creating it."""
+    mock_get.return_value = _site_commands(_available(extra={"enabled": False}))
 
-    assert get_command_info("TEST", _PIN, headers).wrapper_id == 5
+    with pytest.raises(Exception, match="not enabled site-wide") as excinfo:
+        get_command_info("TEST", _PIN, headers)
+
+    assert "configure-dcm2niix.sh" in str(excinfo.value)
 
 
 @patch("imaging_api.services.projects.requests.get")
 def test_get_command_info_names_both_images_when_the_registration_predates_the_pin(mock_get, headers):
     """The pre-FLIP#980 XNAT: one dcm2niix wrapper, on the 2021 Docker Hub image."""
-    mock_get.return_value = _listing(_available(command_id=4, image="xnat/dcm2niix:latest"))
+    mock_get.return_value = _site_commands(_available(command_id=4, image="xnat/dcm2niix:latest"))
 
     with pytest.raises(Exception, match="runs 'xnat/dcm2niix:latest'") as excinfo:
         get_command_info("TEST", _PIN, headers)
@@ -349,9 +353,9 @@ def test_get_command_info_names_both_images_when_the_registration_predates_the_p
 @patch("imaging_api.services.projects.requests.get")
 @pytest.mark.parametrize("rows", [[], [_available(extra={"wrapper-name": "other-scan"})]], ids=["empty", "other-only"])
 def test_get_command_info_without_a_dcm2niix_wrapper_says_how_to_register_it(mock_get, headers, rows):
-    mock_get.return_value = _listing(*rows)
+    mock_get.return_value = _site_commands(*rows)
 
-    with pytest.raises(Exception, match="No 'dcm2niix-scan' wrapper is available") as excinfo:
+    with pytest.raises(Exception, match="No 'dcm2niix-scan' wrapper is registered") as excinfo:
         get_command_info("TEST", _PIN, headers)
 
     message = str(excinfo.value)
@@ -362,7 +366,9 @@ def test_get_command_info_without_a_dcm2niix_wrapper_says_how_to_register_it(moc
 
 @patch("imaging_api.services.projects.requests.get")
 def test_get_command_info_picks_the_pinned_wrapper_out_of_two(mock_get, headers):
-    mock_get.return_value = _listing(_available(command_id=4, image="xnat/dcm2niix:latest"), _available(command_id=7))
+    mock_get.return_value = _site_commands(
+        _available(command_id=4, image="xnat/dcm2niix:latest"), _available(command_id=7)
+    )
 
     assert get_command_info("TEST", _PIN, headers).command_id == 7
 
@@ -374,7 +380,9 @@ def test_get_command_info_picks_the_pinned_wrapper_out_of_two(mock_get, headers)
     ids=["none-pinned", "two-pinned"],
 )
 def test_get_command_info_refuses_to_guess_between_wrappers(mock_get, headers, images):
-    mock_get.return_value = _listing(*(_available(command_id=i + 4, image=image) for i, image in enumerate(images)))
+    mock_get.return_value = _site_commands(
+        *(_available(command_id=i + 4, image=image) for i, image in enumerate(images))
+    )
 
     with pytest.raises(Exception, match="ambiguous") as excinfo:
         get_command_info("TEST", _PIN, headers)
@@ -387,7 +395,7 @@ def test_get_command_info_refuses_to_guess_between_wrappers(mock_get, headers, i
 def test_get_command_info_ambiguity_stays_inside_the_truncation_budget(mock_get, headers):
     """trust-api relays at most 1000 characters to the hub; the remedy must survive the cut."""
     long_image = f"registry.example.org/{'a' * 40}/xnat-dcm2niix:v1.0.20260724"
-    mock_get.return_value = _listing(*(_available(command_id=i, image=long_image) for i in range(10)))
+    mock_get.return_value = _site_commands(*(_available(command_id=i, image=long_image) for i in range(10)))
 
     with pytest.raises(Exception, match="ambiguous") as excinfo:
         get_command_info(str(uuid4()), _PIN, headers)
@@ -400,7 +408,7 @@ def test_get_command_info_ambiguity_stays_inside_the_truncation_budget(mock_get,
 @patch("imaging_api.services.projects.requests.get")
 @pytest.mark.parametrize(
     ("status", "remedy"),
-    [(401, "XNAT_SERVICE_PASSWORD"), (403, "cannot read the project"), (500, "Container Service are up")],
+    [(401, "XNAT_SERVICE_PASSWORD"), (403, "may not read the Container Service"), (500, "Container Service are up")],
     ids=["401", "403", "500"],
 )
 def test_get_command_info_listing_failure_names_the_cause(mock_get, headers, status, remedy):
@@ -431,7 +439,7 @@ def test_get_command_info_rejects_a_body_that_is_not_a_listing(mock_get, headers
 )
 def test_get_command_info_refuses_a_row_without_numeric_ids(mock_get, headers, ids):
     """A trigger's action key names the wrapper id, so there is no safe fallback when it is absent."""
-    mock_get.return_value = _listing(_available(extra=ids))
+    mock_get.return_value = _site_commands(_available(extra=ids))
 
     with pytest.raises(Exception, match="without numeric ids"):
         get_command_info("TEST", _PIN, headers)
@@ -1022,24 +1030,24 @@ async def test_delete_project_keeps_a_hostile_id_out_of_the_query(sent_xnat_requ
     assert parsed.query == "removeFiles=true"
 
 
-def test_command_lookup_is_project_scoped_with_one_query_value(sent_xnat_requests):
+def test_command_lookup_is_the_site_listing_with_one_query_value(sent_xnat_requests):
     listing = [{"command-id": 7, "wrapper-id": 7, "wrapper-name": "dcm2niix-scan", "image-name": "img:1.0"}]
     with patch.object(requests.Response, "json", return_value=listing):
         assert get_command_info(_PROJECT_ID, "img:1.0", {}) == (7, "dcm2niix-scan", 7)
 
     parsed = urlsplit(sent_xnat_requests[0].url)
-    assert parsed.path == f"/xapi/projects/{_PROJECT_ID}/commands/available"
+    assert parsed.path == "/xapi/commands/available/site"
     assert parse_qs(parsed.query) == {"xsiType": ["xnat:imageScanData"]}
 
 
-def test_command_lookup_keeps_a_hostile_project_id_in_one_segment(sent_xnat_requests, xnat_path_segment):
-    raw, encoded = xnat_path_segment
+def test_command_lookup_never_puts_the_project_id_in_the_url(sent_xnat_requests, xnat_path_segment):
+    raw, _ = xnat_path_segment
     listing = [{"command-id": 7, "wrapper-id": 7, "wrapper-name": "dcm2niix-scan", "image-name": "img:1.0"}]
     with patch.object(requests.Response, "json", return_value=listing):
         get_command_info(raw, "img:1.0", {})
 
     parsed = urlsplit(sent_xnat_requests[0].url)
-    assert parsed.path == f"/xapi/projects/{encoded}/commands/available"
+    assert parsed.path == "/xapi/commands/available/site"
     assert parse_qs(parsed.query) == {"xsiType": ["xnat:imageScanData"]}
     assert parsed.fragment == ""
 
