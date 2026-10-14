@@ -368,14 +368,18 @@ xnat:
 ### 2.3c dcm2niix Registered Against a Stale Image
 
 **Symptom:** studies pull and archive fine, conversion never runs, and
-imaging-api reports the mismatch by listing what *is* registered, e.g.
+creating a project fails with imaging-api naming both images, e.g.
 
 ```
-No commands found for container 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724'.
-The Container Service is installed and has 1 command(s) registered:
-'dcm2niix' -> 'xnat/dcm2niix:latest'. If one of those is the same tool on an older
-image, this XNAT's registration predates the current pin ...
+XNAT's 'dcm2niix-scan' wrapper (command 4) runs 'xnat/dcm2niix:latest', but this
+imaging-api expects 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724', so a
+trigger would convert with the wrong image. Re-run configure-dcm2niix.sh ...
 ```
+
+imaging-api reads this from the project's own
+`GET /xapi/projects/<project>/commands/available?xsiType=xnat:imageScanData`
+row for the `dcm2niix-scan` wrapper, which carries the command id, the wrapper id
+and the image the command runs (FLIP#1456).
 
 The Container Service is healthy and the command is enabled; it is simply bound
 to the image this XNAT was provisioned with.

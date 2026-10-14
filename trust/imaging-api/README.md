@@ -128,11 +128,17 @@ Create an XNAT project from a Central Hub project:
 ```
 
 Creating the project also creates its DICOM->NIfTI trigger: an XNAT event subscription named
-`DICOM-NIfTI Conversion`, active when the project's `dicom_to_nifti` is set, whose action key is
-the one XNAT lists for the dcm2niix wrapper at `GET /xapi/events/allactions` (the key names the
-wrapper id, not the command id — FLIP#1451). The XNAT configure step finds FLIP's triggers by that
-name to repair them after a redeploy, so it is held equal across the three copies by
-`trust/xnat/tests/test_dcm2niix_registration.py`.
+`DICOM-NIfTI Conversion`, active when the project's `dicom_to_nifti` is set.
+
+- The wrapper it launches (`dcm2niix-scan`) is found in the project's
+  `GET /xapi/projects/{project}/commands/available?xsiType=xnat:imageScanData`, whose row carries the
+  command id, the wrapper id and the image the command runs. A wrapper on another image than
+  `DCM2NIIX_IMAGE` is refused with both images named (FLIP#1456).
+- Its action key is the one XNAT lists for that wrapper at `GET /xapi/events/allactions`. The key names
+  the wrapper id, not the command id (FLIP#1451).
+- The XNAT configure step finds FLIP's triggers by the subscription name to repair them after a
+  redeploy, so `trust/xnat/tests/test_dcm2niix_registration.py` holds the name, and the wrapper name and
+  context, equal to the configure script and `dcm2niix_command.json`.
 
 #### Restoring triggers: `restore_nifti_triggers`
 

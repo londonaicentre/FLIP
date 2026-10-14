@@ -119,8 +119,8 @@ is otherwise silent: the old immutable tag simply keeps being pulled.
 That check compares files in this repository and never calls a running XNAT, so it cannot see the
 *live* registration. An XNAT provisioned before a bump keeps its old command in the XNAT database and
 goes on converting with the superseded image while looking perfectly healthy — both staging trusts sat
-in that state. Confirm a deployment with `GET /xapi/commands` (the `name -> image` pairs it returns are
-what imaging-api reports when nothing matches) and re-run `configure-dcm2niix.sh`, or the
+in that state. Confirm a deployment with `GET /xapi/commands` (the image imaging-api names when project creation
+refuses a stale registration is the one listed there) and re-run `configure-dcm2niix.sh`, or the
 `xnat-init` job on Kubernetes, if the image named there is not the current pin. Both update the
 existing command in place, so its ids, and every project's trigger, survive the move (FLIP#1451).
 

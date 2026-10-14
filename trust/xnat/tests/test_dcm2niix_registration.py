@@ -555,6 +555,18 @@ def test_the_trigger_name_is_the_one_imaging_api_creates() -> None:
     assert script.group(1) == imaging.group(1) == TRIGGER
 
 
+def test_imaging_api_looks_up_the_wrapper_this_command_registers() -> None:
+    """imaging-api finds the trigger's wrapper by name and data type in the project's available commands."""
+    text = IMAGING_API_PROJECTS.read_text()
+    name = re.search(r'^DCM2NIIX_WRAPPER_NAME = "([^"]+)"', text, re.M)
+    context = re.search(r'^DCM2NIIX_CONTEXT = "([^"]+)"', text, re.M)
+    assert name, "imaging-api no longer defines DCM2NIIX_WRAPPER_NAME"
+    assert context, "imaging-api no longer defines DCM2NIIX_CONTEXT"
+    (wrapper,) = command_file()["xnat"]
+    assert name.group(1) == wrapper["name"]
+    assert context.group(1) in wrapper["contexts"]
+
+
 HUB_ID_PATTERN = "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
 
 
