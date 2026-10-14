@@ -28,10 +28,6 @@ from imaging_api.utils.xnat_url import xnat_url
 # alias-token alias + secret; visiting the link authenticates the user and shows a password form.
 XNAT_SETUP_PATH_TEMPLATE = "/app/template/XDATScreen_UpdateUser.vm?a={alias}&s={secret}"
 
-# XNAT's own username rule (xnat-web 1.10.0 ``Users.PATTERN_USERNAME``, ``^[a-zA-Z][A-Za-z0-9-_'.]{0,63}$``),
-# which POST /xapi/users enforces on create. Used only to tell XNAT refusing a name apart from XNAT failing.
-XNAT_USERNAME_RULE = re.compile(r"[a-zA-Z][A-Za-z0-9\-_'.]{0,63}")
-
 
 def get_xnat_users(headers: dict[str, str]) -> list[User]:
     """
@@ -47,12 +43,10 @@ def get_xnat_users(headers: dict[str, str]) -> list[User]:
         Exception: If XNAT returns a non-200 response.
     """
     response = requests.get(xnat_url("xapi", "users", "profiles"), headers=headers)
-    users = [User(**user) for user in response.json()]
-
-    if response.status_code == 200:
-        return users
-    else:
+    if response.status_code != 200:
         raise Exception(f"Error: Getting XNAT users failed: {response.status_code} - {response.text}")
+
+    return [User(**user) for user in response.json()]
 
 
 def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> CreateUser:
@@ -120,7 +114,7 @@ def _match_in_listing(key: str, value: str, headers: dict[str, str]) -> User:
 
     Raises:
         imaging_api.utils.exceptions.NotFoundError: If no XNAT user matches.
-        Exception: If fetching the XNAT users fails.
+        Exception: If listing the XNAT users fails.
     """
     try:
         users = get_xnat_users(headers)
@@ -138,13 +132,8 @@ def get_xnat_user_profile(username: str, headers: dict[str, str]) -> User:
     """
     Fetches one user profile from XNAT by username, with ``GET /xapi/users/profile/{username}``.
 
-    XNAT answers this route from the same query and row mapping as the ``/xapi/users/profiles`` listing,
-    narrowed to ``WHERE login = :username``, so the profile is the one the listing would have held for
-    this user, matched exactly and case-sensitively (xnat-web 1.10.0 ``UsersApi.usersProfileGet``,
-    ``org.nrg.xapi.model.users.User.getUser``).
-
-    When XNAT refuses to look the name up at all rather than saying there is no such user, the lookup falls
-    back to that exact match against the full listing (see the comment at the fallback).
+    Only a 404 means "no such user". XNAT refuses to look up some names an account can still carry (from
+    LDAP, OpenID or a legacy install), so any other failure falls back to an exact match in the listing.
 
     Args:
         username (str): The XNAT username to fetch.
@@ -155,55 +144,32 @@ def get_xnat_user_profile(username: str, headers: dict[str, str]) -> User:
 
     Raises:
         imaging_api.utils.exceptions.NotFoundError: If XNAT has no user with this username.
-        Exception: If XNAT cannot be reached, returns any other non-200 response, or returns a body that is
-            not a user profile.
+        Exception: If XNAT fails, or answers 200 with a body that is not a user profile.
     """
     try:
         url = xnat_url("xapi", "users", "profile", username)
     except ValueError:
-        # An empty or dot-segment username cannot name an XNAT account (XNAT's username rule requires a
-        # leading letter), and the URL helper refuses to build the request, so it is simply not found.
+        # An empty or dot-segment name cannot be an XNAT account.
         raise NotFoundError("User not found by username")
 
-    try:
-        response = requests.get(url, headers=headers)
-    except requests.RequestException as e:
-        raise Exception(f"Error: XNAT error when fetching user profile: {str(e)}")
-
+    response = requests.get(url, headers=headers)
     if response.status_code == 404:
         raise NotFoundError("User not found by username")
-
-    # XNAT refused to look this name up, which is not the same as "no such user": a 400 from its username
-    # rule (``Users.isValidUsername``) or from Tomcat for an encoded "/" or "\", or a 500 from its request
-    # firewall for a "%" or ";" in the name. POST /xapi/users enforces that rule on create, but an account
-    # provisioned another way (LDAP, OpenID, a legacy install) may not satisfy it, so answer the way the
-    # listing always did: an exact, case-sensitive match. A 500 for a name the rule accepts is a real error.
-    if response.status_code == 400 or (response.status_code == 500 and not XNAT_USERNAME_RULE.fullmatch(username)):
-        logger.info(
-            f"XNAT refused the profile lookup (HTTP {response.status_code}); matching the username against "
-            "the user listing instead"
-        )
-        return _match_in_listing("username", username, headers)
-
     if response.status_code != 200:
-        raise Exception(f"Error: XNAT error when fetching user profile: {response.status_code} - {response.text}")
+        logger.info(f"XNAT answered {response.status_code} for a user profile; matching against the user listing")
+        return _match_in_listing("username", username, headers)
 
     try:
         return User.model_validate(response.json())
     except ValueError as e:
-        raise Exception(
-            f"Error: XNAT error when fetching user profile: unexpected response body ({type(e).__name__}: {e}) "
-            f"- {response.text}"
-        )
+        raise Exception("Error: XNAT's user profile response is not a user profile") from e
 
 
 def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
     """
     Fetches a user profile from XNAT using the key and value.
 
-    A username lookup is one ``GET /xapi/users/profile/{username}`` (:func:`get_xnat_user_profile`), with a
-    listing only when XNAT refuses the name. XNAT has no lookup by email, so an email lookup lists every
-    profile and matches in Python.
+    XNAT has no lookup by email, so an email lookup lists every profile and matches in Python.
 
     Args:
         key (str): The key to search by. Can be 'username' or 'email'.
@@ -351,9 +317,6 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
     """
     Core logic to create an XNAT user. Returns the newly created user profile.
 
-    XNAT answers the ``201`` with the created user (xnat-web 1.10.0 ``UsersApi.createUser`` returns the saved
-    account), so the profile is read from that body rather than fetched again.
-
     Args:
         user (imaging_api.routers.schemas.CreateUser): The user to create.
         headers (dict[str, str]): XNAT authentication headers.
@@ -371,16 +334,7 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
 
     if response.status_code == 201:
         logger.info(f"User '{user.username}' created successfully on XNAT")
-        try:
-            return User.model_validate(response.json())
-        except ValueError as e:
-            # The account exists by now, so a 201 body that is not a profile must not fail the step that
-            # just succeeded: fetch the one profile instead.
-            logger.warning(
-                f"XNAT's 201 body for user '{user.username}' is not a user profile ({type(e).__name__}); "
-                "fetching the profile instead"
-            )
-            return get_user_profile_by("username", user.username, headers)
+        return get_xnat_user_profile(user.username, headers)
 
     elif response.status_code == 409:
         raise AlreadyExistsError(f"Error: User '{user.username}' already exists")
