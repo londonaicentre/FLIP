@@ -16,7 +16,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -427,6 +427,43 @@ class TestDownloadAndUnzipImages:
                 await download_and_unzip_images("hub-proj-1", "ACC1", "net-never-seen-before", "scan", "NIFTI", headers)
 
             assert os.path.isdir(expected_net_dir), f"download_and_unzip_images should have created {expected_net_dir}"
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.unzip_file")
+    @patch("imaging_api.services.download.download_file")
+    @patch("imaging_api.services.projects.requests.get")
+    async def test_project_lookups_are_filtered_by_xnat_not_listings(
+        self, mock_get, mock_download, mock_unzip, headers, tmp_path
+    ):
+        """A download resolves the hub project id, then checks the XNAT project, each with one request that XNAT
+        filters (secondary_ID, then ID). It never lists every project on the trust (FLIP#1456 D1)."""
+        hub_project_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        row = {
+            "ID": "PROJ1",
+            "secondary_ID": hub_project_id,
+            "name": "Project",
+            "description": "",
+            "pi_firstname": "",
+            "pi_lastname": "",
+            "URI": "/data/projects/PROJ1",
+        }
+        listing = MagicMock(status_code=200, json=MagicMock(return_value={"ResultSet": {"Result": [row]}}))
+        experiment = {"items": [{"data_fields": {"subject_ID": "SUBJ1"}}]}
+        mock_get.side_effect = [listing, listing, MagicMock(status_code=200, json=MagicMock(return_value=experiment))]
+        mock_download.return_value = str(tmp_path / "net1" / hub_project_id / "ACC1-scans-NIFTI.zip")
+        mock_unzip.return_value = str(tmp_path / "net1" / hub_project_id / "ACC1")
+
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            await download_and_unzip_images(hub_project_id, "ACC1", "net1", "scan", "NIFTI", headers)
+
+        assert mock_get.call_count == 3
+        lookups = [urlsplit(call.args[0]) for call in mock_get.call_args_list[:2]]
+        assert all(url.path.endswith("/data/projects") for url in lookups)
+        assert [parse_qs(url.query) for url in lookups] == [
+            {"format": ["json"], "secondary_ID": [hub_project_id]},
+            {"format": ["json"], "ID": ["PROJ1"]},
+        ]
+        assert urlsplit(mock_get.call_args_list[2].args[0]).path.endswith("/data/projects/PROJ1/experiments/ACC1")
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.download.os.makedirs", side_effect=PermissionError("read-only fs"))

@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import re
 import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
@@ -47,10 +48,79 @@ XNAT_URL = get_settings().XNAT_URL
 # exempts (#1386).
 ET.register_namespace("xnat", f"{XNAT_URL}/data/projects")
 
+# XNAT's own rule for a project ID: XftStringUtils.REGEX_VALID_ID, ``^[A-Za-z0-9-_]+$``, which
+# ``POST /data/projects`` applies before it creates anything (ProjectListResource, xnat-web 1.10.0).
+# Every project XNAT holds matches it, FLIP's uuid4 IDs included, so a value outside it names no project.
+_XNAT_PROJECT_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _is_xnat_project_id(value: str) -> bool:
+    """Whether ``value`` is a well-formed XNAT project ID (whole-string match, so no trailing newline)."""
+    return isinstance(value, str) and _XNAT_PROJECT_ID.fullmatch(value) is not None
+
+
+def _is_central_hub_project_id(value: str) -> bool:
+    """Whether ``value`` is a canonical (lower-case, hyphenated) UUID, the form ``to_create_project`` stores."""
+    try:
+        return str(uuid.UUID(value)) == value
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _find_project(field: str, value: str, headers: dict[str, str]) -> Project | None:
+    """
+    Fetches the one XNAT project whose ``field`` equals ``value``, filtered by XNAT instead of listing every project.
+
+    ``GET /data/projects?format=json&<field>=<value>`` turns the query variable into a criterion on
+    ``xnat:projectData`` (QueryOrganizerResource.populateQuery, xnat-web 1.10.0) and answers with the same columns
+    as the full listing. That criterion is not a plain equality: a value containing ``*`` or ``%`` becomes a SQL
+    ``LIKE`` and a comma splits it into an OR list (QueryOrganizerResource.processStringQuery), and URL-encoding
+    does not stop either, because XNAT reads the decoded value. So callers pass only a value they have validated,
+    and a row still counts only when its ``field`` equals ``value`` exactly.
+
+    Args:
+        field (str): The ``xnat:projectData`` field to filter on, ``ID`` or ``secondary_ID``.
+        value (str): The value to match, already validated by the caller.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        Project | None: The matching XNAT project, or None when XNAT holds none.
+
+    Raises:
+        imaging_api.utils.exceptions.XnatFetchError: If the request fails, XNAT returns a non-200 response, or the
+            body is not a project listing.
+        Exception: If more than one XNAT project has ``field`` equal to ``value``.
+    """
+    url = xnat_url("data", "projects", query={"format": "json", field: value})
+    try:
+        response = requests.get(url, headers=headers)
+    except requests.RequestException as e:
+        raise XnatFetchError(f"Error: XNAT project fetch failed: {e}") from e
+
+    if response.status_code != 200:
+        raise XnatFetchError(f"Error: XNAT project fetch failed: {response.status_code} - {response.text}")
+
+    try:
+        matches = [Project(**row) for row in response.json()["ResultSet"]["Result"] if row.get(field) == value]
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        raise XnatFetchError(f"Error: XNAT project fetch failed: unexpected response body: {e}") from e
+
+    if len(matches) > 1:
+        raise Exception(
+            f"Error: XNAT project lookup is ambiguous: {len(matches)} projects have {field} '{value}' "
+            f"({', '.join(sorted(project.ID for project in matches))})."
+        )
+    return matches[0] if matches else None
+
 
 def get_project_from_central_hub_project_id(central_hub_project_id: str, headers: dict[str, str]) -> Project:
     """
-    Gets the XNAT project from a central hub project ID (corresponds to XNAT project secondary ID)
+    Gets the XNAT project from a central hub project ID (corresponds to XNAT project secondary ID).
+
+    XNAT filters on ``secondary_ID`` itself (``GET /data/projects?secondary_ID=<id>``), so finding one project no
+    longer lists every project on the trust. The id must be a canonical UUID, the only form ``to_create_project``
+    writes; anything else is refused before a request is built, since XNAT would read a ``*``, ``%`` or ``,`` in it
+    as a wildcard or a list (see ``_find_project``). The refusal is a not-found, as the full listing's was.
 
     Args:
         central_hub_project_id (str): Central hub project ID
@@ -60,24 +130,29 @@ def get_project_from_central_hub_project_id(central_hub_project_id: str, headers
         Project: XNAT project object
 
     Raises:
-        imaging_api.utils.exceptions.NotFoundError: If no XNAT project has a matching ``secondary_ID``.
-        Exception: If the upstream ``get_all_projects`` call fails.
+        imaging_api.utils.exceptions.NotFoundError: If the id is not a canonical UUID, or no XNAT project has it as
+            its ``secondary_ID``.
+        imaging_api.utils.exceptions.XnatFetchError: If the XNAT request fails or returns a non-200 response.
+        Exception: If more than one XNAT project has it as its ``secondary_ID``.
     """
-    try:
-        projects = get_all_projects(headers)
-    except Exception as e:
-        raise Exception(f"Error: XNAT project fetch failed: {str(e)}")
+    if not _is_central_hub_project_id(central_hub_project_id):
+        raise NotFoundError(
+            f"Project with central hub ID '{central_hub_project_id}' not found: not a valid central hub project ID."
+        )
 
-    for project in projects:
-        if project.secondary_ID == central_hub_project_id:
-            return project
-
-    raise NotFoundError(f"Project with central hub ID '{central_hub_project_id}' not found among XNAT projects.")
+    project = _find_project("secondary_ID", central_hub_project_id, headers)
+    if project is None:
+        raise NotFoundError(f"Project with central hub ID '{central_hub_project_id}' not found among XNAT projects.")
+    return project
 
 
 def get_project(project_id: str, headers: dict[str, str]) -> Project:
     """
-    Fetches a specific XNAT project by selecting from all projects.
+    Fetches a specific XNAT project by its ID, filtered by XNAT (``GET /data/projects?ID=<id>``).
+
+    The filtered listing rather than ``GET /data/projects/{id}``, because the latter answers in a different shape
+    without ``URI``, ``pi_firstname`` or ``pi_lastname`` (see ``routers.projects.get_project_endpoint``). An ID XNAT
+    could never have created is refused before a request is built (see ``_find_project``), as not found.
 
     Args:
         project_id (str): Unique identifier for the project
@@ -87,19 +162,18 @@ def get_project(project_id: str, headers: dict[str, str]) -> Project:
         Project: XNAT project object
 
     Raises:
-        imaging_api.utils.exceptions.NotFoundError: If no XNAT project matches ``project_id``.
-        Exception: If the upstream ``get_all_projects`` call fails.
+        imaging_api.utils.exceptions.NotFoundError: If ``project_id`` is not a valid XNAT project ID, or no XNAT
+            project has it.
+        imaging_api.utils.exceptions.XnatFetchError: If the XNAT request fails or returns a non-200 response.
+        Exception: If XNAT returns more than one project with that ID.
     """
-    try:
-        projects = get_all_projects(headers)
-    except Exception as e:
-        raise Exception(f"Error: XNAT project fetch failed: {str(e)}")
+    if not _is_xnat_project_id(project_id):
+        raise NotFoundError(f"Project with ID '{project_id}' not found: not a valid XNAT project ID.")
 
-    for project in projects:
-        if project.ID == project_id:
-            return project
-
-    raise NotFoundError(f"Project with ID '{project_id}' not found.")
+    project = _find_project("ID", project_id, headers)
+    if project is None:
+        raise NotFoundError(f"Project with ID '{project_id}' not found.")
+    return project
 
 
 def get_all_projects(headers: dict[str, str]) -> list[Project]:
@@ -176,6 +250,10 @@ def create_project(
     Note this endpoint only accepts XML payload, not JSON.
     See also https://wiki.xnat.org/xnat-api/project-api#ProjectAPI-Createoneormoreprojects
 
+    XNAT refuses an ID it already holds with HTTP 409 ("Project already exists.") before it changes anything
+    (ProjectListResource, xnat-web 1.10.0), so that answer is the existence check: no listing of every project
+    beforehand, and no gap between a check and the create for a concurrent request to land in.
+
     Args:
         project_id (str): Unique identifier for the project.
         project_secondary_id (str): Secondary ID for the project.
@@ -200,13 +278,6 @@ def create_project(
         project_description,
     )
 
-    # Check if project already exists
-    for project in get_all_projects(headers):
-        if project.ID == project_id:
-            raise AlreadyExistsError(
-                f"Project ID '{project_id}' already exists. Can't create a new project with the same ID."
-            )
-
     # Create the XNAT project
     response = requests.post(
         xnat_projects_uri,
@@ -217,6 +288,10 @@ def create_project(
     if response.status_code == 200:
         logger.info(f"Project '{project_id}' created successfully.")
         return get_project(project_id, headers)
+    elif response.status_code == 409:
+        raise AlreadyExistsError(
+            f"Project ID '{project_id}' already exists. Can't create a new project with the same ID."
+        )
     else:
         raise Exception(f"Error: XNAT project creation failed: {response.status_code} - {response.text}")
 
