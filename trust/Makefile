@@ -594,9 +594,8 @@ restore-nifti-triggers:
 	  $(if $(REST),--rest $(REST)) $(if $(DRY_RUN),--dry-run)
 
 # Convert the archived scans that have DICOM but no NIfTI (a trigger fires on new scans only), through
-# Container Service's bulk launch. Report only without LAUNCH=1; PROJECT="<id> ..." narrows it to those
-# projects and lets LAUNCH convert them whatever their trigger says. See trust/xnat/README.md,
-# "Converting scans archived without NIfTI".
+# Container Service's bulk launch. Report only without LAUNCH=1. PROJECT, not PROJECTS (the datasets to
+# seed). See trust/deploy/helm/TROUBLESHOOTING.md §2.3f.
 reconvert-nifti:
 	$(require_kit_file)
 	@c=$(call trust_container,imaging-api); \

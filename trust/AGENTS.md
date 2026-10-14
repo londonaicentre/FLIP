@@ -148,7 +148,7 @@ make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck 
 make check-governance KIT=GSTT   # Validate the trust's governance document — both halves, on the host's Python (no project sync), starts nothing
 make reload-governance KIT=GSTT  # Re-apply an edited governance document to a LIVE trust: recreates data-access-api (+ on NVFLARE fl-governance-init and the fl-clients), then checks the service logs the document's digest; touches no data
 make restore-nifti-triggers KIT=GSTT [ACTIVE="<id> ..."] [INACTIVE="<id> ..."] [REST=active|inactive] [DRY_RUN=1]  # Recreate the DICOM->NIfTI triggers a pre-FLIP#1451 configure deleted (imaging-api's own creation path, in its container); active/inactive per the project's hub-side setting, which the trust does not hold; report only without ACTIVE/INACTIVE/REST
-make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert the archived scans that have DICOM and no NIfTI (a trigger never fires again for them) by one Container Service bulk launch per project, in imaging-api's container; report only without LAUNCH; without PROJECT only active-trigger projects launch; follows each scan to its NIFTI resource, relaunching within MAX_ATTEMPTS; never launches on a scan whose container is unfinished
+make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch, in imaging-api's container; report only without LAUNCH (deploy/helm/TROUBLESHOOTING.md §2.3f)
 ```
 
 ## Environment

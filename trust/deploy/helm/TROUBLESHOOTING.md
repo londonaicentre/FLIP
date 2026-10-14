@@ -497,6 +497,9 @@ kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
   python -m imaging_api.scripts.reconvert_nifti --project <id> --launch
 ```
 
+Run it on an idle trust (DQR import queue empty): it leaves alone any session
+archived in the last 10 minutes, whose trigger may still be starting its conversion.
+
 How it behaves:
 
 - **Which projects:** without `--project`, `--launch` converts only projects whose
@@ -507,18 +510,24 @@ How it behaves:
   finished. A container that will never finish (the finalize stall: `_Waiting` long
   after its history shows `complete`; or a Job deleted from under it) holds its scan
   back until you pass `--relaunch-unfinished`.
-- **Confirmed by the result:** a conversion counts as done when the scan's `NIFTI`
-  resource appears. The launch response cannot say (one `bulk-launch-id`, every
-  per-scan entry "To be assigned").
-- **Bounded retries:** while `--wait` lasts (default 30 minutes), a scan whose
-  conversion ended without NIfTI is relaunched, until `--max-attempts` (default 3)
-  of its containers have ended. Earlier failed conversions count. A scan dcm2niix
-  cannot convert stops there and is reported. The command exits 1.
+- **Followed to the result:** for `--wait` minutes (default 30; `0` returns at
+  once) it follows the scans it launched, and reports each as converted (its `NIFTI`
+  resource appeared), converting, without a container yet, or ended without NIfTI.
+  The launch response cannot say: it holds one `bulk-launch-id`, and every target
+  reads "To be assigned".
+- **Retries are re-runs:** nothing is relaunched within a run. Run `--launch` again
+  to relaunch the scans that ended without NIfTI. A scan is left alone once
+  `--max-attempts` (default 3) of its containers have ended, earlier ones included.
+- **One failure does not stop the rest:** a project XNAT will not list is reported
+  `NOT READ` and the others go on. A failed check while following is retried at the
+  next one.
+- **Exit codes:** 0 when every launch was converted (or nothing was needed); 1 when
+  a project was not read, a launch failed, or a conversion ended without NIfTI; 2
+  for an unknown project id (nothing is launched); 3 when the wait ended first.
 - **Large backlogs:** conversions queue behind the cluster's capacity (and, with the
   FLIP#1448 conversion cap, at most `xnat.containerService.maxConcurrentJobs` at
-  once), so a backlog of hundreds outlasts the wait. The command then lists what is
-  still converting and exits 3. Re-run the report later: a new `--launch` leaves a
-  scan alone while its container runs.
+  once), so a backlog of hundreds outlasts the wait and exits 3. Re-run the report
+  later: a new `--launch` leaves a scan alone while its container runs.
 
 On Compose the same command is `make -C trust reconvert-nifti KIT=<CODE>
 [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<minutes>] [MAX_ATTEMPTS=<n>]
