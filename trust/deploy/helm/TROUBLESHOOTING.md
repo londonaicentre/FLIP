@@ -59,7 +59,7 @@ kubectl logs <pod-name> -n flip-trust -c <init-container-name>
 | Pod stuck in `Init:0/1` | Init container 0% complete. Check init container logs. | `kubectl logs <pod> -n flip-trust -c <init-container>` |
 | Pod stuck in `Init:1/2` | Second init container failed. | Check download-plugins or wait-for-xnat-db init logs |
 | `CrashLoopBackOff` | Container exits immediately. Check logs, check env vars. | `kubectl logs <pod> -n flip-trust` |
-| `xnat-web` `Running` but `0/1` ready for more than a few minutes | Its readiness probe, an anonymous `GET /xapi/siteConfig/buildInfo` on port 8080, is failing. Connection refused or a timeout means XNAT is still starting. A `401` or `403` means this XNAT version needs a login for buildInfo: `trust/xnat/tests/test_anonymous_endpoints.py` records the versions checked. | `kubectl exec -n flip-trust deploy/trust-release-flip-trust-xnat-web -c tomcat -- curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/xapi/siteConfig/buildInfo` |
+| `xnat-web` `Running` but `0/1` ready for more than a few minutes | Readiness (anonymous buildInfo, see `templates/xnat-web.yaml`) fails: `000` means XNAT is still starting, `401`/`403` means this XNAT version closed the path. | `kubectl exec -n flip-trust deploy/trust-release-flip-trust-xnat-web -c tomcat -- curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/xapi/siteConfig/buildInfo` |
 | `Pending` (PVC) | PVC not bound (check storage class) | `kubectl get pvc -n flip-trust` |
 | `Pending` (resources) | Insufficient CPU/memory | `kubectl describe pod <pod> -n flip-trust` — check Events |
 
