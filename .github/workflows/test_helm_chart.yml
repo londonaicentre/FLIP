@@ -694,6 +694,13 @@ jobs:
             --overwrite
           kubectl apply -f trust/deploy/helm/ci/test-secret.yaml
 
+      # SCRATCH (FLIP#1467 evidence): watch xnat-web from before the install, so the timeline
+      # starts at pod creation rather than whenever `helm install` returns.
+      - name: Start xnat-web probe timeline (scratch)
+        run: |
+          nohup bash trust/deploy/helm/ci/xnat-probe-timeline.sh > /tmp/xnat-timeline.log 2>&1 &
+          echo $! > /tmp/xnat-timeline.pid
+
       # The trust-seed hook installs its loaders from FLIP at trustData.seed.sourceRef (a GitHub
       # source archive), so the install must point it at the commit under test — the chart
       # default, `develop`, would seed with whatever loaders develop has, not this PR's. A fork's
@@ -706,9 +713,18 @@ jobs:
           helm install trust-release trust/deploy/helm/ \
             --namespace flip-trust \
             -f trust/deploy/helm/ci/test-values.yaml \
+            -f trust/deploy/helm/ci/test-values-xnat.yaml \
             --set secrets.existingName=flip-trust-secrets \
             --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api \
             --set trustData.seed.sourceRef="${SEED_REF}"
+
+      - name: xnat-web probe timeline (scratch)
+        run: |
+          pid=$(cat /tmp/xnat-timeline.pid)
+          for _ in $(seq 1 360); do kill -0 "$pid" 2>/dev/null || break; sleep 5; done
+          cat /tmp/xnat-timeline.log
+          grep -q "pod Ready" /tmp/xnat-timeline.log || { echo "::error::xnat-web never went Ready"; exit 1; }
+          grep -q "tomcat restartCount    0" /tmp/xnat-timeline.log || { echo "::error::xnat-web restarted"; exit 1; }
 
       - name: Check pod status
         run: |
@@ -716,7 +732,7 @@ jobs:
           kubectl wait --for=condition=ready pod \
             -l app.kubernetes.io/instance=trust-release \
             --namespace flip-trust \
-            --timeout=120s
+            --timeout=600s
 
       - name: Verify services
         run: |
@@ -730,3 +746,5 @@ jobs:
           kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api --tail=50
           # A failed trust-seed hook keeps its Job (only a succeeded one is deleted).
           kubectl logs -n flip-trust job/trust-release-flip-trust-trust-seed --tail=100 || true
+          cat /tmp/xnat-timeline.log || true
+          kubectl logs -n flip-trust -l app.kubernetes.io/component=xnat-web -c tomcat --tail=80 || true
