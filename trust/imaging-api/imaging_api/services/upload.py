@@ -13,6 +13,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import requests
 from fastapi import APIRouter
@@ -52,9 +53,10 @@ async def upload_data_to_xnat(
         XNAT secondary ID.
         accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label.
         net_id (str): The ID of the FL net that will run the training.
-        scan_id (str): The ID of the scan in XNAT. Will be created if it does not exist.
-        resource_id (str): XNAT resource type e.g DICOM/NIFTI. Custom value is allowed. Will be created if it does not
-        exist.
+        scan_id (str): The ID of the scan in XNAT. Will be created if it does not exist, with the scan type that
+        matches the session (see ``xsi_type_for_new_scan``).
+        resource_id (str): XNAT resource type e.g DICOM/NIFTI. Custom value is allowed. XNAT creates it with the first
+        file if it does not exist.
         files_relative_paths_to_upload (list[str]): List of relative file paths to be uploaded.
         exist_ok (bool): Whether to replace a file of the same name that already exists in the resource.
         headers (dict[str, str]): XNAT authentication headers.
@@ -102,29 +104,23 @@ async def upload_data_to_xnat(
     # Parse subject ID from experiment response
     subject_id = get_subject_id_from_experiment_response(experiment_response)
 
-    # Create scan in XNAT
-    # Note this function will not complain if the scan already exists.
-    create_xnat_scan(
-        project_id=project_id,
-        subject_id=subject_id,
-        experiment_id_or_label=accession_id,
-        scan_id=scan_id,
-        headers=headers,
-    )
-
-    # Create resource in XNAT
-    try:
-        create_xnat_resource(
+    # A file PUT needs its scan to exist: XNAT answers 404 "Unable to identify scan" otherwise
+    # (xnat-web 1.10.0 XNATTemplate.java:268-270). So only a scan the session does not hold yet is
+    # created, typed like the session. An existing scan is left alone, since a scan PUT carrying
+    # another xsiType is refused with a 409 (ScanResource.java:294-297).
+    session_xsi_type, existing_scan_xsi_types = get_xsi_types_from_experiment_response(experiment_response)
+    if scan_id not in existing_scan_xsi_types:
+        create_xnat_scan(
             project_id=project_id,
             subject_id=subject_id,
             experiment_id_or_label=accession_id,
             scan_id=scan_id,
-            resource_id=resource_id,
+            xsi_type=xsi_type_for_new_scan(session_xsi_type, list(existing_scan_xsi_types.values())),
             headers=headers,
         )
-    except AlreadyExistsError:
-        # This is the only exception we want to ignore
-        logger.info(f"Resource '{resource_id}' already exists for this scan. Skipping creation.")
+
+    # There is no resource PUT: the file PUT creates the resource, with this label, when the scan
+    # has none (xnat-web 1.10.0 ResourceModifierA.addFile, lines 106-117).
 
     # Upload files to XNAT
     uploaded_files: list[str] = []
@@ -164,25 +160,23 @@ def create_xnat_scan(
     subject_id: str,
     experiment_id_or_label: str,
     scan_id: str,
+    xsi_type: str,
     headers: dict[str, str],
 ) -> None:
     """
-    Creates a scan in XNAT if it does not exist.
+    Creates a new scan in an XNAT session.
 
-    Normally when we upload a file to XNAT, the scan will already exist.
-    TODO reassess if this function is necessary -- could require the scan to exist
-
-    In order to create a scan, you must specify the xsiType of the scan.
-    See https://wiki.xnat.org/xnat-api/image-session-scans-api#ImageSessionScansAPI-AddScanToAnImageSession
-    TODO Note this is hardcoded to MR scans below (xsiType=xnat:mrScanData), but it is not really used for anything.
-
-    Note this function will not complain if the scan already exists.
+    XNAT needs the scan's xsi:type to create it, and refuses a scan PUT without one with a 417 "Need PUT Contents".
+    Call this only for a scan ID the session does not hold yet. On an existing scan, XNAT refuses a PUT whose xsiType
+    differs from the scan's own with a 409 "Specified xsiType differs from existing xsiType" (xnat-web 1.10.0
+    ScanResource.java:294-297).
 
     Args:
         project_id (str): The ID of the XNAT project.
         subject_id (str): The ID of the subject in XNAT.
         experiment_id_or_label (str): The ID or label of the experiment in XNAT.
-        scan_id (str): The ID of the scan in XNAT.
+        scan_id (str): The ID of the new scan.
+        xsi_type (str): The new scan's xsi:type, e.g. ``xnat:crScanData`` (see ``xsi_type_for_new_scan``).
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
@@ -202,7 +196,7 @@ def create_xnat_scan(
         experiment_id_or_label,
         "scans",
         scan_id,
-        query={"xsiType": "xnat:mrScanData"},
+        query={"xsiType": xsi_type},
     )
 
     response = requests.put(scan_url, headers=headers)
@@ -211,54 +205,71 @@ def create_xnat_scan(
         raise Exception(f"Error creating scan: {response.text}")
 
 
-def create_xnat_resource(
-    project_id: str,
-    subject_id: str,
-    experiment_id_or_label: str,
-    scan_id: str,
-    resource_id: str,
-    headers: dict[str, str],
-) -> None:
+def get_xsi_types_from_experiment_response(experiment_response: dict[str, Any]) -> tuple[str, dict[str, str]]:
     """
-    Creates a resource folder under a scan in XNAT if it does not exist.
-    A resource can have any name, but it is typically "DICOM" or "NIFTI".
+    Extracts the session's xsi:type and the xsi:type of each scan it holds from the XNAT experiment response JSON.
+
+    The response is XNAT's full experiment document (``GET .../experiments/{label}?format=json``). It lists the
+    session's scans as its ``scans/scan`` child, each with its own ``meta["xsi:type"]`` and ``data_fields["ID"]``.
 
     Args:
-        project_id (str): The ID of the XNAT project.
-        subject_id (str): The ID of the subject in XNAT.
-        experiment_id_or_label (str): The ID or label of the experiment in XNAT.
-        scan_id (str): The ID of the scan in XNAT.
-        resource_id (str): The ID of the resource in XNAT.
-        headers (dict[str, str]): XNAT authentication headers.
+        experiment_response (dict[str, Any]): XNAT experiment response JSON.
 
     Returns:
-        None
+        tuple[str, dict[str, str]]: The session's xsi:type (e.g. ``xnat:crSessionData``), and each existing scan's ID
+        mapped to its xsi:type (e.g. ``{"1": "xnat:crScanData"}``), in the session's order.
 
     Raises:
-        ValueError: If an identifier is empty or a dot-segment.
-        AlreadyExistsError: If the resource already exists in XNAT.
-        Exception: If there is an error during the creation of the resource.
+        Exception: If the response JSON does not have the shape of an XNAT experiment document.
     """
-    resource_url = xnat_url(
-        "data",
-        "projects",
-        project_id,
-        "subjects",
-        subject_id,
-        "experiments",
-        experiment_id_or_label,
-        "scans",
-        scan_id,
-        "resources",
-        resource_id,
+    try:
+        item = experiment_response["items"][0]
+        session_xsi_type = str(item["meta"]["xsi:type"])
+        scan_xsi_types = {
+            str(scan["data_fields"]["ID"]): str(scan["meta"]["xsi:type"])
+            for child in item.get("children", [])
+            if child.get("field") == "scans/scan"
+            for scan in child.get("items", [])
+        }
+    except (KeyError, IndexError, TypeError, AttributeError) as e:
+        raise Exception(f"Failed to parse XNAT experiment data JSON: {e!r}")
+    return session_xsi_type, scan_xsi_types
+
+
+def xsi_type_for_new_scan(session_xsi_type: str, existing_scan_xsi_types: list[str]) -> str:
+    """
+    Chooses the xsi:type of a scan that FLIP adds to an existing XNAT session.
+
+    XNAT keeps no session-to-scan type table. Its DICOM importer types each scan and each session from the SOP class
+    of the images (dicom-xnat-sop ``SOPModel``, with ``series-scans.properties`` and ``study-sessions.properties``).
+    Those two tables pair every ``xnat:<m>SessionData`` they produce with ``xnat:<m>ScanData``, with two exceptions:
+    an ``xnat:rtSessionData`` holds ``xnat:rtImageScanData``, and an ``xnat:otherDicomSessionData`` holds other types.
+    A PET-MR session holds both PET and MR scans. So the new scan takes, in order:
+
+    1. the session's own scan type, ``xnat:<m>ScanData``, if the session already holds a scan of that type;
+    2. otherwise the type of the session's first scan, which XNAT chose when it imported that scan;
+    3. with no scan to copy, the session's own scan type, by name.
+
+    Args:
+        session_xsi_type (str): The session's xsi:type, e.g. ``xnat:crSessionData``.
+        existing_scan_xsi_types (list[str]): The xsi:types of the session's existing scans, in the session's order.
+
+    Returns:
+        str: The xsi:type for the new scan, e.g. ``xnat:crScanData``.
+
+    Raises:
+        ValueError: If the session holds no scan and its xsi:type is not of the form ``<prefix>SessionData``.
+    """
+    own_scan_xsi_type = (
+        session_xsi_type.removesuffix("SessionData") + "ScanData" if session_xsi_type.endswith("SessionData") else None
     )
-
-    response = requests.put(resource_url, headers=headers)
-
-    if response.status_code == 409:
-        raise AlreadyExistsError(f"Resource already exists: {resource_id}")
-    elif response.status_code != 200:
-        raise Exception(f"Error creating resource: {response.text}")
+    if own_scan_xsi_type is not None and own_scan_xsi_type in existing_scan_xsi_types:
+        return own_scan_xsi_type
+    if existing_scan_xsi_types:
+        return existing_scan_xsi_types[0]
+    if own_scan_xsi_type is None:
+        raise ValueError(f"Cannot choose a scan type for a new scan in an empty session of type {session_xsi_type!r}")
+    return own_scan_xsi_type
 
 
 def xnat_upload_duplicates(response: requests.Response) -> list[str]:

@@ -158,6 +158,11 @@ name. `true` replaces it: the upload is sent to XNAT with `overwrite=true`, with
 old file. `false` leaves the existing file in place and fails the request. XNAT reports the clash in its
 `200` response (a `duplicates` list), not with an error status.
 
+Neither the scan nor the resource has to exist. XNAT creates a missing resource with the first file. A
+`scan_id` the session does not hold yet is created first, with the session's own scan type (an
+`xnat:crScanData` in an `xnat:crSessionData`, for example; see `xsi_type_for_new_scan` in
+`services/upload.py`). An existing scan is left as it is.
+
 ### Users
 
 Create users, update user details, or add a user to an XNAT project.
