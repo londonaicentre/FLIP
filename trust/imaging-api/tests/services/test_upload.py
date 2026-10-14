@@ -20,8 +20,8 @@ import requests
 
 from imaging_api.config import get_settings
 from imaging_api.services.upload import (
-    create_xnat_resource,
     create_xnat_scan,
+    get_scan_xsi_types_from_experiment_response,
     upload_data_to_xnat,
     upload_file_to_xnat,
     xnat_kept_existing_file,
@@ -54,11 +54,30 @@ def _xnat_put_response(
     return response
 
 
+def _experiment_response(scans: tuple[tuple[str, str], ...] = (("SCAN1", "xnat:crScanData"),)) -> dict:
+    """Build XNAT's experiment document (``GET .../experiments/{label}?format=json``), trimmed to what the upload reads.
+
+    Args:
+        scans (tuple[tuple[str, str], ...]): ``(scan ID, scan xsi:type)`` for each existing scan, in order. An empty
+            session has no ``scans/scan`` child.
+
+    Returns:
+        dict: The experiment document.
+    """
+    items = [{"meta": {"xsi:type": xsi_type}, "data_fields": {"ID": scan_id}} for scan_id, xsi_type in scans]
+    children = [{"field": "scans/scan", "items": items}] if scans else []
+    return {
+        "items": [
+            {"meta": {"xsi:type": "xnat:crSessionData"}, "data_fields": {"subject_ID": "SUBJ1"}, "children": children}
+        ]
+    }
+
+
 # ── create_xnat_scan ──
 
 
 @patch("imaging_api.services.upload.requests.put")
-def test_create_existing_xnat_scan(mock_put, headers):
+def test_create_xnat_scan_sends_the_given_xsi_type(mock_put, headers):
     mock_put.return_value = MagicMock(status_code=200)
 
     create_xnat_scan(
@@ -66,48 +85,39 @@ def test_create_existing_xnat_scan(mock_put, headers):
         subject_id="XNAT_S00002",
         experiment_id_or_label="XNAT_E00002",
         scan_id="1_2_826_0_1_3680043_8_274_1_1_8323329_1189734_1740750875_622789",
+        xsi_type="xnat:dxScanData",
         headers=headers,
     )
+
+    assert urlsplit(mock_put.call_args.args[0]).query == "xsiType=xnat%3AdxScanData"
 
 
 @patch("imaging_api.services.upload.requests.put")
 def test_create_xnat_scan_failure(mock_put, headers):
     mock_put.return_value = MagicMock(status_code=500, text="Internal error")
     with pytest.raises(Exception, match="Error creating scan"):
-        create_xnat_scan("PROJ", "SUBJ", "EXP", "SCAN1", headers)
+        create_xnat_scan("PROJ", "SUBJ", "EXP", "SCAN1", "xnat:crScanData", headers)
 
 
-# ── create_xnat_resource ──
+# ── get_scan_xsi_types_from_experiment_response ──
 
 
-@patch("imaging_api.services.upload.requests.put")
-def test_create_existing_xnat_resource(mock_put, headers):
-    mock_put.return_value = MagicMock(status_code=409)
+def test_get_scan_xsi_types_reads_every_scan_and_nothing_else():
+    response = _experiment_response((("1", "xnat:mrScanData"), ("3", "xnat:otherDicomScanData")))
+    share = {"meta": {"xsi:type": "xnat:experimentData_share"}, "data_fields": {"project": "OTHER"}}
+    response["items"][0]["children"].insert(0, {"field": "sharing/share", "items": [share]})
 
-    with pytest.raises(AlreadyExistsError) as exc_info:
-        create_xnat_resource(
-            project_id="test",
-            subject_id="XNAT_S00002",
-            experiment_id_or_label="XNAT_E00002",
-            scan_id="1_2_826_0_1_3680043_8_274_1_1_8323329_1189734_1740750875_622789",
-            resource_id="DICOM",
-            headers=headers,
-        )
-
-    assert str(exc_info.value) == "Resource already exists: DICOM"
+    assert get_scan_xsi_types_from_experiment_response(response) == {
+        "1": "xnat:mrScanData",
+        "3": "xnat:otherDicomScanData",
+    }
+    assert get_scan_xsi_types_from_experiment_response(_experiment_response(())) == {}
 
 
-@patch("imaging_api.services.upload.requests.put")
-def test_create_xnat_resource_non_200_non_409(mock_put, headers):
-    mock_put.return_value = MagicMock(status_code=500, text="Server error")
-    with pytest.raises(Exception, match="Error creating resource"):
-        create_xnat_resource("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", headers)
-
-
-@patch("imaging_api.services.upload.requests.put")
-def test_create_xnat_resource_success(mock_put, headers):
-    mock_put.return_value = MagicMock(status_code=200)
-    create_xnat_resource("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", headers)
+@pytest.mark.parametrize("response", [{}, {"items": []}, {"items": None}])
+def test_get_scan_xsi_types_refuses_a_response_that_is_not_an_experiment_document(response):
+    with pytest.raises(Exception, match="Failed to parse XNAT experiment data JSON"):
+        get_scan_xsi_types_from_experiment_response(response)
 
 
 # ── xnat_kept_existing_file ──
@@ -249,14 +259,11 @@ def test_upload_file_exist_ok_false_already_exists(mock_put, headers, tmp_path):
 class TestUploadDataToXnat:
     @pytest.mark.asyncio
     @patch("imaging_api.services.upload.upload_file_to_xnat")
-    @patch("imaging_api.services.upload.create_xnat_resource")
     @patch("imaging_api.services.upload.create_xnat_scan")
     @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.upload.get_experiment", return_value={})
+    @patch("imaging_api.services.upload.get_experiment", return_value=_experiment_response())
     @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
-    async def test_success(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_create_res, mock_upload, headers
-    ):
+    async def test_success(self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_upload, headers):
         mock_get_project.return_value = MagicMock(ID="PROJ1")
         mock_upload.return_value = f"{XNAT_URL}/data/projects/PROJ1/file.nii"
 
@@ -298,13 +305,12 @@ class TestUploadDataToXnat:
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.upload.upload_file_to_xnat", return_value="url")
-    @patch("imaging_api.services.upload.create_xnat_resource")
     @patch("imaging_api.services.upload.create_xnat_scan")
     @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.upload.get_experiment", return_value={})
+    @patch("imaging_api.services.upload.get_experiment", return_value=_experiment_response())
     @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
     async def test_upload_invalidates_cached_downloads_across_nets(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_create_res, mock_upload, headers
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_upload, headers
     ):
         """An upload changes the accession's XNAT content, so every net's cached download of
         (project, accession) must be invalidated; other accessions' caches must survive."""
@@ -335,13 +341,12 @@ class TestUploadDataToXnat:
 
     @pytest.mark.asyncio
     @patch("imaging_api.services.upload.upload_file_to_xnat", return_value="url")
-    @patch("imaging_api.services.upload.create_xnat_resource")
     @patch("imaging_api.services.upload.create_xnat_scan")
     @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.upload.get_experiment", return_value={})
+    @patch("imaging_api.services.upload.get_experiment", return_value=_experiment_response())
     @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
     async def test_upload_with_no_cached_downloads_succeeds(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_create_res, mock_upload, headers
+        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_upload, headers
     ):
         mock_get_project.return_value = MagicMock(ID="PROJ1")
 
@@ -365,10 +370,9 @@ class TestUploadDataToXnat:
     @pytest.mark.asyncio
     @patch("imaging_api.services.upload.invalidate_accession", side_effect=OSError("stale NFS handle"))
     @patch("imaging_api.services.upload.upload_file_to_xnat", return_value="url")
-    @patch("imaging_api.services.upload.create_xnat_resource")
     @patch("imaging_api.services.upload.create_xnat_scan")
     @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.upload.get_experiment", return_value={})
+    @patch("imaging_api.services.upload.get_experiment", return_value=_experiment_response())
     @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
     async def test_invalidation_failure_does_not_fail_completed_upload(
         self,
@@ -376,7 +380,6 @@ class TestUploadDataToXnat:
         mock_get_exp,
         mock_get_subj,
         mock_create_scan,
-        mock_create_res,
         mock_upload,
         mock_invalidate,
         headers,
@@ -435,55 +438,63 @@ class TestUploadDataToXnat:
                         headers=headers,
                     )
 
-    @pytest.mark.asyncio
-    @patch("imaging_api.services.upload.upload_file_to_xnat")
-    @patch("imaging_api.services.upload.create_xnat_resource")
-    @patch("imaging_api.services.upload.create_xnat_scan")
-    @patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1")
-    @patch("imaging_api.services.upload.get_experiment", return_value={})
-    @patch("imaging_api.services.upload.get_project_from_central_hub_project_id")
-    async def test_resource_already_exists_is_ignored(
-        self, mock_get_project, mock_get_exp, mock_get_subj, mock_create_scan, mock_create_res, mock_upload, headers
+
+# ── upload_data_to_xnat: the requests it sends ──
+
+
+_SCANS_PATH = "/data/projects/PROJ1/subjects/SUBJ1/experiments/ACC123/scans"
+
+
+async def _upload_into(experiment_response: dict, scan_id: str, tmp_path, sent: list) -> list[tuple[str, str, str]]:
+    """Upload one file into ``scan_id`` of the session that ``experiment_response`` describes.
+
+    Returns:
+        list[tuple[str, str, str]]: The method, path and query of every request sent to XNAT.
+    """
+    upload_dir = tmp_path / "net1" / "upload"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    (upload_dir / "scan.nii").write_bytes(b"nifti-data")
+    with (
+        patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
+        patch(
+            "imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="PROJ1")
+        ),
+        patch("imaging_api.services.upload.get_experiment", return_value=experiment_response),
     ):
-        mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_create_res.side_effect = AlreadyExistsError("Resource already exists")
-        mock_upload.return_value = "url"
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            upload_dir = os.path.join(tmp_dir, "net1", "upload")
-            os.makedirs(upload_dir)
-            with open(os.path.join(upload_dir, "scan.nii"), "w") as f:
-                f.write("data")
-
-            with patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", tmp_dir):
-                result = await upload_data_to_xnat(
-                    central_hub_project_id="hub-proj-1",
-                    accession_id="ACC123",
-                    net_id="net1",
-                    scan_id="SCAN1",
-                    resource_id="NIFTI",
-                    files_relative_paths_to_upload=["scan.nii"],
-                    exist_ok=False,
-                    headers=headers,
-                )
-
-            assert len(result) == 1
+        await upload_data_to_xnat("hub-proj-1", "ACC123", "net1", scan_id, "NIFTI", ["scan.nii"], False, {})
+    urls = [(str(r.method), urlsplit(str(r.url))) for r in sent]
+    return [(method, url.path, url.query) for method, url in urls]
 
 
-@pytest.mark.parametrize("sink", ["scan", "resource", "upload"])
+@pytest.mark.asyncio
+async def test_upload_into_an_existing_scan_sends_only_the_file_put(tmp_path, sent_xnat_requests):
+    response = _experiment_response((("SCAN1", "xnat:dxScanData"),))
+
+    sent = await _upload_into(response, "SCAN1", tmp_path, sent_xnat_requests)
+
+    assert sent == [("PUT", f"{_SCANS_PATH}/SCAN1/resources/NIFTI/files/scan.nii", "inbody=true")]
+
+
+@pytest.mark.asyncio
+async def test_upload_into_a_new_scan_creates_it_with_the_type_of_the_sessions_first_scan(tmp_path, sent_xnat_requests):
+    response = _experiment_response((("1", "xnat:ctScanData"), ("2", "xnat:otherDicomScanData")))
+
+    sent = await _upload_into(response, "NEW", tmp_path, sent_xnat_requests)
+
+    assert sent == [
+        ("PUT", f"{_SCANS_PATH}/NEW", "xsiType=xnat%3ActScanData"),
+        ("PUT", f"{_SCANS_PATH}/NEW/resources/NIFTI/files/scan.nii", "inbody=true"),
+    ]
+
+
+@pytest.mark.parametrize("sink", ["scan", "upload"])
 def test_identifiers_stay_in_one_segment_at_http_boundary(sink, xnat_path_segment, tmp_path, sent_xnat_requests):
     raw, encoded = xnat_path_segment
     headers = {"X-Request-ID": "trace-1"}
     if sink == "scan":
-        create_xnat_scan(raw, raw, raw, raw, headers)
+        create_xnat_scan(raw, raw, raw, raw, "xnat:crScanData", headers)
         expected_path = f"/data/projects/{encoded}/subjects/{encoded}/experiments/{encoded}/scans/{encoded}"
-        expected_query = "xsiType=xnat%3AmrScanData"
-    elif sink == "resource":
-        create_xnat_resource(raw, raw, raw, raw, raw, headers)
-        expected_path = (
-            f"/data/projects/{encoded}/subjects/{encoded}/experiments/{encoded}/scans/{encoded}/resources/{encoded}"
-        )
-        expected_query = ""
+        expected_query = "xsiType=xnat%3AcrScanData"
     else:
         file_path = tmp_path / "image ?#% α.nii.gz"
         file_path.write_bytes(b"image-data")
@@ -513,11 +524,6 @@ def test_identifiers_stay_in_one_segment_at_http_boundary(sink, xnat_path_segmen
         ("scan", "subject_id"),
         ("scan", "experiment_id_or_label"),
         ("scan", "scan_id"),
-        ("resource", "project_id"),
-        ("resource", "subject_id"),
-        ("resource", "experiment_id_or_label"),
-        ("resource", "scan_id"),
-        ("resource", "resource_id"),
         ("upload", "project_id"),
         ("upload", "subject_id"),
         ("upload", "experiment_id_or_label"),
@@ -534,8 +540,10 @@ def test_empty_and_dot_segments_fail_before_http(sink, field, invalid, tmp_path,
         "headers": {},
         field: invalid,
     }
-    call = {"scan": create_xnat_scan, "resource": create_xnat_resource, "upload": upload_file_to_xnat}[sink]
-    if sink != "scan":
+    call = {"scan": create_xnat_scan, "upload": upload_file_to_xnat}[sink]
+    if sink == "scan":
+        kwargs["xsi_type"] = "xnat:crScanData"
+    else:
         kwargs.setdefault("resource_id", "NIFTI")
     if sink == "upload":
         file_path = tmp_path / "image.nii.gz"

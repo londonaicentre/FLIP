@@ -26,6 +26,12 @@ _REQUEST_BODY = {
     "exist_ok": False,
 }
 
+# XNAT's experiment document for ACC123, trimmed to what the upload reads: its subject and its one scan, SCAN1.
+_SCAN1 = {"meta": {"xsi:type": "xnat:crScanData"}, "data_fields": {"ID": "SCAN1"}}
+_EXPERIMENT_WITH_SCAN1 = {
+    "items": [{"data_fields": {"subject_ID": "SUBJ1"}, "children": [{"field": "scans/scan", "items": [_SCAN1]}]}]
+}
+
 
 def test_upload_data_rejects_a_project_id_that_fails_authentication(client):
     with patch("imaging_api.routers.upload.decrypt", side_effect=InvalidTag()):
@@ -166,10 +172,8 @@ def test_upload_data_rejected_xnat_put_is_an_error_not_a_url(client, tmp_path):
         patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
         patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
         patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
-        patch("imaging_api.services.upload.get_experiment", return_value={}),
-        patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1"),
-        patch("imaging_api.services.upload.create_xnat_scan"),
-        patch("imaging_api.services.upload.create_xnat_resource"),
+        # SCAN1 already exists, so the upload sends no scan PUT and requests.put sees only the file.
+        patch("imaging_api.services.upload.get_experiment", return_value=_EXPERIMENT_WITH_SCAN1),
         patch(
             "imaging_api.services.upload.requests.put",
             return_value=MagicMock(status_code=403, ok=False, text="Forbidden"),
@@ -195,10 +199,8 @@ def test_upload_data_file_xnat_kept_is_an_error_and_leaves_the_download_cache(cl
         patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
         patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
         patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
-        patch("imaging_api.services.upload.get_experiment", return_value={}),
-        patch("imaging_api.services.upload.get_subject_id_from_experiment_response", return_value="SUBJ1"),
-        patch("imaging_api.services.upload.create_xnat_scan"),
-        patch("imaging_api.services.upload.create_xnat_resource"),
+        # SCAN1 already exists, so the upload sends no scan PUT and requests.put sees only the file.
+        patch("imaging_api.services.upload.get_experiment", return_value=_EXPERIMENT_WITH_SCAN1),
         patch("imaging_api.services.upload.requests.put", return_value=kept),
         patch("imaging_api.services.upload.invalidate_accession") as mock_invalidate,
     ):
@@ -207,3 +209,24 @@ def test_upload_data_file_xnat_kept_is_an_error_and_leaves_the_download_cache(cl
     assert response.status_code == 500
     assert response.json()["detail"].startswith("Failed to upload files: File already exists on XNAT")
     mock_invalidate.assert_not_called()
+
+
+def test_upload_into_a_new_scan_of_a_session_without_scans_is_a_server_error(client, tmp_path):
+    # With no scan to take the new scan's type from, the fault is XNAT's state, not the request.
+    upload_dir = tmp_path / "net1" / "upload"
+    upload_dir.mkdir(parents=True)
+    (upload_dir / "scan.nii").write_bytes(b"nifti-data")
+    empty_session = {"items": [{"data_fields": {"subject_ID": "SUBJ1"}, "children": []}]}
+
+    with (
+        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
+        patch("imaging_api.services.upload.get_project_from_central_hub_project_id", return_value=MagicMock(ID="P")),
+        patch("imaging_api.services.upload.get_experiment", return_value=empty_session),
+        patch("imaging_api.services.upload.requests.put") as mock_put,
+    ):
+        response = client.put("/upload/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 500
+    assert "holds no scan to take its type from" in response.json()["detail"]
+    mock_put.assert_not_called()
