@@ -29,6 +29,9 @@ on:
       - "fl-tutorials/flower/xray_classification/**"
       - "fl-tutorials/nvflare/image_segmentation/**"
       - "fl-tutorials/flower/3d_spleen_segmentation/**"
+      # The biomarker causal-discovery pairs, same shape (nvflare reference, flower copy).
+      - "fl-tutorials/nvflare/tabular_causal_discovery/**"
+      - "fl-tutorials/flower/biomarker_causal_discovery/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
   pull_request:
@@ -45,6 +48,9 @@ on:
       - "fl-tutorials/flower/xray_classification/**"
       - "fl-tutorials/nvflare/image_segmentation/**"
       - "fl-tutorials/flower/3d_spleen_segmentation/**"
+      # The biomarker causal-discovery pairs, same shape (nvflare reference, flower copy).
+      - "fl-tutorials/nvflare/tabular_causal_discovery/**"
+      - "fl-tutorials/flower/biomarker_causal_discovery/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
 
