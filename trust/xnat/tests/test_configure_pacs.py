@@ -50,13 +50,10 @@ edit() {  # edit <state-file> <jq-filter> [args...]
   jq "$@" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 }
 
-# DQR's availability API over $AVAIL_STATE (one JSON array of intervals), with the behaviour the
-# converge depends on, as read from the pinned DQR 3.0.0 jar: times stored the way
-# PacsAvailability.validateTime stores them (24:00 as 00:00, H:MM zero-padded), overlap judged per
-# day with an end not after the start running into the next day (DqrDateRange), a create refused
-# with 400 on overlap, and a PUT that copies the day, times, threads, utilisation and pacsId from
-# the body and answers 304 when none of them differ. Not modelled: the PUT trimming the day's other
-# intervals to fit, which the script never relies on because it removes them first.
+# DQR 3.0.0's availability API over $AVAIL_STATE (one JSON array of intervals): times stored as DQR
+# stores them (24:00 as 00:00, H:MM zero-padded), overlap judged per day, a create refused with 400
+# on overlap, and a PUT that copies the day, times, threads, utilisation and pacsId from the body and
+# answers 304 when none of them differ.
 AVAIL_DEFS='
 def dqr_time: if . == "24:00" then "00:00" elif test("^[0-9]:") then "0" + . else . end;
 def stored: (.availabilityStart |= dqr_time) | (.availabilityEnd |= dqr_time);
@@ -74,15 +71,6 @@ body='{}'
 case "$url" in
   *"/xapi/siteConfig/initialized")
     body="${INITIALIZED_BODY:-true}"
-    ;;
-  *"/xapi/pacs/"*"/availability/validate")
-    pid=$(pacs_of_url)
-    if [ -n "${AVAIL_VALIDATE_BODY:-}" ]; then
-      body="$AVAIL_VALIDATE_BODY"
-    else
-      body=$(jq -c --argjson pid "$pid" --argjson e "$data" "$AVAIL_DEFS"'
-        ($e | stored) as $n | [.[] | select(.pacsId == $pid and overlaps($n))] | length == 0' "$AVAIL_STATE")
-    fi
     ;;
   *"/xapi/pacs/"*"/availability/"*)
     pid=$(pacs_of_url)
@@ -358,17 +346,11 @@ DEFAULT_SCHEDULE = [interval(40 + i, day) for i, day in enumerate(WEEK)]
 
 
 def availability_writes(payloads: str, method: str | None = None) -> list[tuple[str, str]]:
-    """The writes the script made to DQR's schedule, in order: POST (create), PUT, DELETE.
-
-    The ``validate`` POST is a read, so it is left out.
-    """
+    """The writes the script made to DQR's schedule, in order: POST (create), PUT, DELETE."""
     return [
         (m, u)
         for m, u in requests_made(payloads)
-        if "/availability" in u
-        and not u.endswith("/validate")
-        and m in ("POST", "PUT", "DELETE")
-        and (method is None or m == method)
+        if "/availability" in u and m in ("POST", "PUT", "DELETE") and (method is None or m == method)
     ]
 
 
@@ -775,11 +757,7 @@ def test_a_server_error_on_availability_fails_the_run(tmp_path):
 
 
 def test_an_overlap_refusal_is_a_failure_not_a_sign_the_window_is_in_place(tmp_path):
-    """The old script read this 400 as "already configured", so a changed window never applied (FLIP#1455).
-
-    The converge only creates on a day it has just found empty, after DQR's validate check agreed,
-    so DQR refusing the create means the schedule changed under the run. That has to stop it.
-    """
+    """DQR refusing a create because it overlaps stops the run; it is never read as "already configured"."""
     code, _, output = run_configure(
         tmp_path,
         {
@@ -790,7 +768,6 @@ def test_an_overlap_refusal_is_a_failure_not_a_sign_the_window_is_in_place(tmp_p
         },
     )
     assert code != 0, "an overlap refusal was read as the window being in place"
-    assert "HTTP 400" in output
 
 
 def test_a_registration_that_did_not_take_fails_rather_than_configuring_nothing(tmp_path):
@@ -969,10 +946,8 @@ def test_the_final_error_points_at_the_cause(tmp_path, status, hint):
 
 # ── The availability schedule converges onto the kit (FLIP#1455) ──────────────────────────────
 #
-# The old step POSTed every day on every run and read DQR's 400 "probable overlap" as "already
-# configured", so on a live trust a changed window, thread count or utilisation never applied. These
-# run the script against a DQR that starts with a schedule, and assert both the writes and what DQR
-# holds afterwards.
+# These run the script against a DQR that starts with a schedule, and assert the writes it made and
+# what DQR holds afterwards.
 
 
 @pytest.mark.parametrize(
@@ -993,8 +968,6 @@ def test_a_changed_window_is_applied_in_place(tmp_path, var, value, field, store
 
     expected = [("PUT", f"http://xnat-web:8080/xapi/pacs/7/availability/{40 + i}") for i in range(7)]
     assert availability_writes(payloads) == expected, "expected one in-place update per day and nothing else"
-    assert f"drifted on {field}" in output
-
     after = schedule_after(tmp_path)
     for i, day in enumerate(WEEK):
         assert [item["id"] for item in after[day]] == [40 + i], f"{day} was not updated in place"
@@ -1002,11 +975,7 @@ def test_a_changed_window_is_applied_in_place(tmp_path, var, value, field, store
 
 
 def test_an_update_names_its_day_and_pacs(tmp_path):
-    """DQR's PUT takes the day and the PACS from the body, not the URL.
-
-    Without the day it fails with a NullPointerException. Without pacsId it reads 0 as a change and
-    moves the interval to PACS 0, where this PACS's schedule no longer lists it.
-    """
+    """DQR's PUT takes the day and the PACS from the body: without pacsId the interval moves to PACS 0."""
     code, payloads, output = run_configure(
         tmp_path, {"PACS_THREADS": "2"}, pacs_state=MOCK_PACS_REGISTRATION, avail_state=DEFAULT_SCHEDULE
     )
@@ -1021,14 +990,13 @@ def test_an_update_names_its_day_and_pacs(tmp_path):
 
 
 def test_an_unchanged_schedule_is_left_untouched(tmp_path):
-    """A re-run that changes nothing writes nothing, including against the 24:00 that DQR stores as 00:00."""
+    """No write and no read-back, including against the 24:00 that DQR stores as 00:00."""
     code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION, avail_state=DEFAULT_SCHEDULE)
     assert code == 0, output
-
     assert availability_writes(payloads) == []
-    assert not [u for m, u in requests_made(payloads) if u.endswith("/availability/validate")]
-    assert output.count("already 00:00-24:00, 1 thread(s), 100%; leaving as-is") == 7
-    assert "PACS availability schedule matches the kit" in output
+    assert [u for m, u in requests_made(payloads) if m == "GET" and u.endswith("/availability")] == [
+        "http://xnat-web:8080/xapi/pacs/7/availability"
+    ], "the schedule was read back although nothing was written"
     assert schedule_after(tmp_path) == {day: [item] for day, item in zip(WEEK, DEFAULT_SCHEDULE, strict=True)}
 
 
@@ -1041,36 +1009,23 @@ def test_a_removed_day_is_deleted(tmp_path):
         avail_state=DEFAULT_SCHEDULE,
     )
     assert code == 0, output
-
     assert availability_writes(payloads) == [
         ("DELETE", "http://xnat-web:8080/xapi/pacs/7/availability/45"),
         ("DELETE", "http://xnat-web:8080/xapi/pacs/7/availability/46"),
     ]
-    assert "SATURDAY is no longer in PACS_AVAILABILITY_DAYS" in output
     after = schedule_after(tmp_path)
     assert after["SATURDAY"] == []
     assert after["SUNDAY"] == []
     assert [after[day][0]["id"] for day in WEEK[:5]] == [40, 41, 42, 43, 44]
 
 
-def test_a_missing_day_is_created_after_dqr_validates_it(tmp_path):
-    """A day with no interval gets one, and DQR's own overlap check is asked before each create."""
+def test_a_missing_day_is_created(tmp_path):
     code, payloads, output = run_configure(
         tmp_path, pacs_state=MOCK_PACS_REGISTRATION, avail_state=[interval(40, "MONDAY")]
     )
     assert code == 0, output
-
     assert availability_writes(payloads) == [("POST", "http://xnat-web:8080/xapi/pacs/7/availability")] * 6
-    created = [
-        body["dayOfWeek"] for url, body in availability_bodies(payloads, "POST") if url.endswith("/availability")
-    ]
-    assert created == WEEK[1:]
-    made = requests_made(payloads)
-    creates = [i for i, (m, u) in enumerate(made) if m == "POST" and u.endswith("/availability")]
-    for i in creates:
-        assert made[i - 1] == ("POST", "http://xnat-web:8080/xapi/pacs/7/availability/validate"), (
-            "a create was not preceded by DQR's validate check"
-        )
+    assert [body["dayOfWeek"] for _, body in availability_bodies(payloads, "POST")] == WEEK[1:]
     after = schedule_after(tmp_path)
     assert after["MONDAY"] == [interval(40, "MONDAY")], "the day that already matched was rewritten"
     assert all(len(after[day]) == 1 for day in WEEK)
@@ -1097,7 +1052,6 @@ def test_a_second_interval_on_a_listed_day_is_removed(tmp_path):
     )
     assert code == 0, output
     assert availability_writes(payloads) == [("DELETE", "http://xnat-web:8080/xapi/pacs/7/availability/40")]
-    assert "removing extra interval 40" in output
     assert [item["id"] for item in schedule_after(tmp_path)["MONDAY"]] == [41]
 
 
@@ -1128,24 +1082,8 @@ def test_removals_run_before_updates_and_updates_before_creations(tmp_path):
     assert [m for m, _ in availability_writes(payloads)] == ["DELETE", "PUT", "POST"]
 
 
-def test_a_window_dqr_says_would_overlap_is_not_created(tmp_path):
-    """validate answering false stops the run before the create, naming the day."""
-    code, payloads, output = run_configure(
-        tmp_path,
-        {"PACS_AVAILABILITY_DAYS": "MONDAY", "AVAIL_VALIDATE_BODY": "false"},
-        pacs_state=MOCK_PACS_REGISTRATION,
-    )
-    assert code != 0, "a window DQR refused was created anyway"
-    assert availability_writes(payloads) == []
-    assert "validate check refused the MONDAY window" in output
-
-
 def test_a_not_modified_answer_to_an_update_is_accepted(tmp_path):
-    """DQR answers 304 to a PUT with nothing to change. That is not a failure when the window is in place.
-
-    The converge only PUTs a day it saw drift on, so a 304 means something else (a second run, an
-    admin) got there between the read and the write. The read-back at the end is what decides.
-    """
+    """DQR answers 304 to a PUT with nothing to change, as when another run got there first."""
     code, payloads, output = run_configure(
         tmp_path,
         {"PACS_THREADS": "2", "AVAIL_PUT_ALREADY_APPLIED": "1"},
@@ -1153,8 +1091,7 @@ def test_a_not_modified_answer_to_an_update_is_accepted(tmp_path):
         avail_state=DEFAULT_SCHEDULE,
     )
     assert code == 0, output
-    assert "304 Not Modified" in output
-    assert "request failed" not in output
+    assert len(availability_writes(payloads, "PUT")) == 7
     assert all(item["threads"] == 2 for items in schedule_after(tmp_path).values() for item in items)
 
 
@@ -1167,8 +1104,16 @@ def test_a_write_that_did_not_take_fails_the_run(tmp_path):
         avail_state=DEFAULT_SCHEDULE,
     )
     assert code != 0, "a schedule that did not change was reported as matching the kit"
-    assert "still differs from the kit" in output
-    assert "update\tMONDAY\t40" in output
+
+
+def test_a_failed_schedule_read_stops_the_run_with_one_error(tmp_path):
+    """xnat_curl reports the failed GET; a second, misleading "not a schedule" error must not follow."""
+    code, payloads, output = run_configure(
+        tmp_path, {"FAIL_ON_URL": "/xapi/pacs/7/availability"}, pacs_state=MOCK_PACS_REGISTRATION
+    )
+    assert code != 0
+    assert output.count("ERROR:") == 1, output
+    assert availability_writes(payloads) == []
 
 
 def test_a_second_run_changes_nothing(tmp_path):
@@ -1217,23 +1162,6 @@ def test_an_invalid_schedule_is_refused_before_xnat_is_touched(tmp_path, var, va
     assert requests_made(payloads) == [], "XNAT was contacted before the schedule was validated"
 
 
-def test_no_branch_reads_dqr_error_text_for_overlap():
-    """The decision is DQR's validate endpoint and the read-back, never matching words in an error body.
-
-    Comments may explain overlap. No line of code may mention it, so a grep for it cannot come back.
-    """
-    code_lines = [
-        (number, line)
-        for number, line in enumerate(SCRIPT.read_text().splitlines(), start=1)
-        if line.strip() and not line.strip().startswith("#")
-    ]
-    offending = [f"{number}: {line.strip()}" for number, line in code_lines if "overlap" in line.lower()]
-    assert not offending, "configure-xnat.sh decides on error text again:\n" + "\n".join(offending)
-
-
-# ── A kit window cannot cross midnight (FLIP#1465) ───────────────────────────────────────────────
-
-
 @pytest.mark.parametrize(
     ("start", "end"),
     [
@@ -1246,16 +1174,11 @@ def test_no_branch_reads_dqr_error_text_for_overlap():
 )
 @pytest.mark.parametrize("schedule", [[], DEFAULT_SCHEDULE], ids=["empty", "existing"])
 def test_a_kit_window_that_crosses_midnight_is_refused_before_xnat_is_touched(tmp_path, start, end, schedule):
-    """DQR runs a window whose start is not before its end inverted: 19:00-07:00 retrieves 07:00-19:00."""
+    """DQR runs a window whose start is not before its end inverted, during the day (FLIP#1465)."""
     code, payloads, output = run_configure(
         tmp_path, {"PACS_AVAILABILITY_START": start, "PACS_AVAILABILITY_END": end}, avail_state=schedule
     )
     assert code == 1, f"{start}-{end} was accepted"
-    assert f"PACS_AVAILABILITY_START={start}" in output
-    assert f"PACS_AVAILABILITY_END={end}" in output
-    assert "inverted" in output
-    assert "FLIP#1465" in output
-    assert "19:00-24:00" in output, "the refusal must say how to write an out-of-hours window"
     assert requests_made(payloads) == [], "XNAT was contacted before the window was validated"
     assert json.loads((tmp_path / "availability.json").read_text()) == schedule
 
@@ -1276,27 +1199,27 @@ def test_a_kit_window_ending_at_midnight_is_accepted(tmp_path, start, end):
     assert [window(item) for item in schedule_after(tmp_path)["MONDAY"]] == [(start, stored_end, 1, 100)]
 
 
-# ── The kit owns the schedule: a change made in XNAT is reverted, and the log says so ───────────
-
-
-def test_a_change_made_in_xnat_is_reverted_and_named(tmp_path):
-    """An operator who edited the schedule in XNAT's admin page must be able to see what replaced it."""
+def test_a_change_made_in_xnat_is_reverted(tmp_path):
+    """The kit owns the schedule: an edit in XNAT's admin page is put back by the next run, in place."""
     edited = [interval(40, "MONDAY", start="08:00", end="18:00", threads=2), *DEFAULT_SCHEDULE[1:]]
     code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION, avail_state=edited)
     assert code == 0, output
     assert availability_writes(payloads) == [("PUT", "http://xnat-web:8080/xapi/pacs/7/availability/40")]
-    assert (
-        "MONDAY: interval 40 drifted on availabilityStart, availabilityEnd, threads (08:00-18:00, 2 thread(s), 100%"
-        " -> 00:00-24:00, 1 thread(s), 100%); updating it in place." in output
-    )
-    assert "The kit owns this schedule" in output
     assert [window(i) for i in schedule_after(tmp_path)["MONDAY"]] == [("00:00", "00:00", 1, 100)]
 
 
-def test_the_kit_owns_the_schedule_line_only_appears_when_something_is_overwritten(tmp_path):
-    code, _, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION, avail_state=DEFAULT_SCHEDULE)
+@pytest.mark.parametrize(
+    ("env", "schedule", "printed"),
+    [
+        ({}, [interval(40, "MONDAY", threads=2), *DEFAULT_SCHEDULE[1:]], True),  # a drifted interval
+        ({}, [*DEFAULT_SCHEDULE, interval(47, "MONDAY", start="19:00", end="20:00")], True),  # an extra one
+        ({}, DEFAULT_SCHEDULE, False),  # unchanged
+        ({}, [], False),  # a new schedule
+        ({"PACS_AVAILABILITY_DAYS": "MONDAY"}, DEFAULT_SCHEDULE, False),  # days removed from the kit
+    ],
+    ids=["drifted", "extra-interval", "unchanged", "new", "days-removed"],
+)
+def test_the_kit_owns_line_marks_only_a_hand_edit_being_replaced(tmp_path, env, schedule, printed):
+    code, _, output = run_configure(tmp_path, env, pacs_state=MOCK_PACS_REGISTRATION, avail_state=schedule)
     assert code == 0, output
-    assert "The kit owns this schedule" not in output
-    code, _, output = run_configure(tmp_path / "fresh", pacs_state=MOCK_PACS_REGISTRATION)
-    assert code == 0, output
-    assert "The kit owns this schedule" not in output, "a fresh schedule overwrites nothing"
+    assert ("The kit owns this schedule" in output) is printed

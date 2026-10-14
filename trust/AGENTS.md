@@ -183,20 +183,10 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
 - `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are
-  agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
-  `configure-xnat.sh` converges DQR's availability schedule onto the kit on every run (FLIP#1455):
-  it PUTs a drifted interval in place, creates a missing day after DQR's `validate` check, removes
-  days no longer listed (and any second interval on a listed day), and writes nothing when the kit
-  is unchanged. It then reads the schedule back and fails on any difference. So a kit change applies
-  on the next `xnat-configure` / `upgrade-xnat` / `helm upgrade`, on both shapes, and a change made in
-  XNAT's DQR admin page is reverted then (each overwrite is logged with what it replaced). The
-  schedule values are validated before XNAT is contacted, including that the window does not cross
-  midnight: `START` must come before `END`, an `END` of `24:00` or `00:00` being the end of the day,
-  because DQR runs `19:00`–`07:00` inverted, during the day (FLIP#1465). Out-of-hours is `19:00`–`24:00`,
-  `00:00`–`07:00` or whole days. No branch reads DQR's error text: the old step treated a
-  "probable overlap" 400 as "already configured", which kept the first window forever.
-  `trust/xnat/tests/test_configure_pacs.py` runs the script against a stub of DQR's availability API
-  built from the pinned jar's behaviour.
+  agreed with the trust's PACS manager. Defaults are all week, all day, one thread. The kit owns
+  the schedule: `configure-xnat.sh` converges DQR's onto it on every run, so a change made in XNAT's
+  UI is reverted (FLIP#1455), and a window that crosses midnight is refused (FLIP#1465). Detail in
+  [`trust/xnat/README.md`](xnat/README.md#pacs-configuration).
 
 ## Trust-internal Service Authentication
 

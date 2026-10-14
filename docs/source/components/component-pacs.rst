@@ -194,9 +194,8 @@ trust's PACS team supplies; what they supply is covered above.
        PACS, not a preference — see the table above
      - ``true``
    * - ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``
-     - When retrieval may run, as a comma-separated day list and a daily window. The window's start
-       must come before its end (``24:00`` is the end of the day), so it cannot cross midnight; see
-       Scheduling and Throughput below
+     - When retrieval may run, as a comma-separated day list and a daily window whose start comes
+       before its end (see Scheduling and Throughput below)
      - all week, ``00:00``–``24:00``
    * - ``PACS_THREADS`` / ``PACS_UTILIZATION_PERCENT``
      - How hard to drive the PACS during that window
@@ -376,39 +375,13 @@ is usually raised as a separate service request.
 
 .. note::
 
-   **The configure step keeps the schedule in line with the kit.** The window is usually something
-   a trust's PACS manager has agreed to, so a change to it has to apply. On every run
-   ``configure-xnat.sh`` reads the registered PACS's schedule and converges it onto the kit:
-
-   - an interval whose window, thread count or utilisation drifted is updated in place;
-   - a listed day with no interval gets one;
-   - the intervals on a day the kit no longer lists are removed, as is a second interval on a
-     listed day;
-   - an unchanged kit writes nothing.
-
-   The script then reads the schedule back and fails the deploy if it still differs. A change takes
-   effect on the next ``make -C trust/xnat xnat-configure`` (Compose), ``upgrade-xnat``, or
-   ``helm upgrade`` (Kubernetes). No clean-up in XNAT's administration UI is needed.
-
-   **The kit sets the schedule.** A change made in XNAT's DQR administration page, including a
-   window added there by hand, is reverted on the next configure run. Each overwrite is logged with
-   what it replaced. Put a window agreed with the PACS manager in the kit.
-
-.. important::
-
-   **A window cannot cross midnight.** DQR runs a window whose start is not before its end inverted:
-   ``19:00``–``07:00`` retrieves from 07:00 to 19:00, during the working day the window was meant to
-   spare, and a window that starts where it ends never runs. DQR also looks only at the current
-   weekday, so one window cannot reach into the next morning. The configure step therefore refuses
-   ``PACS_AVAILABILITY_START`` at or after ``PACS_AVAILABILITY_END`` before it contacts XNAT
-   (FLIP#1465), counting an end of ``24:00`` as the end of the day. For out-of-hours retrieval, end
-   the window at midnight (``19:00``–``24:00``), start it there (``00:00``–``07:00``), or list whole
-   days in ``PACS_AVAILABILITY_DAYS`` (for example ``SATURDAY,SUNDAY``).
-
-   Before FLIP#1455 a re-run could not change an existing window, so a trust configured earlier may
-   still be running its first one until the configure step runs again.
-   ``GET /xapi/pacs/{id}/availability`` shows what is in force. XNAT stores an end time of ``24:00``
-   as ``00:00``, which it still reads as the end of the day.
+   **The kit sets the schedule.** Every configure run (``xnat-configure``, ``upgrade-xnat``,
+   ``helm upgrade``) makes the registered PACS's schedule match the kit, so a change made in XNAT's
+   DQR administration page is reverted and the log names what it replaced. Put a window agreed with
+   the PACS manager in the kit. The window cannot cross midnight: DQR would run ``19:00``–``07:00``
+   inverted, during the day, so it is refused (FLIP#1465). For out-of-hours retrieval use
+   ``19:00``–``24:00``, ``00:00``–``07:00`` or whole days. ``trust/xnat/README.md`` (PACS
+   configuration) has the detail.
 
 Verification
 ============

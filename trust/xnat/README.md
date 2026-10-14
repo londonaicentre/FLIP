@@ -230,15 +230,6 @@ rather than silently falling back.
 The throttle group exists because a production PACS may refuse further associations after a certain
 volume, and a trust may want retrieval confined to out-of-hours.
 
-**A window cannot cross midnight (FLIP#1465).** DQR runs a window whose start is not before its end
-inverted: `19:00`–`07:00` retrieves from 07:00 to 19:00, the working day the window was meant to
-spare, and a window that starts where it ends never runs. DQR also looks only at the current weekday,
-so one window cannot reach into the next morning. `configure-xnat.sh` therefore refuses
-`PACS_AVAILABILITY_START` ≥ `PACS_AVAILABILITY_END` before contacting XNAT, counting an end of
-`24:00` (or `00:00`) as the end of the day. For out-of-hours retrieval, end the window at midnight
-(`19:00`–`24:00`), start it there (`00:00`–`07:00`), or list whole days in `PACS_AVAILABILITY_DAYS`
-(for example `SATURDAY,SUNDAY`).
-
 **`XNAT_PORT` and `XNAT_WEB_PORT` are two different things** (they were one variable until FLIP#993,
 which is why host 8104 once served Tomcat while the receiver's 8104 was an unpublished container
 port). Both are host-published — the receiver so a real PACS can complete the C-STORE return leg of
@@ -252,31 +243,21 @@ read the PACS id back from XNAT at runtime rather than assuming `1`. The delete 
 foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
 the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
 
-The availability schedule is converged the same way, so a change to the days, window, thread count
-or utilisation in the kit takes effect the next time the configure step runs (`make -C trust/xnat
-xnat-configure` on Compose, the chart's `xnat-init` hook on Kubernetes). The kit describes one
-window per listed day. Each run reads DQR's schedule for the registered PACS and:
+**The availability schedule is set from the kit.** Each configure run (`xnat-configure`,
+`upgrade-xnat`, or the chart's `xnat-init` hook on `helm upgrade`) converges DQR's schedule for the
+registered PACS onto the kit's one window per listed day. It updates drifted intervals in place,
+creates missing days, and removes the days no longer listed and any extra interval on a listed day.
+An unchanged schedule is not written. Removals run first, so a run that fails part-way leaves less
+retrieval scheduled than agreed, and the schedule is read back after any write. A change made in
+XNAT's DQR admin page is therefore reverted on the next run, and each overwrite is logged with what
+it replaced, so put a window agreed with the PACS manager in the kit.
 
-- updates in place any interval whose start, end, thread count or utilisation drifted;
-- creates an interval for a listed day that has none, after DQR's own overlap check agrees;
-- removes the intervals on a day the kit no longer lists, and any second interval on a listed day;
-- leaves a day that already matches untouched, so an unchanged kit writes nothing.
-
-Removals run first, so a run that fails part-way leaves less retrieval scheduled than agreed, never
-more. The script then reads the schedule back and fails if DQR still disagrees with the kit. The
-schedule values are validated before XNAT is contacted, because a value DQR rejected part-way through
-would leave days with no window, and DQR does not retrieve outside one. DQR stores an end of `24:00`
-as `00:00` and still reads it as the end of the day; the comparison accounts for that.
-
-**The kit sets the schedule.** A change made in XNAT's DQR admin page is reverted on the next
-configure run (`xnat-configure`, `upgrade-xnat`, or `helm upgrade` on Kubernetes). Each overwrite is
-logged with the interval it replaces ("drifted on … (old -> new); updating it in place", "removing
-extra interval …"), and the run says once that the kit owns the schedule. So put a window agreed
-with the PACS manager in the kit, not only in XNAT.
-
-Until FLIP#1455 the step re-POSTed every day and treated DQR's "probable overlap" refusal as "already
-configured", so on a live trust a changed window never applied. A trust configured before that fix
-may be running its first window; the next configure run corrects it.
+**A window cannot cross midnight (FLIP#1465).** DQR runs a window whose start is not before its end
+inverted, during the day (`19:00`–`07:00` retrieves from 07:00 to 19:00), and it only looks at the
+current weekday. So the configure step refuses `PACS_AVAILABILITY_START` ≥ `PACS_AVAILABILITY_END`,
+with an end of `24:00` meaning the end of the day. For out-of-hours retrieval use `19:00`–`24:00`,
+`00:00`–`07:00`, or whole days in `PACS_AVAILABILITY_DAYS`. Like every schedule value, this is checked
+before XNAT is contacted.
 
 ## Plugins
 

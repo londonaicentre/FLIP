@@ -57,18 +57,11 @@ follow.
 
    .. important::
 
-      **Put any agreed PACS retrieval window in the kit before you upgrade.** XNAT's PACS
-      availability schedule is set from the kit: ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``,
-      ``PACS_THREADS`` and ``PACS_UTILIZATION_PERCENT``. A change to them applies on the next
-      configure run: this upgrade, ``upgrade-xnat``, or a ``helm upgrade`` on Kubernetes. A change
-      made in XNAT's DQR admin page is reverted at that point, and the configure log names each
-      interval it replaced. Earlier documentation said to change the window in XNAT's UI, so a
-      window agreed with the PACS manager may exist only there. Read it first
-      (``GET /xapi/pacs/{id}/availability``, or the DQR admin page) and copy it into the kit.
-
-      A kit window that **crosses midnight**, such as ``19:00``–``07:00``, stops the configure pass
-      before it writes anything, because DQR would run it inverted, during the day (FLIP#1465). Use
-      ``19:00``–``24:00``, ``00:00``–``07:00``, or whole days in ``PACS_AVAILABILITY_DAYS``.
+      **Put any agreed PACS retrieval window in the kit first.** The upgrade sets XNAT's PACS
+      availability schedule from the kit (``PACS_AVAILABILITY_*``, ``PACS_THREADS``,
+      ``PACS_UTILIZATION_PERCENT``), reverting a window changed in XNAT's DQR admin page, which
+      earlier docs said to use. A kit window that crosses midnight (``19:00``–``07:00``) is
+      refused (FLIP#1465): use ``19:00``–``24:00``, ``00:00``–``07:00`` or whole days.
 
 3. **Move your FLIP checkout to the release.** The images are only half of a release: the
    compose files, the Makefiles, the XNAT stack files and the upgrade command itself all come
