@@ -665,7 +665,7 @@ new-trust:
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
 	@:$(call old_kit_hint,$(call kit_file,trust/,$(KIT)))
-	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
 # Sync every locally-present kit for this env (old kit names included; the
 # .example templates never match).

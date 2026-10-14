@@ -272,3 +272,12 @@ def test_the_static_switch_cannot_be_set_from_outside(
     result = _make_dry_run(*args, tmp_path=tmp_path, extra_env=extra_env)
     assert result.returncode != 0
     assert "FLARE_KIT_DATE must be set" in result.stderr, result.stderr
+
+
+def test_register_trusts_mints_the_xnat_credentials_into_the_kit(tmp_path: Path) -> None:
+    """As the dev register-trust does, so a packaged kit carries no XNAT placeholders (FLIP#1419)."""
+    result = _make_dry_run("register-trusts", "KIT=AZ1", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "generate_xnat_credentials --env-file " + str(AWS_PROVIDER_DIR.parents[2] / "trust" / ".env.AZ1.stag") in (
+        result.stdout
+    )

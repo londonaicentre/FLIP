@@ -22,7 +22,7 @@
 #      TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER,
 #      EXPECTED_TRUST_ID) and paste them into trust/.env.<KIT>, replacing
 #      the <run-make-register-trusts> placeholders.
-#   2. Run `make sync-trust-kit KIT=<slot> HUB=prod` (from the repo root) to
+#   2. Run `make sync-trust-kit KIT=<CODE> HUB=prod` (from the repo root) to
 #      populate the Hub-shared block in trust/.env.<KIT>, replacing the
 #      <run-make-sync-trust-kit> placeholders.
 #
@@ -40,10 +40,10 @@
 #      deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 #
 # Operator post-steps (after receiving the tarball over encrypted channel):
-#   7. Extract, copy .env.<slot>.<env> into trust/, edit Host-local profile +
+#   7. Extract, copy .env.<CODE>.<env> into trust/, edit Host-local profile +
 #      Trust-local credentials sections (set FL_KIT_DIR to the extracted
 #      fl-kit/ absolute path, override ports/dirs/passwords as needed for
-#      their host), then `sudo -E make up-onprem-trust KIT=<slot>` (sudo:
+#      their host), then `sudo -E make up-onprem-trust KIT=<CODE>` (sudo:
 #      the provisioned login user is deliberately not in the docker group).
 
 set -eo pipefail
@@ -56,13 +56,13 @@ source "$SCRIPT_DIR/utils.sh"
 check_aws_profile
 
 if [ -z "${KIT:-}" ]; then
-    log_error "KIT=<slot> is required (e.g. KIT=Trust_2)."
+    log_error "KIT=<CODE> is required (e.g. KIT=GSTT)."
     exit 1
 fi
 
 # The kit the deploy Makefile resolved (deploy/env_mode.mk's kit_file: trust/.env.<KIT>.<env>,
 # or the kit's pre-FLIP#1479 name). It ships under the current name either way.
-KIT_NAME=".env.${KIT}.${HUB:?HUB is required — run via make package-onprem-trust-kit KIT=<slot> HUB=<env>}"
+KIT_NAME=".env.${KIT}.${HUB:?HUB is required — run via make package-onprem-trust-kit KIT=<CODE> HUB=<env>}"
 KIT_FILE="${KIT_FILE:-$REPO_ROOT/trust/$KIT_NAME}"
 if [ ! -f "$KIT_FILE" ]; then
     log_error "Kit file $KIT_FILE not found."
@@ -80,7 +80,7 @@ if grep -qE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE"; then
     log_error "$KIT_FILE still has $n unfilled <run-make-…> placeholder(s)."
     log_error "Fill them in first:"
     log_error "  - Kit credentials (5 lines): UI → Add Trust → paste the modal output."
-    log_error "  - Hub-shared block (12 lines): run 'make sync-trust-kit KIT=<slot> HUB=${HUB}' from repo root."
+    log_error "  - Hub-shared block (12 lines): run 'make sync-trust-kit KIT=<CODE> HUB=${HUB}' from repo root."
     exit 1
 fi
 
@@ -116,14 +116,6 @@ else
 fi
 if [ -z "$fl_kit_date" ]; then
     log_error "$date_var is empty in $KIT_FILE — run 'make sync-trust-kit KIT=$KIT HUB=${HUB}' from repo root."
-    exit 1
-fi
-
-# Slot in the kit file must match KIT — the FL kit S3 source is keyed on
-# slot and we'd otherwise package the wrong sub-tree.
-if [ "$slot" != "$KIT" ]; then
-    log_error "FL_KIT_SLOT='$slot' in $KIT_FILE does not match KIT='$KIT'."
-    log_error "Re-run with KIT=$slot (or fix the kit file)."
     exit 1
 fi
 
@@ -250,7 +242,7 @@ cat <<EOF
      not in the docker group; -E keeps your \$HOME so root's docker reuses
      your GHCR login from ~/.docker/config.json):
 
-       sudo -E make up-onprem-trust KIT=${slot} HUB=${HUB}
+       sudo -E make up-onprem-trust KIT=${KIT} HUB=${HUB}
 
 ════════════════════════════════════════════════════════════════════════
 

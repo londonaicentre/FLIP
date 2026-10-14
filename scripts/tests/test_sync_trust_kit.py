@@ -34,6 +34,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 SYNC_SCRIPT = SCRIPTS_DIR / "sync_trust_kit.py"
 LIB_SCRIPT = SCRIPTS_DIR / "trust_kit_lib.py"
+UPGRADE_SCRIPT = SCRIPTS_DIR / "site_upgrade.py"
 
 # Minimal valid env: every HUB_SHARED_KEYS value populated.
 HUB_SHARED_DEFAULTS: dict[str, str] = {
@@ -83,8 +84,9 @@ def _run(repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None)
     lib_copy = scripts_dir / "trust_kit_lib.py"
     if not lib_copy.exists():
         shutil.copy2(LIB_SCRIPT, lib_copy)
+        shutil.copy2(UPGRADE_SCRIPT, scripts_dir / "site_upgrade.py")
     return subprocess.run(
-        ["uv", "run", "--no-config", str(copy), kit],
+        ["uv", "run", "--no-config", str(copy), "--env-class", "stag", kit],
         cwd=repo_root,
         env=env,
         capture_output=True,
@@ -166,10 +168,11 @@ def test_4_missing_env_var_is_error() -> None:
         copy = scripts_dir / "sync_trust_kit.py"
         shutil.copy2(SYNC_SCRIPT, copy)
         shutil.copy2(LIB_SCRIPT, scripts_dir / "trust_kit_lib.py")
+        shutil.copy2(UPGRADE_SCRIPT, scripts_dir / "site_upgrade.py")
         env = {k: v for k, v in HUB_SHARED_DEFAULTS.items() if k != "AES_KEY_BASE64"}
         env["PATH"] = os.environ.get("PATH", "")
         result = subprocess.run(
-            ["uv", "run", "--no-config", str(copy), "Trust_1"],
+            ["uv", "run", "--no-config", str(copy), "--env-class", "stag", "Trust_1"],
             cwd=root,
             env=env,
             capture_output=True,
@@ -225,10 +228,11 @@ def test_6_optional_key_absent_is_tolerated() -> None:
         copy = scripts_dir / "sync_trust_kit.py"
         shutil.copy2(SYNC_SCRIPT, copy)
         shutil.copy2(LIB_SCRIPT, scripts_dir / "trust_kit_lib.py")
+        shutil.copy2(UPGRADE_SCRIPT, scripts_dir / "site_upgrade.py")
         env = {k: v for k, v in HUB_SHARED_DEFAULTS.items() if k != "DOCKER_FL_REGISTRY"}
         env["PATH"] = os.environ.get("PATH", "")
         result = subprocess.run(
-            ["uv", "run", "--no-config", str(copy), "Trust_1"],
+            ["uv", "run", "--no-config", str(copy), "--env-class", "stag", "Trust_1"],
             cwd=root,
             env=env,
             capture_output=True,
@@ -246,6 +250,28 @@ def test_6_optional_key_absent_is_tolerated() -> None:
         _assert(not live_fl_reg, "absent optional key not written", str(live_fl_reg))
 
 
+def test_8_site_facing_port_and_tag() -> None:
+    """A kit gets the trust-facing FL port and, for a hub sha- tag, a tag every site image exists at."""
+    print("▶ sync writes TRUST_FL_SERVER_PORT and swaps a sha- tag for the branch tag")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "trust").mkdir()
+        kit = root / "trust" / ".env.Trust_1"
+        kit.write_text("TRUST_API_KEY=preserved\n")
+
+        result = _run(
+            root,
+            "Trust_1",
+            env_overrides={"TRUST_FL_SERVER_PORT": "8003", "DOCKER_TAG": "sha-3e4fd83", "DOCKER_FL_TAG": "v0.12.0"},
+        )
+
+        _assert(result.returncode == 0, "exit 0", result.stderr)
+        content = kit.read_text()
+        _assert("FL_SERVER_PORT=8003" in content, "FL_SERVER_PORT is the trust-facing port")
+        _assert("DOCKER_TAG=stag" in content, "a sha- tag outside its release checkout becomes the branch tag")
+        _assert("DOCKER_FL_TAG=v0.12.0" in content, "a release tag passes through")
+
+
 def main() -> None:
     if not SYNC_SCRIPT.is_file():
         sys.exit(f"❌ {SYNC_SCRIPT} not found")
@@ -258,6 +284,7 @@ def main() -> None:
     test_4_missing_env_var_is_error()
     test_5_in_place_replacement_on_template()
     test_6_optional_key_absent_is_tolerated()
+    test_8_site_facing_port_and_tag()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

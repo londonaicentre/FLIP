@@ -40,6 +40,7 @@ from typing import NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import site_upgrade  # noqa: E402
 import trust_kit_lib as tkl  # noqa: E402
 
 # Hub-shared keys that legitimately default downstream and so may be absent from
@@ -66,6 +67,7 @@ def main() -> None:
     """CLI entry point: refresh the Hub-shared block in trust/.env.<KIT>."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("kit", help="Slot/handle (e.g. Trust_2). Selects trust/.env.<kit>.")
+    parser.add_argument("--env-class", required=True, choices=("stag", "prod"), help="ENV_CLASS from env_mode.mk")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -87,6 +89,14 @@ def main() -> None:
     # register_trust's _hub_shared_from_env. An absent optional key is skipped,
     # so the kit never carries a stale/empty value the trust would default anyway.
     new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS if os.environ.get(k)}
+    # Sites dial the edge, which can remap the hub's FL listener (LZA staging serves :8003).
+    if os.environ.get("TRUST_FL_SERVER_PORT"):
+        new_values["FL_SERVER_PORT"] = os.environ["TRUST_FL_SERVER_PORT"]
+    # Most site images were never built at a sha- tag (path-filtered CI, see site_upgrade.py):
+    # use its release, else the stag/prod branch tag every image carries.
+    for key in ("DOCKER_TAG", "DOCKER_FL_TAG"):
+        if new_values[key].startswith("sha-"):
+            new_values[key] = site_upgrade.release_for_sha(new_values[key]) or args.env_class
 
     # Surface the source env file + destination URL up-front — doubles as a
     # footgun guard: an on-prem-pointed kit accidentally synced without HUB=prod
