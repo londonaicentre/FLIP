@@ -102,9 +102,62 @@ def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> Cre
     )
 
 
+def get_xnat_user_profile(username: str, headers: dict[str, str]) -> User:
+    """
+    Fetches one user profile from XNAT by username, with ``GET /xapi/users/profile/{username}``.
+
+    XNAT answers this route from the same query and row mapping as the ``/xapi/users/profiles`` listing,
+    narrowed to ``WHERE login = :username``, so the profile is the one the listing would have held for
+    this user, matched exactly and case-sensitively (xnat-web 1.10.0 ``UsersApi.usersProfileGet``,
+    ``org.nrg.xapi.model.users.User.getUser``).
+
+    Args:
+        username (str): The XNAT username to fetch.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        imaging_api.routers.schemas.User: The user profile.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If XNAT has no user with this username.
+        Exception: If XNAT cannot be reached, returns any other non-200 response, or returns a body that is
+            not a user profile.
+    """
+    try:
+        url = xnat_url("xapi", "users", "profile", username)
+    except ValueError:
+        # An empty or dot-segment username cannot name an XNAT account (XNAT's username rule requires a
+        # leading letter), and the URL helper refuses to build the request, so it is simply not found.
+        raise NotFoundError("User not found by username")
+
+    try:
+        response = requests.get(url, headers=headers)
+    except requests.RequestException as e:
+        raise Exception(f"Error: XNAT error when fetching user profile: {str(e)}")
+
+    # 404: no such user. 400: XNAT refuses to look up a username that fails its username rule
+    # (``Users.isValidUsername``) — the same rule POST /xapi/users applies on create, so no account
+    # created through the API can carry one. Either way there is no such user.
+    if response.status_code in (400, 404):
+        raise NotFoundError("User not found by username")
+    if response.status_code != 200:
+        raise Exception(f"Error: XNAT error when fetching user profile: {response.status_code} - {response.text}")
+
+    try:
+        return User.model_validate(response.json())
+    except ValueError as e:
+        raise Exception(
+            f"Error: XNAT error when fetching user profile: unexpected response body ({type(e).__name__}: {e}) "
+            f"- {response.text}"
+        )
+
+
 def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
     """
     Fetches a user profile from XNAT using the key and value.
+
+    A username lookup is one ``GET /xapi/users/profile/{username}`` (:func:`get_xnat_user_profile`). XNAT
+    has no lookup by email, so an email lookup lists every profile and matches in Python.
 
     Args:
         key (str): The key to search by. Can be 'username' or 'email'.
@@ -117,19 +170,23 @@ def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
     Raises:
         AssertionError: If ``key`` is not ``"username"`` or ``"email"``.
         imaging_api.utils.exceptions.NotFoundError: If no XNAT user matches ``value`` for the given ``key``.
-        Exception: If fetching XNAT users fails.
+        Exception: If fetching the XNAT user profile(s) fails.
     """
     assert key in [
         "username",
         "email",
     ], f"Invalid key: {key}, must be 'username' or 'email'"
+
+    if key == "username":
+        return get_xnat_user_profile(value, headers)
+
     try:
         users = get_xnat_users(headers)
     except Exception as e:
         raise Exception(f"Error: XNAT error when fetching users: {str(e)}")
 
     for user in users:
-        if getattr(user, key) == value:
+        if user.email == value:
             return user
 
     raise NotFoundError(f"User not found by {key}")
@@ -257,6 +314,9 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
     """
     Core logic to create an XNAT user. Returns the newly created user profile.
 
+    XNAT answers the ``201`` with the created user (xnat-web 1.10.0 ``UsersApi.createUser`` returns the saved
+    account), so the profile is read from that body rather than fetched again.
+
     Args:
         user (imaging_api.routers.schemas.CreateUser): The user to create.
         headers (dict[str, str]): XNAT authentication headers.
@@ -274,8 +334,16 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
 
     if response.status_code == 201:
         logger.info(f"User '{user.username}' created successfully on XNAT")
-        user_profile = get_user_profile_by("username", user.username, headers)
-        return user_profile
+        try:
+            return User.model_validate(response.json())
+        except ValueError as e:
+            # The account exists by now, so a 201 body that is not a profile must not fail the step that
+            # just succeeded: fetch the one profile instead.
+            logger.warning(
+                f"XNAT's 201 body for user '{user.username}' is not a user profile ({type(e).__name__}); "
+                "fetching the profile instead"
+            )
+            return get_user_profile_by("username", user.username, headers)
 
     elif response.status_code == 409:
         raise AlreadyExistsError(f"Error: User '{user.username}' already exists")
