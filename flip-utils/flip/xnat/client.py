@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 60
 """Per-request timeout. Generous, because label volumes can be tens of megabytes."""
 
+_SCAN_ID_COLUMN = "xnat:imagescandata/id"
+"""The experiment-listing column that joins each image session to its scans, one row per scan."""
+
 
 @dataclass(frozen=True)
 class XnatScan:
@@ -193,7 +196,10 @@ class XnatClient:
         )
 
     def list_scans(self, project_id: str) -> list[XnatScan]:
-        """List every scan in an XNAT project.
+        """List every scan in an XNAT project, in one request.
+
+        The global image-session listing with a scan column returns one row per scan, and an empty scan id
+        for a session without scans. The project-scoped listing would silently leave out DX sessions.
 
         Args:
             project_id (str): The XNAT project id.
@@ -202,26 +208,29 @@ class XnatClient:
             list[XnatScan]: One entry per scan, keyed by accession id (the experiment label).
 
         Raises:
-            XnatError: If any underlying XNAT request fails.
+            XnatError: If the XNAT request fails.
         """
-        experiments = self._get_result_rows(
-            f"/data/projects/{project_id}/experiments",
-            {"columns": "ID,label,subject_ID"},
+        rows = self._get_result_rows(
+            "/data/experiments",
+            {
+                "project": project_id,
+                "xsiType": "xnat:imageSessionData",
+                "columns": f"ID,label,subject_ID,{_SCAN_ID_COLUMN}",
+            },
         )
 
-        scans: list[XnatScan] = []
-        for experiment in experiments:
-            experiment_id = str(experiment.get("ID", ""))
-            for scan in self._get_result_rows(f"/data/experiments/{experiment_id}/scans"):
-                scans.append(
-                    XnatScan(
-                        accession_id=str(experiment.get("label", "")),
-                        subject_id=str(experiment.get("subject_ID", "")),
-                        experiment_id=experiment_id,
-                        scan_id=str(scan.get("ID", "")),
-                    )
-                )
+        scans = [
+            XnatScan(
+                accession_id=str(row.get("label", "")),
+                subject_id=str(row.get("subject_ID", "")),
+                experiment_id=str(row.get("ID", "")),
+                scan_id=str(row[_SCAN_ID_COLUMN]),
+            )
+            for row in rows
+            if row.get(_SCAN_ID_COLUMN)
+        ]
 
+        experiments = {scan.experiment_id for scan in scans}
         logger.info(f"Found {len(scans)} scan(s) across {len(experiments)} experiment(s) in project {project_id}")
         return scans
 

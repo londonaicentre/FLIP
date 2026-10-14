@@ -19,7 +19,13 @@ import pytest
 from flip.exceptions import XnatError
 from flip.xnat.client import XnatClient
 from flip.xnat.enrichment import EnrichmentItem, read_manifest, run_enrichment, upload_enrichment_files
-from tests.unit.xnat.helpers import FakeResponse, FakeSession, project_routes, resolvable_project_routes
+from tests.unit.xnat.helpers import (
+    FakeResponse,
+    FakeSession,
+    project_routes,
+    resolvable_project_routes,
+    scan_listing,
+)
 
 
 def _client(files: list[str], put_response: FakeResponse | None = None) -> XnatClient:
@@ -242,8 +248,8 @@ class TestUploadEnrichmentFiles:
         client = XnatClient(server="http://xnat.example", user="u", password="p")
         routes = project_routes(["input_spleen_2.nii.gz"])
         # Give EXP_1 a second scan; the accession FAK001 now maps to two destination scans.
-        routes["/data/experiments/EXP_1/scans"] = FakeResponse(
-            payload={"ResultSet": {"Result": [{"ID": "1"}, {"ID": "2"}]}}
+        routes["/data/experiments"] = scan_listing(
+            [("EXP_1", "FAK001", "SUBJ_1", "1"), ("EXP_1", "FAK001", "SUBJ_1", "2"), ("EXP_2", "FAK002", "SUBJ_2", "1")]
         )
         client._session = FakeSession(routes)  # type: ignore[assignment]
 

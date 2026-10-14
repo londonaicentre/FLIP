@@ -56,6 +56,8 @@ twice and no per-server filtering is needed. A Trust that has not pulled the pro
 non-fatal skip when there is more than one server in the roster (an `XnatProjectNotFound` alone is
 fatal); any other `XnatError` is always fatal.
 
+`list_scans` lists every scan of the project in one request, DX (chest X-ray) sessions included.
+
 ## CLI: `flip-xnat`
 
 Installed as the `flip-xnat` console script (`flip-utils/pyproject.toml`); also runnable as

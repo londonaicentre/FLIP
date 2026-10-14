@@ -121,6 +121,20 @@ def make_client(routes: dict[str, FakeResponse]) -> XnatClient:
     return client
 
 
+def scan_listing(rows: list[tuple[str, str, str, str]]) -> FakeResponse:
+    """XNAT's one-row-per-scan experiment listing, as ``XnatClient.list_scans`` requests it.
+
+    Args:
+        rows (list[tuple[str, str, str, str]]): ``(experiment ID, label, subject ID, scan ID)`` per row. An empty
+            scan ID is how XNAT reports a session with no scans.
+
+    Returns:
+        FakeResponse: The listing.
+    """
+    columns = ("ID", "label", "subject_ID", "xnat:imagescandata/id")
+    return FakeResponse(payload={"ResultSet": {"Result": [dict(zip(columns, row)) for row in rows]}})
+
+
 def project_routes(files: list[str]) -> dict[str, FakeResponse]:
     """Routes for a project with two single-scan experiments (FAK001, FAK002).
 
@@ -131,20 +145,9 @@ def project_routes(files: list[str]) -> dict[str, FakeResponse]:
         dict[str, FakeResponse]: Routes, most specific first.
     """
     return {
-        # Most specific first: "/scans" alone would also match the files URL.
+        # Most specific first: "/data/experiments" alone would also match the files URL.
         "/resources/NIFTI/files": FakeResponse(payload={"ResultSet": {"Result": [{"Name": n} for n in files]}}),
-        "/data/experiments/EXP_1/scans": FakeResponse(payload={"ResultSet": {"Result": [{"ID": "1"}]}}),
-        "/data/experiments/EXP_2/scans": FakeResponse(payload={"ResultSet": {"Result": [{"ID": "1"}]}}),
-        "/data/projects/PROJ/experiments": FakeResponse(
-            payload={
-                "ResultSet": {
-                    "Result": [
-                        {"ID": "EXP_1", "label": "FAK001", "subject_ID": "SUBJ_1"},
-                        {"ID": "EXP_2", "label": "FAK002", "subject_ID": "SUBJ_2"},
-                    ]
-                }
-            }
-        ),
+        "/data/experiments": scan_listing([("EXP_1", "FAK001", "SUBJ_1", "1"), ("EXP_2", "FAK002", "SUBJ_2", "1")]),
     }
 
 

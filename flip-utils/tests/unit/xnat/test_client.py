@@ -19,7 +19,7 @@ import requests
 
 from flip.exceptions import XnatError
 from flip.xnat.client import XnatClient, XnatScan
-from tests.unit.xnat.helpers import FakeResponse, FakeSession, make_client
+from tests.unit.xnat.helpers import FakeResponse, FakeSession, make_client, scan_listing
 
 
 class TestFromEnv:
@@ -129,6 +129,26 @@ class TestResolveProjectByFlipProjectId:
             client.resolve_project_by_flip_project_id("any")
 
 
+def _record_gets(client: XnatClient) -> list[tuple[str, dict[str, str]]]:
+    """Record the URL and query parameters of every GET the client sends, on top of its fake session.
+
+    Args:
+        client (XnatClient): A client wired to a :class:`FakeSession`.
+
+    Returns:
+        list[tuple[str, dict[str, str]]]: Filled in as the client sends GETs.
+    """
+    sent: list[tuple[str, dict[str, str]]] = []
+    fake_get = client._session.get
+
+    def get(url: str, params: dict[str, str] | None = None, timeout: int | None = None) -> FakeResponse:
+        sent.append((url, dict(params or {})))
+        return fake_get(url, params=params, timeout=timeout)
+
+    client._session.get = get  # type: ignore[method-assign]
+    return sent
+
+
 class TestListScans:
     """Scans are flattened across experiments and keyed by the accession (experiment label)."""
 
@@ -143,10 +163,60 @@ class TestListScans:
             XnatScan(accession_id="FAK002", subject_id="SUBJ_2", experiment_id="EXP_2", scan_id="1"),
         ]
 
+    def test_lists_every_scan_in_one_global_request(self):
+        """One GET, to the global listing: the project-scoped one silently drops DX sessions."""
+        client = make_client({"/data/experiments": scan_listing([("EXP_1", "FAK001", "SUBJ_1", "1")])})
+        sent = _record_gets(client)
+
+        client.list_scans("PROJ")
+
+        assert sent == [
+            (
+                "http://xnat.example/data/experiments",
+                {
+                    "format": "json",
+                    "project": "PROJ",
+                    "xsiType": "xnat:imageSessionData",
+                    "columns": "ID,label,subject_ID,xnat:imagescandata/id",
+                },
+            )
+        ]
+
+    def test_lists_every_scan_of_multi_scan_sessions(self):
+        rows = [
+            ("EXP_2", "FAK002", "SUBJ_2", "3"),
+            ("EXP_2", "FAK002", "SUBJ_2", "1"),
+            ("EXP_1", "FAK001", "SUBJ_1", "2"),
+            ("EXP_2", "FAK002", "SUBJ_2", "2"),
+        ]
+        client = make_client({"/data/experiments": scan_listing(rows)})
+
+        scans = client.list_scans("PROJ")
+
+        assert {(s.experiment_id, s.accession_id, s.subject_id, s.scan_id) for s in scans} == set(rows)
+        assert len(scans) == len(rows)
+
+    def test_a_session_without_scans_yields_none(self):
+        """XNAT reports a session with no scans as one row with an empty scan id."""
+        client = make_client(
+            {"/data/experiments": scan_listing([("EXP_1", "FAK001", "SUBJ_1", ""), ("EXP_2", "FAK002", "SUBJ_2", "1")])}
+        )
+
+        assert client.list_scans("PROJ") == [
+            XnatScan(accession_id="FAK002", subject_id="SUBJ_2", experiment_id="EXP_2", scan_id="1")
+        ]
+
     def test_empty_project_yields_no_scans(self):
-        client = make_client({"/data/projects/PROJ/experiments": FakeResponse(payload={"ResultSet": {"Result": []}})})
+        client = make_client({"/data/experiments": FakeResponse(payload={"ResultSet": {"Result": []}})})
 
         assert client.list_scans("PROJ") == []
+
+    @pytest.mark.parametrize("status", [401, 404, 500])
+    def test_a_failed_listing_raises_rather_than_reporting_no_scans(self, status):
+        client = make_client({"/data/experiments": FakeResponse(status_code=status, text="refused")})
+
+        with pytest.raises(XnatError, match=str(status)):
+            client.list_scans("PROJ")
 
 
 class TestListResourceFiles:
