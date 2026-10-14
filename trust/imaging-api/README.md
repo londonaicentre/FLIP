@@ -100,11 +100,13 @@ by `force_refresh=true` (the sentinel is removed before the re-download starts a
 the same-size replacement above), and — on the NVFLARE backend — by `CleanupImages`, which empties the whole net
 directory at job start and end.
 
-The zip layout is pinned with `structure=default` on the download URL. Every member sits under the session label,
+The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
 which FLIP sets to the accession id at import, so a study extracts as
-`<accession_id>/scans/<scan id>-<description>/resources/<resource>/files/…`, the layout FL apps read. A zip with no
-files, or with any member outside `<accession_id>/`, is refused before anything is extracted (HTTP 500,
-`XnatZipLayoutError`) and never marked complete.
+`<accession_id>/scans/<scan id>-<description>/resources/<resource>/files/…`. FL apps read that layout (the prostate
+tutorial matches the `<scan id>-<description>` folder), and XNAT's other layouts break them: `improved` drops the
+session folder, `simplified` and `legacy` reshape the folders below it. A zip with no files, or with a member not
+lexically under `<accession_id>/`, is refused before anything is extracted (HTTP 500) and never marked complete. The
+check reads the member names, not the folder afterwards, because a re-download lands in an already-populated folder.
 
 ### Imaging
 

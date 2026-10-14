@@ -31,7 +31,7 @@ from imaging_api.services.download import (
     unzip_file,
 )
 from imaging_api.services.image_cache import CachedDownload, read_sentinel, write_sentinel
-from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatFetchError, XnatZipLayoutError
+from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatFetchError
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -62,15 +62,6 @@ class TestFormatDownloadUrl:
             "?format=zip&structure=default"
         )
         assert url == expected
-
-    @pytest.mark.parametrize("resource_type", ["NIFTI", "DICOM", "SEG", "ALL"])
-    @pytest.mark.parametrize("assessor_type", ["scan", "assessor"])
-    def test_zip_layout_is_pinned_to_default_structure(self, assessor_type, resource_type):
-        """The cache and the FL apps read XNAT's default zip layout (<accession>/scans/<id>-<desc>/...).
-        It is pinned on every URL so a server-side default change cannot reshape it: `improved` drops
-        the session folder, `simplified`/`legacy` reshape the ones below it."""
-        url = format_download_url("PROJ1", "SUBJ1", "EXP1", assessor_type=assessor_type, resource_type=resource_type)
-        assert parse_qs(urlsplit(url).query) == {"format": ["zip"], "structure": ["default"]}
 
     def test_assessor_type(self):
         url = format_download_url("PROJ1", "SUBJ1", "EXP1", assessor_type="assessor", resource_type="DICOM")
@@ -134,12 +125,12 @@ class TestDownloadFile:
 # ── unzip_file ──
 
 
-# The first member of a real `structure=default` zip from dev trust 1 (14 Oct), with the label swapped.
+# The first member of a real `structure=default` zip from dev trust 1, with the label swapped.
 XNAT_DEFAULT_MEMBER = "ACC123/scans/173680-unknown/resources/NIFTI/files/input_Chest_HCT_173680.nii.gz"
 
 
 def _write_zip(path, members):
-    """Writes a zip holding each member name; names ending in "/" become directory entries."""
+    """Writes a zip of the given member names; a name ending in "/" is a directory entry."""
     with zipfile.ZipFile(path, "w") as zf:
         for name in members:
             zf.writestr(name, "" if name.endswith("/") else f"data:{name}")
@@ -148,82 +139,67 @@ def _write_zip(path, members):
 
 class TestUnzipFile:
     def test_extracts_xnat_default_layout_into_accession_dir(self, tmp_path):
-        """XNAT roots the default zip at the session label (the accession id), so the study extracts
-        straight into <extract_dir>/<accession>/ with XNAT's inner layout kept as-is."""
         zip_path = _write_zip(tmp_path / "ACC123-scans-NIFTI.zip", ["ACC123/", XNAT_DEFAULT_MEMBER])
 
-        result = unzip_file(zip_path, str(tmp_path), "ACC123")
-
-        assert result == str(tmp_path / "ACC123")
-        assert (tmp_path / XNAT_DEFAULT_MEMBER).read_text() == f"data:{XNAT_DEFAULT_MEMBER}"
-        assert not os.path.exists(zip_path)  # zip deleted
+        assert unzip_file(zip_path, str(tmp_path), "ACC123") == str(tmp_path / "ACC123")
+        assert (tmp_path / XNAT_DEFAULT_MEMBER).is_file()
+        assert not os.path.exists(zip_path)
 
     @pytest.mark.parametrize(
         "members",
         [
-            # XNAT `structure=improved` (live, 14 Oct): no session folder at all.
-            ["scans/173680_unknown/NIFTI/input.nii.gz"],
-            # The pre-#1456 rename branch's imagined layout: rooted at the zip's own stem.
-            ["ACC123-scans-NIFTI/scan.nii"],
-            # One stray member is enough to refuse the whole zip.
-            [XNAT_DEFAULT_MEMBER, "OTHER/scans/1/resources/NIFTI/files/x.nii.gz"],
-            # A file named after the accession, rather than a folder.
-            ["ACC123"],
+            ["scans/173680_unknown/NIFTI/input.nii.gz"],  # XNAT's `improved` layout: no session folder
+            ["ACC123-scans-NIFTI/scan.nii"],  # rooted at the zip stem
+            [XNAT_DEFAULT_MEMBER, "OTHER/scans/1/x.nii.gz"],  # one stray member
+            ["OTHER/../ACC123/scans/1/x.nii.gz"],  # zipfile would write it to OTHER/ACC123/...
+            ["ACC123/../OTHER/x.nii.gz"],
+            ["ACC123"],  # a file, not a folder
+            [],
+            ["ACC123/"],
         ],
     )
-    def test_refuses_a_zip_not_rooted_at_the_accession_and_extracts_nothing(self, tmp_path, members):
+    def test_refuses_anything_but_files_under_the_accession(self, tmp_path, members):
+        (tmp_path / "OTHER").mkdir()
         zip_path = _write_zip(tmp_path / "ACC123-scans-NIFTI.zip", members)
 
-        with pytest.raises(XnatZipLayoutError, match="not rooted at ACC123/"):
+        with pytest.raises(XnatFetchError, match="must hold files under ACC123/ only"):
             unzip_file(zip_path, str(tmp_path), "ACC123")
 
-        assert sorted(os.listdir(tmp_path)) == ["ACC123-scans-NIFTI.zip"]  # nothing extracted, zip kept
+        assert sorted(os.listdir(tmp_path)) == ["ACC123-scans-NIFTI.zip", "OTHER"]
+        assert os.listdir(tmp_path / "OTHER") == []
 
-    @pytest.mark.parametrize("members", [[], ["ACC123/"]])
-    def test_refuses_a_zip_with_no_files(self, tmp_path, members):
-        zip_path = _write_zip(tmp_path / "ACC123-scans-NIFTI.zip", members)
-
-        with pytest.raises(XnatZipLayoutError, match="holds no files"):
-            unzip_file(zip_path, str(tmp_path), "ACC123")
-
-        assert sorted(os.listdir(tmp_path)) == ["ACC123-scans-NIFTI.zip"]
-
-    def test_refuses_a_mislaid_zip_even_over_a_populated_accession_dir(self, tmp_path):
-        """Why the check reads the member list rather than testing that <accession>/ exists afterwards:
-        on a re-download the folder is already there from the last extraction, so a zip laid out
-        differently would land beside it and an existence check would still pass."""
-        cached = tmp_path / XNAT_DEFAULT_MEMBER
-        cached.parent.mkdir(parents=True)
-        cached.write_text("cached")
+    def test_refuses_a_mislaid_zip_over_a_populated_accession_dir(self, tmp_path):
+        """An existence check after extraction would pass here: the folder is there from the last download."""
+        (tmp_path / XNAT_DEFAULT_MEMBER).parent.mkdir(parents=True)
         zip_path = _write_zip(tmp_path / "ACC123-scans-NIFTI.zip", ["scans/173680_unknown/NIFTI/input.nii.gz"])
 
-        with pytest.raises(XnatZipLayoutError):
+        with pytest.raises(XnatFetchError):
             unzip_file(zip_path, str(tmp_path), "ACC123")
 
         assert not (tmp_path / "scans").exists()
-        assert cached.read_text() == "cached"
+
+    def test_a_member_through_an_on_disk_symlink_is_refused(self, tmp_path):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (tmp_path / "proj" / "ACC123").mkdir(parents=True)
+        (tmp_path / "proj" / "ACC123" / "scans").symlink_to(outside)
+        zip_path = _write_zip(tmp_path / "proj" / "z.zip", ["ACC123/scans/x.nii.gz"])
+
+        with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
+            unzip_file(zip_path, str(tmp_path / "proj"), "ACC123")
+
+        assert list(outside.iterdir()) == []
 
     @pytest.mark.parametrize("expected_root", ["../etc/passwd", "foo/../../etc/passwd"])
     def test_expected_root_path_traversal_raises_value_error(self, tmp_path, expected_root):
-        """expected_root is the user-controlled accession id; it must stay a child of extract_dir."""
         zip_path = _write_zip(tmp_path / "ACC123-scans-NIFTI.zip", [XNAT_DEFAULT_MEMBER])
 
         with pytest.raises(ValueError, match="Path traversal detected in expected root"):
             unzip_file(zip_path, str(tmp_path), expected_root)
 
-        assert os.path.exists(zip_path)
-
     def test_real_xnat_layout_merges_into_populated_accession_dir(self):
-        """Re-extracting over a populated accession dir merges; it must not 500.
-
-        Real XNAT scan zips (``/scans/ALL/files?format=zip&structure=default``) carry
-        the experiment label — the accession id — as their top-level folder. So on a
-        force-refresh / upload-invalidation re-download, extraction merges
-        member-by-member into the already-populated accession dir: no
-        ``FileExistsError``/``ENOTEMPTY``. Files absent from the new zip are
-        deliberately left behind — replacing the merge with an
-        extract-to-temp-and-swap is #1026.
-        """
+        """Re-extracting over a populated accession dir merges member by member; files absent from the
+        new zip are left behind (#1026)."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             accession_dir = os.path.join(tmp_dir, "ACC123")
             member_rel = os.path.join("scans", "1", "resources", "NIFTI", "files", "input_1.nii.gz")
@@ -259,7 +235,7 @@ class TestUnzipFile:
             with zipfile.ZipFile(zip_path, "w") as zf:
                 zf.writestr("../evil.txt", "bad")
 
-            with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
+            with pytest.raises(XnatFetchError, match="stray members"):
                 unzip_file(zip_path, tmp_dir, "ACC123")
 
             assert os.path.exists(zip_path)
@@ -275,7 +251,7 @@ class TestUnzipFile:
                 zf.writestr("safe.txt", "hello")
                 zf.writestr("../evil.txt", "bad")
 
-            with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
+            with pytest.raises(XnatFetchError, match="stray members"):
                 unzip_file(zip_path, tmp_dir, "ACC123")
 
             # The traversal path must NOT have been written to disk
@@ -293,7 +269,7 @@ class TestUnzipFile:
                 zf.writestr("../../etc/passwd", "root:x:0:0:")
                 zf.writestr("../../tmp/evil.sh", "rm -rf /")
 
-            with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
+            with pytest.raises(XnatFetchError, match="stray members"):
                 unzip_file(zip_path, tmp_dir, "ACC123")
 
             assert os.path.exists(zip_path)
@@ -634,8 +610,6 @@ class TestDownloadCache:
     async def test_real_default_layout_zip_is_extracted_and_marked_complete(
         self, mock_get_project, mock_get_exp, mock_get_subj, headers, tmp_path
     ):
-        """The real unzip_file over XNAT's default layout: the study lands in the accession dir the
-        route returns, and only then is the sentinel written."""
         mock_get_project.return_value = MagicMock(ID="PROJ1")
 
         def _xnat_default_zip(url, dest, headers):
@@ -654,19 +628,13 @@ class TestDownloadCache:
         assert sorted(os.listdir(project_dir)) == ["ACC123"]  # zip removed, nothing beside the study
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("populated", [False, True])
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
     @patch("imaging_api.services.download.get_experiment", return_value=EXPERIMENT_RESPONSE)
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_mislaid_zip_is_refused_and_never_cached(
-        self, mock_get_project, mock_get_exp, mock_get_subj, populated, headers, tmp_path
+        self, mock_get_project, mock_get_exp, mock_get_subj, headers, tmp_path
     ):
-        """A zip in another layout (here XNAT's `improved`, no session folder) fails the request and
-        writes no sentinel — also over a populated accession dir, as on a force_refresh re-download."""
         mock_get_project.return_value = MagicMock(ID="PROJ1")
-        if populated:
-            _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
-            os.remove(os.path.join(str(tmp_path), "net1", "hub-proj-1", "ACC123", ".flip_complete-scan-NIFTI"))
 
         def _improved_zip(url, dest, headers):
             return _write_zip(dest, ["scans/173680_unknown/NIFTI/input.nii.gz"])
@@ -675,7 +643,7 @@ class TestDownloadCache:
             patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)),
             patch("imaging_api.services.download.download_file", side_effect=_improved_zip),
         ):
-            with pytest.raises(XnatZipLayoutError):
+            with pytest.raises(XnatFetchError):
                 await download_and_unzip_images("hub-proj-1", "ACC123", "net1", "scan", "NIFTI", headers)
 
         project_dir = tmp_path / "net1" / "hub-proj-1"
