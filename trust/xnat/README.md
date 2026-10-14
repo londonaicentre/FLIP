@@ -412,7 +412,39 @@ Ids are hub project ids (as in the FLIP UI) or XNAT project IDs. The target runs
 creates each trigger through imaging-api's own project-creation path, owned by the service account;
 a project that still has a trigger is never touched. On an on-prem host prefix `sudo -E`. Kubernetes:
 `trust/deploy/helm/TROUBLESHOOTING.md` §2.3d. Scans archived while a project had no trigger are not
-converted retroactively; run dcm2niix on them from the XNAT UI.
+converted retroactively; convert them as the next section describes.
+
+### Converting scans archived without NIfTI
+
+A trigger fires once, when a scan is archived. Scans archived while it was missing or invalid, or
+whose conversion was lost (on Kubernetes, conversion Jobs deleted to free a swamped node, FLIP#1448),
+keep only their DICOM. `reconvert-nifti` lists every archived scan that has a `DICOM` resource and no
+`NIFTI` resource, which is what the `dcm2niix-scan` wrapper accepts, and with `LAUNCH=1` converts
+them through Container Service's bulk launch:
+
+```bash
+make -C trust reconvert-nifti KIT=<CODE>                          # report only
+make -C trust reconvert-nifti KIT=<CODE> PROJECT="<id>" LAUNCH=1  # convert one project's scans
+make -C trust reconvert-nifti KIT=<CODE> LAUNCH=1                 # every project whose trigger is active
+```
+
+- **Which projects:** without `PROJECT`, a launch converts only projects whose trigger is active. An
+  inactive trigger means the hub's *DICOM to NIfTI* setting is off, and a project with no trigger has
+  an unknown setting, so restore triggers first. Naming a project (hub or XNAT project id) converts
+  it whatever its trigger says.
+- **No double conversions:** a scan whose Container Service container has not finished is left
+  alone. `RELAUNCH_UNFINISHED=1` overrides that, for a container known to be dead (a finalize stall).
+- **Confirmed by the result, with bounded retries:** for `WAIT` minutes (default 30) the target
+  follows the launched scans until each has a `NIFTI` resource. It relaunches a scan whose conversion
+  ended without one, until `MAX_ATTEMPTS` (default 3) of its containers have ended, earlier failures
+  included.
+- **Exit codes:** 0 when everything launched was converted, 1 when a launch failed or a scan was
+  given up, 3 when the wait ended with conversions still running. Re-run the report to follow them.
+
+It runs `python -m imaging_api.scripts.reconvert_nifti` in the running imaging-api container. On an
+on-prem host prefix `sudo -E`. Kubernetes: `trust/deploy/helm/TROUBLESHOOTING.md` §2.3e. The XNAT UI
+does the same launch by hand: the project's *Run Containers* bulk launcher, or the batch-launch
+plugin's Processing Dashboard, which hands its selection to it.
 
 ## Resource limits
 

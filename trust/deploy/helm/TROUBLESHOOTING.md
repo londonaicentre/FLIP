@@ -16,6 +16,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
    - [2.3d Existing Projects Stopped Converting After a Redeploy (FLIP#1451)](#23d-existing-projects-stopped-converting-after-a-redeploy-flip1451)
+  - [2.3e Scans Archived Without NIfTI (Converting the Backlog)](#23e-scans-archived-without-nifti-converting-the-backlog)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -465,8 +466,60 @@ A project that still has a trigger is never touched by this command. On Compose
 the same command is `make -C trust restore-nifti-triggers KIT=<CODE>
 [ACTIVE="<id> ..."] [INACTIVE="<id> ..."] [REST=active|inactive] [DRY_RUN=1]`.
 Neither step converts scans archived while the trigger was broken: a trigger fires
-on new scans only. Run dcm2niix on those from the XNAT UI (the project's *Run
-Containers* action), which the command stays enabled for.
+on new scans only. Convert those as §2.3e describes.
+
+### 2.3e Scans Archived Without NIfTI (Converting the Backlog)
+
+**Symptom:** a project's archived sessions hold `DICOM` resources but some scans
+have no `NIFTI` resource, so FL training sees fewer samples than the cohort has.
+Its trigger is (now) active and valid, and new scans convert.
+
+**Root Cause:** a trigger fires once, when a scan is archived. Scans archived while
+it was missing or invalid (§2.3d), or whose conversion was lost (Container Service
+Jobs deleted to free a swamped node, FLIP#1448), are never converted afterwards.
+
+**Fix:** `reconvert_nifti`, in the imaging-api pod. It lists every archived scan
+that has DICOM and no NIfTI, which is exactly what the `dcm2niix-scan` wrapper
+accepts. With `--launch` it converts them through Container Service's bulk launch,
+the same route the XNAT UI's bulk launcher posts to:
+
+```bash
+# Report only: each FLIP project's scans without NIfTI, and what would be launched
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti
+# Convert one project's scans (hub project id or XNAT project ID) and follow them
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti --project <id> --launch
+```
+
+How it behaves:
+
+- **Which projects:** without `--project`, `--launch` converts only projects whose
+  trigger is active. An inactive trigger means the hub's *DICOM to NIfTI* setting is
+  off, and a project with no trigger has an unknown setting, so restore triggers
+  first (§2.3d). Naming a project converts it whatever its trigger says.
+- **No double conversions:** it never launches on a scan whose container has not
+  finished. A container that will never finish (the finalize stall: `_Waiting` long
+  after its history shows `complete`; or a Job deleted from under it) holds its scan
+  back until you pass `--relaunch-unfinished`.
+- **Confirmed by the result:** a conversion counts as done when the scan's `NIFTI`
+  resource appears. The launch response cannot say (one `bulk-launch-id`, every
+  per-scan entry "To be assigned").
+- **Bounded retries:** while `--wait` lasts (default 30 minutes), a scan whose
+  conversion ended without NIfTI is relaunched, until `--max-attempts` (default 3)
+  of its containers have ended. Earlier failed conversions count. A scan dcm2niix
+  cannot convert stops there and is reported. The command exits 1.
+- **Large backlogs:** conversions queue behind the cluster's capacity (and, with the
+  FLIP#1448 conversion cap, at most `xnat.containerService.maxConcurrentJobs` at
+  once), so a backlog of hundreds outlasts the wait. The command then lists what is
+  still converting and exits 3. Re-run the report later: a new `--launch` leaves a
+  scan alone while its container runs.
+
+On Compose the same command is `make -C trust reconvert-nifti KIT=<CODE>
+[PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<minutes>] [MAX_ATTEMPTS=<n>]
+[RELAUNCH_UNFINISHED=1]`. The XNAT UI can do the same launch by hand: select the
+scans in the project's *Run Containers* bulk launcher, or in the batch-launch
+plugin's Processing Dashboard, which hands its selection to the same launcher.
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 

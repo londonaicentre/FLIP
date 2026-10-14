@@ -150,6 +150,26 @@ trigger, and recreates missing ones through the same creation path, for the proj
 triggers, and the trust cannot know which projects should convert: `dicom_to_nifti` reaches it only
 in the create task. See [`../xnat/README.md`](../xnat/README.md#restoring-missing-dicom-nifti-triggers).
 
+#### Converting the backlog: `reconvert_nifti`
+
+`python -m imaging_api.scripts.reconvert_nifti` (`make -C trust reconvert-nifti KIT=<CODE>` on Compose)
+lists, for every FLIP project or the ones named with `--project`, the archived scans that have a
+`DICOM` resource and no `NIFTI` resource. A trigger fires on new scans only, so these stay
+unconverted once a trigger has been missing, invalid or swamped. With `--launch` it converts them:
+
+- **How it launches:** it looks the wrapper up as trigger creation does (refusing one on another
+  image), enables it for the project, and makes one
+  `POST /xapi/projects/{project}/wrappers/{wrapper}/root/scan/bulklaunch` per project, the route
+  XNAT's bulk launcher uses. The body is `{"scan": "<JSON-encoded list of scan URIs>"}`.
+- **How it confirms:** by each scan's `NIFTI` resource. Containers are matched to scans by their
+  `scan` input, which tells a conversion still running from one that ended without NIfTI.
+- **What it will not do:** launch on a scan with an unfinished container (`--relaunch-unfinished`
+  overrides it). Or relaunch, within `--wait` minutes, beyond `--max-attempts` ended conversions.
+- **Which projects, without `--project`:** only those whose trigger is active, since an inactive
+  trigger is the hub's `dicom_to_nifti` off.
+
+See [`../xnat/README.md`](../xnat/README.md#converting-scans-archived-without-nifti).
+
 ### Retrieval
 
 Get import status or count for a project (queries the XNAT PostgreSQL database directly):

@@ -179,6 +179,17 @@ follow.
    Projects that still have a trigger are left alone. On Kubernetes the same command runs in the
    imaging-api pod (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3d).
 
+   A trigger fires on new scans only, so the scans archived while it was missing stay without
+   NIfTI. Convert them once the triggers are back:
+
+   .. code-block:: bash
+
+      sudo -E make -C trust reconvert-nifti KIT=<slot>                                   # report only
+      sudo -E make -C trust reconvert-nifti KIT=<slot> PROJECT="<hub project id> ..." LAUNCH=1
+
+   Without ``PROJECT``, ``LAUNCH=1`` converts only the projects whose trigger is active. On
+   Kubernetes: ``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3e.
+
 Kubernetes
 ==========
 

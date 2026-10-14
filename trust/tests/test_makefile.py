@@ -219,5 +219,30 @@ class DevelopmentFlRegistry(unittest.TestCase):
         assert self.fl_registry("DOCKER_FL_REGISTRY=") == "[]"
 
 
+class ReconvertNifti(unittest.TestCase):
+    """reconvert-nifti reports unless LAUNCH is set, and hands each option to the command (FLIP#1456 G3)."""
+
+    COMMAND = "python -m imaging_api.scripts.reconvert_nifti"
+
+    def test_by_default_it_only_reports(self):
+        out = dry_run("reconvert-nifti")
+        assert self.COMMAND in out, out
+        for flag in ("--launch", "--project", "--wait", "--max-attempts", "--relaunch-unfinished"):
+            assert flag not in out, f"{flag} without being asked:\n{out}"
+        assert_data_safe(out, "reconvert-nifti")
+
+    def test_each_option_reaches_the_command(self):
+        out = dry_run(
+            "reconvert-nifti", "PROJECT=P1 P2", "LAUNCH=1", "WAIT=5", "MAX_ATTEMPTS=2", "RELAUNCH_UNFINISHED=1"
+        )
+        expected = f"{self.COMMAND} --project P1 --project P2 --launch --wait 5 --max-attempts 2 --relaunch-unfinished"
+        assert expected in " ".join(out.replace("\\\n", " ").split()), out
+
+    def test_the_seeding_projects_list_does_not_narrow_it(self):
+        """PROJECTS is the datasets to seed (default cxr_project), not XNAT projects."""
+        out = dry_run("reconvert-nifti", "PROJECTS=cxr_project prostate_project")
+        assert "--project" not in out, out
+
+
 if __name__ == "__main__":
     main()
