@@ -770,7 +770,11 @@ Prerequisites and trade-offs:
 - **Cold start.** The first job waits for a node to boot and pull the FL image, and an idle GPU node lingers
   for the autoscaler's scale-down delay (around 10 minutes on AKS by default). The FL server's 20-second
   wait for a client to start a job does not sink a late pod: tested with a job pod held 3.5 minutes for its
-  GPU, which then joined and completed.
+  GPU, which then joined and completed. The server logs `Started run … for clients:` without a late site, which
+  is expected. If a late pod crashes, the server notices through its dead-client check, not at once: about a
+  minute later (67 s in a test) the run ends as `FINISHED:EXECUTION_EXCEPTION`. Never set NVFLARE's
+  `strict_start_job_reply_check` on a server with job-pod sites: with FLIP's `min_clients` (every selected
+  Trust), it fails each job whose pod starts late.
 - **Finished job pods are not deleted** by NVFLARE; clear them with
   `kubectl delete pod -l app.kubernetes.io/component=fl-job --field-selector=status.phase!=Running`.
 - **NVFLARE only.** Flower has no equivalent wired into this chart.
