@@ -52,8 +52,7 @@ printf '%s\n' "=== $method $url" >> "$PAYLOADS"
 #     failure is a 400. Fields the body leaves out take XNAT's defaults;
 #   - a PUT merges the body into the stored receiver (an id in the body included), runs none of the
 #     POST's checks, and restarts the port's listener even when nothing differs;
-#   - a PUT or DELETE of an unknown id is a 404;
-#   - whitelistText is not a property XNAT has: it is dropped on write and never returned.
+#   - a PUT or DELETE of an unknown id is a 404.
 # Every listener restart is appended to $SCP_STATE.restarts, which is how a test tells an untouched
 # receiver from one rewritten with identical values. The item arm below answers with the collection,
 # as it always has: the script discards write replies and never GETs a single receiver.
@@ -62,7 +61,7 @@ printf '%s\n' "=== $method $url" >> "$PAYLOADS"
 # SCP_LISTING_AFTER_WRITE replaces it (an XNAT that ignored a DELETE, or re-created on a PUT; EMPTY
 # for a 200 with no body).
 scp_seed_ids() {
-  [ -f "$SCP_STATE.seq" ] || jq '(map(.id) | max // 0) + 1' "$SCP_STATE" > "$SCP_STATE.seq"
+  [ -f "$SCP_STATE.seq" ] || jq '(map(.id | numbers) | max // 0) + 1' "$SCP_STATE" > "$SCP_STATE.seq"
 }
 scp_collection() {
   scp_seed_ids
@@ -70,7 +69,7 @@ scp_collection() {
     touch "$SCP_STATE.written"
     [ -n "${SWALLOW_SCP_WRITES:-}" ] && { body='{}'; return; }
     local e problem new_id
-    e=$(jq -c 'del(.whitelistText, .id)' <<< "$data")
+    e=$(jq -c 'del(.id)' <<< "$data")
     problem=$(jq -r --argjson e "$e" '
       if (["dqrObjectIdentifier", "dicomObjectIdentifier"] | index($e.identifier)) == null
         then "DicomScpUnknownDOIException: \($e.identifier)"
@@ -106,8 +105,7 @@ scp_item() {  # PUT, and the checks before a DELETE; the arm below performs the 
       touch "$SCP_STATE.written"
       echo "PUT $id" >> "$SCP_STATE.restarts"
       [ -n "${SWALLOW_SCP_WRITES:-}" ] && return
-      edit "$SCP_STATE" --argjson id "$id" --argjson e "$(jq -c 'del(.whitelistText)' <<< "$data")" \
-        'map(if .id == $id then . + $e else . end)'
+      edit "$SCP_STATE" --argjson id "$id" --argjson e "$data" 'map(if .id == $id then . + $e else . end)'
       ;;
     DELETE)
       touch "$SCP_STATE.written"
@@ -764,6 +762,22 @@ def test_a_read_back_that_fails_fails_the_run(tmp_path):
     assert scp_writes(payloads) == [("PUT", f"{SCP}/2")]
     assert "HTTP 500" in output
     assert "is configured" not in output
+
+
+@pytest.mark.parametrize(
+    ("scp_state", "bad_id"),
+    [
+        (json.dumps([{**LIVE_RECEIVER, "id": "2/../../users", "directArchive": False}]), "2/../../users"),
+        (json.dumps([{**LIVE_RECEIVER, "id": "7;x", "aeTitle": "FLIPOLD"}, LIVE_RECEIVER]), "7;x"),
+    ],
+    ids=["kept", "deleted"],
+)
+def test_a_receiver_id_that_is_not_a_plain_number_never_reaches_a_url(tmp_path, scp_state, bad_id):
+    """XNAT generates the ids, but each goes into a PUT or DELETE URL, so it is checked first."""
+    code, payloads, output = run_configure(tmp_path, scp_state=scp_state)
+    assert code == 1, output
+    assert f"DICOM SCP receiver with id '{bad_id}'" in output
+    assert scp_writes(payloads) == []
 
 
 @pytest.mark.parametrize("title", [" XNAT", "XNAT ", "XN\\AT", "X" * 17, "XNÄT", "XN\tAT"])
