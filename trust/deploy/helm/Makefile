@@ -311,7 +311,8 @@ _upgrade-trust-k8s-apply:
 	@echo "✅ $(KIT) is on $$(sed -n 's/^DOCKER_TAG=//p' $(KIT_FILE) | tail -1). Verify: kubectl -n $(NAMESPACE) get pods; trust-api /health reports the new version."
 
 # The node self-test's checklist against a deployed release (FLIP#1390): release ready, FL kit,
-# API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, FL client steady. Needs no hub.
+# API health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion (FLIP#1448),
+# FL client steady. Needs no hub.
 # Writes selftest-k8s-<backend>-<stamp>.{json,md} under SELFTEST_OUT; exits non-zero on a failure.
 SELFTEST_OUT ?= $(REPO_ROOT)/build/selftest
 selftest: ## Run the trust self-test against the deployed release and write a report

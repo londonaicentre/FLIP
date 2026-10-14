@@ -736,6 +736,10 @@ xnat:
     pin: ""
   initJob:
     enabled: true
+  # How many dcm2niix conversions (BestEffort pods, one Job per archived scan) run at once; the
+  # rest wait for a slot. null removes the cap. Why: README "Container Service jobs" (FLIP#1448).
+  containerService:
+    maxConcurrentJobs: 4
   web:
     enabled: true
     adminUser: "admin"

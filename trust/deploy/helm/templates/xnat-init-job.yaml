@@ -347,11 +347,16 @@ spec:
                 xnat_curl -X DELETE "${XNAT_URL}/xapi/commands/${EXISTING_ID}" -u "${CREDS}" >/dev/null
               fi
 
-              echo "Registering ${DCM2NIIX_NAME} command..."
+              # Without its resource settings, so each dcm2niix pod is BestEffort and the
+              # xnat-container-jobs quota caps them (FLIP#1448; README "Container Service jobs").
+              jq 'del(."reserve-memory", ."limit-memory", ."limit-cpu")' \
+                /cs-config/dcm2niix_command.json > /tmp/dcm2niix_command.json
+
+              echo "Registering ${DCM2NIIX_NAME} command (no resource settings: BestEffort pods)..."
               xnat_curl -X POST "${XNAT_URL}/xapi/commands" \
                 -u "${CREDS}" \
                 -H "Content-Type: application/json" \
-                -d @/cs-config/dcm2niix_command.json >/dev/null
+                -d @/tmp/dcm2niix_command.json >/dev/null
 
               echo "Looking up registered command id and wrapper name..."
               RESPONSE=$(xnat_curl -u "${CREDS}" "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}")
@@ -418,6 +423,8 @@ spec:
 #   trust/xnat/xnat/config/anon_script.das
 # Keep them in sync with those source files until the chart can read them via
 # Helm `.Files.Get` (blocked by the source files living outside the chart dir).
+# dcm2niix_command.json keeps its resource keys here; configure-dcm2niix strips
+# them at registration, the one place the Kubernetes command differs (FLIP#1448).
 apiVersion: v1
 kind: ConfigMap
 metadata:

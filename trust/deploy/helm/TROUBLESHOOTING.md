@@ -15,6 +15,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
+   - [2.3d dcm2niix Jobs Swamp the Node, or Wait for a Slot](#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -397,6 +398,46 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 (`helm upgrade` re-fires the post-install hook) on Kubernetes, or
 `configure-dcm2niix.sh` on Compose. Then confirm the listing above names the
 image the trust's imaging-api requests.
+
+### 2.3d dcm2niix Jobs Swamp the Node, or Wait for a Slot
+
+**Symptom, before the conversion cap (FLIP#1448):** during a cohort pull the namespace fills with
+Pending pods that are not the release's own (one per archived scan, about 300 for a 300-study
+cohort), each requesting a whole CPU. The node sits near 100% of its CPU requests and nothing else
+schedules: a restarted trust pod stays Pending, and on AKS `az aks command invoke` fails because
+its own pod cannot start. Seen on AZ1, a one-node 4-vCPU AKS trust, on 10 Oct 2026.
+
+**Root Cause:** each Job requested a whole CPU, and they all started at once (README,
+[Container Service jobs](README.md#container-service-jobs-dcm2niix)). The cap applies only to Jobs
+created after the `helm upgrade` that re-registered dcm2niix: a Job keeps the pod spec it was
+created with, so a backlog from before the upgrade still requests a CPU per pod.
+
+**Symptom, with the cap (expected, not a fault):** Jobs with no pod yet, whose events read
+`FailedCreate ... exceeded quota: <release>-flip-trust-xnat-container-jobs`. They start as running
+conversions finish; the Job controller retries each at most a minute apart.
+
+**Check:**
+
+```bash
+# Conversions running against the cap
+kubectl describe resourcequota -n flip-trust -l app.kubernetes.io/component=xnat-container-jobs
+# The registration carries no resource settings (both print null)
+kubectl exec -n flip-trust "$XNAT_POD" -c tomcat -- sh -c \
+  'curl -s -u "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" "http://localhost:8080/xapi/commands?name=dcm2niix"' \
+  | jq '.[0] | ."reserve-memory", ."limit-cpu"'
+# Container Service Jobs created before the upgrade. Every Container Service Job carries XNAT_*
+# labels (XNAT_PROJECT, XNAT_ID, ...). An old one has a CPU *limit* in its pod template: the
+# 1-CPU request is added to the pod, not the Job, so select on the limit.
+kubectl get jobs -n flip-trust -l XNAT_PROJECT -o json | jq -r '.items[]
+  | select(.spec.template.spec.containers[0].resources.limits.cpu != null) | .metadata.name'
+```
+
+**Fix:** if the registration still shows `1000` / `1`, run `helm upgrade` (it re-fires the
+`xnat-init` hook). Then delete the Jobs the last command lists
+(`... | xargs kubectl delete job -n flip-trust`; on AZ1, 288 of them, all Pending). The scans they were for stay unconverted, so
+relaunch dcm2niix on them from XNAT: the project's Processing Dashboard (batch-launch plugin) can
+launch it on every scan at once, and the cap paces them. `make -C trust/deploy/helm selftest`
+checks that a conversion completes.
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 

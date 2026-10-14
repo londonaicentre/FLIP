@@ -14,12 +14,14 @@
 The Kubernetes form of the node self-test (scripts/selftest_node.sh), the acceptance checklist
 every trust shape runs: the release is ready, the FL client has its kit, the three APIs are
 healthy, OMOP and Orthanc are seeded, Orthanc refuses anonymous requests, XNAT accepts a real
-C-STORE (smoke-cstore.sh), and the FL client stays up. It needs no hub: an unreachable hub or FL
-server is not a failure. It runs from the operator's machine through kubectl, as `status` and
-`smoke-cstore` do, and writes the same JSON and markdown report as the node self-test.
+C-STORE (smoke-cstore.sh), dcm2niix converts a stored series to NIfTI, and the FL client stays
+up. It needs no hub: an unreachable hub or FL server is not a failure. It runs from the
+operator's machine through kubectl, as `status` and `smoke-cstore` do, and writes the same JSON
+and markdown report as the node self-test.
 
-Every check runs in a pod the release already has, so the self-test adds no workload, no RBAC and
-no NetworkPolicy exception to the trust.
+Every check runs in a pod the release already has, so the self-test adds no RBAC and no
+NetworkPolicy exception to the trust. The conversion check starts one dcm2niix Job, the same way
+a cohort pull does, in a throwaway XNAT project it deletes afterwards.
 """
 
 from __future__ import annotations
@@ -29,9 +31,11 @@ import base64
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -40,6 +44,14 @@ from typing import Protocol
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 ORTHANC_URL = "http://orthanc:8042"
+# XNAT as the xnat-web pod reaches itself.
+XNAT_URL = "http://127.0.0.1:8080"
+# The throwaway project the conversion check imports into, deleted when the check ends. Its name
+# marks it as the check's own, so a later run clears it only if the check created it.
+SELFTEST_PROJECT = "FLIPSELFTEST"
+SELFTEST_NAME = "FLIP self-test"
+# How many Orthanc series the conversion check looks at to pick the smallest one to convert.
+SERIES_SAMPLE = 50
 API_COMPONENTS = ("trust-api", "imaging-api", "data-access-api")
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -288,6 +300,241 @@ def check_cstore(run_smoke: Callable[[], tuple[int, str, str]]) -> Check:
     return Check("xnat c-store", code == 0, last_line(stdout) or last_line(stderr) or f"smoke-cstore exited {code}")
 
 
+# A curl config line carrying a credential as a Basic auth header. Every call below runs in the
+# xnat-web pod and hands curl its credential this way, through a pipe, so no process list in the
+# pod shows it. XNAT's comes from the service user the pod already holds in its environment and
+# never crosses kubectl; Orthanc's arrives on stdin. Base64 leaves nothing to quote: a credential
+# holding a quote or a newline cannot end the config line early, so curl never parses part of it
+# as a directive or echoes it back in a warning, which would land in the report.
+CURL_AUTH = (
+    r"""curl_auth() { printf 'header = "Authorization: Basic %s"\n' "$(printf '%s' "$1" | base64 | tr -d '\n')"; }"""
+)
+XNAT_CURL = 'curl_auth "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" | curl -sS -K - --max-time 100 -w "\\n%{http_code}"'
+ORTHANC_CURL = 'curl_auth "$ocreds" | curl -fsS -K - --max-time 100'
+
+
+class XnatPod:
+    """XNAT's REST API and the mocked PACS, both reached from inside the xnat-web pod."""
+
+    def __init__(self, cluster: Cluster, pod: str) -> None:
+        self.cluster = cluster
+        self.pod = pod
+
+    def _xnat(self, curl_args: str, before: str = "", stdin: str | None = None) -> tuple[int, str]:
+        """Run one XNAT call: (HTTP status, body), status 0 when XNAT gave no answer."""
+        ok, out = self.cluster.exec(self.pod, f"{CURL_AUTH}\n{before}{XNAT_CURL} {curl_args}", stdin=stdin)
+        if not ok:
+            return 0, out
+        body, _, code = out.rpartition("\n")
+        return (int(code), body) if code.isdigit() else (0, out)
+
+    def request(self, method: str, path: str, body: str | None = None, content_type: str = "") -> tuple[int, str]:
+        data = f"-H {shlex.quote('Content-Type: ' + content_type)} --data-binary {shlex.quote(body)} " if body else ""
+        return self._xnat(f"-X {method} {data}{shlex.quote(XNAT_URL + path)}")
+
+    def smallest_series(self, orthanc_creds: str) -> tuple[str, int] | None:
+        """The Orthanc series with the fewest instances among the first SERIES_SAMPLE, and its size."""
+        query = json.dumps({"Level": "Series", "Query": {}, "Limit": SERIES_SAMPLE, "Expand": True})
+        script = (
+            f"{CURL_AUTH}\nread -r ocreds\n{ORTHANC_CURL} -X POST --data-binary {shlex.quote(query)} "
+            f"{ORTHANC_URL}/tools/find"
+        )
+        ok, out = self.cluster.exec(self.pod, script, stdin=orthanc_creds)
+        try:
+            series = [(s["ID"], len(s.get("Instances", []))) for s in json.loads(out)] if ok else []
+        except (json.JSONDecodeError, TypeError, KeyError):
+            series = []
+        series = [s for s in series if s[1] > 0]
+        return min(series, key=lambda s: s[1]) if series else None
+
+    def import_series(self, orthanc_creds: str, series_id: str, project: str) -> tuple[int, str]:
+        """Copy one series from Orthanc into the project's archive, through XNAT's import service.
+
+        ``action=commit`` with ``AA=true`` has the DICOM-zip importer build the session and archive it
+        before it answers, with the archive URI as the body. Without them the session waits in the
+        prearchive until XNAT's idle timer archives it, about five minutes later.
+        """
+        fetch = (
+            "read -r ocreds\n"
+            "zip=$(mktemp)\n"
+            "trap 'rm -f \"$zip\"' EXIT\n"
+            f'{ORTHANC_CURL} -o "$zip" {shlex.quote(f"{ORTHANC_URL}/series/{series_id}/archive")} '
+            "|| { echo 'could not fetch the series from Orthanc' >&2; exit 1; }\n"
+        )
+        url = (
+            f"{XNAT_URL}/data/services/import?import-handler=DICOM-zip&PROJECT_ID={project}"
+            "&SUBJECT_ID=selftest&EXPT_LABEL=selftest&inbody=true&action=commit&AA=true"
+        )
+        return self._xnat(
+            f"-X POST -H 'Content-Type: application/zip' --data-binary @\"$zip\" {shlex.quote(url)}",
+            before=fetch,
+            stdin=orthanc_creds,
+        )
+
+
+def _results(body: str) -> list[dict]:
+    """The rows of an XNAT ResultSet answer, or none."""
+    try:
+        rows = json.loads(body)["ResultSet"]["Result"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return []
+    return rows if isinstance(rows, list) else []
+
+
+def _project_xml(project: str) -> str:
+    """The projectData document imaging-api posts to create a project (services/projects.py)."""
+    root = ET.Element(f"{{{XNAT_URL}/data/projects}}projectData")
+    ET.SubElement(root, "ID").text = project
+    ET.SubElement(root, "secondary_ID").text = project
+    ET.SubElement(root, "name").text = SELFTEST_NAME
+    ET.SubElement(root, "description").text = "Created and deleted by make selftest (selftest_k8s.py)"
+    return ET.tostring(root, encoding="unicode", short_empty_elements=False)
+
+
+def check_conversion(
+    xnat: XnatPod,
+    orthanc_creds: str | None,
+    timeout: int,
+    poll: int = 10,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> Check:
+    """dcm2niix turns a stored series into NIfTI on this cluster (FLIP#1448).
+
+    A C-STORE proves XNAT received a study, not that the Container Service can convert it: on
+    Kubernetes the conversion is a Job of its own, which has to be admitted, scheduled, mount the
+    XNAT volume and hand its output back. So import the smallest series Orthanc holds into a
+    throwaway project, launch dcm2niix on its scan the way a cohort pull's event subscription
+    does, and require a Complete container and a NIfTI file on the scan. The project is deleted
+    afterwards, whatever the outcome.
+    """
+    name = "dcm2niix conversion"
+    if not orthanc_creds:
+        return Check(name, False, "could not read an Orthanc user from its Secret")
+    status, body = xnat.request("GET", "/xapi/commands?name=dcm2niix")
+    try:
+        command = json.loads(body)[0]
+        command_id, wrapper = command["id"], command["xnat"][0]["name"]
+    except (json.JSONDecodeError, LookupError, TypeError):
+        return Check(name, False, f"no dcm2niix command is registered (HTTP {status}: {body[:120]})")
+    series = xnat.smallest_series(orthanc_creds)
+    if series is None:
+        return Check(name, False, "Orthanc lists no series to convert")
+
+    # A project left behind by an interrupted run would hold its old scan, so clear it first. Only
+    # one this check created, though: the service user is an XNAT administrator, and a project
+    # that merely shares the id is someone else's to remove.
+    status, body = xnat.request("GET", "/data/projects?format=json")
+    if status != 200:
+        return Check(name, False, f"could not list XNAT's projects (HTTP {status}: {body[:120]})")
+    existing = next((p for p in _results(body) if p.get("ID") == SELFTEST_PROJECT), None)
+    if existing is not None:
+        if existing.get("name") != SELFTEST_NAME:
+            return Check(
+                name,
+                False,
+                f"XNAT already holds a {SELFTEST_PROJECT} project this self-test did not create "
+                f"(named {existing.get('name')!r}); remove or rename it, then rerun",
+            )
+        status, body = xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
+        if status != 200:
+            return Check(name, False, f"could not clear the {SELFTEST_PROJECT} an earlier run left (HTTP {status})")
+    status, body = xnat.request("POST", "/data/projects", _project_xml(SELFTEST_PROJECT), "application/xml")
+    if status != 200:
+        return Check(name, False, f"could not create the {SELFTEST_PROJECT} project (HTTP {status}: {body[:120]})")
+    try:
+        result = _convert(xnat, orthanc_creds, series, command_id, wrapper, timeout, poll, sleep, clock)
+    finally:
+        cleanup, body = xnat.request("DELETE", f"/data/projects/{SELFTEST_PROJECT}?removeFiles=true")
+    if cleanup != 200:
+        detail = f"{result.detail}; could not delete the {SELFTEST_PROJECT} project (HTTP {cleanup}), delete it in XNAT"
+        return Check(name, result.ok, detail)
+    return result
+
+
+def _convert(
+    xnat: XnatPod,
+    orthanc_creds: str,
+    series: tuple[str, int],
+    command_id: int,
+    wrapper: str,
+    timeout: int,
+    poll: int,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> Check:
+    name = "dcm2niix conversion"
+    project = SELFTEST_PROJECT
+    series_id, instances = series
+    # The import archives before it answers, so an archive XNAT refuses (a validation error, say)
+    # comes back here as the import's own failure.
+    status, body = xnat.import_series(orthanc_creds, series_id, project)
+    if status != 200:
+        return Check(name, False, f"XNAT did not import Orthanc series {series_id} (HTTP {status}: {body[:200]})")
+    experiments = _results(xnat.request("GET", f"/data/projects/{project}/experiments?format=json")[1])
+    if not experiments:
+        return Check(
+            name,
+            False,
+            f"XNAT answered the import of Orthanc series {series_id} ({body.strip()[:120]!r}) "
+            f"but archived no session into {project}",
+        )
+    experiment = experiments[0]["ID"]
+    scans = _results(xnat.request("GET", f"/data/experiments/{experiment}/scans?format=json")[1])
+    if not scans:
+        return Check(name, False, f"session {experiment} has no scan")
+    scan = scans[0]["ID"]
+
+    enable = f"/xapi/projects/{project}/commands/{command_id}/wrappers/{wrapper}/enabled"
+    status, body = xnat.request("PUT", enable)
+    if status != 200:
+        return Check(name, False, f"could not enable dcm2niix on {project} (HTTP {status}: {body[:120]})")
+    launch = f"/xapi/projects/{project}/commands/{command_id}/wrappers/{wrapper}/root/scan/launch"
+    target = json.dumps({"scan": f"/archive/experiments/{experiment}/scans/{scan}"})
+    status, body = xnat.request("POST", launch, target, "application/json")
+    try:
+        workflow = json.loads(body).get("workflow-id") if status == 200 else None
+    except (json.JSONDecodeError, AttributeError):
+        workflow = None
+    if not workflow:
+        return Check(name, False, f"the Container Service refused the launch (HTTP {status}: {body[:160]})")
+
+    started = clock()
+    last = "no container yet"
+    while True:
+        _, body = xnat.request("GET", f"/xapi/projects/{project}/containers")
+        try:
+            containers = [c for c in json.loads(body) if isinstance(c, dict)]
+        except (json.JSONDecodeError, TypeError):
+            containers = []
+        # Only this launch's own container counts. XNAT keeps container rows after a project is deleted, so
+        # the re-created FLIPSELFTEST lists earlier runs' rows, and ours appears only once its Job exists.
+        mine = [c for c in containers if c.get("workflow-id") == workflow]
+        if mine:
+            last = mine[0].get("status") or "no status"
+        if last.startswith(("Complete", "Failed", "Killed")):
+            break
+        if clock() - started >= timeout:
+            return Check(
+                name,
+                False,
+                f"dcm2niix had not finished after {timeout}s (last status: {last}). If other conversions "
+                "are queued, `kubectl describe resourcequota` shows the cap is full; rerun when they finish",
+            )
+        sleep(poll)
+    elapsed = int(clock() - started)
+    if not last.startswith("Complete"):
+        return Check(name, False, f"dcm2niix ended {last} after {elapsed}s on scan {scan} of session {experiment}")
+
+    files = _results(
+        xnat.request("GET", f"/data/experiments/{experiment}/scans/{scan}/resources/NIFTI/files?format=json")[1]
+    )
+    nifti = [f.get("Name", "") for f in files if str(f.get("Name", "")).endswith((".nii", ".nii.gz"))]
+    if not nifti:
+        return Check(name, False, f"dcm2niix completed but scan {scan} has no NIfTI file")
+    return Check(name, True, f"a {instances}-instance series converted to {nifti[0]} in {elapsed}s")
+
+
 def check_fl_client(cluster: Cluster, settle_seconds: int, sleep: Callable[[float], None] = time.sleep) -> Check:
     """The FL client stays up. One look proves nothing (a crash-looping pod is briefly Running),
     so sample twice a settle period apart: running both times, no restart in between."""
@@ -342,6 +589,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--context", default=None)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fl-settle-seconds", type=int, default=45)
+    # A first conversion on a node pulls the dcm2niix image before it can start.
+    parser.add_argument("--conversion-timeout", type=int, default=600)
     args = parser.parse_args(argv)
 
     cluster = KubectlCluster(args.namespace, args.release, args.context)
@@ -381,6 +630,11 @@ def main(argv: list[str] | None = None) -> int:
     for check in check_orthanc(cluster):
         record(check)
     record(check_cstore(run_smoke))
+    xnat_pod = cluster.pod("xnat-web")
+    if xnat_pod:
+        record(check_conversion(XnatPod(cluster, xnat_pod), cluster.orthanc_credentials(), args.conversion_timeout))
+    else:
+        record(Check("dcm2niix conversion", False, "no running xnat-web pod"))
     if fl_enabled:
         record(check_fl_client(cluster, args.fl_settle_seconds))
 

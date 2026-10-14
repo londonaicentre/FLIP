@@ -376,6 +376,17 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "containerService": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxConcurrentJobs": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "description": "How many Container Service jobs (dcm2niix, BestEffort pods) run at once in the namespace, enforced by a ResourceQuota (FLIP#1448). null removes the cap"
+            }
+          }
+        },
         "web": {
           "type": "object",
           "properties": {
