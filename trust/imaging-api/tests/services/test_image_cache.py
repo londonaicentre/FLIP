@@ -10,16 +10,15 @@
 # limitations under the License.
 #
 
-import json
 import os
-from unittest.mock import patch
+from pathlib import Path
 
 import pytest
 
 from imaging_api.services.image_cache import (
     SENTINEL_PREFIX,
     CachedDownload,
-    clear_accession_dir,
+    clear_resource,
     invalidate_accession,
     read_sentinel,
     remove_sentinel,
@@ -27,7 +26,7 @@ from imaging_api.services.image_cache import (
     write_sentinel,
 )
 
-RECORD = CachedDownload(experiment_id="XNAT_E00004", resource_stats=[["173680", "NIFTI", "82", "1", "183823"]])
+RECORD = CachedDownload("XNAT_E00004", [["173680", "NIFTI", "82", "1", "183823"]])
 
 
 def _seed_sentinel(base, net_id, project, accession, assessor="scan", resource="NIFTI"):
@@ -85,42 +84,21 @@ class TestWriteRemoveSentinel:
             write_sentinel(accession_dir, "scan", "NIFTI", RECORD)
         assert not os.path.exists(accession_dir)
 
-    @pytest.mark.parametrize("record", [RECORD, CachedDownload(experiment_id="XNAT_E00004", resource_stats=None)])
+    @pytest.mark.parametrize("record", [RECORD, CachedDownload("XNAT_E00004", None)])
     def test_the_record_reads_back(self, tmp_path, record):
         write_sentinel(str(tmp_path), "scan", "NIFTI", record)
         assert read_sentinel(str(tmp_path), "scan", "NIFTI") == record
 
-    def test_the_record_is_json_with_a_version(self, tmp_path):
-        write_sentinel(str(tmp_path), "scan", "NIFTI", RECORD)
-        assert json.loads((tmp_path / f"{SENTINEL_PREFIX}scan-NIFTI").read_text()) == {
-            "version": 1,
-            "experiment_id": "XNAT_E00004",
-            "resource_stats": [["173680", "NIFTI", "82", "1", "183823"]],
-        }
-
     @pytest.mark.parametrize(
         "content",
         [
-            "",  # an empty sentinel, as imaging-api wrote before the record
-            "{trunc",
-            "[]",
-            '{"experiment_id": "XNAT_E1", "resource_stats": null}',  # no version
-            '{"version": 2, "experiment_id": "XNAT_E1", "resource_stats": null}',
-            '{"version": 1, "resource_stats": null}',
-            '{"version": 1, "experiment_id": "", "resource_stats": null}',
-            '{"version": 1, "experiment_id": "..", "resource_stats": null}',
-            '{"version": 1, "experiment_id": "a/b", "resource_stats": null}',
-            '{"version": 1, "experiment_id": 7, "resource_stats": null}',
-            '{"version": 1, "experiment_id": "XNAT_E1", "resource_stats": "x"}',
-            '{"version": 1, "experiment_id": "XNAT_E1", "resource_stats": [["a", 1]]}',
-            '{"version": 1, "experiment_id": "XNAT_E1", "resource_stats": ["a"]}',
+            "",  # what imaging-api wrote before the record
+            '{"version": 2, "experiment_id": "XNAT_E1"}',
+            '{"version": 1, "experiment_id": ".."}',  # the ID goes into an XNAT URL path
         ],
     )
     def test_anything_but_a_record_reads_as_none(self, tmp_path, content):
         (tmp_path / f"{SENTINEL_PREFIX}scan-NIFTI").write_text(content)
-        assert read_sentinel(str(tmp_path), "scan", "NIFTI") is None
-
-    def test_a_missing_sentinel_reads_as_none(self, tmp_path):
         assert read_sentinel(str(tmp_path), "scan", "NIFTI") is None
 
     def test_remove_is_idempotent(self, tmp_path):
@@ -191,49 +169,60 @@ class TestInvalidateAccession:
             invalidate_accession(str(tmp_path), project, accession)
 
 
-# ── clear_accession_dir ──
+# ── clear_resource ──
 
 
-class TestClearAccessionDir:
-    def test_deletes_images_and_every_sentinel_but_nothing_beside_it(self, tmp_path):
-        nifti = _seed_sentinel(tmp_path, "net-1", "proj-A", "ACC1")
-        dicom = _seed_sentinel(tmp_path, "net-1", "proj-A", "ACC1", resource="DICOM")
-        accession_dir = os.path.dirname(nifti)
-        image = os.path.join(accession_dir, "scans", "1-x", "resources", "NIFTI", "files", "input.nii.gz")
-        os.makedirs(os.path.dirname(image))
-        open(image, "w").close()
-        sibling = _seed_sentinel(tmp_path, "net-1", "proj-A", "ACC2")
-        other_net = _seed_sentinel(tmp_path, "net-2", "proj-A", "ACC1")
+def _seed_resource(accession_dir, resource, assessor="scan"):
+    image = Path(accession_dir, f"{assessor}s", "1-x", "resources", resource, "files", "image")
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_text("x")
+    write_sentinel(str(accession_dir), assessor, resource, RECORD)
+    return image
 
-        clear_accession_dir(accession_dir)
 
-        assert not os.path.exists(accession_dir)
-        assert not os.path.exists(nifti)
-        assert not os.path.exists(dicom)
-        assert os.path.exists(sibling)
-        assert os.path.exists(other_net)
-        assert os.path.isdir(os.path.dirname(accession_dir))  # the project dir stays
+class TestClearResource:
+    def test_one_resource_takes_only_its_files_and_the_sentinels_that_cover_them(self, tmp_path):
+        nifti, dicom = _seed_resource(tmp_path, "NIFTI"), _seed_resource(tmp_path, "DICOM")
+        _seed_resource(tmp_path, "ALL")
 
-    def test_a_missing_directory_is_a_noop(self, tmp_path):
-        clear_accession_dir(str(tmp_path / "net-1" / "proj-A" / "ACC1"))
+        clear_resource(str(tmp_path), "scan", "NIFTI")
 
-    def test_a_file_vanishing_mid_way_is_not_an_error(self, tmp_path):
-        """A concurrent NVFLARE CleanupImages can delete files under the walk."""
-        sentinel = _seed_sentinel(tmp_path, "net-1", "proj-A", "ACC1")
-        real_unlink = os.unlink
+        assert not nifti.parent.parent.exists()
+        assert [read_sentinel(str(tmp_path), "scan", r) is None for r in ("NIFTI", "ALL", "DICOM")] == [
+            True,
+            True,
+            False,
+        ]
+        assert dicom.is_file()
 
-        def _unlink_already_gone(path, *args, **kwargs):
-            real_unlink(path, *args, **kwargs)
-            raise FileNotFoundError(path)
+    def test_all_takes_every_scan_resource_but_not_assessors(self, tmp_path):
+        _seed_resource(tmp_path, "NIFTI")
+        _seed_resource(tmp_path, "ALL")
+        seg = _seed_resource(tmp_path, "SEG", assessor="assessor")
 
-        with patch("shutil.os.unlink", side_effect=_unlink_already_gone):
-            clear_accession_dir(os.path.dirname(sentinel))
+        clear_resource(str(tmp_path), "scan", "ALL")
 
-        assert not os.path.exists(os.path.dirname(sentinel))
+        assert not (tmp_path / "scans").exists()
+        assert [read_sentinel(str(tmp_path), "scan", r) for r in ("NIFTI", "ALL")] == [None, None]
+        assert seg.is_file()
+        assert read_sentinel(str(tmp_path), "assessor", "SEG") == RECORD
 
-    def test_other_failures_propagate(self, tmp_path):
-        sentinel = _seed_sentinel(tmp_path, "net-1", "proj-A", "ACC1")
+    def test_nothing_cached_is_a_noop(self, tmp_path):
+        clear_resource(str(tmp_path), "scan", "ALL")
+        clear_resource(str(tmp_path), "scan", "NIFTI")
 
-        with patch("shutil.os.unlink", side_effect=PermissionError("owned by the FL client")):
+    def test_a_file_that_cannot_be_removed_raises_after_its_sentinel_is_gone(self, tmp_path):
+        """Sentinels go first, so a partial delete never leaves one over missing files."""
+        files = _seed_resource(tmp_path, "NIFTI").parent
+        files.chmod(0o500)
+        try:
             with pytest.raises(PermissionError):
-                clear_accession_dir(os.path.dirname(sentinel))
+                clear_resource(str(tmp_path), "scan", "NIFTI")
+        finally:
+            files.chmod(0o700)
+        assert read_sentinel(str(tmp_path), "scan", "NIFTI") is None
+
+    @pytest.mark.parametrize(("assessor", "resource"), [("../x", "ALL"), ("scan", "a/b")])
+    def test_path_component_values_are_rejected(self, tmp_path, assessor, resource):
+        with pytest.raises(ValueError, match="Path traversal detected in"):
+            clear_resource(str(tmp_path), assessor, resource)

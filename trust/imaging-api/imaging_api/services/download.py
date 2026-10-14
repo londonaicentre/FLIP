@@ -19,15 +19,14 @@ import requests
 from imaging_api.config import get_settings
 from imaging_api.services.image_cache import (
     CachedDownload,
-    clear_accession_dir,
+    clear_resource,
     read_sentinel,
-    remove_sentinel,
     sentinel_path,
     write_sentinel,
 )
 from imaging_api.services.projects import (
     get_experiment,
-    get_experiment_id_from_experiment_response,
+    get_experiment_field,
     get_project_from_central_hub_project_id,
     get_subject_id_from_experiment_response,
 )
@@ -38,11 +37,8 @@ from imaging_api.utils.xnat_url import xnat_url
 # Get download directory
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
-# The resource-listing columns a cache hit compares, in this order: scan id, label, resource id,
-# file count, total bytes.
+# The resource-listing columns a cache hit compares: scan id, label, resource id, file count, bytes.
 _STATS_COLUMNS = ("cat_id", "label", "xnat_abstractresource_id", "file_count", "file_size")
-# Bound on the one XNAT call a cache hit makes; a timeout serves the cached copy unchecked.
-XNAT_STATS_TIMEOUT_SECONDS = 30
 
 
 async def download_and_unzip_images(
@@ -64,20 +60,13 @@ async def download_and_unzip_images(
 
     Downloads are cached on disk per (net, project, accession): extraction lands in
     ``<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/`` and a completeness
-    sentinel per (assessor_type, resource_type) is written there after successful extraction. FL
-    training code calls this once per accession per round, and without the cache each of those calls
-    is a full study re-download of bytes already on local disk (FLIP#953). The per-project path segment
-    keeps projects that share an accession from being served each other's copies (their XNAT content
-    can differ, e.g. per-project label enrichment).
-
-    The sentinel records XNAT's experiment ID and the resource stats (file count and size per scan
-    resource) taken just before the download. When the sentinel is present, one XNAT call fetches the
-    current stats and compares them, with no project or experiment lookup and no zip. If they match,
-    the cached folder is returned. If they differ, or the experiment is gone, the cached folder is
-    deleted and the study downloaded again. That way an edit made straight in XNAT is seen: labels
-    uploaded through ``flip.xnat``, or a NIfTI conversion that finished after an ``ALL`` download. If
-    XNAT cannot answer that call, the cached copy is served and a warning logged. Assessor downloads
-    are not checked, because XNAT has no assessor resource listing.
+    sentinel per (assessor_type, resource_type) is written there after successful extraction. When the
+    sentinel is present the cached folder is returned unless XNAT's resource stats show a change (see the
+    README, "Download") — FL training code calls
+    this once per accession per round, and without the cache each of those calls is a full study
+    re-download of bytes already on local disk (FLIP#953). The per-project path segment keeps projects
+    that share an accession from being served each other's copies (their XNAT content can differ, e.g.
+    per-project label enrichment).
 
     Args:
         central_hub_project_id (str): Central Hub project ID. Corresponds to XNAT secondary ID.
@@ -87,9 +76,8 @@ async def download_and_unzip_images(
         resource_type (str): XNAT resource type, one of DICOM, NIFTI, SEG or ALL (the router's ``ResourceType``
         Literal; custom values are rejected there). ALL will download all resources.
         headers (dict[str, str]): XNAT authentication headers.
-        force_refresh (bool): Re-download even when a completed cached copy exists. The sentinel is
-        removed before the re-download starts, so a crash mid-refresh can never leave a stale
-        completeness marker, and rewritten on success.
+        force_refresh (bool): Re-download even when a completed cached copy exists. The resource's cached
+        files and covering sentinels are deleted first, once XNAT has answered, and rewritten on success.
 
     Returns:
         str: The path to the unzipped folder containing the downloaded images.
@@ -125,23 +113,29 @@ async def download_and_unzip_images(
     if not accession_dir_abs.startswith(project_dir_abs + os.sep):
         raise ValueError(f"Path traversal detected in accession_id: {accession_id!r}")
 
-    # Cache check, before any project or experiment lookup. The sentinel (written only after a fully
-    # successful extraction) is the completeness marker — the mere presence of image files is not
-    # trusted, because extraction merges member-by-member and a crash can leave a partial folder.
-    # A hit costs one XNAT call, the stats check in _serve_cached_copy.
-    sentinel = sentinel_path(accession_dir_abs, assessor_type, resource_type)
-    if force_refresh:
-        remove_sentinel(accession_dir_abs, assessor_type, resource_type)
-        logger.info(
-            f"force_refresh: invalidated cached download of accession {accession_id} "
-            f"({assessor_type}/{resource_type}) ahead of re-download"
-        )
-    elif os.path.isfile(sentinel):
-        context = (
-            f"net={net_id} project={central_hub_project_id} accession={accession_id} ({assessor_type}/{resource_type})"
-        )
-        if _serve_cached_copy(accession_dir_abs, assessor_type, resource_type, headers, context):
+    # Cache check. The sentinel (written only after a fully successful extraction) is the completeness
+    # marker — the mere presence of image files is not trusted, because extraction merges member-by-member
+    # and a crash can leave a partial folder. A hit is checked against XNAT (see the README, "Download").
+    context = (
+        f"net={net_id} project={central_hub_project_id} accession={accession_id} ({assessor_type}/{resource_type})"
+    )
+    cached = not force_refresh and os.path.isfile(sentinel_path(accession_dir_abs, assessor_type, resource_type))
+    record = read_sentinel(accession_dir_abs, assessor_type, resource_type) if cached else None
+    stale = "force_refresh" if force_refresh else "its sentinel predates the XNAT record" if cached else None
+    if record is not None:
+        if record.resource_stats is None:  # an assessor download: XNAT has no assessor resource listing
+            logger.info(f"Cache hit for {context}: reusing {accession_dir_abs} (not checked against XNAT)")
             return accession_dir_abs
+        try:
+            current = get_resource_stats(record.experiment_id, resource_type, headers)
+        except NotFoundError:
+            current = None
+        except (requests.RequestException, XnatFetchError) as e:
+            return _serve_unchecked(accession_dir_abs, context, e)
+        if current == record.resource_stats:
+            logger.info(f"Cache hit for {context}: reusing {accession_dir_abs} (unchanged in XNAT)")
+            return accession_dir_abs
+        stale = f"XNAT stats {record.resource_stats} -> {current}"
 
     # Ensure the per-net/per-project download directory exists before we try to
     # write into it. A missing net_id subdir is a deployment/misconfiguration
@@ -154,46 +148,20 @@ async def download_and_unzip_images(
             f"Cannot create image download directory {project_dir_abs!r} on the trust host: {e}"
         ) from e
 
-    # Get project ID from central hub project ID
     try:
-        project = get_project_from_central_hub_project_id(central_hub_project_id, headers)
-        project_id = project.ID
-    except NotFoundError as e:
-        raise NotFoundError(f"Project with ID {central_hub_project_id} not found: {str(e)}")
-    except Exception as e:
-        raise Exception(f"Failed to fetch project ID: {str(e)}")
-    logger.info(f"Project ID: {project_id}")
-
-    # Get experiment details
-    try:
-        experiment_response = get_experiment(
-            project_id=project_id,
-            experiment_id_or_label=accession_id,
-            headers=headers,
+        project_id, subject_id, experiment_id, resource_stats = _look_up(
+            central_hub_project_id, accession_id, assessor_type, resource_type, headers
         )
-    except NotFoundError as e:
-        raise NotFoundError(f"Experiment with ID or label {accession_id} not found: {str(e)}")
+    except NotFoundError:
+        if stale:  # the study is gone from XNAT, so its cached copy goes too
+            _clear(accession_dir_abs, assessor_type, resource_type, context, f"{stale}; gone from XNAT")
+        raise
     except Exception as e:
-        raise Exception(f"Failed to fetch experiment details: {str(e)}")
-
-    # Get subject ID and XNAT experiment ID from experiment
-    subject_id = get_subject_id_from_experiment_response(experiment_response)
-    experiment_id = get_experiment_id_from_experiment_response(experiment_response)
-
-    # Record XNAT's resource stats BEFORE the download. If the study changes between this call and
-    # the zip, the sentinel holds the older stats, so the next hit sees a difference and fetches
-    # again. Taken after the download, the same race would mark the older copy current. Assessor
-    # downloads record none: XNAT 1.10 has no assessors/ALL/resources listing (it answers 404).
-    resource_stats = None
-    if assessor_type.lower() == "scan":
-        try:
-            resource_stats = get_resource_stats(experiment_id, resource_type, headers)
-        except NotFoundError as e:
-            raise NotFoundError(
-                f"Experiment {experiment_id} ({accession_id}) not found reading its resources: {e.detail}"
-            )
-        except Exception as e:
-            raise Exception(f"Failed to fetch XNAT resource stats for {accession_id}: {str(e)}")
+        if cached and record is None:  # an older sentinel: nothing to check it by, so keep serving it
+            return _serve_unchecked(accession_dir_abs, context, e)
+        raise
+    if stale:
+        _clear(accession_dir_abs, assessor_type, resource_type, context, stale)
 
     # Format download URL
     download_url = format_download_url(
@@ -246,13 +214,8 @@ async def download_and_unzip_images(
             logger.debug(f"Directory: {os.path.join(root, name)}")
 
     # Only now — after a fully successful extraction — mark this (assessor, resource)
-    # download complete, with what it came from, so future calls can check it against XNAT.
-    write_sentinel(
-        accession_dir_abs,
-        assessor_type,
-        resource_type,
-        CachedDownload(experiment_id=experiment_id, resource_stats=resource_stats),
-    )
+    # download complete, with the record a later hit is checked by.
+    write_sentinel(accession_dir_abs, assessor_type, resource_type, CachedDownload(experiment_id, resource_stats))
     logger.info(
         f"Marked download complete for net={net_id} project={central_hub_project_id} "
         f"accession={accession_id} ({assessor_type}/{resource_type})"
@@ -261,113 +224,69 @@ async def download_and_unzip_images(
     return extracted_folder
 
 
-def _serve_cached_copy(
-    accession_dir_abs: str, assessor_type: str, resource_type: str, headers: dict[str, str], context: str
-) -> bool:
+def _look_up(
+    central_hub_project_id: str, accession_id: str, assessor_type: str, resource_type: str, headers: dict[str, str]
+) -> tuple[str, str, str, list[list[str]] | None]:
     """
-    Decides whether a sentinel-marked cached copy may be served, and deletes it when it may not.
+    Finds the accession's XNAT project, subject and experiment, then reads its resource stats.
 
-    The copy is served when XNAT's current resource stats match the ones recorded at download time.
-    It is also served, with a warning, when XNAT cannot answer. That copy was complete and current
-    when written, and serving it unchecked is what every hit did before this check existed. A hit
-    only runs after the request's XNAT session check has just passed, so this covers a transient
-    fault on one call. Failing instead would make an FL client skip that accession for the round.
-    A 404 for the experiment is a definite answer, not a fault: the copy is deleted.
-
-    A stale copy is deleted, folder and all (``clear_accession_dir``), rather than downloaded over.
-    Extraction merges, so files XNAT has since deleted would otherwise stay on disk and still be
-    read by the FL app.
-
-    Args:
-        accession_dir_abs (str): Absolute accession directory holding the cached copy.
-        assessor_type (str): The assessor type of the download.
-        resource_type (str): The resource type of the download.
-        headers (dict[str, str]): XNAT authentication headers.
-        context (str): Identifies the download in log lines.
+    The stats are read before the zip, so a change landing in between shows on the next hit.
 
     Returns:
-        bool: True to serve the cached copy. False when it has been deleted and must be downloaded.
+        tuple[str, str, str, list[list[str]] | None]: Project ID, subject ID, experiment ID, and the
+        stats (None for an assessor download).
     """
-    record = read_sentinel(accession_dir_abs, assessor_type, resource_type)
-    if record is None:
-        reason = "its sentinel records no XNAT stats (written by an older imaging-api, or unreadable)"
-    elif record.resource_stats is None:
-        logger.info(
-            f"Cache hit for {context}: reusing {accession_dir_abs} (assessor download, not checked against XNAT)"
-        )
-        return True
-    else:
-        try:
-            current = get_resource_stats(record.experiment_id, resource_type, headers)
-        except NotFoundError:
-            reason = f"XNAT experiment {record.experiment_id} no longer exists"
-        except (requests.RequestException, XnatFetchError) as e:
-            logger.warning(
-                f"Cache hit for {context}: could not check XNAT for changes ({type(e).__name__}: {e}); "
-                f"serving the cached copy {accession_dir_abs} unchecked"
-            )
-            return True
-        else:
-            if current == record.resource_stats:
-                logger.info(
-                    f"Cache hit for {context}: reusing {accession_dir_abs} (unchanged in XNAT, skipping download)"
-                )
-                return True
-            reason = f"XNAT changed since the download ({_describe_change(record.resource_stats, current)})"
-
-    logger.info(f"Cached copy for {context} is stale: {reason}; deleting it and downloading again")
-    remove_sentinel(accession_dir_abs, assessor_type, resource_type)
+    # Get project ID from central hub project ID
     try:
-        clear_accession_dir(accession_dir_abs)
-    except OSError as e:
-        logger.warning(
-            f"Could not delete the stale copy {accession_dir_abs} ({e}); downloading over it, "
-            "so files deleted in XNAT may remain on disk"
+        project = get_project_from_central_hub_project_id(central_hub_project_id, headers)
+        project_id = project.ID
+    except NotFoundError as e:
+        raise NotFoundError(f"Project with ID {central_hub_project_id} not found: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Failed to fetch project ID: {str(e)}")
+    logger.info(f"Project ID: {project_id}")
+
+    # Get experiment details
+    try:
+        experiment_response = get_experiment(
+            project_id=project_id,
+            experiment_id_or_label=accession_id,
+            headers=headers,
         )
-    return False
+    except NotFoundError as e:
+        raise NotFoundError(f"Experiment with ID or label {accession_id} not found: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Failed to fetch experiment details: {str(e)}")
+
+    experiment_id = get_experiment_field(experiment_response, "ID")
+    stats = get_resource_stats(experiment_id, resource_type, headers) if assessor_type.lower() == "scan" else None
+    return project_id, get_subject_id_from_experiment_response(experiment_response), experiment_id, stats
 
 
-def _describe_change(before: list[list[str]], after: list[list[str]]) -> str:
-    """
-    Summarises how two resource-stats listings differ, for the log line explaining a re-download.
+def _serve_unchecked(accession_dir_abs: str, context: str, error: Exception) -> str:
+    """Serves a cached copy that XNAT could not be asked about, with a warning."""
+    logger.warning(
+        f"Cache hit for {context}: could not check XNAT for changes ({type(error).__name__}: {error}); "
+        f"serving {accession_dir_abs} unchecked"
+    )
+    return accession_dir_abs
 
-    Args:
-        before (list[list[str]]): The stats recorded at download time.
-        after (list[list[str]]): XNAT's current stats.
 
-    Returns:
-        str: One clause per changed, added or removed (scan, resource) row.
-    """
-    old = {tuple(row[:3]): row for row in before}
-    new = {tuple(row[:3]): row for row in after}
-    parts = [
-        f"{key[1]} on scan {key[0]}: {old[key][3]} -> {new[key][3]} files, {old[key][4]} -> {new[key][4]} bytes"
-        for key in sorted(old.keys() & new.keys())
-        if old[key] != new[key]
-    ]
-    parts += [f"{key[1]} on scan {key[0]} added" for key in sorted(new.keys() - old.keys())]
-    parts += [f"{key[1]} on scan {key[0]} removed" for key in sorted(old.keys() - new.keys())]
-    return "; ".join(parts)
+def _clear(accession_dir_abs: str, assessor_type: str, resource_type: str, context: str, reason: str) -> None:
+    """Deletes a resource's stale cached files before it is downloaded again."""
+    logger.info(f"Cached copy for {context} is stale ({reason}); deleting it before downloading again")
+    try:
+        clear_resource(accession_dir_abs, assessor_type, resource_type)
+    except OSError as e:
+        raise LocalStorageError(f"Cannot delete the stale cached copy in {accession_dir_abs}: {e}") from e
 
 
 def get_resource_stats(experiment_id: str, resource_type: str, headers: dict[str, str]) -> list[list[str]]:
     """
-    Fetches XNAT's stats for the scan resources a download of ``resource_type`` covers.
+    Fetches the ``_STATS_COLUMNS`` rows of the scan resources a download of ``resource_type`` covers.
 
-    One call, ``GET /data/experiments/{experiment_id}/scans/ALL/resources?format=json``. It returns
-    one row per (scan, resource), each with the scan id (``cat_id``), the resource ``label`` and id,
-    ``file_count`` and ``file_size``. Uploading, replacing with a different size, or deleting a file
-    changes them, as does adding or removing a resource or a scan. A same-name replacement of the
-    same size does not.
-
-    The file listing's ``digest`` column would catch that last case, but it is not used, for two
-    reasons. XNAT fills ``digest`` only when the site's ``checksums`` setting is on, and FLIP never
-    turns it on (``siteConfig/checksums`` is ``false`` on dev trust 1, where no file has a digest).
-    And that listing has one row per file, a DICOM series one per slice, so its cost would grow with
-    the study on every hit.
-
-    ``ALL`` keeps every row, matching the download URL, which drops the resource segment. Any other
-    type keeps the rows whose label equals it exactly, as XNAT's label lookup does.
+    ``ALL`` keeps every row; any other type keeps the rows labelled exactly that, as XNAT's lookup does.
+    Counts and sizes rather than file digests: XNAT fills ``digest`` only with its ``checksums`` setting on.
 
     Args:
         experiment_id (str): XNAT's experiment ID (``XNAT_E…``).
@@ -375,17 +294,17 @@ def get_resource_stats(experiment_id: str, resource_type: str, headers: dict[str
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        list[list[str]]: ``[scan id, label, resource id, file count, file size]`` rows, sorted.
+        list[list[str]]: The rows, sorted.
 
     Raises:
         ValueError: If the experiment ID is empty or a dot-segment.
-        imaging_api.utils.exceptions.NotFoundError: If XNAT has no experiment with that ID (404).
-        imaging_api.utils.exceptions.XnatFetchError: For any other non-200 answer, or a body that is
-            not a resource listing.
+        imaging_api.utils.exceptions.NotFoundError: If XNAT has no experiment with that ID.
+        imaging_api.utils.exceptions.XnatFetchError: For any other non-200, or a body that is not a listing.
         requests.RequestException: If the request fails or times out.
     """
     url = xnat_url("data", "experiments", experiment_id, "scans", "ALL", "resources", query={"format": "json"})
-    response = requests.get(url, headers=headers, timeout=XNAT_STATS_TIMEOUT_SECONDS)
+    # 5 s, like the session check: a hit holds imaging-api's single event loop for as long as this takes.
+    response = requests.get(url, headers=headers, timeout=5)
     if response.status_code == 404:
         raise NotFoundError(f"XNAT experiment {experiment_id} not found")
     if response.status_code != 200:

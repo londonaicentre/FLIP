@@ -23,11 +23,7 @@ the directory member-by-member, so a partially-extracted folder can hold plausib
 files. Sentinels are exact-match per (assessor_type, resource_type); ``ALL`` and a specific
 resource type cache independently. Helpers are pure functions over explicit directory
 arguments so callers keep patching their own module-level ``BASE_IMAGES_DOWNLOAD_DIR``.
-
-The sentinel holds a small JSON record (``CachedDownload``) of what the download came from:
-XNAT's experiment ID and the resource stats XNAT reported for it. A cache hit compares those
-stats with XNAT's current ones, so an edit made straight in XNAT is seen. An empty or
-unreadable sentinel, such as one written by an older imaging-api, reads as ``None``.
+The sentinel holds a ``CachedDownload`` record that a hit checks against XNAT (README, "Download").
 """
 
 import glob
@@ -45,15 +41,8 @@ SENTINEL_VERSION = 1
 @dataclass(frozen=True)
 class CachedDownload:
     """
-    What a completeness sentinel records about the download it marks.
-
-    Attributes:
-        experiment_id (str): XNAT's experiment ID (``XNAT_E…``) the copy came from. It stays fixed
-            when a session is relabelled, so a hit can be checked with one call and no project or
-            label lookup.
-        resource_stats (list[list[str]] | None): XNAT's stats for the resources the download
-            covered, one ``[scan id, label, resource id, file count, file size]`` row each, sorted.
-            None when XNAT has no listing to compare against (assessor downloads).
+    What a sentinel records: XNAT's experiment ID, and the resource stats taken before the download
+    (``get_resource_stats`` rows; None for assessor downloads, which XNAT cannot list).
     """
 
     experiment_id: str
@@ -113,9 +102,6 @@ def write_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: st
 
     A missing directory means the download extracted nothing, which is never marked complete.
 
-    The write is not atomic and does not need to be: a crash part-way leaves an empty or
-    truncated file, which ``read_sentinel`` reads as ``None``, so the next request downloads again.
-
     Args:
         accession_dir_abs (str): Absolute accession directory the download extracted into.
         assessor_type (str): The assessor type of the completed download.
@@ -135,13 +121,6 @@ def write_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: st
     Path(sentinel_path(accession_dir_abs, assessor_type, resource_type)).write_text(json.dumps(payload))
 
 
-def _is_stats(value: Any) -> bool:
-    """True if value is a list of lists of strings, the shape ``CachedDownload.resource_stats`` takes."""
-    return isinstance(value, list) and all(
-        isinstance(row, list) and all(isinstance(cell, str) for cell in row) for row in value
-    )
-
-
 def read_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str) -> CachedDownload | None:
     """
     Reads the record a completeness sentinel holds.
@@ -152,51 +131,55 @@ def read_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str
         resource_type (str): The resource type of the download.
 
     Returns:
-        CachedDownload | None: The record. None when the sentinel is missing, empty (written by an
-        imaging-api that predates the record), truncated, or not a record of this version.
+        CachedDownload | None: The record; None for a missing, empty (older imaging-api) or unreadable sentinel.
     """
     try:
         payload = json.loads(Path(sentinel_path(accession_dir_abs, assessor_type, resource_type)).read_text())
-    except (OSError, ValueError):
+        experiment_id = payload["experiment_id"]
+        if payload["version"] != SENTINEL_VERSION or not isinstance(experiment_id, str):
+            return None
+        _validate_component("experiment_id", experiment_id)  # it goes into an XNAT URL path
+    except (OSError, ValueError, KeyError, TypeError):
         return None
-    if not isinstance(payload, dict) or payload.get("version") != SENTINEL_VERSION:
-        return None
-    experiment_id = payload.get("experiment_id")
-    stats = payload.get("resource_stats")
-    if not isinstance(experiment_id, str) or not (stats is None or _is_stats(stats)):
-        return None
-    try:
-        # The ID goes into an XNAT URL path; anything but a single plain segment is not a record.
-        _validate_component("experiment_id", experiment_id)
-    except ValueError:
-        return None
-    return CachedDownload(experiment_id=experiment_id, resource_stats=stats)
+    return CachedDownload(experiment_id=experiment_id, resource_stats=payload.get("resource_stats"))
 
 
-def clear_accession_dir(accession_dir_abs: str) -> None:
+def _ignore_missing(function: Any, path: str, exc: BaseException) -> None:
+    if not isinstance(exc, FileNotFoundError):
+        raise exc
+
+
+def clear_resource(accession_dir_abs: str, assessor_type: str, resource_type: str) -> None:
     """
-    Deletes one cached accession directory: its images and every sentinel in it.
+    Deletes one resource's cached files, after the sentinels that cover them.
 
-    Used when XNAT's copy of the study has changed. Extraction merges, so re-downloading over the
-    old copy would keep the files XNAT has since deleted (#1026). Every (assessor, resource)
-    download of the accession extracts into this one directory, so all its sentinels go with it.
-    A sibling download then fetches again on its next request rather than being served from a
-    half-replaced folder. A missing directory, or a file that vanishes mid-way (a concurrent
-    NVFLARE ``CleanupImages``), is not an error.
+    Paths follow the pinned ``structure=default`` layout: ``<assessor_type>s/*/resources/<R>/`` for one
+    resource, all of ``<assessor_type>s/`` for ``ALL``. The covering sentinels are ``R`` and ``ALL``, or
+    every one of that assessor type for ``ALL``. Other resources' files and sentinels stay.
 
     Args:
-        accession_dir_abs (str): Absolute (realpath'd) accession directory, already checked by the
-            caller to sit inside its project directory.
+        accession_dir_abs (str): Absolute accession directory.
+        assessor_type (str): The assessor type of the download.
+        resource_type (str): The resource type of the download.
 
     Raises:
-        OSError: If a file cannot be removed for any reason other than already being gone.
+        OSError: If a file cannot be removed for a reason other than already being gone.
     """
-
-    def _ignore_missing(function: Any, path: str, exc: BaseException) -> None:
-        if not isinstance(exc, FileNotFoundError):
-            raise exc
-
-    shutil.rmtree(accession_dir_abs, onexc=_ignore_missing)
+    _validate_component("assessor_type", assessor_type)
+    _validate_component("resource_type", resource_type)
+    folder = os.path.join(accession_dir_abs, f"{assessor_type.lower()}s")
+    if resource_type.upper() == "ALL":
+        sentinels = glob.glob(
+            os.path.join(glob.escape(accession_dir_abs), f"{SENTINEL_PREFIX}{glob.escape(assessor_type)}-*")
+        )
+        targets = [folder]
+    else:
+        sentinels = [sentinel_path(accession_dir_abs, assessor_type, r) for r in (resource_type, "ALL")]
+        targets = glob.glob(os.path.join(glob.escape(folder), "*", "resources", glob.escape(resource_type)))
+    for sentinel in sentinels:
+        Path(sentinel).unlink(missing_ok=True)
+    for target in targets:
+        shutil.rmtree(target, onexc=_ignore_missing)
 
 
 def remove_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str) -> None:
