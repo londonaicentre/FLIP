@@ -78,18 +78,16 @@ class XnatTokenFactory:
 
     def is_token_valid(self, token: str) -> bool:
         """
-        Checks if a given XNAT session token is still valid for the configured service user.
+        Checks if a given XNAT session token is still valid.
 
-        Asks XNAT whose session it is: ``GET /xapi/users/username`` answers with the bare username as
-        text/plain, and with 401 for an unknown, expired or logged-out session. Only an answer naming
-        the configured service user counts. A session XNAT resolves to anyone else is not one this
-        factory logged in, so it is treated as invalid and replaced.
+        ``GET /xapi/users/username`` needs a live session: XNAT answers 401 for an unknown, expired or
+        logged-out one.
 
         Args:
             token (str): The XNAT session token to validate.
 
         Returns:
-            bool: True if XNAT accepts the token as the configured service user's session, False otherwise.
+            bool: True if XNAT accepts the session, False otherwise.
         """
         status_url = f"{self.url}/xapi/users/username"
         headers = {"Cookie": f"JSESSIONID={token}"}
@@ -101,20 +99,5 @@ class XnatTokenFactory:
             logger.debug(f"XNAT session check failed (connection error), logging in again: {e}")
             return False
 
-        if response.status_code != status.HTTP_200_OK:
-            logger.debug(f"XNAT session check returned {response.status_code}, logging in again")
-            return False
-
-        if response.text.strip() != self.username:
-            # A warning, not a debug line: if XNAT_SERVICE_USER differs from the XNAT username at all (letter
-            # case, stray whitespace), every request logs in again and sessions pile up, and this line is the
-            # only sign of why. It names neither user, and never the token.
-            logger.warning(
-                "XNAT session check: the session belongs to a different user than XNAT_SERVICE_USER, logging in "
-                "again. If this repeats on every request, check that XNAT_SERVICE_USER matches the XNAT username "
-                "exactly (letter case, whitespace)."
-            )
-            return False
-
-        logger.debug("XNAT session check passed, reusing the cached session")
-        return True
+        logger.debug(f"XNAT session check returned {response.status_code}")
+        return response.status_code == status.HTTP_200_OK

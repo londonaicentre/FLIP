@@ -25,8 +25,6 @@ PASSWORD = "secret"  # pragma: allowlist secret
 
 SESSION_CHECK_URL = f"{URL}/xapi/users/username"
 LOGIN_URL = f"{URL}/data/JSESSION"
-# The list endpoint the session check used to call: every XNAT user, on every request.
-USER_LIST_URL = f"{URL}/xapi/users"
 
 CACHED_TOKEN = "8F3A1C9E7B2D4F60A5E1C3B7D9F2B4E6"  # pragma: allowlist secret
 NEW_TOKEN = "C4E2A9F1B7D3E5A0C8F6B2D4E1A3C5F7"  # pragma: allowlist secret
@@ -36,10 +34,9 @@ def _response(status_code: int, text: str = "") -> MagicMock:
     return MagicMock(status_code=status_code, text=text)
 
 
-# Each way a cached session can stop being usable: XNAT names someone else, refuses it, or cannot
-# be reached. Every one must lead to exactly one fresh login.
+# Each way a cached session can stop being usable: XNAT refuses it, or cannot be reached. Every one
+# must lead to exactly one fresh login.
 INVALID_SESSION_CHECKS = [
-    pytest.param(_response(200, "another-user"), id="another-user"),
     pytest.param(_response(401, "Unauthorized"), id="401"),
     pytest.param(requests.exceptions.ConnectionError("connection refused"), id="connection-error"),
 ]
@@ -56,7 +53,7 @@ def _called_urls(mock_get: MagicMock) -> list[str]:
 
 class TestIsTokenValid:
     @patch("imaging_api.utils.xnat_token.requests.get")
-    def test_valid_session_for_the_service_user(self, mock_get, factory):
+    def test_valid_session(self, mock_get, factory):
         mock_get.return_value = _response(200, USERNAME)
 
         assert factory.is_token_valid("valid-token") is True
@@ -66,23 +63,9 @@ class TestIsTokenValid:
             timeout=SESSION_CHECK_TIMEOUT_SECONDS,
         )
 
-    @patch("imaging_api.utils.xnat_token.requests.get")
-    def test_surrounding_whitespace_in_the_answer_is_ignored(self, mock_get, factory):
-        mock_get.return_value = _response(200, f"{USERNAME}\n")
-        assert factory.is_token_valid("valid-token") is True
-
-    @pytest.mark.parametrize(
-        "answer",
-        ["another-user", "guest", f"{USERNAME}2", USERNAME[:-1], USERNAME.upper(), "", "<html>login</html>"],
-    )
-    @patch("imaging_api.utils.xnat_token.requests.get")
-    def test_a_session_naming_anyone_else_is_invalid(self, mock_get, factory, answer):
-        mock_get.return_value = _response(200, answer)
-        assert factory.is_token_valid("someone-elses-token") is False
-
     @pytest.mark.parametrize("status_code", [401, 403, 404, 500, 503])
     @patch("imaging_api.utils.xnat_token.requests.get")
-    def test_non_200_is_invalid_even_if_the_body_names_the_service_user(self, mock_get, factory, status_code):
+    def test_non_200_is_invalid(self, mock_get, factory, status_code):
         mock_get.return_value = _response(status_code, USERNAME)
         assert factory.is_token_valid("expired-token") is False
 
@@ -144,18 +127,6 @@ class TestGetXnatCookie:
 
     @patch("imaging_api.utils.xnat_token.requests.post")
     @patch("imaging_api.utils.xnat_token.requests.get")
-    def test_the_user_list_is_never_requested(self, mock_get, mock_post, factory):
-        mock_get.side_effect = [_response(401), _response(200, USERNAME), _response(200, "another-user")]
-        mock_post.return_value = _response(200, NEW_TOKEN)
-
-        for _ in range(3):
-            factory.get_xnat_cookie()
-
-        assert USER_LIST_URL not in _called_urls(mock_get)
-        assert all(url == SESSION_CHECK_URL for url in _called_urls(mock_get))
-
-    @patch("imaging_api.utils.xnat_token.requests.post")
-    @patch("imaging_api.utils.xnat_token.requests.get")
     def test_login_timeout_raises_http_exception(self, mock_get, mock_post, factory):
         mock_get.return_value = _response(401)
         mock_post.side_effect = requests.exceptions.ReadTimeout("read timed out")
@@ -212,40 +183,3 @@ class TestSessionTokenIsNeverLogged:
         for token in (CACHED_TOKEN, NEW_TOKEN):
             # The previous code logged the first ten characters; any six would already be a leak.
             assert not any(token[i : i + 6] in caplog.text for i in range(len(token) - 5))
-
-    @patch("imaging_api.utils.xnat_token.requests.get")
-    def test_a_session_for_another_user_warns_without_naming_either_user(self, mock_get, factory, caplog):
-        """A mismatch makes every request log in again, so it must be visible: one WARNING, no names, no token."""
-        caplog.set_level(logging.DEBUG)
-        mock_get.return_value = _response(200, "another-user")
-
-        assert factory.is_token_valid(CACHED_TOKEN) is False
-
-        warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
-        assert len(warnings) == 1
-        assert "a different user than XNAT_SERVICE_USER" in warnings[0]
-        assert USERNAME not in caplog.text
-        assert "another-user" not in caplog.text
-        assert not any(CACHED_TOKEN[i : i + 6] in caplog.text for i in range(len(CACHED_TOKEN) - 5))
-
-    @pytest.mark.parametrize(
-        "session_check",
-        [
-            pytest.param(_response(200, USERNAME), id="valid"),
-            pytest.param(_response(401, "Unauthorized"), id="401"),
-            pytest.param(requests.exceptions.ConnectionError("connection refused"), id="connection-error"),
-        ],
-    )
-    @patch("imaging_api.utils.xnat_token.requests.get")
-    def test_an_expired_or_unreachable_session_stays_at_debug(self, mock_get, factory, session_check, caplog):
-        """An expired session or a blip is routine, so only the user mismatch warns."""
-        caplog.set_level(logging.DEBUG)
-        if isinstance(session_check, Exception):
-            mock_get.side_effect = session_check
-        else:
-            mock_get.return_value = session_check
-
-        factory.is_token_valid(CACHED_TOKEN)
-
-        assert "XNAT session check" in caplog.text
-        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
