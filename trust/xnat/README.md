@@ -236,8 +236,9 @@ they collide or are non-numeric. The dev allocation is 8104/8105 (GSTT) and 8106
 
 `configure-xnat.sh` updates an existing PACS registration in place when any of its kit-managed
 fields drift (host, query/retrieve port, label, extended-negotiation flag), and deletes every
-registration other than the configured one so exactly one survives — which is why imaging-api can
-read the PACS id back from XNAT at runtime rather than assuming `1`. The delete is conditional: if
+registration other than the configured one so exactly one survives, flagged as DQR's default
+query/retrieve PACS — which is why imaging-api needs no PACS id: its queries name none, so DQR uses
+that default, and each import reads the default's id back from XNAT. The delete is conditional: if
 foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
 the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
 

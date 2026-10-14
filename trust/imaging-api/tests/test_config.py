@@ -17,20 +17,30 @@ from imaging_api.config import Settings
 
 
 def test_internal_topology_vars_default(monkeypatch):
-    """PACS_ID and the internal trust-network URLs are topology constants (the
-    single registered PACS is always id 1; the URLs are docker service name +
+    """The internal trust-network URLs are topology constants (docker service name +
     container port). They must default in Settings rather than be required kit
-    fields a kit can omit or set wrong — a mis-set PACS_ID 404s every DQR query.
+    fields a kit can omit or set wrong.
     """
-    for var in ("PACS_ID", "XNAT_URL", "DATA_ACCESS_API_URL", "XNAT_DATABASE_URL", "XNAT_DATASOURCE_PASSWORD"):
+    for var in ("XNAT_URL", "DATA_ACCESS_API_URL", "XNAT_DATABASE_URL", "XNAT_DATASOURCE_PASSWORD"):
         monkeypatch.delenv(var, raising=False)
 
     settings = Settings()
 
-    assert settings.PACS_ID == 1
     assert settings.XNAT_URL == "http://xnat-web:8080"
     assert settings.DATA_ACCESS_API_URL == "http://data-access-api:8000"
     assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
+
+
+def test_a_leftover_pacs_id_is_ignored(monkeypatch):
+    """There is no PACS id setting any more: DQR queries its default PACS and the import reads that
+    PACS's id from XNAT. An older kit or Helm values file that still injects PACS_ID must not stop
+    imaging-api booting on upgrade, and must not come back as a setting anything could read.
+    """
+    monkeypatch.setenv("PACS_ID", "1")
+
+    settings = Settings()
+
+    assert not hasattr(settings, "PACS_ID")
 
 
 def test_minted_xnat_datasource_password_replaces_url_password(monkeypatch):
