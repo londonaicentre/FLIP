@@ -9,15 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The xnat-init Job refuses an xnat-web image whose configure-dcm2niix.sh predates FLIP#1451.
+"""The xnat-init Job runs the xnat-web image's configure-dcm2niix.sh, unless that script predates FLIP#1451.
 
-The chart's configure-dcm2niix container runs the script the xnat-web image ships, and the image
-follows ``xnat.image.pin`` (the kit's XNAT_TAG). A pin on an image built before FLIP#1451, v0.12.0
-say, hands the chart a Docker-only script that dies under ``set -u`` on DATA_PATH, which a
-``helm upgrade`` reports only as a failed hook. These tests render the Job with such a pin, run its
-container command for real against a stand-in script and check it stops first, naming the image.
-
-Skipped without helm; the chart workflow's helm-template job runs it.
+A pin on an older image (``xnat.image.pin``, the kit's XNAT_TAG) hands the chart a Docker-only
+script that dies on DATA_PATH, which ``helm upgrade`` reports only as a failed hook. Skipped without
+helm; the chart workflow's helm-template job runs it.
 """
 
 import shutil
@@ -48,25 +44,20 @@ def _container_command(*sets: str) -> str:
 
 def _run(tmp_path: Path, command: str, script: str) -> subprocess.CompletedProcess[str]:
     """Runs ``command`` with the image's config directory stood in for by ``tmp_path``."""
+    tmp_path.mkdir()
     (tmp_path / "configure-dcm2niix.sh").write_text(script)
     command = command.replace("cd /data/xnat/config", f"cd {tmp_path}")
     return subprocess.run(["bash", "-c", command], capture_output=True, text=True, timeout=60)
 
 
-def test_an_image_from_before_the_backend_switch_is_refused_by_name(tmp_path: Path) -> None:
-    command = _container_command("xnat.image.pin=v0.12.0")
+def test_the_container_runs_the_images_script_and_refuses_one_from_before_the_backend_switch(tmp_path: Path) -> None:
+    current = _run(tmp_path / "current", _container_command(), 'echo "backend=${XNAT_CS_BACKEND:-unset}"\n')
+    assert current.returncode == 0, current.stderr
+    assert "backend=unset" in current.stdout, "the script was not run"
+
     # v0.12.0's script, reduced to the line that kills it under the chart.
-    result = _run(tmp_path, command, 'set -u\necho "DATA_PATH=$DATA_PATH"\necho ran\n')
-
-    assert result.returncode != 0
-    assert f"{REPOSITORY}:v0.12.0 predates FLIP#1451" in result.stderr
-    assert "xnat.image.pin" in result.stderr
-    assert "ran" not in result.stdout, "the old script ran anyway"
-
-
-def test_an_image_with_the_backend_switch_runs_its_script(tmp_path: Path) -> None:
-    command = _container_command()
-    result = _run(tmp_path, command, 'echo "backend=${XNAT_CS_BACKEND:-unset}"\n')
-
-    assert result.returncode == 0, result.stderr
-    assert "backend=unset" in result.stdout, "the script was not run"
+    old = _run(tmp_path / "old", _container_command("xnat.image.pin=v0.12.0"), 'set -u\necho "DATA_PATH=$DATA_PATH"\n')
+    assert old.returncode != 0
+    assert f"{REPOSITORY}:v0.12.0 predates FLIP#1451" in old.stderr
+    assert "xnat.image.pin" in old.stderr
+    assert "DATA_PATH=" not in old.stdout, "the old script ran anyway"

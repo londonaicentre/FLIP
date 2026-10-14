@@ -371,13 +371,13 @@ xnat:
 creating a project fails with imaging-api naming both images, e.g.
 
 ```
-XNAT's 'dcm2niix-scan' wrapper (command 4) runs 'xnat/dcm2niix:latest', but this
-imaging-api expects 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724', so a
-trigger would convert with the wrong image. Re-run configure-dcm2niix.sh ...
+XNAT has 0 'dcm2niix-scan' wrappers on the pinned
+'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724' (registered images:
+xnat/dcm2niix:latest), not one, so project ... gets no DICOM->NIfTI trigger. ...
 ```
 
-imaging-api reads this from the `dcm2niix-scan` row of
-`GET /xapi/commands/available/site?xsiType=xnat:imageScanData`, which carries the
+imaging-api reads this from the `dcm2niix-scan` rows of
+`GET /xapi/commands/available/site?xsiType=xnat:imageScanData`, which carry the
 command id, the wrapper id and the image the command runs (FLIP#1456).
 
 The Container Service is healthy and the command is enabled; it is simply bound
@@ -435,8 +435,8 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
 ```
 
 **Fix:** run the current `xnat-init` Job (`helm upgrade`). It updates dcm2niix in
-place and re-points every `DICOM-NIfTI Conversion` subscription that names another
-wrapper at the current one, after enabling that wrapper for the project, logging
+place and re-points every `DICOM-NIfTI Conversion` subscription whose wrapper no
+longer exists at the current one, after enabling that wrapper for the project, logging
 one `Repaired the DICOM->NIfTI trigger of project <id>` line per project. It
 leaves a subscription whose project no longer exists alone, warns about a repair
 XNAT refuses and carries on (the closing `could not repair: N` counts them), and

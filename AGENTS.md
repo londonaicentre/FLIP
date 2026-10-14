@@ -284,7 +284,7 @@ make -C trust debug-<SVC>          # Debug mode for one trust-internal service d
 make -C trust debug-<SVC>-off      # Stop it
 make -C trust check-governance KIT=<CODE>   # Validate the trust's governance document (FLIP#1259) — both halves, host Python, starts nothing
 make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE trust: data-access-api (+ NVFLARE clients), checks the logged digest
-make -C trust restore-nifti-triggers KIT=<CODE> [ACTIVE="<id> ..."] [INACTIVE="<id> ..."] [REST=active|inactive] [DRY_RUN=1]  # Recreate DICOM->NIfTI triggers a pre-FLIP#1451 configure deleted, as the hub's per-project setting says (report only without ACTIVE/INACTIVE/REST)
+make -C trust restore-nifti-triggers KIT=<CODE> [ACTIVE=… INACTIVE=… REST=active|inactive DRY_RUN=1]  # Recreate DICOM->NIfTI triggers a pre-FLIP#1451 configure deleted; report only by default
 ```
 
 ### Site release upgrades (FLIP#1204)

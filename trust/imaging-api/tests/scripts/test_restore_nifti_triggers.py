@@ -157,7 +157,7 @@ def test_one_failure_does_not_strand_the_rest():
         if project_id == "XA":
             raise Exception("XNAT said no")
 
-    code, lines, _ = _drive(["--rest", "active"], listing=_listing(None), create_side_effect=create)
+    code, lines, _ = _drive(["--rest", "active"], create_side_effect=create)
 
     assert code == 1
     assert any("XA" in line and "FAILED: XNAT said no" in line for line in lines)
@@ -165,13 +165,24 @@ def test_one_failure_does_not_strand_the_rest():
     assert "Restored: 2. Failed: 1." in lines[-1]
 
 
-def test_a_listing_failure_stops_before_any_change():
-    tomcat_page = "<html><head><title>HTTP Status 403</title><style>" + "x" * 2000 + "</style></head></html>"
+TOMCAT_403 = "<html><head><title>HTTP Status 403</title><style>" + "x" * 2000 + "</style></head></html>"
+
+
+@pytest.mark.parametrize(
+    ("listing", "refusal"),
+    [
+        (MagicMock(status_code=403, text=TOMCAT_403), "event subscriptions failed: 403"),
+        # XNAT lists null while the Event Service is off: read as "no triggers", --rest would duplicate them all.
+        (_listing(None), "Event Service is off"),
+    ],
+    ids=["refused", "event-service-off"],
+)
+def test_a_listing_it_cannot_read_stops_before_any_change(listing: MagicMock, refusal: str):
     with (
         patch(f"{MODULE}.get_all_projects", return_value=PROJECTS),
-        patch(f"{MODULE}.requests.get", return_value=MagicMock(status_code=403, text=tomcat_page)),
+        patch(f"{MODULE}.requests.get", return_value=listing),
         patch(f"{MODULE}.create_project_event_subscription") as create,
-        pytest.raises(Exception, match="event subscriptions failed: 403") as excinfo,
+        pytest.raises(Exception, match=refusal) as excinfo,
     ):
         run(["--rest", "active"], {}, out=lambda _: None)
 

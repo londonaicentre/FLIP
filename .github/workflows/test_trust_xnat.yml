@@ -27,10 +27,9 @@ name: Trust - XNAT CI
 # agree with trust/xnat/Makefile, so all three of those files trigger this
 # workflow — otherwise a change to the uid in the image, or to the ownership task
 # in either playbook, lands with the drift test that exists to catch it unrun.
-# test_dcm2niix_registration.py runs configure-dcm2niix.sh for both Container Service backends,
-# checks the chart's xnat-init Job sets what its Kubernetes path reads, and holds its subscription
-# name and FLIP-project test to imaging-api's (services/projects.py, scripts/restore_nifti_triggers.py),
-# so all of those trigger this workflow too (FLIP#1451).
+# test_dcm2niix_registration.py runs configure-dcm2niix.sh for both Container Service backends and
+# holds its subscription name and FLIP-project test to imaging-api's (services/projects.py,
+# scripts/restore_nifti_triggers.py), so those trigger this workflow too (FLIP#1451).
 on:
   push:
     branches: [main, develop]

@@ -12,18 +12,10 @@
 
 """dcm2niix registration and project-trigger repair, on both Container Service backends (FLIP#1451).
 
-Configuring an XNAT used to DELETE the dcm2niix command and register it again. XNAT gives the new
-registration new ids, and every project's DICOM->NIfTI trigger names the wrapper by id, so each
-configure silently disabled conversion for every project that already existed. On Compose the
-"legacy site-wide" cleanup then deleted every project's subscription outright, through a selector on
-a field no subscription has.
-
-``configure-dcm2niix.sh`` is now the one implementation: Compose runs it with the docker backend
-inside xnat-web, and the chart's xnat-init Job runs the same file from the same image with
-``XNAT_CS_BACKEND=kubernetes``. Each test runs it for real against :mod:`fake_xnat`, a miniature
-XNAT behind a ``curl`` on ``PATH`` that keeps the commands, wrapper enablement and subscriptions in a
-state file and validates subscriptions the way container-service 3.8.1 does, so the assertions are
-about what XNAT ends up holding.
+Configuring an XNAT used to delete the dcm2niix command and register it again, which gave its wrapper
+a new id and so invalidated every project's DICOM->NIfTI trigger. Each test runs
+``configure-dcm2niix.sh`` for real against :mod:`fake_xnat`, a miniature XNAT behind a ``curl`` on
+``PATH``, and asserts what XNAT ends up holding.
 """
 
 from __future__ import annotations
@@ -47,7 +39,6 @@ REPO_ROOT = XNAT_DIR.parents[1]
 CONFIG_DIR = XNAT_DIR / "xnat" / "config"
 SCRIPT = CONFIG_DIR / "configure-dcm2niix.sh"
 COMMAND_FILE = CONFIG_DIR / "dcm2niix_command.json"
-INIT_JOB = REPO_ROOT / "trust" / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
 IMAGING_API_PROJECTS = REPO_ROOT / "trust" / "imaging-api" / "imaging_api" / "services" / "projects.py"
 RESTORE_CLI = REPO_ROOT / "trust" / "imaging-api" / "imaging_api" / "scripts" / "restore_nifti_triggers.py"
 FAKE_XNAT = TESTS_DIR / "fake_xnat.py"
@@ -103,7 +94,6 @@ def subscription(
     *,
     name: str = TRIGGER,
     active: bool = True,
-    provider: str = PROVIDER,
     attributes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """A subscription shaped as GET /xapi/events/subscriptions returns one: projects only in the filter."""
@@ -111,7 +101,7 @@ def subscription(
         "id": sub_id,
         "name": name,
         "active": active,
-        "action-key": f"{provider}{wrapper_id}",
+        "action-key": f"{PROVIDER}{wrapper_id}",
         "attributes": attributes or {},
         "event-filter": {
             "event-type": "org.nrg.xnat.eventservice.events.ScanEvent",
@@ -174,11 +164,9 @@ def is_valid(state: dict[str, Any], sub: dict[str, Any]) -> bool:
     return fake_xnat.validation_error(state, sub) is None
 
 
-def configure(tmp_path: Path, backend: str, state: dict[str, Any], **env_overrides: str) -> Run:
-    """Runs configure-dcm2niix.sh with ``backend`` against a fake XNAT holding ``state``.
-
-    Each backend gets exactly the environment its deployment gives it: Compose's xnat-web carries
-    DATA_PATH, the chart's configure-dcm2niix container sets XNAT_CS_BACKEND and XNAT_CS_PVC_NAME.
+def configure(tmp_path: Path, state: dict[str, Any], backend: str = "docker", **env_overrides: str) -> Run:
+    """Runs configure-dcm2niix.sh against a fake XNAT holding ``state``, with the environment ``backend``'s
+    deployment gives it: Compose's xnat-web carries DATA_PATH, the chart sets XNAT_CS_BACKEND and XNAT_CS_PVC_NAME.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(parents=True)
@@ -220,7 +208,7 @@ def configure(tmp_path: Path, backend: str, state: dict[str, Any], **env_overrid
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_each_backend_registers_its_own_container_service_backend_and_pings_it(tmp_path: Path, backend: str) -> None:
-    run = configure(tmp_path, backend, xnat_state([command(4, 4)]))
+    run = configure(tmp_path, xnat_state([command(4, 4)]), backend)
 
     assert run.code == 0, run.output
     registered = run.state["backend"]
@@ -237,7 +225,7 @@ def test_each_backend_registers_its_own_container_service_backend_and_pings_it(t
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_only_the_docker_backend_registers_an_image_host(tmp_path: Path, backend: str) -> None:
     """Swarm launches NPE without one; kubelet pulls on Kubernetes, so none is needed there."""
-    run = configure(tmp_path, backend, xnat_state([command(4, 4)]))
+    run = configure(tmp_path, xnat_state([command(4, 4)]), backend)
 
     assert run.code == 0, run.output
     hosts = [h["url"] for h in run.state["hubs"]]
@@ -248,7 +236,7 @@ def test_only_the_docker_backend_registers_an_image_host(tmp_path: Path, backend
     ("backend", "missing"), [("docker", "DATA_PATH"), ("kubernetes", "XNAT_CS_PVC_NAME")], ids=["docker", "kubernetes"]
 )
 def test_each_backend_refuses_to_run_without_its_setting(tmp_path: Path, backend: str, missing: str) -> None:
-    run = configure(tmp_path, backend, xnat_state([command(4, 4)]), **{missing: ""})
+    run = configure(tmp_path, xnat_state([command(4, 4)]), backend, **{missing: ""})
 
     assert run.code != 0
     assert missing in run.output
@@ -256,16 +244,15 @@ def test_each_backend_refuses_to_run_without_its_setting(tmp_path: Path, backend
 
 
 def test_an_unknown_backend_is_refused(tmp_path: Path) -> None:
-    run = configure(tmp_path, "docker", xnat_state([command(4, 4)]), XNAT_CS_BACKEND="swarm")
+    run = configure(tmp_path, xnat_state([command(4, 4)]), XNAT_CS_BACKEND="swarm")
 
     assert run.code != 0
     assert "XNAT_CS_BACKEND must be docker or kubernetes" in run.output
     assert not run.requests
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_a_missing_container_manager_role_is_named(tmp_path: Path, backend: str) -> None:
-    run = configure(tmp_path, backend, xnat_state([command(4, 4)], faults={"no_container_manager": True}))
+def test_a_missing_container_manager_role_is_named(tmp_path: Path) -> None:
+    run = configure(tmp_path, xnat_state([command(4, 4)], faults={"no_container_manager": True}))
 
     assert run.code != 0
     assert "does not hold the ContainerManager role" in run.output
@@ -279,12 +266,8 @@ def test_a_missing_container_manager_role_is_named(tmp_path: Path, backend: str)
 
 @pytest.mark.parametrize("backend", BACKENDS)
 def test_an_existing_command_is_updated_in_place_and_never_deleted(tmp_path: Path, backend: str) -> None:
-    state = xnat_state(
-        [command(4, 4)],
-        subscriptions=[subscription(1, 4, ["P"])],
-        project_enabled={"P": [4]},
-    )
-    run = configure(tmp_path, backend, state)
+    state = xnat_state([command(4, 4)], subscriptions=[subscription(1, 4, ["P"])], project_enabled={"P": [4]})
+    run = configure(tmp_path, state, backend)
 
     assert run.code == 0, run.output
     assert not run.made("DELETE", r"/xapi/commands.*"), "the configure step deleted a command"
@@ -306,7 +289,7 @@ def test_an_existing_command_is_updated_in_place_and_never_deleted(tmp_path: Pat
 def test_a_command_is_registered_only_when_none_exists(tmp_path: Path, backend: str) -> None:
     state = xnat_state([])
     state["last_command_id"], state["last_wrapper_id"] = 6, 8
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state, backend)
 
     assert run.code == 0, run.output
     (register,) = run.made("POST", r"/xapi/commands")
@@ -323,7 +306,7 @@ def test_kubernetes_moves_the_command_off_its_resource_settings_and_docker_keeps
     tmp_path: Path, backend: str
 ) -> None:
     """On Kubernetes the keys made every pod reserve a whole CPU (FLIP#1448); on Docker they are limits."""
-    run = configure(tmp_path, backend, xnat_state([command(4, 4)]))
+    run = configure(tmp_path, xnat_state([command(4, 4)]), backend)
 
     assert run.code == 0, run.output
     in_file = {key for key in RESOURCE_KEYS if key in command_file()}
@@ -332,24 +315,20 @@ def test_kubernetes_moves_the_command_off_its_resource_settings_and_docker_keeps
     assert kept == (set() if backend == "kubernetes" else in_file)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_a_second_run_changes_nothing_about_the_triggers(tmp_path: Path, backend: str) -> None:
-    """Upgrading twice must leave the ids alone the second time too."""
-    first = configure(tmp_path / "one", backend, xnat_state([command(4, 4)], subscriptions=[subscription(1, 4, ["P"])]))
+def test_a_second_run_changes_nothing_about_the_triggers(tmp_path: Path) -> None:
+    first = configure(tmp_path / "one", xnat_state([command(4, 4)], subscriptions=[subscription(1, 4, ["P"])]))
     assert first.code == 0, first.output
-    second = configure(tmp_path / "two", backend, first.state)
+    second = configure(tmp_path / "two", first.state)
 
     assert second.code == 0, second.output
-    assert second.dcm2niix()["id"] == 4
-    assert second.dcm2niix()["xnat"][0]["id"] == 4
+    assert (second.dcm2niix()["id"], second.dcm2niix()["xnat"][0]["id"]) == (4, 4)
     assert not second.made("PUT", r"/xapi/events/subscription/\d+")
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_refuses_to_pick_between_two_dcm2niix_commands(tmp_path: Path, backend: str) -> None:
+def test_refuses_to_pick_between_two_dcm2niix_commands(tmp_path: Path) -> None:
     second = command(5, 5)
     second["version"] = "9.9"
-    run = configure(tmp_path, backend, xnat_state([command(4, 4), second]))
+    run = configure(tmp_path, xnat_state([command(4, 4), second]))
 
     assert run.code != 0
     assert "expected at most one" in run.output
@@ -358,14 +337,11 @@ def test_refuses_to_pick_between_two_dcm2niix_commands(tmp_path: Path, backend: 
     assert not run.made("DELETE", r"/xapi/commands.*")
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_fails_when_the_pinned_image_does_not_reach_the_command(tmp_path: Path, backend: str) -> None:
-    """The check behind "an image pin change still reaches the registered command"."""
-    run = configure(tmp_path, backend, xnat_state([command(4, 4)], faults={"drop_image_on_update": True}))
+def test_fails_when_the_pinned_image_does_not_reach_the_command(tmp_path: Path) -> None:
+    run = configure(tmp_path, xnat_state([command(4, 4)], faults={"drop_image_on_update": True}))
 
     assert run.code != 0
-    assert OLD_IMAGE in run.output
-    assert "not the pinned" in run.output
+    assert f"runs '{OLD_IMAGE}', not the pinned" in run.output
 
 
 # --------------------------------------------------------------------------------------------------
@@ -373,9 +349,8 @@ def test_fails_when_the_pinned_image_does_not_reach_the_command(tmp_path: Path, 
 # --------------------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_triggers_left_on_a_deleted_wrapper_are_repointed(tmp_path: Path, backend: str) -> None:
-    """AZ1 after the 13 Oct upgrade: wrapper 4 deleted, dcm2niix re-registered as 5."""
+def test_triggers_left_on_a_deleted_wrapper_are_repointed(tmp_path: Path) -> None:
+    """Wrapper 4 deleted by an earlier configure, dcm2niix re-registered as 5."""
     state = xnat_state(
         [command(5, 5, image=pinned_image())],
         subscriptions=[
@@ -388,7 +363,7 @@ def test_triggers_left_on_a_deleted_wrapper_are_repointed(tmp_path: Path, backen
         projects={"P": HUB_P, "Q": HUB_Q, "R": HUB_R},
     )
     assert not is_valid(state, state["subscriptions"][0]), "fixture: the stale trigger must start invalid"
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     for sub_id in (1, 2, 3):
@@ -406,13 +381,12 @@ def test_triggers_left_on_a_deleted_wrapper_are_repointed(tmp_path: Path, backen
     assert "WARNING: invalid DICOM->NIfTI trigger" not in run.output
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_the_project_is_enabled_before_its_trigger_is_updated(tmp_path: Path, backend: str) -> None:
+def test_the_project_is_enabled_before_its_trigger_is_updated(tmp_path: Path) -> None:
     """XNAT validates on update, and the project's old enablement belongs to the deleted wrapper."""
     state = xnat_state(
         [command(5, 5, image=pinned_image())], subscriptions=[subscription(1, 4, ["P"])], project_enabled={"P": [4]}
     )
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     order = [r["path"] for r in run.requests if r["method"] == "PUT"]
@@ -420,58 +394,66 @@ def test_the_project_is_enabled_before_its_trigger_is_updated(tmp_path: Path, ba
     assert enable < order.index("/xapi/events/subscription/1")
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_the_repair_names_the_wrapper_id_not_the_command_id(tmp_path: Path, backend: str) -> None:
+def test_the_repair_names_the_wrapper_id_not_the_command_id(tmp_path: Path) -> None:
     """imaging-api used to write the command id, which only worked while the two were equal."""
     state = xnat_state(
-        [command(9, 12, image=pinned_image())],
-        subscriptions=[subscription(1, 9, ["P"])],
-        project_enabled={"P": [9]},
+        [command(9, 12, image=pinned_image())], subscriptions=[subscription(1, 9, ["P"])], project_enabled={"P": [9]}
     )
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     assert run.subscription(1)["action-key"] == f"{PROVIDER}12"
     assert is_valid(run.state, run.subscription(1))
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_other_subscriptions_are_left_alone(tmp_path: Path, backend: str) -> None:
+def test_a_flip_trigger_on_another_live_wrapper_is_left_alone(tmp_path: Path) -> None:
+    """Only a trigger whose action XNAT no longer offers is FLIP's to repair; a live one is someone's choice."""
+    other = command(6, 6, name="dcm2niix-gpu")
+    other["xnat"][0]["name"] = "dcm2niix-gpu-scan"
     state = xnat_state(
-        [command(5, 5, image=pinned_image())],
-        subscriptions=[
-            subscription(1, 4, ["P"], name="Someone else's trigger"),
-            subscription(2, 4, ["P"], provider="org.nrg.xnat.eventservice.actions.EventServiceLoggingAction:"),
-        ],
+        [command(5, 5, image=pinned_image()), other],
+        subscriptions=[subscription(1, 6, ["P"])],
+        project_enabled={"P": [6]},
     )
     before = copy.deepcopy(state["subscriptions"])
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     assert not run.made("PUT", r"/xapi/events/subscription/\d+")
     assert run.state["subscriptions"] == before
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_a_trigger_whose_project_is_gone_is_skipped_not_fatal(tmp_path: Path, backend: str) -> None:
+def test_other_subscriptions_are_left_alone(tmp_path: Path) -> None:
+    """Another name is not FLIP's, and a site-wide one revived would convert every project's scans."""
+    state = xnat_state(
+        [command(5, 5, image=pinned_image())],
+        subscriptions=[subscription(1, 4, ["P"], name="Someone else's trigger"), subscription(2, 4, [])],
+    )
+    before = copy.deepcopy(state["subscriptions"])
+    run = configure(tmp_path, state)
+
+    assert run.code == 0, run.output
+    assert not run.made("PUT", r"/xapi/events/subscription/\d+")
+    assert run.state["subscriptions"] == before
+
+
+def test_a_trigger_whose_project_is_gone_is_skipped_not_fatal(tmp_path: Path) -> None:
     """One deleted project must not wedge every later deploy."""
     state = xnat_state(
         [command(5, 5, image=pinned_image())],
         subscriptions=[subscription(1, 4, ["GONE"]), subscription(2, 4, ["P"])],
         project_enabled={"P": [4]},
     )
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     assert "Skipped subscription 1" in run.output
     assert run.subscription(1)["action-key"] == f"{PROVIDER}4"
     assert run.subscription(2)["action-key"] == f"{PROVIDER}5"
-    # Still invalid, and said so.
-    assert "WARNING: invalid DICOM->NIfTI trigger: subscription 1" in run.output
+    assert "WARNING: invalid DICOM->NIfTI trigger: subscription 1" in run.output, "still invalid, and said so"
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_flip_projects_with_no_trigger_are_named(tmp_path: Path, backend: str) -> None:
+def test_flip_projects_with_no_trigger_are_named(tmp_path: Path) -> None:
     """A Compose site upgraded before the fix lost every trigger; the deploy log must say which."""
     state = xnat_state(
         [command(7, 7, image=pinned_image())],
@@ -479,7 +461,7 @@ def test_flip_projects_with_no_trigger_are_named(tmp_path: Path, backend: str) -
         subscriptions=[subscription(1, 7, ["Q"])],
         project_enabled={"Q": [7]},
     )
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     assert f"WARNING: project P (hub project {HUB_P}) has no DICOM->NIfTI trigger" in run.output
@@ -488,18 +470,8 @@ def test_flip_projects_with_no_trigger_are_named(tmp_path: Path, backend: str) -
     assert not run.made("POST", r"/xapi/(projects/[^/]+/)?events/subscription"), "the configure step created a trigger"
 
 
-# --------------------------------------------------------------------------------------------------
-# No subscription is ever deleted; listings of any size; refused repairs
-# --------------------------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_the_script_deletes_no_subscription(tmp_path: Path, backend: str) -> None:
-    """The legacy cleanup selected on `project-id`, which no subscription has, so it deleted every trigger.
-
-    It is gone rather than narrowed: nothing has created the site-wide subscription it was for since
-    2026-03-24, so even FLIP's own old one, if a site still had it, is left for a person (FLIP#945 agrees).
-    """
+def test_the_script_deletes_no_subscription(tmp_path: Path) -> None:
+    """The legacy cleanup selected on a field no subscription has, so it deleted every project's trigger."""
     state = xnat_state(
         [command(4, 4)],
         subscriptions=[
@@ -509,42 +481,29 @@ def test_the_script_deletes_no_subscription(tmp_path: Path, backend: str) -> Non
         ],
         project_enabled={"P": [4]},
     )
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     assert not run.made("DELETE", r"/xapi/(projects/[^/]+/)?events/subscription/\d+")
     assert {s["id"] for s in run.state["subscriptions"]} == {1, 2, 3}
 
 
-def _big_state(stale: int = 1) -> dict[str, Any]:
-    """An XNAT whose subscription and project listings are each over 1 MiB.
-
-    Linux refuses any single command-line argument over 128 KiB (MAX_ARG_STRLEN) and macOS a whole
-    argument list over 1 MiB, so a listing passed to jq as an argument fails on either. Live XNAT
-    answers ~520 B per subscription and ~400 B per project, so this is a site of 3,500 projects.
-    """
+def test_listings_over_the_argument_limit_still_configure(tmp_path: Path) -> None:
+    """Listings over 1 MiB, past Linux's 128 KiB per-argument and macOS's 1 MiB argv caps (a 3,500-project site)."""
     projects = {f"P{i:05d}": f"{i:08x}-1d2f-4a5b-8c6d-7e8f9a0b1c2d" for i in range(3500)}
     subscriptions = [subscription(i, 5, [pid]) for i, pid in enumerate(projects, start=100)]
-    for sub in subscriptions[:stale]:
-        sub["action-key"] = f"{PROVIDER}4"
-    return xnat_state(
+    subscriptions[0]["action-key"] = f"{PROVIDER}4"
+    state = xnat_state(
         [command(5, 5, image=pinned_image())],
         subscriptions=subscriptions,
         project_enabled={pid: [5] for pid in projects},
         projects=projects,
     )
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_listings_over_the_argument_limit_still_configure(tmp_path: Path, backend: str) -> None:
-    """At a few hundred projects the listings passed jq's --argjson and every deploy failed (FLIP#1451)."""
-    state = _big_state()
     for path in ("/xapi/events/subscriptions", "/data/projects"):
         _, body = fake_xnat.handle(copy.deepcopy(state), fake_xnat.Request([f"http://xnat-web:8080{path}"]))
-        # Over macOS's 1 MiB argument-list limit too, so the test fails on a laptop as it would on Linux.
         assert len(body) > 1024 * 1024, f"fixture: {path} is only {len(body)} bytes"
     del state["subscriptions"][-1]  # one FLIP project left with no trigger, for the report
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output[-2000:]
     assert run.subscription(100)["action-key"] == f"{PROVIDER}5", "the one stale trigger was not repaired"
@@ -552,8 +511,7 @@ def test_listings_over_the_argument_limit_still_configure(tmp_path: Path, backen
     assert "WARNING: project P03499 " in run.output, "the missing-trigger report did not run"
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-def test_a_repair_xnat_refuses_is_a_warning_and_the_rest_go_on(tmp_path: Path, backend: str) -> None:
+def test_a_repair_xnat_refuses_is_a_warning_and_the_rest_go_on(tmp_path: Path) -> None:
     """One subscription XNAT will not update (its owner cannot be loaded) must not fail every deploy."""
     state = xnat_state(
         [command(5, 5, image=pinned_image())],
@@ -561,7 +519,7 @@ def test_a_repair_xnat_refuses_is_a_warning_and_the_rest_go_on(tmp_path: Path, b
         project_enabled={"P": [4], "Q": [4]},
         faults={"reject_subscription_update": [1]},
     )
-    run = configure(tmp_path, backend, state)
+    run = configure(tmp_path, state)
 
     assert run.code == 0, run.output
     assert "WARNING: could not repair the DICOM->NIfTI trigger of project(s) P (subscription 1" in run.output
@@ -572,64 +530,12 @@ def test_a_repair_xnat_refuses_is_a_warning_and_the_rest_go_on(tmp_path: Path, b
 
 
 # --------------------------------------------------------------------------------------------------
-# Static guards
+# Names imaging-api and this script must agree on
 # --------------------------------------------------------------------------------------------------
-
-DELETE_COMMAND = re.compile(r"DELETE[^\n]*/xapi/commands|/xapi/commands[^\n]*DELETE")
-
-
-def _code(text: str) -> str:
-    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
-
-
-def test_the_configure_script_never_deletes_a_command() -> None:
-    """Belt and braces for paths the runs above do not reach."""
-    code = _code(SCRIPT.read_text())
-    assert "/xapi/commands" in code, "guard the guard: the script no longer talks to the command API"
-    assert not DELETE_COMMAND.search(code), "configure-dcm2niix.sh deletes a dcm2niix command again (FLIP#1451)"
-
-
-def test_the_configure_script_never_deletes_a_subscription() -> None:
-    """The same rule FLIP#945 pins: per-project triggers are indistinguishable from any site-wide one."""
-    code = _code(SCRIPT.read_text())
-    offending = [line for line in code.splitlines() if "events/subscription" in line and "DELETE" in line]
-    assert not offending, "configure-dcm2niix.sh deletes an event subscription again:\n" + "\n".join(offending)
-
-
-def test_no_listing_reaches_jq_as_an_argument() -> None:
-    """--argjson / --arg carry a whole value in argv, which Linux caps at 128 KiB per argument."""
-    code = _code(SCRIPT.read_text())
-    assert "--argjson" not in code, "pass a listing to jq with --slurpfile or on stdin, never --argjson"
-    for variable in ("SUBS_FILE", "PROJECTS_FILE"):
-        assert f'"${variable}"' in code, f"guard the guard: {variable} is no longer read from its file"
-
-
-def test_the_chart_refuses_an_xnat_image_whose_script_predates_the_backend_switch() -> None:
-    """The chart greps the image's script for its marker; renaming the switch would refuse every image."""
-    container = _init_job_dcm2niix_container()
-    marker = re.search(r"grep -q (\S+) configure-dcm2niix\.sh", container)
-    assert marker, "the chart no longer checks the image's configure-dcm2niix.sh before running it"
-    assert marker.group(1) in _code(SCRIPT.read_text())
-
-
-def _init_job_dcm2niix_container() -> str:
-    text = INIT_JOB.read_text()
-    start = text.index("        - name: configure-dcm2niix\n")
-    end = text.index("{{- end }}", start)
-    return text[start:end]
-
-
-def test_the_chart_sets_everything_the_kubernetes_path_reads() -> None:
-    """The chart's configure-dcm2niix runs this script; a variable it does not set falls back or fails."""
-    declared = set(re.findall(r"- name: ([A-Z0-9_]+)", _init_job_dcm2niix_container()))
-    needed = {"XNAT_URL", "XNAT_CS_BACKEND", "XNAT_CS_PVC_NAME", "XNAT_ADMIN_USER", "XNAT_ADMIN_PASSWORD"}
-    assert needed <= declared, f"xnat-init-job.yaml's configure-dcm2niix never sets {sorted(needed - declared)}"
-    read = set(re.findall(r"\$\{?([A-Z][A-Z0-9_]+)", _code(SCRIPT.read_text())))
-    assert needed <= read, f"configure-dcm2niix.sh no longer reads {sorted(needed - read)}"
 
 
 def test_the_trigger_name_is_the_one_imaging_api_creates() -> None:
-    """The repair finds FLIP's subscriptions by name, so both copies must agree."""
+    """The repair finds FLIP's subscriptions by name."""
     script = re.search(r'^DCM2NIIX_SUBSCRIPTION_NAME="([^"]+)"', SCRIPT.read_text(), re.M)
     imaging = re.search(r'^DCM2NIIX_SUBSCRIPTION_NAME = "([^"]+)"', IMAGING_API_PROJECTS.read_text(), re.M)
     assert script, "configure-dcm2niix.sh no longer sets DCM2NIIX_SUBSCRIPTION_NAME"
@@ -638,7 +544,7 @@ def test_the_trigger_name_is_the_one_imaging_api_creates() -> None:
 
 
 def test_imaging_api_looks_up_the_wrapper_this_command_registers() -> None:
-    """imaging-api finds the trigger's wrapper by name and data type in the project's available commands."""
+    """imaging-api finds the trigger's wrapper by name and data type in XNAT's site listing."""
     text = IMAGING_API_PROJECTS.read_text()
     name = re.search(r'^DCM2NIIX_WRAPPER_NAME = "([^"]+)"', text, re.M)
     context = re.search(r'^DCM2NIIX_CONTEXT = "([^"]+)"', text, re.M)

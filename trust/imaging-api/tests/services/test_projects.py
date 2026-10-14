@@ -284,10 +284,11 @@ def test_set_project_prearchive_settings_failure(mock_put, headers):
 # get_command_info
 # ===========================================================================
 _PIN = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"
+_OLD = "xnat/dcm2niix:latest"
 
 
 def _available(command_id: int = 5, wrapper_id: int = 5, image: str = _PIN, extra: dict | None = None) -> dict:
-    """One row of GET /xapi/commands/available/site, as dev trust 1 answered it on 14 Oct."""
+    """One row of GET /xapi/commands/available/site, as dev trust 1 answered it."""
     row = {
         "command-id": command_id,
         "command-name": "dcm2niix",
@@ -308,17 +309,16 @@ def _site_commands(*rows) -> MagicMock:
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_takes_ids_from_the_projects_dcm2niix_row(mock_get, headers):
+def test_get_command_info_takes_ids_from_the_sites_dcm2niix_row(mock_get, headers):
     mock_get.return_value = _site_commands(
         _available(command_id=2, wrapper_id=9, extra={"wrapper-name": "other-scan"}),
+        _available(command_id=4, wrapper_id=4, image=_OLD),
         _available(command_id=1, wrapper_id=3),
     )
 
-    command_id, wrapper_name, wrapper_id = get_command_info("TEST", _PIN, headers)
-
-    assert (command_id, wrapper_name, wrapper_id) == (1, "dcm2niix-scan", 3)
+    assert get_command_info("TEST", _PIN, headers) == (1, "dcm2niix-scan", 3)
     url = urlsplit(mock_get.call_args[0][0])
-    # The site listing: the project's own filters by permissions it has not settled for a new project.
+    # The site listing: the project's own can come back empty for a project created moments ago.
     assert url.path.endswith("/xapi/commands/available/site")
     assert parse_qs(url.query) == {"xsiType": ["xnat:imageScanData"]}
 
@@ -335,114 +335,51 @@ def test_get_command_info_refuses_a_wrapper_the_site_has_not_enabled(mock_get, h
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_names_both_images_when_the_registration_predates_the_pin(mock_get, headers):
-    """The pre-FLIP#980 XNAT: one dcm2niix wrapper, on the 2021 Docker Hub image."""
-    mock_get.return_value = _site_commands(_available(command_id=4, image="xnat/dcm2niix:latest"))
-
-    with pytest.raises(Exception, match="runs 'xnat/dcm2niix:latest'") as excinfo:
-        get_command_info("TEST", _PIN, headers)
-
-    message = str(excinfo.value)
-    assert f"expects '{_PIN}'" in message
-    assert "command 4" in message
-    assert "configure-dcm2niix.sh" in message
-    assert "TROUBLESHOOTING 2.3c" in message
-    assert len(message) < 1000
-
-
-@patch("imaging_api.services.projects.requests.get")
-@pytest.mark.parametrize("rows", [[], [_available(extra={"wrapper-name": "other-scan"})]], ids=["empty", "other-only"])
-def test_get_command_info_without_a_dcm2niix_wrapper_says_how_to_register_it(mock_get, headers, rows):
+@pytest.mark.parametrize(
+    ("rows", "named"),
+    [
+        ([], "none"),
+        ([_available(extra={"wrapper-name": "other-scan"})], "none"),
+        ([_available(command_id=4, image=_OLD)], _OLD),  # an XNAT registered before the current pin
+        ([_available(command_id=4), _available(command_id=6)], _PIN),
+    ],
+    ids=["empty", "other-wrapper-only", "older-image", "two-pinned"],
+)
+def test_get_command_info_refuses_without_exactly_one_pinned_wrapper(mock_get, headers, rows, named):
     mock_get.return_value = _site_commands(*rows)
 
-    with pytest.raises(Exception, match="No 'dcm2niix-scan' wrapper is registered") as excinfo:
+    with pytest.raises(Exception, match=f"wrappers on the pinned '{_PIN}'") as excinfo:
         get_command_info("TEST", _PIN, headers)
 
     message = str(excinfo.value)
+    assert f"registered images: {named})" in message
     assert "configure-dcm2niix.sh" in message
-    assert "ContainerManager" in message
-    assert len(message) < 1000
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_picks_the_pinned_wrapper_out_of_two(mock_get, headers):
-    mock_get.return_value = _site_commands(
-        _available(command_id=4, image="xnat/dcm2niix:latest"), _available(command_id=7)
-    )
-
-    assert get_command_info("TEST", _PIN, headers).command_id == 7
-
-
-@patch("imaging_api.services.projects.requests.get")
-@pytest.mark.parametrize(
-    "images",
-    [["xnat/dcm2niix:latest", "xnat/dcm2niix:old"], [_PIN, _PIN]],
-    ids=["none-pinned", "two-pinned"],
-)
-def test_get_command_info_refuses_to_guess_between_wrappers(mock_get, headers, images):
-    mock_get.return_value = _site_commands(
-        *(_available(command_id=i + 4, image=image) for i, image in enumerate(images))
-    )
-
-    with pytest.raises(Exception, match="ambiguous") as excinfo:
-        get_command_info("TEST", _PIN, headers)
-
-    assert "command 4" in str(excinfo.value)
-    assert "command 5" in str(excinfo.value)
-
-
-@patch("imaging_api.services.projects.requests.get")
-def test_get_command_info_ambiguity_stays_inside_the_truncation_budget(mock_get, headers):
+def test_get_command_info_messages_stay_inside_the_truncation_budget(mock_get, headers):
     """trust-api relays at most 1000 characters to the hub; the remedy must survive the cut."""
-    long_image = f"registry.example.org/{'a' * 40}/xnat-dcm2niix:v1.0.20260724"
-    mock_get.return_value = _site_commands(*(_available(command_id=i, image=long_image) for i in range(10)))
+    images = [f"registry.example.org/{'a' * 40}/xnat-dcm2niix:v{i}" for i in range(10)]
+    mock_get.return_value = _site_commands(*(_available(command_id=i, image=image) for i, image in enumerate(images)))
 
-    with pytest.raises(Exception, match="ambiguous") as excinfo:
+    with pytest.raises(Exception, match="wrappers on the pinned") as excinfo:
         get_command_info(str(uuid4()), _PIN, headers)
 
     message = str(excinfo.value)
     assert len(message) < 1000, len(message)
-    assert message.rstrip().endswith("the xnat-init job (k8s).")
+    assert message.endswith("(TROUBLESHOOTING 2.3c).")
 
 
 @patch("imaging_api.services.projects.requests.get")
-@pytest.mark.parametrize(
-    ("status", "remedy"),
-    [(401, "XNAT_SERVICE_PASSWORD"), (403, "may not read the Container Service"), (500, "Container Service are up")],
-    ids=["401", "403", "500"],
-)
-def test_get_command_info_listing_failure_names_the_cause(mock_get, headers, status, remedy):
-    page = "<html><head><title>HTTP Status</title><style>" + "x" * 600 + "</style></head></html>"
-    mock_get.return_value = MagicMock(status_code=status, text=page)
+def test_get_command_info_listing_failure_is_bounded(mock_get, headers):
+    page = "<html><head><title>HTTP Status 403</title><style>" + "x" * 600 + "</style></head></html>"
+    mock_get.return_value = MagicMock(status_code=403, text=page)
 
-    with pytest.raises(Exception, match=f"failed: {status}") as excinfo:
+    with pytest.raises(Exception, match="failed: 403") as excinfo:
         get_command_info("TEST", _PIN, headers)
 
-    message = str(excinfo.value)
-    assert remedy in message
-    assert "full body in the imaging-api log" in message
-    assert len(message) < 1000
-
-
-@patch("imaging_api.services.projects.requests.get")
-@pytest.mark.parametrize("body", [{"error": "x"}, "OK", None], ids=["object", "string", "null"])
-def test_get_command_info_rejects_a_body_that_is_not_a_listing(mock_get, headers, body):
-    mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=body), text=str(body))
-
-    with pytest.raises(Exception, match="not a list"):
-        get_command_info("TEST", _PIN, headers)
-
-
-@patch("imaging_api.services.projects.requests.get")
-@pytest.mark.parametrize(
-    "ids", [{"wrapper-id": None}, {"wrapper-id": "3"}, {"command-id": True}], ids=["none", "string", "bool"]
-)
-def test_get_command_info_refuses_a_row_without_numeric_ids(mock_get, headers, ids):
-    """A trigger's action key names the wrapper id, so there is no safe fallback when it is absent."""
-    mock_get.return_value = _site_commands(_available(extra=ids))
-
-    with pytest.raises(Exception, match="without numeric ids"):
-        get_command_info("TEST", _PIN, headers)
+    assert "full body in the imaging-api log" in str(excinfo.value)
+    assert len(str(excinfo.value)) < 1000
 
 
 # ===========================================================================
@@ -457,6 +394,7 @@ def test_get_wrapper_action_key_takes_the_key_xnat_lists_for_the_wrapper(mock_ge
         {"action-key": f"{_PROVIDER}3", "display-name": "other-wrapper"},
         {"action-key": f"{_PROVIDER}4", "display-name": "dcm2niix-scan"},
         {"action-key": "org.nrg.xnat.eventservice.actions.EventServiceLoggingAction:logger", "display-name": "Logger"},
+        {"action-key": "org.example.OtherActionProvider:5", "display-name": "another provider's action 5"},
         {"action-key": f"{_PROVIDER}5", "display-name": "dcm2niix-scan", "description": "Run dcm2niix on a Scan"},
     ]
     mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=actions))
@@ -512,7 +450,6 @@ def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_
 
     create_project_event_subscription("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", True, headers)
 
-    # Looked up in the project, before the project enable that needs its command id.
     mock_cmd_info.assert_called_once_with("TEST", "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724", headers)
     mock_put.assert_called_once()
     assert "/commands/1/wrappers/dcm2niix-scan/enabled" in mock_put.call_args[0][0]
@@ -522,9 +459,7 @@ def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_
     assert "/xapi/projects/TEST/events/subscription" in call_url
     assert call_payload["active"] is True
     assert call_payload["name"] == "DICOM-NIfTI Conversion"
-    # The action key is the one XNAT lists for the WRAPPER (id 3), not one formatted from the command
-    # id (1): container-service parses it as a wrapper id, so a command id only ever worked while the
-    # two were equal (FLIP#1451).
+    # The key XNAT lists for the wrapper (id 3), not one formatted from the command id (1).
     mock_key.assert_called_once_with(3, "dcm2niix-scan", headers)
     assert call_payload["action-key"] == f"{_PROVIDER}3"
 

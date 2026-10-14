@@ -385,7 +385,7 @@ XNAT's own action listing (`GET /xapi/events/allactions`). So the id must surviv
   matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image
   included; on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is registered only when none exists, and
   the step refuses to choose between two.
-- It then **re-points** any `DICOM-NIfTI Conversion` subscription that names another wrapper (left
+- It then **re-points** any `DICOM-NIfTI Conversion` subscription whose wrapper no longer exists (left
   by a configure from before the fix, which deleted and re-registered the command) at the current
   one, enabling the wrapper for that project first, and logs one line per project repaired.
 - A repair XNAT refuses (the subscription's owner cannot be loaded, say) is a warning, and the

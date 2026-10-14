@@ -206,43 +206,26 @@ def test_the_init_container_delegates_to_configure_xnat() -> None:
     )
 
 
-def _dcm2niix_container() -> str:
-    """Return the xnat-init Job's ``configure-dcm2niix`` container with comment lines dropped."""
+def test_the_init_job_delegates_dcm2niix_to_configure_dcm2niix() -> None:
+    """One configure-dcm2niix.sh for both shapes (FLIP#1451): the chart runs the xnat-web image's copy, not its own."""
     text = XNAT_INIT_JOB.read_text()
     start = text.index("        - name: configure-dcm2niix\n")
-    end = text.index("{{- end }}", start)
-    return "\n".join(line for line in text[start:end].splitlines() if not line.strip().startswith("#"))
-
-
-def test_the_init_job_delegates_dcm2niix_to_configure_dcm2niix() -> None:
-    """One configure-dcm2niix.sh for both shapes, run from the xnat-web image (FLIP#1451).
-
-    The container used to carry its own inline copy, which deleted and re-registered dcm2niix on
-    every upgrade (so every project's trigger went invalid) while the Compose copy had moved on.
-    trust/xnat/tests/test_dcm2niix_registration.py runs that one script for the Kubernetes backend;
-    this pins that the chart still runs it, the way the initContainer runs configure-xnat.sh.
-    """
-    container = _dcm2niix_container()
-
-    assert "bash configure-dcm2niix.sh" in container, (
-        "the xnat-init Job's configure-dcm2niix no longer runs configure-dcm2niix.sh — an inline copy "
-        "here is a second implementation trust/xnat/tests/ never exercises"
+    container = "\n".join(
+        line for line in text[start : text.index("{{- end }}", start)].splitlines() if not line.strip().startswith("#")
     )
+
     assert "cd /data/xnat/config" in container
+    assert "bash configure-dcm2niix.sh" in container
     image = next(line for line in container.splitlines() if line.strip().startswith("image:"))
     assert ".Values.xnat.web.image.repository" in image, f"not run from the xnat-web image: {image.strip()}"
     assert re.search(r'- name: XNAT_CS_BACKEND\n\s+value: "kubernetes"', container), "the backend switch is not set"
+    for variable in ("XNAT_URL", "XNAT_CS_PVC_NAME", "XNAT_ADMIN_USER"):
+        assert f"- name: {variable}\n" in container, f"configure-dcm2niix.sh reads {variable}, which the Job never sets"
     assert re.search(r"- name: XNAT_ADMIN_PASSWORD\n\s+valueFrom:\n\s+secretKeyRef:", container), (
         "the admin password must come from the chart Secret, never a literal or argv"
     )
     assert "/xapi/" not in container, "the container calls XNAT itself again instead of delegating"
-
-
-def test_the_init_job_no_longer_ships_copies_of_the_xnat_config() -> None:
-    """The ConfigMap's hand-synced copies drifted from trust/xnat/xnat/config/ (FLIP#1451); the image carries them."""
-    text = XNAT_INIT_JOB.read_text()
-    assert "kind: ConfigMap" not in text
-    assert "/cs-config" not in text
+    assert "kind: ConfigMap" not in text, "the chart ships its own copies of trust/xnat/xnat/config/ again"
 
 
 def test_the_xnat_site_is_activated_before_the_plugin_route_gate() -> None:

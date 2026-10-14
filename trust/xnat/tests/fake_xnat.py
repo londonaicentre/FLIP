@@ -12,29 +12,15 @@
 
 """A miniature XNAT behind a ``curl`` stand-in, for the dcm2niix configure tests (FLIP#1451).
 
-``test_dcm2niix_registration.py`` puts a ``curl`` on ``PATH`` that runs this module. It keeps the
-Container Service commands, the wrapper enablement and the Event Service subscriptions in one JSON
-state file, mutates it the way XNAT does, and logs every request, so the tests assert what XNAT
-would end up holding rather than which strings the scripts contain.
+It keeps commands, wrapper enablement and Event Service subscriptions in one JSON state file, changes
+them the way container-service 3.8.1 and xnat-web 1.10.0 do (read from their source), and logs every
+request:
 
-What it models, from the container-service 3.8.1 and xnat-web 1.10.0 sources:
-
-* ``POST /xapi/commands`` gives the command and each wrapper a fresh id from separate sequences.
-* ``POST /xapi/commands/{id}`` keeps the command id and matches wrappers by name, keeping a matched
-  wrapper's id (CommandEntity.java:201-222, CommandWrapperEntity.java:41-44); the image and every
-  other field come from the body (CommandEntity.java:99-130).
-* A subscription's action key names a wrapper id. It is valid while that wrapper exists, is enabled
-  site-wide and is enabled for every project the subscription filters on
-  (CommandActionProvider.java:476-489, ContainerConfigServiceImpl.java:135-143), recomputed on every
-  read (EventSubscriptionEntityServiceImpl.java:430-438).
-* ``PUT /xapi/events/subscription/{id}`` validates before it saves (EventServiceImpl.java:122-142)
-  and defaults an absent act-as-event-user to false and absent attributes to {}
-  (SubscriptionUpdate.java).
-* ``GET /xapi/events/subscriptions`` is null while the Event Service is off
-  (EventServiceImpl.java:153-157).
-
-That the real XNAT behaves this way is read from source, not proven here; the PR lists what still
-needs a live check.
+* ``POST /xapi/commands`` gives the command and each wrapper fresh ids; ``POST /xapi/commands/{id}``
+  keeps the command id and the id of every wrapper it matches by name.
+* A subscription is valid while its action key names a wrapper that exists and is enabled site-wide
+  and for each of its projects; ``PUT /xapi/events/subscription/{id}`` refuses an invalid update.
+* ``GET /xapi/events/subscriptions`` is null while the Event Service is off.
 """
 
 from __future__ import annotations
@@ -164,8 +150,6 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
 
     if path.endswith("/app/template/Login.vm"):
         return ok_empty
-    if path == "/xapi/siteConfig":
-        return 200, json.dumps({"initialized": True})
     if re.fullmatch(r"/xapi/users/[^/]+/roles/?", path):
         roles = ["Administrator"] if state["faults"].get("no_container_manager") else ["ContainerManager"]
         return 200, json.dumps(roles)
@@ -193,11 +177,8 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
                 wrapper["id"] = _new_id(state, "last_wrapper_id")
             state["commands"].append(body)
             return 201, str(body["id"])
-        found = state["commands"]
-        for field in ("name", "image"):
-            if field in req.query:
-                found = [c for c in found if c.get(field) == req.query[field]]
-        return 200, json.dumps(found)
+        name = req.query.get("name")
+        return 200, json.dumps([c for c in state["commands"] if name is None or c["name"] == name])
 
     match = re.fullmatch(r"/xapi/commands/(\d+)", path)
     if match:
@@ -252,8 +233,7 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
         return 200, json.dumps({"enabled": state["events_enabled"]})
 
     if path == "/xapi/events/allactions":
-        # One action per wrapper of every command, keyed "<provider class>:<wrapper id>" and named
-        # after the wrapper (CommandActionProvider.java:389-403, MultiActionProvider.java:31-32).
+        # One action per wrapper of every command, keyed "<provider class>:<wrapper id>" and named after the wrapper.
         actions = [
             {"action-key": f"{ACTION_KEY_PREFIX}{w['id']}", "display-name": w["name"], "description": None}
             for c in state["commands"]
@@ -309,9 +289,6 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
             for pid, secondary in state["projects"].items()
         ]
         return 200, json.dumps({"ResultSet": {"Result": rows}})
-    match = re.fullmatch(r"/data/projects/([^/]+)", path)
-    if match:
-        return (200, "{}") if match.group(1) in state["projects"] else (404, "not found")
 
     return 404, f'{{"error":"fake XNAT does not model {method} {path}"}}'
 

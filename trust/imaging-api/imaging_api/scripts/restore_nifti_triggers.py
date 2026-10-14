@@ -11,18 +11,11 @@
 #
 """Recreates the DICOM->NIfTI triggers an earlier XNAT configure deleted (FLIP#1451).
 
-Until FLIP#1451 the Compose configure step (``configure-dcm2niix.sh``, run by ``up-trust`` and by
-the in-place ``upgrade-xnat``) deleted every project's dcm2niix event subscription each time it ran,
-through a cleanup selector on a field no subscription has. On such a site no existing project
-converts its scans, and nothing logs an error.
-
-Why this is a separate command and not part of the configure step: imaging-api creates a project's
-trigger *active* or *inactive* from the project's ``dicom_to_nifti`` setting, and that setting lives
-only on the hub. It reaches the trust once, in the create task, and is not stored here. So this
-recreates a trigger only for the projects the operator names, active or inactive as the hub says
-(the hub's project page shows the setting; its default is on). It creates each one exactly as
-project creation does, through ``create_project_event_subscription``: same payload, same wrapper
-enablement, owned by the service account.
+Until FLIP#1451 the Compose configure step deleted every project's dcm2niix event subscription each
+time it ran, so on such a site no existing project converts its scans and nothing logs an error.
+Whether a trigger is active is the project's ``dicom_to_nifti`` setting, which lives only on the hub,
+so this recreates one only for the projects the operator names, active or inactive as the hub says,
+through the same ``create_project_event_subscription`` project creation uses.
 
 Run inside the imaging-api container::
 
@@ -30,9 +23,8 @@ Run inside the imaging-api container::
     python -m imaging_api.scripts.restore_nifti_triggers --active A --inactive B  # restore A and B
     python -m imaging_api.scripts.restore_nifti_triggers --rest active --inactive B
 
-An id is the project's hub id (the id in the FLIP UI, XNAT's ``secondary_ID``) or its XNAT project
-ID. A project that still has a trigger is never touched: re-pointing a stale one is the configure
-step's job. On Compose, ``make -C trust restore-nifti-triggers KIT=<CODE>`` runs this.
+An id is the project's hub id (XNAT's ``secondary_ID``) or its XNAT project ID. A project that still
+has a trigger is never touched. On Compose, ``make -C trust restore-nifti-triggers KIT=<CODE>`` runs this.
 """
 
 import argparse
@@ -76,9 +68,8 @@ def flip_projects(headers: dict[str, str]) -> list[Project]:
 def triggers_by_project(headers: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
     """FLIP's DICOM->NIfTI subscriptions, grouped by the projects they filter on.
 
-    One ``GET /xapi/events/subscriptions``, which needs a site administrator: configure-xnat.sh gives
-    the service account that role. The listing is null while the Event Service is off, which reads as
-    no triggers here.
+    One ``GET /xapi/events/subscriptions``, which needs the site administrator role configure-xnat.sh
+    gives the service account.
 
     Args:
         headers (dict[str, str]): XNAT authentication headers.
@@ -88,16 +79,20 @@ def triggers_by_project(headers: dict[str, str]) -> dict[str, list[dict[str, Any
         ``DCM2NIIX_SUBSCRIPTION_NAME``.
 
     Raises:
-        Exception: If XNAT does not answer the listing with 200.
+        Exception: If XNAT does not answer the listing with 200, or answers null (the Event Service is off).
     """
     response = requests.get(xnat_url("xapi", "events", "subscriptions"), headers=headers)
     if response.status_code != 200:
         raise Exception(
             f"Error: listing XNAT event subscriptions failed: {response.status_code} - {_bounded_body(response.text)}"
         )
+    subscriptions = response.json()
+    # XNAT lists null rather than the triggers while the Event Service is off, which is not "no triggers".
+    if subscriptions is None:
+        raise Exception("Error: XNAT's Event Service is off; run the configure step, which turns it on, then retry.")
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for sub in response.json() or []:
-        if isinstance(sub, dict) and sub.get("name") == DCM2NIIX_SUBSCRIPTION_NAME:
+    for sub in subscriptions:
+        if sub.get("name") == DCM2NIIX_SUBSCRIPTION_NAME:
             for project_id in (sub.get("event-filter") or {}).get("project-ids") or []:
                 grouped.setdefault(project_id, []).append(sub)
     return grouped
