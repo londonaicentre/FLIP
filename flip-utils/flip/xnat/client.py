@@ -270,27 +270,29 @@ class XnatClient:
             resource (str): Resource name, e.g. ``NIFTI``.
             local_path (Path): The file to upload.
             target_filename (str): Name the file should take in XNAT.
-            overwrite (bool): Replace an existing file of that name. Off by default so a re-run
-                never silently rewrites enrichment that is already in place. Enforced by listing
-                the resource first, because XNAT's PUT overwrites unconditionally.
+            overwrite (bool): Replace an existing file of that name, by sending XNAT's
+                ``overwrite=true``. Off by default so a re-run never silently rewrites enrichment
+                that is already in place: without the flag XNAT keeps the existing file and
+                reports it as a duplicate, which this method raises on.
 
         Raises:
-            XnatError: If the upload fails, or if the file exists and ``overwrite`` is False.
+            XnatError: If the upload fails, if the file exists and ``overwrite`` is False, or if
+                ``overwrite`` is True and XNAT still kept the existing file.
         """
-        # A bare PUT replaces an existing file silently — which is what imaging-api's own uploader
-        # assumes, and why it pre-checks with a GET (`services/upload.py::check_file_exists_in_xnat`).
-        # XNAT has no "overwrite" query parameter, so the guarantee this argument makes can only be
-        # kept by asking first. Without this, overwrite=False protected nothing at this level.
-        if not overwrite and target_filename in self.list_resource_files(scan, resource):
-            raise XnatError(f"File already exists on XNAT: {target_filename}")
+        # XNAT replaces an existing file only when the request carries overwrite=true. A bare PUT
+        # keeps the old file and still answers 200, listing the file under "duplicates" in the body
+        # (xnat-web 1.10.0 FileList.java:295 and :345-349, CatalogUtils.java:1764). So the PUT itself
+        # says whether it wrote, and there is no pre-check: asking first would only leave a window
+        # for another writer between the two requests.
+        query = "inbody=true&overwrite=true" if overwrite else "inbody=true"
 
         # Escape the caller-supplied path segments. A "/" would redirect the write to another
-        # resource, and a "?" or "#" would truncate the URL and silently drop inbody=true —
+        # resource, and a "?" or "#" would truncate the URL and silently drop the query —
         # requests splits on those before it quotes anything, and leaves them in its safe set.
         url = (
             f"{self.server}/data/projects/{quote(project_id, safe='')}/subjects/{quote(scan.subject_id, safe='')}/"
             f"experiments/{quote(scan.experiment_id, safe='')}/scans/{quote(scan.scan_id, safe='')}/"
-            f"resources/{quote(resource, safe='')}/files/{quote(target_filename, safe='')}?inbody=true"
+            f"resources/{quote(resource, safe='')}/files/{quote(target_filename, safe='')}?{query}"
         )
 
         try:
@@ -304,11 +306,42 @@ class XnatClient:
         except OSError as err:
             raise XnatError(f"Could not read {local_path}: {err}") from err
 
-        # 409 is kept as a distinct message for the race the pre-check cannot close, and because a
-        # server that does reject duplicates should say so clearly rather than as a bare status.
+        # XNAT 1.10 reports a duplicate as a 200 (below), not a 409, on this endpoint. The 409 branch
+        # stays so that a server or proxy that does reject the write says so clearly.
         if response.status_code == 409:
             raise XnatError(f"File already exists on XNAT: {target_filename}")
         if response.status_code not in (200, 201):
             raise XnatError(f"Upload of {local_path} returned {response.status_code}: {response.text}")
 
+        # A 200 is not proof of a write: XNAT keeps an existing file and lists it under "duplicates".
+        duplicates = _upload_duplicates(response)
+        if duplicates:
+            if not overwrite:
+                raise XnatError(f"File already exists on XNAT: {target_filename}")
+            raise XnatError(
+                f"XNAT kept the existing {target_filename} instead of replacing it (duplicates: {duplicates})"
+            )
+
         logger.info(f"Uploaded {local_path.name} as {target_filename} to scan {scan.scan_id} ({scan.accession_id})")
+
+
+def _upload_duplicates(response: requests.Response) -> list[str]:
+    """Return the files XNAT reports it kept instead of writing, from a file PUT's response body.
+
+    XNAT answers a PUT that would replace an existing file without ``overwrite=true`` with HTTP 200
+    and ``{"duplicates": [...]}``, and writes nothing. A clean write answers 200 with an empty body.
+    XNAT serves the ``duplicates`` body as ``text/html``, so the body is parsed as JSON whatever the
+    Content-Type says, and an empty or non-JSON body means nothing was reported.
+
+    Args:
+        response (requests.Response): XNAT's response to a file PUT.
+
+    Returns:
+        list[str]: The duplicate file paths XNAT reported, or an empty list if the file was written.
+    """
+    try:
+        body = json.loads(response.content)
+    except ValueError:
+        return []
+    duplicates = body.get("duplicates") if isinstance(body, dict) else None
+    return [str(duplicate) for duplicate in duplicates] if isinstance(duplicates, list) else []

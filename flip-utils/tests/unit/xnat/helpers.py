@@ -24,16 +24,30 @@ from flip.xnat.client import XnatClient
 class FakeResponse:
     """Stands in for a ``requests.Response``."""
 
-    def __init__(self, status_code: int = 200, payload: dict[str, Any] | None = None, text: str = "") -> None:
+    def __init__(
+        self,
+        status_code: int = 200,
+        payload: dict[str, Any] | None = None,
+        text: str = "",
+        content_type: str = "text/plain",
+    ) -> None:
         """
         Args:
             status_code (int): HTTP status to report.
             payload (dict[str, Any] | None): JSON body.
             text (str): Body text, as surfaced in error messages.
+            content_type (str): The ``Content-Type`` header. XNAT serves an upload's
+                ``duplicates`` body as ``text/html`` even though it is JSON.
         """
         self.status_code = status_code
         self.text = text
+        self.headers = {"Content-Type": content_type}
         self._payload = payload or {}
+
+    @property
+    def content(self) -> bytes:
+        """bytes: The raw body, which is ``text`` encoded. Upload responses are parsed from this."""
+        return self.text.encode()
 
     def json(self) -> dict[str, Any]:
         """dict[str, Any]: The JSON body."""
@@ -41,7 +55,7 @@ class FakeResponse:
 
 
 class FakeSession:
-    """Routes GETs by URL substring and records PUTs.
+    """Routes GETs by URL substring and records both GETs and PUTs.
 
     Routes are matched in insertion order, so register the most specific path first.
     """
@@ -55,6 +69,7 @@ class FakeSession:
         self.auth: tuple[str, str] | None = None
         self.routes = routes
         self.put_response = put_response or FakeResponse(status_code=200)
+        self.gets: list[str] = []
         self.puts: list[str] = []
         self.get_error: Exception | None = None
         self.put_error: Exception | None = None
@@ -75,6 +90,7 @@ class FakeSession:
         """
         if self.get_error is not None:
             raise self.get_error
+        self.gets.append(url)
         for pattern, response in self.routes.items():
             if pattern in url:
                 return response

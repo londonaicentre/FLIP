@@ -46,8 +46,9 @@ images that vendor `flip`. Endpoint shapes mirror what the Trust `imaging-api` a
 from the image already sitting in the scan's `NIFTI` resource, swapping the `input_` prefix for
 `label_` (`DEFAULT_RENAME`, overridable). That keeps the uploaded name in lock-step with whatever
 DICOM-to-NIfTI conversion produced, instead of the caller guessing it. `upload_scan_resource_file`
-never overwrites unless asked (`overwrite=True`): XNAT's `PUT` overwrites unconditionally, so the
-client pre-checks with a `GET` to keep that guarantee.
+never overwrites unless asked (`overwrite=True`, sent to XNAT as `overwrite=true`). Without the
+flag XNAT keeps an existing file and still answers `200`, naming it under `duplicates` in the
+response body; the client raises `XnatError` on that, so the `PUT` itself is the existence check.
 
 **Multi-server rosters are self-selecting.** Each Trust's XNAT holds only its own studies, so
 `run_enrichment` sends the whole manifest to every server in `clients` — an accession exists at
