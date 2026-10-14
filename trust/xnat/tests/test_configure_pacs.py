@@ -442,7 +442,7 @@ def test_throttle_settings_are_configurable(tmp_path):
         {
             "PACS_AVAILABILITY_DAYS": "SATURDAY,SUNDAY",
             "PACS_AVAILABILITY_START": "19:00",
-            "PACS_AVAILABILITY_END": "07:00",
+            "PACS_AVAILABILITY_END": "23:30",
             "PACS_THREADS": "2",
             "PACS_UTILIZATION_PERCENT": "40",
             "DQR_MAX_PACS_REQUEST_ATTEMPTS": "25",
@@ -457,7 +457,7 @@ def test_throttle_settings_are_configurable(tmp_path):
 
     availability = payload_for(payloads, "/availability")
     assert availability["availabilityStart"] == "19:00"
-    assert availability["availabilityEnd"] == "07:00"
+    assert availability["availabilityEnd"] == "23:30"
     assert availability["threads"] == 2
     assert availability["utilizationPercent"] == 40
 
@@ -1229,3 +1229,74 @@ def test_no_branch_reads_dqr_error_text_for_overlap():
     ]
     offending = [f"{number}: {line.strip()}" for number, line in code_lines if "overlap" in line.lower()]
     assert not offending, "configure-xnat.sh decides on error text again:\n" + "\n".join(offending)
+
+
+# ── A kit window cannot cross midnight (FLIP#1465) ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        ("19:00", "07:00"),  # the out-of-hours window the kit templates used to invite
+        ("23:00", "03:00"),
+        ("12:00", "12:00"),  # starts where it ends: DQR never runs it
+        ("7:30", "07:30"),  # the same, through DQR's H:MM form
+        ("00:30", "00:15"),
+    ],
+)
+@pytest.mark.parametrize("schedule", [[], DEFAULT_SCHEDULE], ids=["empty", "existing"])
+def test_a_kit_window_that_crosses_midnight_is_refused_before_xnat_is_touched(tmp_path, start, end, schedule):
+    """DQR runs a window whose start is not before its end inverted: 19:00-07:00 retrieves 07:00-19:00."""
+    code, payloads, output = run_configure(
+        tmp_path, {"PACS_AVAILABILITY_START": start, "PACS_AVAILABILITY_END": end}, avail_state=schedule
+    )
+    assert code == 1, f"{start}-{end} was accepted"
+    assert f"PACS_AVAILABILITY_START={start}" in output
+    assert f"PACS_AVAILABILITY_END={end}" in output
+    assert "inverted" in output
+    assert "FLIP#1465" in output
+    assert "19:00-24:00" in output, "the refusal must say how to write an out-of-hours window"
+    assert requests_made(payloads) == [], "XNAT was contacted before the window was validated"
+    assert json.loads((tmp_path / "availability.json").read_text()) == schedule
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [("19:00", "24:00"), ("19:00", "00:00"), ("00:00", "24:00"), ("00:00", "00:00"), ("00:00", "07:00")],
+)
+def test_a_kit_window_ending_at_midnight_is_accepted(tmp_path, start, end):
+    """24:00, and 00:00 as DQR stores it, are the end of the day, so these windows do not cross it."""
+    code, _, output = run_configure(
+        tmp_path,
+        {"PACS_AVAILABILITY_DAYS": "MONDAY", "PACS_AVAILABILITY_START": start, "PACS_AVAILABILITY_END": end},
+        pacs_state=MOCK_PACS_REGISTRATION,
+    )
+    assert code == 0, output
+    stored_end = "00:00" if end in ("24:00", "00:00") else end
+    assert [window(item) for item in schedule_after(tmp_path)["MONDAY"]] == [(start, stored_end, 1, 100)]
+
+
+# ── The kit owns the schedule: a change made in XNAT is reverted, and the log says so ───────────
+
+
+def test_a_change_made_in_xnat_is_reverted_and_named(tmp_path):
+    """An operator who edited the schedule in XNAT's admin page must be able to see what replaced it."""
+    edited = [interval(40, "MONDAY", start="08:00", end="18:00", threads=2), *DEFAULT_SCHEDULE[1:]]
+    code, payloads, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION, avail_state=edited)
+    assert code == 0, output
+    assert availability_writes(payloads) == [("PUT", "http://xnat-web:8080/xapi/pacs/7/availability/40")]
+    assert (
+        "MONDAY: interval 40 drifted on availabilityStart, availabilityEnd, threads (08:00-18:00, 2 thread(s), 100%"
+        " -> 00:00-24:00, 1 thread(s), 100%); updating it in place." in output
+    )
+    assert "The kit owns this schedule" in output
+    assert [window(i) for i in schedule_after(tmp_path)["MONDAY"]] == [("00:00", "00:00", 1, 100)]
+
+
+def test_the_kit_owns_the_schedule_line_only_appears_when_something_is_overwritten(tmp_path):
+    code, _, output = run_configure(tmp_path, pacs_state=MOCK_PACS_REGISTRATION, avail_state=DEFAULT_SCHEDULE)
+    assert code == 0, output
+    assert "The kit owns this schedule" not in output
+    code, _, output = run_configure(tmp_path / "fresh", pacs_state=MOCK_PACS_REGISTRATION)
+    assert code == 0, output
+    assert "The kit owns this schedule" not in output, "a fresh schedule overwrites nothing"

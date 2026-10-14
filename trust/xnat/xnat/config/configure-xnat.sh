@@ -85,6 +85,7 @@ esac
 # a window. The accepted forms are DQR's own, read from the pinned DQR 3.0.0 jar:
 #   - days: java.time.DayOfWeek names. XNAT's Jackson does not accept them case-insensitively.
 #   - times: PacsAvailability.validateTime takes HH:MM from 00:00 to 23:59, H:MM, or 24:00.
+#   - the window: the start must come before the end (see below, FLIP#1465).
 #   - threads, utilisation: createPacsAvailabilityInterval stores 0 for both when either is 0, and
 #     PacsDequeueThread sleeps (100 / utilisation - 1) x the time it ran, so 0% would never run again.
 #     Nine digits at most keeps the thread count inside a Java int.
@@ -131,6 +132,33 @@ dqr_time() {
 }
 avail_start=$(dqr_time "${PACS_AVAILABILITY_START}")
 avail_end=$(dqr_time "${PACS_AVAILABILITY_END}")
+
+# The window must not cross midnight (FLIP#1465). DQR runs one whose start is not before its end
+# inverted: PacsAvailability.isAvailableAtTime takes start >= end to mean "available between the end
+# and the start", so 19:00-07:00 retrieves from 07:00 to 19:00. That is the working day, the load an
+# out-of-hours window exists to keep off the PACS. One that starts where it ends never runs at all.
+# Retrieval also looks only at today's weekday (findAvailableNow), so a single interval cannot reach
+# into the next day's small hours either. An end of 24:00, or 00:00 (DQR's stored form of it, read as
+# LocalTime.MAX), is the end of the day. The times are already validated as digits, so the
+# arithmetic below sees nothing else.
+avail_minutes() {  # avail_minutes <HH:MM> -> minutes after midnight
+  printf '%d' $(( 10#${1%%:*} * 60 + 10#${1##*:} ))
+}
+avail_start_minutes=$(avail_minutes "$avail_start")
+if [[ "$avail_end" == "00:00" ]]; then
+  avail_end_minutes=1440
+else
+  avail_end_minutes=$(avail_minutes "$avail_end")
+fi
+if (( avail_start_minutes >= avail_end_minutes )); then
+  echo "ERROR: PACS_AVAILABILITY_START=${PACS_AVAILABILITY_START} is not before" \
+    "PACS_AVAILABILITY_END=${PACS_AVAILABILITY_END}. DQR runs a window that crosses midnight inverted, during" \
+    "the day (19:00-07:00 retrieves from 07:00 to 19:00, FLIP#1465), and one that starts where it ends never" \
+    "runs. For out-of-hours retrieval, end the window at midnight (19:00-24:00) or start it there (00:00 is" \
+    "the earliest start, e.g. 00:00-07:00), or schedule whole days through PACS_AVAILABILITY_DAYS" \
+    "(e.g. SATURDAY,SUNDAY)." >&2
+  exit 1
+fi
 
 # jq parses the /xapi/dicomscp and /xapi/pacs listings below. It ships in the xnat-web image
 # (trust/xnat/xnat/Dockerfile), but fail loudly here rather than let a missing binary degrade into a
@@ -793,6 +821,13 @@ echo "Converging the PACS availability schedule onto the kit (days ${PACS_AVAILA
 # Two assignments rather than a nested $(...): set -e does not see a failure inside an argument.
 avail_current=$(availability_schedule)
 avail_plan=$(availability_plan "$avail_current")
+# Each overwrite below is logged with what it replaces. Say once why, for an operator who changed
+# the schedule in XNAT's DQR admin page and finds the change undone.
+if printf '%s\n' "$avail_plan" | grep -qE $'^(remove|remove-extra|update)\t'; then
+  echo "  The kit owns this schedule, so a change made in XNAT's DQR admin page is replaced below with" \
+    "the kit's window. To keep an agreed window, put it in the kit (PACS_AVAILABILITY_*, PACS_THREADS," \
+    "PACS_UTILIZATION_PERCENT)."
+fi
 while IFS=$'\t' read -r avail_op avail_day avail_id avail_detail; do
   [[ -n "$avail_op" ]] || continue
   # The id goes into a URL. XNAT generates it, but check it is a plain number before using it.

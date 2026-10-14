@@ -961,6 +961,12 @@ pacs:
   supportsExtendedNegotiations: true
   # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
+  # These values set XNAT's schedule: a change applies on the next helm upgrade (the xnat-init hook's
+  # configure step), and a change made in XNAT's DQR admin page is reverted then, so put the agreed
+  # window here. One window per listed day, and start must come before end: DQR runs a window that
+  # crosses midnight (19:00-07:00) inverted, during the day, so it is refused (FLIP#1465). For
+  # out-of-hours, end the window at midnight (19:00-24:00), start it there (00:00-07:00), or list
+  # whole days.
   availability:
     days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
     start: "00:00"

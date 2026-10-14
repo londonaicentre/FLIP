@@ -55,6 +55,21 @@ follow.
    ``FL_KIT_DIR``) and Trust-local credentials stay as they are — do not copy the whole file
    over yours.
 
+   .. important::
+
+      **Put any agreed PACS retrieval window in the kit before you upgrade.** XNAT's PACS
+      availability schedule is set from the kit: ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``,
+      ``PACS_THREADS`` and ``PACS_UTILIZATION_PERCENT``. A change to them applies on the next
+      configure run: this upgrade, ``upgrade-xnat``, or a ``helm upgrade`` on Kubernetes. A change
+      made in XNAT's DQR admin page is reverted at that point, and the configure log names each
+      interval it replaced. Earlier documentation said to change the window in XNAT's UI, so a
+      window agreed with the PACS manager may exist only there. Read it first
+      (``GET /xapi/pacs/{id}/availability``, or the DQR admin page) and copy it into the kit.
+
+      A kit window that **crosses midnight**, such as ``19:00``–``07:00``, stops the configure pass
+      before it writes anything, because DQR would run it inverted, during the day (FLIP#1465). Use
+      ``19:00``–``24:00``, ``00:00``–``07:00``, or whole days in ``PACS_AVAILABILITY_DAYS``.
+
 3. **Move your FLIP checkout to the release.** The images are only half of a release: the
    compose files, the Makefiles, the XNAT stack files and the upgrade command itself all come
    from the git checkout on your host, not from the images, and they change between releases.
@@ -134,8 +149,9 @@ follow.
      — only a complete dump is kept, and without one (a failed dump, or no running ``xnat-db``
      to take it from) the upgrade stops before XNAT is touched — then the Swarm stack
      redeployed onto the new image (XNAT migrates its own schema on boot), then the configure
-     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, Container Service
-     backend, dcm2niix command — against the live instance.
+     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, PACS availability
+     schedule (from the kit, see step 2), Container Service backend, dcm2niix command — against
+     the live instance.
 
    It never runs ``ensure-seeded`` or ``xnat-reset``. Those belong to
    ``make up-onprem-trust`` / ``make -C trust up-trust``, the **first-install** verbs, which

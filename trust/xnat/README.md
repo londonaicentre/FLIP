@@ -221,7 +221,7 @@ rather than silently falling back.
 | `PACS_LABEL` | `Test PACS instance` | Display label for the registration in the DQR UI. |
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
 | `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
-| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. |
+| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. The start must come before the end, so the window cannot cross midnight (see below). |
 | `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
 | `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
@@ -229,6 +229,15 @@ rather than silently falling back.
 
 The throttle group exists because a production PACS may refuse further associations after a certain
 volume, and a trust may want retrieval confined to out-of-hours.
+
+**A window cannot cross midnight (FLIP#1465).** DQR runs a window whose start is not before its end
+inverted: `19:00`–`07:00` retrieves from 07:00 to 19:00, the working day the window was meant to
+spare, and a window that starts where it ends never runs. DQR also looks only at the current weekday,
+so one window cannot reach into the next morning. `configure-xnat.sh` therefore refuses
+`PACS_AVAILABILITY_START` ≥ `PACS_AVAILABILITY_END` before contacting XNAT, counting an end of
+`24:00` (or `00:00`) as the end of the day. For out-of-hours retrieval, end the window at midnight
+(`19:00`–`24:00`), start it there (`00:00`–`07:00`), or list whole days in `PACS_AVAILABILITY_DAYS`
+(for example `SATURDAY,SUNDAY`).
 
 **`XNAT_PORT` and `XNAT_WEB_PORT` are two different things** (they were one variable until FLIP#993,
 which is why host 8104 once served Tomcat while the receiver's 8104 was an unpublished container
@@ -255,9 +264,15 @@ window per listed day. Each run reads DQR's schedule for the registered PACS and
 
 Removals run first, so a run that fails part-way leaves less retrieval scheduled than agreed, never
 more. The script then reads the schedule back and fails if DQR still disagrees with the kit. The
-five values are validated before XNAT is contacted, because a value DQR rejected part-way through
+schedule values are validated before XNAT is contacted, because a value DQR rejected part-way through
 would leave days with no window, and DQR does not retrieve outside one. DQR stores an end of `24:00`
 as `00:00` and still reads it as the end of the day; the comparison accounts for that.
+
+**The kit sets the schedule.** A change made in XNAT's DQR admin page is reverted on the next
+configure run (`xnat-configure`, `upgrade-xnat`, or `helm upgrade` on Kubernetes). Each overwrite is
+logged with the interval it replaces ("drifted on … (old -> new); updating it in place", "removing
+extra interval …"), and the run says once that the kit owns the schedule. So put a window agreed
+with the PACS manager in the kit, not only in XNAT.
 
 Until FLIP#1455 the step re-POSTed every day and treated DQR's "probable overlap" refusal as "already
 configured", so on a live trust a changed window never applied. A trust configured before that fix

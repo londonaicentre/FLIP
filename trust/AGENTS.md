@@ -188,8 +188,12 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
   it PUTs a drifted interval in place, creates a missing day after DQR's `validate` check, removes
   days no longer listed (and any second interval on a listed day), and writes nothing when the kit
   is unchanged. It then reads the schedule back and fails on any difference. So a kit change applies
-  on the next `xnat-configure` / `helm upgrade`, on both shapes. The five schedule values are
-  validated before XNAT is contacted. No branch reads DQR's error text: the old step treated a
+  on the next `xnat-configure` / `upgrade-xnat` / `helm upgrade`, on both shapes, and a change made in
+  XNAT's DQR admin page is reverted then (each overwrite is logged with what it replaced). The
+  schedule values are validated before XNAT is contacted, including that the window does not cross
+  midnight: `START` must come before `END`, an `END` of `24:00` or `00:00` being the end of the day,
+  because DQR runs `19:00`–`07:00` inverted, during the day (FLIP#1465). Out-of-hours is `19:00`–`24:00`,
+  `00:00`–`07:00` or whole days. No branch reads DQR's error text: the old step treated a
   "probable overlap" 400 as "already configured", which kept the first window forever.
   `trust/xnat/tests/test_configure_pacs.py` runs the script against a stub of DQR's availability API
   built from the pinned jar's behaviour.
