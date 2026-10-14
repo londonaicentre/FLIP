@@ -45,22 +45,10 @@ def resolve_default_pacs_id(headers: dict[str, str]) -> int:
     """
     Resolves the id of the PACS XNAT flags as its default query/retrieve PACS.
 
-    That is the PACS DQR queries by itself when a C-FIND names none: ``POST /xapi/dqr/query/studies``
-    without a ``pacsId`` reaches ``AbstractDqrRestController.getDefaultQueryablePacs(0)``, which takes
-    ``PacsService.findDefaultQueryRetrievePacs()``. DQR's import does not default the same way —
-    ``BasicDicomQueryRetrieveService.importFromPacs`` looks the id up with ``PacsService.retrieve`` and
-    throws ``PacsNotFoundException`` when it is absent — so an import, and a ping meaning "the trust's
-    PACS", must name one, and naming this one keeps the import on the PACS the query reached.
-
-    Read from XNAT on every call and never cached: the id is XNAT's to assign (an XNAT that carried the
-    mocked Orthanc before the real PACS has it at a later id, FLIP#993), and a cached copy outlives a
-    re-registration. One metadata call per import or ping is small next to the DIMSE work behind it.
-
-    There is no fallback id: a guessed one is wrong exactly when it matters, so a listing XNAT cannot
-    give, or one without exactly one default, fails here naming what XNAT reported.
-    ``configure-xnat.sh`` keeps one registration and flags it (restoring a flag that went missing), and
-    DQR clears the flag on every other PACS when one is made the default, so two flagged PACS mean XNAT
-    was changed outside both.
+    A query that names no PACS runs against this one, but DQR's import does not fall back to it, so an
+    import (and an id-less ping) names it. Read on every call: the id is XNAT's to assign and changes
+    when the PACS is re-registered (FLIP#993). There is no fallback id; a listing without exactly one
+    default fails here, naming what XNAT reported.
 
     Args:
         headers (dict[str, str]): XNAT authentication headers.
@@ -74,8 +62,7 @@ def resolve_default_pacs_id(headers: dict[str, str]) -> int:
         imaging_api.utils.exceptions.NotFoundError: If no queryable PACS is flagged as the default.
         Exception: If more than one is.
     """
-    # queryable=true is the filter DQR's import enforces anyway: it refuses a PACS that does not
-    # allow C-FIND with PacsNotQueryableException.
+    # queryable=true: DQR's import refuses any other PACS. DQR also leaves a disabled PACS out of this list.
     try:
         response = requests.get(
             xnat_url("xapi", "pacs", query={"queryable": "true"}),
@@ -99,7 +86,8 @@ def resolve_default_pacs_id(headers: dict[str, str]) -> int:
         raise NotFoundError(
             f"XNAT has no PACS flagged as the default query/retrieve PACS (queryable PACS found: {found}), "
             "so DQR answers every query 404. Re-run XNAT's configure step (configure-xnat.sh; the xnat-init "
-            "job on Kubernetes): it registers the trust's PACS, or restores the flag on it."
+            "job on Kubernetes): it registers the trust's PACS, or restores the flag on it. A PACS disabled in "
+            "DQR's admin page is not listed either, and the configure step does not re-enable it."
         )
     if len(defaults) > 1:
         raise Exception(
@@ -216,10 +204,8 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
     Raises:
         Exception: If there is an error during the query request.
     """
-    # Construct DQR Query. pacsId is left out rather than sent: DQR reads a missing pacsId as 0 and
-    # then queries its default query/retrieve PACS (AbstractDqrRestController.getDefaultQueryablePacs).
-    # exclude_none drops the key; sending null would not work, because DQR's PacsSearchCriteriaDeserializer
-    # parses whatever value it is given with Long.parseLong.
+    # No pacsId, so DQR queries its default PACS. exclude_none drops the key: DQR would parse a null
+    # pacsId as a number and fail.
     study_query = StudyQuery(accessionNumber=accession_number)
 
     response = requests.post(
@@ -243,17 +229,6 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         return []
     elif response.status_code == 401:
         raise Exception("Unauthorized to query PACS via DQR")
-    elif response.status_code == 404:
-        # DQR answers a query that names no PACS with 404 when XNAT has no default query/retrieve PACS
-        # (getDefaultQueryablePacs -> PacsNotFoundException), the same 404 it gives any query for a PACS
-        # it lacks. One listing call, paid only on this failure path, tells that case apart:
-        # resolve_default_pacs_id raises NotFoundError naming what XNAT has. A listing that fails too
-        # leaves the query's own status to report.
-        try:
-            resolve_default_pacs_id(headers)
-        except XnatFetchError:
-            pass
-        raise Exception("Failed to query PACS via DQR (HTTP 404)")
     else:
         raise Exception(f"Failed to query PACS via DQR (HTTP {response.status_code})")
 

@@ -992,66 +992,51 @@ async def test_retry_requeues_terminal_failures_end_to_end(
 
 
 # ===========================================================================
-# A missing default query/retrieve PACS stops the run (FLIP#1456 E1)
+# A missing default query/retrieve PACS ends the run before its queries (FLIP#1456 E1)
 # ===========================================================================
 
-# What resolve_default_pacs_id raises, and the status the run must stop with. NotFoundError is XNAT
-# having no default PACS; anything else (an unreachable XNAT, two flagged PACS) is a 500.
 UNRESOLVABLE_PACS = [
-    (NotFoundError("XNAT has no PACS flagged as the default query/retrieve PACS (queryable PACS found: none)"), 404),
-    (XnatFetchError("Could not list the PACS registered in XNAT: HTTP 503"), 500),
-    (Exception("XNAT flags 2 PACS as the default query/retrieve PACS"), 500),
+    NotFoundError("XNAT has no PACS flagged as the default query/retrieve PACS"),
+    XnatFetchError("Could not list the PACS registered in XNAT: HTTP 503"),
 ]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("error", "expected_status"), UNRESOLVABLE_PACS, ids=["no default", "listing failed", "two"])
+@pytest.mark.parametrize("error", UNRESOLVABLE_PACS, ids=["no default", "listing failed"])
 @patch("imaging_api.services.retrieval.queue_image_import_request")
 @patch("imaging_api.services.retrieval.query_by_accession_number")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
 @patch("imaging_api.services.retrieval.get_project")
-async def test_retrieve_images_without_a_default_pacs_stops_before_any_query(
-    mock_get_project,
-    mock_encrypt,
-    mock_get_accession_ids,
-    mock_query,
-    mock_queue,
-    error,
-    expected_status,
-    default_pacs,
-    headers,
+async def test_retrieve_images_without_a_default_pacs_logs_why_and_queries_nothing(
+    mock_get_project, mock_encrypt, mock_get_accession_ids, mock_query, mock_queue, error, default_pacs, headers, caplog
 ):
-    """Every C-FIND would be DQR's 404, and the run would end "No studies found" — a data problem in disguise."""
+    """Otherwise every C-FIND is DQR's 404 and the run ends "No studies found": a data problem in disguise."""
     mock_get_accession_ids.return_value = ["ACC1", "ACC2"]
     default_pacs.side_effect = error
 
-    with pytest.raises(HTTPException) as excinfo:
-        await retrieve_images_for_project("proj1", "SELECT *", headers)
+    assert await retrieve_images_for_project("proj1", "SELECT *", headers) is False
 
-    assert excinfo.value.status_code == expected_status
-    assert str(error) in excinfo.value.detail
-    assert not mock_query.called, "the run queried the PACS without a default PACS to query"
+    assert f"Not importing images for project proj1: {error}" in caplog.text
+    assert not mock_query.called
     assert not mock_queue.called
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("error", "expected_status"), UNRESOLVABLE_PACS, ids=["no default", "listing failed", "two"])
+@pytest.mark.parametrize("error", UNRESOLVABLE_PACS, ids=["no default", "listing failed"])
 @patch("imaging_api.services.retrieval.queue_image_import_request")
 @patch("imaging_api.services.retrieval.query_by_accession_number")
 @patch("imaging_api.services.retrieval.get_import_status", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.get_project")
-async def test_retry_without_a_default_pacs_stops_before_any_query(
-    mock_get_project, mock_get_status, mock_query, mock_queue, error, expected_status, default_pacs, headers
+async def test_retry_without_a_default_pacs_logs_why_and_queries_nothing(
+    mock_get_project, mock_get_status, mock_query, mock_queue, error, default_pacs, headers, caplog
 ):
     mock_get_status.return_value = ImportStatus(failed=["ACC1"], queue_failed=["ACC2"])
     default_pacs.side_effect = error
 
-    with pytest.raises(HTTPException) as excinfo:
-        await retry_retrieve_images_for_project("proj1", "SELECT *", headers)
+    assert await retry_retrieve_images_for_project("proj1", "SELECT *", headers) is False
 
-    assert excinfo.value.status_code == expected_status
-    assert str(error) in excinfo.value.detail
+    assert f"Not importing images for project proj1: {error}" in caplog.text
     assert not mock_query.called
     assert not mock_queue.called
 

@@ -389,6 +389,31 @@ def test_an_adopted_registration_without_a_dqr_flag_gets_it_back_in_place(tmp_pa
     assert pacs["queryable"] is True
 
 
+@pytest.mark.parametrize("flag", ["defaultQueryRetrievePacs", "queryable"])
+def test_a_flag_restore_that_did_not_take_fails_the_run(tmp_path, flag):
+    """A 200 that stores nothing must fail the run, not leave every C-FIND answered 404 (the FLIP#822 class)."""
+    wrap = tmp_path / "wrap"
+    wrap.mkdir()
+    # Ahead of the stub on PATH: a PUT to a registration answers 200 and is dropped; the rest pass through.
+    (wrap / "curl").write_text(
+        '#!/bin/bash\nmethod=GET; url=""; prev=""\n'
+        'for a in "$@"; do [ "$prev" = "-X" ] && method="$a"; case "$a" in http*) url="$a";; esac; prev="$a"; done\n'
+        'if [ "$method" = PUT ] && [[ "$url" =~ /xapi/pacs/[0-9]+$ ]]; then printf "{}\\n200"; exit 0; fi\n'
+        'exec "$REAL_CURL" "$@"\n'
+    )
+    (wrap / "curl").chmod(0o755)
+    registration = json.loads(MOCK_PACS_REGISTRATION)
+    registration[0][flag] = False
+
+    code, _, output = run_configure(
+        tmp_path,
+        {"PATH": f"{wrap}:{tmp_path / 'bin'}:{os.environ['PATH']}", "REAL_CURL": str(tmp_path / "bin" / "curl")},
+        pacs_state=json.dumps(registration),
+    )
+    assert code != 0, "a flag that never reached XNAT was treated as configured"
+    assert "is not registered as the DQR default queryable PACS" in output
+
+
 def test_a_default_flag_taken_by_a_foreign_pacs_comes_back_to_ours(tmp_path):
     """A default PACS added through the UI clears our flag; removing it as foreign must not leave us unflagged."""
     ours = {

@@ -96,9 +96,9 @@ flags as its default query/retrieve PACS — the one registration `configure-xna
 flag set. DQR's import does not default the same way, so each import reads that PACS's id from
 `GET /xapi/pacs?queryable=true` (one call per import, never cached) and fails, naming what XNAT
 reported, when no PACS or more than one is flagged. An import run checks that PACS once before its
-C-FINDs, so a missing default stops the run with that message rather than every query failing 404
-and the run ending "No studies found to import"; a query DQR does answer 404 is diagnosed the same
-way. Re-running XNAT's configure step restores the flag. `GET /imaging/ping_pacs` without an id
+C-FINDs and, without it, logs that message and stops, rather than every query failing 404 and the
+run ending "No studies found to import". Re-running XNAT's configure step restores a missing flag; a
+PACS disabled in DQR's admin page has to be re-enabled there. `GET /imaging/ping_pacs` without an id
 pings the same PACS, resolved the same way on every call.
 
 Example DQR import request:

@@ -94,31 +94,26 @@ def select_study_for_accession(accession_number: str, studies_found: list[Study]
     return None
 
 
-def require_default_pacs(project_id: str, headers: dict[str, str]) -> None:
-    """Stops an import run before its C-FINDs when XNAT has no usable default query/retrieve PACS.
+def has_default_pacs(project_id: str, headers: dict[str, str]) -> bool:
+    """Whether XNAT has the default query/retrieve PACS that an import run's C-FINDs depend on.
 
-    The queries name no PACS, so without a default DQR answers every one of them 404. Each would be
-    logged as one failed accession and the run would end "No studies found to import", which reads
-    as a data problem rather than the misconfiguration it is. Checked once, before the loop, so the
-    run stops naming the cause. The import resolves the PACS again when it is queued, since the
-    C-FINDs in between can take a long time.
+    Without it DQR answers every query 404, and the run would end "No studies found to import", which
+    reads as a data problem. Logged rather than raised, like a cohort below the threshold, because the
+    run is a background task.
 
     Args:
         project_id (str): The imaging project the run imports into, for the log line.
         headers (dict[str, str]): XNAT authentication headers.
 
-    Raises:
-        HTTPException: 404 when XNAT has no default query/retrieve PACS, 500 when it cannot be
-            resolved for any other reason — the same mapping as the project check before it.
+    Returns:
+        bool: True when the PACS resolves; False, with the reason logged, otherwise.
     """
     try:
         resolve_default_pacs_id(headers)
-    except NotFoundError as e:
-        logger.error(f"Not importing images for project {project_id}: {e.detail}")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
         logger.error(f"Not importing images for project {project_id}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        return False
+    return True
 
 
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
@@ -171,7 +166,8 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         )
         return False
 
-    require_default_pacs(project_id, headers)
+    if not has_default_pacs(project_id, headers):
+        return False
 
     studies_list: list[ImportStudy] = []
 
@@ -410,7 +406,8 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     failed_accession_numbers = import_status.failed + import_status.queue_failed
     logger.info(f"Retrying import for {len(failed_accession_numbers)} failed accession numbers")
 
-    require_default_pacs(project_id, headers)
+    if not has_default_pacs(project_id, headers):
+        return False
 
     # For each accession ID, unencrypt it and find the study
     studies_list: list[ImportStudy] = []

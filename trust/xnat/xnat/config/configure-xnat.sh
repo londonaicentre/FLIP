@@ -588,13 +588,8 @@ else
   # and keeps the old flag forever, exactly the silently-ignored kit change the in-place update
   # exists to prevent. Comparison against the desired payload rather than the env vars keeps type
   # handling in jq (port and the flag are JSON number/boolean in both documents, not strings).
-  #
-  # defaultQueryRetrievePacs and queryable are compared too, though no kit sets them: imaging-api's
-  # C-FINDs name no PACS, so DQR queries whichever one carries the default flag, and the import looks
-  # that PACS up among the queryable ones. A registration adopted by AE title without the flag (one
-  # made by hand — the admin UI's "Default Q/R AE" switch starts at No), or one whose flag went to
-  # another PACS that was then removed above as foreign, would otherwise be left "as-is" with every
-  # query answered 404. The PUT below restores both.
+  # The two DQR flags are compared too: imaging-api's queries need the default one, and a PACS
+  # registered by hand (the admin UI's "Default Q/R AE" starts at No) is adopted without it.
   pacs_drift=$(jq -cn --argjson entry "$pacs_entry" --argjson desired "$pacs_payload" \
     '[("host","queryRetrievePort","label","supportsExtendedNegotiations","defaultQueryRetrievePacs","queryable")
       | select($entry[.] != $desired[.])]')
@@ -614,8 +609,8 @@ fi
 # The availability schedule below is written against the registered PACS, so resolve its id whether
 # it was just created or already existed.
 PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs" \
-  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae)) | .[0].id // empty')
-: "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered after configuration}"
+  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae and .defaultQueryRetrievePacs and .queryable)) | .[0].id // empty')
+: "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered as the DQR default queryable PACS after configuration}"
 
 # Configure the PACS availability schedule — the throttle for a production PACS, which may refuse
 # further associations after a certain volume, and which a trust may want restricted to out-of-hours
