@@ -79,6 +79,59 @@ case "${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS}" in
   *) echo "ERROR: PACS_SUPPORTS_EXTENDED_NEGOTIATIONS must be true or false, got '${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS}'" >&2; exit 1 ;;
 esac
 
+# The availability schedule is validated here too, before XNAT is touched, and it matters more than
+# usual: the converge at the end of this script deletes intervals before it writes any, so a value DQR
+# refused part-way through would leave days with no window at all, and DQR does not retrieve outside
+# a window. The accepted forms are DQR's own, read from the pinned DQR 3.0.0 jar:
+#   - days: java.time.DayOfWeek names. XNAT's Jackson does not accept them case-insensitively.
+#   - times: PacsAvailability.validateTime takes HH:MM from 00:00 to 23:59, H:MM, or 24:00.
+#   - threads, utilisation: createPacsAvailabilityInterval stores 0 for both when either is 0, and
+#     PacsDequeueThread sleeps (100 / utilisation - 1) x the time it ran, so 0% would never run again.
+#     Nine digits at most keeps the thread count inside a Java int.
+# Commas and spaces both separate days, as they always have. A day listed twice is scheduled once.
+read -r -a avail_day_list <<< "${PACS_AVAILABILITY_DAYS//,/ }"
+if [[ ${#avail_day_list[@]} -eq 0 ]]; then
+  echo "ERROR: PACS_AVAILABILITY_DAYS lists no days, got '${PACS_AVAILABILITY_DAYS}'. DQR retrieves only" \
+    "inside a scheduled window, so an empty schedule would stop retrieval altogether." >&2
+  exit 1
+fi
+for avail_day in "${avail_day_list[@]}"; do
+  case "$avail_day" in
+    MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY) ;;
+    *) echo "ERROR: PACS_AVAILABILITY_DAYS must list days as MONDAY ... SUNDAY in capitals, separated by" \
+         "commas, got '${avail_day}' in '${PACS_AVAILABILITY_DAYS}'" >&2; exit 1 ;;
+  esac
+done
+for avail_var in PACS_AVAILABILITY_START PACS_AVAILABILITY_END; do
+  if ! [[ "${!avail_var}" =~ ^(([01][0-9]|2[0-3]):[0-5][0-9]|[0-9]:[0-5][0-9]|24:00)$ ]]; then
+    echo "ERROR: ${avail_var} must be a time of day, HH:MM from 00:00 to 23:59 or 24:00 for the end of" \
+      "the day, got '${!avail_var}'" >&2
+    exit 1
+  fi
+done
+if ! [[ "${PACS_THREADS}" =~ ^[1-9][0-9]{0,8}$ ]]; then
+  echo "ERROR: PACS_THREADS must be a whole number from 1, got '${PACS_THREADS}'" >&2
+  exit 1
+fi
+if ! [[ "${PACS_UTILIZATION_PERCENT}" =~ ^([1-9][0-9]?|100)$ ]]; then
+  echo "ERROR: PACS_UTILIZATION_PERCENT must be a whole number from 1 to 100, got '${PACS_UTILIZATION_PERCENT}'" >&2
+  exit 1
+fi
+
+# A time in the form DQR stores and returns it (PacsAvailability.validateTime): H:MM is zero-padded and
+# 24:00 is stored as 00:00, which DQR reads back as the end of the day. The converge compares the kit
+# against what DQR returns, so the kit's times are put in the same form first. Otherwise the default
+# end of 24:00 would read as drift on every run.
+dqr_time() {
+  case "$1" in
+    24:00) printf '00:00' ;;
+    ?:??) printf '0%s' "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+avail_start=$(dqr_time "${PACS_AVAILABILITY_START}")
+avail_end=$(dqr_time "${PACS_AVAILABILITY_END}")
+
 # jq parses the /xapi/dicomscp and /xapi/pacs listings below. It ships in the xnat-web image
 # (trust/xnat/xnat/Dockerfile), but fail loudly here rather than let a missing binary degrade into a
 # silently-empty lookup that would re-register a PACS that already exists.
@@ -120,6 +173,12 @@ echo "XNAT is up!"
 # here, so the args echoed on failure are scrubbed first: the value following
 # -u (credentials) or -d/--data-binary (payloads carry the admin and service
 # passwords) must never reach the tee'd configure log.
+#
+# One opt-in, --allow-not-modified as the first argument: a 304 Not Modified also
+# counts as success. DQR answers 304 to a PUT of an availability interval that
+# already matches (see the schedule converge below). Every call also leaves its
+# status in XNAT_CURL_STATUS. That is only visible to a caller that ran xnat_curl
+# directly rather than inside $(...), which is how the converge tells 304 from 200.
 scrub_args() {
   local redact_next=""
   local arg
@@ -143,6 +202,12 @@ xnat_curl() {
   local status
   local body
   local curl_exit=0
+  local accepted='^2[0-9]{2}$'
+  if [[ "${1:-}" == "--allow-not-modified" ]]; then
+    accepted='^(2[0-9]{2}|304)$'
+    shift
+  fi
+  XNAT_CURL_STATUS=""
   response=$(curl -sS --connect-timeout 10 --max-time 120 -w '\n%{http_code}' "$@") || curl_exit=$?
   if [[ "$curl_exit" -ne 0 ]]; then
     echo "ERROR: curl transport failure (exit $curl_exit)" >&2
@@ -156,9 +221,10 @@ xnat_curl() {
   # inside JSON strings, so this is lossless).
   status=${status//$'\r'/}
   body=${body//$'\r'/}
+  XNAT_CURL_STATUS="$status"
   # Fail closed: anything other than a literal 2xx status line (including
-  # an empty or non-numeric one) is an error.
-  if ! [[ "$status" =~ ^2[0-9]{2}$ ]]; then
+  # an empty or non-numeric one) is an error, apart from the opted-in 304.
+  if ! [[ "$status" =~ $accepted ]]; then
     echo "ERROR: XNAT request failed with HTTP $status" >&2
     echo "  args: $(scrub_args "$@")" >&2
     echo "  body: $body" >&2
@@ -610,47 +676,195 @@ PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xa
   | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae)) | .[0].id // empty')
 : "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered after configuration}"
 
-# Configure the PACS availability schedule — the throttle for a production PACS, which may refuse
-# further associations after a certain volume, and which a trust may want restricted to out-of-hours
-# (FLIP#993). Defaults are all week, all day, one thread.
+# Converge the PACS availability schedule onto the kit. The schedule is the throttle for a production
+# PACS, which may refuse further associations after a certain volume, and which a trust may want
+# restricted to out-of-hours (FLIP#993). Defaults are all week, all day, one thread.
 #
-# DQR appears to pre-create availability intervals when the PACS is registered: on XNAT 1.10 +
-# DQR 3.0.0 this POST returns 400 "probable overlap with existing interval" for an already-scheduled
-# day, so that specific 400 is treated as "already configured" rather than a failure.
+# The kit describes one window per listed day, and this script owns the registered PACS's schedule,
+# just as it owns the registration above. So each run makes DQR's schedule match the kit:
+#   - a listed day with no interval gets one (POST, after DQR's own overlap check);
+#   - a listed day whose interval drifted is updated in place (PUT);
+#   - an interval on a day the kit no longer lists is removed, and so is any second interval on a
+#     listed day (an extra window someone added would widen retrieval beyond what was agreed);
+#   - a day that already matches is not written at all.
+# The previous version POSTed every day on every run and read DQR's 400 "probable overlap with
+# existing interval" as "already configured". Any re-run hits that 400, because the interval it
+# overlaps is the one the first run created, so a changed window, thread count or utilisation was
+# never applied and the old window stayed in force with nothing reported (FLIP#1455). Nothing below
+# reads error text. Every non-2xx still fails the run through xnat_curl.
 #
-# The overlap text is matched, not the bare status: the payload is now built from operator-supplied
-# values, so a bad day name or window also returns 400. Treating every 400 as an overlap reported a
-# rejected schedule as applied, and a trust that had negotiated an out-of-hours window would have
-# been told it was in force while DQR retrieved around the clock (FLIP#993).
-for DAY in ${PACS_AVAILABILITY_DAYS//,/ }; do
-  echo "Setting PACS availability for $DAY..."
-  avail_body=/tmp/pacs-availability-response.json
-  avail_status=$(curl -s -o "$avail_body" --connect-timeout 10 --max-time 120 -w '%{http_code}' \
-    -X POST "$XNAT_URL/xapi/pacs/${PACS_ID}/availability" \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n --arg start "${PACS_AVAILABILITY_START}" --arg end "${PACS_AVAILABILITY_END}" \
-          --arg day "$DAY" --argjson pacs "${PACS_ID}" --argjson threads "${PACS_THREADS}" \
-          --argjson util "${PACS_UTILIZATION_PERCENT}" '{
-      availabilityEnd: $end,
-      availabilityStart: $start,
-      availableNow: true,
+# DQR 3.0.0 behaviour this relies on, read from the pinned jar (org.nrg.xnatx.dqr):
+#   - GET    {pacsId}/availability: every DayOfWeek as a key, each with a list of intervals
+#            (HibernatePacsAvailabilityService.findAllByPacsIdGroupedByDayOfWeek).
+#   - POST   {pacsId}/availability/validate: true, or false when the window overlaps an interval
+#            already on that day (DqrPacsApi.validatePacsAvailabilityInterval; overlap is per day).
+#   - POST   {pacsId}/availability: runs the same check and answers 400 on overlap
+#            (createPacsAvailabilityInterval).
+#   - PUT    {pacsId}/availability/{id}: copies only the day, start, end, threads, utilisation and
+#            pacsId from the body, and answers 304 when none of them differ
+#            (updatePacsAvailabilityInterval, its isDirty flag). It does not refuse an overlap. It
+#            trims or deletes the day's other intervals to fit, which is one more reason the extras
+#            are removed first. It reads the day and pacsId from the body, not the URL, so both are
+#            always sent: without the day it fails, and without pacsId the interval moves to PACS 0.
+#   - DELETE {pacsId}/availability/{id}.
+#   - Retrieval runs only while an interval is "available now" (PacsDequeueThread via
+#     findAvailableNow). Nothing reads an interval's `enabled` flag, and `availableNow` is computed
+#     from the clock with no setter. Neither is compared, and `availableNow` is not sent.
+# DQR's own admin UI is what pre-creates 24/7 intervals when a PACS is added through it
+# (PacsAdministration.js setInitialAvailability). Registering through the API, as above, creates
+# none, so a new PACS starts with an empty schedule.
+#
+# Order: every removal first, then updates, then creations. A failure part-way then leaves less
+# retrieval scheduled, never more, and nothing written later can collide with an interval that is
+# about to be removed.
+avail_url="$XNAT_URL/xapi/pacs/${PACS_ID}/availability"
+# The plan walks the seven weekdays and asks whether each is listed, so a day listed twice is still
+# scheduled once.
+avail_days_json=$(jq -cn '$ARGS.positional' --args "${avail_day_list[@]}")
+
+# The kit's window for one day, as DQR's PacsAvailability takes it.
+availability_payload() {  # availability_payload <day>
+  jq -cn --arg day "$1" --arg start "$avail_start" --arg end "$avail_end" \
+    --argjson pacs "${PACS_ID}" --argjson threads "${PACS_THREADS}" \
+    --argjson util "${PACS_UTILIZATION_PERCENT}" '{
       dayOfWeek: $day,
-      enabled: true,
-      pacsId: $pacs,
+      availabilityStart: $start,
+      availabilityEnd: $end,
       threads: $threads,
-      utilizationPercent: $util
-    }')") || avail_status="000"
-  if [[ "$avail_status" == 2* ]]; then
-    continue
-  elif [[ "$avail_status" == "400" ]] && grep -qi 'overlap' "$avail_body"; then
-    echo "  Availability interval for $DAY already exists (HTTP 400 overlap) — leaving as-is."
-  else
-    echo "ERROR: setting PACS availability for $DAY failed (HTTP $avail_status)" >&2
-    cat "$avail_body" >&2 || true
+      utilizationPercent: $util,
+      pacsId: $pacs,
+      enabled: true
+    }'
+}
+
+# What to do to each day, given DQR's current schedule. One tab-separated line per action:
+# action, day, interval id ("-" for a creation: `read` would collapse an empty field, since a tab
+# counts as whitespace in IFS), and a description for the log. Ordered removals,
+# then updates, then creations, then the unchanged days. Drift is judged on exactly the four fields
+# DQR's PUT treats as changes; the day and the PACS are fixed by where an interval is listed. When a
+# listed day has several intervals, one already matching the kit is kept, otherwise the oldest.
+# Everything operator-supplied goes in as --arg/--argjson.
+availability_plan() {  # availability_plan <schedule JSON from GET {pacsId}/availability>
+  jq -rn --argjson current "$1" --argjson days "$avail_days_json" \
+    --arg start "$avail_start" --arg end "$avail_end" \
+    --argjson threads "${PACS_THREADS}" --argjson util "${PACS_UTILIZATION_PERCENT}" '
+    def window: {availabilityStart, availabilityEnd, threads, utilizationPercent};
+    def shown: "\(.availabilityStart)-\(if .availabilityEnd == "00:00" then "24:00" else .availabilityEnd end),"
+      + " \(.threads) thread(s), \(.utilizationPercent)%";
+    {availabilityStart: $start, availabilityEnd: $end, threads: $threads, utilizationPercent: $util} as $want
+    | ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+    | [ to_entries[]
+        | .key as $order | .value as $day
+        | (($current[$day] // []) | sort_by(.id)) as $intervals
+        | if any($days[]; . == $day) | not then
+            $intervals[] | {rank: 0, $order, op: "remove", $day, id, detail: (window | shown)}
+          else
+            (first($intervals[] | select(window == $want)) // $intervals[0]) as $keep
+            | ( $intervals[] | select(.id != $keep.id)
+                | {rank: 0, $order, op: "remove-extra", $day, id, detail: (window | shown)} ),
+              ( if $keep == null then
+                  {rank: 2, $order, op: "create", $day, id: null, detail: ($want | shown)}
+                elif ($keep | window) == $want then
+                  {rank: 3, $order, op: "unchanged", $day, id: $keep.id, detail: ($want | shown)}
+                else
+                  {rank: 1, $order, op: "update", $day, id: $keep.id,
+                   detail: (([$want | keys_unsorted[] | select($keep[.] != $want[.])] | join(", "))
+                     + " (\($keep | window | shown) -> \($want | shown))")}
+                end )
+          end ]
+    | sort_by(.rank, .order, .id)[]
+    | [.op, .day, (.id // "-" | tostring), .detail] | @tsv'
+}
+
+# The current schedule, checked for shape first so a non-JSON or unexpected answer fails naming the
+# call rather than as a jq parse error.
+availability_schedule() {
+  local schedule
+  schedule=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$avail_url")
+  if ! printf '%s' "$schedule" | jq -e 'type == "object" and all(.[]; type == "array")' >/dev/null 2>&1; then
+    echo "ERROR: GET $avail_url did not return DQR's schedule (intervals listed by day), got: ${schedule}" >&2
+    return 1
+  fi
+  printf '%s' "$schedule"
+}
+
+echo "Converging the PACS availability schedule onto the kit (days ${PACS_AVAILABILITY_DAYS}," \
+  "${PACS_AVAILABILITY_START}-${PACS_AVAILABILITY_END}, ${PACS_THREADS} thread(s), ${PACS_UTILIZATION_PERCENT}%)..."
+# Two assignments rather than a nested $(...): set -e does not see a failure inside an argument.
+avail_current=$(availability_schedule)
+avail_plan=$(availability_plan "$avail_current")
+while IFS=$'\t' read -r avail_op avail_day avail_id avail_detail; do
+  [[ -n "$avail_op" ]] || continue
+  # The id goes into a URL. XNAT generates it, but check it is a plain number before using it.
+  if [[ "$avail_op" != "create" ]] && ! [[ "$avail_id" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: DQR reported an availability interval for ${avail_day} with id '${avail_id}'" >&2
     exit 1
   fi
-done
+  case "$avail_op" in
+    remove|remove-extra)
+      if [[ "$avail_op" == "remove" ]]; then
+        echo "  ${avail_day}: removing interval ${avail_id} (${avail_detail}); ${avail_day} is no longer in PACS_AVAILABILITY_DAYS."
+      else
+        echo "  ${avail_day}: removing extra interval ${avail_id} (${avail_detail}); the kit sets one window per day."
+      fi
+      xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" -X DELETE "${avail_url}/${avail_id}" >/dev/null
+      ;;
+    update)
+      echo "  ${avail_day}: interval ${avail_id} drifted on ${avail_detail}; updating it in place."
+      # Run directly, not in $(...), so XNAT_CURL_STATUS survives for the check below.
+      xnat_curl --allow-not-modified -X PUT "${avail_url}/${avail_id}" \
+        -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d "$(availability_payload "$avail_day")" >/dev/null
+      if [[ "$XNAT_CURL_STATUS" == "304" ]]; then
+        echo "    DQR answered 304 Not Modified: it already holds this window. The read-back below confirms it."
+      fi
+      ;;
+    create)
+      avail_payload=$(availability_payload "$avail_day")
+      # DQR's own overlap check, asked before writing. Overlap is judged per day and every other
+      # interval on this day has been removed above, so a refusal here means the schedule changed
+      # under this run.
+      avail_valid=$(xnat_curl -X POST "${avail_url}/validate" \
+        -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d "$avail_payload")
+      if [[ "$avail_valid" != "true" ]]; then
+        echo "ERROR: DQR's validate check refused the ${avail_day} window (${avail_detail}): it answered" \
+          "'${avail_valid}'. Another interval appeared on ${avail_day} after this run removed the extras;" \
+          "re-run the configure step, or check the schedule in XNAT's DQR admin page." >&2
+        exit 1
+      fi
+      echo "  ${avail_day}: no interval scheduled; creating ${avail_detail}."
+      xnat_curl -X POST "$avail_url" \
+        -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d "$avail_payload" >/dev/null
+      ;;
+    unchanged)
+      echo "  ${avail_day}: already ${avail_detail}; leaving as-is."
+      ;;
+    *)
+      echo "ERROR: unexpected availability action '${avail_op}' for ${avail_day}" >&2
+      exit 1
+      ;;
+  esac
+done <<< "$avail_plan"
+
+# Read the schedule back and require that it now matches, rather than trusting each write's status:
+# XNAT answering 2xx without persisting is how the PACS registration bug stayed hidden (FLIP#822),
+# and the window is what the trust's PACS manager agreed to. Any line other than "unchanged" is a day
+# DQR still disagrees with the kit about.
+avail_current=$(availability_schedule)
+avail_residue=$(availability_plan "$avail_current")
+avail_residue=$(printf '%s\n' "$avail_residue" | grep -v $'^unchanged\t' || true)
+if [[ -n "$avail_residue" ]]; then
+  echo "ERROR: after configuration DQR's availability schedule for PACS ${PACS_ID} still differs from the kit." \
+    "Outstanding (action, day, interval id, detail):" >&2
+  printf '%s\n' "$avail_residue" | sed 's/^/         /' >&2
+  exit 1
+fi
+echo "PACS availability schedule matches the kit."
 
 # Configure FLIP site branding on the login page: a trust-named welcome description and the FLIP
 # FLIP logo (baked into the webapp image at /images/flip-logo.png). XNAT is enclave-only and this is a

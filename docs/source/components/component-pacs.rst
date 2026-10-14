@@ -372,21 +372,27 @@ carries an availability schedule with a per-day window, a thread count and a uti
 Where a trust has a test or pre-production PACS, connecting FLIP to that first is recommended, and
 is usually raised as a separate service request.
 
-.. warning::
+.. note::
 
-   **Verify the window that is actually in force rather than assuming the configured one applied.**
+   **The configure step keeps the schedule in line with the kit.** The window is usually something
+   a trust's PACS manager has agreed to, so a change to it has to apply. On every run
+   ``configure-xnat.sh`` reads the registered PACS's schedule and converges it onto the kit:
 
-   DQR pre-creates availability intervals when a PACS is registered, and rejects a write to a day
-   that already has one. On a first deployment the configured values are applied; on any XNAT where
-   intervals already exist — including one where the PACS has been re-registered, which leaves the
-   previous intervals behind — the write is rejected and the existing window stands. Changing it
-   then requires deleting the intervals through XNAT's administration UI.
+   - an interval whose window, thread count or utilisation drifted is updated in place;
+   - a listed day with no interval gets one;
+   - the intervals on a day the kit no longer lists are removed, as is a second interval on a
+     listed day;
+   - an unchanged kit writes nothing.
 
-   Confirm with ``GET /xapi/pacs/{id}/availability`` after configuring. Note also that XNAT
-   normalises an end time of ``24:00`` to ``00:00`` when it stores it.
+   The script then reads the schedule back and fails the deploy if it still differs. A change takes
+   effect on the next ``make -C trust/xnat xnat-configure`` (Compose) or ``helm upgrade``
+   (Kubernetes). No clean-up in XNAT's administration UI is needed, and a window added there by hand
+   is removed on the next run.
 
-   This matters because the window is usually something a trust's PACS manager has agreed to. If it
-   has not applied, retrieval runs outside it.
+   Before FLIP#1455 a re-run could not change an existing window, so a trust configured earlier may
+   still be running its first one until the configure step runs again.
+   ``GET /xapi/pacs/{id}/availability`` shows what is in force. XNAT stores an end time of ``24:00``
+   as ``00:00``, which it still reads as the end of the day.
 
 Verification
 ============

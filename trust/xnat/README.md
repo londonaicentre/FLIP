@@ -166,7 +166,9 @@ HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack
 bring-up — the log is written host-side), instead of silently skipping
 that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
-tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
+tolerated and converges it onto the kit: the existing service account is left as-is, the PACS registration is updated
+in place if a kit-managed field drifted, and the PACS availability schedule is brought into line with the kit (see
+[PACS configuration](#pacs-configuration)).
 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
@@ -218,10 +220,10 @@ rather than silently falling back.
 | `PACS_QR_PORT` | `4242` | The PACS query/retrieve port XNAT dials. Must be reachable **from the XNAT container** — not a host-published port. |
 | `PACS_LABEL` | `Test PACS instance` | Display label for the registration in the DQR UI. |
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
-| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. |
-| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end. |
-| `PACS_THREADS` | `1` | Concurrent retrieval threads. |
-| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use. |
+| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
+| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. |
+| `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
+| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
 | `DQR_RETRY_WAIT_SECONDS` | `300` | Wait between those retries. |
 
@@ -240,6 +242,26 @@ registration other than the configured one so exactly one survives — which is 
 read the PACS id back from XNAT at runtime rather than assuming `1`. The delete is conditional: if
 foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
 the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
+
+The availability schedule is converged the same way, so a change to the days, window, thread count
+or utilisation in the kit takes effect the next time the configure step runs (`make -C trust/xnat
+xnat-configure` on Compose, the chart's `xnat-init` hook on Kubernetes). The kit describes one
+window per listed day. Each run reads DQR's schedule for the registered PACS and:
+
+- updates in place any interval whose start, end, thread count or utilisation drifted;
+- creates an interval for a listed day that has none, after DQR's own overlap check agrees;
+- removes the intervals on a day the kit no longer lists, and any second interval on a listed day;
+- leaves a day that already matches untouched, so an unchanged kit writes nothing.
+
+Removals run first, so a run that fails part-way leaves less retrieval scheduled than agreed, never
+more. The script then reads the schedule back and fails if DQR still disagrees with the kit. The
+five values are validated before XNAT is contacted, because a value DQR rejected part-way through
+would leave days with no window, and DQR does not retrieve outside one. DQR stores an end of `24:00`
+as `00:00` and still reads it as the end of the day; the comparison accounts for that.
+
+Until FLIP#1455 the step re-POSTed every day and treated DQR's "probable overlap" refusal as "already
+configured", so on a live trust a changed window never applied. A trust configured before that fix
+may be running its first window; the next configure run corrects it.
 
 ## Plugins
 

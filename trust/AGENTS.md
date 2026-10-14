@@ -184,6 +184,15 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are
   agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
+  `configure-xnat.sh` converges DQR's availability schedule onto the kit on every run (FLIP#1455):
+  it PUTs a drifted interval in place, creates a missing day after DQR's `validate` check, removes
+  days no longer listed (and any second interval on a listed day), and writes nothing when the kit
+  is unchanged. It then reads the schedule back and fails on any difference. So a kit change applies
+  on the next `xnat-configure` / `helm upgrade`, on both shapes. The five schedule values are
+  validated before XNAT is contacted. No branch reads DQR's error text: the old step treated a
+  "probable overlap" 400 as "already configured", which kept the first window forever.
+  `trust/xnat/tests/test_configure_pacs.py` runs the script against a stub of DQR's availability API
+  built from the pinned jar's behaviour.
 
 ## Trust-internal Service Authentication
 
