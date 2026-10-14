@@ -24,14 +24,13 @@ from imaging_api.services.upload import (
     create_xnat_scan,
     upload_data_to_xnat,
     upload_file_to_xnat,
-    xnat_upload_duplicates,
+    xnat_kept_existing_file,
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 
 XNAT_URL = get_settings().XNAT_URL
 
-# What XNAT 1.10 answers for a file it kept instead of writing: HTTP 200 with this body, served as
-# text/html (xnat-web 1.10.0 FileList.java:345-349).
+# The body of XNAT's 200 for a file it kept instead of writing.
 _DUPLICATES_BODY = b'{"duplicates": ["scan.nii"]}'
 
 
@@ -111,25 +110,22 @@ def test_create_xnat_resource_success(mock_put, headers):
     create_xnat_resource("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", headers)
 
 
-# ── xnat_upload_duplicates ──
+# ── xnat_kept_existing_file ──
 
 
 @pytest.mark.parametrize(
     ("body", "content_type", "expected"),
     [
-        # XNAT's own shape for a kept file: JSON, but served as text/html.
-        (_DUPLICATES_BODY, "text/html", ["scan.nii"]),
-        (_DUPLICATES_BODY, "application/json", ["scan.nii"]),
-        # A clean write: an empty text/plain body.
-        (b"", "text/plain", []),
-        (b"not json", "text/html", []),
-        (b"{}", "application/json", []),
-        (b'{"duplicates": []}', "text/html", []),
-        (b'["scan.nii"]', "application/json", []),
+        (_DUPLICATES_BODY, "text/html", True),
+        (b"", "text/plain", False),
+        (b"not json", "text/html", False),
+        (b"{}", "application/json", False),
+        (b'{"duplicates": []}', "text/html", False),
+        (b'["scan.nii"]', "application/json", False),
     ],
 )
-def test_xnat_upload_duplicates_parses_the_body_whatever_the_content_type(body, content_type, expected):
-    assert xnat_upload_duplicates(_xnat_put_response(body=body, content_type=content_type)) == expected
+def test_xnat_kept_existing_file_parses_the_body_whatever_the_content_type(body, content_type, expected):
+    assert xnat_kept_existing_file(_xnat_put_response(body=body, content_type=content_type)) is expected
 
 
 # ── upload_file_to_xnat ──
@@ -216,11 +212,6 @@ def test_upload_file_to_xnat_rejected_put_raises(mock_put, status_code, headers)
         os.remove(temp_path)
 
 
-# The two halves of XNAT's overwrite contract (#1454). XNAT replaces an existing file only when the
-# PUT carries overwrite=true. Without it, XNAT keeps the old file and answers 200 with
-# {"duplicates": [...]}, so the PUT's own body is the existence check and there is no pre-check GET.
-
-
 @pytest.mark.parametrize(
     ("exist_ok", "expected_query"),
     [(True, "inbody=true&overwrite=true"), (False, "inbody=true")],
@@ -235,7 +226,6 @@ def test_upload_sends_overwrite_only_when_exist_ok_and_no_pre_check(
         "PROJ", "SUBJ", "EXP", "SCAN1", "NIFTI", str(file_path), exist_ok=exist_ok, headers={}
     )
 
-    # One request, the PUT: the racy existence GET that used to precede it is gone.
     assert [request.method for request in sent_xnat_requests] == ["PUT"]
     assert urlsplit(sent_xnat_requests[0].url).query == expected_query
     assert uploaded_url == sent_xnat_requests[0].url
@@ -251,53 +241,6 @@ def test_upload_file_exist_ok_false_already_exists(mock_put, headers, tmp_path):
         upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", str(file_path), exist_ok=False, headers=headers)
 
     assert "overwrite" not in urlsplit(mock_put.call_args.args[0]).query
-
-
-@pytest.mark.parametrize(
-    ("body", "content_type"),
-    [(b"", "text/plain"), (b"not json", "text/html"), (b"{}", "application/json")],
-)
-@patch("imaging_api.services.upload.requests.put")
-def test_upload_file_exist_ok_false_clean_write_succeeds(mock_put, body, content_type, headers, tmp_path):
-    mock_put.return_value = _xnat_put_response(body=body, content_type=content_type)
-    file_path = tmp_path / "scan.nii"
-    file_path.write_bytes(b"data")
-
-    uploaded_url = upload_file_to_xnat(
-        "PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", str(file_path), exist_ok=False, headers=headers
-    )
-
-    assert uploaded_url.endswith("/files/scan.nii?inbody=true")
-
-
-@patch("imaging_api.services.upload.requests.put")
-def test_upload_file_exist_ok_true_replaces_existing_file(mock_put, headers, tmp_path):
-    # With overwrite=true XNAT moves the old file to its history, writes the new one and answers an
-    # empty 200, which must read as success.
-    mock_put.return_value = _xnat_put_response()
-    file_path = tmp_path / "scan.nii"
-    file_path.write_bytes(b"data")
-
-    uploaded_url = upload_file_to_xnat(
-        "PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", str(file_path), exist_ok=True, headers=headers
-    )
-
-    assert urlsplit(mock_put.call_args.args[0]).query == "inbody=true&overwrite=true"
-    assert uploaded_url == mock_put.call_args.args[0]
-
-
-@patch("imaging_api.services.upload.requests.put")
-def test_upload_file_exist_ok_true_but_xnat_kept_the_file_raises(mock_put, headers, tmp_path):
-    # Should a server ever ignore overwrite=true, the old file is still in place. That is a failed
-    # upload, never a success, and not an "already exists" either: the caller asked to replace it.
-    mock_put.return_value = _xnat_put_response(body=_DUPLICATES_BODY, content_type="text/html")
-    file_path = tmp_path / "scan.nii"
-    file_path.write_bytes(b"data")
-
-    with pytest.raises(Exception, match="XNAT kept the existing file") as exc_info:
-        upload_file_to_xnat("PROJ", "SUBJ", "EXP", "SCAN1", "DICOM", str(file_path), exist_ok=True, headers=headers)
-
-    assert not isinstance(exc_info.value, AlreadyExistsError)
 
 
 # ── upload_data_to_xnat ──

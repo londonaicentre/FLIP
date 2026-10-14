@@ -56,7 +56,7 @@ async def upload_data_to_xnat(
         resource_id (str): XNAT resource type e.g DICOM/NIFTI. Custom value is allowed. Will be created if it does not
         exist.
         files_relative_paths_to_upload (list[str]): List of relative file paths to be uploaded.
-        exist_ok (bool): Whether to replace a file of the same name that already exists in the resource.
+        exist_ok (bool): Whether to overwrite the file if it already exists.
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
@@ -65,7 +65,6 @@ async def upload_data_to_xnat(
     Raises:
         FileNotFoundError: If any of the files to be uploaded are not found.
         ValueError: If the net ID or any file path attempts path traversal outside the upload directory.
-        AlreadyExistsError: If exist_ok is False and XNAT reports that a file of the same name already exists.
     """
     # Get base directory from configuration
     upload_directory = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id, "upload")
@@ -261,29 +260,24 @@ def create_xnat_resource(
         raise Exception(f"Error creating resource: {response.text}")
 
 
-def xnat_upload_duplicates(response: requests.Response) -> list[str]:
+def xnat_kept_existing_file(response: requests.Response) -> bool:
     """
-    Returns the files XNAT reports it kept instead of writing, from a file PUT's response body.
+    Whether XNAT kept an existing file instead of writing the upload.
 
-    Without ``overwrite=true``, XNAT does not replace a file that already exists: it keeps the old one
-    and still answers HTTP 200, with ``{"duplicates": [...]}`` as the body. A clean write answers 200
-    with an empty body. (xnat-web 1.10.0, ``CatalogUtils.java:1764`` and ``FileList.java:345-349``.)
-
-    XNAT serves the ``duplicates`` body as ``text/html``, so the body is parsed as JSON whatever the
-    Content-Type says. An empty or non-JSON body means nothing was reported.
+    Without ``overwrite=true``, XNAT keeps an existing file and still answers 200, naming it under ``duplicates``
+    in a JSON body that it serves as ``text/html``.
 
     Args:
         response (requests.Response): XNAT's response to a file PUT.
 
     Returns:
-        list[str]: The duplicate file paths XNAT reported, or an empty list if the file was written.
+        bool: True if the body lists a duplicate, False for a clean write (an empty or non-JSON body).
     """
     try:
         body = json.loads(response.content)
     except ValueError:
-        return []
-    duplicates = body.get("duplicates") if isinstance(body, dict) else None
-    return [str(duplicate) for duplicate in duplicates] if isinstance(duplicates, list) else []
+        return False
+    return isinstance(body, dict) and bool(body.get("duplicates"))
 
 
 def upload_file_to_xnat(
@@ -306,8 +300,7 @@ def upload_file_to_xnat(
         scan_id (str): The ID of the scan in XNAT.
         resource_id (str): The ID of the resource in XNAT, for example "DICOM" or "NIFTI".
         file_path (str): The path to the file to be uploaded.
-        exist_ok (bool): Whether to replace a file of the same name that already exists. True sends XNAT's
-        ``overwrite=true``; False sends no flag, so XNAT keeps an existing file and reports it as a duplicate.
+        exist_ok (bool): Whether to overwrite the file if it already exists.
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
@@ -315,18 +308,10 @@ def upload_file_to_xnat(
 
     Raises:
         ValueError: If an identifier or filename is empty or a dot-segment.
-        AlreadyExistsError: If exist_ok is False and XNAT reports that a file with the same name already exists in
-        the specified resource. XNAT then keeps the existing file and writes nothing.
-        Exception: If there is an error during the upload process, or if exist_ok is True but XNAT still kept the
-        existing file.
+        AlreadyExistsError: If XNAT kept a file with the same name in the specified resource instead of writing.
+        Exception: If there is an error during the upload process.
     """
     file_name = Path(file_path).name
-
-    query = {"inbody": "true"}
-    if exist_ok:
-        # XNAT replaces an existing file only when the request asks it to. A bare PUT keeps the old
-        # file and still answers 200 (xnat-web 1.10.0 FileList.java:295, CatalogUtils.java:1764).
-        query["overwrite"] = "true"
 
     url = xnat_url(
         "data",
@@ -342,24 +327,18 @@ def upload_file_to_xnat(
         resource_id,
         "files",
         file_name,
-        query=query,
+        query={"inbody": "true", "overwrite": "true"} if exist_ok else {"inbody": "true"},
     )
 
-    # Upload the file. There is no existence pre-check: the PUT itself reports a file it did not
-    # write, so asking first would only open a window for another writer between the two requests.
+    # Upload the file. The PUT is its own existence check: see xnat_kept_existing_file.
     with open(file_path, "rb") as file:
         response = requests.put(url, headers=headers, data=file)
 
     # XNAT may answer a file PUT with 200 or 201, so accept any 2xx
     if not response.ok:
         raise Exception(f"Error uploading file {file_path}: {response.status_code} {response.text}")
-
-    # A 200 is not proof of a write: XNAT keeps an existing file and lists it under "duplicates".
-    duplicates = xnat_upload_duplicates(response)
-    if duplicates:
-        if not exist_ok:
-            raise AlreadyExistsError(f"File already exists on XNAT: {url}")
-        raise Exception(f"XNAT kept the existing file instead of replacing it: {url} (duplicates: {duplicates})")
+    if xnat_kept_existing_file(response):
+        raise AlreadyExistsError(f"File already exists on XNAT: {url}")
 
     logger.info(f"Successfully uploaded file: {file_path}")
     return url

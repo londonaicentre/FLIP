@@ -153,10 +153,8 @@ Upload files to an XNAT experiment:
 }
 ```
 
-`exist_ok` (default `false`) decides what happens when the resource already holds a file of the same
-name. `true` replaces it: the upload is sent to XNAT with `overwrite=true`, without which XNAT keeps the
-old file. `false` leaves the existing file in place and fails the request. XNAT reports the clash in its
-`200` response (a `duplicates` list), not with an error status.
+`exist_ok` (default `false`): `true` replaces a file of the same name already in the resource, `false`
+leaves it in place and fails the request.
 
 ### Users
 

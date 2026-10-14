@@ -188,7 +188,6 @@ class TestUploadEnrichmentFiles:
         summary = upload_enrichment_files(client, "PROJ", items, overwrite=True)
 
         assert summary.uploaded == ["FAK001"]
-        # Without overwrite=true on the wire XNAT keeps the old label and still answers 200 (#1454).
         assert client._session.puts == [
             "http://xnat.example/data/projects/PROJ/subjects/SUBJ_1/experiments/EXP_1/scans/1/"
             "resources/NIFTI/files/label_spleen_2.nii.gz?inbody=true&overwrite=true"
@@ -198,9 +197,7 @@ class TestUploadEnrichmentFiles:
         """The listing showed no label, but XNAT kept one that landed before the PUT."""
         client = _client(
             ["input_spleen_2.nii.gz"],
-            put_response=FakeResponse(
-                status_code=200, text='{"duplicates": ["label_spleen_2.nii.gz"]}', content_type="text/html"
-            ),
+            put_response=FakeResponse(status_code=200, text='{"duplicates": ["label_spleen_2.nii.gz"]}'),
         )
         items = [EnrichmentItem("FAK001", _label(tmp_path))]
 
