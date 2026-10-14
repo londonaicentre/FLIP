@@ -9,6 +9,10 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
+-- Concept names are resolved through omop.concept when the trust has loaded the licensed core
+-- vocabulary, and fall back to the fixed names below when it has not (the AWS-free local stack
+-- seeds only the DICOM vocabulary). The ids are OHDSI integers, not vocabulary content; the
+-- fallbacks are the names the vocabulary gives them, so the dataframe is the same either way.
 WITH feature_observation AS (
     -- the subset of image_feature rows that link to the observation table
     SELECT
@@ -30,23 +34,23 @@ observation_value AS (
         MAX(
             CASE
                 -- when the feature is "effusion" (4215818) get the "yes/no" value from observation table
-                WHEN image_feature_concept_id = 4215818 THEN value_concept.concept_name
+                WHEN image_feature_concept_id = 4215818 THEN COALESCE(value_concept.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END)
             END
         ) AS effusion,
         MAX(
             CASE
-                WHEN image_feature_concept_id = 4196943 THEN value_concept.concept_name
+                WHEN image_feature_concept_id = 4196943 THEN COALESCE(value_concept.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END)
             END
         ) AS edema,
         MAX(
             CASE
-                WHEN image_feature_concept_id = 40481136 THEN value_concept.concept_name
+                WHEN image_feature_concept_id = 40481136 THEN COALESCE(value_concept.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END)
             END
         ) AS normal_lungs
     FROM
         feature_observation fo
         JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id
-        JOIN omop.concept value_concept ON value_concept.concept_id = o.value_as_concept_id
+        LEFT JOIN omop.concept value_concept ON value_concept.concept_id = o.value_as_concept_id
     GROUP BY
         fo.image_occurrence_id
 )
@@ -62,10 +66,19 @@ SELECT
     -- image occurrence
     io.accession_id,
     io.image_occurrence_date AS "Image date",
-    modality_concept.concept_name AS "Modality",
-    io_anatomic_site_concept.concept_name AS "Image occurrence anatomy",
+    COALESCE(modality_concept.concept_name, CASE io.modality_concept_id WHEN 4056681 THEN 'Plain radiography' END)
+        AS "Modality",
+    COALESCE(io_anatomic_site_concept.concept_name, CASE io.anatomic_site_concept_id WHEN 4213162 THEN 'Lung structure' END)
+        AS "Image occurrence anatomy",
     -- chest x-ray features
-    ife_anatomic_site_concept.concept_name AS "Image feature anatomy",
+    COALESCE(
+        ife_anatomic_site_concept.concept_name,
+        CASE ov.anatomic_site_concept_id
+            WHEN 4250192 THEN 'Both lungs'
+            WHEN 4141610 THEN 'Right lung structure'
+            WHEN 4195613 THEN 'Left lung structure'
+        END
+    ) AS "Image feature anatomy",
     ov.effusion AS "Effusion",
     ov.edema AS "Edema",
     ov.normal_lungs AS "Lungs in normal arrangement"
@@ -73,9 +86,9 @@ FROM
     -- data tables
     omop.image_occurrence io
     JOIN observation_value ov ON ov.image_occurrence_id = io.image_occurrence_id -- concept tables
-    JOIN omop.concept modality_concept ON modality_concept.concept_id = io.modality_concept_id
-    JOIN omop.concept io_anatomic_site_concept ON io.anatomic_site_concept_id = io_anatomic_site_concept.concept_id
-    JOIN omop.concept ife_anatomic_site_concept ON ov.anatomic_site_concept_id = ife_anatomic_site_concept.concept_id
+    LEFT JOIN omop.concept modality_concept ON modality_concept.concept_id = io.modality_concept_id
+    LEFT JOIN omop.concept io_anatomic_site_concept ON io.anatomic_site_concept_id = io_anatomic_site_concept.concept_id
+    LEFT JOIN omop.concept ife_anatomic_site_concept ON ov.anatomic_site_concept_id = ife_anatomic_site_concept.concept_id
 -- Load-bearing, not cosmetic: without it the LIMIT below picks an unspecified 300 studies in an
 -- unspecified order, so the same cohort can disagree with itself between approval, the imaging
 -- pull and training -- the app can then be handed a study whose DICOM was never fetched. Ordered

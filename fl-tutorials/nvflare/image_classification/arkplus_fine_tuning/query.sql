@@ -9,6 +9,10 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
+-- Concept names are resolved through omop.concept when the trust has loaded the licensed core
+-- vocabulary, and fall back to the fixed names below when it has not (the AWS-free local stack
+-- seeds only the DICOM vocabulary). The ids are OHDSI integers, not vocabulary content; the
+-- fallbacks are the names the vocabulary gives them, so the dataframe is the same either way.
 WITH project_images AS (
     SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id
     FROM omop.image_occurrence io
@@ -25,22 +29,23 @@ feature_observation AS (
 observation_value AS (
     -- pivot the per-label observations to one row per image occurrence
     SELECT fo.image_occurrence_id,
-        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,
-        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,
-        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN vc.concept_name END) AS consolidation,
-        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN vc.concept_name END) AS infiltration,
-        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN vc.concept_name END) AS lung_nodule_or_mass,
-        MAX(CASE WHEN image_feature_concept_id = 253796   THEN vc.concept_name END) AS pneumothorax,
-        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN vc.concept_name END) AS normal_lungs
+        MAX(CASE WHEN image_feature_concept_id = 4215818  THEN COALESCE(vc.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS effusion,
+        MAX(CASE WHEN image_feature_concept_id = 4196943  THEN COALESCE(vc.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS edema,
+        MAX(CASE WHEN image_feature_concept_id = 4319884  THEN COALESCE(vc.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS consolidation,
+        MAX(CASE WHEN image_feature_concept_id = 4264333  THEN COALESCE(vc.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS infiltration,
+        MAX(CASE WHEN image_feature_concept_id = 4214641  THEN COALESCE(vc.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS lung_nodule_or_mass,
+        MAX(CASE WHEN image_feature_concept_id = 253796   THEN COALESCE(vc.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS pneumothorax,
+        MAX(CASE WHEN image_feature_concept_id = 40481136 THEN COALESCE(vc.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS normal_lungs
     FROM feature_observation fo
     JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id
-    JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id
+    LEFT JOIN omop.concept vc ON vc.concept_id = o.value_as_concept_id
     GROUP BY fo.image_occurrence_id
 )
 SELECT
     pi.accession_id,
     pi.image_occurrence_date AS "Image date",
-    modality.concept_name    AS "Modality",
+    COALESCE(modality.concept_name, CASE pi.modality_concept_id WHEN 4056681 THEN 'Plain radiography' END)
+        AS "Modality",
     ov.effusion              AS "Effusion",
     ov.edema                 AS "Edema",
     ov.consolidation         AS "Consolidation",
@@ -50,5 +55,5 @@ SELECT
     ov.normal_lungs          AS "Lungs in normal arrangement"
 FROM project_images pi
 JOIN observation_value ov ON ov.image_occurrence_id = pi.image_occurrence_id
-JOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id
+LEFT JOIN omop.concept modality ON modality.concept_id = pi.modality_concept_id
 ORDER BY pi.accession_id

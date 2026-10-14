@@ -45,7 +45,10 @@ studies) comes anonymously from the public Hugging Face dataset
 AWS is used for one optional step: the **OMOP core vocabulary** (Step 7). It is
 licensed (SNOMED CT, LOINC, ...), so it is never published, and
 ``make -C trust/omop-db load-omop-vocab`` fetches the AI Centre's copy from the
-``vocab/`` prefix of a FLIP deployment's S3 bucket.
+``vocab/`` prefix of a FLIP deployment's S3 bucket. The shipped tutorials and
+the end-to-end smoke test run without it: their cohort queries fall back to
+fixed names for the handful of concepts the mock data uses. You need it only
+for your own queries that look concepts up by name.
 
 .. note::
 
@@ -89,7 +92,8 @@ Step 1 — Clone the project
    git checkout develop
 
 Run every command below from the repository root, as your own user (never
-with ``sudo`` — the containers run with your UID).
+with ``sudo`` — the containers run with your UID). ``make up`` asks for your
+password itself at one point (Step 6), so run it in an interactive terminal.
 
 ************************************
 Step 2 — Create the environment file
@@ -259,6 +263,21 @@ its XNAT.
 The first run takes a while: images are pulled and each Trust's mock DICOM is
 loaded into Orthanc. Later runs skip anything already seeded.
 
+.. note::
+
+   Before each Trust's XNAT starts, ``make up`` resets its data directory,
+   which XNAT's container owns as UID 1001. That step runs ``sudo`` itself, so
+   expect a **password prompt** (usually just one: sudo remembers it for the
+   second Trust). Answer it in the terminal; do not
+   rerun the whole command as ``sudo make up``, which leaves root-owned files
+   behind (see Troubleshooting). From a script, CI job or any shell without a
+   terminal it fails with ``sudo: A terminal is required to authenticate``.
+
+The two Trusts run side by side on one host as separate Compose projects,
+``trust1`` (GSTT) and ``trust2`` (KCH), each with its own network, data
+directories and host ports from its kit file. KCH's trust API publishes no host
+port: Trusts only ever dial out to the hub.
+
 To start only part of the stack:
 
 .. list-table::
@@ -280,25 +299,33 @@ To start only part of the stack:
 Step 7 — Load the OMOP vocabulary
 *********************************
 
-The published OMOP data is vocabulary-free (the vocabulary is licensed). Load
-it once per Trust, then restart the data-access APIs so they drop cached
-results. The first load downloads the bundle from ``VOCAB_S3_BUCKET`` (Step 3)
-into ``trust/omop-db/data/``; later loads reuse that copy:
+**Optional** — skip it unless you need concept names in your own cohort
+queries (see `What still needs AWS (and what not)`_). The published OMOP data
+carries only the freely licensed DICOM vocabulary. To add the core vocabulary,
+load it once per Trust, naming each Trust's kit file so the loader uses that
+Trust's port and credentials, then restart the data-access APIs so they drop
+cached results. The first load downloads the bundle from ``VOCAB_S3_BUCKET``
+(Step 3) into ``trust/omop-db/data/``; later loads reuse that copy:
 
 .. code-block:: bash
 
-   make -C trust/omop-db load-omop-vocab                    # GSTT (port 5434)
-   make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # KCH
+   make -C trust/omop-db load-omop-vocab KIT_ENV_FILE=../.env.GSTT.development
+   make -C trust/omop-db load-omop-vocab KIT_ENV_FILE=../.env.KCH.development
 
    docker restart trust1-data-access-api-1 trust2-data-access-api-1
+
+Each load takes around fifteen minutes. Check the result rather than the
+closing message, which is printed even when the target database was already
+loaded: ``omop.concept`` holds about six million rows afterwards, against
+under ten thousand before.
 
 The container names assume the default stack; with ``FLIP_INSTANCE`` set they
 carry its prefix (``<instance>-trust1-...``). ``docker ps`` lists them.
 
-If you skip this, every cohort query returns zero rows, and later the project
-cannot be staged with ``returned no cohort records (zero or
-privacy-suppressed)`` — which looks like a privacy-threshold problem but is the
-missing vocabulary.
+Without it, a cohort query of your own that joins ``omop.concept`` with an
+inner ``JOIN`` returns zero rows, and the project later fails staging with
+``returned no cohort records (zero or privacy-suppressed)`` — which looks like a
+privacy-threshold problem but is the missing vocabulary.
 
 **************************
 Step 8 — Sign in and check
@@ -323,6 +350,15 @@ minutes):
 .. code-block:: bash
 
    make e2e_smoke
+
+The smoke test talks to ``http://localhost:8080/api``. If you changed
+``API_PORT``, point it at your port instead:
+``FLIP_E2E_BASE_URL=http://127.0.0.1:<API_PORT>/api make e2e_smoke``.
+
+To run the same job by hand, sign in to the UI and follow
+:doc:`../user-guides`, using the cohort query and app files of
+``fl-tutorials/nvflare/image_classification/xray_classification/``
+(``query.sql`` and ``app_files/``).
 
 **************
 Day-to-day use
@@ -370,8 +406,16 @@ The UI loads but sign-in fails
    Check ``UI_PORT`` is the port in your browser's address bar, and that
    nothing else is using port ``8180``.
 
+``make up`` stops with ``sudo: A terminal is required to authenticate``
+   The XNAT reset needs your password (Step 6). Run ``make up`` again in an
+   interactive terminal; the hub and anything already seeded are skipped.
+
 Cohort queries return no records
-   Load the OMOP vocabulary (Step 7).
+   If the query joins ``omop.concept``, load the OMOP vocabulary (Step 7). If
+   you loaded data or vocabulary after first running the query, restart the
+   data-access APIs (``docker restart trust1-data-access-api-1
+   trust2-data-access-api-1``): each caches a query's result, zero rows
+   included, and logs a cached zero with the same privacy-suppression wording.
 
 ``permission denied`` on ``object-store/`` or ``jobs/``
    A container created the directory as root, usually after a plain
