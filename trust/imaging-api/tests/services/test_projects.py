@@ -18,8 +18,8 @@ import pytest
 import requests
 
 from imaging_api.config import get_settings
-from imaging_api.db.models import QueuedPacsRequest
 from imaging_api.routers.schemas import CentralHubProject, CentralHubUser, CreatedUser, Project, User
+from imaging_api.services.import_requests import PacsRequest
 from imaging_api.services.projects import (
     add_central_hub_users_to_project,
     create_payload_for_project_creation,
@@ -662,59 +662,60 @@ def test_add_central_hub_users_disabled_user_skipped(mock_get_profile, mock_add,
 # ===========================================================================
 # delete_queued_import_requests
 # ===========================================================================
+def _queued(request_id: int) -> PacsRequest:
+    return PacsRequest(id=request_id, xnatProject="TEST", accessionNumber="FAK57777617", status="QUEUED")
+
+
 @pytest.mark.asyncio
-@patch("imaging_api.services.projects.get_queued_pacs_request_by_project")
+@patch("imaging_api.services.projects.get_queued_import_requests")
 @patch("imaging_api.services.projects.requests.post")
-async def test_delete_queued_import_requests_success(mock_post, mock_get_queued, headers):
-    mock_get_queued.return_value = [
-        QueuedPacsRequest(
-            id=1,
-            created="2023-10-01T00:00:00",
-            accession_number="FAK57777617",
-            status="QUEUED",
-            xnat_project="TEST",
-        )
-    ]
+async def test_delete_queued_import_requests_success(mock_post, mock_get_queued):
+    headers = {"Cookie": "JSESSIONID=fake"}
+    mock_get_queued.return_value = [_queued(1), _queued(2)]
     mock_post.return_value = MagicMock(status_code=200)
 
-    async def fake_session():
-        yield MagicMock()
+    result = await delete_queued_import_requests("TEST", headers)
 
-    with patch("imaging_api.services.projects.get_session", side_effect=lambda: fake_session()):
-        result = await delete_queued_import_requests("TEST", headers)
     assert result is True
+    mock_get_queued.assert_called_once_with("TEST", headers)
+    # DQR's bulk delete takes the ids of the project's queued requests as the body.
+    assert mock_post.call_args.kwargs["json"] == [1, 2]
+    assert mock_post.call_args.args[0].endswith("/xapi/dqr/import/queue")
 
 
 @pytest.mark.asyncio
-@patch("imaging_api.services.projects.get_queued_pacs_request_by_project")
-async def test_delete_queued_import_requests_none_to_delete(mock_get_queued, headers):
+@patch("imaging_api.services.projects.get_queued_import_requests")
+@patch("imaging_api.services.projects.requests.post")
+async def test_delete_queued_import_requests_none_to_delete(mock_post, mock_get_queued, headers):
     mock_get_queued.return_value = []
 
-    async def fake_session():
-        yield MagicMock()
+    result = await delete_queued_import_requests("TEST", headers)
 
-    with patch("imaging_api.services.projects.get_session", side_effect=lambda: fake_session()):
-        result = await delete_queued_import_requests("TEST", headers)
+    assert result is False
+    mock_post.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.projects.get_queued_import_requests")
+@patch("imaging_api.services.projects.requests.post")
+async def test_delete_queued_import_requests_post_failure(mock_post, mock_get_queued, headers):
+    mock_get_queued.return_value = [_queued(1)]
+    mock_post.return_value = MagicMock(status_code=500, text="Error")
+
+    result = await delete_queued_import_requests("TEST", headers)
+
     assert result is False
 
 
 @pytest.mark.asyncio
-@patch("imaging_api.services.projects.get_queued_pacs_request_by_project")
+@patch("imaging_api.services.projects.get_queued_import_requests")
 @patch("imaging_api.services.projects.requests.post")
-async def test_delete_queued_import_requests_post_failure(mock_post, mock_get_queued, headers):
-    mock_get_queued.return_value = [
-        QueuedPacsRequest(
-            id=1,
-            created="2023-10-01T00:00:00",
-            accession_number="FAK57777617",
-            status="QUEUED",
-            xnat_project="TEST",
-        )
-    ]
-    mock_post.return_value = MagicMock(status_code=500, text="Error")
+async def test_delete_queued_import_requests_raises_when_the_queue_cannot_be_read(mock_post, mock_get_queued, headers):
+    mock_get_queued.side_effect = XnatFetchError("Error: XNAT DQR import queue fetch failed: 500 - boom")
 
-    async def fake_session():
-        yield MagicMock()
+    with pytest.raises(XnatFetchError, match="DQR import queue fetch failed"):
+        await delete_queued_import_requests("TEST", headers)
+    mock_post.assert_not_called()
 
 
 # ===========================================================================

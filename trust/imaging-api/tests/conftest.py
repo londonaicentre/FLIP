@@ -22,7 +22,6 @@ _TEST_ENV_DEFAULTS = {
     "XNAT_URL": "http://localhost:8080",
     "XNAT_SERVICE_USER": "test_user",
     "XNAT_SERVICE_PASSWORD": "test_password",  # pragma: allowlist secret
-    "XNAT_DATABASE_URL": "postgresql+asyncpg://test:test@localhost:5432/xnat",  # pragma: allowlist secret
     "DATA_ACCESS_API_URL": "http://localhost:8001",
     "AES_KEY_BASE64": "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=",  # 32-byte key, base64  # pragma: allowlist secret
     "XNAT_PORT": "8080",

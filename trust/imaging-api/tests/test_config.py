@@ -11,7 +11,6 @@
 #
 
 import pytest
-from sqlalchemy.engine import make_url
 
 from imaging_api.config import Settings
 
@@ -21,14 +20,13 @@ def test_internal_topology_vars_default(monkeypatch):
     container port). They must default in Settings rather than be required kit
     fields a kit can omit or set wrong.
     """
-    for var in ("XNAT_URL", "DATA_ACCESS_API_URL", "XNAT_DATABASE_URL", "XNAT_DATASOURCE_PASSWORD"):
+    for var in ("XNAT_URL", "DATA_ACCESS_API_URL"):
         monkeypatch.delenv(var, raising=False)
 
     settings = Settings()
 
     assert settings.XNAT_URL == "http://xnat-web:8080"
     assert settings.DATA_ACCESS_API_URL == "http://data-access-api:8000"
-    assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
 
 
 def test_a_leftover_pacs_id_is_ignored(monkeypatch):
@@ -43,44 +41,16 @@ def test_a_leftover_pacs_id_is_ignored(monkeypatch):
     assert not hasattr(settings, "PACS_ID")
 
 
-def test_minted_xnat_datasource_password_replaces_url_password(monkeypatch):
-    """The kit's minted XNAT_DATASOURCE_PASSWORD must land in XNAT_DATABASE_URL
-    (FLIP-PT-056): the URL default stays a non-secret topology constant while
-    the real DB credential arrives via its own env var.
+@pytest.mark.parametrize("variable", ["XNAT_DATABASE_URL", "XNAT_DATASOURCE_PASSWORD"])
+def test_a_leftover_xnat_database_setting_is_ignored(monkeypatch, variable):
+    """imaging-api reads import status through XNAT's REST API and holds no XNAT database settings.
+
+    A kit file keeps XNAT_DATASOURCE_PASSWORD for xnat-web and xnat-db, and an older compose file or
+    Helm values file still hands imaging-api one or both. That must not stop imaging-api booting on
+    upgrade, and must not come back as a setting anything could read.
     """
-    monkeypatch.delenv("XNAT_DATABASE_URL", raising=False)
-    monkeypatch.setenv("XNAT_DATASOURCE_PASSWORD", "minted-secret")
+    monkeypatch.setenv(variable, "leftover")
 
     settings = Settings()
 
-    # pragma: allowlist nextline secret
-    assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat:minted-secret@xnat-db:5432/xnat"
-
-
-@pytest.mark.parametrize("value", ["", "<run-make-generate-xnat-credentials>"])
-def test_unminted_xnat_datasource_password_leaves_url_untouched(monkeypatch, value):
-    """Empty (kit omits it) or still the committed kit-template placeholder
-    (mint skipped) must not touch the URL. The URL then stays passwordless, so a
-    pre-mint deployment fails on its first query instead of authenticating with
-    a weak literal shipped in the image (FLIP-PT-056).
-    """
-    monkeypatch.delenv("XNAT_DATABASE_URL", raising=False)
-    monkeypatch.setenv("XNAT_DATASOURCE_PASSWORD", value)
-
-    settings = Settings()
-
-    assert settings.XNAT_DATABASE_URL == "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
-    assert make_url(settings.XNAT_DATABASE_URL).password is None
-
-
-def test_minted_password_with_url_special_chars_survives_round_trip(monkeypatch):
-    """A password containing URL-reserved characters must be escaped into the
-    URL such that parsing it back yields the original password — otherwise the
-    engine would authenticate with a mangled credential.
-    """
-    monkeypatch.delenv("XNAT_DATABASE_URL", raising=False)
-    monkeypatch.setenv("XNAT_DATASOURCE_PASSWORD", "p@ss:word/1")
-
-    settings = Settings()
-
-    assert make_url(settings.XNAT_DATABASE_URL).password == "p@ss:word/1"  # pragma: allowlist secret
+    assert not hasattr(settings, variable)

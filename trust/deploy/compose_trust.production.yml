@@ -103,7 +103,7 @@ services:
     cap_add:
       - CHOWN
     environment:
-      # XNAT_URL, XNAT_DATABASE_URL, DATA_ACCESS_API_URL and
+      # XNAT_URL, DATA_ACCESS_API_URL and
       # TRUST_INTERNAL_SERVICE_KEY_HEADER are internal-topology constants and now
       # default in imaging_api/config.py — do not inject them (an empty ${VAR}
       # from a kit that omits them would override the code default).
@@ -118,12 +118,6 @@ services:
       XNAT_AETITLE: ${XNAT_AETITLE:-XNAT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
-      # Minted per-trust XNAT DB password (FLIP-PT-056): imaging_api/config.py
-      # splices it over the password in the XNAT_DATABASE_URL default, keeping
-      # the URL itself a non-secret topology constant. Empty/placeholder (a
-      # pre-mint kit) is a documented no-op there, so unconditional injection
-      # is safe.
-      XNAT_DATASOURCE_PASSWORD: ${XNAT_DATASOURCE_PASSWORD}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       ENV: production
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images

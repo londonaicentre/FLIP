@@ -18,8 +18,6 @@ from typing import Any, NamedTuple
 import requests
 
 from imaging_api.config import get_settings
-from imaging_api.db.get_queued_pacs_request_by_project import get_queued_pacs_request_by_project
-from imaging_api.db.get_session import get_session
 from imaging_api.routers.schemas import (
     CentralHubProject,
     CreatedUser,
@@ -30,6 +28,7 @@ from imaging_api.routers.schemas import (
     User,
 )
 from imaging_api.routers.users import add_user_to_project
+from imaging_api.services.import_requests import get_queued_import_requests
 from imaging_api.services.users import create_user_from_central_hub_user, get_user_profile_by, issue_invite
 from imaging_api.utils.enums import ProjectPreArchiveSettings
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
@@ -588,7 +587,8 @@ async def delete_queued_import_requests(project_id: str, headers: dict[str, str]
     """
     Deletes queued import requests from PACS for a specific project.
 
-    Does not raise an exception if it fails to delete the queued imports.
+    Does not raise an exception if it fails to delete the queued imports, but does if it cannot read
+    the queue.
 
     Args:
         project_id (str): Unique identifier for the project
@@ -596,10 +596,12 @@ async def delete_queued_import_requests(project_id: str, headers: dict[str, str]
 
     Returns:
         bool: True if deletion was successful, False otherwise
+
+    Raises:
+        imaging_api.utils.exceptions.XnatFetchError: If DQR's import queue cannot be read.
     """
     # Delete queued import requests when project is deleted
-    async for session in get_session():
-        queued_imports = await get_queued_pacs_request_by_project(project_id, session)
+    queued_imports = get_queued_import_requests(project_id, headers)
 
     # Create a list with the IDs of the queued import requests
     queued_imports_ids = [queued_import.id for queued_import in queued_imports]

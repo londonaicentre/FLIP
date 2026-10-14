@@ -314,15 +314,16 @@ Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
 use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a service account).
 
-> **DQR 3.0.0 is a major version bump and imaging-api reads DQR's tables directly.**
-> `imaging_api/db/get_{queued,executed}_pacs_request_by_project.py` query DQR's Hibernate tables
-> (`xhbm_queued_pacs_request`, `xhbm_executed_pacs_request`) and `services/retrieval.py` compares
-> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change
-> table columns or status vocabulary, which would silently misreport in-flight and failed imports.
+> **DQR 3.0.0 is a major version bump, and imaging-api reads DQR's import queue and history.**
+> It reads them through DQR's REST API (`GET /xapi/dqr/import/queue` and `/import/history`, in
+> `imaging_api/services/import_requests.py`), not DQR's tables, and `services/retrieval.py` compares
+> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change the
+> status vocabulary or the fields imaging-api reads (`id`, `xnatProject`, `accessionNumber`,
+> `status` and the request times), which would silently misreport in-flight and failed imports.
 > **Verified compatible (2026-07-30):** the released 3.0.0 JAR keeps
 > `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary
-> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED), and the `xhbm_*_pacs_request` columns imaging-api reads
-> were confirmed unchanged on a live 3.0.0 instance during the dev-stack smoke test.
+> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED). On 2026-10-14 the REST reads returned the same rows as
+> the table reads they replaced, for every project on a live 3.0.0 instance (FLIP#1456).
 >
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
 > wedging investigated in FLIP#662. What holds that wedge at bay is the directArchive JMS

@@ -26,13 +26,12 @@ from imaging_api.routers.schemas import (
 from imaging_api.services.projects import get_project
 from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 # Bound every XNAT call: an unbounded request to a wedged XNAT would hang the import (and the
 # health probe) rather than failing. The DQR data-path calls get a far larger bound because they
 # proxy live DIMSE operations against the upstream PACS — a throttled or slow real PACS can hold
 # a C-FIND well past what any metadata round-trip to XNAT itself would need.
-XNAT_REQUEST_TIMEOUT = 30
 XNAT_DQR_REQUEST_TIMEOUT = 300
 
 

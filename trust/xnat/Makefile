@@ -15,7 +15,7 @@
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
-# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*, XNAT_DATABASE_URL) and the
+# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*) and the
 # XNAT stack passwords (XNAT_DATASOURCE_PASSWORD, XNAT_DATASOURCE_ADMIN_PASSWORD,
 # XNAT_ACTIVEMQ_PASSWORD — minted by `make register-trust`) are pulled from the
 # kit file via `-include $(KIT_FILE)` below; non-secret XNAT-internal config

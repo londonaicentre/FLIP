@@ -32,7 +32,7 @@ The imaging-api handles the imaging data lifecycle for federated learning studie
 2. **DICOM import** — queries the PACS with accession numbers and queues image retrieval into XNAT, all through XNAT's DQR REST API (XNAT talks to Orthanc over DIMSE; imaging-api itself never contacts Orthanc)
 3. **Data download** — packages and transfers XNAT datasets for FL training
 4. **Upload** — stores result files back into XNAT experiments
-5. **Retrieval status** — monitors import progress by querying the XNAT database
+5. **Retrieval status** — monitors import progress through XNAT's REST API (DQR's import queue and history, and XNAT's direct-archive sessions)
 
 ## Deployment
 
@@ -161,12 +161,29 @@ Container Service bulk launch per project. See
 
 ### Retrieval
 
-Get import status or count for a project (queries the XNAT PostgreSQL database directly):
+Get import status or count for a project:
 
 ```
 project_id: 8ba38209-97f5-41b9-976e-dfe3c5c8dd94
 query: SELECT * FROM omop.image_occurrence
 ```
+
+Each cohort accession gets one status, the first that applies: `successful` when it is an experiment in
+the project; `failed` when DQR executed its request and the request `FAILED`, or its direct-archive
+session is in `ERROR`; `processing` for any other executed request or direct-archive session (DQR's
+`RECEIVED` means the study was transferred, not archived); `queued` while its request waits in DQR's
+queue; `queue_failed` when none of these exists.
+
+The DQR records come from XNAT's REST API, not its database (`services/import_requests.py`): DQR's
+`GET /xapi/dqr/import/queue` and `/import/history`, which take no project filter, so they are read with
+`all=true` and kept by `xnatProject`, and `POST /xapi/direct-archive` with a `project` filter. When every
+accession is already an experiment they are not read at all. A failed read is a 500, never the 404 the
+hub reads as "the XNAT project is missing" (FLIP#1022).
+
+The history only grows, so it is read newest first, 1,000 rows a page, and stops a day before the
+project's `insert_date`. The flip-ui polls a project's imaging status every 10 s while its page is open,
+and each poll of a project with unarchived accessions reads the history written since that project was
+created, about 0.6 MB per 1,000 rows.
 
 ### Upload
 
@@ -197,7 +214,7 @@ Create users, update user details, or add a user to an XNAT project.
 
 ## Configuration
 
-Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL`, `XNAT_DATABASE_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). The two XNAT URLs are deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). `XNAT_URL` is deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
 
 | Variable | Description |
 | --- | --- |
@@ -206,8 +223,6 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `XNAT_AETITLE` | XNAT's own AE title (default `XNAT`). Must match `XNAT_AETITLE` in `configure-xnat.sh`: DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title **and** port |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
-| `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
-| `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched, so a pre-mint deployment fails on its first query instead of falling back to a weak credential |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
 | `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` registers — pinned by version tag, never `latest` |
 | `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
@@ -215,28 +230,6 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
-
-### Troubleshooting: healthy service, but every XNAT-DB query returns 500
-
-Unlike xnat-web and xnat-db — whose entrypoints refuse to boot on a missing or weak credential —
-imaging-api starts normally when `XNAT_DATASOURCE_PASSWORD` is unset or still the kit-template
-placeholder. The engine is created lazily and `/health` reports `{"status": "ok"}` without touching
-the database, so a mis-minted kit looks healthy until the first XNAT-DB query. It then surfaces as a
-bare **500** with `asyncpg.exceptions.InvalidPasswordError` (or `no password supplied`) in the logs —
-typically on `GET /retrieval/import_status_count/{project_id}`, i.e. the project appears stuck at the
-imaging-import step.
-
-The tell is imaging-api's own start-up line, which logs the DSN with the password masked:
-
-```
-Database URL: postgresql+asyncpg://xnat@xnat-db:5432/xnat      # no password — kit not minted
-Database URL: postgresql+asyncpg://xnat:***@xnat-db:5432/xnat  # password spliced in
-```
-
-Remedy: mint the credential into the trust's kit file with `make generate-xnat-credentials`
-(`KIT=<CODE>` for one trust) and redeploy. If xnat-db's data volume was already initialised with a
-different password, Postgres will not pick the new one up — apply the `ALTER ROLE` that
-`make generate-xnat-credentials FORCE=1` prints. See [XNAT setup](../xnat/README.md).
 
 ## Authentication
 
