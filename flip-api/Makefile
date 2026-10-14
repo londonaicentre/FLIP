@@ -227,6 +227,18 @@ e2e_smoke_ehr: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(EHR_FLOWER_DI
 e2e_smoke_ehr: TARGET_ARGS := --no-imaging
 e2e_smoke_ehr: e2e_smoke
 
+# Biomarker causal-discovery variant: the other tabular-only cohort. Its data is a licence
+# holder's own ADNI cohort, loaded into the LOCAL dev trusts first with
+# `make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>` (after
+# `make -C fl-tutorials convert-adni-cohort`); the FL images must carry causal-learn
+# (flip-utils' `full` extra — build them from this tree: `make build-fl`, run with DOCKER_FL_TAG=dev).
+CAUSAL_FLOWER_DIR := ../fl-tutorials/flower/biomarker_causal_discovery
+CAUSAL_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
+e2e_smoke_causal: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/app,$(CAUSAL_NVFLARE_DIR)/app_files)
+e2e_smoke_causal: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/query.sql,$(CAUSAL_NVFLARE_DIR)/query.sql)
+e2e_smoke_causal: TARGET_ARGS := --no-imaging
+e2e_smoke_causal: e2e_smoke
+
 # Prostate variant: the PI-CAI cohort (prostate_project, seeded into the trusts by
 # `make -C trust seed-trusts PROJECTS=prostate_project`), with both picai_labels masks uploaded into
 # every trust's XNAT as the enrichment step, then the Flower 3d_prostate_segmentation app trained

@@ -156,10 +156,25 @@ in "Expected performance" as numbers only.
 matched on `measurement_source_value` (`PLASMA_PTAU217`, `ICV_MM3`, …) and the education
 observation into one row, deterministically ordered. `tests/datasets/ad_biomarkers/` runs it on SQLite
 over OMOP tables written from an invented cohort of the same shape and diffs the two, so the
-simulator CSV and a deployed fetch cannot drift. The cohort is **not seeded on the dev trusts** (no
-`e2e_smoke` target, no demo-video profile): a licence holder can load their converted cohort into
-their own local trusts' OMOP (`to_omop_tables` writes the three tables), which is still their team's
-copy under the agreement, but nothing ADNI-derived can be published to the shared trust-data set.
+simulator CSV and a deployed fetch cannot drift. The cohort is **not seeded on the dev trusts** and
+never will be from the shared trust-data set: nothing ADNI-derived can be published there. A licence
+holder loads their own converted cohort into their **local** dev trusts instead — still their team's
+copy under the agreement — and then the platform smoke runs end to end:
+
+```bash
+make -C trust load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT (fl-tutorials/data/ad_biomarkers/dataframe.csv)
+make -C trust load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+make e2e_smoke_causal [FL_BACKEND=flower]                        # create project → cohort → run → download
+```
+
+The loader (`trust/omop-db/src/omop_db_tools/adni_cohort.py`) writes each trust's `person_id`-modulo
+slice as `person` / `measurement` / `observation` rows, exactly the split the simulator's `site1/` and
+`site2/` hold, and reloads idempotently. Run this way on a local Flower dev stack (two trusts of 280,
+`has_imaging=false`), the smoke's downloaded `FL_global_model.pt` summarises to the same 16 stable
+edges as the simulator run above with identical frequencies: the bootstrap streams are keyed on the
+site index, which both paths resolve the same way. The FL images must carry causal-learn: build them from this
+tree (`make build-fl`) and run the stack with `DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`. There is no
+demo-video profile, since a recording would show ADNI-derived values.
 
 ## Preprocessing and background knowledge (`config.json`)
 
