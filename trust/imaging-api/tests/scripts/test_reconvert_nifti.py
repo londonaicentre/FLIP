@@ -157,7 +157,7 @@ class FakeXnat:
         if parts[:2] == ["xapi", "projects"] and parts[3:] == ["containers"]:
             self._advance()
             return Response(200, [c for c in self.containers if c["project"] == parts[2]])
-        if parts[:2] == ["xapi", "projects"] and parts[3:] == ["commands", "available"]:
+        if path == "/xapi/commands/available/site":  # the listing get_command_info reads
             row = {"command-id": COMMAND_ID, "wrapper-id": WRAPPER_ID, "wrapper-name": "dcm2niix-scan",
                    "image-name": self.image, "enabled": True, "root-element-name": "scan"}  # fmt: skip
             return Response(200, [row])
