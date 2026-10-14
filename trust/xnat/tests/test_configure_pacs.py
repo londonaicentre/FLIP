@@ -45,6 +45,75 @@ printf '%s\n' "=== $method $url" >> "$PAYLOADS"
 [ -n "$data" ] && printf '%s\n' "$data" >> "$PAYLOADS"
 [ -n "$CREDS_LOG" ] && printf '%s %s %s\n' "$method" "$url" "$creds" >> "$CREDS_LOG"
 
+# /xapi/dicomscp as XNAT 1.10.0 behaves, read from xnat-web's DicomSCPApi and DicomSCPManager:
+#   - ids come from a sequence and are never reused, so a re-created receiver never gets its old id;
+#   - a POST is validated: a known identifier, XNAT's AE-title pattern, and no receiver already at the
+#     same AE title *and* port (a second title on a port is accepted: they share one listener). A
+#     failure is a 400. Fields the body leaves out take XNAT's defaults;
+#   - a PUT merges the body into the stored receiver (an id in the body included), runs none of the
+#     POST's checks, and restarts the port's listener even when nothing differs;
+#   - a PUT or DELETE of an unknown id is a 404.
+# Every listener restart is appended to $SCP_STATE.restarts, which is how a test tells an untouched
+# receiver from one rewritten with identical values. The item arm below answers with the collection,
+# as it always has: the script discards write replies and never GETs a single receiver.
+# Knobs, for the script's read-back: SWALLOW_SCP_WRITES answers a POST or PUT with 200 and stores
+# nothing; once anything has been written, FAIL_SCP_READBACK fails the listing, and
+# SCP_LISTING_AFTER_WRITE replaces it (an XNAT that ignored a DELETE, or re-created on a PUT; EMPTY
+# for a 200 with no body).
+scp_seed_ids() {
+  [ -f "$SCP_STATE.seq" ] || jq '(map(.id | numbers) | max // 0) + 1' "$SCP_STATE" > "$SCP_STATE.seq"
+}
+scp_collection() {
+  scp_seed_ids
+  if [ "$method" = "POST" ]; then
+    touch "$SCP_STATE.written"
+    [ -n "${SWALLOW_SCP_WRITES:-}" ] && { body='{}'; return; }
+    local e problem new_id
+    e=$(jq -c 'del(.id)' <<< "$data")
+    problem=$(jq -r --argjson e "$e" '
+      if (["dqrObjectIdentifier", "dicomObjectIdentifier"] | index($e.identifier)) == null
+        then "DicomScpUnknownDOIException: \($e.identifier)"
+      elif ($e.aeTitle | test("^(?=[^\\\\]*[^\\s\\\\]+$)(?=[^\\s\\\\]+[^\\\\]*)[ -~]{1,16}$") | not)
+        then "Invalid AE-title: \($e.aeTitle)"
+      elif any(.[]; .aeTitle == $e.aeTitle and .port == $e.port)
+        then "DICOMReceiverWithDuplicateTitleAndPortException: \($e.aeTitle):\($e.port)"
+      else empty end' "$SCP_STATE")
+    if [ -n "$problem" ]; then status=400; body="$problem"; return; fi
+    new_id=$(cat "$SCP_STATE.seq"); echo $((new_id + 1)) > "$SCP_STATE.seq"
+    edit "$SCP_STATE" --argjson e "$e" --argjson id "$new_id" '. + [{
+      enabled: true, customProcessing: false, directArchive: false, anonymizationEnabled: true,
+      whitelistEnabled: false, whitelist: [], routingExpressionsEnabled: false,
+      projectRoutingExpression: null, subjectRoutingExpression: null, sessionRoutingExpression: null,
+      directArchiveOverwrite: false} + $e + {id: $id}]'
+    jq -e '.enabled' <<< "$e" >/dev/null && echo "POST $new_id" >> "$SCP_STATE.restarts"
+    body=$(jq -c --argjson id "$new_id" 'map(select(.id == $id)) | .[0]' "$SCP_STATE")
+  elif [ -n "${FAIL_SCP_READBACK:-}" ] && [ -f "$SCP_STATE.written" ]; then
+    status=500; body='{"error":"stub read-back failure"}'
+  elif [ -n "${SCP_LISTING_AFTER_WRITE:-}" ] && [ -f "$SCP_STATE.written" ]; then
+    body="${SCP_LISTING_AFTER_WRITE#EMPTY}"
+  else
+    body=$(cat "$SCP_STATE")
+  fi
+}
+scp_item() {  # PUT, and the checks before a DELETE; the arm below performs the DELETE and replies
+  scp_seed_ids
+  if ! jq -e --argjson id "$id" 'any(.[]; .id == $id)' "$SCP_STATE" >/dev/null; then
+    status=404; return
+  fi
+  case "$method" in
+    PUT)
+      touch "$SCP_STATE.written"
+      echo "PUT $id" >> "$SCP_STATE.restarts"
+      [ -n "${SWALLOW_SCP_WRITES:-}" ] && return
+      edit "$SCP_STATE" --argjson id "$id" --argjson e "$data" 'map(if .id == $id then . + $e else . end)'
+      ;;
+    DELETE)
+      touch "$SCP_STATE.written"
+      echo "DELETE $id" >> "$SCP_STATE.restarts"
+      ;;
+  esac
+}
+
 edit() {  # edit <state-file> <jq-filter> [args...]
   local f="$1"; shift
   jq "$@" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
@@ -78,14 +147,11 @@ case "$url" in
     body=$(cat "$PACS_STATE")
     ;;
   *"/xapi/dicomscp")
-    if [ "$method" = "POST" ]; then
-      edit "$SCP_STATE" --argjson id "$(( $(jq 'length' "$SCP_STATE") + 5 ))" --argjson e "$data" \
-        '. + [$e + {id: $id}]'
-    fi
-    body=$(cat "$SCP_STATE")
+    scp_collection
     ;;
   *"/xapi/dicomscp/"*)
     id="${url##*/}"
+    scp_item
     [ "$method" = "DELETE" ] && edit "$SCP_STATE" --argjson id "$id" 'map(select(.id != $id))'
     body=$(cat "$SCP_STATE")
     ;;
@@ -150,11 +216,36 @@ FLIP_OWNED_RECEIVER = '{"id":3,"aeTitle":"FLIPXNAT","port":8104,"identifier":"dq
 # XNAT's own, created by the webapp on first boot: always titled "XNAT", never carrying FLIP's
 # identifier.
 STOCK_RECEIVER = '{"id":1,"aeTitle":"XNAT","port":8104,"identifier":"dicomObjectIdentifier"}'
+# FLIP's receiver exactly as XNAT 1.10.0 returned it on dev trust 1 (GET /xapi/dicomscp, 14 Oct 2026),
+# after an earlier run of this script under the default kit: every field the script sets, plus the
+# ones XNAT adds. A test drifts a copy of it field by field.
+LIVE_RECEIVER = {
+    "label": "XNAT:8104",
+    "port": 8104,
+    "identifier": "dqrObjectIdentifier",
+    "aeTitle": "XNAT",
+    "whitelist": [],
+    "routingExpressionsEnabled": False,
+    "subjectRoutingExpression": "",
+    "sessionRoutingExpression": "",
+    "projectRoutingExpression": "",
+    "customProcessing": True,
+    "directArchive": True,
+    "anonymizationEnabled": True,
+    "whitelistEnabled": False,
+    "enabled": True,
+    "id": 2,
+    "timestamp": 1791374307821,
+    "created": 1791374307821,
+    "disabled": 0,
+    "directArchiveOverwrite": False,
+}
 # An operator's, registered by hand for some other local DICOM source: neither marker, so nothing
 # here owns it.
 OPERATOR_RECEIVER = '{"id":9,"aeTitle":"WARDCT","port":11113,"identifier":"dicomObjectIdentifier"}'
-# The same unowned receiver, but squatting the port this deployment is about to bind. XNAT rejects a
-# second receiver on a bound port, so this one cannot be worked around by registering alongside it.
+# The same unowned receiver, but squatting the port this deployment is about to bind. XNAT 1.10.0 would
+# accept FLIP's receiver alongside it (a second AE title on a port shares its listener); the script
+# refuses to share the port with a receiver it does not own.
 SQUATTING_RECEIVER = '{"id":9,"aeTitle":"WARDCT","port":8104,"identifier":"dicomObjectIdentifier"}'
 
 
@@ -469,16 +560,40 @@ def deletes(payloads: str) -> list[str]:
     return [b.partition("\n")[0].split()[-1] for b in payloads.split("=== ") if b.startswith("DELETE ")]
 
 
-def test_receiver_on_our_port_is_reclaimed_whatever_it_is_called(tmp_path):
-    """Renaming the AE title must not strand the old receiver fighting for the same port."""
+def scp_writes(payloads: str) -> list[tuple[str, str]]:
+    """Every write the script sent to ``/xapi/dicomscp``, in order."""
+    return [(m, u) for m, u in requests_made(payloads) if m in {"POST", "PUT", "DELETE"} and "/xapi/dicomscp" in u]
+
+
+def receivers_after(tmp_path) -> list[dict]:
+    """The SCP receivers the stub's XNAT holds once the run is over."""
+    return json.loads((tmp_path / "scp.json").read_text())
+
+
+def listener_restarts(tmp_path) -> list[str]:
+    """Every listener restart the run caused, as the stub logs them (``"PUT 2"``, ``"DELETE 1"``)."""
+    log = tmp_path / "scp.json.restarts"
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def live_receiver(**drift) -> str:
+    """dev trust 1's receiver as a one-receiver listing, with ``drift`` applied to its fields."""
+    return json.dumps([{**LIVE_RECEIVER, **drift}])
+
+
+SCP = "http://xnat-web:8080/xapi/dicomscp"
+
+
+def test_a_renamed_ae_title_updates_flips_receiver_in_place(tmp_path):
+    """A rename must reach the receiver FLIP already has, not strand it beside a new one."""
     code, payloads, output = run_configure(
         tmp_path,
         scp_state=f"[{FLIP_OWNED_RECEIVER}]",
     )
     assert code == 0, output
-    assert "(id 3)" in output
-    assert "FLIPXNAT" in output
-    assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads))
+    assert scp_writes(payloads) == [("PUT", f"{SCP}/3")]
+    [receiver] = receivers_after(tmp_path)
+    assert (receiver["id"], receiver["aeTitle"], receiver["port"]) == (3, "XNAT", 8104)
 
 
 def test_a_receiver_this_script_does_not_own_survives_the_reconcile(tmp_path):
@@ -498,27 +613,29 @@ def test_a_receiver_this_script_does_not_own_survives_the_reconcile(tmp_path):
     deleted = deletes(payloads)
     assert not any(u.endswith("/xapi/dicomscp/9") for u in deleted), "deleted a receiver FLIP does not own"
     assert "Removing SCP receiver 'WARDCT" not in output
-    # The two it does own still go, or the re-created receiver fights the old one for the port.
-    assert any(u.endswith("/xapi/dicomscp/3") for u in deleted), "left FLIP's own stale receiver behind"
-    assert any(u.endswith("/xapi/dicomscp/1") for u in deleted), "left XNAT's stock receiver behind"
+    # XNAT's stock receiver still goes, or it fights FLIP's for the AE title and port. FLIP's own is
+    # kept and updated in place rather than deleted and re-created.
+    assert deleted == [f"{SCP}/1"], "the stock receiver should be the only one deleted"
+    assert ("PUT", f"{SCP}/3") in scp_writes(payloads), "FLIP's own receiver was not updated in place"
+    assert sorted(r["id"] for r in receivers_after(tmp_path)) == [3, 9]
 
 
-def test_a_receiver_squatting_our_port_is_refused_before_anything_is_deleted(tmp_path):
-    """Refusing has to happen before the reclamation loop, not at the POST.
+def test_a_receiver_squatting_our_port_is_refused_before_anything_is_written(tmp_path):
+    """Refusing has to happen before any receiver write.
 
-    An unowned receiver on the port this deployment binds is left alone by the reclamation above
-    (correctly — it is not ours), and the POST that follows is then rejected by XNAT as a duplicate
-    port. If the deletes have already run by that point, a redeploy that changed nothing else ends
-    with FLIP's own working receiver gone and no replacement: strictly worse than the state it
-    started in, and on Kubernetes the only record is a Job pod log discarded on success. The
-    PACS-side guard further down refuses ahead of its deletes; this asserts the SCP side matches.
+    An unowned receiver on the port this deployment binds is left alone (correctly — it is not
+    ours), and this script will not share the port with it. If the writes had already run by that
+    point, a redeploy that changed nothing else would end with FLIP's own receiver deleted or
+    rewritten and the run failed: worse than the state it started in, and on Kubernetes the only
+    record is a Job pod log discarded on success. The PACS-side guard further down refuses ahead of
+    its deletes; this asserts the SCP side matches.
     """
     code, payloads, output = run_configure(
         tmp_path,
         scp_state=f"[{FLIP_OWNED_RECEIVER}, {SQUATTING_RECEIVER}]",
     )
     assert code != 0, "a squatted port should abort the run"
-    assert not deletes(payloads), f"deleted something before refusing: {deletes(payloads)}"
+    assert not scp_writes(payloads), f"wrote a receiver before refusing: {scp_writes(payloads)}"
     assert "WARDCT" in output, "the refusal must name the receiver holding the port"
     assert "8104" in output
 
@@ -539,17 +656,235 @@ def test_foreign_pacs_registrations_are_removed(tmp_path):
     assert any(u.endswith("/xapi/pacs/1") for u in deletes(payloads))
 
 
-def test_receiver_is_reclaimed_when_port_and_title_both_change(tmp_path):
-    """Matching on our port *or* our AE title left an orphan when both moved in one change."""
+def test_receiver_is_updated_in_place_when_port_and_title_both_change(tmp_path):
+    """Matching on our port *or* our AE title left an orphan when both moved in one change.
+
+    Ownership is read from the identifier, so the receiver is found whatever it now carries, and one
+    PUT moves it: nothing is left enabled and bound to the old port.
+    """
     code, payloads, output = run_configure(
         tmp_path,
         {"XNAT_PORT": "11112", "XNAT_AETITLE": "FLIPXNAT2"},
         scp_state=f"[{FLIP_OWNED_RECEIVER}]",
     )
     assert code == 0, output
-    assert any(u.endswith("/xapi/dicomscp/3") for u in deletes(payloads)), (
-        "the old receiver was left enabled and bound to its port"
+    assert scp_writes(payloads) == [("PUT", f"{SCP}/3")]
+    [receiver] = receivers_after(tmp_path)
+    assert (receiver["id"], receiver["aeTitle"], receiver["port"]) == (3, "FLIPXNAT2", 11112)
+
+
+# ── The receiver is converged in place, not re-created on every run (FLIP#1456) ──────────────
+
+
+def test_a_receiver_that_already_matches_is_not_written(tmp_path):
+    """No drift, no write: XNAT 1.10's PUT restarts the listener even when nothing in it changed.
+
+    A restart drops the C-STORE return leg of any retrieval in flight, and this step runs on every
+    redeploy and every ``helm upgrade``.
+    """
+    code, payloads, output = run_configure(tmp_path, scp_state=live_receiver())
+    assert code == 0, output
+    assert scp_writes(payloads) == []
+    assert listener_restarts(tmp_path) == []
+    assert receivers_after(tmp_path) == [LIVE_RECEIVER]
+    assert "'XNAT:8104' (id 2) already matches the kit" in output
+
+
+def test_routing_expressions_returned_as_null_are_not_drift(tmp_path):
+    """A receiver made another way can hold null where the kit sends "": with routing off, both are none."""
+    code, payloads, output = run_configure(
+        tmp_path,
+        scp_state=live_receiver(
+            projectRoutingExpression=None, subjectRoutingExpression=None, sessionRoutingExpression=None
+        ),
     )
+    assert code == 0, output
+    assert scp_writes(payloads) == []
+
+
+# Every field the kit manages, drifted one at a time: either through the kit (title, port) or on the
+# receiver itself (an administrator's edit in XNAT's UI).
+RECEIVER_DRIFTS = {
+    "aeTitle": ({"XNAT_AETITLE": "FLIPXNAT"}, {}),
+    "port": ({"XNAT_PORT": "11112"}, {}),
+    "enabled": ({}, {"enabled": False}),
+    "customProcessing": ({}, {"customProcessing": False}),
+    "directArchive": ({}, {"directArchive": False}),
+    "anonymizationEnabled": ({}, {"anonymizationEnabled": False}),
+    "whitelistEnabled": ({}, {"whitelistEnabled": True}),
+    "routingExpressionsEnabled": ({}, {"routingExpressionsEnabled": True}),
+    "projectRoutingExpression": ({}, {"projectRoutingExpression": "(0008,1030):^(.*)$:1"}),
+    "subjectRoutingExpression": ({}, {"subjectRoutingExpression": "(0010,0020):^(.*)$:1"}),
+    "sessionRoutingExpression": ({}, {"sessionRoutingExpression": "(0008,0050):^(.*)$:1"}),
+}
+
+
+@pytest.mark.parametrize(("env", "drift"), RECEIVER_DRIFTS.values(), ids=RECEIVER_DRIFTS.keys())
+def test_a_drifted_receiver_is_updated_in_place_under_the_same_id(tmp_path, env, drift):
+    """One PUT to the receiver's own id, carrying the kit's receiver; then a re-run writes nothing."""
+    code, payloads, output = run_configure(tmp_path, env, scp_state=live_receiver(**drift))
+    assert code == 0, output
+    assert scp_writes(payloads) == [("PUT", f"{SCP}/2")]
+    assert listener_restarts(tmp_path) == ["PUT 2"]
+    assert "id" not in payload_for(payloads, "/xapi/dicomscp/2"), "XNAT would merge a body id into the receiver"
+
+    [receiver] = receivers_after(tmp_path)
+    assert receiver["id"] == 2
+    assert (receiver["aeTitle"], receiver["port"]) == (
+        env.get("XNAT_AETITLE", "XNAT"),
+        int(env.get("XNAT_PORT", "8104")),
+    )
+    for field in ("enabled", "customProcessing", "directArchive", "anonymizationEnabled"):
+        assert receiver[field] is True, field
+    for field in ("whitelistEnabled", "routingExpressionsEnabled"):
+        assert receiver[field] is False, field
+    for field in ("projectRoutingExpression", "subjectRoutingExpression", "sessionRoutingExpression"):
+        assert receiver[field] == "", field
+
+    code, payloads, output = run_configure(tmp_path / "again", env, scp_state=json.dumps([receiver]))
+    assert code == 0, output
+    assert scp_writes(payloads) == [], "the re-run rewrote a receiver that already matched"
+
+
+@pytest.mark.parametrize("scp_state", ["[]", f"[{OPERATOR_RECEIVER}]"], ids=["none", "only-an-operators"])
+def test_a_receiver_is_created_only_when_flip_has_none(tmp_path, scp_state):
+    code, payloads, output = run_configure(tmp_path, scp_state=scp_state)
+    assert code == 0, output
+    assert scp_writes(payloads) == [("POST", SCP)]
+    flip = [r for r in receivers_after(tmp_path) if r["identifier"] == "dqrObjectIdentifier"]
+    assert [(r["aeTitle"], r["port"]) for r in flip] == [("XNAT", 8104)]
+
+
+def test_first_boot_replaces_the_stock_receiver_rather_than_updating_it(tmp_path):
+    """The stock receiver is deleted and FLIP's created, because the POST is the write XNAT validates.
+
+    The delete has to come first: the stock receiver already holds XNAT:8104, and XNAT refuses a
+    second receiver at the same AE title and port.
+    """
+    code, payloads, output = run_configure(tmp_path, scp_state=f"[{STOCK_RECEIVER}]")
+    assert code == 0, output
+    assert scp_writes(payloads) == [("DELETE", f"{SCP}/1"), ("POST", SCP)]
+    [receiver] = receivers_after(tmp_path)
+    assert receiver["identifier"] == "dqrObjectIdentifier"
+    assert receiver["id"] != 1
+
+
+def test_a_second_flip_receiver_left_by_a_rename_is_deleted(tmp_path):
+    """The receiver already at the kit's title and port is the one kept, untouched; the other goes.
+
+    The leftover has the lower id on purpose: "keep the oldest" alone would keep it and rewrite the
+    receiver that was already right.
+    """
+    leftover = {**LIVE_RECEIVER, "id": 1, "aeTitle": "FLIPOLD", "port": 11112, "label": "FLIPOLD:11112"}
+    code, payloads, output = run_configure(tmp_path, scp_state=json.dumps([leftover, LIVE_RECEIVER]))
+    assert code == 0, output
+    assert scp_writes(payloads) == [("DELETE", f"{SCP}/1")]
+    assert receivers_after(tmp_path) == [LIVE_RECEIVER]
+
+
+def test_with_none_at_the_kits_title_and_port_the_oldest_flip_receiver_is_kept(tmp_path):
+    """The choice is deterministic: the lowest id is updated in place and the newer one deleted."""
+    older = {**LIVE_RECEIVER, "id": 2, "aeTitle": "OLDA", "label": "OLDA:8104"}
+    newer = {**LIVE_RECEIVER, "id": 6, "aeTitle": "OLDB", "label": "OLDB:8104"}
+    code, payloads, output = run_configure(tmp_path, scp_state=json.dumps([newer, older]))
+    assert code == 0, output
+    assert scp_writes(payloads) == [("DELETE", f"{SCP}/6"), ("PUT", f"{SCP}/2")]
+
+
+def test_the_deletes_run_before_the_update(tmp_path):
+    """The PUT runs no duplicate check, so the receiver holding the target title and port goes first."""
+    code, payloads, output = run_configure(tmp_path, scp_state=f"[{STOCK_RECEIVER}, {FLIP_OWNED_RECEIVER}]")
+    assert code == 0, output
+    assert scp_writes(payloads) == [("DELETE", f"{SCP}/1"), ("PUT", f"{SCP}/3")]
+
+
+@pytest.mark.parametrize(
+    ("scp_state", "env", "problem"),
+    [
+        # A 200 that persisted nothing.
+        (live_receiver(directArchive=False), {"SWALLOW_SCP_WRITES": "1"}, "it still differs on directArchive"),
+        (f"[{STOCK_RECEIVER}]", {"SWALLOW_SCP_WRITES": "1"}, "0 receivers this script owns are left, not one"),
+        # The same with no delete ahead of the POST: the POST alone must trigger the read-back.
+        ("[]", {"SWALLOW_SCP_WRITES": "1"}, "0 receivers this script owns are left, not one"),
+        # A 200 with no body at all reads as no receivers, not as nothing to check.
+        ("[]", {"SCP_LISTING_AFTER_WRITE": "EMPTY"}, "0 receivers this script owns are left, not one"),
+        # Created, but not with FLIP's identifier: studies would land Unassigned (TROUBLESHOOTING §2.2).
+        (
+            f"[{STOCK_RECEIVER}]",
+            {"SCP_LISTING_AFTER_WRITE": json.dumps([{**LIVE_RECEIVER, "identifier": "dicomObjectIdentifier"}])},
+            "it still differs on identifier",
+        ),
+        # An update that re-created the receiver under a new id: the churn this step exists to stop.
+        (
+            live_receiver(directArchive=False),
+            {"SCP_LISTING_AFTER_WRITE": json.dumps([{**LIVE_RECEIVER, "id": 9}])},
+            "its id changed from 2 to 9",
+        ),
+        # A delete XNAT answered but did not apply.
+        (
+            json.dumps([{**LIVE_RECEIVER, "id": 1, "aeTitle": "FLIPOLD"}, LIVE_RECEIVER]),
+            {"SCP_LISTING_AFTER_WRITE": json.dumps([{**LIVE_RECEIVER, "id": 1, "aeTitle": "FLIPOLD"}, LIVE_RECEIVER])},
+            "2 receivers this script owns are left, not one",
+        ),
+    ],
+    ids=[
+        "put-not-stored",
+        "post-not-stored",
+        "post-not-stored-nothing-deleted",
+        "empty-listing",
+        "post-wrong-identifier",
+        "id-changed",
+        "delete-not-applied",
+    ],
+)
+def test_a_write_the_read_back_does_not_show_fails_the_run(tmp_path, scp_state, env, problem):
+    """XNAT answering 200 without persisting is how FLIP#822 stayed hidden, and the PUT checks nothing."""
+    code, _, output = run_configure(tmp_path, env, scp_state=scp_state)
+    assert code == 1, output
+    assert f"did not converge on 'XNAT:8104': {problem}" in output
+
+
+def test_a_read_back_that_fails_fails_the_run(tmp_path):
+    code, payloads, output = run_configure(
+        tmp_path, {"FAIL_SCP_READBACK": "1"}, scp_state=live_receiver(directArchive=False)
+    )
+    assert code != 0, output
+    assert scp_writes(payloads) == [("PUT", f"{SCP}/2")]
+    assert "HTTP 500" in output
+    assert "is configured" not in output
+
+
+@pytest.mark.parametrize(
+    ("scp_state", "bad_id"),
+    [
+        (json.dumps([{**LIVE_RECEIVER, "id": "2/../../users", "directArchive": False}]), "2/../../users"),
+        (json.dumps([{**LIVE_RECEIVER, "id": "7;x", "aeTitle": "FLIPOLD"}, LIVE_RECEIVER]), "7;x"),
+    ],
+    ids=["kept", "deleted"],
+)
+def test_a_receiver_id_that_is_not_a_plain_number_never_reaches_a_url(tmp_path, scp_state, bad_id):
+    """XNAT generates the ids, but each goes into a PUT or DELETE URL, so it is checked first."""
+    code, payloads, output = run_configure(tmp_path, scp_state=scp_state)
+    assert code == 1, output
+    assert f"DICOM SCP receiver with id '{bad_id}'" in output
+    assert scp_writes(payloads) == []
+
+
+@pytest.mark.parametrize("title", [" XNAT", "XNAT ", "XN\\AT", "X" * 17, "XNÄT", "XN\tAT"])
+def test_an_ae_title_xnat_would_refuse_is_refused_before_xnat_is_touched(tmp_path, title):
+    """XNAT checks the AE title when a receiver is created, not when one is updated in place."""
+    code, payloads, output = run_configure(tmp_path, {"XNAT_AETITLE": title}, scp_state=live_receiver())
+    assert code == 1, output
+    assert "XNAT_AETITLE must be 1 to 16 printable ASCII characters" in output
+    assert payloads == "", "XNAT was contacted before the AE title was checked"
+
+
+@pytest.mark.parametrize("title", ["FLIP XNAT", "X" * 16, "A", "XNAT-1_GSTT.2"])
+def test_an_ae_title_xnat_accepts_reaches_the_receiver(tmp_path, title):
+    """Created through the stub's POST, which applies XNAT's own pattern, so the two rules must agree."""
+    code, payloads, output = run_configure(tmp_path, {"XNAT_AETITLE": title}, scp_state=f"[{STOCK_RECEIVER}]")
+    assert code == 0, output
+    assert [r["aeTitle"] for r in receivers_after(tmp_path)] == [title]
 
 
 def test_refuses_to_delete_a_foreign_pacs_while_still_on_mock_defaults(tmp_path):
