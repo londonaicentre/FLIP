@@ -937,3 +937,25 @@ def get_subject_id_from_experiment_response(experiment_response: dict[str, Any])
         return subject_id
     except Exception as e:
         raise Exception(f"Failed to parse XNAT experiment data JSON: {str(e)}")
+
+
+def get_experiment_id_from_experiment_response(experiment_response: dict[str, Any]) -> str:
+    """
+    Extracts XNAT's experiment ID (``XNAT_E…``, not the label) from the XNAT experiment response JSON.
+
+    Args:
+        experiment_response (dict[str, Any]): XNAT experiment response JSON.
+
+    Returns:
+        str: Experiment ID
+
+    Raises:
+        Exception: If the response holds no experiment ID.
+    """
+    try:
+        experiment_id = experiment_response["items"][0]["data_fields"]["ID"]
+    except Exception as e:
+        raise Exception(f"Failed to parse XNAT experiment data JSON: {str(e)}")
+    if not isinstance(experiment_id, str) or not experiment_id:
+        raise Exception(f"XNAT experiment data JSON has no experiment ID: {experiment_id!r}")
+    return experiment_id

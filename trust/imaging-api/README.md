@@ -72,13 +72,33 @@ is its one exemption.
 
 Downloads are cached on the trust host. Extraction lands in
 `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel
-(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction. When the
-sentinel is present the cached folder is returned without contacting XNAT, so FL training code that fetches the
-cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
+(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction, so FL training
+code that fetches the cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
 (assessor, resource); the per-project path segment keeps projects that share an accession from being served each
-other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload), by
-`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
-NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
+other's copies.
+
+The sentinel records XNAT's experiment ID and the resource stats (file count and size per scan resource) taken
+just before the download. When it is present, imaging-api makes one XNAT call,
+`GET /data/experiments/{id}/scans/ALL/resources?format=json`, and compares the stats. It makes no project or
+experiment lookup and downloads no zip.
+- **Unchanged:** the cached folder is returned.
+- **Changed, or the experiment is gone:** the cached folder is deleted, sibling resource types included, and the
+  study downloaded again. Deleting rather than downloading over it keeps files XNAT has since deleted off disk.
+  This is how an edit made straight in XNAT is seen: labels uploaded through `flip.xnat` enrichment or the XNAT
+  UI, or a NIfTI conversion that finished after an `ALL` download.
+- **XNAT cannot answer** (timeout, connection error, non-404 error): the cached copy is served and a warning
+  logged. The request's XNAT session check passed moments before, so this is a transient fault, and a failure
+  would make an FL client skip the accession for that round.
+- **Not seen:** a file replaced in XNAT by one of the same name and the same size. XNAT records no checksums
+  unless its `checksums` setting is on, and FLIP leaves it off.
+- **Assessor downloads (`SEG`) are not checked:** XNAT 1.10 has no `assessors/ALL/resources` listing. Their
+  hits are served as before.
+- **Sentinels from an older imaging-api** hold no stats. Each such copy is downloaded again once.
+
+The cache is also invalidated when an upload through imaging-api changes the accession's XNAT content (see Upload),
+by `force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success; use it for
+the same-size replacement above), and — on the NVFLARE backend — by `CleanupImages`, which empties the whole net
+directory at job start and end.
 
 The zip layout is pinned with `structure=default` on the download URL. Every member sits under the session label,
 which FLIP sets to the accession id at import, so a study extracts as
