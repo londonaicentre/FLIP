@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import re
 import uuid
 import xml.etree.ElementTree as ET
 from typing import Any, NamedTuple
@@ -46,6 +47,41 @@ XNAT_URL = get_settings().XNAT_URL
 # exempts (#1386).
 ET.register_namespace("xnat", f"{XNAT_URL}/data/projects")
 
+# XNAT's own project-ID characters (XftStringUtils.REGEX_VALID_ID); hub UUIDs match them too.
+_XNAT_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _find_project(field: str, value: str, headers: dict[str, str]) -> Project | None:
+    """
+    Fetches the XNAT project whose ``field`` (``ID`` or ``secondary_ID``) equals ``value``, or None.
+
+    XNAT's filter treats ``*``/``%`` as wildcards and ``,`` as a list, so the value is validated and only exact
+    matches are kept.
+
+    Raises:
+        imaging_api.utils.exceptions.XnatFetchError: If the XNAT request fails, its body is not a project listing,
+            or more than one project matches.
+    """
+    if not _XNAT_ID.fullmatch(value):
+        return None
+
+    try:
+        response = requests.get(xnat_url("data", "projects", query={"format": "json", field: value}), headers=headers)
+    except requests.RequestException as e:
+        raise XnatFetchError(f"Error: XNAT project fetch failed: {e}") from e
+
+    if response.status_code != 200:
+        raise XnatFetchError(f"Error: XNAT project fetch failed: {response.status_code} - {response.text}")
+
+    try:
+        matches = [Project(**row) for row in response.json()["ResultSet"]["Result"] if row.get(field) == value]
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        raise XnatFetchError(f"Error: XNAT project fetch failed: unexpected response body: {e}") from e
+
+    if len(matches) > 1:  # fail closed rather than route a hub project to whichever one XNAT listed first
+        raise XnatFetchError(f"Error: XNAT has {len(matches)} projects with {field} '{value}'.")
+    return matches[0] if matches else None
+
 
 def get_project_from_central_hub_project_id(central_hub_project_id: str, headers: dict[str, str]) -> Project:
     """
@@ -60,23 +96,17 @@ def get_project_from_central_hub_project_id(central_hub_project_id: str, headers
 
     Raises:
         imaging_api.utils.exceptions.NotFoundError: If no XNAT project has a matching ``secondary_ID``.
-        Exception: If the upstream ``get_all_projects`` call fails.
+        imaging_api.utils.exceptions.XnatFetchError: If the XNAT request fails.
     """
-    try:
-        projects = get_all_projects(headers)
-    except Exception as e:
-        raise Exception(f"Error: XNAT project fetch failed: {str(e)}")
-
-    for project in projects:
-        if project.secondary_ID == central_hub_project_id:
-            return project
-
-    raise NotFoundError(f"Project with central hub ID '{central_hub_project_id}' not found among XNAT projects.")
+    project = _find_project("secondary_ID", central_hub_project_id, headers)
+    if project is None:
+        raise NotFoundError(f"Project with central hub ID '{central_hub_project_id}' not found among XNAT projects.")
+    return project
 
 
 def get_project(project_id: str, headers: dict[str, str]) -> Project:
     """
-    Fetches a specific XNAT project by selecting from all projects.
+    Fetches a specific XNAT project by its ID.
 
     Args:
         project_id (str): Unique identifier for the project
@@ -87,18 +117,12 @@ def get_project(project_id: str, headers: dict[str, str]) -> Project:
 
     Raises:
         imaging_api.utils.exceptions.NotFoundError: If no XNAT project matches ``project_id``.
-        Exception: If the upstream ``get_all_projects`` call fails.
+        imaging_api.utils.exceptions.XnatFetchError: If the XNAT request fails.
     """
-    try:
-        projects = get_all_projects(headers)
-    except Exception as e:
-        raise Exception(f"Error: XNAT project fetch failed: {str(e)}")
-
-    for project in projects:
-        if project.ID == project_id:
-            return project
-
-    raise NotFoundError(f"Project with ID '{project_id}' not found.")
+    project = _find_project("ID", project_id, headers)
+    if project is None:
+        raise NotFoundError(f"Project with ID '{project_id}' not found.")
+    return project
 
 
 def get_all_projects(headers: dict[str, str]) -> list[Project]:
@@ -186,7 +210,7 @@ def create_project(
         Project: XNAT project object.
 
     Raises:
-        AlreadyExistsError: If a project with the same ID already exists in XNAT.
+        AlreadyExistsError: If a project with the same ID already exists in XNAT (XNAT answers 409).
         Exception: If there is an error during the creation of the project.
     """
     xnat_projects_uri = xnat_url("data", "projects")
@@ -199,13 +223,6 @@ def create_project(
         project_description,
     )
 
-    # Check if project already exists
-    for project in get_all_projects(headers):
-        if project.ID == project_id:
-            raise AlreadyExistsError(
-                f"Project ID '{project_id}' already exists. Can't create a new project with the same ID."
-            )
-
     # Create the XNAT project
     response = requests.post(
         xnat_projects_uri,
@@ -216,6 +233,10 @@ def create_project(
     if response.status_code == 200:
         logger.info(f"Project '{project_id}' created successfully.")
         return get_project(project_id, headers)
+    elif response.status_code == 409:
+        raise AlreadyExistsError(
+            f"Project ID '{project_id}' already exists. Can't create a new project with the same ID."
+        )
     else:
         raise Exception(f"Error: XNAT project creation failed: {response.status_code} - {response.text}")
 

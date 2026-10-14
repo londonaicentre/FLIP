@@ -7,6 +7,7 @@ FastAPI service for DICOM image retrieval via XNAT. Receives requests from trust
 ## Key Patterns
 
 - Communicates only with XNAT (`XNAT_URL`, `http://xnat-web:8080` on the trust network). It never opens a socket to Orthanc — DICOM reaches XNAT from the PACS via XNAT's own DQR plugin over DIMSE (port 4242)
+- One project is looked up with XNAT's filter (`GET /data/projects?ID=` / `?secondary_ID=`), never a full listing: validate the value and keep only exact matches, because XNAT's filter treats `*`/`%` as wildcards and `,` as a list
 - Receives internal requests from trust-api (task-driven flow) and from the fl-client via the `flip` package (`flip.get_by_accession_number` etc.); not directly exposed
 - Every internal caller authenticates with the per-trust `TRUST_INTERNAL_SERVICE_KEY` header (see the root `AGENTS.md` "Trust-internal Service Authentication" section). `/health` stays unauthenticated
 - DICOM-to-NIfTI conversion support
