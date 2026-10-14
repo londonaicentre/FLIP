@@ -254,8 +254,8 @@ undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undepl
 	@true
 
 smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received it (FLIP#1228)
-	## `make status` compares the pod's plugin jars against the values; this drives the
-	## path those jars are on. Both are needed: a roster can match while the importer is
+	## `make status` compares the plugins XNAT loaded against the values; this drives the
+	## path those plugins are on. Both are needed: a roster can match while the importer is
 	## broken for some other reason, and a C-ECHO can pass while every store aborts.
 	## Requires a seeded Orthanc (it stores an instance the PACS already holds).
 	## Exit 2 from the script is INCONCLUSIVE — the only evidence was a prearchive object's

@@ -41,7 +41,8 @@ protect the XNAT database credentials (FLIP-PT-056).
   URLs as the Helm chart) and executes `xnat_artifacts.sh` `check`/`fetch` against fixture
   manifests with a stubbed `curl` and an `aws` stub that must never run.
 - **Startup reliability** (`test_startup.py`) — executes the dev plugin-cache check ordering
-  and authenticated plugin-readiness wait with stubbed curl commands,
+  and authenticated plugin-readiness wait with stubbed curl commands, against fixture plugin
+  jars (`plugin_fixtures.py`) whose declared ids the wait must find in `GET /xapi/plugins`,
   checks aggregate Make targets propagate failures, and pins root-relative paths
   passed to the end-to-end smoke test.
 

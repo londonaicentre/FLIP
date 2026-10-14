@@ -27,11 +27,16 @@ Three things therefore have to stay true, and none is visible in a rendered char
   versions.
 """
 
+import base64
 import importlib.util
+import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 MAKEFILE = CHART_DIR / "Makefile"
@@ -400,6 +405,247 @@ def test_xnat_web_replaces_its_pod_rather_than_surging_a_second_one() -> None:
     )
 
 
+# ── What XNAT loaded: GET /xapi/plugins ──────────────────────────────────────────────
+
+# What XNAT 1.10.0 answered on 14 Oct 2026 (dev trust 1, the roster in values.yaml), id → version.
+# OHIF's version carries no classifier because its properties file declares one; the others are
+# read off the jar's filename, classifier and all.
+XNAT_1_10_LOADED = {
+    "batchLaunchPlugin": "0.9.0-xpl",
+    "containers": "3.8.1-fat",
+    "dicom-query-retrieve": "3.0.0-xpl",
+    "ohifViewerPlugin": "3.8.0",
+}
+
+
+def _values_jars() -> dict[str, str]:
+    """``{key: jar}`` for the chart's own ``xnat.web.plugins.urls``, derived as the chart derives it."""
+    urls = yaml.safe_load((CHART_DIR / "values.yaml").read_text())["xnat"]["web"]["plugins"]["urls"]
+    return {key: check_status.plugin_jar_name(url) for key, url in urls.items()}
+
+
+def _xapi_plugins_output(loaded: dict[str, str], status: str = "200") -> str:
+    """What the in-pod fetch prints: the /xapi/plugins body, a newline, the HTTP status."""
+    body = json.dumps({pid: {"id": pid, "name": pid, "version": version} for pid, version in loaded.items()})
+    return f"{body}\n{status}"
+
+
+def test_every_plugin_in_the_values_has_a_known_plugin_id() -> None:
+    """A roster key with no id could only be checked on disk — the gap this check exists to close."""
+    assert set(_values_jars()) == set(check_status.XNAT_PLUGIN_IDS), (
+        "xnat.web.plugins.urls and XNAT_PLUGIN_IDS name different plugins; add the new plugin's id "
+        "(the `id=` in its jar's META-INF/xnat/*-plugin.properties) to XNAT_PLUGIN_IDS"
+    )
+
+
+def test_the_plugin_ids_are_the_ones_xnat_reports() -> None:
+    """The keys are not the ids; this pins the pairing read off the jars and off /xapi/plugins."""
+    assert check_status.XNAT_PLUGIN_IDS == {
+        "batch-launch": "batchLaunchPlugin",
+        "container-service": "containers",
+        "dicom-query-retrieve": "dicom-query-retrieve",
+        "ohif-viewer": "ohifViewerPlugin",
+    }
+    assert set(check_status.XNAT_PLUGIN_IDS.values()) == set(XNAT_1_10_LOADED)
+
+
+def test_the_shipped_roster_passes_against_what_xnat_reported() -> None:
+    """Every plugin loaded at the values' version — including OHIF, which reports no classifier."""
+    jars = _values_jars()
+
+    verdicts = check_status.compare_loaded_plugins(jars, XNAT_1_10_LOADED, sorted(jars.values()))
+
+    assert [(v.key, v.state) for v in verdicts] == [(key, check_status.PluginLoad.LOADED) for key in sorted(jars)]
+
+
+@pytest.mark.parametrize(
+    ("expected", "loaded", "same"),
+    [
+        ("3.8.0-fat", "3.8.0", True),
+        ("3.8.1-fat", "3.8.1-fat", True),
+        ("3.0.0-xpl", "3.0.0", True),
+        ("3.8.1-fat", "3.8.0-fat", False),
+        ("3.8.0-fat", "3.8.1", False),
+        # Only packaging classifiers are set aside; a SNAPSHOT is a different build.
+        ("1.0-SNAPSHOT", "1.0", False),
+    ],
+)
+def test_a_packaging_classifier_is_not_a_version(expected: str, loaded: str, same: bool) -> None:
+    jars = {"ohif-viewer": f"ohif-viewer-{expected}.jar"}
+
+    (verdict,) = check_status.compare_loaded_plugins(jars, {"ohifViewerPlugin": loaded}, list(jars.values()))
+
+    assert (verdict.state is check_status.PluginLoad.LOADED) is same
+
+
+def test_a_wrong_version_loaded_is_reported_naming_both(reported: list[tuple[str, str]]) -> None:
+    """The FLIP#1228 shape, now read from what XNAT loaded rather than from filenames."""
+    jars = _values_jars()
+    loaded = {**XNAT_1_10_LOADED, "containers": "3.8.0-fat"}
+    on_disk = [
+        *(jar for jar in jars.values() if not jar.startswith("container-service")),
+        "container-service-3.8.0-fat.jar",
+    ]
+
+    verdicts = check_status.compare_loaded_plugins(jars, loaded, on_disk)
+    (wrong,) = [v for v in verdicts if v.state is not check_status.PluginLoad.LOADED]
+
+    assert wrong.state is check_status.PluginLoad.WRONG_VERSION
+    assert check_status._report_verdict(wrong, "pod/xnat-1") is False
+    ((status, message),) = reported
+    assert status == "FAIL"
+    assert "wrong version loaded" in message
+    assert "container-service-3.8.1-fat.jar (3.8.1-fat)" in message, "the version the values ask for"
+    assert "containers 3.8.0-fat" in message, "the version XNAT loaded"
+
+
+def test_a_jar_on_disk_that_xnat_did_not_load_fails_as_such(reported: list[tuple[str, str]]) -> None:
+    """The new catch: the jar is there, so a filename comparison passes it; XNAT never loaded it."""
+    jars = _values_jars()
+    loaded = {pid: v for pid, v in XNAT_1_10_LOADED.items() if pid != "ohifViewerPlugin"}
+
+    verdicts = check_status.compare_loaded_plugins(jars, loaded, sorted(jars.values()))
+    (missing,) = [v for v in verdicts if v.state is not check_status.PluginLoad.LOADED]
+
+    assert (missing.key, missing.state, missing.on_disk) == ("ohif-viewer", check_status.PluginLoad.NOT_LOADED, True)
+    assert check_status._report_verdict(missing, "pod/xnat-1") is False
+    ((status, message),) = reported
+    assert status == "FAIL"
+    assert "ohif-viewer-3.8.0-fat.jar is present on disk but not loaded" in message
+    assert "ohifViewerPlugin" in message
+
+
+def test_a_plugin_neither_loaded_nor_on_disk_is_not_present(reported: list[tuple[str, str]]) -> None:
+    """A failed download: nothing on disk and nothing loaded, which sends the operator to the init logs."""
+    jars = _values_jars()
+    loaded = {pid: v for pid, v in XNAT_1_10_LOADED.items() if pid != "batchLaunchPlugin"}
+    on_disk = [jar for jar in jars.values() if not jar.startswith("batch-launch")]
+
+    verdicts = check_status.compare_loaded_plugins(jars, loaded, on_disk)
+    (absent,) = [v for v in verdicts if v.state is not check_status.PluginLoad.LOADED]
+
+    assert (absent.key, absent.state) == ("batch-launch", check_status.PluginLoad.NOT_PRESENT)
+    assert check_status._report_verdict(absent, "pod/xnat-1") is False
+    ((status, message),) = reported
+    assert status == "FAIL"
+    assert "not present" in message
+    assert "download-plugins" in message
+
+
+def test_an_unlistable_directory_cannot_say_whether_the_jar_is_there(reported: list[tuple[str, str]]) -> None:
+    """Without the disk listing, "not loaded" must not be dressed up as "present on disk"."""
+    jars = {"ohif-viewer": "ohif-viewer-3.8.0-fat.jar"}
+
+    (verdict,) = check_status.compare_loaded_plugins(jars, {}, None)
+
+    assert (verdict.state, verdict.on_disk) == (check_status.PluginLoad.NOT_LOADED, None)
+    check_status._report_verdict(verdict, "pod/xnat-1")
+    ((status, message),) = reported
+    assert status == "FAIL"
+    assert "present on disk" not in message
+    assert "could not be listed" in message
+
+
+def test_a_key_with_no_known_id_warns_and_is_not_passed(reported: list[tuple[str, str]]) -> None:
+    """An operator-added plugin FLIP has no id for: say so, rather than pass it unexamined."""
+    jars = {"site-extra": "site-extra-1.0.jar"}
+
+    (verdict,) = check_status.compare_loaded_plugins(jars, XNAT_1_10_LOADED, ["site-extra-1.0.jar"])
+
+    assert verdict.state is check_status.PluginLoad.UNMAPPED
+    assert check_status._report_verdict(verdict, "pod/xnat-1") is False
+    ((status, message),) = reported
+    assert status == "WARN"
+    assert "XNAT_PLUGIN_IDS" in message
+
+
+@pytest.mark.parametrize(
+    ("output", "reason"),
+    [
+        ('{"error": "unauthorized"}\n401', "service account"),
+        ("<html>oops</html>\n500", "HTTP 500"),
+        ("<html>ok</html>\n200", "did not answer JSON"),
+        ('["containers"]\n200', "JSON object"),
+        ("", "no status"),
+    ],
+)
+def test_a_listing_that_cannot_be_read_says_why(output: str, reason: str) -> None:
+    """Unreadable is never "nothing loaded": the caller falls back to the disk and says so."""
+    loaded = check_status.parse_loaded_plugins(output)
+
+    assert loaded.versions is None
+    assert reason in loaded.detail
+
+
+def test_a_listing_is_read_as_id_to_version() -> None:
+    loaded = check_status.parse_loaded_plugins(_xapi_plugins_output(XNAT_1_10_LOADED))
+
+    assert loaded.versions == XNAT_1_10_LOADED
+
+
+def test_the_fetch_puts_no_credential_in_any_argv(tmp_path: Path) -> None:
+    """The credential is the pod's own, read in the pod and handed to curl on stdin.
+
+    Run here for real under ``sh`` with a stub ``curl`` that records its argv and stdin: the
+    password is in neither kubectl's argv (it is never known on this side) nor curl's.
+    """
+    argv = check_status.loaded_plugins_command("pod/xnat-1", "flip-trust")
+    assert argv[:7] == ["kubectl", "exec", "pod/xnat-1", "-n", "flip-trust", "--", "sh"]
+    script, url = argv[8], argv[10]
+
+    stub = tmp_path / "curl"
+    stub.write_text(
+        f'#!/bin/sh\nprintf \'%s\\n\' "$*" > "{tmp_path}/argv"\ncat > "{tmp_path}/stdin"\nprintf \'{{}}\\n200\'\n'
+    )
+    stub.chmod(0o755)
+    secret = "s3cret-pass"  # pragma: allowlist secret
+    result = subprocess.run(
+        ["sh", "-c", script, "sh", url],
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "XNAT_SERVICE_USER": "svc",
+            "XNAT_SERVICE_PASSWORD": secret,
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not any(secret in arg for arg in argv)
+    curl_argv = (tmp_path / "argv").read_text()
+    assert secret not in curl_argv, "the password reached curl's argv"
+    assert "-K -" in curl_argv, "curl no longer reads its config (the credential) from stdin"
+    assert url in curl_argv
+    header = re.search(r'Authorization: Basic ([A-Za-z0-9+/=]+)"', (tmp_path / "stdin").read_text())
+    assert header, "curl was not handed the credential on stdin"
+    assert base64.b64decode(header.group(1)).decode() == f"svc:{secret}"
+
+
+def test_the_fetch_refuses_without_the_pods_service_credential(tmp_path: Path) -> None:
+    """No credential in the pod means no request at all, not an anonymous one that 401s."""
+    script = check_status.loaded_plugins_command("pod/xnat-1", "flip-trust")[8]
+    stub = tmp_path / "curl"
+    stub.write_text(f'#!/bin/sh\ntouch "{tmp_path}/called"\n')
+    stub.chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("XNAT_SERVICE_")}
+
+    result = subprocess.run(
+        ["sh", "-c", script, "sh", check_status.XNAT_PLUGINS_URL],
+        env={**env, "PATH": f"{tmp_path}:{env['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "XNAT_SERVICE_PASSWORD" in result.stderr
+    assert not (tmp_path / "called").exists()
+
+
 # ── The check itself: pod selection and the paths that report nothing ────────────────
 
 
@@ -421,6 +667,27 @@ def _roster(**kwargs: object) -> object:
     return check_status.PluginRoster(**defaults)  # type: ignore[arg-type]
 
 
+EXEC_FAILED = "error: unable to upgrade connection"
+
+
+def _pods(monkeypatch: pytest.MonkeyPatch, pods: dict[str, tuple[str | None, str | None]]) -> None:
+    """Fake the running xnat-web pods and both kubectl execs the check makes in each.
+
+    Args:
+        monkeypatch: The test's monkeypatch.
+        pods: ``{pod: (ls of the plugin dir, /xapi/plugins fetch output)}``; None for either makes
+            that exec fail.
+    """
+
+    def fake_run(args: list[str], **_kwargs: object) -> tuple[bool, str]:
+        listing, fetched = pods[args[2]]
+        answer = listing if "ls" in args else fetched
+        return (True, answer) if answer is not None else (False, EXEC_FAILED)
+
+    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: list(pods))
+    monkeypatch.setattr(check_status, "run_command", fake_run)
+
+
 def test_every_running_pod_is_checked_so_a_surge_cannot_mask_a_stale_one(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
@@ -431,13 +698,19 @@ def test_every_running_pod_is_checked_so_a_surge_cannot_mask_a_stale_one(
     pod is deliberately second here, so a first-pod-only check passes this scenario.
     """
     monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
-    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-new", "pod/xnat-old"])
-
-    listings = {
-        "pod/xnat-new": "dicom-query-retrieve-3.0.0-xpl.jar",
-        "pod/xnat-old": "dicom-query-retrieve-2.3.2-xpl.jar",
-    }
-    monkeypatch.setattr(check_status, "run_command", lambda args, **_k: (True, listings[args[2]]))
+    _pods(
+        monkeypatch,
+        {
+            "pod/xnat-new": (
+                "dicom-query-retrieve-3.0.0-xpl.jar",
+                _xapi_plugins_output({"dicom-query-retrieve": "3.0.0-xpl"}),
+            ),
+            "pod/xnat-old": (
+                "dicom-query-retrieve-2.3.2-xpl.jar",
+                _xapi_plugins_output({"dicom-query-retrieve": "2.3.2-xpl"}),
+            ),
+        },
+    )
 
     check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
 
@@ -489,8 +762,15 @@ def test_an_undrivable_url_is_reported_rather_than_dropped(
 ) -> None:
     """The chart's own download container SystemExits on it, so no pod can start."""
     monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster(undrivable=("broken",)))
-    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
-    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar"))
+    _pods(
+        monkeypatch,
+        {
+            "pod/xnat-1": (
+                "dicom-query-retrieve-3.0.0-xpl.jar",
+                _xapi_plugins_output({"dicom-query-retrieve": "3.0.0-xpl"}),
+            )
+        },
+    )
 
     check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
 
@@ -511,10 +791,9 @@ def test_no_running_pod_warns(monkeypatch: pytest.MonkeyPatch, reported: list[tu
 def test_an_exec_failure_leaves_the_roster_unverified_rather_than_passing(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
-    """A pod whose plugin dir could not be listed says nothing about its jars."""
+    """A pod that could be neither asked nor listed says nothing about its plugins."""
     monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
-    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
-    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (False, "error: unable to upgrade connection"))
+    _pods(monkeypatch, {"pod/xnat-1": (None, None)})
 
     check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
 
@@ -525,17 +804,64 @@ def test_an_exec_failure_leaves_the_roster_unverified_rather_than_passing(
 
 
 def test_a_single_matching_pod_passes(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
-    """The happy path still reports PASS, naming the jars it matched."""
+    """The happy path reports PASS, naming what XNAT loaded and at which version."""
     monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
-    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
-    monkeypatch.setattr(
-        check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar\nREADME")
+    _pods(
+        monkeypatch,
+        {
+            "pod/xnat-1": (
+                "dicom-query-retrieve-3.0.0-xpl.jar\nREADME",
+                _xapi_plugins_output({"dicom-query-retrieve": "3.0.0-xpl"}),
+            )
+        },
     )
 
     check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
 
     assert [status for status, _ in reported] == ["PASS"]
-    assert "dicom-query-retrieve-3.0.0-xpl.jar" in reported[0][1]
+    assert "dicom-query-retrieve 3.0.0-xpl" in reported[0][1]
+
+
+def test_a_pod_whose_xnat_did_not_load_an_on_disk_jar_fails(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """End to end through the check: the jar is listed on disk, XNAT's own list lacks it."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    _pods(monkeypatch, {"pod/xnat-1": ("dicom-query-retrieve-3.0.0-xpl.jar", _xapi_plugins_output({}))})
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["FAIL"]
+    assert "present on disk but not loaded" in reported[0][1]
+
+
+def test_when_xnat_cannot_be_asked_the_disk_check_still_catches_a_stale_jar(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """The fallback keeps the FLIP#1228 catch running, and says it is the weaker check."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    _pods(monkeypatch, {"pod/xnat-1": ("dicom-query-retrieve-2.3.2-xpl.jar", '{"error": "unauthorized"}\n401')})
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN", "FAIL"]
+    assert "HTTP 401" in reported[0][1]
+    assert "cannot see a jar XNAT failed to load" in reported[0][1]
+    assert "2.3.2" in reported[1][1]
+
+
+def test_when_xnat_cannot_be_asked_a_matching_disk_passes_as_the_disk_check(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """A PASS from the fallback must not claim XNAT loaded anything."""
+    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
+    _pods(monkeypatch, {"pod/xnat-1": ("dicom-query-retrieve-3.0.0-xpl.jar", None)})
+
+    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN", "PASS"]
+    assert "jars on disk match" in reported[1][1]
+    assert "loaded" not in reported[1][1]
 
 
 def test_the_smoke_fails_a_curl_rather_than_reading_an_error_body() -> None:

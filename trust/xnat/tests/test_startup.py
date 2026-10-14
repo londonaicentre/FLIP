@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from plugin_fixtures import PLUGIN_JARS, declared_ids, plugins_listing, xnat_home
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
 WAIT_FOR_PLUGINS = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "wait-for-xnat-plugins.sh"
@@ -28,19 +30,68 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
+# A stub XNAT for the readiness wait. It answers by route — GET /xapi/plugins lists $PLUGINS_JSON,
+# everything else (GET /xapi/dqr/settings) answers {} — and keeps a per-route request count in $n,
+# so each test's BEHAVIOUR snippet can override `status` and `body` for the request in hand from
+# $route, $n and $creds. The reply is printed the way the script's `-w '\n%{http_code}'` makes
+# real curl print it: the body, a newline, the status.
+READINESS_CURL = r"""#!/bin/sh
+set -eu
+url=""; creds=""; prev=""
+for a in "$@"; do
+  case "$prev" in -u) creds="$a" ;; esac
+  case "$a" in http*) url="$a" ;; esac
+  prev="$a"
+done
+case "$url" in
+  */xapi/plugins) route=plugins ;;
+  */xapi/dqr/settings) route=dqr ;;
+  *) route=other ;;
+esac
+printf '%s %s\n' "$route" "$*" >> "$CURL_LOG"
+n=$(( $(cat "$CURL_COUNTS/$route" 2>/dev/null || echo 0) + 1 ))
+printf '%s' "$n" > "$CURL_COUNTS/$route"
+status=200
+body='{}'
+if [ "$route" = plugins ]; then body="$PLUGINS_JSON"; fi
+__BEHAVIOUR__
+printf '%s\n%s' "$body" "$status"
+"""
+
+
 def _readiness_env(
     tmp_path: Path,
-    curl_body: str,
+    behaviour: str = "",
     timeout: str = "5",
     initial_password: str = "test-password",
     rotated_password: str = "test-password",
+    jars: dict[str, str | None] | None = None,
+    listed: list[str] | None = None,
 ) -> dict[str, str]:
+    """Environment for one run of the wait against the stub XNAT.
+
+    Args:
+        tmp_path: Per-test directory for the stub, its logs and the fixture XNAT home.
+        behaviour: Shell run per request, after the defaults are set, to override them.
+        timeout: The wait's budget, in seconds.
+        initial_password: The kit's initial admin password.
+        rotated_password: The kit's configured admin password.
+        jars: Fixture plugin jars in the XNAT home ({filename: declared id or None}).
+        listed: The plugin ids GET /xapi/plugins lists; defaults to every id ``jars`` declares.
+    """
+    jars = PLUGIN_JARS if jars is None else jars
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _write_executable(bin_dir / "curl", f"#!/bin/sh\nset -eu\n{curl_body}\n")
+    counts = tmp_path / "curl-counts"
+    counts.mkdir()
+    _write_executable(bin_dir / "curl", READINESS_CURL.replace("__BEHAVIOUR__", behaviour))
     return {
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "XNAT_HOME": str(xnat_home(tmp_path, jars)),
+        "PLUGINS_JSON": plugins_listing(declared_ids(jars) if listed is None else listed),
+        "CURL_LOG": str(tmp_path / "curl-log"),
+        "CURL_COUNTS": str(counts),
         "XNAT_ADMIN_USER": "admin",
         "XNAT_ADMIN_INITIAL_PASSWORD": initial_password,
         "XNAT_ADMIN_PASSWORD": rotated_password,
@@ -69,50 +120,151 @@ def _run_readiness(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_readiness_waits_for_authenticated_plugin_route(tmp_path: Path) -> None:
-    count_file = tmp_path / "curl-count"
-    curl_body = (
-        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
-        f'printf "%s" "$count" > "{count_file}"; '
-        'if [ "$count" -ge 2 ]; then printf "204"; else printf "404"; fi'
-    )
+def _requests(tmp_path: Path, route: str | None = None) -> list[str]:
+    """The curl argv of every request the wait made, optionally only those to one route."""
+    log = tmp_path / "curl-log"
+    lines = log.read_text().splitlines() if log.exists() else []
+    return [line.split(" ", 1)[1] for line in lines if route is None or line.split(" ", 1)[0] == route]
 
-    result = _run_readiness(_readiness_env(tmp_path, curl_body))
+
+# A listing that lacks two of the four fixture plugins, as an XNAT that did not load them answers.
+PARTIAL_LISTING = plugins_listing(["containers", "dicom-query-retrieve"])
+
+
+def test_readiness_waits_until_xnat_lists_every_plugin_the_jars_declare(tmp_path: Path) -> None:
+    """A route answering is not enough: XNAT must report every installed plugin as loaded."""
+    behaviour = f"""if [ "$route" = plugins ] && [ "$n" -lt 3 ]; then body='{PARTIAL_LISTING}'; fi"""
+
+    result = _run_readiness(_readiness_env(tmp_path, behaviour))
 
     assert result.returncode == 0, result.stderr
-    assert "ready (HTTP 204)" in result.stdout
+    assert "missing: batchLaunchPlugin ohifViewerPlugin" in result.stdout, "the retry must name what is missing"
+    assert "XNAT plugins are ready (HTTP 200)" in result.stdout
+    assert len(_requests(tmp_path, "plugins")) == 3
+    assert len(_requests(tmp_path, "dqr")) == 1, "the DQR route is asked only once the listing is complete"
+
+
+def test_readiness_names_the_plugin_xnat_has_not_loaded(tmp_path: Path) -> None:
+    """The fail-loud message must say which plugin, not just that the wait timed out."""
+    loaded = [plugin_id for plugin_id in declared_ids() if plugin_id != "ohifViewerPlugin"]
+
+    result = _run_readiness(_readiness_env(tmp_path, timeout="0", listed=loaded))
+
+    assert result.returncode != 0
+    assert "XNAT has not loaded: ohifViewerPlugin\n" in result.stderr, result.stderr
+    assert "/xapi/plugins" in result.stderr
+    assert not _requests(tmp_path, "dqr"), "the DQR route must not be asked while a plugin is missing"
+
+
+def test_readiness_expects_a_plugin_because_a_jar_declares_it(tmp_path: Path) -> None:
+    """The roster is read from the jars, so a jar this script has never heard of is waited for too."""
+    jars = {**PLUGIN_JARS, "site-extra-1.0.jar": "siteExtraPlugin"}
+
+    result = _run_readiness(_readiness_env(tmp_path, timeout="0", jars=jars, listed=declared_ids()))
+
+    assert result.returncode != 0
+    assert "XNAT has not loaded: siteExtraPlugin\n" in result.stderr, result.stderr
+
+
+def test_readiness_expects_only_the_plugins_the_jars_declare(tmp_path: Path) -> None:
+    """…and a plugin no jar declares is not expected, so the roster cannot be a list in the script."""
+    jars: dict[str, str | None] = {"dicom-query-retrieve-3.0.0-xpl.jar": "dicom-query-retrieve"}
+
+    result = _run_readiness(_readiness_env(tmp_path, jars=jars))
+
+    assert result.returncode == 0, result.stderr
+    assert "XNAT loaded dicom-query-retrieve and" in result.stdout
+
+
+def test_a_jar_that_declares_no_plugin_is_not_waited_for(tmp_path: Path) -> None:
+    """XNAT loads every jar in the directory, but only those with plugin properties are plugins."""
+    jars = {**PLUGIN_JARS, "some-library-2.1.jar": None}
+
+    result = _run_readiness(_readiness_env(tmp_path, jars=jars))
+
+    assert result.returncode == 0, result.stderr
+    assert "some-library-2.1.jar declares no XNAT plugin" in result.stdout
+
+
+def test_an_empty_plugin_directory_fails_before_any_login(tmp_path: Path) -> None:
+    """No jars is a broken install, not a vacuously ready one, and there is nothing to log in for."""
+    result = _run_readiness(_readiness_env(tmp_path, jars={}))
+
+    assert result.returncode != 0
+    assert "no XNAT plugin jars found in" in result.stderr
+    assert str(tmp_path / "xnat-home" / "plugins") in result.stderr
+    assert not _requests(tmp_path), "the wait logged in although it had nothing to wait for"
+
+
+def test_an_unreadable_jar_fails_naming_it_before_any_login(tmp_path: Path) -> None:
+    """A truncated download is a jar XNAT cannot load either; which plugin it was is unknowable."""
+    env = _readiness_env(tmp_path)
+    (Path(env["XNAT_HOME"]) / "plugins" / "truncated-1.0.jar").write_bytes(b"<html>503</html>")
+
+    result = _run_readiness(env)
+
+    assert result.returncode != 0
+    assert "truncated-1.0.jar is not a readable jar" in result.stderr
+    assert not _requests(tmp_path)
+
+
+def test_readiness_still_requires_the_dqr_route_once_every_plugin_is_listed(tmp_path: Path) -> None:
+    """The listing does not prove a plugin's routes are registered, so DQR's own route still gates."""
+    result = _run_readiness(_readiness_env(tmp_path, 'if [ "$route" = dqr ]; then status=404; fi', timeout="0"))
+
+    assert result.returncode != 0
+    assert "endpoint:   http://xnat-web:8080/xapi/dqr/settings" in result.stderr
+    assert "last HTTP status: 404" in result.stderr
+    assert "has not loaded" not in result.stderr, "every plugin was listed; only the route was missing"
+
+
+def test_readiness_waits_for_the_dqr_route_after_the_listing_is_complete(tmp_path: Path) -> None:
+    behaviour = 'if [ "$route" = dqr ] && [ "$n" -lt 3 ]; then status=404; fi'
+
+    result = _run_readiness(_readiness_env(tmp_path, behaviour))
+
+    assert result.returncode == 0, result.stderr
+    assert "HTTP 404 from http://xnat-web:8080/xapi/dqr/settings" in result.stdout
+    assert len(_requests(tmp_path, "dqr")) == 3
+
+
+def test_a_listing_that_is_not_json_lists_nothing(tmp_path: Path) -> None:
+    """A 200 the script cannot read must not pass the wait."""
+    result = _run_readiness(
+        _readiness_env(tmp_path, """if [ "$route" = plugins ]; then body='<html>ok</html>'; fi""", timeout="0")
+    )
+
+    assert result.returncode != 0
+    assert f"XNAT has not loaded: {' '.join(declared_ids())}\n" in result.stderr, result.stderr
 
 
 def test_readiness_fails_with_endpoint_and_status_on_timeout(tmp_path: Path) -> None:
-    result = _run_readiness(_readiness_env(tmp_path, 'printf "404"', timeout="0"))
+    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="0"))
 
     assert result.returncode != 0
-    assert "/xapi/dqr/settings" in result.stderr
+    assert "/xapi/plugins" in result.stderr
     assert "last HTTP status: 404" in result.stderr
     assert "test-password" not in result.stdout + result.stderr
 
 
-def test_readiness_probe_authenticates_against_the_plugin_route(tmp_path: Path) -> None:
-    """The gate is only meaningful authenticated — unauthenticated XNAT 401s whatever the plugin state."""
-    argv_log = tmp_path / "curl-argv"
-    result = _run_readiness(_readiness_env(tmp_path, f'printf "%s\\n" "$*" >> "{argv_log}"; printf "200"'))
+def test_readiness_probe_authenticates_against_both_routes(tmp_path: Path) -> None:
+    """Both probes are only meaningful authenticated — unauthenticated XNAT 401s whatever the plugin state."""
+    result = _run_readiness(_readiness_env(tmp_path))
 
     assert result.returncode == 0, result.stderr
-    recorded = argv_log.read_text()
-    assert "-u admin:test-password" in recorded
-    assert "/xapi/dqr/settings" in recorded
+    for route in ("plugins", "dqr"):
+        (made,) = _requests(tmp_path, route)
+        assert "-u admin:test-password" in made, f"the {route} probe was not authenticated"
 
 
 def test_readiness_keeps_polling_while_connection_is_refused(tmp_path: Path) -> None:
-    """`000` (curl could not connect) is the normal state for the first seconds of a boot."""
-    count_file = tmp_path / "curl-count"
-    curl_body = (
-        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
-        f'printf "%s" "$count" > "{count_file}"; '
-        'if [ "$count" -ge 3 ]; then printf "200"; else exit 7; fi'
-    )
+    """`000` (curl could not connect) is the normal state for the first seconds of a boot.
 
-    result = _run_readiness(_readiness_env(tmp_path, curl_body))
+    Real curl prints its -w status (000) and exits non-zero; the stub does the same.
+    """
+    behaviour = """if [ "$route" = plugins ] && [ "$n" -lt 3 ]; then printf '\\n000'; exit 7; fi"""
+
+    result = _run_readiness(_readiness_env(tmp_path, behaviour))
 
     assert result.returncode == 0, result.stderr
     assert "HTTP 000" in result.stdout
@@ -120,7 +272,7 @@ def test_readiness_keeps_polling_while_connection_is_refused(tmp_path: Path) -> 
 
 def test_readiness_rejects_a_leading_zero_timeout(tmp_path: Path) -> None:
     """`09` is an invalid octal literal to bash arithmetic, which would silently disable the timeout."""
-    result = _run_readiness(_readiness_env(tmp_path, 'printf "404"', timeout="09"))
+    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="09"))
 
     assert result.returncode != 0
     assert "timeout='09'" in result.stderr, "the rejection should name the offending value"
@@ -133,70 +285,94 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     and the whole backoff tolerance (~45s at the shipped defaults) on every retry — on the path this
     script exists to keep idempotent.
     """
-    argv_log = tmp_path / "curl-argv"
-    curl_body = (
-        f'printf "%s\\n" "$*" >> "{argv_log}"; case "$*" in *admin:rotated*) printf "200" ;; *) printf "401" ;; esac'
-    )
-
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            curl_body,
+            'case "$creds" in *:rotated) ;; *) status=401 ;; esac',
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
     assert result.returncode == 0, result.stderr
-    probes = argv_log.read_text().strip().splitlines()
+    probes = _requests(tmp_path, "plugins")
     assert sum("admin:initial" in line for line in probes) == 1, "one rejection is enough evidence"
     assert sum("admin:rotated" in line for line in probes) == 1
 
 
-def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) -> None:
-    """A lone 401 amid 404s must not permanently switch away from a working credential.
+def test_an_accepted_alternate_password_is_kept_while_plugins_load(tmp_path: Path) -> None:
+    """Accepted-but-not-ready proves which password XNAT holds; the rejected one is not tried again.
 
-    XNAT can reject a valid credential for a beat while its auth providers wire up. Switching on
-    that blip would strand the run on the wrong password for the rest of the wait.
+    Before /xapi/plugins could answer "authenticated, not ready yet" the wait had no such signal,
+    and only a full run of rejections switched credentials — spending AUTH_FAILURE_LIMIT
+    wrong-password logins toward XNAT's lockout while the plugins finished loading.
     """
-    argv_log = tmp_path / "curl-argv"
-    count_file = tmp_path / "curl-count"
-    curl_body = (
-        f'printf "%s\\n" "$*" >> "{argv_log}"; '
-        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
-        f'printf "%s" "$count" > "{count_file}"; '
-        'case "$count" in 1) printf "404" ;; 2) printf "401" ;; 3) printf "404" ;; *) printf "200" ;; esac'
+    behaviour = (
+        'case "$creds" in *:rotated) ;; *) status=401 ;; esac; '
+        f"""if [ "$route" = plugins ] && [ "$n" -lt 4 ]; then body='{PARTIAL_LISTING}'; fi"""
     )
 
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            curl_body,
+            behaviour,
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
     assert result.returncode == 0, result.stderr
-    probes = argv_log.read_text().strip().splitlines()
-    # The blip does spend one look at the other password — but the 404 it gets back is inconclusive
-    # (the route is not registered yet for either credential), so the run continues, and finishes,
-    # on the credential it started with.
+    assert "continuing with the configured one" in result.stdout
+    probes = _requests(tmp_path, "plugins")
+    assert sum("admin:initial" in line for line in probes) == 1, "the rejected password was tried again"
+    assert "admin:rotated" in probes[-1]
+
+
+def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) -> None:
+    """A lone 401 amid inconclusive answers must not permanently switch away from a working credential.
+
+    XNAT can reject a valid credential for a beat while its auth providers wire up. Switching on
+    that blip would strand the run on the wrong password for the rest of the wait.
+    """
+    behaviour = (
+        'if [ "$route" = plugins ]; then case "$n" in 1) status=404 ;; 2) status=401 ;; 3) status=503 ;; esac; fi'
+    )
+
+    result = _run_readiness(
+        _readiness_env(
+            tmp_path,
+            behaviour,
+            initial_password="initial",  # pragma: allowlist secret
+            rotated_password="rotated",  # pragma: allowlist secret
+        )
+    )
+
+    assert result.returncode == 0, result.stderr
+    probes = _requests(tmp_path, "plugins")
+    # The blip does spend one look at the other password — but the 503 it gets back is inconclusive
+    # (XNAT answered neither password), so the run continues, and finishes, on the credential it
+    # started with.
     assert sum("admin:rotated" in line for line in probes) == 1, "a single 401 must not switch"
     assert "admin:initial" in probes[-1], "the successful probe must be the original credential"
 
 
-def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path: Path) -> None:
-    """A 404 means the plugin is still registering, so the *other* password must not be tried.
+@pytest.mark.parametrize(
+    "behaviour",
+    [
+        pytest.param("status=404", id="route-not-answering"),
+        pytest.param(f"""if [ "$route" = plugins ]; then body='{PARTIAL_LISTING}'; fi""", id="plugins-missing"),
+    ],
+)
+def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path: Path, behaviour: str) -> None:
+    """Not ready yet means XNAT is still loading, so the *other* password must not be tried.
 
     Probing both credentials on every poll sends one wrong-password login every few seconds, which
     trips XNAT's 20-attempt account lockout long before the wait budget expires.
     """
-    argv_log = tmp_path / "curl-argv"
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            f'printf "%s\\n" "$*" >> "{argv_log}"; printf "404"',
+            behaviour,
             timeout="0",
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
@@ -204,16 +380,15 @@ def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path
     )
 
     assert result.returncode != 0
-    assert "admin:rotated" not in argv_log.read_text()
+    assert not any("admin:rotated" in line for line in _requests(tmp_path))
 
 
 def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(tmp_path: Path) -> None:
     """Waiting cannot fix a wrong password, so fail fast instead of burning the whole budget."""
-    argv_log = tmp_path / "curl-argv"
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            f'printf "%s\\n" "$*" >> "{argv_log}"; printf "401"',
+            "status=401",
             timeout="900",
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
@@ -222,7 +397,7 @@ def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(
 
     assert result.returncode != 0
     assert "rejected every admin credential" in result.stderr
-    probes = argv_log.read_text().strip().splitlines()
+    probes = _requests(tmp_path)
     assert len(probes) <= 6, f"{len(probes)} rejected logins risks XNAT's 20-attempt lockout"
     # Pinned per credential, not just in total: the early look at the other password on the first
     # rejection is charged to that password's own allowance, so it buys the fast path to a rotated

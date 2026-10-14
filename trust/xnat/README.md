@@ -164,8 +164,13 @@ registration, dcm2niix command). The repo-root `make up` follows the same path a
 Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
 HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the
 bring-up — the log is written host-side), instead of silently skipping
-that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
-earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
+that step. Configuration waits up to 15 minutes for XNAT's plugins (`wait-for-xnat-plugins.sh`), rather than treating
+the earlier Tomcat login page as proof that plugins are ready: XNAT must list every plugin the jars in
+`${XNAT_HOME}/plugins` declare as loaded (`GET /xapi/plugins`, authenticated), and then the DQR plugin's settings
+route must answer — the listing alone does not prove a plugin's routes are registered, and that route is the one
+configuration writes to next. The expected plugins are read from the installed jars themselves (each declares its
+id in `META-INF/xnat/*-plugin.properties`), so there is no second roster to keep in step with `artifacts.manifest`.
+On timeout it names the plugin(s) XNAT has not loaded. Re-running against an already-configured instance is
 tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
@@ -339,8 +344,12 @@ account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8
    SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
    plus `XNAT_VERSION` in `.env`.
 2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
-3. Update the plugin compatibility table above.
-4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
+3. For a **new** plugin (not a version bump), add its XNAT plugin id — the `id=` in the jar's
+   `META-INF/xnat/*-plugin.properties`, which is how `GET /xapi/plugins` names it — to `XNAT_PLUGIN_IDS` in
+   `trust/deploy/helm/check_status.py`, so `make -C trust/deploy/helm status` can check XNAT loaded it; its test
+   fails until you do. The configure-time readiness wait needs nothing: it reads the id from the jar.
+4. Update the plugin compatibility table above.
+5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 

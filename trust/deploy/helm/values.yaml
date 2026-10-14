@@ -799,10 +799,17 @@ xnat:
       # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
       #   https://wiki.xnat.org/xnat-ohif-viewer
       # Convention, relied on by `make status`: each key is the jar's basename up to the
-      # version, so the filename reads `<key>-<version>...jar`. The roster check pairs a
-      # key with the jars on the pod by exactly that shape; a key spelled otherwise still
-      # deploys fine, but a version skew under it reports as a missing download rather
-      # than a stale jar, sending the operator to init-container logs that are clean.
+      # version, so the filename reads `<key>-<version>...jar`. The roster check asks the
+      # running XNAT what it LOADED (GET /xapi/plugins), which lists plugins by their own
+      # id — not by these keys (container-service is `containers`) — so check_status.py
+      # pairs each key with its id in XNAT_PLUGIN_IDS, and reads the expected version off
+      # the jar name by that shape. It then reports each plugin as loaded at the expected
+      # version, loaded at the wrong one, present on disk but not loaded, or not present.
+      # Adding a plugin here therefore means adding its id there too (the `id=` in the
+      # jar's META-INF/xnat/*-plugin.properties); its test fails until you do. A key
+      # spelled otherwise still deploys, but the check cannot read its version and says so.
+      # A plugin that loads can still fail at run time (one built for another XNAT core
+      # aborts every C-STORE, FLIP#1228), so `make smoke-cstore` stays the DICOM-path check.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
