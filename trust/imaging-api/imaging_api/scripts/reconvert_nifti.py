@@ -396,14 +396,12 @@ def run(
         missing, with_dicom = unconverted_scans(project.ID, headers)
         head = f"{describe(project)}, {states}"
         if not missing:
-            out(
-                f"{head}: "
-                + (
-                    f"all {with_dicom} archived scans with DICOM have NIfTI."
-                    if with_dicom
-                    else "no archived scans with DICOM."
-                )
+            found = (
+                f"all {with_dicom} archived scans with DICOM have NIfTI"
+                if with_dicom
+                else "no archived scans with DICOM"
             )
+            out(f"{head}: {found}.")
             continue
         out(f"{head}: {len(missing)} of {with_dicom} archived scans with DICOM have no NIfTI.")
         tally["missing"] += len(missing)
@@ -529,7 +527,7 @@ def _check(
     # Containers before scans, for the reason given in run().
     by_scan = containers_by_scan(f.project.ID, headers)
     converted = {
-        f"/archive/experiments/{experiment}/scans/{scan_id}"
+        Scan(experiment, "", scan_id).uri
         for experiment in {s.experiment for s in f.pending.values()}
         for scan_id, labels in session_scans(experiment, headers).items()
         if DCM2NIIX_OUTPUT_RESOURCE in labels
@@ -545,24 +543,24 @@ def _check(
         if len(mine) < f.launches[uri] or not all(has_ended(c) for c in mine):
             continue  # a launch has no container yet, or one is still running
         ended = sum(1 for c in containers if has_ended(c))
-        last = _name(max(mine, key=lambda c: c.get("id") or 0))
+        last = max(mine, key=lambda c: c.get("id") or 0)
         if ended < args.max_attempts:
             relaunch.append(scan)
             out(
-                f"  {f.project.ID} {scan}: ended without NIfTI ({last}); "
+                f"  {f.project.ID} {scan}: ended without NIfTI ({_name(last)}); "
                 f"relaunching ({ended + 1} of {args.max_attempts})."
             )
         else:
             del f.pending[uri]
             tally["gave_up"] += 1
             out(
-                f"  {f.project.ID} {scan}: {ended} conversions ended without NIfTI (last: {last}); not launched "
-                "again. Container Service keeps each container's log."
+                f"  {f.project.ID} {scan}: {ended} conversions ended without NIfTI (last: {_name(last)}); not "
+                f"launched again. Its log: GET /xapi/containers/{last.get('id')}/logs/stdout"
             )
     if not relaunch:
         return
     try:
-        bulk_id, refused = bulk_launch(f.project.ID, f.wrapper_id, relaunch, headers)
+        _, refused = bulk_launch(f.project.ID, f.wrapper_id, relaunch, headers)
     except Exception as exc:  # stop following these scans; the next report lists them again
         for scan in relaunch:
             del f.pending[scan.uri]

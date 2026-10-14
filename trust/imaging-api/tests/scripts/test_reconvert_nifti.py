@@ -378,7 +378,8 @@ def test_a_failed_conversion_is_relaunched_until_the_bound_then_given_up(xnat):
     assert launched(xnat).count(uri("E1", "1")) == 3
     assert launched(xnat).count(uri("E1", "2")) == 2
     assert xnat.sessions["E1"]["scans"]["2"] == {"DICOM", "NIFTI"}
-    assert any("scan 1: 3 conversions ended without NIfTI" in line and "not launched again" in line for line in lines)
+    (given_up,) = [line for line in lines if "scan 1: 3 conversions ended without NIfTI" in line]
+    assert "not launched again. Its log: GET /xapi/containers/" in given_up, given_up
     assert lines[-1].startswith(
         "Projects: 1. Scans without NIfTI: 2. Launched: 2. Relaunched: 3. Converted: 1. Still converting: 0. "
         "Ended without NIfTI: 1."
