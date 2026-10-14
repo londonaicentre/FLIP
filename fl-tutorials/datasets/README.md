@@ -118,6 +118,25 @@ script imports, like the others):
   `tests/datasets/synthea/` keeps the two honest: it runs the actual `query.sql` on SQLite over the
   same tiny tables and diffs it against `derive_features` row for row.
 
+[`ad_biomarkers/`](ad_biomarkers/) owns the biomarker causal-discovery tutorial's cohort, in a uv
+project as small as synthea's (numpy + pandas). The data is ADNI, which is **access-controlled** —
+every user signs a Data Use Agreement that forbids redistributing participant-level data in any
+form — so there is no download target and no synthetic stand-in: the user applies for ADNI access
+(the tutorial README's "Running on real ADNI data" has the steps), downloads five study tables, and
+
+- `make_adni_cohort.py` — *converts* (`convert-adni-cohort ADNI_DIR=<IDA downloads> [OUT=…]`) that
+  download — the `PTDEMOG`, `APOERES`, `ADAS`, `UCSFFSX7` and `UPENN_PLASMA_FUJIREBIO_QUANTERIX`
+  tables, found by prefix — into the twelve-column cohort the tutorial's `query.sql` returns
+  (demographics, APOE4 count, four plasma markers, two brain volumes, ADAS-Cog13), the
+  `person_id`-modulo site splits and a counts-only summary, applying the centralised analysis's
+  rules (earliest FreeSurfer scan with a baseline plasma draw within ±3 months, ADNI missing-value
+  codes, left + right hippocampus, APOE ε4 count from the genotype). Code only: `OUT` defaults to the
+  gitignored `data/ad_biomarkers/` and the target refuses any path inside the repository that git
+  does not ignore; the script prints counts, never a row. `to_omop_tables` writes a cohort frame as
+  `person` / `measurement` / `observation`, and `tests/datasets/ad_biomarkers/` pins the cohort rules
+  on invented ADNI-shaped tables and runs the actual `query.sql` over those OMOP tables on SQLite,
+  so the simulator's CSV and a deployed query agree row for row.
+
 [`prostate/`](prostate/) owns the prostate download/preprocessing scripts. The dataset class that
 reads this data lives with the tutorial instead, at
 `../flower/3d_prostate_segmentation/app/dataset.py`, as does the nnU-Net planning step above:
