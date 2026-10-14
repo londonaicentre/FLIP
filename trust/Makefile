@@ -15,7 +15,7 @@
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
 	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance \
-	restore-nifti-triggers
+	restore-nifti-triggers reconvert-nifti
 # PROD selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the production compose) and the kit-file env token (ENV: stag stays distinct,
 # so a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production; the
@@ -592,6 +592,17 @@ restore-nifti-triggers:
 	docker exec "$$c" python -m imaging_api.scripts.restore_nifti_triggers \
 	  $(foreach id,$(ACTIVE),--active $(id)) $(foreach id,$(INACTIVE),--inactive $(id)) \
 	  $(if $(REST),--rest $(REST)) $(if $(DRY_RUN),--dry-run)
+
+# Convert the archived scans that have DICOM but no NIfTI (a trigger fires on new scans only), through
+# Container Service's bulk launch. Report only without LAUNCH=1. PROJECT, not PROJECTS (the datasets to
+# seed). See trust/deploy/helm/TROUBLESHOOTING.md §2.3f.
+reconvert-nifti:
+	$(require_kit_file)
+	@c=$(call trust_container,imaging-api); \
+	if [ -z "$$c" ]; then echo "❌ imaging-api for $(KIT) (compose project $(TRUST_PROJECT)) is not running."; exit 1; fi; \
+	docker exec "$$c" python -m imaging_api.scripts.reconvert_nifti \
+	  $(foreach id,$(PROJECT),--project $(id)) $(if $(LAUNCH),--launch) $(if $(WAIT),--wait $(WAIT)) \
+	  $(if $(MAX_ATTEMPTS),--max-attempts $(MAX_ATTEMPTS)) $(if $(RELAUNCH_UNFINISHED),--relaunch-unfinished)
 
 down-trust:
 	$(require_kit)

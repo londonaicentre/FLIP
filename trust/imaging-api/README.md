@@ -142,6 +142,13 @@ trigger, and recreates missing ones through the same creation path for the proje
 previews. Only the hub knows which projects should convert. See
 [`../xnat/README.md`](../xnat/README.md#restoring-missing-dicom-nifti-triggers).
 
+#### Converting the backlog: `reconvert_nifti`
+
+`python -m imaging_api.scripts.reconvert_nifti` (`make -C trust reconvert-nifti KIT=<CODE>` on Compose)
+lists the archived scans that have DICOM and no NIfTI and, with `--launch`, converts them by one
+Container Service bulk launch per project. See
+[`../deploy/helm/TROUBLESHOOTING.md` §2.3f](../deploy/helm/TROUBLESHOOTING.md#23f-scans-archived-without-nifti-converting-the-backlog).
+
 ### Retrieval
 
 Get import status or count for a project (queries the XNAT PostgreSQL database directly):

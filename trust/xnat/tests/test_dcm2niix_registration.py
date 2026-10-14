@@ -555,6 +555,25 @@ def test_imaging_api_looks_up_the_wrapper_this_command_registers() -> None:
     assert context.group(1) in wrapper["contexts"]
 
 
+def test_imaging_api_reconverts_what_the_wrapper_takes_and_writes() -> None:
+    """reconvert_nifti launches on scans the wrapper's matcher accepts and waits for the resource it writes."""
+    text = IMAGING_API_PROJECTS.read_text()
+    held: dict[str, str] = {}
+    for key in ("ROOT_ELEMENT", "INPUT_RESOURCE", "OUTPUT_RESOURCE"):
+        found = re.search(rf'^DCM2NIIX_{key} = "([^"]+)"', text, re.M)
+        assert found, f"imaging-api no longer defines DCM2NIIX_{key}"
+        held[key] = found.group(1)
+    (wrapper,) = command_file()["xnat"]
+    (scan_input,) = wrapper["external-inputs"]
+    (derived,) = wrapper["derived-inputs"]
+    (handler,) = wrapper["output-handlers"]
+    assert held["ROOT_ELEMENT"] == scan_input["name"]
+    assert f"'{held['INPUT_RESOURCE']}' in @.resources[*].label" == scan_input["matcher"]
+    assert f"@.label == '{held['INPUT_RESOURCE']}'" == derived["matcher"]
+    assert held["OUTPUT_RESOURCE"] == handler["label"]
+    assert handler["as-a-child-of"] == scan_input["name"]
+
+
 HUB_ID_PATTERN = "^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$"
 
 

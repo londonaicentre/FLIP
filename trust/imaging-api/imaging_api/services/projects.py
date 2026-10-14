@@ -316,6 +316,12 @@ DCM2NIIX_SUBSCRIPTION_NAME = "DICOM-NIfTI Conversion"
 # The `xnat[0]` wrapper of trust/xnat/xnat/config/dcm2niix_command.json and the data type it runs on.
 DCM2NIIX_WRAPPER_NAME = "dcm2niix-scan"
 DCM2NIIX_CONTEXT = "xnat:imageScanData"
+# What that wrapper takes and writes, from the same entry: its external input (the launch body's key
+# and the container input that names the scan), the resource its matcher requires on the scan, and
+# the resource its output handler adds. reconvert_nifti selects scans by the last two.
+DCM2NIIX_ROOT_ELEMENT = "scan"
+DCM2NIIX_INPUT_RESOURCE = "DICOM"
+DCM2NIIX_OUTPUT_RESOURCE = "NIFTI"
 
 _RERUN_CONFIGURE = "Re-run configure-dcm2niix.sh (compose) or the xnat-init job (k8s)"
 
@@ -404,6 +410,33 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
     return CommandInfo(command_id=row["command-id"], wrapper_name=DCM2NIIX_WRAPPER_NAME, wrapper_id=row["wrapper-id"])
 
 
+def enable_wrapper_for_project(project_id: str, command_id: int, wrapper_name: str, headers: dict[str, str]) -> None:
+    """Enables a Container Service wrapper in one project, as project creation does for dcm2niix.
+
+    Enablement is held per wrapper id (container-service 3.8.1 ContainerConfigServiceImpl.java:74-143),
+    so a project created before a pre-FLIP#1451 re-registration is enabled only for the deleted wrapper.
+    The call is idempotent.
+
+    Args:
+        project_id (str): XNAT project ID.
+        command_id (int): The wrapper's command id, from ``get_command_info``.
+        wrapper_name (str): The wrapper's name, from ``get_command_info``.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Raises:
+        Exception: If XNAT does not answer with 200.
+    """
+    response = requests.put(
+        xnat_url("xapi", "projects", project_id, "commands", str(command_id), "wrappers", wrapper_name, "enabled"),
+        headers=headers,
+    )
+    if response.status_code != 200:
+        raise Exception(
+            f"Error: Enabling command {command_id} ('{wrapper_name}') for project '{project_id}' failed: "
+            f"{response.status_code} - {_bounded_body(response.text)}"
+        )
+
+
 def create_project_event_subscription(project_id: str, container: str, active: bool, headers: dict[str, str]) -> None:
     """
     Creates a project-scoped event subscription in XNAT that auto-triggers a command on scan upload.
@@ -426,15 +459,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
 
     # Enable the command at the project level — required by XNAT to validate the action key
     # in project-scoped event subscriptions
-    response = requests.put(
-        xnat_url("xapi", "projects", project_id, "commands", str(command_id), "wrappers", wrapper_name, "enabled"),
-        headers=headers,
-    )
-    if response.status_code != 200:
-        raise Exception(
-            f"Error: Enabling command '{container}' for project '{project_id}' failed: "
-            f"{response.status_code} - {response.text}"
-        )
+    enable_wrapper_for_project(project_id, command_id, wrapper_name, headers)
 
     # The key names the wrapper, not the command: formatting the command id only worked while the two were equal.
     action_key = get_wrapper_action_key(wrapper_id, wrapper_name, headers)

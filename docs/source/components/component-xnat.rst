@@ -258,7 +258,7 @@ When a FLIP project is created, the ``dicom_to_nifti`` setting controls the even
 
 The event subscription can be activated or deactivated later via the XNAT Event Service API.
 
-The subscription's action key names the dcm2niix *wrapper* by id, as XNAT lists it at ``GET /xapi/events/allactions``. Redeploying keeps that id (the command is updated in place) and repairs any subscription a pre-FLIP#1451 deploy left on a deleted wrapper. A project that lost its subscription altogether is named in the configure log and restored with ``restore-nifti-triggers``, active or inactive as its hub-side ``dicom_to_nifti`` setting says (``trust/xnat/README.md``, "Restoring missing DICOM->NIfTI triggers").
+The subscription's action key names the dcm2niix *wrapper* by id, as XNAT lists it at ``GET /xapi/events/allactions``. Redeploying keeps that id (the command is updated in place) and repairs any subscription a pre-FLIP#1451 deploy left on a deleted wrapper. A project that lost its subscription altogether is named in the configure log and restored with ``restore-nifti-triggers``, active or inactive as its hub-side ``dicom_to_nifti`` setting says (``trust/xnat/README.md``, "Restoring missing DICOM->NIfTI triggers"). A subscription fires on new scans only; the scans archived while it was missing or invalid are converted with ``reconvert-nifti`` (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3f).
 
 A project created with 'Includes imaging data' turned off (``has_imaging=False``) never reaches XNAT at all: the Central Hub skips the imaging stage at approval, so no XNAT project, event subscription or PACS pull is created at any trust.
 

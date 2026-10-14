@@ -417,7 +417,14 @@ Ids are hub project ids (as in the FLIP UI) or XNAT project IDs. The target runs
 creates each trigger through imaging-api's own project-creation path, owned by the service account;
 a project that still has a trigger is never touched. On an on-prem host prefix `sudo -E`. Kubernetes:
 `trust/deploy/helm/TROUBLESHOOTING.md` §2.3e. Scans archived while a project had no trigger are not
-converted retroactively; run dcm2niix on them from the XNAT UI.
+converted retroactively; convert them as the next section describes.
+
+### Converting scans archived without NIfTI
+
+A trigger fires on new scans only. `make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."]
+[LAUNCH=1]` converts the archived scans that have DICOM and no NIfTI, by Container Service bulk launch
+(report only without `LAUNCH=1`; on-prem prefix `sudo -E`). What it selects, what it leaves alone and
+its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3f](../deploy/helm/TROUBLESHOOTING.md#23f-scans-archived-without-nifti-converting-the-backlog).
 
 ## Resource limits
 

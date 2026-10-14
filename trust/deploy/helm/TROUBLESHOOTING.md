@@ -17,6 +17,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
    - [2.3d dcm2niix Jobs Swamp the Node, or Wait for a Slot](#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot)
    - [2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)](#23e-existing-projects-stopped-converting-after-a-redeploy-flip1451)
+   - [2.3f Scans Archived Without NIfTI (Converting the Backlog)](#23f-scans-archived-without-nifti-converting-the-backlog)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -444,9 +445,8 @@ kubectl get jobs -n flip-trust -l XNAT_PROJECT -o json | jq -r '.items[]
 
 **Fix:** if the registration still shows `1000` / `1`, run `helm upgrade` (it re-fires the
 `xnat-init` hook). Then delete the Jobs the last command lists
-(`... | xargs kubectl delete job -n flip-trust`; on AZ1, 288 of them, all Pending). The scans they were for stay unconverted, so
-relaunch dcm2niix on them from XNAT: the project's Processing Dashboard (batch-launch plugin) can
-launch it on every scan at once, and the cap paces them. `make -C trust/deploy/helm selftest`
+(`... | xargs kubectl delete job -n flip-trust`; on AZ1, 288 of them, all Pending). The scans they were for stay unconverted:
+convert them as §2.3f describes, and the cap paces them. `make -C trust/deploy/helm selftest`
 checks that a conversion completes.
 
 ### 2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)
@@ -511,8 +511,69 @@ A project that still has a trigger is never touched by this command. On Compose
 the same command is `make -C trust restore-nifti-triggers KIT=<CODE>
 [ACTIVE="<id> ..."] [INACTIVE="<id> ..."] [REST=active|inactive] [DRY_RUN=1]`.
 Neither step converts scans archived while the trigger was broken: a trigger fires
-on new scans only. Run dcm2niix on those from the XNAT UI (the project's *Run
-Containers* action), which the command stays enabled for.
+on new scans only. Convert those as §2.3f describes.
+
+### 2.3f Scans Archived Without NIfTI (Converting the Backlog)
+
+**Symptom:** a project's archived sessions hold `DICOM` resources but some scans
+have no `NIFTI` resource, so FL training sees fewer samples than the cohort has.
+Its trigger is (now) active and valid, and new scans convert.
+
+**Root Cause:** a trigger fires once, when a scan is archived. Scans archived while
+it was missing or invalid (§2.3e), or whose conversion was lost (Container Service
+Jobs deleted to free a swamped node, FLIP#1448), are never converted afterwards.
+
+**Fix:** `reconvert_nifti`, in the imaging-api pod. It lists every archived scan
+that has DICOM and no NIfTI, which is exactly what the `dcm2niix-scan` wrapper
+accepts. With `--launch` it converts them through Container Service's bulk launch,
+the same route the XNAT UI's bulk launcher posts to:
+
+```bash
+# Report only: each FLIP project's scans without NIfTI, and what would be launched
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti
+# Convert one project's scans (hub project id or XNAT project ID) and follow them
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti --project <id> --launch
+```
+
+Run it on an idle trust (DQR import queue empty): it leaves alone any session
+archived in the last 10 minutes, whose trigger may still be starting its conversion.
+
+How it behaves:
+
+- **Which projects:** without `--project`, `--launch` converts only projects whose
+  trigger is active. An inactive trigger means the hub's *DICOM to NIfTI* setting is
+  off, and a project with no trigger has an unknown setting, so restore triggers
+  first (§2.3e). Naming a project converts it whatever its trigger says.
+- **No double conversions:** it never launches on a scan whose container has not
+  finished. A container that will never finish (the finalize stall: `_Waiting` long
+  after its history shows `complete`; or a Job deleted from under it) holds its scan
+  back until you pass `--relaunch-unfinished`.
+- **Followed to the result:** for `--wait` minutes (default 30; `0` returns at
+  once) it follows the scans it launched, and reports each as converted (its `NIFTI`
+  resource appeared), converting, without a container yet, or ended without NIfTI.
+  The launch response cannot say: it holds one `bulk-launch-id`, and every target
+  reads "To be assigned".
+- **Retries are re-runs:** nothing is relaunched within a run. Run `--launch` again
+  to relaunch the scans that ended without NIfTI. A scan is left alone once
+  `--max-attempts` (default 3) of its containers have ended, earlier ones included.
+- **One failure does not stop the rest:** a project XNAT will not list is reported
+  `NOT READ` and the others go on. A failed check while following is retried at the
+  next one.
+- **Exit codes:** 0 when every launch was converted (or nothing was needed); 1 when
+  a project was not read, a launch failed, or a conversion ended without NIfTI; 2
+  for an unknown project id (nothing is launched); 3 when the wait ended first.
+- **Large backlogs:** conversions queue behind the cluster's capacity (and, with the
+  FLIP#1448 conversion cap, at most `xnat.containerService.maxConcurrentJobs` at
+  once), so a backlog of hundreds outlasts the wait and exits 3. Re-run the report
+  later: a new `--launch` leaves a scan alone while its container runs.
+
+On Compose the same command is `make -C trust reconvert-nifti KIT=<CODE>
+[PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<minutes>] [MAX_ATTEMPTS=<n>]
+[RELAUNCH_UNFINISHED=1]`. The XNAT UI can do the same launch by hand: select the
+scans in the project's *Run Containers* bulk launcher, or in the batch-launch
+plugin's Processing Dashboard, which hands its selection to the same launcher.
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 

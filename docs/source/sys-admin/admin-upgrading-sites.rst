@@ -179,6 +179,10 @@ follow.
    Projects that still have a trigger are left alone. On Kubernetes the same command runs in the
    imaging-api pod (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3e).
 
+   A trigger fires on new scans only. Once the triggers are back, convert the scans archived
+   meanwhile with ``sudo -E make -C trust reconvert-nifti KIT=<slot>`` (report only; ``LAUNCH=1``
+   converts), as ``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3f describes.
+
 Kubernetes
 ==========
 

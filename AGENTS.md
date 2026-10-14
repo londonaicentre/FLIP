@@ -286,6 +286,7 @@ make -C trust debug-<SVC>-off      # Stop it
 make -C trust check-governance KIT=<CODE>   # Validate the trust's governance document (FLIP#1259) — both halves, host Python, starts nothing
 make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE trust: data-access-api (+ NVFLARE clients), checks the logged digest
 make -C trust restore-nifti-triggers KIT=<CODE> [ACTIVE=… INACTIVE=… REST=active|inactive DRY_RUN=1]  # Recreate DICOM->NIfTI triggers a pre-FLIP#1451 configure deleted; report only by default
+make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch; report only without LAUNCH (trust/deploy/helm/TROUBLESHOOTING.md §2.3f)
 ```
 
 ### Site release upgrades (FLIP#1204)

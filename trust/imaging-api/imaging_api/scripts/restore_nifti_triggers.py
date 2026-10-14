@@ -126,18 +126,20 @@ def _parse(argv: Sequence[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _resolve(ids: list[str], projects: list[Project]) -> tuple[set[str], list[str]]:
+def resolve_ids(ids: list[str], projects: list[Project]) -> tuple[set[str], list[str]]:
     """Maps hub or XNAT project ids to XNAT IDs, returning the unknown ones separately."""
     by_any = {p.ID: p.ID for p in projects} | {p.secondary_ID: p.ID for p in projects}
     known = {by_any[i] for i in ids if i in by_any}
     return known, [i for i in ids if i not in by_any]
 
 
-def _describe(project: Project) -> str:
+def describe(project: Project) -> str:
+    """How a report line names a project: its XNAT ID, its hub project id and its name."""
     return f"{project.ID} (hub project {project.secondary_ID}, {project.name!r})"
 
 
-def _trigger_state(trigger: dict[str, Any]) -> str:
+def trigger_state(trigger: dict[str, Any]) -> str:
+    """A trigger's state for a report line: active or inactive, and why XNAT calls it invalid."""
     state = "active" if trigger.get("active") else "inactive"
     if trigger.get("valid") is False:
         return f"{state}, INVALID: {trigger.get('validation-message') or 'no message'}"
@@ -158,8 +160,8 @@ def run(argv: Sequence[str], headers: dict[str, str], out: Callable[[str], None]
     """
     args = _parse(argv)
     projects = flip_projects(headers)
-    active, unknown_active = _resolve(args.active, projects)
-    inactive, unknown_inactive = _resolve(args.inactive, projects)
+    active, unknown_active = resolve_ids(args.active, projects)
+    inactive, unknown_inactive = resolve_ids(args.inactive, projects)
     unknown = unknown_active + unknown_inactive
     if unknown:
         out(f"ERROR: no FLIP project on this XNAT has the id(s): {', '.join(unknown)}. Nothing was changed.")
@@ -177,9 +179,9 @@ def run(argv: Sequence[str], headers: dict[str, str], out: Callable[[str], None]
     for project in projects:
         triggers = triggers_of.get(project.ID)
         if triggers:
-            states = "; ".join(f"subscription {t.get('id')} {_trigger_state(t)}" for t in triggers)
+            states = "; ".join(f"subscription {t.get('id')} {trigger_state(t)}" for t in triggers)
             note = " Named, but left as it is." if project.ID in named else ""
-            out(f"{_describe(project)}: has a trigger ({states}).{note}")
+            out(f"{describe(project)}: has a trigger ({states}).{note}")
             continue
         if project.ID in named:
             make_active = project.ID in active
@@ -188,22 +190,22 @@ def run(argv: Sequence[str], headers: dict[str, str], out: Callable[[str], None]
         else:
             undecided += 1
             out(
-                f"{_describe(project)}: NO trigger, not restored. Name it with --active or --inactive, as its "
+                f"{describe(project)}: NO trigger, not restored. Name it with --active or --inactive, as its "
                 "'DICOM to NIfTI' setting on the hub says, or pass --rest."
             )
             continue
         state = "active" if make_active else "inactive"
         if args.dry_run:
-            out(f"{_describe(project)}: NO trigger, would restore it {state}.")
+            out(f"{describe(project)}: NO trigger, would restore it {state}.")
             continue
         try:
             create_project_event_subscription(project.ID, image, make_active, headers)
         except Exception as exc:  # report and carry on: one project's failure must not strand the rest
             failed += 1
-            out(f"{_describe(project)}: NO trigger, restoring it {state} FAILED: {exc}")
+            out(f"{describe(project)}: NO trigger, restoring it {state} FAILED: {exc}")
             continue
         restored += 1
-        out(f"{_describe(project)}: NO trigger, restored it {state}.")
+        out(f"{describe(project)}: NO trigger, restored it {state}.")
 
     out(
         f"Projects: {len(projects)}. Restored: {restored}. Failed: {failed}. "
