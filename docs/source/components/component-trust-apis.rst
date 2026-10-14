@@ -96,7 +96,9 @@ Every 30 seconds the collector probes the Trust's own services concurrently — 
 ping, and the OMOP database with a plain TCP connect (the ``trust-api`` carries no database driver) — and
 grades each ``healthy``, ``degraded`` (slow), ``down`` or ``unknown``. The snapshot rides on the next
 heartbeat and is what the hub's connection-status drawer shows. A probe cycle that fails or hangs discards
-the snapshot rather than resend a stale one, so the hub shows *no data* instead of a frozen green.
+the snapshot rather than resend a stale one, so the hub shows *no data* instead of a frozen green. The PACS
+ping opens an association to the hospital PACS, so it runs at most every five minutes and the cycles in
+between report its last result.
 
 ***********
 Imaging API
