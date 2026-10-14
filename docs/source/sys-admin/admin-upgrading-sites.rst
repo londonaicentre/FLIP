@@ -51,7 +51,7 @@ follow.
 
 2. **Replace the Hub-shared block if you were sent a refreshed kit.** Copy only the block
    between ``# ── Hub-shared (managed …)`` and ``# ── Kit credentials (managed)`` from the new
-   ``.env.<CODE>.production`` into yours. Your Host-local profile (ports, data directories,
+   ``.env.<CODE>.prod`` into yours. Your Host-local profile (ports, data directories,
    ``FL_KIT_DIR``) and Trust-local credentials stay as they are — do not copy the whole file
    over yours.
 
@@ -66,11 +66,17 @@ follow.
       git fetch --tags origin
       git checkout vX.Y.Z          # the release named in the Site upgrade section
 
-   Your kit (``trust/.env.<CODE>.production``), the FL kit and the data directories are
+   Your kit (``trust/.env.<CODE>.prod``), the FL kit and the data directories are
    untracked, so checking out a tag never touches them. The upgrade verb refuses a release
    target from a checkout that is not at that tag (exit code 6, naming the fix) — the one
    reason to override it, ``ALLOW_CHECKOUT_DRIFT=1``, is testing a branch that is not a
    release.
+
+   .. note::
+
+      Before FLIP#1479 a kit was named ``.env.<CODE>.production``, ``.env.<CODE>.lza-prod`` or
+      a bare ``.env.<CODE>``. Such a kit keeps working for one release — the verbs find it and
+      print the exact rename — but rename it to ``trust/.env.<CODE>.prod`` before the next one.
 
    .. note::
 
@@ -94,9 +100,8 @@ follow.
      install, now with a *Hub-shared block current* row that compares your kit's AES key with
      the hub's (as your running trust-api last heard it), and warns when the kit pins a release
      behind the hub. The checklist and upgrade use the same kit: the root on-prem
-     verbs default to ``PROD=true``, prefer ``trust/.env.<KIT>.production``, and fall
-     back to ``trust/.env.<KIT>``. Pass ``PROD=stag|lza|lza-stag`` for another
-     deployed environment; the checklist names the selected path in its diagnostics.
+     verbs default to ``HUB=prod`` and read ``trust/.env.<KIT>.prod``. Pass ``HUB=stag``
+     to join the staging hub; the checklist names the selected path in its diagnostics.
      A kit you have just refreshed passes with a warning that trust-api still
      runs the old key: this upgrade is what recreates it;
    - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. A hub
@@ -170,7 +175,7 @@ git checkout vX.Y.Z`` first (the verb refuses a release tag from any other check
 
 .. code-block:: bash
 
-   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
 
 The resolver pins your kit exactly as on Compose; ``sync-kit`` then regenerates the override
 from it (``global.image.tag``, and the per-image pins below) and re-patches the Secret; then a
@@ -198,7 +203,7 @@ context ``make deploy-trust`` uses:
 
 .. code-block:: bash
 
-   make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> [TAG=vX.Y.Z]
+   make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
 ``deploy-trust`` remains the first-install verb: its ``seed-trust-data`` step re-seeds
 OMOP and Orthanc on the host and its XNAT step resets the archive.
@@ -256,11 +261,11 @@ sequence, all on the admin workstation:
 
    # 1. The hub's deployed inputs are the truth; the laptop env file follows them.
    cd deploy/providers/AWS && uv run --no-project --with boto3 python scripts/reconcile_ci_env.py \
-       --env prod --profile prod --compare ../../../.env.production
+       --env prod --compare ../../../.env.prod
    # 2. Refresh every local kit's Hub-shared block from the reconciled env file.
-   make sync-trust-kits PROD=true
+   make sync-trust-kits HUB=prod
    # 3. Package each site's kit and send it over the encrypted channel used at onboarding.
-   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true
+   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
 
 Then note *Refreshed kit needed: yes* in the release's Site upgrade section, and which keys
 changed, so operators know to replace the block before upgrading.
@@ -279,7 +284,7 @@ membership is already frozen unless asked to (``?include_frozen=true`` on the en
 store. A site that still holds its membership keeps it unchanged, so its patients cannot change; one that
 lost it freezes afresh from its live database.
 
-Deploying the hub itself — ``make deploy-centralhub PROD=true TAG=v<X.Y.Z>`` after enabling
+Deploying the hub itself — ``make deploy-centralhub HUB=prod TAG=v<X.Y.Z>`` after enabling
 Deployment Mode and waiting for ``GET /fl/quiesce`` — is described in ``deploy/providers/AWS/README.md``
 and in *Cutting a release* in CONTRIBUTING.md.
 

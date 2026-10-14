@@ -94,12 +94,12 @@ bastion only. From `deploy/providers/AWS/` with the staging profile:
 
 ```bash
 cd deploy/providers/AWS
-export AWS_PROFILE=stag                 # must match; the Makefile enforces it
+export AWS_PROFILE=lza-stag             # must match; the Makefile enforces it (stag on a self-contained estate)
 make aws-login                          # SSO
-make plan  PROD=stag DEPLOY_TRUST_EC2=false   # hub-only (trusts run on the desktop)
-make apply PROD=stag DEPLOY_TRUST_EC2=false   # run plan + apply as SEPARATE commands
-make deploy-centralhub                  # roll the hub services to the develop tip (sha-<short7> task-def revisions)
-make deploy-ui                          # ship the UI (S3 + CloudFront)
+make plan  HUB=stag DEPLOY_TRUST_EC2=false   # hub-only (trusts run on the desktop)
+make apply HUB=stag DEPLOY_TRUST_EC2=false   # run plan + apply as SEPARATE commands
+make deploy-centralhub HUB=stag         # roll the hub services to the develop tip (sha-<short7> task-def revisions)
+make deploy-ui HUB=stag                 # ship the UI (S3 + CloudFront)
 ```
 
 Image tags come from `.env.stag`: `DOCKER_TAG` (flip-api / flip-ui) and `DOCKER_FL_TAG`
@@ -117,8 +117,8 @@ Verify: `curl -s -o /dev/null -w '%{http_code}\n' https://stag.flip.aicentre.co.
 ## Part B — Bring up the two trusts (on the GPU desktop)
 
 Both trusts run on the desktop (they need the GPU the trust EC2 lacks). Prereqs: the trusts are
-registered on the hub (`make register-trusts PROD=stag`) and the FL-server NLB admits the desktop's
-public IP (`make allow-local-trust-nlb PROD=stag`). The DeCaf data itself is loaded into each
+registered on the hub (`make register-trusts HUB=stag`) and the FL-server NLB admits the desktop's
+public IP (`make allow-local-trust-nlb HUB=stag`). The DeCaf data itself is loaded into each
 trust's Orthanc + OMOP **after** the trust containers are up — see
 [Load the DeCaf dataset](#load-the-decaf-dataset-into-omop--orthanc) below.
 
@@ -137,8 +137,8 @@ OBSERVABILITY_CONFIG_DIR=/…/FLIP-Ark/trust/observability
 Start them (XNAT's reset step needs `sudo`, so run in a real terminal or enable passwordless sudo):
 
 ```bash
-env PROD=stag make -C trust up-trust KIT=GSTT
-env PROD=stag make -C trust up-trust KIT=KCH
+make -C trust up-trust KIT=GSTT HUB=stag
+make -C trust up-trust KIT=KCH HUB=stag
 ```
 
 Verify both are polling the hub: `docker logs trust1-trust-api-1 --tail 3` should show

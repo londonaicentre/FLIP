@@ -54,7 +54,7 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
 
-The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
+The on-prem trust kit (`trust/.env.<CODE>.prod`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
 
 ## Prerequisites
 
@@ -82,10 +82,10 @@ cd deploy/providers/AWS
 ### Recommended end-to-end target (hybrid)
 
 ```bash
-make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
+make full-deploy-hybrid HUB=<stag|prod> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
-This wrapper target runs the full AWS + on-prem trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
+This wrapper target runs the full AWS + on-prem trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `HUB` is inherited from the environment and supports both staging (`stag`) and production (`prod`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
 
 You still need to start the on-prem trust stack on the trust host. The playbook
 deliberately does **not** add the SSH login user to the `docker` group (docker
@@ -95,14 +95,14 @@ must be run via `sudo`:
 
 ```bash
 cd ../../..
-sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
+sudo -E make -C trust up-trust KIT=<CODE> HUB=<stag|prod>
 ```
 
-Use the trust code you registered, whose kit file is `trust/.env.<CODE>.production`.
+Use the trust code you registered, whose kit file is `trust/.env.<CODE>.<stag|prod>`.
 `-E` is load-bearing: it preserves `$HOME`, so root's docker client reuses your
 `~/.docker/config.json` GHCR login for the image pulls — a plain `sudo` looks in
-`/root/.docker` and the pulls fail. (`PROD` needs no preserving; `env PROD=…` sets
-it explicitly for the command.) Any direct `docker`, `docker compose`, or
+`/root/.docker` and the pulls fail. (`HUB` needs no preserving: it is a make argument.)
+Any direct `docker`, `docker compose`, or
 `docker swarm` invocations on the trust host should likewise be prefixed with `sudo`.
 
 > **Hosts provisioned before this change are not remediated by re-running the
@@ -190,7 +190,7 @@ make provision-local-trust
 > `XNAT_DATA_DIR=./xnat-data`, resolved against `trust/xnat/` (so
 > `<checkout>/trust/xnat/xnat-data`). Only when the kit omits the key does the
 > Makefile fall back to the **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` under
-> `PROD=stag|true` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
+> `HUB=stag|prod` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
 > in dev) — a deliberate split so two trusts sharing a host stay isolated. Compose,
 > `xnat-reset` and the ownership check all read that same variable, so the live tree
 > is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache}` plus
@@ -211,7 +211,7 @@ Opening the AWS FL-server NLB to the trust's public IP is a **separate** step �
 
    ```bash
    cd ../../..
-   sudo -E env PROD=stag make -C trust up-trust KIT=<CODE>   # the trust code you registered
+   sudo -E make -C trust up-trust KIT=<CODE> HUB=stag   # the trust code you registered
    ```
 
 2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling — `sudo docker compose logs trust-api`).
@@ -234,7 +234,7 @@ Any machine with the correct credentials can act as a trust — the hub identifi
 
 1. The trust must be registered on the hub — run `make register-trusts`, or use the Add-Trust button on the Connection status page. Registration inserts the `trust` row with its `api_key_hash` and claims an FL kit slot. No hub redeploy is needed.
 
-The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust registration automatically (both honour `PROD=stag|true`). When provisioning a trust standalone with `provision-local-trust`, the trust must already be registered.
+The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust registration automatically (both honour `HUB=stag|prod`). When provisioning a trust standalone with `provision-local-trust`, the trust must already be registered.
 
 ## Ansible Playbook Details
 

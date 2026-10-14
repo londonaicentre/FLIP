@@ -194,8 +194,8 @@ the remote hub logs a request. Remote hubs enforce MFA, so the Cognito password 
 as `FLIP_E2E_TOKEN` (the Cognito **AccessToken** of a TOTP-enrolled admin) plus `FLIP_E2E_REFRESH_TOKEN` so the smoke
 can renew it across a long training run. The module also imports flip-api `Settings`, whose dev class requires
 `POSTGRES_PASSWORD` even though the smoke never opens the database — export any dummy value on an LZA env, which has
-none (IAM DB auth). Run it through the root target so `PROD` selects the env file:
-`FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr PROD=lza-stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.
+none (IAM DB auth). Run it through the root target so `HUB` selects the env file:
+`FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr HUB=stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.
 
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the

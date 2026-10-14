@@ -8,16 +8,17 @@ The **platform-managed** deployment mode, for an AWS estate governed by the
 `Landing Zone Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_
 (LZA): a platform team owns the network, the guardrails and a shared edge, and
 FLIP's workload account is denied network-layer creation. It is the same
-Terraform root as the self-contained mode, selected by ``PROD=lza`` (production)
-or ``PROD=lza-stag`` (staging), which set the ``lza_managed_network`` flag; with
-the flag off the resolved configuration is identical to before, so the
-self-contained environments are never touched by LZA work (FLIP#749).
+Terraform root as the self-contained mode, selected by ``LZA_MANAGED_NETWORK=true``
+in the hub's environment file (``.env.prod`` or ``.env.stag``), which sets the
+``lza_managed_network`` flag; with the flag off the resolved configuration is
+identical to before, so the self-contained environments are never touched by LZA
+work (FLIP#749).
 
 This page describes **what the mode changes and what the estate has to
 provide**. The operator runbook — the environment file, the out-of-band
 prerequisites and their commands, the apply sequence — is the "Deploying onto an
-LZA estate (PROD=lza)" section of `deploy/providers/AWS/README.md
-<https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza>`_,
+LZA estate" section of `deploy/providers/AWS/README.md
+<https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate>`_,
 and the estate-side configuration lives in the platform team's own repositories.
 The prerequisites, IAM permissions, service authentication, schema changes and
 email setup shared with the self-contained mode are on :ref:`deploy-central-hub`.
@@ -136,8 +137,8 @@ account, and the estate around it, need:
 - the Terraform-CI bootstrap: the Terraform state bucket, the GitHub OIDC provider and the CI plan and apply
   roles. The platform repository applies them from FLIP's ``terraform_ci_bootstrap`` module, pinned to a FLIP
   commit. The permissions boundary every FLIP role carries is the accelerator's own
-  ``AICentre-WorkloadRoleBoundary``, which an SCP requires on every workload role and which the LZA modes of
-  the Makefile select by default; the module references it rather than declaring FLIP's. The bucket is versioned, blocks public
+  ``AICentre-WorkloadRoleBoundary``, which an SCP requires on every workload role and which the Makefile
+  selects by default on an LZA estate; the module references it rather than declaring FLIP's. The bucket is versioned, blocks public
   access, refuses unencrypted transport and keeps a bounded version history; it is encrypted with S3-managed
   keys, or on production with the AWS-managed KMS key;
 - an Identity Center permission set for the operator, with a matching ``lza-prod`` or ``lza-stag`` profile
@@ -170,16 +171,16 @@ Deploying
 every pull request into ``main`` or ``develop`` touching ``deploy/providers/AWS/**``,
 applies it on a push to ``develop``, and plans nightly to report drift — all
 authenticated by GitHub OIDC with no long-lived AWS keys. Pointing a GitHub
-environment at an account is a value change (the ``TF_PROD`` mode token plus the two
-role ARNs), described under "Repointing CI at the LZA accounts" in the deployment
+environment at an account is a value change (the ``TF_HUB`` and ``LZA_MANAGED_NETWORK``
+variables plus the two role ARNs), described under "Repointing CI at the LZA accounts" in the deployment
 README. Production is on LZA too (`FLIP#1199
 <https://github.com/londonaicentre/FLIP/issues/1199>`_, repointed 2026-10-06):
 merges to ``main`` apply to LZA production.
 
-``PROD=lza`` selects ``.env.lza-prod``, production semantics (``TF_VAR_environment=prod``, so RDS deletion
-protection and the final snapshot stay on) and deploys from ``origin/main``; ``PROD=lza-stag`` selects
-``.env.lza-stag``, staging semantics and ``origin/develop``. Each keeps its own trust-kit suffix
-(``trust/.env.<CODE>.lza-prod`` / ``.lza-stag``), so self-contained kits are never overwritten.
+``HUB=prod`` selects ``.env.prod``, production semantics (``TF_VAR_environment=prod``, so RDS deletion
+protection and the final snapshot stay on) and deploys from ``origin/main``; ``HUB=stag`` selects
+``.env.stag``, staging semantics and ``origin/develop``. Trust kits follow the same token
+(``trust/.env.<CODE>.prod`` / ``.stag``).
 
 The same targets run from a laptop as the **break-glass** path — when CI is wedged,
 and for the one-off account bootstrap steps that must precede the first CI plan:
@@ -188,7 +189,7 @@ and for the one-off account bootstrap steps that must precede the first CI plan:
 
    cd deploy/providers/AWS
    export AWS_PROFILE=lza-stag   # or: lza-prod
-   export PROD=lza-stag          # or: PROD=lza
+   export HUB=stag               # or: HUB=prod
 
    make init
    make plan
@@ -218,7 +219,7 @@ Further reading
 ***************
 
 - `deploy/providers/AWS/README.md — Deploying onto an LZA estate
-  <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza>`_
+  <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md#deploying-onto-an-lza-estate>`_
   — the operator runbook: environment file, out-of-band prerequisites, the handoff variables.
 - `FLIP#749 <https://github.com/londonaicentre/FLIP/issues/749>`_ — the migration that introduced the mode.
 - :ref:`security` — the "Cloud infrastructure" controls, including the estate-level ones the accelerator adds.

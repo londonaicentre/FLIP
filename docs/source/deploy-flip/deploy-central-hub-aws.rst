@@ -6,7 +6,7 @@ Deploy the Central Hub on AWS
 
 The **self-contained** deployment mode: everything FLIP needs lives in one AWS
 account, and Terraform builds the network as well as the services. It is the
-default (``PROD=stag`` / ``PROD=true``) and the shape the open-source project
+default (``LZA_MANAGED_NETWORK=false`` in the hub's environment file) and the shape the open-source project
 targets. The prerequisites, IAM permissions, service authentication, schema
 changes and email setup that apply to both modes are on
 :ref:`deploy-central-hub`; the platform-managed alternative is
@@ -78,9 +78,9 @@ The complete pipeline is wrapped behind a single Make target:
 .. code-block:: shell
 
    cd deploy/providers/AWS
-   make full-deploy PROD=stag    # staging
+   make full-deploy HUB=stag    # staging
    # OR
-   make full-deploy PROD=true    # production
+   make full-deploy HUB=prod    # production
 
 This runs, in order:
 
@@ -104,16 +104,16 @@ This runs, in order:
 12. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
 13. ``status`` — comprehensive health checks.
 
-The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,
-``true`` → ``.env.production``) and is mapped onto ``TF_VAR_environment``
-(``stag`` or ``prod``) so Terraform can gate prod-only RDS hardening (deletion
-protection, final snapshot).
+The ``HUB`` variable (required: ``stag`` or ``prod``) selects the environment
+file (``.env.stag`` / ``.env.prod``) and is mapped onto ``TF_VAR_environment``
+so Terraform can gate prod-only RDS hardening (deletion protection, final
+snapshot).
 
 Subsequent UI-only deploys do not need Terraform:
 
 .. code-block:: shell
 
-   make deploy-ui PROD=stag
+   make deploy-ui HUB=stag
 
 This rebuilds the UI from the working tree, regenerates ``window.js``, syncs to
 S3, and invalidates CloudFront. There is no legacy EC2 UI container; CloudFront
@@ -127,7 +127,7 @@ For debugging or selective steps:
 
 .. code-block:: shell
 
-   export PROD=stag    # or: export PROD=true
+   export HUB=stag    # or: export HUB=prod
 
    make github-login
    make aws-login

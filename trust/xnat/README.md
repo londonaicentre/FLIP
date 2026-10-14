@@ -62,7 +62,7 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 **How it works:**
 
 - `make up` / `make down` use `docker stack deploy` / `docker stack rm` under the hood
-- The stack definition uses layered compose files, selected by the `PROD` variable:
+- The stack definition uses layered compose files, selected by the `HUB` variable:
 
   | Environment | Files |
   | --- | --- |
@@ -76,7 +76,7 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
   In development the reset runs without `sudo` when the invoking user is the container uid (1001)
   and already owns every directory in the tree; any other developer, or a root-created directory,
-  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> PROD=<env>` (driven
+  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
   `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
   container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
@@ -168,7 +168,7 @@ that step. Configuration waits up to 15 minutes for an authenticated DQR plugin 
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
 tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
 
-In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
+In development (when `HUB` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
 > XNAT's container service plugin executes Docker commands on the host. `xnat-web` does **not** mount
@@ -182,7 +182,7 @@ In development (when `PROD` is not set), `make up` also mounts the local `xnat/p
 > `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /
 > `./xnat-data-KCH` in the dev examples) — a relative value resolves against `trust/xnat/`. Only
 > when the kit omits the key does `Makefile` fall back to a per-slot default derived from
-> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `PROD=stag|true`,
+> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `HUB=stag|prod`,
 > `./xnat-data-trust<N>` in development. See `docker-compose-stack.development.yml` for the full
 > volume configuration.
 

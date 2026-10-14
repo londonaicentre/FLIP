@@ -189,7 +189,7 @@ already-onboarded participant's kit byte-identical — no re-provision, no CA ro
 fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
 
 **One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
-PROD=stag|true` runs this whole section end to end. `N` is a target ("ensure N more live
+HUB=stag|prod` runs this whole section end to end. `N` is a target ("ensure N more live
 slots"), not a mint count: it discovers the deployment's nets from S3, **activates** up
 to `N` existing spares first (env-file edit only — no CA workspace, no certs, no upload),
 and for any remaining shortfall restores + fingerprint-verifies each net's CA workspace
@@ -205,7 +205,7 @@ unusual cases (custom slot names, a single net).
 different things: the hub only claims names listed in `FL_KIT_SLOT_NAMES` (via the SSM
 parameter). A net provisioned with spare kits therefore has kits no trust can claim, and
 those need **activating, not minting** — add the name to `FL_KIT_SLOT_NAMES`, run
-`make -C deploy/providers/AWS apply-fl-kit-slots PROD=…`, done (no certs, no upload, no
+`make -C deploy/providers/AWS apply-fl-kit-slots HUB=…`, done (no certs, no upload, no
 restart). `add-fl-kits N=<n>` does this for you: it treats `N` as "ensure N more live
 slots" and activates up to `N` such spares (lowest-numbered first) before minting the
 shortfall, so a good kit is never stranded and, when spares cover `N`, nothing is minted
@@ -254,7 +254,7 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 > wipes `state/`, rotates the root CA, and so **forces a redeploy of every already-onboarded
 > trust** (the same fleet-wide churn called out above). Only take this route in a maintenance
 > window where redeploying the whole fleet is acceptable, then re-upload:
-> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 PROD=true`.
+> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 HUB=prod`.
 
 ### Activating the new slot on the hub
 
@@ -274,8 +274,8 @@ list has a single source per environment (`resolve_fl_kit_slot_names`):
   production source (the list is plain configuration, not a secret, and there is
   deliberately no env fallback: a broken or missing parameter means the pool can't grow,
   loudly, rather than silently serving stale env values). Add the name to
-  `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.production` and run
-  `make -C deploy/providers/AWS apply-fl-kit-slots PROD=stag|true` — a targeted
+  `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.prod` and run
+  `make -C deploy/providers/AWS apply-fl-kit-slots HUB=stag|prod` — a targeted
   plan/apply of just that parameter, with a plain-text diff you can review. **No
   restart, no task-definition change**: the next registration reconciles the pool from
   the parameter. (`make add-fl-kits` runs this step for you.)

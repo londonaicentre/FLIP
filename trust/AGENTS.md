@@ -52,13 +52,13 @@ that `scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kit
 results to S3); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
 `deploy/fl_backend.mk` (trust/Makefile includes it).
 
-`make sync-trust-kit KIT=<CODE> PROD=<env>` refreshes the Hub-shared block in
+`make sync-trust-kit KIT=<CODE> HUB=<env>` refreshes the Hub-shared block in
 `trust/.env.<CODE>.<env>` from the admin's local `$(MAIN_ENV_FILE)` without
 rotating credentials. Implemented by `scripts/sync_trust_kit.py` (uv
 PEP 723 script — stdlib only, no docker/jq/ECS round-trip). Works
 identically across dev/stag/prod — the root Makefile's `include
 $(MAIN_ENV_FILE)` + `export` populates os.environ before the script
-runs, so `PROD=true` simply selects which env file to read. Run after
+runs, so `HUB=prod` simply selects which env file to read. Run after
 rotating `AES_KEY_BASE64`, bumping `DOCKER_TAG`, switching `FL_BACKEND`,
 etc., then re-transmit the refreshed kit file to the remote operator
 (out-of-band, same as initial distribution — SCP-via-SSM for EC2;
@@ -67,24 +67,24 @@ encrypted channel for on-prem).
 For the on-prem flow, the admin scaffolds and fills the kit on their
 workstation in two commands (prod AWS creds required):
 
-1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=true`
-   — scaffolds `trust/.env.<CODE>.production` from the base template
+1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
+   — scaffolds `trust/.env.<CODE>.prod` from the base template
    (`trust/.env.example`).
-2. `make register-trust KIT=<CODE> PROD=true` — registers on the prod hub and
+2. `make register-trust KIT=<CODE> HUB=prod` — registers on the prod hub and
    fills BOTH the Kit credentials AND the Hub-shared block in one step.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true`
+Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
 tarballs the populated kit file as-is + the operator's slice of the FL
 participant kit S3 bucket into
 `deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 
-The operator extracts, copies `.env.<CODE>.production` into their checkout,
+The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE> PROD=true`
+the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
 the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE> PROD=true`.
+exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
 Sudo because the provisioned login user is deliberately not in the docker group
 (root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
 GHCR login from `~/.docker/config.json`.
@@ -103,7 +103,7 @@ GHCR login from `~/.docker/config.json`.
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
 | `deploy/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
-| `.env.<CODE>.<env>` | Per-trust kit file, e.g. `.env.GSTT.development`, `.env.<CODE>.production` (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: per-trust dev examples `.env.GSTT.development.example` / `.env.KCH.development.example`; the generic scaffold base `.env.example`, consumed by `make new-trust`. Same kit-file schema everywhere — `make -C trust up-trust KIT=<CODE> PROD=<env>` is the only dispatch |
+| `.env.<CODE>.<env>` | Per-trust kit file, e.g. `.env.GSTT.development`, `.env.<CODE>.prod` (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: per-trust dev examples `.env.GSTT.development.example` / `.env.KCH.development.example`; the generic scaffold base `.env.example`, consumed by `make new-trust`. Same kit-file schema everywhere — `make -C trust up-trust KIT=<CODE> HUB=<env>` is the only dispatch |
 
 On Kubernetes the trust's per-trust keys reach the cluster twice: `patch-kit-secrets`
 patches them into the chart Secret (field manager `kubectl-patch`) and the chart templates
@@ -112,9 +112,10 @@ two must agree or `helm upgrade` is refused with `conflict with "kubectl-patch"`
 refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` keeps them
 in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
 server-side-apply a subset of that Secret (it prunes the keys it does not list).
-`PROD` → kit-file token comes only from `deploy/env_mode.mk`: the chart Makefile injects it
-as `KIT_ENV` / `--env` into the preflight script and `sync_k8s_kit.py`, which refuse a `PROD`
-without it instead of keeping their own map (`lza` → `.lza-prod`, `lza-stag` → `.lza-stag`).
+The kit-file token is `HUB` itself (`prod` / `stag`, unset = `development`). The chart Makefile
+resolves the kit file through `deploy/env_mode.mk`'s `kit_file` — which still finds a pre-FLIP#1479
+name (`.production`, `.lza-prod`, `.lza-stag`, bare) for one release and prints the rename — and
+passes it to the preflight script (`KIT_FILE`) and `sync_k8s_kit.py` (`--kit-file`).
 
 ## Commands (from `trust/`)
 
@@ -123,11 +124,11 @@ make up                        # Start the shipped dev trust stacks (GSTT + KCH)
 make down                      # Stop all trusts
 make up-trust KIT=GSTT         # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=GSTT       # Stop one trust stack
-make onboard-onprem-trust KIT=<CODE> PROD=<env>  # Read-only readiness check using this Makefile's resolved KIT_FILE; root on-prem wrappers default PROD=true
+make onboard-onprem-trust KIT=<CODE> HUB=<env>  # Read-only readiness check using this Makefile's resolved KIT_FILE; root on-prem wrappers default HUB=prod
 make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
-make upgrade-trust KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
+make upgrade-trust KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
-make up-trust KIT=<CODE> PROD=true  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
+make up-trust KIT=<CODE> HUB=prod  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
 make debug                     # Trust-1 in debug mode
 make debug-trust-api           # Debug trust-api only
 make debug-imaging-api         # Debug imaging-api only
@@ -151,7 +152,7 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
 
 ## Environment
 
-- In production all runtime config comes from the kit file (`trust/.env.<KIT>`): neither `trust/Makefile` nor `trust/xnat/Makefile` includes a hub `.env.*`. In dev, `trust/Makefile` also `-include`s `../$(MAIN_ENV_FILE)` for the Hub-shared values (see *Kit file structure*). `PROD` also selects the compose-file suffix (development / production).
+- In production all runtime config comes from the kit file (`trust/.env.<CODE>.<env>`): neither `trust/Makefile` nor `trust/xnat/Makefile` includes a hub `.env.*`. In dev, `trust/Makefile` also `-include`s `../$(MAIN_ENV_FILE)` for the Hub-shared values (see *Kit file structure*). `HUB` also selects the compose-file suffix (development / production).
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
 - `DEBUG`: `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.

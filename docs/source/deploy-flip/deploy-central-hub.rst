@@ -21,7 +21,8 @@ Deployment modes
 ****************
 
 Both modes are permanently supported. They share the one root module — the
-second is selected by an environment flag, not a fork of the code.
+second is selected by a setting in the hub's environment file, not a fork of the
+code.
 
 .. list-table::
    :header-rows: 1
@@ -32,11 +33,11 @@ second is selected by an environment flag, not a fork of the code.
      - Network
      - Ingress
    * - **Self-contained** (default)
-     - ``PROD=stag`` / ``PROD=true``
+     - ``LZA_MANAGED_NETWORK=false``
      - FLIP creates its own VPC, subnets, internet gateway and NAT
      - In-account CloudFront for the UI and ``/api/*``; a public NLB for FL traffic
    * - **Platform-managed**
-     - ``PROD=lza`` (production) / ``PROD=lza-stag`` (staging)
+     - ``LZA_MANAGED_NETWORK=true``
      - Discovered from a VPC provisioned by the AWS `Landing Zone Accelerator
        <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_;
        FLIP creates no network resources
@@ -133,9 +134,9 @@ Prerequisites
 5. **SSH key pair** at ``~/.ssh/host-aws`` — uploaded to AWS and used as the
    identity file for the SSM ProxyCommand-based SSH config (self-contained mode;
    the platform-managed mode has no SSH or Ansible step).
-6. **Environment file** — ``.env.stag`` (staging) or ``.env.production``
-   (production) for the self-contained mode, ``.env.lza-stag`` or
-   ``.env.lza-prod`` for the platform-managed mode, in the project root.
+6. **Environment file** — ``.env.stag`` (staging) or ``.env.prod``
+   (production) in the project root, with ``LZA_MANAGED_NETWORK`` set to
+   ``false`` (self-contained) or ``true`` (platform-managed).
 7. **AWS Session Manager plugin** — required for ``ssh flip`` and
    ``make forward-trust`` (self-contained mode).
 
@@ -143,14 +144,13 @@ AWS profile aliases (``prod``, ``stag``, ``dev``, and ``lza-prod`` / ``lza-stag`
 for a platform-managed deployment) should be configured in ``~/.aws/config`` so
 the Makefile guards can verify the active profile against the chosen environment.
 
-The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,
-``true`` → ``.env.production``, ``lza`` → ``.env.lza-prod``, ``lza-stag`` →
-``.env.lza-stag``) and is mapped onto ``TF_VAR_environment`` — ``prod`` for
-``true`` and ``lza``, ``stag`` otherwise — so Terraform can gate prod-only RDS
-hardening (deletion protection, final snapshot). The two ``lza`` values
-additionally set the platform-managed-network flag, which is orthogonal to the
-environment name: ``PROD=lza`` is a production estate and keeps every prod-only
-control, while ``PROD=lza-stag`` is staging semantics on the same
+The ``HUB`` variable (``stag`` or ``prod``, required by every
+``deploy/providers/AWS`` target) selects the environment file (``.env.stag`` /
+``.env.prod``) and is mapped onto ``TF_VAR_environment`` so Terraform can gate
+prod-only RDS hardening (deletion protection, final snapshot). The network mode
+is orthogonal to it: ``LZA_MANAGED_NETWORK`` in that file sets the
+platform-managed-network flag, so ``HUB=prod`` on an LZA estate keeps every
+prod-only control, and ``HUB=stag`` there is staging semantics on the same
 platform-managed network.
 
 ************************
@@ -194,10 +194,10 @@ for full details):
 - **Trust API keys** — minted by the ``register_trust`` service when a trust is
   registered. The hub stores only the SHA-256 hash in the ``api_key_hash``
   column of the ``trust`` table; the plaintext is written once into that
-  trust's kit file (``trust/.env.<CODE>.<env>``). Trusts are registered from
+  trust's kit file (``trust/.env.<CODE>.<hub>``). Trusts are registered from
   ``deploy/providers/AWS`` with ``make register-trusts KIT=<CODE>`` for a single
   kit, or ``make register-trusts`` with no ``KIT`` for every
-  ``trust/.env.*.<env>`` kit present.
+  ``trust/.env.*.<hub>`` kit present.
 - **Internal service key** — single hub-internal key for fl-server → flip-api
   calls. Generated with ``make generate-internal-service-key``.
 - **Trust-internal service keys** — per-trust shared secret used inside each
@@ -206,7 +206,7 @@ for full details):
   trust API key and written into the trust's kit file.
 
 ``make generate-internal-service-key`` populates the active env file
-(``.env.stag``, ``.env.production``, ``.env.lza-stag`` or ``.env.lza-prod``) and
+(``.env.stag`` or ``.env.prod``) and
 preserves any keys that already exist; ``make register-trusts`` writes the
 per-trust keys into the kit files.
 
@@ -233,7 +233,7 @@ The same page's ``AES_KEY_BASE64`` must be byte-identical on the hub and on ever
 trust container that decrypts. On staging and production the hub's copy is whatever
 the CI Terraform apply wrote into Secrets Manager from the GitHub environment; recover
 the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` rather than
-trusting a checked-out ``.env.<env>``.
+trusting a checked-out ``.env.<hub>``.
 
 Applying schema changes
 ***********************

@@ -84,9 +84,9 @@ slot); the chart never registers anything itself. The flow is:
 
 ```bash
 # From the repo root. <CODE> is this trust's name, e.g. Trust_K8s.
-make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>"
-make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=stag   # mints creds + claims FL slot
-make sync-trust-kit KIT=<CODE> PROD=stag                            # fills the Hub-shared block
+make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>" HUB=stag
+make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=stag   # mints creds + claims FL slot
+make sync-trust-kit KIT=<CODE> HUB=stag                            # fills the Hub-shared block
 ```
 
 This writes `trust/.env.<CODE>.stag` containing the per-trust keys
@@ -129,7 +129,7 @@ without touching the infra keys.
 ### 3. Sync the kit into the cluster
 
 ```bash
-make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=stag
+make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=stag
 ```
 
 This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
@@ -191,7 +191,7 @@ reached the node leaves the pod `Pending` on the `hostPath type check failed` ev
 ### 5. Install / upgrade the chart
 
 ```bash
-make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=stag
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=stag
 ```
 
 With `KIT=` this first regenerates `k8s-trust-<CODE>.yaml` from the kit
@@ -204,18 +204,15 @@ is given) and a `helm lint` — and aborts the install if a required check fails
 Run it on its own to check a host before deploying:
 
 ```bash
-make -C trust/deploy/helm preflight KIT=<CODE> PROD=stag
+make -C trust/deploy/helm preflight KIT=<CODE> HUB=stag
 ```
 
-`PROD` takes the platform's five tokens — unset (development), `stag`, `true`,
-`lza`, `lza-stag` — and the Makefile resolves the kit-file suffix through
-`deploy/env_mode.mk`, the single source of truth (`lza` → `trust/.env.<CODE>.lza-prod`,
-`lza-stag` → `.lza-stag`). That resolved token is injected into `scripts/preflight.sh`
-as `KIT_ENV` (not `ENV` — that is the POSIX shell's own startup-file variable) and into
-`sync_k8s_kit.py` as `--env`, so the checklist looks for the kit an LZA
-site actually has. Neither script keeps its own copy of that map: run bare with `PROD` set
-and no token, each refuses and names the Makefile target to use, rather than quietly
-reading a `development` kit. With `PROD` unset they still default to development.
+`HUB` takes the platform's three values — unset (development), `stag`, `prod` — and is
+itself the kit-file token (`trust/.env.<CODE>.<hub>`). The Makefile resolves the kit file
+through `deploy/env_mode.mk`'s `kit_file`, which for one release still finds a kit under its
+pre-FLIP#1479 name (`.production`, `.lza-prod`, `.lza-stag`, bare) and prints the rename, and
+passes the result to `scripts/preflight.sh` as `KIT_FILE` and to `sync_k8s_kit.py` as
+`--kit-file`, so the checklist reads the kit the site actually has.
 
 Equivalent raw Helm for the install step:
 
@@ -271,7 +268,7 @@ Three fixes that look right and are not:
 | `kubectl apply --server-side --field-manager=helm` of the three keys | Worse: a **partial** apply prunes every key that manager owns and did not list, emptying the XNAT / OMOP / Orthanc slots out of the same Secret (verified). |
 
 If you hit the conflict on a deployment that predates this change, re-run
-`make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>` once — it realigns the
+`make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> HUB=<env>` once — it realigns the
 values file with the live keys — then redeploy. Helm 3 never applies server-side and is
 unaffected either way; the chart needs no version switch.
 
@@ -334,7 +331,7 @@ reach the hub's FL server. Add the node's public/egress IP to
 `K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]`), then reconcile the NLB:
 
 ```bash
-make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=stag
+make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> HUB=stag
 ```
 
 This is a normal `terraform apply` (no `-target`), so re-running with an
@@ -492,12 +489,12 @@ does roll the fl-client and interrupts its job: apply one between runs.
 # 1. Point ACCESS_POLICY_FILE at the document in trust/.env.<CODE>.<env> (a path resolved against
 #    trust/, as Compose resolves it), then validate: both halves, through the loaders the services
 #    themselves run, including a site privacy section on a Flower trust and a filter in both places.
-make -C trust check-governance KIT=<CODE> PROD=<env>
+make -C trust check-governance KIT=<CODE> HUB=<env>
 
 # 2. Deploy. Both targets regenerate k8s-trust-<CODE>.yaml from the kit first: sync-kit embeds the
 #    document as governance.document, validates it again, writes flPrivacyChecksum, and carries the
 #    kit's COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* to the chart.
-make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>    # or upgrade-trust-k8s
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>    # or upgrade-trust-k8s
 ```
 
 Do not set the document with `helm upgrade --set-file governance.document=…`. The next
@@ -588,7 +585,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out, and trust roles have no cross-account read. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out, and trust roles have no cross-account read. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):

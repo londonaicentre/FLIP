@@ -321,9 +321,10 @@ carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `regis
 automatically once the hub is up.
 
 For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
-that `up-onprem-trust` and `upgrade-onprem-trust` use: `.env.<CODE>.<env>` first,
-then the legacy `.env.<KIT>`, under `trust/`. These root wrappers default to
-`PROD=true`; pass `PROD=stag`, `lza` or `lza-stag` for another deployed environment.
+that `up-onprem-trust` and `upgrade-onprem-trust` use: `trust/.env.<CODE>.<env>`, or for
+one release a kit still under its pre-FLIP#1479 name (`.production`, `.lza-prod`, `.lza-stag` or a
+bare `.env.<CODE>`), with a one-line rename hint. These root wrappers default to
+`HUB=prod`; pass `HUB=stag` for the staging hub.
 The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
 resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
 
@@ -515,7 +516,7 @@ false positive.
 
 ### Running the stack (pull vs. build)
 
-In development (`PROD` unset), `make up` **pulls** the repo-built service images
+In development (`HUB` unset), `make up` **pulls** the repo-built service images
 (`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
 instead of building them — each carries `image:` + `pull_policy: always` in the dev
 compose, and your local `src/` is bind-mounted on top, so editing a `.py` still
@@ -530,7 +531,7 @@ make up BUILD=true     # rebuild the repo-built services from local source inste
 Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
 system packages, or a `Dockerfile` — those live in the image layer, so a plain
 `make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
-no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+no GHCR image). Stag/prod (`HUB=stag|prod`) are unaffected: they run the prod
 compose with baked images and no bind-mounts.
 
 ## The contribution process
@@ -664,7 +665,7 @@ make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
 # Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
 # without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
-make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
+make -C trust/deploy/helm sync-kit-override KIT=<CODE> HUB=<env>
 
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
 # receiver log (a C-ECHO cannot see an importer crash — FLIP#1228). Exits 0 pass, 1 fail,
@@ -862,7 +863,7 @@ Before opening the release PR from `develop` to `main`:
 
 The release is not deployed by merging. Two steps, in this order:
 
-1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui PROD=true` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --profile prod --compare .env.production` → `make sync-trust-kits PROD=true` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui HUB=prod` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.
 1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<slot>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes
@@ -884,7 +885,7 @@ Full detail — the per-PR gates, the trusted-publishing setup, and the `release
 
 ### Deploying the release
 
-Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
+Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
 
 ### Hotfixes
 

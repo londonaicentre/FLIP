@@ -31,7 +31,7 @@ Glossary
     **Landing Zone Accelerator (LZA)**
       AWS's reference implementation of a multi-account estate with centrally managed network,
       guardrails and logging. FLIP's Central Hub can be deployed onto such an estate as its
-      platform-managed mode (``PROD=lza``), where the workload account discovers the network it is
+      platform-managed mode (``LZA_MANAGED_NETWORK=true``), where the workload account discovers the network it is
       given and ingress arrives through the estate's edge. See :ref:`deploy-central-hub-aws-lza`.
 
     **MAP**

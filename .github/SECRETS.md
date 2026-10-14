@@ -80,24 +80,25 @@ GitHub *environments* — `aws-stag` and `aws-prod` — so the values are scoped
 environment and readable only on the branches its deployment branch policy admits
 (`aws-prod` admits `main` alone; that restriction is security, not tidiness).
 
-Which account and which mode an environment drives is set by its **`TF_PROD`**
-variable — the `deploy/env_mode.mk` token, one of `stag` | `true` | `lza-stag` |
-`lza` — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
+Which account an environment drives is set by its **`TF_HUB`** variable (`stag` |
+`prod`, the `deploy/env_mode.mk` selector) and **`LZA_MANAGED_NETWORK`** (`true` for
+a platform-managed LZA network, `false` for a self-contained one), neither of which
+defaults — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
 assumes. Those roles are not created by FLIP's pipeline: they come from the
 `deploy/providers/AWS/modules/terraform_ci_bootstrap` module, which the platform
 repositories (`aicentre-iac`, `aicentre-lza-iac`) apply in each account — or, in an
 account you own, `deploy/providers/AWS/ci`. The seeding script reads both ARNs from
 IAM, after checking the roles trust this repository's environment. Repointing an environment at a different AWS account is a change to those
-values, not to any workflow. Because that variable alone decides the estate's
-shape, the workflows also state the **class** their branch implies
+values, not to any workflow. Because `TF_HUB` alone decides the estate's
+class, the workflows also state the **class** their branch implies
 (`EXPECTED_ENV_CLASS`: `main` → `prod`, otherwise `stag`; `stag` in
-`terraform_plan.yml`) and `compose-ci-env.sh` refuses to compose when `TF_PROD`
+`terraform_plan.yml`) and `compose-ci-env.sh` refuses to compose when `TF_HUB`
 names the other class — so a mis-set variable is a red compose step rather than an
 unattended apply that plans production with staging's shape. The full key list, the
 seeding procedure and the per-account bootstrap order are documented with the stack
 that consumes them: `deploy/providers/AWS/README.md` → "Terraform CI: plan on PR,
 apply on merge" and "Repointing CI at the LZA accounts". Seeding is done by
-`deploy/providers/AWS/scripts/setup-github-environments.sh --mode <token>` (repo
+`deploy/providers/AWS/scripts/setup-github-environments.sh --hub <stag|prod> --lza-managed-network <true|false>` (repo
 admin, `--dry-run` first, from a machine holding the operator's `.env.<env>` file).
 
 ## Security Notes

@@ -25,10 +25,11 @@ trust's identity, credentials, and Hub-shared configuration. `trust_kit_lib.py` 
 in-place-upsert implementation behind the others, so a kit file's operator edits (host-local
 ports, bind dirs) always survive a re-run.
 
-- **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=<stag|true>`; leave
-  `PROD` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
+- **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=<stag|prod>`; leave
+  `HUB` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
   (`trust/.env.example`), prepending the trust's identity (`TRUST_NAME` / `TRUST_CODE` /
-  `TRUST_REGION`). Refuses to overwrite an existing kit. The result is ready for
+  `TRUST_REGION`). Refuses to overwrite an existing kit, or to scaffold one beside a kit
+  still under its pre-FLIP#1479 name. The result is ready for
   `make register-trust KIT=<CODE>` to fill in credentials.
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
@@ -45,7 +46,7 @@ ports, bind dirs) always survive a re-run.
   default without `--target`) reads a JSON array of kits on stdin and writes each to the legacy
   slot-named `trust/.env.<fl_kit_slot>`, seeding a host-local profile from the matching
   `.example` on first write; nothing in the repo invokes it any more.
-- **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> PROD=<env>`) — refreshes only the
+- **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> HUB=<env>`) — refreshes only the
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
   untouched. Portable across dev/stag/prod — no docker compose exec, no ECS round-trip.
