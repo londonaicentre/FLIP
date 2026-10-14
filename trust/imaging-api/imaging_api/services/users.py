@@ -43,12 +43,10 @@ def get_xnat_users(headers: dict[str, str]) -> list[User]:
         Exception: If XNAT returns a non-200 response.
     """
     response = requests.get(xnat_url("xapi", "users", "profiles"), headers=headers)
-    users = [User(**user) for user in response.json()]
-
-    if response.status_code == 200:
-        return users
-    else:
+    if response.status_code != 200:
         raise Exception(f"Error: Getting XNAT users failed: {response.status_code} - {response.text}")
+
+    return [User(**user) for user in response.json()]
 
 
 def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> CreateUser:
@@ -102,9 +100,76 @@ def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> Cre
     )
 
 
+def _match_in_listing(key: str, value: str, headers: dict[str, str]) -> User:
+    """
+    Finds the XNAT user whose ``key`` equals ``value`` exactly, by listing every user profile.
+
+    Args:
+        key (str): The ``User`` field to match on: ``"username"`` or ``"email"``.
+        value (str): The value to match, exactly and case-sensitively.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        imaging_api.routers.schemas.User: The first matching user profile.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If no XNAT user matches.
+        Exception: If listing the XNAT users fails.
+    """
+    try:
+        users = get_xnat_users(headers)
+    except Exception as e:
+        raise Exception(f"Error: XNAT error when fetching users: {str(e)}")
+
+    for user in users:
+        if getattr(user, key) == value:
+            return user
+
+    raise NotFoundError(f"User not found by {key}")
+
+
+def get_xnat_user_profile(username: str, headers: dict[str, str]) -> User:
+    """
+    Fetches one user profile from XNAT by username, with ``GET /xapi/users/profile/{username}``.
+
+    Only a 404 means "no such user". XNAT refuses to look up some names an account can still carry (from
+    LDAP, OpenID or a legacy install), so any other failure falls back to an exact match in the listing.
+
+    Args:
+        username (str): The XNAT username to fetch.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        imaging_api.routers.schemas.User: The user profile.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If XNAT has no user with this username.
+        Exception: If XNAT fails, or answers 200 with a body that is not a user profile.
+    """
+    try:
+        url = xnat_url("xapi", "users", "profile", username)
+    except ValueError:
+        # An empty or dot-segment name cannot be an XNAT account.
+        raise NotFoundError("User not found by username")
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 404:
+        raise NotFoundError("User not found by username")
+    if response.status_code != 200:
+        logger.info(f"XNAT answered {response.status_code} for a user profile; matching against the user listing")
+        return _match_in_listing("username", username, headers)
+
+    try:
+        return User.model_validate(response.json())
+    except ValueError as e:
+        raise Exception("Error: XNAT's user profile response is not a user profile") from e
+
+
 def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
     """
     Fetches a user profile from XNAT using the key and value.
+
+    XNAT has no lookup by email, so an email lookup lists every profile and matches in Python.
 
     Args:
         key (str): The key to search by. Can be 'username' or 'email'.
@@ -117,22 +182,17 @@ def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
     Raises:
         AssertionError: If ``key`` is not ``"username"`` or ``"email"``.
         imaging_api.utils.exceptions.NotFoundError: If no XNAT user matches ``value`` for the given ``key``.
-        Exception: If fetching XNAT users fails.
+        Exception: If fetching the XNAT user profile(s) fails.
     """
     assert key in [
         "username",
         "email",
     ], f"Invalid key: {key}, must be 'username' or 'email'"
-    try:
-        users = get_xnat_users(headers)
-    except Exception as e:
-        raise Exception(f"Error: XNAT error when fetching users: {str(e)}")
 
-    for user in users:
-        if getattr(user, key) == value:
-            return user
+    if key == "username":
+        return get_xnat_user_profile(value, headers)
 
-    raise NotFoundError(f"User not found by {key}")
+    return _match_in_listing(key, value, headers)
 
 
 def user_exists(username: str, headers: dict[str, str]) -> bool:
@@ -274,8 +334,7 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
 
     if response.status_code == 201:
         logger.info(f"User '{user.username}' created successfully on XNAT")
-        user_profile = get_user_profile_by("username", user.username, headers)
-        return user_profile
+        return get_xnat_user_profile(user.username, headers)
 
     elif response.status_code == 409:
         raise AlreadyExistsError(f"Error: User '{user.username}' already exists")
