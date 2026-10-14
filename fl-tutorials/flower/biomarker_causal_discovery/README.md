@@ -163,7 +163,11 @@ uv run --project ../../../flip-utils --extra full --group dev python summarise_r
 
 Upload `app/` as a `standard` job with imaging **off** (`has_imaging=false`), paste `query.sql` as
 the cohort query, and keep `num-server-rounds` in `config.toml` at the mode's round count. There is
-no `e2e_smoke_<name>` target yet because the cohort is not seeded on the dev trusts.
+`make e2e_smoke_causal FL_BACKEND=flower` runs it on a local dev stack once your converted cohort is
+loaded into the two dev trusts (`make -C trust load-adni-cohort …`, NVFLARE README "On the platform")
+and the Flower FL images are built from this tree so they carry causal-learn (`make build-fl
+FL_BACKEND=flower`, run with `DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`). That run's downloaded model
+summarises to the same 16 stable edges, with identical frequencies, as the simulator run.
 
 ## References
 

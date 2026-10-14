@@ -166,7 +166,11 @@ both-backends switch: [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke
 
 Tabular-only cohorts (`has_imaging=false`, FLIP#1071) skip the imaging stage entirely; the EHR
 risk-prediction tutorials are the first such cohort and have their own target,
-`make e2e_smoke_ehr [FL_BACKEND=flower]`, which pins `--no-imaging` for you.
+`make e2e_smoke_ehr [FL_BACKEND=flower]`, which pins `--no-imaging` for you. The biomarker causal-discovery
+tutorial is the second: `make e2e_smoke_causal [FL_BACKEND=flower]`, after the licence holder's converted ADNI
+cohort has been loaded into the **local** dev trusts (`make -C trust load-adni-cohort TRUST_INDEX=<1|2>
+OMOP_DB_PORT=<5434|5436>`) and the FL images rebuilt from this tree so they carry causal-learn (`make build-fl`,
+`DOCKER_FL_TAG=dev`).
 
 ### Running FL Tutorials Locally
 
