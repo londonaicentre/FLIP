@@ -154,10 +154,9 @@ def test_xnat_db_superuser_and_app_role_use_distinct_secret_keys():
     """xnat-db's two passwords must not resolve to the same Secret key.
 
     ``POSTGRES_PASSWORD`` is the Postgres superuser; ``XNAT_DATASOURCE_PASSWORD``
-    is the `xnat` application role that xnat-web, imaging-api and the import
-    worker authenticate with. Pointing both at one key makes the app role's
-    password superuser-equivalent and quietly discards the separately minted
-    admin credential (FLIP-PT-056).
+    is the `xnat` application role that xnat-web authenticates with. Pointing
+    both at one key makes the app role's password superuser-equivalent and
+    quietly discards the separately minted admin credential (FLIP-PT-056).
     """
     refs = _secret_key_refs(XNAT_DB_TEMPLATE)
 

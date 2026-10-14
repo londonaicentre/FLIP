@@ -802,7 +802,7 @@ with `secrets.create=true` or pre-created externally):
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
-| `xnat-datasource-password` | xnat-web, xnat-db, imaging-api | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values, and imaging-api splices it into its `XNAT_DATABASE_URL` (FLIP-PT-056) |
+| `xnat-datasource-password` | xnat-web, xnat-db | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values (FLIP-PT-056). imaging-api does not hold it: it reads import status through XNAT's REST API (FLIP#1456) |
 | `xnat-datasource-admin-password` | xnat-db | Password of the Postgres **superuser** (`POSTGRES_PASSWORD`). Minted by the same command, from the kit's `XNAT_DATASOURCE_ADMIN_PASSWORD`. Must differ from `xnat-datasource-password` — xnat-db's entrypoint refuses to start when the two match (FLIP-PT-056) |
 | `grafana-admin-password` | grafana | Grafana admin password |
 
@@ -813,8 +813,7 @@ sync secrets from AWS Secrets Manager or HashiCorp Vault.
 
 xnat-db runs two Postgres roles, mirroring the swarm deployment: the `postgres`
 superuser (`xnat-datasource-admin-password`) and the non-superuser `xnat`
-application role (`xnat-datasource-password`) that xnat-web, imaging-api and the
-imaging-import worker authenticate with. The `xnat` role is created by the
+application role (`xnat-datasource-password`) that xnat-web authenticates with. The `xnat` role is created by the
 image's baked `XNAT.sql`, which runs from `/docker-entrypoint-initdb.d`.
 
 > **Do not mount a ConfigMap over `/docker-entrypoint-initdb.d`.** A directory
@@ -834,21 +833,20 @@ the old hash.) The two roles are handled differently from here:
 | `xnat` application role | `xnat-datasource-password` | **Automatic.** A `postStart` hook on the xnat-db container re-applies it to the live role on every pod start, so rotating the secret and restarting the pod is enough. |
 | `postgres` superuser | `xnat-datasource-admin-password` | **Manual.** Still first-initdb only — rotate it by hand as below. |
 
-Rotating the `xnat` role needs the secret updated and **all three**
-consumers restarted, in that order — `xnat-web` and `imaging-api` also hold
-`xnat-datasource-password` as a plain `secretKeyRef` env var, which resolves
-once at pod start with no `checksum/secret` annotation to force a restart, so
-stopping after `xnat-db` leaves them authenticating with the old password:
+Rotating the `xnat` role needs the secret updated and **both** consumers
+restarted, in that order — `xnat-web` also holds `xnat-datasource-password` as
+a plain `secretKeyRef` env var, which resolves once at pod start with no
+`checksum/secret` annotation to force a restart, so stopping after `xnat-db`
+leaves it authenticating with the old password:
 
 ```bash
 kubectl rollout restart statefulset/<release>-flip-trust-xnat-db
 kubectl rollout status statefulset/<release>-flip-trust-xnat-db
 kubectl rollout restart deployment/<release>-flip-trust-xnat-web
-kubectl rollout restart deployment/<release>-flip-trust-imaging-api
 ```
 
-`make patch-kit-secrets` restarts `imaging-api` (along with `trust-api` and
-`data-access-api`) but neither `xnat-db` nor `xnat-web`, so running it alone
+`make patch-kit-secrets` restarts `imaging-api`, `trust-api` and
+`data-access-api` but neither `xnat-db` nor `xnat-web`, so running it alone
 during a rotation still leaves those two on the old password — restart
 `xnat-db` and `xnat-web` yourself, in that order, around it.
 
@@ -1144,7 +1142,7 @@ The chart is validated in CI via:
 | ------- | ------- | ----- |
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
-| **DB unreachable** | trust-api / imaging-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
+| **DB unreachable** | data-access-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
 | **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect

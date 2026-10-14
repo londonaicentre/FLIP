@@ -16,12 +16,6 @@ import pandas as pd
 from fastapi import Depends, HTTPException, status
 from pydantic import ValidationError
 
-from imaging_api.db.get_direct_archive_sessions_by_project import (
-    get_direct_archive_sessions_by_project,
-)
-from imaging_api.db.get_executed_pacs_request_by_project import get_executed_pacs_request_by_project
-from imaging_api.db.get_queued_pacs_request_by_project import get_queued_pacs_request_by_project
-from imaging_api.db.get_session import get_session
 from imaging_api.routers.schemas import (
     ImportStatus,
     ImportStudy,
@@ -29,6 +23,11 @@ from imaging_api.routers.schemas import (
     Study,
 )
 from imaging_api.services.imaging import query_by_accession_number, queue_image_import_request
+from imaging_api.services.import_requests import (
+    get_direct_archive_sessions,
+    get_executed_import_requests,
+    get_queued_import_requests,
+)
 from imaging_api.services.projects import get_experiments, get_project
 from imaging_api.services_external.data_access import get_accession_ids
 from imaging_api.utils.auth import get_xnat_auth_headers
@@ -45,11 +44,11 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 # `PrearcStatus.ERROR` re-verified present in the XNAT 1.10.0 source. The DQR value IS verified for
 # DQR 3.0.0 (the 1.10-targeting major bump that also swaps dcm4che2 for dcm4che5): the released JAR
 # (public download on bitbucket.org/xnatdev/dicom-query-retrieve) keeps
-# `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary: QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED),
-# and the `xhbm_*_pacs_request` columns read by imaging_api/db/get_*_pacs_request_by_project.py were
-# confirmed unchanged against a live 3.0.0 instance during the 1.10.0 upgrade smoke test.
+# `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary: QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED).
+# imaging-api reads these statuses from DQR's and XNAT's REST listings (services/import_requests.py), so
+# an upgrade re-checks those listings rather than database columns.
 # Any other status on a row that exists means the import is still in flight. A successful directArchive
-# deletes its row, so "successful" is never read from these tables — only from the experiment listing.
+# deletes its row, so "successful" is never read from these records — only from the experiment listing.
 _PACS_REQUEST_FAILED_STATUS = "FAILED"
 _DIRECT_ARCHIVE_FAILED_STATUS = "ERROR"
 
@@ -230,6 +229,9 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             live OMOP on every status check, so a project that imported cleanly can start
             refusing later if its cohort shrinks (see FLIP#857). Otherwise, if the request
             cannot be processed.
+        imaging_api.utils.exceptions.XnatFetchError: If XNAT's experiment listing, DQR's import
+            queue or history, or the direct-archive sessions cannot be read. The route answers it
+            with a 500, never the 404 the hub reads as a missing project.
     """
     # Encrypt project ID to send to the data access API
     encrypted_project_id = encrypt(project_id, context=PROJECT_ID_CONTEXT)
@@ -263,15 +265,12 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # TODO What if the XNAT project contains experiments that aren't actually in the cohort dataframe?
     # Could this even happen?
 
-    # Go through the accession numbers and find its import status
-    async for session in get_session():
-        direct_archive_sessions = await get_direct_archive_sessions_by_project(project_id, session)
-
-    async for session in get_session():
-        executed_pacs_requests = await get_executed_pacs_request_by_project(project_id, session)
-
-    async for session in get_session():
-        queued_pacs_requests = await get_queued_pacs_request_by_project(project_id, session)
+    # Go through the accession numbers and find its import status. A request only moves forward, from
+    # DQR's queue to its history (where it stays), so reading the queue first sees a request that moves
+    # between the two reads in at least one of them.
+    queued_pacs_requests = get_queued_import_requests(project_id, headers)
+    direct_archive_sessions = get_direct_archive_sessions(project_id, headers)
+    executed_pacs_requests = get_executed_import_requests(project_id, headers)
 
     logger.debug(f"Direct Archive Sessions: {len(direct_archive_sessions)}")
     logger.debug(f"Executed PACS requests: {len(executed_pacs_requests)}")

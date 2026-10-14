@@ -7,6 +7,7 @@ FastAPI service for DICOM image retrieval via XNAT. Receives requests from trust
 ## Key Patterns
 
 - Communicates only with XNAT (`XNAT_URL`, `http://xnat-web:8080` on the trust network). It never opens a socket to Orthanc — DICOM reaches XNAT from the PACS via XNAT's own DQR plugin over DIMSE (port 4242)
+- Never reads XNAT's database and holds no credential for it (FLIP#1456 B1). Import status and the queue a project delete clears come from XNAT's REST API in `services/import_requests.py`: DQR's `GET /xapi/dqr/import/queue` and `/import/history` (no project filter, so `all=true` and rows kept by `xnatProject`; the history read newest first and stopped a day before the project's `insert_date`), and `POST /xapi/direct-archive` with a `project` filter. A failed read is an `XnatFetchError` (500), never a 404, which the hub reads as a missing project
 - Receives internal requests from trust-api (task-driven flow) and from the fl-client via the `flip` package (`flip.get_by_accession_number` etc.); not directly exposed
 - Every internal caller authenticates with the per-trust `TRUST_INTERNAL_SERVICE_KEY` header (see the root `AGENTS.md` "Trust-internal Service Authentication" section). `/health` stays unauthenticated
 - DICOM-to-NIfTI conversion support

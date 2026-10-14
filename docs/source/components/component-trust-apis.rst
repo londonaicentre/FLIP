@@ -115,7 +115,9 @@ the Trust-internal service key.
      - Create, list, inspect and delete XNAT projects; the hub-driven create is
        ``POST /projects/create-project-from-central-hub-project``.
    * - ``/retrieval``
-     - Import status counts and study re-import for a project.
+     - Import status counts and study re-import for a project. The counts are read through XNAT's REST
+       API (DQR's import queue and history, and XNAT's direct-archive sessions); imaging-api holds no
+       credential for XNAT's database.
    * - ``/imaging``
      - Ping the PACS, query it by accession number, queue an import.
    * - ``/download``
