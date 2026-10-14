@@ -123,6 +123,19 @@ def test_lookup_keeps_only_the_exact_match(mock_get, lookup, field, headers):
         lookup(_HUB_PROJECT_ID, headers)
 
 
+@pytest.mark.parametrize(
+    ("lookup", "field"), [(get_project, "ID"), (get_project_from_central_hub_project_id, "secondary_ID")]
+)
+@patch("imaging_api.services.projects.requests.get")
+def test_lookup_refuses_more_than_one_exact_match(mock_get, lookup, field, headers):
+    mock_get.return_value = _listing(
+        {**_PROJECT_DICT, "ID": "A", field: _HUB_PROJECT_ID}, {**_PROJECT_DICT, "ID": "B", field: _HUB_PROJECT_ID}
+    )
+
+    with pytest.raises(XnatFetchError, match="XNAT has 2 projects with"):
+        lookup(_HUB_PROJECT_ID, headers)
+
+
 @pytest.mark.parametrize("value", ["TEST*", "TE%ST", "TEST,OTHER", "TE ST", "TEST\n", "", "TÉST"])
 @pytest.mark.parametrize("lookup", [get_project, get_project_from_central_hub_project_id])
 @patch("imaging_api.services.projects.requests.get")

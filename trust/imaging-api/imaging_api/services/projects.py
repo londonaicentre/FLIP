@@ -60,7 +60,8 @@ def _find_project(field: str, value: str, headers: dict[str, str]) -> Project | 
     matches are kept.
 
     Raises:
-        imaging_api.utils.exceptions.XnatFetchError: If the XNAT request fails or its body is not a project listing.
+        imaging_api.utils.exceptions.XnatFetchError: If the XNAT request fails, its body is not a project listing,
+            or more than one project matches.
     """
     if not _XNAT_ID.fullmatch(value):
         return None
@@ -78,6 +79,8 @@ def _find_project(field: str, value: str, headers: dict[str, str]) -> Project | 
     except (AttributeError, KeyError, TypeError, ValueError) as e:
         raise XnatFetchError(f"Error: XNAT project fetch failed: unexpected response body: {e}") from e
 
+    if len(matches) > 1:  # fail closed rather than route a hub project to whichever one XNAT listed first
+        raise XnatFetchError(f"Error: XNAT has {len(matches)} projects with {field} '{value}'.")
     return matches[0] if matches else None
 
 
