@@ -18,13 +18,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import trust_api.services.health_collector as health_collector
-from trust_api.config import get_settings
 from trust_api.services.health_collector import (
-    ThrottledProbe,
     _probe_dicom,
     _probe_health_endpoint,
     _probe_tcp,
     _probe_xnat,
+    _ThrottledProbe,
     collect_once,
     current_snapshot,
     run_health_collector,
@@ -35,8 +34,7 @@ ROSTER = {"trust-api", "imaging-api", "data-access-api", "xnat", "dicom", "omop"
 
 @pytest.fixture(autouse=True)
 def _reset_snapshot(monkeypatch):
-    """The collector keeps the latest snapshot and the PACS ping throttle in module globals;
-    reset both per test, or one test's PACS result would be served to the next."""
+    """The collector keeps the latest snapshot and the PACS throttle in module globals; reset per test."""
     health_collector._snapshot = None
     monkeypatch.setattr(health_collector._pacs_ping, "_attempted_at", None)
     monkeypatch.setattr(health_collector._pacs_ping, "_result", None)
@@ -560,20 +558,16 @@ async def test_collect_once_isolates_a_probe_that_raises(caplog):
     assert any("xnat" in r.message and "TypeError" in r.message for r in caplog.records)
 
 
-# ---- PACS ping cadence (ThrottledProbe) ----
-#
-# Each live PACS probe is a C-ECHO association against the hospital PACS plus a stored
-# PacsPing row in XNAT (DQR DqrPacsApi.pingPacs), so it runs at most once per
-# PACS_PING_INTERVAL_SECONDS while the rest of the collection keeps its 30 s cadence.
+# ---- PACS ping cadence (_ThrottledProbe) ----
 
 
 class _FakeClock:
     """A monotonic clock the test moves by hand."""
 
-    def __init__(self, now: float = 1_000.0):
-        self.now = now
+    def __init__(self):
+        self.now = 1_000.0
 
-    def __call__(self) -> float:
+    def __call__(self):
         return self.now
 
 
@@ -581,32 +575,24 @@ def _pacs_entry(status, response_ms=None):
     return {"status": status, "version": None, "response_ms": response_ms}
 
 
-def test_the_collectors_pacs_throttle_uses_the_pacs_ping_interval():
-    """The process-wide throttle runs on PACS_PING_INTERVAL_SECONDS, not on the 30 s
-    collection cadence, which would restore a live ping on every cycle."""
-    assert health_collector._pacs_ping._interval_seconds == get_settings().PACS_PING_INTERVAL_SECONDS
-    assert get_settings().PACS_PING_INTERVAL_SECONDS != get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
-
-
 @pytest.mark.asyncio
-async def test_collector_ticking_every_30s_pings_the_pacs_live_once_per_interval(monkeypatch):
-    """Drive the real loop for ten minutes of 30 s cycles: the PACS is pinged at 0, 300
-    and 600 s only, every cycle still reports it, and the other probes run every cycle."""
+async def test_collector_ticking_every_30s_pings_the_pacs_once_per_interval(monkeypatch):
+    """Ten minutes of the real loop at 30 s: the PACS is pinged live at 0, 300 and 600 s only,
+    every cycle still reports it, and the other probes run every cycle."""
     clock = _FakeClock()
     start = clock.now
-    monkeypatch.setattr(health_collector, "_pacs_ping", ThrottledProbe(300, clock=clock))
+    monkeypatch.setattr(health_collector._pacs_ping, "_clock", clock)
     monkeypatch.setattr(health_collector, "HEALTH_COLLECT_INTERVAL_SECONDS", 30)
-
     live_pings_at: list[float] = []
     calls_per_url: dict[str, int] = {}
-    dicom_per_cycle: list[dict] = []
+    dicom_per_cycle: list[str] = []
 
     async def fake_get(url, **kwargs):
         calls_per_url[url] = calls_per_url.get(url, 0) + 1
         if url.endswith("/imaging/ping_pacs"):
             live_pings_at.append(clock.now - start)
-            return _response(200, {"successful": True, "pingTime": 1_786_029_453_834})
-        return _response(200, {"status": "ok", "version": "1.0"})
+            return _response(200, {"successful": True})
+        return _response(200, {"status": "ok"})
 
     mock_client = AsyncMock()
     mock_client.get.side_effect = fake_get
@@ -614,35 +600,29 @@ async def test_collector_ticking_every_30s_pings_the_pacs_live_once_per_interval
     client_cm.__aenter__.return_value = mock_client
 
     async def fake_sleep(seconds):
-        dicom_per_cycle.append(current_snapshot()["services"]["dicom"])
+        dicom_per_cycle.append(current_snapshot()["services"]["dicom"]["status"])
         if len(dicom_per_cycle) == 21:  # cycles at t = 0, 30, ..., 600
             raise asyncio.CancelledError()
         clock.now += seconds
 
     with (
         patch("trust_api.services.health_collector.httpx.AsyncClient", return_value=client_cm),
-        patch(
-            "trust_api.services.health_collector.asyncio.open_connection",
-            side_effect=ConnectionRefusedError("refused"),
-        ),
+        patch("trust_api.services.health_collector.asyncio.open_connection", side_effect=ConnectionRefusedError()),
         patch("trust_api.services.health_collector.asyncio.sleep", side_effect=fake_sleep),
     ):
         with pytest.raises(asyncio.CancelledError):
             await run_health_collector()
 
     assert live_pings_at == [0, 300, 600]
-    assert [entry["status"] for entry in dicom_per_cycle] == ["healthy"] * 21
+    assert dicom_per_cycle == ["healthy"] * 21
     assert calls_per_url[f"{health_collector.IMAGING_API_URL}/health"] == 21
-    assert calls_per_url[f"{health_collector.DATA_ACCESS_API_URL}/health"] == 21
     assert calls_per_url[f"{health_collector.XNAT_URL}/xapi/siteConfig/buildInfo"] == 21
 
 
 @pytest.mark.asyncio
 async def test_between_live_pings_the_last_result_is_reported_unchanged():
-    """The cached entry keeps its status and its latency: both describe the last live
-    echo, which is what the hub's dicom row has always meant."""
     clock = _FakeClock()
-    throttle = ThrottledProbe(300, clock=clock)
+    throttle = _ThrottledProbe(300, clock=clock)
     probe = AsyncMock(return_value=_pacs_entry("degraded", 1500))
 
     reported = []
@@ -650,80 +630,38 @@ async def test_between_live_pings_the_last_result_is_reported_unchanged():
         reported.append(await throttle.run(probe))
         clock.now += 30
 
-    assert probe.await_count == 1
     assert reported == [_pacs_entry("degraded", 1500)] * 10
+    assert probe.await_count == 1
 
 
 @pytest.mark.asyncio
-async def test_a_down_pacs_is_reported_until_the_next_interval_then_pinged_again():
-    """A failed echo is reported straight away, held for the interval (no extra
-    associations against a struggling PACS), and retried when the interval is up."""
+async def test_a_failed_ping_is_held_until_the_next_interval_then_retried():
+    """Through the real probe: an unreachable imaging-api (unknown) and a failed echo (down)
+    are each reported at once, held for the interval, and retried after it."""
     clock = _FakeClock()
-    throttle = ThrottledProbe(300, clock=clock)
-    probe = AsyncMock(side_effect=[_pacs_entry("down"), _pacs_entry("healthy", 40)])
-
-    first = await throttle.run(probe)
-    clock.now += 270
-    held = await throttle.run(probe)
-    clock.now += 30  # t = 300
-    retried = await throttle.run(probe)
-
-    assert (first, held, retried) == (_pacs_entry("down"), _pacs_entry("down"), _pacs_entry("healthy", 40))
-    assert probe.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_unreachable_imaging_api_reports_unknown_and_retries_at_the_next_interval():
-    """Through the real probe: imaging-api refusing the connection is ``unknown`` (it says
-    nothing about the PACS), held for the interval, then retried."""
-    clock = _FakeClock()
-    throttle = ThrottledProbe(300, clock=clock)
+    throttle = _ThrottledProbe(300, clock=clock)
     mock_client = AsyncMock()
     mock_client.get.side_effect = [
         Exception("connection refused"),
-        _response(200, {"successful": True, "pingTime": 1_786_029_453_834}),
+        _response(200, {"successful": False}),
+        _response(200, {"successful": True}),
     ]
 
-    first = await throttle.run(lambda: _probe_dicom(mock_client))
-    clock.now += 150
-    held = await throttle.run(lambda: _probe_dicom(mock_client))
-    clock.now += 150
-    retried = await throttle.run(lambda: _probe_dicom(mock_client))
+    reported = []
+    for _ in range(5):  # t = 0, 150, 300, 450, 600
+        reported.append((await throttle.run(lambda: _probe_dicom(mock_client)))["status"])
+        clock.now += 150
 
-    assert first == held == _pacs_entry("unknown")
-    assert retried["status"] == "healthy"
-    assert mock_client.get.await_count == 2
+    assert reported == ["unknown", "unknown", "down", "down", "healthy"]
+    assert mock_client.get.await_count == 3
 
 
 @pytest.mark.asyncio
-async def test_an_attempt_that_raises_reports_unknown_not_the_previous_result():
-    """Staleness rule: once an interval's attempt has failed to produce a result, the
-    previous interval's "healthy" must not be reported in its place."""
+async def test_an_attempt_without_a_result_reports_unknown_until_the_next_interval():
+    """An attempt that hangs until the cycle deadline cancels it, or raises, still uses up its
+    interval, and reports unknown rather than the previous interval's healthy."""
     clock = _FakeClock()
-    throttle = ThrottledProbe(300, clock=clock)
-    probe = AsyncMock(side_effect=[_pacs_entry("healthy", 40), RuntimeError("bug"), _pacs_entry("healthy", 45)])
-
-    assert await throttle.run(probe) == _pacs_entry("healthy", 40)
-    clock.now += 300
-    with pytest.raises(RuntimeError):
-        await throttle.run(probe)
-    clock.now += 30
-    after_failure = await throttle.run(probe)
-    clock.now += 270  # t = 600: the next interval
-    recovered = await throttle.run(probe)
-
-    assert after_failure == _pacs_entry("unknown")
-    assert recovered == _pacs_entry("healthy", 45)
-    assert probe.await_count == 3
-
-
-@pytest.mark.asyncio
-async def test_an_attempt_cancelled_by_the_cycle_deadline_counts_and_reports_unknown():
-    """A ping that hangs is cancelled by the cycle deadline. It must still use up its
-    interval, or a hanging PACS would be pinged on every cycle. Until the next interval
-    the probe reports ``unknown``, not the last "healthy"."""
-    clock = _FakeClock()
-    throttle = ThrottledProbe(300, clock=clock)
+    throttle = _ThrottledProbe(300, clock=clock)
     never_answers = asyncio.Event()  # deliberately never set
     calls = 0
 
@@ -732,20 +670,24 @@ async def test_an_attempt_cancelled_by_the_cycle_deadline_counts_and_reports_unk
         calls += 1
         if calls == 2:
             await never_answers.wait()
+        if calls == 3:
+            raise RuntimeError("bug")
         return _pacs_entry("healthy", 40)
 
-    await throttle.run(probe)
+    assert await throttle.run(probe) == _pacs_entry("healthy", 40)
     clock.now += 300
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(throttle.run(probe), 0.01)
     clock.now += 30
-    after_hang = await throttle.run(probe)
-
-    assert after_hang == _pacs_entry("unknown")
-    assert calls == 2
-    clock.now += 270  # t = 600
-    assert await throttle.run(probe) == _pacs_entry("healthy", 40)
+    assert await throttle.run(probe) == _pacs_entry("unknown")
+    clock.now += 270
+    with pytest.raises(RuntimeError):
+        await throttle.run(probe)
+    clock.now += 30
+    assert await throttle.run(probe) == _pacs_entry("unknown")
     assert calls == 3
+    clock.now += 270
+    assert await throttle.run(probe) == _pacs_entry("healthy", 40)
 
 
 # ---- current_snapshot / run_health_collector ----

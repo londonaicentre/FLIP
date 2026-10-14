@@ -13,7 +13,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,15 +78,6 @@ class Settings(BaseSettings):
     # default here instead of being required kit fields.
     HEALTH_COLLECT_INTERVAL_SECONDS: int = 30  # How often to probe the trust services (seconds)
     HEALTH_PROBE_DEGRADED_MS: int = 1000  # Successful probe slower than this reports "degraded"
-    # The PACS probe is the one probe that costs the hospital something. Each run makes XNAT's DQR
-    # open a live DICOM association to the PACS (a C-ECHO) and store a ping row, so at the 30 s
-    # collection cadence that was 2,880 associations a day, against a PACS that may refuse
-    # associations past an agreed volume (FLIP#993). So the collector pings the PACS live at most
-    # this often and reports the last result in between (FLIP#1456 E3). The price is latency: a PACS
-    # outage, or its recovery, reaches the hub up to this many seconds late. The bounds are 30 s
-    # (shorter means a ping on every collection, the load this setting removes) and an hour (so an
-    # outage cannot hide behind an old "healthy" for longer than that).
-    PACS_PING_INTERVAL_SECONDS: int = Field(default=300, ge=30, le=3600)
     XNAT_URL: str = "http://xnat-web:8080"
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432

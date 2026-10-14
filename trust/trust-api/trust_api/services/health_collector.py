@@ -21,10 +21,7 @@ contract with the hub (``healthy | degraded | down | unknown``):
   instead.
 - ``dicom`` is the PACS connector, probed transitively via imaging-api's ``ping_pacs``
   (imaging-api → XNAT → DIMSE echo). A transport/HTTP failure there proves nothing about
-  the PACS itself, so it maps to ``unknown`` rather than ``down``. Unlike the other probes it
-  runs live at most once per ``PACS_PING_INTERVAL_SECONDS``: every live run is a new DICOM
-  association against the hospital PACS. Between live runs each cycle reports the last result
-  (see ``ThrottledProbe``).
+  the PACS itself, so it maps to ``unknown`` rather than ``down``.
 - ``omop`` is a raw TCP connect — trust-api deliberately carries no Postgres driver.
 
 Failure semantics: a probe can never raise out of ``collect_once`` (a leaked bug maps to
@@ -55,8 +52,12 @@ OMOP_DB_HOST = get_settings().OMOP_DB_HOST
 OMOP_DB_PORT = get_settings().OMOP_DB_PORT
 HEALTH_COLLECT_INTERVAL_SECONDS = get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
 HEALTH_PROBE_DEGRADED_MS = get_settings().HEALTH_PROBE_DEGRADED_MS
-PACS_PING_INTERVAL_SECONDS = get_settings().PACS_PING_INTERVAL_SECONDS
 FL_CLIENT_IMAGE_TAG = get_settings().FL_CLIENT_IMAGE_TAG
+
+# Each PACS ping makes XNAT open a C-ECHO association to the hospital PACS and store a ping row,
+# and a PACS may refuse associations past an agreed volume (FLIP#993). So the PACS is pinged live
+# at most this often, not every cycle, and the cycles in between report the last result.
+PACS_PING_INTERVAL_SECONDS = 300
 
 _PROBE_TIMEOUT_SECONDS = 5.0
 _TEARDOWN_TIMEOUT_SECONDS = 1.0
@@ -202,10 +203,6 @@ async def _probe_xnat(client: httpx.AsyncClient) -> dict:
 async def _probe_dicom(client: httpx.AsyncClient) -> dict:
     """Probe the PACS connector via imaging-api's ``ping_pacs`` deep endpoint.
 
-    Every call costs the PACS one live association. XNAT's ``GET /xapi/pacs/{id}/status``
-    (DQR ``DqrPacsApi.pingPacs``) runs a C-ECHO and stores a ``PacsPing`` row each time. So
-    the collector calls this through ``_pacs_ping``, never on every cycle.
-
     Args:
         client (httpx.AsyncClient): HTTP client for making requests.
 
@@ -246,61 +243,30 @@ async def _probe_dicom(client: httpx.AsyncClient) -> dict:
     return _entry(_status_from_latency(elapsed_ms), None, elapsed_ms)
 
 
-class ThrottledProbe:
-    """Run a costly probe at most once per interval and report its last result in between.
+class _ThrottledProbe:
+    """Runs a probe at most once per interval and reports its last result in between.
 
-    Built for the PACS probe. Nothing else records a PACS ping that could be read instead:
-    in DQR 3.0.0 only the live ``status`` route stores a ``PacsPing``. DQR's own scheduled
-    check (``PacsThreadsChecker``) pings only while imports are queued, and it stores no row.
-    So the throttle keeps the result itself.
-
-    The interval limits *attempts*, not successes. A ping that fails, or finds the PACS down,
-    is retried at the next interval rather than on the next cycle: a struggling PACS is the
-    one that most needs FLIP to stop opening associations against it.
-
-    Staleness rule: a result is reported only within the interval of the attempt that
-    produced it. Sometimes an interval's attempt yields nothing: it raised, or it hung until
-    the collection cycle's deadline cancelled it. Then the probe reports ``unknown`` until
-    the next attempt. Falling back to the previous result would keep a PACS that stopped
-    answering on its last "healthy".
+    A failed attempt is retried at the next interval, not sooner. An attempt that produced no
+    result (it raised, or the cycle deadline cancelled it) reports ``unknown``, never the
+    previous interval's result.
     """
 
     def __init__(self, interval_seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
-        """Create a throttle with no attempt yet, so the first call probes live.
-
-        Args:
-            interval_seconds (float): Minimum time between two live attempts.
-            clock (Callable[[], float]): Monotonic time source; injectable for tests.
-        """
         self._interval_seconds = interval_seconds
         self._clock = clock
         self._attempted_at: float | None = None
         self._result: dict | None = None
 
     async def run(self, probe: Callable[[], Awaitable[dict]]) -> dict:
-        """Return a live probe result when the interval is up, else the last one.
-
-        Args:
-            probe (Callable[[], Awaitable[dict]]): Runs the live probe, returning a wire entry.
-
-        Returns:
-            dict: The fresh entry, the current interval's entry, or ``unknown`` when this
-            interval's attempt produced none.
-        """
         now = self._clock()
-        if self._attempted_at is not None and now - self._attempted_at < self._interval_seconds:
-            return self._result if self._result is not None else _entry("unknown")
-        # Claim the interval before awaiting. A probe cancelled mid-flight by the cycle
-        # deadline must still count as this interval's attempt, or a PACS that hangs
-        # would be pinged again on every cycle.
-        self._attempted_at = now
-        self._result = None
-        self._result = await probe()
-        return self._result
+        if self._attempted_at is None or now - self._attempted_at >= self._interval_seconds:
+            # Claimed before the await, so a cancelled attempt still uses up its interval.
+            self._attempted_at, self._result = now, None
+            self._result = await probe()
+        return self._result or _entry("unknown")
 
 
-# Process-wide: the interval has to hold across collection cycles.
-_pacs_ping = ThrottledProbe(PACS_PING_INTERVAL_SECONDS)
+_pacs_ping = _ThrottledProbe(PACS_PING_INTERVAL_SECONDS)
 
 
 async def _probe_tcp(host: str, port: int) -> dict:
@@ -399,10 +365,7 @@ async def run_health_collector() -> None:
     alongside the task poller.
     """
     global _snapshot
-    logger.info(
-        f"Starting health collector, probing trust services every {HEALTH_COLLECT_INTERVAL_SECONDS}s "
-        f"and pinging the PACS live at most every {PACS_PING_INTERVAL_SECONDS}s"
-    )
+    logger.info(f"Starting health collector, probing trust services every {HEALTH_COLLECT_INTERVAL_SECONDS}s")
 
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(_PROBE_TIMEOUT_SECONDS)) as client:
