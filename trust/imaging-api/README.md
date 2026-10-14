@@ -80,6 +80,14 @@ other's copies. The cache is invalidated when an upload changes the accession's 
 `force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
 NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
 
+The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
+which FLIP sets to the accession id at import, so a study extracts as
+`<accession_id>/scans/<scan id>-<description>/resources/<resource>/files/…`. FL apps read that layout (the prostate
+tutorial matches the `<scan id>-<description>` folder), and XNAT's other layouts break them: `improved` drops the
+session folder, `simplified` and `legacy` reshape the folders below it. A zip with no files, or with a member not
+lexically under `<accession_id>/`, is refused before anything is extracted (HTTP 500) and never marked complete. The
+check reads the member names, not the folder afterwards, because a re-download lands in an already-populated folder.
+
 ### Imaging
 
 Interfaces with XNAT's DICOM Query-Retrieve (DQR) plugin. Full DQR API docs available at
