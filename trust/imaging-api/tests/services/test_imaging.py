@@ -687,6 +687,51 @@ def test_ping_registered_pacs_without_a_default_raises_not_found_and_pings_nothi
     assert xnat.pinged == []
 
 
+@patch("imaging_api.services.imaging.requests.post")
+def test_a_query_404_without_a_default_pacs_says_so(mock_post, headers):
+    """DQR's 404 to a query naming no PACS is, here, XNAT lacking a default: the error must name that."""
+    mock_post.return_value = MagicMock(status_code=404, reason="Not Found")
+    xnat = _FakeXnat([_pacs(3, "STRAY", default=False)])
+
+    with (
+        patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get),
+        pytest.raises(NotFoundError, match="no PACS flagged as the default query/retrieve PACS") as excinfo,
+    ):
+        query_by_accession_number("ACC1", headers)
+
+    assert "'STRAY' (id 3)" in str(excinfo.value)
+    assert "restores the flag" in str(excinfo.value), "the advice must be the step that actually fixes it"
+
+
+@patch("imaging_api.services.imaging.requests.post")
+def test_a_query_404_with_a_default_pacs_is_reported_by_status(mock_post, headers):
+    """When XNAT does have a default PACS the 404 is something else, and must not be blamed on the PACS."""
+    mock_post.return_value = MagicMock(status_code=404, reason="Not Found")
+    xnat = _FakeXnat([_pacs(9, "SECTRA_QR")])
+
+    with (
+        patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get),
+        pytest.raises(Exception, match=re.escape("Failed to query PACS via DQR (HTTP 404)")) as excinfo,
+    ):
+        query_by_accession_number("ACC1", headers)
+
+    assert excinfo.type is Exception
+    assert len(xnat.listing_queries) == 1
+
+
+@patch("imaging_api.services.imaging.requests.post")
+def test_a_query_404_whose_diagnosis_also_fails_reports_the_query_status(mock_post, headers):
+    mock_post.return_value = MagicMock(status_code=404, reason="Not Found")
+
+    with (
+        patch("imaging_api.services.imaging.requests.get", return_value=MagicMock(status_code=503)),
+        pytest.raises(Exception, match=re.escape("Failed to query PACS via DQR (HTTP 404)")) as excinfo,
+    ):
+        query_by_accession_number("ACC1", headers)
+
+    assert excinfo.type is Exception, "the listing's own failure must not replace the query's 404"
+
+
 def test_import_request_ae_title_follows_settings():
     """The C-MOVE destination AE title is configuration, not a hardcoded literal."""
     from imaging_api.config import get_settings

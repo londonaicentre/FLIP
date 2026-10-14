@@ -28,7 +28,11 @@ from imaging_api.routers.schemas import (
     ImportStudyRequest,
     Study,
 )
-from imaging_api.services.imaging import query_by_accession_number, queue_image_import_request
+from imaging_api.services.imaging import (
+    query_by_accession_number,
+    queue_image_import_request,
+    resolve_default_pacs_id,
+)
 from imaging_api.services.projects import get_experiments, get_project
 from imaging_api.services_external.data_access import get_accession_ids
 from imaging_api.utils.auth import get_xnat_auth_headers
@@ -90,6 +94,33 @@ def select_study_for_accession(accession_number: str, studies_found: list[Study]
     return None
 
 
+def require_default_pacs(project_id: str, headers: dict[str, str]) -> None:
+    """Stops an import run before its C-FINDs when XNAT has no usable default query/retrieve PACS.
+
+    The queries name no PACS, so without a default DQR answers every one of them 404. Each would be
+    logged as one failed accession and the run would end "No studies found to import", which reads
+    as a data problem rather than the misconfiguration it is. Checked once, before the loop, so the
+    run stops naming the cause. The import resolves the PACS again when it is queued, since the
+    C-FINDs in between can take a long time.
+
+    Args:
+        project_id (str): The imaging project the run imports into, for the log line.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Raises:
+        HTTPException: 404 when XNAT has no default query/retrieve PACS, 500 when it cannot be
+            resolved for any other reason — the same mapping as the project check before it.
+    """
+    try:
+        resolve_default_pacs_id(headers)
+    except NotFoundError as e:
+        logger.error(f"Not importing images for project {project_id}: {e.detail}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error(f"Not importing images for project {project_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
     """
     Queues an import request for the images associated with the given project.
@@ -139,6 +170,8 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
             "minimum size, so the Data Access API withheld its accession IDs."
         )
         return False
+
+    require_default_pacs(project_id, headers)
 
     studies_list: list[ImportStudy] = []
 
@@ -376,6 +409,8 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     # Create list of accession numbers that have failed
     failed_accession_numbers = import_status.failed + import_status.queue_failed
     logger.info(f"Retrying import for {len(failed_accession_numbers)} failed accession numbers")
+
+    require_default_pacs(project_id, headers)
 
     # For each accession ID, unencrypt it and find the study
     studies_list: list[ImportStudy] = []

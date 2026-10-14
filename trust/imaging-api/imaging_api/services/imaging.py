@@ -58,8 +58,9 @@ def resolve_default_pacs_id(headers: dict[str, str]) -> int:
 
     There is no fallback id: a guessed one is wrong exactly when it matters, so a listing XNAT cannot
     give, or one without exactly one default, fails here naming what XNAT reported.
-    ``configure-xnat.sh`` keeps one registration and flags it, and DQR clears the flag on every other
-    PACS when one is made the default, so two flagged PACS mean XNAT was changed outside both.
+    ``configure-xnat.sh`` keeps one registration and flags it (restoring a flag that went missing), and
+    DQR clears the flag on every other PACS when one is made the default, so two flagged PACS mean XNAT
+    was changed outside both.
 
     Args:
         headers (dict[str, str]): XNAT authentication headers.
@@ -96,8 +97,9 @@ def resolve_default_pacs_id(headers: dict[str, str]) -> int:
     if not defaults:
         found = ", ".join(_describe_pacs(p) for p in registrations) or "none"
         raise NotFoundError(
-            f"XNAT has no PACS flagged as the default query/retrieve PACS (queryable PACS found: {found}). "
-            "configure-xnat.sh registers the trust's PACS with that flag; re-run it."
+            f"XNAT has no PACS flagged as the default query/retrieve PACS (queryable PACS found: {found}), "
+            "so DQR answers every query 404. Re-run XNAT's configure step (configure-xnat.sh; the xnat-init "
+            "job on Kubernetes): it registers the trust's PACS, or restores the flag on it."
         )
     if len(defaults) > 1:
         raise Exception(
@@ -241,9 +243,18 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         return []
     elif response.status_code == 401:
         raise Exception("Unauthorized to query PACS via DQR")
+    elif response.status_code == 404:
+        # DQR answers a query that names no PACS with 404 when XNAT has no default query/retrieve PACS
+        # (getDefaultQueryablePacs -> PacsNotFoundException), the same 404 it gives any query for a PACS
+        # it lacks. One listing call, paid only on this failure path, tells that case apart:
+        # resolve_default_pacs_id raises NotFoundError naming what XNAT has. A listing that fails too
+        # leaves the query's own status to report.
+        try:
+            resolve_default_pacs_id(headers)
+        except XnatFetchError:
+            pass
+        raise Exception("Failed to query PACS via DQR (HTTP 404)")
     else:
-        # The status is the only trace of DQR having no default query/retrieve PACS, now that the
-        # query does not name one, so it is kept in the message the import loop logs per accession.
         raise Exception(f"Failed to query PACS via DQR (HTTP {response.status_code})")
 
     # Convert raw API response to a list of Study models

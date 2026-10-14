@@ -174,7 +174,8 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
   did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
-  port drift, keeps exactly one registration and flags it `defaultQueryRetrievePacs`. imaging-api has
+  port drift, keeps exactly one registration and flags it `defaultQueryRetrievePacs` (a re-run
+  restores that flag, and `queryable`, on a registration that lacks them). imaging-api has
   no PACS id setting: its C-FINDs send no `pacsId`, so DQR queries that default PACS itself, and each
   import — DQR's import does not default — reads the default PACS's id from
   `GET /xapi/pacs?queryable=true`, failing (rather than guessing an id) when none or more than one is

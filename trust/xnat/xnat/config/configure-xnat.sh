@@ -588,8 +588,15 @@ else
   # and keeps the old flag forever, exactly the silently-ignored kit change the in-place update
   # exists to prevent. Comparison against the desired payload rather than the env vars keeps type
   # handling in jq (port and the flag are JSON number/boolean in both documents, not strings).
+  #
+  # defaultQueryRetrievePacs and queryable are compared too, though no kit sets them: imaging-api's
+  # C-FINDs name no PACS, so DQR queries whichever one carries the default flag, and the import looks
+  # that PACS up among the queryable ones. A registration adopted by AE title without the flag (one
+  # made by hand — the admin UI's "Default Q/R AE" switch starts at No), or one whose flag went to
+  # another PACS that was then removed above as foreign, would otherwise be left "as-is" with every
+  # query answered 404. The PUT below restores both.
   pacs_drift=$(jq -cn --argjson entry "$pacs_entry" --argjson desired "$pacs_payload" \
-    '[("host","queryRetrievePort","label","supportsExtendedNegotiations")
+    '[("host","queryRetrievePort","label","supportsExtendedNegotiations","defaultQueryRetrievePacs","queryable")
       | select($entry[.] != $desired[.])]')
 
   if [[ "$pacs_drift" == "[]" ]]; then
