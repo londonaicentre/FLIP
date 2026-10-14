@@ -453,7 +453,12 @@ def test_a_wrapper_on_another_image_is_named_once_and_nothing_is_launched(xnat):
     assert xnat.launches == []
     assert xnat.enabled == []
     assert (
-        sum(line.startswith("Cannot launch 2: XNAT's 'dcm2niix-scan' wrapper (command 4) runs") for line in lines) == 1
+        sum(
+            line.startswith("Cannot launch 2: XNAT has 0 'dcm2niix-scan' wrappers on the pinned")
+            and "(registered images: xnat/dcm2niix:latest)" in line
+            for line in lines
+        )
+        == 1
     )
 
 
