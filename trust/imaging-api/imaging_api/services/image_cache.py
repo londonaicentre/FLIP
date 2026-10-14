@@ -83,9 +83,7 @@ def write_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: st
     """
     Marks a download of (assessor, resource) into the accession directory as complete.
 
-    The accession directory must already exist, because extraction creates it. XNAT never sends
-    an empty zip (it answers 404 instead), and ``unzip_file`` refuses one, so a missing directory
-    means the download produced nothing. It is never marked complete.
+    A missing directory means the download extracted nothing, which is never marked complete.
 
     Args:
         accession_dir_abs (str): Absolute accession directory the download extracted into.
@@ -96,10 +94,7 @@ def write_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: st
         FileNotFoundError: If the accession directory does not exist.
     """
     if not os.path.isdir(accession_dir_abs):
-        raise FileNotFoundError(
-            f"Accession directory {accession_dir_abs} does not exist after extraction; "
-            "refusing to mark the download complete"
-        )
+        raise FileNotFoundError(f"{accession_dir_abs} does not exist; refusing to mark the download complete")
     Path(sentinel_path(accession_dir_abs, assessor_type, resource_type)).touch()
 
 

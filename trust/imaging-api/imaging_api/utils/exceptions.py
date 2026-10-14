@@ -39,19 +39,6 @@ class XnatFetchError(Exception):
     pass
 
 
-class XnatZipLayoutError(Exception):
-    """Exception raised when an XNAT download zip is not laid out the way FLIP's cache relies on.
-
-    The download cache extracts XNAT's ``structure=default`` zip, whose every member sits under the
-    session label (the accession id). A zip with no files, or with a member outside that folder, is
-    refused before anything is extracted, so a layout change upstream can never be cached as a
-    complete download. A plain ``Exception`` subclass, like ``XnatFetchError``: the download
-    router's generic handler surfaces it as HTTP 500.
-    """
-
-    pass
-
-
 class CohortBelowThresholdError(Exception):
     """Exception raised when data-access-api refuses a cohort as below the disclosure threshold.
 

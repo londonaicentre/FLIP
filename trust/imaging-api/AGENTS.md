@@ -11,7 +11,7 @@ FastAPI service for DICOM image retrieval via XNAT. Receives requests from trust
 - Every internal caller authenticates with the per-trust `TRUST_INTERNAL_SERVICE_KEY` header (see the root `AGENTS.md` "Trust-internal Service Authentication" section). `/health` stays unauthenticated
 - DICOM-to-NIfTI conversion support
 - Downloads are cached on disk per (net, project, accession): extraction lands in `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` with a `.flip_complete-<assessor>-<resource>` sentinel written after successful extraction (`services/image_cache.py`); a present sentinel short-circuits the download route before any XNAT call (FLIP#953 — FL apps fetch the cohort per round). Invalidated by uploads to the same (project, accession), by `force_refresh=true`, and wiped with the net dir by NVFLARE's `CleanupImages`
-- The download URL pins `structure=default`, XNAT's zip layout rooted at the session label (= accession id): `<accession>/scans/<scan id>-<desc>/resources/<R>/files/…`. FL apps read that layout (the prostate tutorial reads the `<scan id>-<desc>` folder name), so never switch it to `improved` (drops the session folder), `simplified` or `legacy`. `unzip_file` refuses a zip with no files or with a member outside `<accession>/` before extracting, so a layout change cannot be cached as complete
+- The download URL pins `structure=default` (`<accession>/scans/<scan id>-<desc>/resources/<R>/files/…`), the layout FL apps read; never change it (README, "Download")
 
 ## Commands
 
