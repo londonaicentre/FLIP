@@ -10,13 +10,16 @@
 # limitations under the License.
 #
 
-import datetime
-from typing import Any
-
 import requests
 from fastapi import HTTPException, status
 
 from imaging_api.utils.logger import logger
+
+# Bound both calls to XNAT: without a timeout a hung XNAT holds open every request that needs a
+# session. The session check is a one-line answer, so it fails fast and falls through to a login;
+# the login gets the same bound as imaging-api's other metadata calls to XNAT.
+SESSION_CHECK_TIMEOUT_SECONDS = 5
+LOGIN_TIMEOUT_SECONDS = 30
 
 
 class XnatTokenFactory:
@@ -24,16 +27,15 @@ class XnatTokenFactory:
     Factory class for retrieving and caching XNAT authentication tokens.
     """
 
-    def __init__(self, url: str, username: str, password: str, expiry_hours: int = 24) -> None:
+    def __init__(self, url: str, username: str, password: str) -> None:
         self.url = url
         self.username = username
         self.password = password
-        self.expiry_hours = expiry_hours
-        self.xnat_cookie: dict[str, Any] = {}
+        self.xnat_cookie: dict[str, str] = {}
 
     def get_xnat_cookie(self) -> str:
         """
-        Retrieves a new XNAT authentication token if expired or not set.
+        Retrieves a new XNAT authentication token if XNAT no longer accepts the cached one, or none is set.
         Caches the token for reuse.
 
         Returns:
@@ -48,7 +50,13 @@ class XnatTokenFactory:
 
         # Request a new token from XNAT
         session_url = f"{self.url}/data/JSESSION"
-        response = requests.post(session_url, auth=(self.username, self.password))
+        try:
+            response = requests.post(session_url, auth=(self.username, self.password), timeout=LOGIN_TIMEOUT_SECONDS)
+        except requests.exceptions.Timeout:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail=f"Failed to authenticate with XNAT: no response within {LOGIN_TIMEOUT_SECONDS} s",
+            ) from None
 
         if response.status_code != status.HTTP_200_OK:
             raise HTTPException(
@@ -64,39 +72,42 @@ class XnatTokenFactory:
                 detail=f"Invalid authentication response from XNAT: {response.text}",
             )
 
-        # Store the token with a timestamp
-        self.xnat_cookie = {
-            "token": token_value,
-            "created_at": datetime.datetime.now(datetime.UTC),
-        }
+        self.xnat_cookie = {"token": token_value}
 
         return token_value
 
     def is_token_valid(self, token: str) -> bool:
         """
-        Checks if a given XNAT session token is still valid.
+        Checks if a given XNAT session token is still valid for the configured service user.
+
+        Asks XNAT whose session it is: ``GET /xapi/users/username`` answers with the bare username as
+        text/plain, and with 401 for an unknown, expired or logged-out session. Only an answer naming
+        the configured service user counts. A session XNAT resolves to anyone else is not one this
+        factory logged in, so it is treated as invalid and replaced.
 
         Args:
             token (str): The XNAT session token to validate.
 
         Returns:
-            bool: True if the token is valid, False otherwise.
+            bool: True if XNAT accepts the token as the configured service user's session, False otherwise.
         """
-        # Lightweight way to check auth.
-        status_url = f"{self.url}/xapi/users"
+        status_url = f"{self.url}/xapi/users/username"
         headers = {"Cookie": f"JSESSIONID={token}"}
 
         try:
-            response = requests.get(status_url, headers=headers, timeout=5)
-            # A 200 OK means the token is valid and the user's status was returned.
-            if response.status_code == status.HTTP_200_OK:
-                logger.debug(f"Token validation successful for {token[:10]}...")
-                return True
-            else:
-                logger.debug(f"⚠️ Token {token[:10]}... invalid. Status: {response.status_code}")
-                return False
-
+            response = requests.get(status_url, headers=headers, timeout=SESSION_CHECK_TIMEOUT_SECONDS)
         except requests.exceptions.RequestException as e:
-            logger.debug(f"❌ XNAT Token validation failed (connection error): {e}")
             # Treat connection errors as a sign we can't confirm validity right now
+            logger.debug(f"XNAT session check failed (connection error), logging in again: {e}")
             return False
+
+        if response.status_code != status.HTTP_200_OK:
+            logger.debug(f"XNAT session check returned {response.status_code}, logging in again")
+            return False
+
+        if response.text.strip() != self.username:
+            logger.debug("XNAT session check named a user other than the configured service user, logging in again")
+            return False
+
+        logger.debug("XNAT session check passed, reusing the cached session")
+        return True
