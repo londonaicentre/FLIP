@@ -140,10 +140,13 @@ The NVFLARE tutorials (all Client-API apps):
 - `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type `evaluation`)
 - `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `diffusion_model`)
 - `ehr_risk_prediction <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction>`_ (job type `standard`)
+- `biomarker_causal_discovery <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery>`_ (job type `standard`)
 
-The three `standard` examples show how one job type runs quite different user-uploaded
-applications: each performs a supervised federated averaging training, but the data, architecture
-and training configuration differ. The third goes furthest — its cohort is tabular OMOP data with no
+The four `standard` examples show how one job type runs quite different user-uploaded
+applications: the first three perform a supervised federated averaging training with different data,
+architecture and training configuration, and the fourth trains nothing at all — it federates a
+constraint-based causal-discovery analysis (bootstrapped FCI) by sending each site's sufficient
+statistics, or its vote on the graph skeleton, through the same weighted averaging. The third goes furthest — its cohort is tabular OMOP data with no
 imaging in it at all, which is possible because a job type describes the NVFLARE job FLIP assembles
 around your files, never the modality. What to fetch is the uploaded script's decision: an imaging
 app calls ``flip.get_by_accession_number``, the EHR one calls only ``flip.get_dataframe``.

@@ -52,6 +52,15 @@ PAIRS=(
   "fl-tutorials/flower/ehr_risk_prediction/app/feature_engineering.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/feature_engineering.py"
   "fl-tutorials/flower/ehr_risk_prediction/app/models.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/models.py"
   "fl-tutorials/flower/ehr_risk_prediction/query.sql:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql"
+  # The biomarker causal-discovery tutorial: the whole federation (what a site sends, how the
+  # received state is read, the FCI orientation) is one module both transports call, plus the
+  # state-holding model, the config and the cohort query. NVFLARE is the reference side; its tree
+  # (fl-tutorials/nvflare/tabular_causal_discovery/) is in the workflow's path filters.
+  "fl-tutorials/flower/biomarker_causal_discovery/app/federated_fci.py:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/app_files/federated_fci.py"
+  "fl-tutorials/flower/biomarker_causal_discovery/app/models.py:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/app_files/models.py"
+  "fl-tutorials/flower/biomarker_causal_discovery/app/config.json:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/app_files/config.json"
+  "fl-tutorials/flower/biomarker_causal_discovery/query.sql:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/query.sql"
+  "fl-tutorials/flower/biomarker_causal_discovery/summarise_results.py:fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery/summarise_results.py"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
   # loading and their flattened model definitions are meant to be the same file -- and they have
   # already drifted once (the Client-API port landed in the baseline copy days before the
