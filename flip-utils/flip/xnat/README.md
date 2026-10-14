@@ -56,6 +56,11 @@ twice and no per-server filtering is needed. A Trust that has not pulled the pro
 non-fatal skip when there is more than one server in the roster (an `XnatProjectNotFound` alone is
 fatal); any other `XnatError` is always fatal.
 
+**One request lists the project's scans.** `list_scans` reads XNAT's global experiment listing,
+`/data/experiments?project=<id>&xsiType=xnat:imageSessionData`, with the `xnat:imagescandata/id` column,
+which returns one row per scan. The project-scoped `/data/projects/<id>/experiments` would silently leave
+out DX (chest X-ray) sessions, the same reason imaging-api's `get_experiments` uses the global listing.
+
 ## CLI: `flip-xnat`
 
 Installed as the `flip-xnat` console script (`flip-utils/pyproject.toml`); also runnable as
