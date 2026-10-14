@@ -47,6 +47,8 @@ protect the XNAT database credentials (FLIP-PT-056).
   and authenticated plugin-readiness wait with stubbed curl commands and fixture jars (`plugin_fixtures.py`),
   checks aggregate Make targets propagate failures, and pins root-relative paths
   passed to the end-to-end smoke test.
+- **Anonymous XNAT paths** (`test_anonymous_endpoints.py`) — fails on an `XNAT_VERSION` bump until
+  the new version's anonymous paths have been checked (the assert message says how).
 
 The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
 validate the FLIP-authored ruleset against synthetic studies; the guard-behaviour

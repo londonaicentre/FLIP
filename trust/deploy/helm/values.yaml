@@ -790,6 +790,7 @@ xnat:
       limits:
         memory: "4Gi"
         cpu: "2"
+    # Timing only. The probe paths, and why, are in templates/xnat-web.yaml.
     probes:
       liveness:
         initialDelaySeconds: 120
