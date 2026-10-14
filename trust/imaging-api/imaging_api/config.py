@@ -86,8 +86,8 @@ class Settings(BaseSettings):
 
     # Container Service image for automatic DICOM→NIfTI conversion. The per-project
     # event subscription looks the XNAT command up by this exact image string, so it
-    # must match what trust/xnat/xnat/config/dcm2niix_command.json (and the K8s
-    # init-job's inline copy) registers at deploy time. Pinned by version tag, never
+    # must match what trust/xnat/xnat/config/dcm2niix_command.json registers at deploy
+    # time (configure-dcm2niix.sh, on Compose and Kubernetes). Pinned by version tag, never
     # `latest`: Docker Hub's mutable `xnat/dcm2niix:latest` resolved to a 2021 build
     # that silently dropped slices from valid series (FLIP#980).
     DCM2NIIX_IMAGE: str = "ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724"

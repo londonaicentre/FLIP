@@ -15,25 +15,38 @@
 # Exit on first error, undefined variable, or pipe failure.
 set -euo pipefail
 
-# This script configures the dcm2niix container service in XNAT.
-# It is intended to be run after configure-xnat.sh (which changes the admin password).
+# Configures the XNAT Container Service and the dcm2niix command, on both deployment shapes: the
+# Compose trust runs it inside xnat-web (`make -C trust/xnat xnat-configure`), and the Helm chart's
+# xnat-init Job runs this same file from the same image (its configure-dcm2niix container), as it
+# does configure-xnat.sh since FLIP#993. Run after configure-xnat.sh, which sets the admin password
+# and grants the admin the ContainerManager role. One copy, so the fixes below reach both (FLIP#1451).
 #
-# Required environment variables:
-#   XNAT_ADMIN_USER     - XNAT admin username
-#   XNAT_ADMIN_PASSWORD - XNAT admin password (must match what configure-xnat.sh set)
-#   DATA_PATH           - Host path for Docker path translation
+# Environment:
+#   XNAT_ADMIN_USER      - XNAT admin username
+#   XNAT_ADMIN_PASSWORD  - XNAT admin password (must match what configure-xnat.sh set)
+#   XNAT_URL             - XNAT's internal URL; default http://xnat-web:8080 (both shapes)
+#   XNAT_CS_BACKEND      - docker (default: Compose, Docker Swarm through xnat-socket-proxy) or
+#                          kubernetes (the chart: the Container Service's Kubernetes backend)
+#   DATA_PATH            - docker only: host path for the Docker path translation
+#   XNAT_CS_PVC_NAME     - kubernetes only: the xnat-web data PVC the conversion Jobs mount
 #
 
-# The below are fixed values for now
-XNAT_URL="http://xnat-web:8080" # internal to Docker network
+XNAT_URL="${XNAT_URL:-http://xnat-web:8080}"
+XNAT_CS_BACKEND="${XNAT_CS_BACKEND:-docker}"
 DCM2NIIX_NAME="dcm2niix"
-# The command definition sent to XNAT, both to register it and to update it in place. One path,
-# so every call below sends the same body.
-DCM2NIIX_COMMAND_JSON="dcm2niix_command.json"
 # imaging-api names every DICOM->NIfTI subscription it creates this
 # (imaging_api/services/projects.py, DCM2NIIX_SUBSCRIPTION_NAME), which is how the repair below
-# tells FLIP's subscriptions from anyone else's. The chart's xnat-init job carries the same value.
+# tells FLIP's subscriptions from anyone else's.
 DCM2NIIX_SUBSCRIPTION_NAME="DICOM-NIfTI Conversion"
+
+case "$XNAT_CS_BACKEND" in
+  docker) : "${DATA_PATH:?DATA_PATH is required for the docker backend}" ;;
+  kubernetes) : "${XNAT_CS_PVC_NAME:?XNAT_CS_PVC_NAME is required for the kubernetes backend}" ;;
+  *)
+    echo "ERROR: XNAT_CS_BACKEND must be docker or kubernetes, not '$XNAT_CS_BACKEND'" >&2
+    exit 1
+    ;;
+esac
 
 # Wait for XNAT to be available (wall-clock bounded, and each probe carries
 # its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
@@ -60,7 +73,8 @@ echo "XNAT is up!"
 # `if`/`||` without handling the failure). Use it for every request to
 # XNAT's REST API, reads included: an unnoticed bad GET response is how the
 # original empty-CMD_ID deploy failure slipped through — bare `curl -s`
-# surfaced neither HTTP errors nor unexpected bodies.
+# surfaced neither HTTP errors nor unexpected bodies. The credentials are added
+# after "$@", so the logged arguments never carry them.
 xnat_curl() {
   local response
   local status
@@ -91,13 +105,42 @@ xnat_curl() {
   printf '%s' "$body"
 }
 
-# Path translation for container service plugin
-# This is so that the container service can access the data
-echo "Adding path translation for container service..."
+# Container Service >= 3.7.0 answers every call below with 401/403 unless the admin holds the
+# ContainerManager role, which configure-xnat.sh grants. Name that cause rather than let the first
+# call fail with a bare status (TROUBLESHOOTING 2.3a).
+ADMIN_ROLES=$(xnat_curl "$XNAT_URL/xapi/users/${XNAT_ADMIN_USER}/roles/")
+if ! jq -e 'index("ContainerManager")' >/dev/null <<<"$ADMIN_ROLES"; then
+  echo "ERROR: ${XNAT_ADMIN_USER} does not hold the ContainerManager role, so every Container Service call would be refused." >&2
+  echo "  roles: $ADMIN_ROLES (configure-xnat.sh grants it; see TROUBLESHOOTING 2.3a)" >&2
+  exit 1
+fi
 
-# Set path-translation-docker-prefix to $DATA_PATH in the backend config
-echo "Path translation with DATA_PATH=$DATA_PATH"
-backend_config=$(jq --arg data_path "$DATA_PATH" '.["path-translation-docker-prefix"] = $data_path' container-service-backend-configuration.json)
+# ----------------------------------------------------------------
+# CONTAINER SERVICE BACKEND
+# ----------------------------------------------------------------
+
+# docker: the Container Service reaches Docker through the xnat-socket-proxy sidecar (see
+# docker-compose-stack.yml), not a socket mounted into xnat-web, and translates XNAT's paths to the
+# host's DATA_PATH. kubernetes: the Container Service's own Kubernetes backend. Its entry carries
+# the PVC mount settings (FLIP#565): without them the plugin bind-mounts the scan path as a node
+# hostPath, which only exists inside the xnat-web pod, and dcm2niix finds no DICOM in /input.
+# combined-pvc-name is the single xnat-web data PVC (its root holds both archive/ and build/), and
+# combined-path-translation must keep its trailing slash, or the Job's subPath keeps a leading `/`
+# and the Kubernetes API rejects it with HTTP 422 (TROUBLESHOOTING 2.3b).
+case "$XNAT_CS_BACKEND" in
+  docker)
+    echo "Path translation with DATA_PATH=$DATA_PATH"
+    backend_config=$(jq --arg data_path "$DATA_PATH" \
+      '.["path-translation-docker-prefix"] = $data_path' container-service-backend-configuration.json)
+    backend_label="Docker (via xnat-socket-proxy)"
+    ;;
+  kubernetes)
+    echo "Kubernetes backend, conversion Jobs mounting PVC $XNAT_CS_PVC_NAME"
+    backend_config=$(jq --arg pvc "$XNAT_CS_PVC_NAME" \
+      '.["combined-pvc-name"] = $pvc' container-service-backend-configuration.kubernetes.json)
+    backend_label="the Kubernetes API"
+    ;;
+esac
 
 echo "backend_config: $backend_config"
 # curl exits 0 on HTTP 4xx/5xx (no --fail), so check the status explicitly — if XNAT
@@ -114,18 +157,41 @@ if [[ "$post_status" != 2* ]]; then
   exit 1
 fi
 
-# The Container Service reaches Docker through the xnat-socket-proxy sidecar
-# (see docker-compose-stack.yml), not a socket mounted into xnat-web. Fail loudly
-# here if that path is broken — the command registration below would still
-# "succeed", but every dcm2niix launch would then fail at conversion time.
-echo "Pinging Docker through the socket proxy..."
+# Fail loudly here if the backend cannot be reached — the command registration below would still
+# "succeed", but every dcm2niix launch would then fail at conversion time. The ping is the same
+# endpoint on both backends; on Kubernetes it lists pods in XNAT's namespace (container-service
+# 3.8.1 KubernetesClientImpl.java:192-206), which xnat-rbac.yaml grants.
+echo "Pinging $backend_label..."
 ping_status=$(curl -s -o /dev/null --max-time 60 -w "%{http_code}" "$XNAT_URL/xapi/docker/server/ping" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}") || ping_status="000"
 if [[ "$ping_status" != "200" ]]; then
-  echo "ERROR: Container Service cannot reach Docker via xnat-socket-proxy (HTTP $ping_status)"
+  echo "ERROR: Container Service cannot reach $backend_label (HTTP $ping_status)"
   exit 1
 fi
-echo "Container Service -> Docker (via xnat-socket-proxy): OK"
+echo "Container Service -> $backend_label: OK"
+
+# ----------------------------------------------------------------
+# THE dcm2niix COMMAND BODY
+# ----------------------------------------------------------------
+
+# The command definition sent to XNAT, both to register it and to update it in place. One path,
+# so every call below sends the same body.
+DCM2NIIX_COMMAND_JSON="dcm2niix_command.json"
+DCM2NIIX_IMAGE=$(jq -r '.image // empty' "$DCM2NIIX_COMMAND_JSON")
+if [[ "$XNAT_CS_BACKEND" == kubernetes ]]; then
+  # Registered without the command's resource settings (FLIP#1448). On this backend the Container
+  # Service turns limit-cpu into a pod CPU *limit* and sets no CPU request (container-service 3.8.1
+  # has no reserve-cpu), so Kubernetes defaults the request to the limit: every dcm2niix pod
+  # reserved a whole CPU, plus 1000 MiB for reserve-memory, and on a 4-vCPU AKS node ~300 of them
+  # filled the node's requests until nothing else could schedule. Without them each pod is
+  # BestEffort: it reserves nothing and runs at the lowest CPU weight. The update below must send
+  # this body too: it nulls any resource key the body leaves out (CommandEntity.java:116-118), so it
+  # is also what moves an existing command off them. On Docker the same keys are container limits,
+  # and the file goes unchanged.
+  DCM2NIIX_COMMAND_JSON=$(mktemp)
+  trap 'rm -f "$DCM2NIIX_COMMAND_JSON"' EXIT
+  jq 'del(."reserve-memory", ."limit-memory", ."limit-cpu")' dcm2niix_command.json >"$DCM2NIIX_COMMAND_JSON"
+fi
 
 # ----------------------------------------------------------------
 # IMAGE HOST (registry entry for the pinned dcm2niix image)
@@ -141,9 +207,15 @@ echo "Container Service -> Docker (via xnat-socket-proxy): OK"
 # registry as a credential-less image host so the lookup resolves. The hostname is derived from the
 # image pinned in dcm2niix_command.json so it can never drift from the image actually launched; an
 # image with no registry component is a Docker Hub image, covered by the built-in default entry.
-DCM2NIIX_IMAGE=$(jq -r '.image // empty' "$DCM2NIIX_COMMAND_JSON")
+# The Kubernetes backend pulls through kubelet, not the Container Service's docker client, so the
+# NPE cannot occur there and no entry is needed.
 DCM2NIIX_REGISTRY=${DCM2NIIX_IMAGE%%/*}
-if [[ "$DCM2NIIX_REGISTRY" == *.* || "$DCM2NIIX_REGISTRY" == *:* || "$DCM2NIIX_REGISTRY" == localhost ]]; then
+needs_image_host=false
+if [[ "$XNAT_CS_BACKEND" == docker ]] \
+  && [[ "$DCM2NIIX_REGISTRY" == *.* || "$DCM2NIIX_REGISTRY" == *:* || "$DCM2NIIX_REGISTRY" == localhost ]]; then
+  needs_image_host=true
+fi
+if [[ "$needs_image_host" == true ]]; then
   echo "Ensuring image host '$DCM2NIIX_REGISTRY' is registered..."
   HUB_ID=$(xnat_curl "$XNAT_URL/xapi/docker/hubs" \
     | jq -r --arg url "$DCM2NIIX_REGISTRY" 'map(select(.url == $url)) | .[0].id // empty')
@@ -156,11 +228,11 @@ if [[ "$DCM2NIIX_REGISTRY" == *.* || "$DCM2NIIX_REGISTRY" == *:* || "$DCM2NIIX_R
     echo "Image host '$DCM2NIIX_REGISTRY' already registered (id=$HUB_ID)."
   fi
 else
-  echo "dcm2niix image has no registry component; the built-in Docker Hub image host applies."
+  echo "No image host needed (backend $XNAT_CS_BACKEND, registry '$DCM2NIIX_REGISTRY')."
 fi
 
 # ----------------------------------------------------------------
-# CONTAINER SERVICE
+# THE dcm2niix COMMAND
 # ----------------------------------------------------------------
 
 dcm2niix_wrapper_name=$(jq -r '.xnat[0].name // empty' "$DCM2NIIX_COMMAND_JSON")
@@ -302,22 +374,22 @@ PROJECTS_JSON=$(xnat_curl "$XNAT_URL/data/projects?format=json")
 # Take the one entry for this wrapper's name and id; everything before the id is the provider, which
 # says which subscriptions name a Container Service wrapper at all.
 ALL_ACTIONS=$(xnat_curl "$XNAT_URL/xapi/events/allactions")
-CURRENT_ACTION_KEY=$(jq -r --arg w "$dcm2niix_wrapper_name" --arg id "$WRAPPER_ID" '
+DCM2NIIX_ACTION=$(jq -r --arg w "$dcm2niix_wrapper_name" --arg id "$WRAPPER_ID" '
   [(. // [])[]
    | select(.["display-name"] == $w and ((.["action-key"] // "") | split(":") | last) == $id)
    | .["action-key"]]
   | if length == 1 then .[0] else empty end' <<<"$ALL_ACTIONS")
-if [[ -z "$CURRENT_ACTION_KEY" ]]; then
+if [[ -z "$DCM2NIIX_ACTION" ]]; then
   echo "ERROR: XNAT lists no single event-service action for wrapper '$dcm2niix_wrapper_name' (id $WRAPPER_ID)." >&2
   echo "  body: $ALL_ACTIONS" >&2
   exit 1
 fi
-ACTION_PROVIDER_PREFIX="${CURRENT_ACTION_KEY%:*}:"
-echo "Current $DCM2NIIX_NAME action key: $CURRENT_ACTION_KEY"
+ACTION_PROVIDER_PREFIX="${DCM2NIIX_ACTION%:*}:"
+echo "Current $DCM2NIIX_NAME action key: $DCM2NIIX_ACTION"
 echo "Checking project DICOM->NIfTI triggers for a stale $DCM2NIIX_NAME wrapper id..."
 # One line per stale subscription: the subscription, plus `missing`, its projects XNAT no longer has.
 STALE_SUBS=$(jq -c --arg name "$DCM2NIIX_SUBSCRIPTION_NAME" --arg prefix "$ACTION_PROVIDER_PREFIX" \
-  --arg key "$CURRENT_ACTION_KEY" --argjson projects "$PROJECTS_JSON" '
+  --arg key "$DCM2NIIX_ACTION" --argjson projects "$PROJECTS_JSON" '
   [($projects.ResultSet.Result // [])[].ID] as $known
   | (. // [])[]
   | select(.name == $name)
@@ -339,7 +411,7 @@ while IFS= read -r sub; do
   for project in $projects; do
     xnat_curl -X PUT "$XNAT_URL/xapi/projects/$project/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" >/dev/null
   done
-  update=$(jq -c --arg key "$CURRENT_ACTION_KEY" \
+  update=$(jq -c --arg key "$DCM2NIIX_ACTION" \
     '{"action-key": $key, "active": .active, "act-as-event-user": (.["act-as-event-user"] // false), "attributes": (.attributes // {})}' \
     <<<"$sub")
   xnat_curl -X PUT "$XNAT_URL/xapi/events/subscription/$sub_id" \
@@ -401,7 +473,7 @@ if [ "$WRAPPER_ENABLED" != "true" ]; then
 fi
 
 # Verify the image host for the pinned image's registry persisted (swarm launches NPE without it)
-if [[ "$DCM2NIIX_REGISTRY" == *.* || "$DCM2NIIX_REGISTRY" == *:* || "$DCM2NIIX_REGISTRY" == localhost ]]; then
+if [[ "$needs_image_host" == true ]]; then
   HUB_COUNT=$(xnat_curl "$XNAT_URL/xapi/docker/hubs" \
     | jq -r --arg url "$DCM2NIIX_REGISTRY" 'map(select(.url == $url)) | length')
   if [ "$HUB_COUNT" -lt 1 ]; then

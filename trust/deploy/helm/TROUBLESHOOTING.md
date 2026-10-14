@@ -289,9 +289,10 @@ Job still exited 0 with dcm2niix silently unregistered — the same
 silent-failure class as FLIP#822 / FLIP#862.
 
 **Fix:** Both are now handled by `xnat-init-job.yaml`: `configure-xnat-web`
-grants the role, and `configure-dcm2niix` waits for it and then fails loudly
-rather than swallowing the error. To repair a cluster configured by an older
-chart:
+grants the role, and `configure-dcm2niix` (which runs `configure-dcm2niix.sh`
+from the xnat-web image since FLIP#1451) checks for it first and fails loudly,
+naming the role, rather than swallowing the error. To repair a cluster
+configured by an older chart:
 
 ```bash
 kubectl exec -n flip-trust "$XNAT_POD" -- \
@@ -330,10 +331,12 @@ docker exec <node> find /data/xnat/archive -type d | wc -l   # many
 docker exec <node> find /data/xnat/archive -type f | wc -l   # zero
 ```
 
-**Fix:** the chart sets this in the Kubernetes backend entry of the
-`xnat-cs-config` ConfigMap (`combined-pvc-name` + `combined-path-translation`),
-since the single `xnat-web` data PVC holds both `archive/` and `build/` at its
-root. If you configure a backend by hand, mirror it:
+**Fix:** the chart sets this in the Kubernetes backend entry that
+`configure-dcm2niix.sh` registers (`combined-pvc-name` +
+`combined-path-translation`): `trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json`,
+with `combined-pvc-name` set to the release's PVC from the Job's
+`XNAT_CS_PVC_NAME`, since the single `xnat-web` data PVC holds both `archive/`
+and `build/` at its root. If you configure a backend by hand, mirror it:
 
 ```json
 "combined-pvc-name": "<release>-flip-trust-xnat-web",

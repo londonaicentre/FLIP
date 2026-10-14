@@ -1260,7 +1260,8 @@ Include:
    conversion runs end-to-end on Kubernetes (FLIP#565). The Container Service
    spawns each `dcm2niix` Job with the `xnat-web` data PVC mounted, configured by
    `combined-pvc-name` + `combined-path-translation` in the Kubernetes backend
-   entry of the `xnat-cs-config` ConfigMap. Because the Job mounts the *same* PVC
+   entry the xnat-init Job registers (`configure-dcm2niix.sh` with
+   `XNAT_CS_BACKEND=kubernetes`). Because the Job mounts the *same* PVC
    as `xnat-web`, the chart default `ReadWriteOnce` only works when the Job is
    scheduled onto the node running `xnat-web` — true for a single-node cluster.
    For multi-node, give the XNAT data volume a `ReadWriteMany` storage class

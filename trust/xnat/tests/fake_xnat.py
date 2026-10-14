@@ -167,8 +167,11 @@ def handle(state: dict[str, Any], req: Request) -> tuple[int, str]:
     if path == "/xapi/siteConfig":
         return 200, json.dumps({"initialized": True})
     if re.fullmatch(r"/xapi/users/[^/]+/roles/?", path):
-        return 200, json.dumps(["ContainerManager"])
+        roles = ["Administrator"] if state["faults"].get("no_container_manager") else ["ContainerManager"]
+        return 200, json.dumps(roles)
     if path == "/xapi/docker/server":
+        if method == "POST":
+            state["backend"] = req.json_body()
         return 200, "{}"
     if path == "/xapi/docker/server/ping":
         return 200, "OK"

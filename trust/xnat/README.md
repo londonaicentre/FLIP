@@ -107,11 +107,12 @@ This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.m
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
 GitHub workflow). It is referenced by an immutable version tag from
-[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), the K8s init-job's inline
-copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all three together with the
-Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
-a stale 2021 build that silently dropped slices from valid series).
-[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the four stay in
+[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), which both deployment
+shapes register (the chart runs `configure-dcm2niix.sh` from the xnat-web image, FLIP#1451), and
+imaging-api's `Settings.DCM2NIIX_IMAGE` — bump both together with the Dockerfile's
+`DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was a stale 2021
+build that silently dropped slices from valid series).
+[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the three stay in
 sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
 is otherwise silent: the old immutable tag simply keeps being pulled.
 
@@ -378,10 +379,11 @@ A project's trigger names the dcm2niix **wrapper** by id: its action key is
 `org.nrg.containers.services.CommandActionProvider:<wrapper id>`, which imaging-api takes from
 XNAT's own action listing (`GET /xapi/events/allactions`). So the id must survive a redeploy:
 
-- `configure-dcm2niix.sh` (and the chart's `configure-dcm2niix`) **update** an existing dcm2niix
-  command in place with `POST /xapi/commands/{id}`. That keeps the command id and the
-  `dcm2niix-scan` wrapper's id (XNAT matches wrappers by name) while taking every field from
-  `dcm2niix_command.json`, the image included. A command is registered only when none exists, and
+- `configure-dcm2niix.sh`, which the chart's xnat-init Job also runs (from the xnat-web image, with
+  `XNAT_CS_BACKEND=kubernetes`), **updates** an existing dcm2niix command in place with
+  `POST /xapi/commands/{id}`. That keeps the command id and the `dcm2niix-scan` wrapper's id (XNAT
+  matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image
+  included; on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is registered only when none exists, and
   the step refuses to choose between two.
 - It then **re-points** any `DICOM-NIfTI Conversion` subscription that names another wrapper (left
   by a configure from before the fix, which deleted and re-registered the command) at the current
