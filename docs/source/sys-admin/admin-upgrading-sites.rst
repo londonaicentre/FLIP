@@ -159,6 +159,26 @@ follow.
    FLIP admin sees the same versions in *Connection Status → trust drawer*, with an amber
    ``≠ hub`` pill on any container still on another build.
 
+6. **Check every project still converts DICOM to NIfTI** (once, when upgrading *from* a
+   release before FLIP#1451). Those releases re-registered dcm2niix on every configure pass, and
+   on Compose also deleted every project's DICOM->NIfTI trigger. The configure pass now repairs
+   the triggers it can and names, in its log, each project left with none:
+
+   .. code-block:: text
+
+      WARNING: project <id> (hub project <id>) has no DICOM->NIfTI trigger, so its scans are not converted.
+
+   Whether a project converts is its *DICOM to NIfTI* setting on the hub (each project's page
+   shows it; the default is on), which the trust does not hold. Ask the FLIP admin for it, then:
+
+   .. code-block:: bash
+
+      sudo -E make -C trust restore-nifti-triggers KIT=<slot>              # report only
+      sudo -E make -C trust restore-nifti-triggers KIT=<slot> ACTIVE="<hub project id> ..." INACTIVE="<hub project id> ..."
+
+   Projects that still have a trigger are left alone. On Kubernetes the same command runs in the
+   imaging-api pod (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3e).
+
 Kubernetes
 ==========
 
@@ -189,6 +209,12 @@ The kit's ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` opt-outs reach the ch
 for that one image. That is the only way to move a Kubernetes site to a ``sha-`` tag one of
 them was never built at — a StatefulSet rolled onto a tag that does not exist stays down — and
 a release tag never needs one.
+
+Since FLIP#1451 the chart's ``xnat-init`` Job runs ``configure-dcm2niix.sh`` from the xnat-web
+image, so ``xnat.image.pin`` (the kit's ``XNAT_TAG``) also picks the configure script. An xnat-web
+image built before FLIP#1451 (v0.12.0, for one) carries a Docker-only script: the Job refuses it,
+naming the image, rather than letting ``helm upgrade`` fail on its own. Hold XNAT back only on an
+xnat-web image from the release that ships the chart, or later.
 
 Cloud (EC2) trust
 =================

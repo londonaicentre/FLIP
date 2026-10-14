@@ -40,6 +40,9 @@ protect the XNAT database credentials (FLIP-PT-056).
   lines, the WAR at the `.env` XNAT version, one jar per required plugin family, the same plugin
   URLs as the Helm chart) and executes `xnat_artifacts.sh` `check`/`fetch` against fixture
   manifests with a stubbed `curl` and an `aws` stub that must never run.
+- **dcm2niix registration and trigger repair** (`test_dcm2niix_registration.py`, FLIP#1451) —
+  runs `configure-dcm2niix.sh` for both Container Service backends against `fake_xnat.py`, a
+  miniature XNAT behind a stubbed `curl`, and checks what XNAT ends up holding.
 - **Startup reliability** (`test_startup.py`) — executes the dev plugin-cache check ordering
   and authenticated plugin-readiness wait with stubbed curl commands,
   checks aggregate Make targets propagate failures, and pins root-relative paths

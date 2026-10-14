@@ -147,6 +147,7 @@ make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=… DELETE=�
 make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
 make check-governance KIT=GSTT   # Validate the trust's governance document — both halves, on the host's Python (no project sync), starts nothing
 make reload-governance KIT=GSTT  # Re-apply an edited governance document to a LIVE trust: recreates data-access-api (+ on NVFLARE fl-governance-init and the fl-clients), then checks the service logs the document's digest; touches no data
+make restore-nifti-triggers KIT=GSTT [ACTIVE=… INACTIVE=… REST=active|inactive DRY_RUN=1]  # Recreate DICOM->NIfTI triggers a pre-FLIP#1451 configure deleted, active or not as the hub says; report only by default
 ```
 
 ## Environment

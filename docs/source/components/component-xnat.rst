@@ -239,7 +239,7 @@ DICOM to NIfTI Conversion
 
 XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). On the Docker/swarm backend the setup script also registers ``ghcr.io`` as a credential-less Container Service *image host*: without an image-host entry matching the image's registry hostname, container-service 3.8.1's swarm launch path fails with a ``NullPointerException`` before any container exists, even for a public image (the Kubernetes backend pulls via kubelet and does not need the entry). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
 
-The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — the same listing imaging-api returns when no command matches the image it requests — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) re-registers against the current pin.
+The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — imaging-api refuses to create a project's trigger on a ``dcm2niix-scan`` wrapper that runs another image and names both images — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) moves the command to the current pin. Both update the existing command in place (``POST /xapi/commands/{id}``), which keeps its command and wrapper ids: every project's trigger names the wrapper by id, so a delete and re-register would silently stop every existing project converting (FLIP#1451).
 
 Commands vs Event Subscriptions
 ================================
@@ -257,6 +257,8 @@ When a FLIP project is created, the ``dicom_to_nifti`` setting controls the even
 - **Disabled** (``dicom_to_nifti=False``): An inactive event subscription is created. No automatic conversion occurs, but ``dcm2niix`` can still be triggered manually from the XNAT UI if needed.
 
 The event subscription can be activated or deactivated later via the XNAT Event Service API.
+
+The subscription's action key names the dcm2niix *wrapper* by id, as XNAT lists it at ``GET /xapi/events/allactions``. Redeploying keeps that id (the command is updated in place) and repairs any subscription a pre-FLIP#1451 deploy left on a deleted wrapper. A project that lost its subscription altogether is named in the configure log and restored with ``restore-nifti-triggers``, active or inactive as its hub-side ``dicom_to_nifti`` setting says (``trust/xnat/README.md``, "Restoring missing DICOM->NIfTI triggers").
 
 A project created with 'Includes imaging data' turned off (``has_imaging=False``) never reaches XNAT at all: the Central Hub skips the imaging stage at approval, so no XNAT project, event subscription or PACS pull is created at any trust.
 
@@ -287,6 +289,12 @@ The following XNAT Event Service API endpoints are used by FLIP for managing per
     * - POST
       - ``/xapi/projects/{project}/events/subscription/{id}/deactivate``
       - Deactivates an active subscription
+    * - GET
+      - ``/xapi/events/allactions``
+      - Lists the action key of every command wrapper (imaging-api reads dcm2niix's from it)
+    * - PUT
+      - ``/xapi/events/subscription/{id}``
+      - Re-points a subscription at the current dcm2niix wrapper (the configure step, admin only)
 
 *****************
 FLIP XNAT methods

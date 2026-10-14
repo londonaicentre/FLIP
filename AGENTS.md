@@ -285,6 +285,7 @@ make -C trust debug-<SVC>          # Debug mode for one trust-internal service d
 make -C trust debug-<SVC>-off      # Stop it
 make -C trust check-governance KIT=<CODE>   # Validate the trust's governance document (FLIP#1259) — both halves, host Python, starts nothing
 make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE trust: data-access-api (+ NVFLARE clients), checks the logged digest
+make -C trust restore-nifti-triggers KIT=<CODE> [ACTIVE=… INACTIVE=… REST=active|inactive DRY_RUN=1]  # Recreate DICOM->NIfTI triggers a pre-FLIP#1451 configure deleted; report only by default
 ```
 
 ### Site release upgrades (FLIP#1204)
@@ -532,7 +533,7 @@ gh run list --workflow=docker_build_flip_api.yml --branch <branch>
 
 ## Pre-commit Hooks
 
-TruffleHog, detect-secrets (also enforced repo-wide by the `Detect Secrets Scan` CI job against `.secrets.baseline` since FLIP#1215 — allowlist a dummy value inline with `# pragma: allowlist secret`, see CONTRIBUTING.md "Secret scanning"), large file check (max 1000KB), merge conflict markers, YAML validation, end-of-file-fixer, private key detection, env var validation, fl-apps required-files generation (`fl-apps-required-files` — regenerates each `fl-apps/<backend>/required_files.json` from its per-template arrays via `fl-apps/check_required_files.sh`; rewrites-and-fails on drift like `prettier`, so re-stage and commit again — backstopped by the `fl-apps-check-required-files.yml` CI workflow. The aggregate is `linguist-generated` in `.gitattributes`; never hand-edit it — edit the per-template `required_files.json`), `xnat-dcm2niix-pin-sync` (checks the pinned `DCM2NIIX_VERSION` image tag stays in sync across the four hand-written sites that reference it; report-only, backstopped by the dcm2niix-pin-sync job in `test_trust_xnat.yml` — #980), `prettier` (scoped to `deploy/providers/AWS/**/*.{yml,yaml}`), uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
+TruffleHog, detect-secrets (also enforced repo-wide by the `Detect Secrets Scan` CI job against `.secrets.baseline` since FLIP#1215 — allowlist a dummy value inline with `# pragma: allowlist secret`, see CONTRIBUTING.md "Secret scanning"), large file check (max 1000KB), merge conflict markers, YAML validation, end-of-file-fixer, private key detection, env var validation, fl-apps required-files generation (`fl-apps-required-files` — regenerates each `fl-apps/<backend>/required_files.json` from its per-template arrays via `fl-apps/check_required_files.sh`; rewrites-and-fails on drift like `prettier`, so re-stage and commit again — backstopped by the `fl-apps-check-required-files.yml` CI workflow. The aggregate is `linguist-generated` in `.gitattributes`; never hand-edit it — edit the per-template `required_files.json`), `xnat-dcm2niix-pin-sync` (checks the pinned `DCM2NIIX_VERSION` image tag stays in sync across the three hand-written sites that reference it; report-only, backstopped by the dcm2niix-pin-sync job in `test_trust_xnat.yml` — #980), `prettier` (scoped to `deploy/providers/AWS/**/*.{yml,yaml}`), uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
 
 ## Security Rules
 

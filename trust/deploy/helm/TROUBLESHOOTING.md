@@ -16,6 +16,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
    - [2.3d dcm2niix Jobs Swamp the Node, or Wait for a Slot](#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot)
+   - [2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)](#23e-existing-projects-stopped-converting-after-a-redeploy-flip1451)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -289,9 +290,10 @@ Job still exited 0 with dcm2niix silently unregistered — the same
 silent-failure class as FLIP#822 / FLIP#862.
 
 **Fix:** Both are now handled by `xnat-init-job.yaml`: `configure-xnat-web`
-grants the role, and `configure-dcm2niix` waits for it and then fails loudly
-rather than swallowing the error. To repair a cluster configured by an older
-chart:
+grants the role, and `configure-dcm2niix` (which runs `configure-dcm2niix.sh`
+from the xnat-web image since FLIP#1451) checks for it first and fails loudly,
+naming the role, rather than swallowing the error. To repair a cluster
+configured by an older chart:
 
 ```bash
 kubectl exec -n flip-trust "$XNAT_POD" -- \
@@ -330,10 +332,12 @@ docker exec <node> find /data/xnat/archive -type d | wc -l   # many
 docker exec <node> find /data/xnat/archive -type f | wc -l   # zero
 ```
 
-**Fix:** the chart sets this in the Kubernetes backend entry of the
-`xnat-cs-config` ConfigMap (`combined-pvc-name` + `combined-path-translation`),
-since the single `xnat-web` data PVC holds both `archive/` and `build/` at its
-root. If you configure a backend by hand, mirror it:
+**Fix:** the chart sets this in the Kubernetes backend entry that
+`configure-dcm2niix.sh` registers (`combined-pvc-name` +
+`combined-path-translation`): `trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json`,
+with `combined-pvc-name` set to the release's PVC from the Job's
+`XNAT_CS_PVC_NAME`, since the single `xnat-web` data PVC holds both `archive/`
+and `build/` at its root. If you configure a backend by hand, mirror it:
 
 ```json
 "combined-pvc-name": "<release>-flip-trust-xnat-web",
@@ -365,14 +369,17 @@ xnat:
 ### 2.3c dcm2niix Registered Against a Stale Image
 
 **Symptom:** studies pull and archive fine, conversion never runs, and
-imaging-api reports the mismatch by listing what *is* registered, e.g.
+creating a project fails with imaging-api naming both images, e.g.
 
 ```
-No commands found for container 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724'.
-The Container Service is installed and has 1 command(s) registered:
-'dcm2niix' -> 'xnat/dcm2niix:latest'. If one of those is the same tool on an older
-image, this XNAT's registration predates the current pin ...
+XNAT has 0 'dcm2niix-scan' wrappers on the pinned
+'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724' (registered images:
+xnat/dcm2niix:latest), not one, so project ... gets no DICOM->NIfTI trigger. ...
 ```
+
+imaging-api reads this from the `dcm2niix-scan` rows of
+`GET /xapi/commands/available/site?xsiType=xnat:imageScanData`, which carry the
+command id, the wrapper id and the image the command runs (FLIP#1456).
 
 The Container Service is healthy and the command is enabled; it is simply bound
 to the image this XNAT was provisioned with.
@@ -394,10 +401,13 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
   | jq -r '.[] | "\(.name) -> \(.image)"'
 ```
 
-**Fix:** re-register against the pinned image — re-run the `xnat-init` Job
+**Fix:** move the command to the pinned image — re-run the `xnat-init` Job
 (`helm upgrade` re-fires the post-install hook) on Kubernetes, or
-`configure-dcm2niix.sh` on Compose. Then confirm the listing above names the
-image the trust's imaging-api requests.
+`configure-dcm2niix.sh` on Compose. Both update the existing command in place
+with `POST /xapi/commands/{id}`, so its command and wrapper ids, and with them
+every project's trigger, survive (FLIP#1451). Then confirm the listing above
+names the image the trust's imaging-api requests. A chart older than FLIP#1451
+deleted and re-registered the command instead, which is how §2.3e happens.
 
 ### 2.3d dcm2niix Jobs Swamp the Node, or Wait for a Slot
 
@@ -438,6 +448,71 @@ kubectl get jobs -n flip-trust -l XNAT_PROJECT -o json | jq -r '.items[]
 relaunch dcm2niix on them from XNAT: the project's Processing Dashboard (batch-launch plugin) can
 launch it on every scan at once, and the cap paces them. `make -C trust/deploy/helm selftest`
 checks that a conversion completes.
+
+### 2.3e Existing Projects Stopped Converting After a Redeploy (FLIP#1451)
+
+**Symptom:** after a `helm upgrade` (or, on Compose, `upgrade-xnat`), projects
+created *before* it archive DICOM but never get NIfTI; projects created after it
+convert normally. Nothing logs an error trust-side.
+
+**Root Cause:** each project's DICOM->NIfTI trigger is an XNAT event subscription
+whose action key names the dcm2niix *wrapper* by id
+(`org.nrg.containers.services.CommandActionProvider:<wrapper id>`). Before
+FLIP#1451 every configure deleted dcm2niix and registered it again under new ids,
+leaving every existing subscription on a wrapper that no longer exists. XNAT
+reports such a subscription `valid: false` ("Could not validate Action") and
+fires nothing. On Compose it was worse: the configure step's legacy cleanup
+deleted every project's subscription outright.
+
+**Check:**
+
+```bash
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -u admin:<admin-pass> http://localhost:8080/xapi/events/subscriptions \
+  | jq -r '.[] | "\(.id) \(.["event-filter"]["project-ids"]) \(.["action-key"]) valid=\(.valid)"'
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -u admin:<admin-pass> "http://localhost:8080/xapi/commands?name=dcm2niix" \
+  | jq '.[] | {id, wrapper: .xnat[0].id, image}'
+```
+
+**Fix:** run the current `xnat-init` Job (`helm upgrade`). It updates dcm2niix in
+place and re-points every `DICOM-NIfTI Conversion` subscription whose wrapper no
+longer exists at the current one, after enabling that wrapper for the project, logging
+one `Repaired the DICOM->NIfTI trigger of project <id>` line per project. It
+leaves a subscription whose project no longer exists alone, warns about a repair
+XNAT refuses and carries on (the closing `could not repair: N` counts them), and
+warns about any trigger XNAT still calls invalid.
+
+The Job runs `configure-dcm2niix.sh` from the xnat-web image. If `xnat.image.pin`
+(the kit's `XNAT_TAG`) holds that image before FLIP#1451, the Job stops with
+`xnat-web image <image> predates FLIP#1451`: unpin it, or pin an image from the
+release that ships this chart or later.
+
+A project with **no** subscription at all is named in the Job log
+(`WARNING: project <id> (hub project <id>) has no DICOM->NIfTI trigger`) but not
+recreated: whether a project converts is its hub-side *DICOM to NIfTI* setting,
+which reaches the trust only when the project is created. Read the setting from
+each project's page on the hub (its default is on), then recreate the triggers
+with imaging-api's own creation path:
+
+```bash
+# Report only: every FLIP project and whether it has a trigger
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.restore_nifti_triggers
+# Recreate: ids are hub project ids (as in the FLIP UI) or XNAT project IDs
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.restore_nifti_triggers --active <id> --inactive <id>
+# Or: every untriggered project active except the ones named inactive (--dry-run to preview)
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.restore_nifti_triggers --rest active --inactive <id>
+```
+
+A project that still has a trigger is never touched by this command. On Compose
+the same command is `make -C trust restore-nifti-triggers KIT=<CODE>
+[ACTIVE="<id> ..."] [INACTIVE="<id> ..."] [REST=active|inactive] [DRY_RUN=1]`.
+Neither step converts scans archived while the trigger was broken: a trigger fires
+on new scans only. Run dcm2niix on those from the XNAT UI (the project's *Run
+Containers* action), which the command stays enabled for.
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 

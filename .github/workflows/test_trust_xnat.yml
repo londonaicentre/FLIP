@@ -20,19 +20,23 @@ name: Trust - XNAT CI
 # asserts each wires XNAT_AETITLE to exactly its two consumers with the same default the XNAT stack
 # substitutes, and the AE titles on the two sides drifting apart is the queries-succeed /
 # retrievals-time-out failure, since DQR matches the C-MOVE destination by exact AE and port.
-# The dcm2niix-pin-sync job below likewise reads four files scattered across the
+# The dcm2niix-pin-sync job below likewise reads three files scattered across the
 # repo, so each of those triggers the workflow too. The same rule covers the
 # bind-mount ownership drift tests (test_data_dir_ownership.py): they assert that
 # the XNAT Dockerfile's uid and both Ansible playbooks' ownership tasks still
 # agree with trust/xnat/Makefile, so all three of those files trigger this
 # workflow — otherwise a change to the uid in the image, or to the ownership task
 # in either playbook, lands with the drift test that exists to catch it unrun.
+# test_dcm2niix_registration.py runs configure-dcm2niix.sh for both Container Service backends and
+# holds its subscription name and FLIP-project test to imaging-api's (services/projects.py,
+# scripts/restore_nifti_triggers.py), so those trigger this workflow too (FLIP#1451).
 on:
   push:
     branches: [main, develop]
     paths:
       - "trust/xnat/xnat/config/anon_script.das"
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/xnat/xnat/config/configure-dcm2niix.sh"
       - "trust/xnat/xnat/config/wait-for-xnat-plugins.sh"
       - "trust/xnat/scripts/xnat_artifacts.sh"
       - "trust/xnat/artifacts.manifest"
@@ -52,6 +56,8 @@ on:
       - "trust/xnat/xnat/wait-for-postgres.sh"
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
+      - "trust/imaging-api/imaging_api/services/projects.py"
+      - "trust/imaging-api/imaging_api/scripts/restore_nifti_triggers.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"
@@ -65,6 +71,7 @@ on:
     paths:
       - "trust/xnat/xnat/config/anon_script.das"
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/xnat/xnat/config/configure-dcm2niix.sh"
       - "trust/xnat/xnat/config/wait-for-xnat-plugins.sh"
       - "trust/xnat/scripts/xnat_artifacts.sh"
       - "trust/xnat/artifacts.manifest"
@@ -84,6 +91,8 @@ on:
       - "trust/xnat/xnat/wait-for-postgres.sh"
       - "trust/xnat/postgres/guard-xnat-db-passwords.sh"
       - "trust/imaging-api/imaging_api/config.py"
+      - "trust/imaging-api/imaging_api/services/projects.py"
+      - "trust/imaging-api/imaging_api/scripts/restore_nifti_triggers.py"
       - "flip-api/src/flip_api/scripts/generate_xnat_credentials.py"
       - "trust/xnat/dcm2niix/**"
       - "trust/xnat/xnat/config/dcm2niix_command.json"
@@ -120,7 +129,7 @@ jobs:
 
   # Backstop for the xnat-dcm2niix-pin-sync pre-commit hook, for commits made without pre-commit
   # installed. Kept a separate job (no Python, no uv) because it is a two-second grep and must stay
-  # cheap enough to run on any of the four pin sites changing.
+  # cheap enough to run on any of the three pin sites changing.
   dcm2niix-pin-sync:
     runs-on: ubuntu-latest
 

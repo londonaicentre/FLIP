@@ -107,20 +107,22 @@ This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.m
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
 GitHub workflow). It is referenced by an immutable version tag from
-[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), the K8s init-job's inline
-copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all three together with the
-Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
-a stale 2021 build that silently dropped slices from valid series).
-[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the four stay in
+[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), which both deployment
+shapes register (the chart runs `configure-dcm2niix.sh` from the xnat-web image, FLIP#1451), and
+imaging-api's `Settings.DCM2NIIX_IMAGE` — bump both together with the Dockerfile's
+`DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was a stale 2021
+build that silently dropped slices from valid series).
+[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the three stay in
 sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
 is otherwise silent: the old immutable tag simply keeps being pulled.
 
 That check compares files in this repository and never calls a running XNAT, so it cannot see the
 *live* registration. An XNAT provisioned before a bump keeps its old command in the XNAT database and
 goes on converting with the superseded image while looking perfectly healthy — both staging trusts sat
-in that state. Confirm a deployment with `GET /xapi/commands` (the `name -> image` pairs it returns are
-what imaging-api reports when nothing matches) and re-register with `configure-dcm2niix.sh`, or the
-`xnat-init` job on Kubernetes, if the image named there is not the current pin.
+in that state. Confirm a deployment with `GET /xapi/commands` (the image imaging-api names when project creation
+refuses a stale registration is the one listed there) and re-run `configure-dcm2niix.sh`, or the
+`xnat-init` job on Kubernetes, if the image named there is not the current pin. Both update the
+existing command in place, so its ids, and every project's trigger, survive the move (FLIP#1451).
 
 #### Operator action: the GHCR package must be public
 
@@ -370,6 +372,52 @@ XNAT uses two mechanisms for dcm2niix conversion:
 - **Event Subscription** (Event Service): Per-project event subscriptions auto-trigger dcm2niix when DICOM scans are uploaded. These are created by the **Imaging API** during FLIP project creation, controlled by the `dicom_to_nifti` project setting.
 
 The setup script (`configure-dcm2niix.sh`) intentionally does **not** create a site-wide event subscription. This ensures dcm2niix only auto-triggers for projects that have opted in via the `dicom_to_nifti` flag.
+
+### Re-running the setup keeps every project's trigger (FLIP#1451)
+
+A project's trigger names the dcm2niix **wrapper** by id: its action key is
+`org.nrg.containers.services.CommandActionProvider:<wrapper id>`, which imaging-api takes from
+XNAT's own action listing (`GET /xapi/events/allactions`). So the id must survive a redeploy:
+
+- `configure-dcm2niix.sh`, which the chart's xnat-init Job also runs (from the xnat-web image, with
+  `XNAT_CS_BACKEND=kubernetes`), **updates** an existing dcm2niix command in place with
+  `POST /xapi/commands/{id}`. That keeps the command id and the `dcm2niix-scan` wrapper's id (XNAT
+  matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image
+  included; on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is registered only when none exists, and
+  the step refuses to choose between two.
+- It then **re-points** any `DICOM-NIfTI Conversion` subscription whose wrapper no longer exists (left
+  by a configure from before the fix, which deleted and re-registered the command) at the current
+  one, enabling the wrapper for that project first, and logs one line per project repaired.
+- A repair XNAT refuses (the subscription's owner cannot be loaded, say) is a warning, and the
+  run goes on; the closing count says how many could not be repaired.
+- The script **deletes no event subscription**. Its legacy site-wide cleanup is gone: it selected
+  a `project-id` field that no subscription has, and so deleted **every** project's subscription
+  on every `up-trust` and `upgrade-xnat`, while the site-wide subscription it was written for has
+  not been created since 2026-03-24 (FLIP#945 removes it too).
+- XNAT's listings reach jq through files, never as an argument: Linux caps one argument at
+  128 KiB, which a few hundred projects or subscriptions exceed.
+
+### Restoring missing DICOM->NIfTI triggers
+
+A Compose trust configured before FLIP#1451 has probably lost every project's trigger to that
+cleanup. The configure step names each such project in its log
+(`WARNING: project <id> (hub project <id>) has no DICOM->NIfTI trigger`) but cannot recreate them
+faithfully: a trigger is created active or inactive from the project's hub-side **DICOM to NIfTI**
+setting, which reaches the trust only when the project is created. Read the setting from each
+project's page on the hub (its default is on), then:
+
+```bash
+make -C trust restore-nifti-triggers KIT=<CODE>                                   # report only
+make -C trust restore-nifti-triggers KIT=<CODE> ACTIVE="<id> <id>" INACTIVE="<id>"
+make -C trust restore-nifti-triggers KIT=<CODE> REST=active INACTIVE="<id>" DRY_RUN=1
+```
+
+Ids are hub project ids (as in the FLIP UI) or XNAT project IDs. The target runs
+`python -m imaging_api.scripts.restore_nifti_triggers` in the running imaging-api container, which
+creates each trigger through imaging-api's own project-creation path, owned by the service account;
+a project that still has a trigger is never touched. On an on-prem host prefix `sudo -E`. Kubernetes:
+`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e. Scans archived while a project had no trigger are not
+converted retroactively; run dcm2niix on them from the XNAT UI.
 
 ## Resource limits
 
