@@ -28,7 +28,7 @@ The trust-api acts as the local orchestrator at each Trust:
 
 1. **Cohort queries** — polls for and executes OMOP SQL queries from the Central Hub, delegates to [data-access-api](../data-access-api/), and returns aggregated statistics
 2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) in response to approved FL studies
-3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` (imaging-api + data-access-api `/health`, XNAT via its anonymous `buildInfo` endpoint, the PACS connector transitively via imaging-api's `ping_pacs` DIMSE echo, the OMOP database via a raw TCP connect) and attaches the snapshot to the heartbeat; the hub surfaces it on the Connection Status page's per-container drawer
+3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` (imaging-api + data-access-api `/health`, XNAT via its anonymous `buildInfo` endpoint, the PACS connector transitively via imaging-api's `ping_pacs` DIMSE echo, the OMOP database via a raw TCP connect) and attaches the snapshot to the heartbeat; the hub surfaces it on the Connection Status page's per-container drawer. The PACS echo is the exception to the cadence: it runs live at most every `PACS_PING_INTERVAL_SECONDS`, and the cycles in between report its last result (see the table below)
 4. **Audit** — logs all operations locally for governance purposes
 
 The trust-api polls the [flip-api](../../flip-api/) (Central Hub) for tasks. It does not accept inbound requests from the hub or expose an external user interface.
@@ -74,10 +74,17 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `COHORT_QUERY_TIMEOUT_SECONDS` | Timeout on trust-api's one cohort-query request, `POST /cohort` to data-access-api (default: 300). A cohort re-runs against OMOP at every later stage too, but those are other services' calls (imaging-api → `/cohort/accession-ids`, fl-client → `/cohort/dataframe`) and this setting does not reach them |
 | `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |
 | `HEALTH_PROBE_DEGRADED_MS` | A successful probe slower than this reports `degraded` (default: 1000) |
+| `PACS_PING_INTERVAL_SECONDS` | The longest the health collector waits between live PACS pings (default: 300; allowed 30–3600, and trust-api refuses to start outside that range). Each live ping makes XNAT's DQR open a DICOM association to the PACS (a C-ECHO) and store a ping row. A ping on every 30 s collection was 2,880 a day against a hospital PACS, which may refuse associations past an agreed volume (FLIP#993). The cycles in between report the last result unchanged, status and response time alike. **Latency:** a PACS outage, or its recovery, can reach the Connection Status page up to this many seconds late. A ping that fails is retried at the next interval, not sooner, so a struggling PACS gets no extra associations. A ping that never completes (it hangs past the cycle deadline) reports `unknown` until the next interval, never the previous `healthy` |
 | `XNAT_URL` | Internal URL of XNAT for the health probe (default `http://xnat-web:8080`) |
 | `OMOP_DB_HOST` / `OMOP_DB_PORT` | OMOP PostgreSQL address for the TCP health probe (defaults `omop-db` / 5432) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
+
+The kit file does not carry `HEALTH_COLLECT_INTERVAL_SECONDS` or `PACS_PING_INTERVAL_SECONDS`, and
+neither the compose files nor the Helm chart inject them, so every deployed trust runs their code
+defaults. If a site's PACS manager agrees a different ping interval, add `PACS_PING_INTERVAL_SECONDS`
+to trust-api's `environment:` block in the compose file, or to the chart's trust-api ConfigMap
+(`trust/deploy/helm/templates/trust-api.yaml`).
 
 `XNAT_URL`, `OMOP_DB_HOST`/`OMOP_DB_PORT`, `DATA_ACCESS_API_URL`, `IMAGING_API_URL` and
 `TRUST_INTERNAL_SERVICE_KEY_HEADER` are internal-topology constants fixed by the compose network,

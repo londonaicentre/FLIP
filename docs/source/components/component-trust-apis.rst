@@ -98,6 +98,13 @@ grades each ``healthy``, ``degraded`` (slow), ``down`` or ``unknown``. The snaps
 heartbeat and is what the hub's connection-status drawer shows. A probe cycle that fails or hangs discards
 the snapshot rather than resend a stale one, so the hub shows *no data* instead of a frozen green.
 
+The PACS ping does not run every cycle. Each live ping makes XNAT open a DICOM association to the
+hospital PACS (a ``C-ECHO``) and store a ping record, and a PACS may refuse associations past an agreed
+volume. So the collector pings live at most every ``PACS_PING_INTERVAL_SECONDS`` (default five minutes,
+288 a day rather than 2,880), and the cycles in between report the last result. A PACS outage, or its
+recovery, therefore reaches the hub up to that long late. A failed ping is retried at the next interval,
+not sooner. A ping that never completes reports ``unknown`` until then, never the previous ``healthy``.
+
 ***********
 Imaging API
 ***********
