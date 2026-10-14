@@ -376,10 +376,9 @@ imaging-api expects 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724', so a
 trigger would convert with the wrong image. Re-run configure-dcm2niix.sh ...
 ```
 
-imaging-api reads this from the project's own
-`GET /xapi/projects/<project>/commands/available?xsiType=xnat:imageScanData`
-row for the `dcm2niix-scan` wrapper, which carries the command id, the wrapper id
-and the image the command runs (FLIP#1456).
+imaging-api reads this from the `dcm2niix-scan` row of
+`GET /xapi/commands/available/site?xsiType=xnat:imageScanData`, which carries the
+command id, the wrapper id and the image the command runs (FLIP#1456).
 
 The Container Service is healthy and the command is enabled; it is simply bound
 to the image this XNAT was provisioned with.
