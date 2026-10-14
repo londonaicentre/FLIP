@@ -14,6 +14,7 @@ from typing import Annotated
 
 import pandas as pd
 from fastapi import Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
 from imaging_api.routers.schemas import (
@@ -24,6 +25,8 @@ from imaging_api.routers.schemas import (
 )
 from imaging_api.services.imaging import query_by_accession_number, queue_image_import_request
 from imaging_api.services.import_requests import (
+    DirectArchiveSession,
+    PacsRequest,
     get_direct_archive_sessions,
     get_executed_import_requests,
     get_queued_import_requests,
@@ -194,6 +197,29 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         return False
 
 
+def _read_import_records(
+    project_id: str, headers: dict[str, str]
+) -> tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]]:
+    """Reads the project's DQR queue, direct-archive sessions and DQR history, in that order.
+
+    A request only moves forward, from DQR's queue to its history (where it stays), so reading the
+    queue first sees a request that moves between the two reads in at least one of them.
+
+    Args:
+        project_id (str): The XNAT project ID.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]]: The queued requests,
+        the direct-archive sessions and the executed requests.
+    """
+    return (
+        get_queued_import_requests(project_id, headers),
+        get_direct_archive_sessions(project_id, headers),
+        get_executed_import_requests(project_id, headers),
+    )
+
+
 async def get_import_status(project_id: str, query: str, headers: XNATAuthHeaders) -> ImportStatus:
     """
     Returns information about the status of study imports:
@@ -265,12 +291,15 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # TODO What if the XNAT project contains experiments that aren't actually in the cohort dataframe?
     # Could this even happen?
 
-    # Go through the accession numbers and find its import status. A request only moves forward, from
-    # DQR's queue to its history (where it stays), so reading the queue first sees a request that moves
-    # between the two reads in at least one of them.
-    queued_pacs_requests = get_queued_import_requests(project_id, headers)
-    direct_archive_sessions = get_direct_archive_sessions(project_id, headers)
-    executed_pacs_requests = get_executed_import_requests(project_id, headers)
+    # Go through the accession numbers and find its import status. An archived accession is
+    # `successful` whatever DQR holds for it, so when every accession is archived the DQR records
+    # cannot change the answer, and a finished project polled by an open page reads none of them.
+    # They are blocking calls, so they run off the event loop.
+    archived = set(successfully_imported_accession_numbers)
+    records: tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]] = ([], [], [])
+    if not all(accession_number in archived for accession_number in accession_ids):
+        records = await run_in_threadpool(_read_import_records, project_id, headers)
+    queued_pacs_requests, direct_archive_sessions, executed_pacs_requests = records
 
     logger.debug(f"Direct Archive Sessions: {len(direct_archive_sessions)}")
     logger.debug(f"Executed PACS requests: {len(executed_pacs_requests)}")
@@ -304,7 +333,7 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
 
         # "successful" means archived as a queryable experiment — a directArchive that has only been
         # RECEIVED is not yet archived, so it stays `processing` until the experiment appears.
-        if accession_number in successfully_imported_accession_numbers:
+        if accession_number in archived:
             import_status.successful.append(accession_number)
         elif accession_number in failed_accessions:
             import_status.failed.append(accession_number)

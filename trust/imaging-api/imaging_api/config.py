@@ -51,10 +51,6 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     XNAT_SERVICE_USER: str
     XNAT_SERVICE_PASSWORD: str
-    # No XNAT database settings: import status is read through XNAT's REST API
-    # (services/import_requests.py), so imaging-api holds no credential for XNAT's
-    # Postgres. An XNAT_DATABASE_URL or XNAT_DATASOURCE_PASSWORD still set in an
-    # older deployment is ignored, not an error.
 
     #
     DATA_ACCESS_API_URL: str = "http://data-access-api:8000"

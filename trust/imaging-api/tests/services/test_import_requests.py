@@ -36,6 +36,7 @@ from imaging_api.services.import_requests import (
     get_queued_import_requests,
 )
 from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT
 
 PROJECT = "b4a5fa39-004c-4522-b808-8bdf92b70ccb"
 OTHER = "46c30776-3495-404b-ad03-fb71e0379b15"
@@ -175,14 +176,13 @@ def test_a_request_pushed_onto_the_next_page_is_kept_once(xnat):
     assert len(ids) == len(set(ids)) == PAGE + 1
 
 
-def test_a_server_ignoring_the_page_number_does_not_loop(xnat):
+def test_a_server_ignoring_the_page_number_is_a_fetch_error(xnat):
+    """Stopping there would drop the rest of the listing and report its accessions as never queued."""
     full_page = [_request(i) for i in range(PAGE, 0, -1)]
     xnat.on("GET", "/xapi/dqr/import/queue", lambda r: (200, full_page))
 
-    queued = get_queued_import_requests(PROJECT, {})
-
-    assert len(queued) == PAGE
-    assert len(xnat.requested("GET", "/xapi/dqr/import/queue")) == 2
+    with pytest.raises(XnatFetchError, match="page 2 repeats the pages before it"):
+        get_queued_import_requests(PROJECT, {})
 
 
 # ===========================================================================
@@ -197,6 +197,15 @@ def test_an_unreadable_listing_is_a_fetch_error_not_a_not_found(xnat, status):
     with pytest.raises(XnatFetchError, match=f"DQR import queue fetch failed: {status}") as raised:
         get_queued_import_requests(PROJECT, {})
     assert not isinstance(raised.value, NotFoundError)
+
+
+@pytest.mark.parametrize("listing", ["queue", "history"])
+def test_a_403_names_the_missing_all_data_access(xnat, listing):
+    xnat.on("GET", f"/xapi/dqr/import/{listing}", lambda r: (403, "You must have all data access privileges"))
+    read = get_queued_import_requests if listing == "queue" else get_executed_import_requests
+
+    with pytest.raises(XnatFetchError, match="403 - the service account lacks all-data access$"):
+        read(PROJECT, {})
 
 
 @pytest.mark.parametrize(
@@ -268,7 +277,8 @@ def test_history_stops_once_a_page_reaches_back_past_the_project(xnat):
 
 def test_history_reads_on_while_the_page_is_inside_the_horizon(xnat):
     first = [_request(i) for i in range(2 * PAGE, PAGE, -1)]
-    first[-1].update(queuedTime=HORIZON_MS - 1, created=HORIZON_MS - 1)  # still executed after the horizon
+    # Queued and executed before the horizon, but last updated after it: the read goes on.
+    first[-1].update(queuedTime=HORIZON_MS - 1, created=HORIZON_MS - 1, executedTime=HORIZON_MS - 1)
     xnat.pages("GET", "/xapi/dqr/import/history", [first, [_request(1, at=HORIZON_MS)]])
 
     executed = get_executed_import_requests(PROJECT, {})
@@ -286,20 +296,12 @@ def test_history_keeps_a_matching_request_on_the_last_page_read(xnat):
 
 
 @pytest.mark.parametrize(
-    "listing",
-    [
-        (404, "<html>Not found</html>"),
-        (200, _projects_listing()),
-        (200, _projects_listing({"ID": OTHER, _COL: INSERT_DATE})),
-        (200, _projects_listing({"ID": PROJECT})),
-        (200, _projects_listing({"ID": PROJECT, _COL: "Mon Oct 12 18:52:11 UTC 2026"})),
-        (200, {"unexpected": True}),
-        (200, "not json"),
-    ],
-    ids=["non-200", "no-row", "other-project-only", "no-column", "unparseable-date", "unexpected-shape", "not-json"],
+    "row",
+    [{"ID": OTHER, _COL: INSERT_DATE}, {"ID": PROJECT}, {"ID": PROJECT, _COL: "Mon Oct 12 18:52:11 UTC 2026"}],
+    ids=["no-such-project", "no-date", "unreadable-date"],
 )
-def test_history_without_a_creation_date_reads_every_page(xnat, listing):
-    xnat.on("GET", "/data/projects", lambda r: listing)
+def test_history_without_a_creation_date_reads_every_page(xnat, row):
+    xnat.on("GET", "/data/projects", lambda r: (200, _projects_listing(row)))
     old_page = [_request(i, at=0) for i in range(2 * PAGE, PAGE, -1)]
     xnat.pages("GET", "/xapi/dqr/import/history", [old_page, [_request(1, at=0)]])
 
@@ -309,14 +311,13 @@ def test_history_without_a_creation_date_reads_every_page(xnat, listing):
     assert len(executed) == PAGE + 1
 
 
-def test_a_failed_creation_date_lookup_is_not_fatal(xnat):
-    def refuse(request):
-        raise requests.ConnectionError("connection refused")
+@pytest.mark.parametrize("listing", [(503, "<html>Unavailable</html>"), (200, {"unexpected": True})])
+def test_an_unreadable_project_listing_is_a_fetch_error(xnat, listing):
+    xnat.on("GET", "/data/projects", lambda r: listing)
 
-    xnat.on("GET", "/data/projects", refuse)
-    xnat.pages("GET", "/xapi/dqr/import/history", [[_request(1)]])
-
-    assert [r.id for r in get_executed_import_requests(PROJECT, {})] == [1]
+    with pytest.raises(XnatFetchError, match="project listing fetch failed"):
+        get_executed_import_requests(PROJECT, {})
+    assert xnat.requested("GET", "/xapi/dqr/import/history") == []
 
 
 def test_the_creation_date_is_asked_of_xnat_for_this_project_only(xnat):
@@ -346,26 +347,7 @@ def test_the_horizon_is_a_day_before_the_creation_date(xnat, inserted, expected)
     assert import_requests._history_horizon_ms(PROJECT, {}) == expected
 
 
-def test_the_horizon_precedes_creation_whatever_zone_xnat_runs_in():
-    """insert_date is wall-clock time read as UTC; the margin must cover the furthest zone either way."""
-    assert import_requests._HISTORY_MARGIN > timedelta(hours=14)
-
-
-@pytest.mark.parametrize(
-    ("record", "expected"),
-    [
-        ({"queuedTime": 1, "created": 5, "executedTime": 3, "timestamp": 4}, 5),
-        ({"timestamp": 9}, 9),
-        ({"created": True, "executedTime": "7", "queuedTime": 0}, 0),
-        ({"id": 1}, None),
-    ],
-    ids=["latest-of-all", "one-field", "ignores-non-numbers", "none"],
-)
-def test_latest_time_of_a_request(record, expected):
-    assert import_requests._latest_time_ms(record) == expected
-
-
-def test_a_request_with_no_times_does_not_stop_the_history_read(xnat):
+def test_a_request_with_no_timestamp_does_not_stop_the_history_read(xnat):
     first = [_request(i) for i in range(2 * PAGE, PAGE, -1)]
     first[-1] = {"id": PAGE + 1, "xnatProject": OTHER}
     xnat.pages("GET", "/xapi/dqr/import/history", [first, [_request(1)]])
@@ -465,4 +447,4 @@ def test_every_read_is_bounded_in_time(xnat):
         get_direct_archive_sessions(PROJECT, {})
 
     assert len(timeouts) == 4
-    assert all(t == import_requests._XNAT_REQUEST_TIMEOUT for t in timeouts)
+    assert all(t == XNAT_REQUEST_TIMEOUT for t in timeouts)

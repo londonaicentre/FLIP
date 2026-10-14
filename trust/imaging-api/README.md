@@ -142,24 +142,16 @@ session is in `ERROR`; `processing` for any other executed request or direct-arc
 `RECEIVED` means the study was transferred, not archived); `queued` while its request waits in DQR's
 queue; `queue_failed` when none of these exists.
 
-The records come from XNAT's REST API, not its database (FLIP#1456), in `services/import_requests.py`:
+The DQR records come from XNAT's REST API, not its database (`services/import_requests.py`): DQR's
+`GET /xapi/dqr/import/queue` and `/import/history`, which take no project filter, so they are read with
+`all=true` and kept by `xnatProject`, and `POST /xapi/direct-archive` with a `project` filter. When every
+accession is already an experiment they are not read at all. A failed read is a 500, never the 404 the
+hub reads as "the XNAT project is missing" (FLIP#1022).
 
-- DQR's `GET /xapi/dqr/import/queue` and `GET /xapi/dqr/import/history`. Neither takes a project filter,
-  so both are read with `all=true` (every user's requests, which DQR allows the service account as a
-  site Administrator) and the project's rows are kept by `xnatProject`.
-- `POST /xapi/direct-archive`, with XNAT filtering on `project`.
-
-The history only grows, so it is read newest first, 1,000 rows a page, and the read stops after the
-page that reaches a day before the project's creation date (`insert_date` from
-`GET /data/projects?ID=<id>&columns=ID,xnat:projectData/meta/insert_date`): no older request can be the
-project's. On dev trust 1 (14 Oct 2026; 1,878 history rows, 1.1 MB) a page of 1,000 rows was about
-0.6 MB and 0.02 s, and a status check took 0.03–0.07 s against 0.02–0.03 s for the database read it
-replaces. The cost grows with the history written since the project was created: a project as old as
-a 100,000-row history would read about 58 MB, around 2 s at that rate, while a project created last
-week reads only that week's rows. If XNAT does not return the creation date, the whole history is read.
-
-A failed read is answered with a 500, never a 404: the hub reads a 404 from imaging-api as "the XNAT
-project is missing" (FLIP#1022).
+The history only grows, so it is read newest first, 1,000 rows a page, and stops a day before the
+project's `insert_date`. The flip-ui polls a project's imaging status every 10 s while its page is open,
+and each poll of a project with unarchived accessions reads the history written since that project was
+created, about 0.6 MB per 1,000 rows.
 
 ### Upload
 
@@ -201,10 +193,6 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
-
-imaging-api has no XNAT database settings: it reads import status through XNAT's REST API (see
-[Retrieval](#retrieval)). An `XNAT_DATABASE_URL` or `XNAT_DATASOURCE_PASSWORD` an older deployment
-still passes it is ignored. The kit keeps `XNAT_DATASOURCE_PASSWORD`, which xnat-web and xnat-db use.
 
 ## Authentication
 

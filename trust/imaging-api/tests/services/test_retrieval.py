@@ -11,6 +11,7 @@
 #
 
 from datetime import datetime
+from threading import current_thread, main_thread
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -682,7 +683,7 @@ def _xnat_json(body) -> MagicMock:
     return response
 
 
-def _fake_xnat_get(url: str, **kwargs) -> MagicMock:
+def _fake_xnat(method: str, url: str, **kwargs) -> MagicMock:
     """XNAT's answers to the REST reads, shaped as DQR 3.0.0 and xnat-web 1.10.0 serve them."""
     if "/xapi/dqr/import/queue" in url:
         return _xnat_json(
@@ -699,14 +700,30 @@ def _fake_xnat_get(url: str, **kwargs) -> MagicMock:
                 {"id": 20, "xnatProject": "other", "accessionNumber": "ACC_OTHER_F", "status": "FAILED"},
             ]
         )
+    if "/xapi/direct-archive" in url:
+        # An archive failure with no name: attributed by its folder name.
+        return _xnat_json([{"id": 5, "project": "proj1", "folderName": "ACC_D", "status": "ERROR"}])
     if "/data/projects" in url:
         return _xnat_json({"ResultSet": {"Result": [{"ID": "proj1"}]}})
-    raise AssertionError(f"unexpected XNAT GET {url}")
+    raise AssertionError(f"unexpected XNAT {method} {url}")
+
+
+def _experiment(label: str) -> Experiment:
+    return Experiment.model_validate(
+        {
+            "ID": f"e-{label}",
+            "label": label,
+            "date": "2023-01-01",
+            "project": "proj1",
+            "insert_date": "2023-01-01",
+            "xsiType": "xnat:ctScanData",
+            "URI": f"/exp/e-{label}",
+        }
+    )
 
 
 @pytest.mark.asyncio
-@patch("imaging_api.services.import_requests.requests.post")
-@patch("imaging_api.services.import_requests.requests.get", side_effect=_fake_xnat_get)
+@patch("imaging_api.services.import_requests.requests.request", side_effect=_fake_xnat)
 @patch("imaging_api.services.retrieval.get_experiments")
 @patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
 @patch("imaging_api.services.retrieval.encrypt")
@@ -714,8 +731,7 @@ async def test_get_import_status_classifies_xnat_rest_records(
     mock_encrypt,
     mock_get_accession_ids,
     mock_get_experiments,
-    mock_get,
-    mock_post,
+    mock_request,
     headers,
 ):
     """The REST reads feed the classification as the table reads did, another project's rows ignored."""
@@ -730,19 +746,7 @@ async def test_get_import_status_classifies_xnat_rest_records(
         "ACC_OTHER_F",
         "ACC_NONE",
     ]
-    mock_get_experiments.return_value = [
-        Experiment(
-            ID="e1",
-            label="ACC_OK",
-            date="2023-01-01",
-            project="proj1",
-            insert_date="2023-01-01",
-            xsiType="xnat:ctScanData",
-            URI="/exp/e1",
-        ),
-    ]
-    # An archive failure with no name: attributed by its folder name.
-    mock_post.return_value = _xnat_json([{"id": 5, "project": "proj1", "folderName": "ACC_D", "status": "ERROR"}])
+    mock_get_experiments.return_value = [_experiment("ACC_OK")]
 
     status = await get_import_status("proj1", "SELECT *", headers)
 
@@ -753,6 +757,49 @@ async def test_get_import_status_classifies_xnat_rest_records(
         queued=["ACC_Q"],
         queue_failed=["ACC_OTHER_Q", "ACC_OTHER_F", "ACC_NONE"],
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cohort", [["ACC1", "ACC2", "ACC1"], []], ids=["all-archived", "empty-cohort"])
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_reads_no_dqr_record_when_every_accession_is_archived(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, cohort, headers
+):
+    """An archived accession is `successful` whatever DQR holds, so a finished project reads none of it."""
+    mock_get_accession_ids.return_value = cohort
+    mock_get_experiments.return_value = [_experiment("ACC1"), _experiment("ACC2")]
+
+    with patch("imaging_api.services.retrieval._read_import_records") as read:
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    read.assert_not_called()
+    assert status == ImportStatus(successful=cohort)
+
+
+@pytest.mark.asyncio
+@patch("imaging_api.services.retrieval.get_experiments")
+@patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock)
+@patch("imaging_api.services.retrieval.encrypt")
+async def test_get_import_status_reads_dqr_off_the_event_loop_once_one_accession_is_not_archived(
+    mock_encrypt, mock_get_accession_ids, mock_get_experiments, headers
+):
+    """The DQR reads are blocking calls on a single-worker service, so they must not run on the loop."""
+    mock_get_accession_ids.return_value = ["ACC1", "ACC2"]
+    mock_get_experiments.return_value = [_experiment("ACC1")]
+    threads = []
+
+    def read(project_id, hdrs):
+        threads.append(current_thread())
+        return [], [], []
+
+    with patch("imaging_api.services.retrieval._read_import_records", side_effect=read):
+        status = await get_import_status("proj1", "SELECT *", headers)
+
+    assert len(threads) == 1
+    assert threads[0] is not main_thread()
+    assert status == ImportStatus(successful=["ACC1"], queue_failed=["ACC2"])
 
 
 # ===========================================================================

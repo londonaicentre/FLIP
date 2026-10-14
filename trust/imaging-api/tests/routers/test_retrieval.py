@@ -108,7 +108,7 @@ def test_get_import_status_count_dqr_unreadable_is_500_not_404():
         patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock, return_value=["ACC001"]),
         patch("imaging_api.services.retrieval.encrypt", return_value="encrypted_id"),
         patch("imaging_api.services.retrieval.get_experiments", return_value=[]),
-        patch("imaging_api.services.import_requests.requests.get", return_value=not_found),
+        patch("imaging_api.services.import_requests.requests.request", return_value=not_found),
     ):
         response = TestClient(app, raise_server_exceptions=False).get(
             "/retrieval/import_status_count/PROJ1",
