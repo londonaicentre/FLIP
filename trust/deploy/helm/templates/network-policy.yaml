@@ -147,11 +147,29 @@ metadata:
 spec:
   podSelector: {}
   egress:
+{{- /* AWS IMDS (169.254.169.254, EC2 metadata / node IAM role) is reachable only for its one
+     consumer: the omop-db vocab-load Job reaching S3 through the node instance role (it is
+     rendered, and carries no mounted credentials). The chart has no IRSA path. Everywhere else
+     (kind, AKS — FLIP#1390) the metadata endpoint, an SSRF/credential-theft target, is excluded
+     from the any-destination ports rule below as well, since IMDS listens on port 80. */}}
+{{- $vocab := .Values.omopDb.vocabLoad }}
+{{- $imds := and .Values.omopDb.enabled $vocab.enabled $vocab.s3Bucket (not $vocab.hostAwsMount.enabled) }}
     # Allow configured egress ports (defaults include DNS/HTTP/HTTPS)
     - ports:
 {{- range .Values.networkPolicies.allowedEgressPorts }}
         - port: {{ .port }}
           protocol: {{ .protocol }}
+{{- end }}
+{{- if not $imds }}
+      # Anywhere but the instance-metadata endpoint, plus every pod in the cluster: some CNIs
+      # (Cilium) read a 0.0.0.0/0 ipBlock as outside-the-cluster only, so in-cluster peers such
+      # as kube-dns need their own selector.
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+        - namespaceSelector: {}
 {{- end }}
     # Allow intra-namespace egress (all ports)
     - to:
@@ -179,16 +197,12 @@ spec:
           protocol: {{ default "TCP" .protocol }}
 {{- end }}
 {{- end }}
-    # Allow AWS IMDS (EC2 metadata / node IAM role).
-    # NOT for the fl-client any more: it holds no AWS credentials and its kit is staged
-    # onto the node before deploy. Still load-bearing for the omop-db vocab-load Job, the
-    # chart's only AWS-bearing Job now that the snapshot init Jobs are gone (the trust-seed
-    # Job fetches the mock data anonymously): the chart has no IRSA path, and its AWS env
-    # is gated on omopDb.vocabLoad.hostAwsMount.enabled which defaults false — so by
-    # default it reaches S3 through the node instance role. See NETWORK-POLICY.md.
+    # AWS IMDS for the vocab-load Job on a node role (see above; NETWORK-POLICY.md).
+{{- if $imds }}
     - to:
         - ipBlock:
             cidr: 169.254.169.254/32
+{{- end }}
   policyTypes:
     - Egress
 {{- end }}

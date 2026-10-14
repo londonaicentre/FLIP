@@ -80,6 +80,11 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-omop-db
           env:
+{{- with .Values.omopDb.persistence.pgdataSubdir }}
+            # A fresh cloud disk has lost+found at its root, which initdb refuses (FLIP#1390).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/{{ . }}
+{{- end }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

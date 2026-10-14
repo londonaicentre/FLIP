@@ -147,6 +147,10 @@ demo_video:
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
 #     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
 #     make e2e_smoke QUERY_FILE=/path/to/your_cohort.sql
+# NO_VOCAB=1 runs the x-ray tutorial's query_no_vocab.sql instead of query.sql: the same cohort for a
+# test trust deployed without the OMOP vocabulary (the Helm chart's NO_VOCAB_LOAD=1, FLIP#1390), where
+# query.sql's concept joins return nothing and staging refuses the project. Never for a real trust.
+#     make e2e_smoke NO_VOCAB=1 EXTRA_ARGS="--trusts <CODE>"
 # Anything else passed via EXTRA_ARGS goes straight to the script:
 #     make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5"
 #
@@ -158,10 +162,10 @@ demo_video:
 FL_BACKEND ?= nvflare
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
-QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/query.sql
+QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/query$(if $(NO_VOCAB),_no_vocab).sql
 else
 MODEL_FILES_DIR ?= ../fl-tutorials/nvflare/image_classification/xray_classification/app_files
-QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
+QUERY_FILE ?= $(MODEL_FILES_DIR)/../query$(if $(NO_VOCAB),_no_vocab).sql
 endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."

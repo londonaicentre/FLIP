@@ -196,6 +196,14 @@ can renew it across a long training run. The module also imports flip-api `Setti
 none (IAM DB auth). Run it through the root target so `PROD` selects the env file:
 `FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr PROD=lza-stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.
 
+**A trust without the OMOP vocabulary (FLIP#1390).** A Helm trust deployed with `NO_VOCAB_LOAD=1` (the AKS path)
+holds the x-ray data but only a sliver of `omop.concept`, so the x-ray tutorial's `query.sql` — which names the
+Yes/No answers, the modality and the anatomy through concept joins — returns no rows and staging fails with
+"returned no cohort records". `make e2e_smoke NO_VOCAB=1` runs the sibling `query_no_vocab.sql` instead: the same
+studies and findings, with the two answer concepts named inline (`fl-tutorials/tests/test_xray_no_vocab_query.py`
+runs both against one synthetic OMOP database and fails if they disagree). A test-trust switch only; an explicit
+`QUERY_FILE` still wins, and the spleen and EHR variants pin their own queries.
+
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
