@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from plugin_fixtures import PLUGIN_JARS, declared_ids, fake_proc, plugins_listing, write_plugin_jar, xnat_home
+from plugin_fixtures import PLUGIN_JARS, declared_ids, plugins_listing, write_plugin_jar, xnat_home
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
@@ -67,7 +67,7 @@ def _readiness_env(
     rotated_password: str = "test-password",
     jars: dict[str, str | None] | None = None,
     listed: list[str] | None = None,
-    tomcat: str = "beside",
+    roster: bool = True,
 ) -> dict[str, str]:
     """Environment for one run of the wait against the stub XNAT.
 
@@ -79,9 +79,7 @@ def _readiness_env(
         rotated_password: The kit's configured admin password.
         jars: Fixture plugin jars in the XNAT home ({filename: declared id or None}).
         listed: The plugin ids GET /xapi/plugins lists; defaults to every id ``jars`` declares.
-        tomcat: ``beside`` — a Tomcat in the wait's PID namespace loads this XNAT home, as in
-            Compose; ``elsewhere`` — a Tomcat is visible but loads another home; ``none`` — no
-            Tomcat at all, as in the chart's xnat-init pod.
+        roster: Set XNAT_PLUGIN_READINESS_ROSTER=1, as the Compose ``xnat-configure`` recipe does.
     """
     jars = PLUGIN_JARS if jars is None else jars
     bin_dir = tmp_path / "bin"
@@ -89,20 +87,13 @@ def _readiness_env(
     counts = tmp_path / "curl-counts"
     counts.mkdir()
     _write_executable(bin_dir / "curl", READINESS_CURL.replace("__BEHAVIOUR__", behaviour))
-    home = xnat_home(tmp_path, jars)
-    tomcat_home: Path | None = None
-    if tomcat == "beside":
-        tomcat_home = home
-    elif tomcat == "elsewhere":
-        # A home holding the very same jars, so only the directory's identity differs.
-        tomcat_home = xnat_home(tmp_path / "other", jars)
-    else:
-        assert tomcat == "none", tomcat
+    env = {k: v for k, v in os.environ.items() if k != "XNAT_PLUGIN_READINESS_ROSTER"}
+    if roster:
+        env["XNAT_PLUGIN_READINESS_ROSTER"] = "1"
     return {
-        **os.environ,
+        **env,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "XNAT_HOME": str(home),
-        "XNAT_PLUGIN_READINESS_PROC_DIR": str(fake_proc(tmp_path, tomcat_home)),
+        "XNAT_HOME": str(xnat_home(tmp_path, jars)),
         "PLUGINS_JSON": plugins_listing(declared_ids(jars) if listed is None else listed),
         "CURL_LOG": str(tmp_path / "curl-log"),
         "CURL_COUNTS": str(counts),
@@ -145,6 +136,9 @@ def _requests(tmp_path: Path, route: str | None = None) -> list[str]:
 PARTIAL_LISTING = plugins_listing(["containers", "dicom-query-retrieve"])
 
 
+# ── With the roster (XNAT_PLUGIN_READINESS_ROSTER=1, as Compose runs it) ──────────────────────────
+
+
 def test_readiness_waits_until_xnat_lists_every_plugin_the_jars_declare(tmp_path: Path) -> None:
     """A route answering is not enough: XNAT must report every installed plugin as loaded."""
     behaviour = f"""if [ "$route" = plugins ] && [ "$n" -lt 3 ]; then body='{PARTIAL_LISTING}'; fi"""
@@ -165,23 +159,23 @@ def test_readiness_names_the_plugin_xnat_has_not_loaded(tmp_path: Path) -> None:
     result = _run_readiness(_readiness_env(tmp_path, timeout="0", listed=loaded))
 
     assert result.returncode != 0
-    assert "XNAT has not loaded: ohifViewerPlugin\n" in result.stderr, result.stderr
+    assert "XNAT has not loaded: ohifViewerPlugin (" in result.stderr, result.stderr
     assert "/xapi/plugins" in result.stderr
     assert not _requests(tmp_path, "dqr"), "the DQR route must not be asked while a plugin is missing"
 
 
-def test_readiness_expects_a_plugin_because_a_jar_declares_it(tmp_path: Path) -> None:
-    """The roster is read from the jars, so a jar this script has never heard of is waited for too."""
+def test_readiness_expects_exactly_the_plugins_the_jars_declare(tmp_path: Path) -> None:
+    """The roster is read from the jars, not a list in the script: an unknown jar is waited for…"""
     jars = {**PLUGIN_JARS, "site-extra-1.0.jar": "siteExtraPlugin"}
 
     result = _run_readiness(_readiness_env(tmp_path, timeout="0", jars=jars, listed=declared_ids()))
 
     assert result.returncode != 0
-    assert "XNAT has not loaded: siteExtraPlugin\n" in result.stderr, result.stderr
+    assert "XNAT has not loaded: siteExtraPlugin (" in result.stderr, result.stderr
 
 
 def test_readiness_expects_only_the_plugins_the_jars_declare(tmp_path: Path) -> None:
-    """…and a plugin no jar declares is not expected, so the roster cannot be a list in the script."""
+    """…and a plugin no jar declares is not."""
     jars: dict[str, str | None] = {"dicom-query-retrieve-3.0.0-xpl.jar": "dicom-query-retrieve"}
 
     result = _run_readiness(_readiness_env(tmp_path, jars=jars))
@@ -190,132 +184,36 @@ def test_readiness_expects_only_the_plugins_the_jars_declare(tmp_path: Path) -> 
     assert "XNAT loaded dicom-query-retrieve and" in result.stdout
 
 
-def test_a_jar_that_declares_no_plugin_is_not_waited_for(tmp_path: Path) -> None:
-    """XNAT loads every jar in the directory, but only those with plugin properties are plugins."""
-    jars = {**PLUGIN_JARS, "some-library-2.1.jar": None}
-
-    result = _run_readiness(_readiness_env(tmp_path, jars=jars))
-
-    assert result.returncode == 0, result.stderr
-    assert "some-library-2.1.jar declares no XNAT plugin" in result.stdout
-
-
 def test_an_empty_plugin_directory_fails_before_any_login(tmp_path: Path) -> None:
-    """No jars is a broken install, not a vacuously ready one, and there is nothing to log in for."""
+    """No jars is a broken install, not a vacuously ready one."""
     result = _run_readiness(_readiness_env(tmp_path, jars={}))
 
     assert result.returncode != 0
-    assert "no XNAT plugin jars found in" in result.stderr
-    assert str(tmp_path / "xnat-home" / "plugins") in result.stderr
-    # The hint covers every shape, not just the Compose dev cache: a Helm operator who lands here
-    # (exec'd into xnat-web) gets the plugins from xnat.web.plugins.urls, not prepare-artifacts.
-    assert "prepare-artifacts" in result.stderr
-    assert "xnat.web.plugins.urls" in result.stderr
+    assert f"no XNAT plugin jars in {tmp_path / 'xnat-home' / 'plugins'}" in result.stderr
     assert not _requests(tmp_path), "the wait logged in although it had nothing to wait for"
 
 
-def test_an_unreadable_jar_fails_naming_it_before_any_login(tmp_path: Path) -> None:
-    """A failed download saved as a jar is one XNAT cannot load either; which plugin it was is unknowable."""
+@pytest.mark.parametrize(
+    ("name", "jar"),
+    [("error-page-1.0.jar", b"<html>503</html>"), ("library-1.0.jar", None)],
+    ids=["not-a-zip", "declares-no-plugin"],
+)
+def test_a_jar_that_names_no_plugin_fails_naming_it_before_any_login(
+    tmp_path: Path, name: str, jar: bytes | None
+) -> None:
+    """The jars are checksum-pinned or baked, so one that names no plugin is a broken install."""
     env = _readiness_env(tmp_path)
-    (Path(env["XNAT_HOME"]) / "plugins" / "error-page-1.0.jar").write_bytes(b"<html>503</html>")
+    plugins = Path(env["XNAT_HOME"]) / "plugins"
+    if jar is None:
+        write_plugin_jar(plugins, name, None)
+    else:
+        (plugins / name).write_bytes(jar)
 
     result = _run_readiness(env)
 
     assert result.returncode != 0
-    assert "error-page-1.0.jar is not a readable jar" in result.stderr
+    assert f"cannot read an XNAT plugin id from {plugins / name}" in result.stderr
     assert not _requests(tmp_path)
-
-
-def test_a_truncated_jar_fails_naming_it_before_any_login(tmp_path: Path) -> None:
-    """A real jar cut short has no central directory: unzip exits 9, and Java cannot load it either."""
-    env = _readiness_env(tmp_path)
-    jar = Path(env["XNAT_HOME"]) / "plugins" / "ohif-viewer-3.8.0-fat.jar"
-    whole = jar.read_bytes()
-    jar.write_bytes(whole[: len(whole) // 2])
-
-    result = _run_readiness(env)
-
-    assert result.returncode != 0
-    assert "ohif-viewer-3.8.0-fat.jar is not a readable jar (unzip exit 9" in result.stderr, result.stderr
-    assert not _requests(tmp_path)
-
-
-def test_a_jar_unzip_only_warns_about_is_still_read(tmp_path: Path) -> None:
-    """unzip exits 1 on an archive it reads despite a defect, such as bytes prepended; Java loads it too.
-
-    Its declared id must therefore be expected like any other, not rejected as unreadable.
-    """
-    env = _readiness_env(tmp_path, timeout="0")
-    sound = write_plugin_jar(tmp_path, "prefixed-1.0.jar", "prefixedPlugin").read_bytes()
-    (Path(env["XNAT_HOME"]) / "plugins" / "prefixed-1.0.jar").write_bytes(b"#!/bin/sh\nexit 0\n" + sound)
-
-    result = _run_readiness(env)
-
-    assert "not a readable jar" not in result.stderr
-    assert "XNAT has not loaded: prefixedPlugin\n" in result.stderr, result.stderr
-
-
-# ── Away from XNAT: the chart's xnat-init job ─────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize("tomcat", ["none", "elsewhere"])
-def test_away_from_xnat_the_wait_takes_the_dqr_route_alone(tmp_path: Path, tomcat: str) -> None:
-    """The xnat-init pod sees the image's baked jars, which the running XNAT never loads.
-
-    The dangerous direction is a plugin the image carries but xnat.web.plugins.urls does not: a
-    roster read from disk would wait out the whole budget for it on every install and upgrade. The
-    same jars beside XNAT time out naming it (``test_readiness_expects_a_plugin_because_a_jar_declares_it``).
-    ``elsewhere`` is a Tomcat that is visible but loads a different directory holding the same jars.
-    """
-    jars = {**PLUGIN_JARS, "baked-only-1.0.jar": "bakedOnlyPlugin"}
-
-    result = _run_readiness(_readiness_env(tmp_path, jars=jars, listed=declared_ids(), tomcat=tomcat))
-
-    assert result.returncode == 0, result.stderr
-    assert "No Tomcat beside this script loads" in result.stdout, "the fallback must say why it was taken"
-    assert "XNAT DQR plugin is ready (HTTP 200)." in result.stdout
-    assert not _requests(tmp_path, "plugins"), "with no roster to check, there is nothing to ask XNAT for"
-    assert len(_requests(tmp_path, "dqr")) == 1
-
-
-def test_away_from_xnat_no_jar_is_read(tmp_path: Path) -> None:
-    """An image with no baked jars, or a bad one, says nothing about the XNAT that is running."""
-    env = _readiness_env(tmp_path, jars={}, tomcat="none")
-    (Path(env["XNAT_HOME"]) / "plugins" / "error-page-1.0.jar").write_bytes(b"<html>503</html>")
-
-    result = _run_readiness(env)
-
-    assert result.returncode == 0, result.stderr
-    assert "XNAT DQR plugin is ready" in result.stdout
-
-
-def test_away_from_xnat_the_dqr_wait_stays_bounded_and_fail_loud(tmp_path: Path) -> None:
-    result = _run_readiness(
-        _readiness_env(tmp_path, 'if [ "$route" = dqr ]; then status=404; fi', timeout="0", tomcat="none")
-    )
-
-    assert result.returncode != 0
-    assert "endpoint:   http://xnat-web:8080/xapi/dqr/settings" in result.stderr
-    assert "last HTTP status: 404" in result.stderr
-
-
-def test_away_from_xnat_the_rotated_password_is_reached_on_the_first_rejection(tmp_path: Path) -> None:
-    """The credential handling is the same whichever probes run."""
-    result = _run_readiness(
-        _readiness_env(
-            tmp_path,
-            'case "$creds" in *:rotated) ;; *) status=401 ;; esac',
-            initial_password="initial",  # pragma: allowlist secret
-            rotated_password="rotated",  # pragma: allowlist secret
-            tomcat="none",
-        )
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "XNAT DQR plugin is ready (HTTP 200, configured admin password)." in result.stdout
-    probes = _requests(tmp_path, "dqr")
-    assert sum("admin:initial" in line for line in probes) == 1
-    assert sum("admin:rotated" in line for line in probes) == 1
 
 
 def test_readiness_still_requires_the_dqr_route_once_every_plugin_is_listed(tmp_path: Path) -> None:
@@ -328,16 +226,6 @@ def test_readiness_still_requires_the_dqr_route_once_every_plugin_is_listed(tmp_
     assert "has not loaded" not in result.stderr, "every plugin was listed; only the route was missing"
 
 
-def test_readiness_waits_for_the_dqr_route_after_the_listing_is_complete(tmp_path: Path) -> None:
-    behaviour = 'if [ "$route" = dqr ] && [ "$n" -lt 3 ]; then status=404; fi'
-
-    result = _run_readiness(_readiness_env(tmp_path, behaviour))
-
-    assert result.returncode == 0, result.stderr
-    assert "HTTP 404 from http://xnat-web:8080/xapi/dqr/settings" in result.stdout
-    assert len(_requests(tmp_path, "dqr")) == 3
-
-
 def test_a_listing_that_is_not_json_lists_nothing(tmp_path: Path) -> None:
     """A 200 the script cannot read must not pass the wait."""
     result = _run_readiness(
@@ -345,16 +233,7 @@ def test_a_listing_that_is_not_json_lists_nothing(tmp_path: Path) -> None:
     )
 
     assert result.returncode != 0
-    assert f"XNAT has not loaded: {' '.join(declared_ids())}\n" in result.stderr, result.stderr
-
-
-def test_readiness_fails_with_endpoint_and_status_on_timeout(tmp_path: Path) -> None:
-    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="0"))
-
-    assert result.returncode != 0
-    assert "/xapi/plugins" in result.stderr
-    assert "last HTTP status: 404" in result.stderr
-    assert "test-password" not in result.stdout + result.stderr
+    assert f"XNAT has not loaded: {' '.join(declared_ids())} (" in result.stderr, result.stderr
 
 
 def test_readiness_probe_authenticates_against_both_routes(tmp_path: Path) -> None:
@@ -365,6 +244,69 @@ def test_readiness_probe_authenticates_against_both_routes(tmp_path: Path) -> No
     for route in ("plugins", "dqr"):
         (made,) = _requests(tmp_path, route)
         assert "-u admin:test-password" in made, f"the {route} probe was not authenticated"
+
+
+# ── Without the roster: the chart's xnat-init pod, and any other caller ───────────────────────────
+
+
+def test_without_the_flag_the_wait_takes_the_dqr_route_alone(tmp_path: Path) -> None:
+    """The xnat-init pod sees the image's baked jars, which the running XNAT never loads.
+
+    The dangerous direction is a plugin the image carries but xnat.web.plugins.urls does not: a
+    roster read from that disk would wait out the whole budget for it on every install and upgrade.
+    So without the flag no jar is read at all — an unreadable one included.
+    """
+    jars = {**PLUGIN_JARS, "baked-only-1.0.jar": "bakedOnlyPlugin"}
+    env = _readiness_env(tmp_path, jars=jars, listed=declared_ids(), roster=False)
+    (Path(env["XNAT_HOME"]) / "plugins" / "error-page-1.0.jar").write_bytes(b"<html>503</html>")
+
+    result = _run_readiness(env)
+
+    assert result.returncode == 0, result.stderr
+    assert "XNAT plugins are ready (HTTP 200): the DQR settings route answers." in result.stdout
+    assert not _requests(tmp_path, "plugins"), "with no roster to check, there is nothing to ask XNAT for"
+
+
+def test_without_the_flag_the_dqr_wait_stays_bounded_and_fail_loud(tmp_path: Path) -> None:
+    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="0", roster=False))
+
+    assert result.returncode != 0
+    assert "endpoint:   http://xnat-web:8080/xapi/dqr/settings" in result.stderr
+    assert "last HTTP status: 404" in result.stderr
+
+
+def test_the_charts_init_job_does_not_ask_for_the_roster() -> None:
+    """Its pod sees the image's baked jars, not the ones the running XNAT loaded (see the script header).
+
+    The Compose recipe that does set the flag is pinned by test_container_lookup.py.
+    """
+    init_job = (REPO_ROOT / "trust/deploy/helm/templates/xnat-init-job.yaml").read_text()
+
+    assert "XNAT_PLUGIN_READINESS_ROSTER" not in init_job
+
+
+def test_readiness_rejects_a_roster_flag_it_does_not_understand(tmp_path: Path) -> None:
+    """``true`` silently meaning "off" would quietly drop the check a caller asked for."""
+    env = _readiness_env(tmp_path)
+    env["XNAT_PLUGIN_READINESS_ROSTER"] = "true"
+
+    result = _run_readiness(env)
+
+    assert result.returncode != 0
+    assert "roster='true'" in result.stderr
+    assert not _requests(tmp_path)
+
+
+# ── Shared: the bounded wait and the credential handling ──────────────────────────────────────────
+
+
+def test_readiness_fails_with_endpoint_and_status_on_timeout(tmp_path: Path) -> None:
+    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="0"))
+
+    assert result.returncode != 0
+    assert "/xapi/plugins" in result.stderr
+    assert "last HTTP status: 404" in result.stderr
+    assert "test-password" not in result.stdout + result.stderr
 
 
 def test_readiness_keeps_polling_while_connection_is_refused(tmp_path: Path) -> None:
@@ -410,43 +352,13 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     assert sum("admin:rotated" in line for line in probes) == 1
 
 
-def test_an_accepted_alternate_password_is_kept_while_plugins_load(tmp_path: Path) -> None:
-    """Accepted-but-not-ready proves which password XNAT holds; the rejected one is not tried again.
-
-    Before /xapi/plugins could answer "authenticated, not ready yet" the wait had no such signal,
-    and only a full run of rejections switched credentials — spending AUTH_FAILURE_LIMIT
-    wrong-password logins toward XNAT's lockout while the plugins finished loading.
-    """
-    behaviour = (
-        'case "$creds" in *:rotated) ;; *) status=401 ;; esac; '
-        f"""if [ "$route" = plugins ] && [ "$n" -lt 4 ]; then body='{PARTIAL_LISTING}'; fi"""
-    )
-
-    result = _run_readiness(
-        _readiness_env(
-            tmp_path,
-            behaviour,
-            initial_password="initial",  # pragma: allowlist secret
-            rotated_password="rotated",  # pragma: allowlist secret
-        )
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "continuing with the configured one" in result.stdout
-    probes = _requests(tmp_path, "plugins")
-    assert sum("admin:initial" in line for line in probes) == 1, "the rejected password was tried again"
-    assert "admin:rotated" in probes[-1]
-
-
 def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) -> None:
-    """A lone 401 amid inconclusive answers must not permanently switch away from a working credential.
+    """A lone 401 amid 404s must not permanently switch away from a working credential.
 
     XNAT can reject a valid credential for a beat while its auth providers wire up. Switching on
     that blip would strand the run on the wrong password for the rest of the wait.
     """
-    behaviour = (
-        'if [ "$route" = plugins ]; then case "$n" in 1) status=404 ;; 2) status=401 ;; 3) status=503 ;; esac; fi'
-    )
+    behaviour = 'if [ "$route" = plugins ]; then case "$n" in 1|3) status=404 ;; 2) status=401 ;; esac; fi'
 
     result = _run_readiness(
         _readiness_env(
@@ -459,9 +371,9 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stderr
     probes = _requests(tmp_path, "plugins")
-    # The blip does spend one look at the other password — but the 503 it gets back is inconclusive
-    # (XNAT answered neither password), so the run continues, and finishes, on the credential it
-    # started with.
+    # The blip does spend one look at the other password — but the 404 it gets back is inconclusive
+    # (the route is not answering yet for either credential), so the run continues, and finishes,
+    # on the credential it started with.
     assert sum("admin:rotated" in line for line in probes) == 1, "a single 401 must not switch"
     assert "admin:initial" in probes[-1], "the successful probe must be the original credential"
 

@@ -298,35 +298,21 @@ make -C trust/deploy/helm status         # includes the plugin-roster comparison
 make -C trust/deploy/helm smoke-cstore   # a real C-STORE, then checks XNAT's prearchive
 ```
 
-`status` asks the running XNAT which plugins it **loaded** (`GET /xapi/plugins`, from inside
-each running `xnat-web` pod as the service account — the credential is the pod's own and
-never travels in a command line) and compares that against the release's own
-`xnat.web.plugins.urls`. Each plugin is reported as one of:
-
-| Outcome | Means |
-|---|---|
-| loaded at the expected version | pass |
-| **wrong version loaded** (both named) | the **pod spec** is older than the values — the plugins live in an emptyDir refilled by an init container on every pod creation, so no upgrade has rolled `xnat-web` since the roster changed |
-| **stale jar** | the same release loaded, but from a different build than the values name (`ohif-viewer-3.8.0.jar` where they ask for `ohif-viewer-3.8.0-fat.jar`) — the same stale pod spec |
-| **present on disk but not loaded** | the jar is in `/data/xnat/home/plugins` but XNAT did not load it — unreadable (a truncated or non-jar download) or arrived after Tomcat started; read the `tomcat` container's startup log |
-| **not present** | neither loaded nor on disk — the `download-plugins` init container did not fetch it |
-
-XNAT lists plugins by their own id, not by the values keys (`container-service` is
-`containers`), so `check_status.py` pairs them in `XNAT_PLUGIN_IDS`. It still lists the plugin
-directory: that listing is what tells *present on disk but not loaded* from *not present*, and
-when XNAT cannot be asked (for example the service account is rejected) `status` warns and
-falls back to comparing the jar filenames alone, which still catches a stale jar but not one
-XNAT failed to load.
-
-`status` is the chart's only check of the loaded roster. The `xnat-init` job's plugin-readiness
-wait (`wait-for-xnat-plugins.sh`, run by `configure-xnat.sh`) runs in its own pod without the
-`xnat-web` plugins volume, so the jars it could see are the image's baked ones rather than what
-this pod downloaded; it waits for the DQR settings route alone and says so in its log.
-
-A plugin that loads can still be broken: one built for a different XNAT core loads, then
-aborts every C-STORE in the importer (FLIP#1228). That is why `smoke-cstore` stores a real
-object through the PACS rather than trusting `status` or a C-ECHO: C-ECHO never reaches the
-importer and passes throughout.
+`status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
+against the release's own `xnat.web.plugins.urls`, failing with both versions named when
+they disagree. They disagree when the **pod spec** is older than the values — the plugins
+live in an emptyDir refilled by an init container on every pod creation, so a mismatch
+means no upgrade has rolled `xnat-web` since the roster changed. It then asks XNAT which plugins
+it **loaded** (`GET /xapi/plugins`, inside the pod as the service account, the credential on
+curl's stdin) and fails a jar that is **present on disk but not loaded** — unreadable, typically
+a truncated download; see the `tomcat` container's startup log. XNAT lists plugins by id, not by
+these keys (`container-service` is `containers`), hence `XNAT_PLUGIN_IDS` in `check_status.py`;
+when XNAT cannot be asked, `status` warns and checks the jars alone. This is the chart's only
+check of what XNAT loaded: the `xnat-init` readiness wait runs in its own pod, whose jars are the
+image's rather than this pod's, so it waits for the DQR route alone. A plugin built for a
+different XNAT core loads and then aborts every C-STORE in the importer, which is why
+`smoke-cstore` stores a real object through the PACS rather than trusting `status` or a C-ECHO:
+C-ECHO never reaches the importer and passes throughout.
 
 `smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
 evidence that the object landed — polled, strongest first: a new prearchive object carrying the

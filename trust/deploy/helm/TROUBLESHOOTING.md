@@ -669,27 +669,20 @@ by itself keep an old pod spec live.
 **Detection.**
 
 ```bash
-# What the pod carries on disk
+# The one-liner: what the pod actually carries
 kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
 # expect dicom-query-retrieve-3.0.0-xpl.jar and container-service-3.8.1-fat.jar,
 # and NO 2.3.2-xpl / 3.8.0-fat
 
-# What XNAT actually LOADED — a jar can be on disk and still not be loaded. Keyed by
-# plugin id, not jar name; the credential is the pod's own service account
-kubectl exec -n flip-trust "$xnat_pod" -- sh -c \
-  'curl -s -u "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" http://localhost:8080/xapi/plugins' \
-  | jq -r 'to_entries[] | "\(.key) \(.value.version)"'
-# expect containers 3.8.1-fat, dicom-query-retrieve 3.0.0-xpl,
-# batchLaunchPlugin 0.9.0-xpl, ohifViewerPlugin 3.8.0
+# What XNAT loaded (plugin ids, not jar names); the pod's own credential goes to curl on stdin
+kubectl exec -n flip-trust "$xnat_pod" -- sh -c 'printf "header = \"Authorization: Basic %s\"\n" \
+  "$(printf "%s:%s" "$XNAT_SERVICE_USER" "$XNAT_SERVICE_PASSWORD" | base64 | tr -d "\n")" \
+  | curl -s -K - http://localhost:8080/xapi/plugins' | jq -r 'to_entries[] | "\(.key) \(.value.version)"'
 
-# Both, automated against the release's own values. FAILs naming the version XNAT loaded
-# and the one the values ask for, a "stale jar" (same release, another build), a jar "present
-# on disk but not loaded", or "not present"
-make -C trust/deploy/helm status
+# The same comparison, automated against the release's own values
+make -C trust/deploy/helm status        # FAILs naming both versions, or a jar present on disk but not loaded
 
-# Exercise the path the roster is on, rather than just the socket. Still needed when status
-# passes: a plugin built for a different XNAT core LOADS, so status reports it loaded, and
-# then aborts every C-STORE in the importer
+# Exercise the path the roster is on, rather than just the socket
 make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then checks XNAT's prearchive
 ```
 

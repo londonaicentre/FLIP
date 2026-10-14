@@ -634,6 +634,8 @@ xnat-reset:
 # completed configure as a failed bring-up. The developer owns the dir, so unlinking it is allowed.
 # XNAT_CONFIGURE_LOG_DIR is where they land (the tests point it at a temp dir so the shimmed recipe
 # does not leave fixture logs in the checkout); it is quoted everywhere it is used.
+# XNAT_PLUGIN_READINESS_ROSTER=1: configuration runs inside xnat-web, where the plugin jars are the
+# ones XNAT loaded, so the readiness wait can check XNAT loaded every one (wait-for-xnat-plugins.sh).
 XNAT_CONFIGURE_LOG_DIR ?= $(XNAT_PATH)/xnat/config
 xnat-configure:
 	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
@@ -646,7 +648,7 @@ xnat-configure:
 	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found at configure time"; exit 1; }; \
 	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
 	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log" "$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log"; \
-	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log'" && \
+	bash -o pipefail -c "docker exec -e XNAT_PLUGIN_READINESS_ROSTER=1 $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log'" && \
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log'"
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust

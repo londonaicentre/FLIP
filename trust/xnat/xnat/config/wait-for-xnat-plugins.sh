@@ -13,44 +13,18 @@
 
 set -euo pipefail
 
-# Blocks until XNAT is ready for configure-xnat.sh to configure its plugins, so it never configures
-# a plugin XNAT has not loaded.
+# Blocks until XNAT's DQR plugin route answers, so configure-xnat.sh never POSTs plugin settings at
+# a Tomcat that is up but has not registered its plugins yet.
 #
-# Beside XNAT — running in the container whose Tomcat loads ${XNAT_HOME}/plugins, which is every
-# Compose path (dev, EC2, on-prem, upgrade-xnat, xnat-reset and xnat-configure all `docker exec`
-# into xnat-web) — readiness is two authenticated probes, the second asked only once the first has
-# passed:
-#
-#   1. GET /xapi/plugins lists every plugin id the jars in ${XNAT_HOME}/plugins declare. This is
-#      XNAT's own answer to "which plugins did you load" (XnatPluginApi): a map keyed by plugin id,
-#      built from the META-INF/xnat/*-plugin.properties files XNAT found on its classpath at
-#      startup. The expected ids are read from those same files in the jars, not restated here, and
-#      differ from the jar names (container-service-3.8.1-fat.jar is `containers`). The jars are
-#      the very directory XNAT loads: filled from trust/xnat/artifacts.manifest, baked into the
-#      image or bind-mounted from the dev cache.
-#   2. GET /xapi/dqr/settings answers. The listing alone does not prove a plugin's REST routes are
-#      registered: XNAT lists every plugin whose properties it found, but adds their Spring
-#      configuration in a loop that a ClassNotFoundException abandons part-way
-#      (XnatWebAppInitializer.getPluginConfigs in xnat-web 1.10.0), so a listed plugin can still
-#      have no routes. DQR's settings route is the one configure-xnat.sh writes to next, so it is
-#      the one probed.
-#
-# Anywhere else, readiness is probe 2 alone. The case is the chart's xnat-init job: it runs this
-# script in its own pod, from the xnat-web image but without the xnat-web pod's plugins volume, so
-# the jars it can see are the ones baked into the image — which the running XNAT never loads, since
-# the chart mounts an emptyDir over ${XNAT_HOME}/plugins and fills it from xnat.web.plugins.urls.
-# Expecting the baked roster there would wait out the whole budget, on every install and upgrade,
-# for any plugin the image carries but the values do not: a values override that drops or replaces
-# one, or an image newer than the chart (xnat.web.image.tag defaults to a moving tag). The loaded
-# roster of the running pod is what `make -C trust/deploy/helm status` checks.
-#
-# "Beside XNAT" is decided once, up front, from two facts. A process in this PID namespace runs
-# Tomcat (org.apache.catalina.startup.Bootstrap), and the plugin directory that Tomcat sees —
-# /proc/<pid>/root + its -Dxnat.home + /plugins — is this script's ${XNAT_HOME}/plugins, the same
-# inode. Seeing the process says "same container" only by default; the inode is the question the
-# roster depends on, whether these are the jars XNAT loaded. A Kubernetes pod shares no PID
-# namespace with another pod, so the xnat-init job always takes probe 2 alone, and says so.
-# XNAT_PLUGIN_READINESS_PROC_DIR (default /proc) exists only as a test seam.
+# With XNAT_PLUGIN_READINESS_ROSTER=1 it first waits for GET /xapi/plugins to list every plugin the
+# jars in ${XNAT_HOME}/plugins declare (the `id=` in each jar's META-INF/xnat/*-plugin.properties,
+# which is what XNAT lists). Those jars are the ones XNAT loaded only inside the xnat-web container,
+# so only the Compose recipe that configures from there sets the flag (trust/xnat/Makefile
+# xnat-configure). The chart's xnat-init pod sees the image's baked jars, not the pod's
+# xnat.web.plugins.urls; `make -C trust/deploy/helm status` checks the loaded roster there instead.
+# The DQR route is probed either way, because a listed plugin can still have no routes: XNAT lists
+# every plugin it discovered, but one ClassNotFoundException ends its config-loading loop
+# (XnatWebAppInitializer.getPluginConfigs, xnat-web 1.10.0).
 #
 # Tunable via the environment (defaults suit an unattended prod deploy; shorten the timeout for a
 # tighter dev feedback loop):
@@ -58,6 +32,7 @@ set -euo pipefail
 #   XNAT_PLUGIN_READINESS_POLL_SECONDS         delay between probes                 (default 5)
 #   XNAT_PLUGIN_READINESS_AUTH_FAILURE_LIMIT   consecutive 401/403s per credential  (default 3)
 #   XNAT_PLUGIN_READINESS_AUTH_BACKOFF_SECONDS delay after a rejected login         (default 15)
+#   XNAT_PLUGIN_READINESS_ROSTER               1 to also wait for the jar roster    (default off)
 #
 # The two auth knobs bound wrong-password logins at AUTH_FAILURE_LIMIT per credential — 6 in total
 # against XNAT's 20-attempt lockout — while the backoff still buys ~45s of tolerance for a
@@ -65,11 +40,9 @@ set -euo pipefail
 # credential, which is what keeps a retry against an already-rotated XNAT from paying that whole
 # ~45s tolerance before it gets to the password that works.
 #
-# On credential handling, see the loop below: a route that is not answering yet gives 404, 5xx or
-# no answer at all, so 401/403 can only mean the credentials are wrong — never "still loading".
-# That distinction is what keeps this script from hammering XNAT with bad logins until the account
-# locks. Only the first probe can spend a wrong password: the second is asked with a password the
-# first has just accepted.
+# On credential handling, see the loop below: a not-yet-registered route answers 404, so 401/403 can
+# only mean the credentials are wrong — never "still loading". That distinction is what keeps this
+# script from hammering XNAT with bad logins until the account locks.
 
 : "${XNAT_ADMIN_USER:?}" "${XNAT_ADMIN_INITIAL_PASSWORD:?}" "${XNAT_ADMIN_PASSWORD:?}"
 
@@ -77,7 +50,7 @@ XNAT_URL="${XNAT_URL:-http://xnat-web:8080}"
 PLUGINS_URL="${XNAT_URL}/xapi/plugins"
 DQR_URL="${XNAT_URL}/xapi/dqr/settings"
 PLUGIN_DIR="${XNAT_HOME:-/data/xnat/home}/plugins"
-PROC_DIR="${XNAT_PLUGIN_READINESS_PROC_DIR:-/proc}"
+ROSTER="${XNAT_PLUGIN_READINESS_ROSTER:-}"
 TIMEOUT_SECONDS="${XNAT_PLUGIN_READINESS_TIMEOUT_SECONDS:-900}"
 POLL_SECONDS="${XNAT_PLUGIN_READINESS_POLL_SECONDS:-5}"
 AUTH_FAILURE_LIMIT="${XNAT_PLUGIN_READINESS_AUTH_FAILURE_LIMIT:-3}"
@@ -89,98 +62,31 @@ AUTH_BACKOFF_SECONDS="${XNAT_PLUGIN_READINESS_AUTH_BACKOFF_SECONDS:-15}"
 if ! [[ "$TIMEOUT_SECONDS" =~ ^(0|[1-9][0-9]*)$ \
      && "$POLL_SECONDS" =~ ^(0|[1-9][0-9]*)([.][0-9]+)?$ \
      && "$AUTH_FAILURE_LIMIT" =~ ^[1-9][0-9]*$ \
-     && "$AUTH_BACKOFF_SECONDS" =~ ^(0|[1-9][0-9]*)([.][0-9]+)?$ ]]; then
+     && "$AUTH_BACKOFF_SECONDS" =~ ^(0|[1-9][0-9]*)([.][0-9]+)?$ \
+     && "$ROSTER" =~ ^[01]?$ ]]; then
   echo "ERROR: XNAT plugin readiness tuning values must be non-negative numbers without leading" >&2
-  echo "  zeros, and the auth-failure limit must be at least 1 (got" >&2
+  echo "  zeros, the auth-failure limit at least 1, and the roster flag 0 or 1 (got" >&2
   echo "  timeout='$TIMEOUT_SECONDS' poll='$POLL_SECONDS'" >&2
-  echo "  auth-limit='$AUTH_FAILURE_LIMIT' auth-backoff='$AUTH_BACKOFF_SECONDS')." >&2
+  echo "  auth-limit='$AUTH_FAILURE_LIMIT' auth-backoff='$AUTH_BACKOFF_SECONDS' roster='$ROSTER')." >&2
   exit 1
 fi
 
-# Succeeds when a Tomcat in this PID namespace loads its plugins from PLUGIN_DIR (see the header).
-# A process vanishing mid-scan, or a /proc entry this user may not read, simply does not count.
-beside_xnat() {
-  local cmdline entry args home
-  for cmdline in "$PROC_DIR"/[0-9]*/cmdline; do
-    args=$(tr '\0' '\n' 2>/dev/null < "$cmdline") || continue
-    grep -qx 'org.apache.catalina.startup.Bootstrap' <<< "$args" || continue
-    entry="${cmdline%/cmdline}"
-    home=$(sed -n 's/^-Dxnat\.home=//p' <<< "$args" | tail -n 1)
-    if [[ "$entry/root${home:-${XNAT_HOME:-/data/xnat/home}}/plugins" -ef "$PLUGIN_DIR" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-check_roster=""
-if beside_xnat; then
-  check_roster=1
-else
-  echo "No Tomcat beside this script loads $PLUGIN_DIR (as for the chart's xnat-init job, which runs in" \
-       "its own pod), so those jars are not the ones XNAT loaded: waiting for the DQR plugin's settings" \
-       "route only — make -C trust/deploy/helm status checks the plugins the running XNAT loaded."
-fi
-
-# Prints the plugin ids a jar declares, one per line: the `id` of each properties file under
-# META-INF/xnat/ named *-plugin.properties — the pattern XNAT scans
-# (XnatPluginBeanManager.PATTERN_PLUGIN_BEAN_PROPERTIES). unzip's `*` crosses `/`, as XNAT's `**`
-# does. Prints nothing for a jar that is not an XNAT plugin (a library jar), for which unzip exits
-# 11; the caller has already proved the jar is a readable zip.
-declared_plugin_ids() {
-  { unzip -p "$1" 'META-INF/xnat/*-plugin.properties' 2>/dev/null || true; } \
-    | tr -d '\r' \
-    | sed -n 's/^[[:space:]]*id[[:space:]]*[=:][[:space:]]*\([^[:space:]]*\).*$/\1/p'
-}
-
+# The roster, read from the jars. They are checksum-pinned (dev cache) or baked at build, so one
+# failure covers every way a jar can fail to name its plugin.
 expected_ids=()
-if [[ -n "$check_roster" ]]; then
-  # Both ship in the xnat-web image (trust/xnat/xnat/Dockerfile). Checked here so a missing binary
-  # fails naming itself, rather than reading as "this jar declares no plugin" or "XNAT listed
-  # nothing". Probe 2 alone needs neither.
+if [[ "$ROSTER" == 1 ]]; then
   for tool in unzip jq; do
     command -v "$tool" >/dev/null || { echo "ERROR: $tool is required by wait-for-xnat-plugins.sh" >&2; exit 1; }
   done
-
   shopt -s nullglob
   for jar in "$PLUGIN_DIR"/*.jar; do
-    # 1 is unzip's warning status — an archive it can read despite a defect, such as bytes prepended
-    # to it, which Java's jar loader reads too. Above that (9: no central directory, the mark of a
-    # truncated download) XNAT cannot load the jar either, and which plugin it was meant to be is
-    # unknowable from here, so nothing could tell this wait what to expect from it.
-    zip_status=0
-    unzip -Z1 "$jar" >/dev/null 2>&1 || zip_status=$?
-    if (( zip_status > 1 )); then
-      echo "ERROR: $jar is not a readable jar (unzip exit $zip_status: a truncated or failed download?)." >&2
-      echo "  XNAT cannot load it, and this wait cannot tell which plugin it should have been." >&2
-      exit 1
-    fi
-    ids=$(declared_plugin_ids "$jar")
-    if [[ -z "$ids" ]]; then
-      echo "  $(basename "$jar") declares no XNAT plugin — not waited for."
-      continue
-    fi
-    while IFS= read -r id; do
-      expected_ids+=("$id")
-    done <<< "$ids"
+    id=$(unzip -p "$jar" 'META-INF/xnat/*-plugin.properties' 2>/dev/null \
+      | sed -n 's/^[[:space:]]*id[[:space:]]*[=:][[:space:]]*\([^[:space:]]*\).*$/\1/p' | head -n 1) || true
+    [[ -n "$id" ]] || { echo "ERROR: cannot read an XNAT plugin id from $jar." >&2; exit 1; }
+    expected_ids+=("$id")
   done
   shopt -u nullglob
-
-  if (( ${#expected_ids[@]} == 0 )); then
-    # Every FLIP XNAT runs plugins (DQR at the least), so an empty roster is a broken install, not a
-    # vacuously ready one — and waiting cannot put a jar on disk.
-    echo "ERROR: no XNAT plugin jars found in $PLUGIN_DIR, the directory this XNAT loads its plugins from." >&2
-    echo "  Every FLIP XNAT runs plugins (DQR at the least). Where they come from depends on the" >&2
-    echo "  deployment: the dev plugin cache in Compose development (make -C trust prepare-artifacts)," >&2
-    echo "  the image itself in every other Compose deployment (a custom image must bake them in, as" >&2
-    echo "  trust/xnat/xnat/Dockerfile does), and xnat.web.plugins.urls in the Helm chart's xnat-web pod." >&2
-    exit 1
-  fi
-  sorted_ids=$(printf '%s\n' "${expected_ids[@]}" | LC_ALL=C sort -u)
-  expected_ids=()
-  while IFS= read -r id; do
-    expected_ids+=("$id")
-  done <<< "$sorted_ids"
+  (( ${#expected_ids[@]} )) || { echo "ERROR: no XNAT plugin jars in $PLUGIN_DIR." >&2; exit 1; }
 fi
 
 # GETs one route with one admin password. Prints the response body, a newline, then the HTTP
@@ -191,50 +97,26 @@ xnat_get() {
     -u "${XNAT_ADMIN_USER}:$2" "$1" || printf '\n000'
 }
 
-# One readiness attempt with one admin password. Sets, for the caller:
-#   attempt_status         HTTP status of the request that decided the attempt
-#   attempt_url            the route that decided it
-#   attempt_authenticated  1 when XNAT accepted the password (/xapi/plugins, or the DQR route when
-#                          that is the only probe), whatever came after
-#   attempt_missing        expected plugin ids XNAT did not list (empty unless it answered 2xx)
+# One readiness attempt with one admin password. Sets attempt_status and attempt_url (the request
+# that decided it) and attempt_missing (expected ids /xapi/plugins did not list).
 attempt() {
-  local password="$1" response loaded id
-  attempt_authenticated=""
+  local response loaded id
   attempt_missing=""
-
-  if [[ -n "$check_roster" ]]; then
+  if [[ "$ROSTER" == 1 ]]; then
     attempt_url="$PLUGINS_URL"
-    response=$(xnat_get "$PLUGINS_URL" "$password")
+    response=$(xnat_get "$PLUGINS_URL" "$1")
     attempt_status="${response##*$'\n'}"
     [[ "$attempt_status" == 2* ]] || return 0
-    attempt_authenticated=1
-
-    # A body that is not a JSON object lists nothing, so every expected plugin reads as missing
-    # rather than the wait passing on a response it could not read.
-    loaded=$(printf '%s' "${response%$'\n'*}" \
-      | jq -r 'if type == "object" then keys[] else empty end' 2>/dev/null) || loaded=""
+    # A body that is not a JSON object lists nothing, so every plugin reads as missing.
+    loaded=$(printf '%s' "${response%$'\n'*}" | jq -r 'keys[]?' 2>/dev/null) || loaded=""
     for id in "${expected_ids[@]}"; do
       grep -Fxq -- "$id" <<< "$loaded" || attempt_missing+="${attempt_missing:+ }$id"
     done
     [[ -z "$attempt_missing" ]] || return 0
   fi
-
   attempt_url="$DQR_URL"
-  response=$(xnat_get "$DQR_URL" "$password")
+  response=$(xnat_get "$DQR_URL" "$1")
   attempt_status="${response##*$'\n'}"
-  if [[ "$attempt_status" == 2* ]]; then
-    attempt_authenticated=1
-  fi
-}
-
-# What a ready XNAT reports, for the probes this run made. $1 is the HTTP status; $2 an optional note.
-announce_ready() {
-  if [[ -n "$check_roster" ]]; then
-    echo "XNAT plugins are ready (HTTP $1$2): XNAT loaded ${expected_ids[*]} and the DQR settings route" \
-         "answers."
-  else
-    echo "XNAT DQR plugin is ready (HTTP $1$2)."
-  fi
 }
 
 # Only called on the fatal redirect path, to name the destination in the error. Worth one extra
@@ -245,16 +127,16 @@ probe_redirect_target() {
     -u "${XNAT_ADMIN_USER}:${credential}" "$last_url" 2>/dev/null || true
 }
 
-if [[ -n "$check_roster" ]]; then
-  echo "Waiting for XNAT to load its plugins (${expected_ids[*]}, declared by the jars in" \
-       "$PLUGIN_DIR) and for the DQR plugin's settings route..."
-  last_url="$PLUGINS_URL"
+if [[ "$ROSTER" == 1 ]]; then
+  ready_means="XNAT loaded ${expected_ids[*]} and the DQR settings route answers"
+  echo "Waiting for XNAT to load ${expected_ids[*]} (the jars in $PLUGIN_DIR) and for the DQR plugin..."
 else
+  ready_means="the DQR settings route answers"
   echo "Waiting for the XNAT DQR plugin to be ready..."
-  last_url="$DQR_URL"
 fi
 wait_start=$SECONDS
 last_status="000"
+last_url="$DQR_URL"
 last_missing=""
 
 # Probe with one credential at a time. This script runs before configure-xnat.sh rotates the admin
@@ -284,7 +166,7 @@ while true; do
   case "$last_status" in
     2*)
       if [[ -z "$last_missing" ]]; then
-        announce_ready "$last_status" ""
+        echo "XNAT plugins are ready (HTTP $last_status): $ready_means."
         exit 0
       fi
       # Authenticated, so not a credential problem: forgive any earlier blip and keep polling.
@@ -304,32 +186,17 @@ while true; do
       # run first costs AUTH_FAILURE_LIMIT rejected logins and the whole backoff tolerance before
       # reaching the password that works.
       #
-      # Only an authenticated answer acts on the result. Ready is ready, whichever admin password
-      # proved it: configure-xnat.sh re-establishes its own credential immediately afterwards.
-      # Accepted but not ready yet (/xapi/plugins answered, but a plugin is still missing or the DQR
-      # route is not answering) proves this is the password XNAT holds — one account has one
-      # password — so the wait carries on with it rather than spending more of the lockout budget on
-      # the one just rejected. Anything else is inconclusive — during a boot blip neither password
-      # gets an answer — so the run-of-rejections logic below keeps the decision to switch, and the
-      # blip stays forgiven. (With the DQR route as the only probe, accepted means ready.)
+      # Only a ready answer acts on the result: whether XNAT is ready is the entire question this
+      # script asks, and which admin password proved it does not matter to configure-xnat.sh, which
+      # re-establishes its own credential immediately afterwards. Anything else is inconclusive —
+      # during a boot blip the route still 404s for both passwords — so the run-of-rejections logic
+      # below keeps the decision to switch, and the blip stays forgiven.
       if [[ -n "$alternate" && -z "$alternate_probed" ]]; then
         alternate_probed=1
         attempt "$alternate"
-        if [[ -n "$attempt_authenticated" ]]; then
-          if [[ "$attempt_status" == 2* && -z "$attempt_missing" ]]; then
-            announce_ready "$attempt_status" ", $alternate_label admin password"
-            exit 0
-          fi
-          echo "  XNAT accepted the $alternate_label admin password and rejected the" \
-               "$credential_label one — continuing with the $alternate_label one."
-          credential="$alternate"
-          credential_label="$alternate_label"
-          alternate=""
-          auth_failures=0
-          last_status="$attempt_status"
-          last_url="$attempt_url"
-          last_missing="$attempt_missing"
-          sleep_for="$POLL_SECONDS"
+        if [[ "$attempt_status" == 2* && -z "$attempt_missing" ]]; then
+          echo "XNAT plugins are ready (HTTP $attempt_status, $alternate_label admin password): $ready_means."
+          exit 0
         elif [[ "$attempt_status" == 401 || "$attempt_status" == 403 ]]; then
           # Charged to the credential it was spent on, and carried into the switch below, so both
           # passwords still share one AUTH_FAILURE_LIMIT budget each however the failures fall.
@@ -376,21 +243,16 @@ while true; do
       exit 1
       ;;
     *)
-      # 404 (route not registered yet), 000 (transport), 5xx (still starting): not a credential
-      # problem, so forgive any earlier blip and keep polling the same credential.
+      # 404 (plugin route not registered yet), 000 (transport), 5xx (still starting): not a
+      # credential problem, so forgive any earlier blip and keep polling the same credential.
       auth_failures=0
       ;;
   esac
 
   if (( SECONDS - wait_start >= 10#$TIMEOUT_SECONDS )); then
     echo "ERROR: XNAT plugins did not become ready within $((SECONDS - wait_start))s." >&2
-    if [[ -n "$last_missing" ]]; then
-      # XNAT builds that listing once, at startup, so a plugin still missing now is not loading
-      # slowly: XNAT did not find it, and only a restart after the cause is fixed will add it.
-      echo "  XNAT has not loaded: $last_missing" >&2
-      echo "  (expected because a jar in $PLUGIN_DIR declares it; XNAT lists the plugins it" >&2
-      echo "  found at startup, so check the xnat-web startup log for that jar.)" >&2
-    fi
+    # XNAT lists its plugins once, at startup, so one still missing now will not load by waiting.
+    [[ -z "$last_missing" ]] || echo "  XNAT has not loaded: $last_missing (see the xnat-web startup log)" >&2
     echo "  endpoint:   $last_url" >&2
     echo "  credential: $credential_label" >&2
     echo "  last HTTP status: $last_status" >&2

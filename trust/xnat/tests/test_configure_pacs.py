@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from plugin_fixtures import declared_ids, fake_proc, plugins_listing, xnat_home
+from plugin_fixtures import declared_ids, plugins_listing, xnat_home
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "xnat" / "config"
 SCRIPT = CONFIG_DIR / "configure-xnat.sh"
@@ -183,7 +183,6 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
     no_sleep.write_text("#!/bin/sh\nexit 0\n")
     no_sleep.chmod(0o755)
 
-    home = xnat_home(tmp_path)
     payloads = tmp_path / "payloads.txt"
     pacs_file = tmp_path / "pacs.json"
     pacs_file.write_text(pacs_state if pacs_state is not None else "[]")
@@ -201,11 +200,10 @@ def run_configure(tmp_path, env_overrides=None, pacs_state=None, scp_state=None)
         "SCP_STATE": str(scp_file),
         "CREDS_LOG": str(tmp_path / "creds.txt"),
         "UNREADY_COUNT": str(tmp_path / "unready-count.txt"),
-        # The plugin-readiness wait reads which plugins to expect from the jars in XNAT_HOME when a
-        # Tomcat beside it loads them (as under Compose, where this script runs inside xnat-web), and
-        # the stub's GET /xapi/plugins reports all of them loaded.
-        "XNAT_HOME": str(home),
-        "XNAT_PLUGIN_READINESS_PROC_DIR": str(fake_proc(tmp_path, home)),
+        # As the Compose xnat-configure recipe runs it: the plugin-readiness wait reads which plugins
+        # to expect from the jars in XNAT_HOME, and the stub's GET /xapi/plugins lists all of them.
+        "XNAT_PLUGIN_READINESS_ROSTER": "1",
+        "XNAT_HOME": str(xnat_home(tmp_path)),
         "PLUGINS_JSON": plugins_listing(declared_ids()),
         **(env_overrides or {}),
     }
