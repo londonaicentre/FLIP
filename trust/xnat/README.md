@@ -234,6 +234,20 @@ port). Both are host-published — the receiver so a real PACS can complete the 
 a retrieval, and dev keeps the same wiring — so they must differ; `xnat-reset` refuses to deploy if
 they collide or are non-numeric. The dev allocation is 8104/8105 (GSTT) and 8106/8107 (KCH).
 
+`configure-xnat.sh` converges the DICOM SCP receiver onto the kit instead of re-creating it on every
+run (FLIP#1456). A receiver that already matches is not written at all: XNAT's
+`PUT /xapi/dicomscp/{id}` restarts the port's listener even when nothing changed, which would drop
+the C-STORE return leg of any retrieval in flight, and the step runs on every redeploy and every
+`helm upgrade`. A FLIP receiver whose AE title, port or flags drifted is updated in place with that
+PUT and keeps its id. A receiver is created only when FLIP has none: on first boot XNAT's stock
+`XNAT` receiver is deleted and FLIP's created, as before, because the POST is the one write XNAT
+validates. Any other receiver the script owns (a second FLIP one left by a rename, or the stock one)
+is deleted first, and the script reads the receivers back after any write and fails unless exactly
+one is left, at the kit's values. The PUT skips XNAT's own checks, so the script validates
+`XNAT_AETITLE` against XNAT's AE-title rule (1 to 16 printable ASCII characters, no backslash, no
+leading or trailing space) before it contacts XNAT. A receiver an operator registered for another
+DICOM source is left alone, but one on `XNAT_PORT` makes the run refuse before anything is written.
+
 `configure-xnat.sh` updates an existing PACS registration in place when any of its kit-managed
 fields drift (host, query/retrieve port, label, extended-negotiation flag), and deletes every
 registration other than the configured one so exactly one survives — which is why imaging-api can

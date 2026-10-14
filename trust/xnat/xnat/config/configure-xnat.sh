@@ -84,6 +84,18 @@ esac
 # silently-empty lookup that would re-register a PACS that already exists.
 command -v jq >/dev/null || { echo "ERROR: jq is required by configure-xnat.sh" >&2; exit 1; }
 
+# XNAT_AETITLE against XNAT's own AE-title rule (DicomSCPManager.AE_TITLE_PATTERN in XNAT 1.10): 1 to
+# 16 printable ASCII characters, no backslash, neither starting nor ending with a space. XNAT applies
+# it when a receiver is created, but not when one is updated in place, and in-place update is how a
+# changed XNAT_AETITLE now reaches an existing receiver (FLIP#1456). So the script applies it itself,
+# before XNAT is touched. jq rather than [[ =~ ]]: its ranges are code points whatever the locale.
+if ! jq -en --arg ae "${XNAT_AETITLE}" \
+    '$ae | test("^[!-~]([ -~]{0,14}[!-~])?$") and (contains("\\") | not)' >/dev/null; then
+  echo "ERROR: XNAT_AETITLE must be 1 to 16 printable ASCII characters, with no backslash and no" \
+    "leading or trailing space (XNAT's own rule for a DICOM AE title), got '${XNAT_AETITLE}'" >&2
+  exit 1
+fi
+
 # Wait for XNAT to be available (wall-clock bounded, and each probe carries
 # its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
 # of printing dots forever — same shape as configure-dcm2niix.sh).
@@ -395,12 +407,17 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
   -H "Content-Type: application/json" \
   -d 'true'
 
-# Remove the pre-existing SCP receivers this script owns, so the POST below can re-create exactly
-# one. Ownership is a property of the receiver itself, not of the port it binds or the title it
-# carries: every receiver FLIP creates is stamped with identifier "dqrObjectIdentifier" by the POST
-# below, and XNAT's stock receiver — created by the webapp on first boot, always called "XNAT" — is
-# the other one that has to go. `GET /xapi/dicomscp` returns `identifier` per receiver, so both
-# markers are readable from the listing.
+# The DICOM SCP receiver, which takes the C-STORE return leg of every DQR retrieval. This step
+# converges it onto the kit rather than re-creating it (FLIP#1456). It runs on every redeploy, and on
+# Kubernetes on every `helm upgrade` (the xnat-init Job is a post-install/post-upgrade hook). The old
+# delete-then-POST left XNAT with no receiver for the length of the gap, so the return leg of any
+# retrieval in flight at that moment failed, and it gave the receiver a new id every run.
+#
+# Which receivers this script owns is a property of the receiver itself, not of the port it binds or the
+# title it carries: every receiver FLIP creates is stamped with identifier "dqrObjectIdentifier" by the
+# POST below, and XNAT's stock receiver — created by the webapp on first boot, always called "XNAT" — is
+# the other one it reclaims. `GET /xapi/dicomscp` returns `identifier` per receiver, so both markers are
+# readable from the listing.
 #
 # Matching instead on "our port or our AE title" left an orphan whenever both moved in one change:
 # an existing FLIPXNAT:8104 under new config XNAT_AETITLE=FLIPXNAT2 XNAT_PORT=11112 matched neither,
@@ -410,22 +427,41 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
 # left alone — it would otherwise be deleted on every redeploy and `helm upgrade`, with the deletion
 # visible only in a Job pod log that is discarded on success.
 #
-# If such a receiver is squatting the port we are about to bind, refuse BEFORE deleting anything.
-# The POST below does fail loud on the duplicate port, but by then the reclamation loop has already
-# removed FLIP's own working receiver, so a redeploy that changed nothing else leaves XNAT with no
-# DICOM receiver at all — worse than the state it started in. The PACS-side guard further down gets
-# this ordering right (it refuses ahead of its deletes), and the listing this check needs has
-# already been fetched, so the check is free.
+# Of the receivers this script owns, one FLIP receiver is kept: the one already at
+# XNAT_AETITLE:XNAT_PORT if there is one, else the oldest. Then:
+#   - every other receiver it owns is deleted: a second FLIP receiver left by a rename, or the stock
+#     one. The deletes run first, so the update below never gives the kept receiver an AE title and
+#     port that another receiver still holds;
+#   - the kept receiver is left untouched when it already matches the kit. That is the point of the
+#     comparison: XNAT 1.10's PUT /xapi/dicomscp/{id} restarts the port's listener even when nothing
+#     in the body differs, so the PUT is sent only when a field actually drifted;
+#   - a drifted one is updated in place with that PUT, which keeps its id;
+#   - a receiver is created only when FLIP has none. On first boot that means the stock receiver is
+#     deleted and FLIP's created, as before, rather than PUT into shape: the POST is the one write
+#     XNAT validates (a known identifier, the AE title, no duplicate title and port), and the stock
+#     receiver carries the default identifier, which never routes a study into the project that
+#     requested it (it lands Unassigned), so the gap breaks no working import.
 #
-# Both markers are literals in the filter, so nothing operator-supplied is spliced into jq.
+# The PUT runs none of the checks the POST does (it reaches DicomSCPManager.update(instance, false)),
+# so the script keeps its own: the AE title is validated at the top, the PUT never changes the
+# identifier (the kept receiver was chosen by it), routing and the whitelist stay off, and when the PUT
+# is sent no other receiver is left on the port — the pre-flight below refuses an unowned one, and the
+# deletes have removed the owned ones.
+#
+# Both markers are literals in the filters, so nothing operator-supplied is spliced into jq.
 response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
 
 if [[ -z "$response" || "$response" == "[]" ]]; then
     echo "No SCP receivers found."
+    response='[]'
 else
     # Pre-flight: a receiver carrying neither ownership marker, already bound to the port this
-    # deployment is about to register, blocks the POST below. Refuse now, while FLIP's own receiver
-    # is still in place.
+    # deployment is about to register, is refused before anything is written, while FLIP's own
+    # receiver is still in place. The PACS-side guard further down gets this ordering right too (it
+    # refuses ahead of its deletes). The refusal is stricter than XNAT, which rejects only a second
+    # receiver with the same AE title and port (titles on one port share one listener), and whose
+    # PUT rejects nothing: here it is also what keeps the PUT below off a title and port another
+    # receiver holds.
     squatters=$(printf '%s' "$response" \
       | jq -r --argjson port "${XNAT_PORT}" \
               '.[] | select(.port == $port)
@@ -434,37 +470,19 @@ else
     if [[ -n "$squatters" ]]; then
         echo "ERROR: another DICOM SCP receiver already holds port ${XNAT_PORT}, and it carries" >&2
         echo "       neither FLIP ownership marker (identifier 'dqrObjectIdentifier', AE title" >&2
-        echo "       'XNAT'). Refusing to delete this deployment's receiver for a registration" >&2
-        echo "       that would then be rejected as a duplicate port, which would leave XNAT with" >&2
-        echo "       no receiver at all. Free the port or remove the receiver in XNAT's admin UI," >&2
-        echo "       or point this deployment at another port via XNAT_PORT. Found:" >&2
+        echo "       'XNAT'). Refusing to configure this deployment's receiver on a port it would" >&2
+        echo "       share with a receiver it does not own. Free the port or remove the receiver in" >&2
+        echo "       XNAT's admin UI, or point this deployment at another port via XNAT_PORT. Found:" >&2
         printf '         %s\n' "$squatters" >&2
         exit 1
     fi
-
-    stale_ids=$(printf '%s' "$response" \
-      | jq -r '.[] | select(.identifier == "dqrObjectIdentifier" or .aeTitle == "XNAT")
-                   | "\(.id):\(.aeTitle):\(.port)"')
-
-    if [[ -z "$stale_ids" ]]; then
-        echo "No existing SCP receiver to replace."
-    else
-        while IFS=: read -r scp_receiver_id scp_receiver_ae scp_receiver_port; do
-            [[ -n "$scp_receiver_id" ]] || continue
-            echo "Removing SCP receiver '${scp_receiver_ae}:${scp_receiver_port}' (id ${scp_receiver_id})..."
-            xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
-                -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
-        done <<< "$stale_ids"
-    fi
 fi
 
-# Configure SCP receiver to have dqrObjectIdentifier as the identifier (the default is not). That
-# identifier is also what marks the receiver as FLIP-owned for the reclamation above.
-echo "Configuring SCP receiver '${XNAT_AETITLE}' on port ${XNAT_PORT}..."
-xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-  -H "Content-Type: application/json" \
-  -d "$(jq -n --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" '{
+# The kit's receiver. dqrObjectIdentifier (the default identifier is not it) is what routes an arriving
+# study to the project DQR requested it for, and it is also what marks the receiver as FLIP-owned. The
+# body never carries an id: the PUT merges every property of the body into the stored receiver, an id
+# included.
+scp_payload=$(jq -n --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" '{
     aeTitle: $ae,
     port: $port,
     enabled: true,
@@ -478,7 +496,86 @@ xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
     projectRoutingExpression: "",
     subjectRoutingExpression: "",
     sessionRoutingExpression: ""
-  }')"
+  }')
+
+# Drift is judged over every field of the payload that XNAT stores. whitelistText is not one: XNAT
+# 1.10 has no such property (it keeps the whitelist as a list), so it is ignored on write and never
+# returned, and there is nothing stored to compare it with. A routing expression XNAT returns as null
+# is the empty one the kit sends, or a receiver made another way would drift on every run.
+# shellcheck disable=SC2016 # jq's variables, not the shell's
+scp_jq_defs='
+def norm: if . == null then "" else . end;
+def drift($entry; $desired):
+  [("aeTitle", "port", "enabled", "customProcessing", "directArchive", "identifier",
+    "anonymizationEnabled", "whitelistEnabled", "routingExpressionsEnabled",
+    "projectRoutingExpression", "subjectRoutingExpression", "sessionRoutingExpression")
+   | select(($entry[.] | norm) != ($desired[.] | norm))];
+def owned: .identifier == "dqrObjectIdentifier" or .aeTitle == "XNAT";
+'
+
+scp_keep=$(printf '%s' "$response" | jq -c --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" \
+  'map(select(.identifier == "dqrObjectIdentifier")) | sort_by(.id)
+   | (map(select(.aeTitle == $ae and .port == $port)) + .) | .[0] // empty')
+scp_keep_id=""
+if [[ -n "$scp_keep" ]]; then
+    scp_keep_id=$(printf '%s' "$scp_keep" | jq -r '.id')
+fi
+
+stale_ids=$(printf '%s' "$response" | jq -r --argjson keep "${scp_keep_id:-null}" "$scp_jq_defs"'
+  .[] | select(owned and .id != $keep) | "\(.id):\(.aeTitle):\(.port)"')
+
+scp_written=false
+while IFS=: read -r scp_receiver_id scp_receiver_ae scp_receiver_port; do
+    [[ -n "$scp_receiver_id" ]] || continue
+    echo "Removing SCP receiver '${scp_receiver_ae}:${scp_receiver_port}' (id ${scp_receiver_id})..."
+    xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
+        -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
+    scp_written=true
+done <<< "$stale_ids"
+
+if [[ -z "$scp_keep_id" ]]; then
+    echo "Creating SCP receiver '${XNAT_AETITLE}' on port ${XNAT_PORT}..."
+    xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+      -H "Content-Type: application/json" \
+      -d "$scp_payload"
+    scp_written=true
+else
+    scp_drift=$(jq -cn --argjson entry "$scp_keep" --argjson desired "$scp_payload" \
+      "$scp_jq_defs"'drift($entry; $desired)')
+    if [[ "$scp_drift" == "[]" ]]; then
+        echo "SCP receiver '${XNAT_AETITLE}:${XNAT_PORT}' (id ${scp_keep_id}) already matches the kit" \
+             "— leaving as-is."
+    else
+        echo "SCP receiver id ${scp_keep_id} drifted on $(printf '%s' "$scp_drift" | jq -r 'join(", ")')," \
+             "updating it in place to '${XNAT_AETITLE}:${XNAT_PORT}'..."
+        xnat_curl -X PUT "$XNAT_URL/xapi/dicomscp/${scp_keep_id}" \
+          -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          -d "$scp_payload" >/dev/null
+        scp_written=true
+    fi
+fi
+
+# After any write, read the receivers back and fail unless exactly one that this script owns is left,
+# at the kit's values, under the id it was kept with. A 200 that persisted nothing is how FLIP#822
+# stayed hidden on the PACS side, and the PUT runs none of XNAT's own checks to catch a body it
+# misapplied. With nothing written, the listing above already is the read-back.
+if [[ "$scp_written" == true ]]; then
+    scp_after=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
+    scp_problem=$(printf '%s' "${scp_after:-[]}" \
+      | jq -r --argjson desired "$scp_payload" --argjson keep "${scp_keep_id:-null}" "$scp_jq_defs"'
+          map(select(owned)) as $ours
+          | if ($ours | length) != 1 then "\($ours | length) receivers this script owns are left, not one"
+            elif $keep != null and $ours[0].id != $keep then "its id changed from \($keep) to \($ours[0].id)"
+            else drift($ours[0]; $desired) | select(length > 0) | "it still differs on \(join(", "))"
+            end')
+    if [[ -n "$scp_problem" ]]; then
+        echo "ERROR: the DICOM SCP receiver did not converge on '${XNAT_AETITLE}:${XNAT_PORT}': ${scp_problem}" >&2
+        exit 1
+    fi
+    echo "SCP receiver '${XNAT_AETITLE}:${XNAT_PORT}' is configured."
+fi
 
 # Configure OHIF viewer
 echo "Configuring OHIF viewer..."
