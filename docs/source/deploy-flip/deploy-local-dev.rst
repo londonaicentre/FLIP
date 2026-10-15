@@ -343,6 +343,26 @@ built-in users are listed in ``flip-api/src/flip_api/utils/constants.py``. MFA
 is off in development. The realm behind sign-in is described in
 `deploy/keycloak/README.md <https://github.com/londonaicentre/FLIP/blob/develop/deploy/keycloak/README.md>`__.
 
+.. note::
+
+   **Running the stack on another machine.** If the browser is not on the
+   host running the stack, forward every port the browser talks to and keep
+   using ``localhost`` in the address bar. The UI port and the API and
+   Keycloak ports are not enough: model-file uploads and result downloads go
+   straight from the browser to the object store on port ``9000``, through
+   URLs the hub signs for ``localhost:9000``. Without that port forwarded,
+   sign-in works but every upload fails with "Error uploading file" (the
+   browser console shows ``net::ERR_CONNECTION_REFUSED``).
+
+   .. code-block:: bash
+
+      ssh -N -L <UI_PORT>:localhost:<UI_PORT> -L 8080:localhost:8080 \
+             -L 8180:localhost:8180 -L 9000:localhost:9000 -L 9001:localhost:9001 \
+             <user>@<stack-host>
+
+   Add ``-L 8105:localhost:8105 -L 8107:localhost:8107`` to view the Trusts'
+   XNAT in the browser.
+
 To prove the whole chain works — create a project, run a cohort query, import
 images, train, download results — run the end-to-end smoke test (several
 minutes):
@@ -406,6 +426,11 @@ Image pulls fail with ``denied`` or ``unauthorized``
    The XNAT plugin cache is missing or older than
    ``trust/xnat/artifacts.manifest``. Run ``make -C trust prepare-artifacts``
    (Step 5) and ``make up`` again.
+
+Uploading a model file fails with "Error uploading file"
+   The browser cannot reach the object store on port ``9000``. This happens
+   when the browser runs on another machine and only the UI, API and Keycloak
+   ports are forwarded. Forward port ``9000`` too (see Step 8).
 
 The UI loads but sign-in fails
    Open the UI at ``http://localhost:<UI_PORT>``, not ``127.0.0.1``: the hub
