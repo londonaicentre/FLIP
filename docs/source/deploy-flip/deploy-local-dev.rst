@@ -358,7 +358,12 @@ The smoke test talks to ``http://localhost:8080/api``. If you changed
 To run the same job by hand, sign in to the UI and follow
 :doc:`../user-guides`, using the cohort query and app files of
 ``fl-tutorials/nvflare/image_classification/xray_classification/``
-(``query.sql`` and ``app_files/``).
+(``query.sql`` and ``app_files/``). Each Trust should report about 300
+subjects. The Trusts hold only the chest X-ray project the seed loads, so a
+query for other data (``flip-api/tests/example_query.sql`` looks for spleen CT,
+for example) comes back empty, and so does any query that filters on concept
+names until you load the vocabulary (Step 7). An empty cohort and one below the
+Trust's privacy threshold are reported the same way, as suppressed.
 
 **************
 Day-to-day use
@@ -403,8 +408,11 @@ Image pulls fail with ``denied`` or ``unauthorized``
    (Step 5) and ``make up`` again.
 
 The UI loads but sign-in fails
-   Check ``UI_PORT`` is the port in your browser's address bar, and that
-   nothing else is using port ``8180``.
+   Open the UI at ``http://localhost:<UI_PORT>``, not ``127.0.0.1``: the hub
+   API only accepts browser requests from the ``localhost`` origin, and a
+   refused request shows only "There was a problem logging you in". Also check
+   that ``UI_PORT`` is the port in the address bar and that nothing else is
+   using port ``8180``.
 
 ``make up`` stops with ``sudo: A terminal is required to authenticate``
    The XNAT reset needs your password (Step 6). Run ``make up`` again in an
