@@ -259,3 +259,33 @@ def test_query_sql_drops_persons_missing_any_measurement(converter: ModuleType, 
     result = run_query(QUERY_FILES["nvflare"], tables)
     assert victim not in set(result["person_id"])
     assert len(result) == len(cohort) - 1
+
+
+# --- rules a reviewer asked to pin -----------------------------------------------------------
+
+
+def test_earliest_scan_is_decided_by_date_not_by_string_order(converter: ModuleType, tmp_path: Path):
+    """A non-ISO export ('M/D/YYYY') must still put the 2011 scan before the 2012 one."""
+    rows = [
+        _freesurfer_row(1, "10/5/2012", 1_600_000, 3000, 3000),
+        _freesurfer_row(1, "9/1/2011", 1_500_000, 3600, 3700),
+    ]
+    path = tmp_path / "UCSFFSX7_x.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    mri = converter.load_mri(path)
+    assert mri["EXAMDATE"].tolist() == [pd.Timestamp("2011-09-01"), pd.Timestamp("2012-10-05")]
+    assert mri["icv_mm3"].tolist() == [1_500_000, 1_600_000]
+
+
+def test_non_positive_assay_values_count_as_missing(converter: ModuleType, tmp_path: Path):
+    """-4 is ADNI's code, but a 0 or a stray -1 is just as impossible for an assay and must not reach the log."""
+    panel = {"AB42_F": 200.0, "AB40_F": 2500.0, "pT217_F": 0.2, "NfL_Q": 20.0, "GFAP_Q": 150.0}
+    rows = [
+        {"RID": 1, "VISCODE2": "bl", "EXAMDATE": "2019-01-01", **panel},
+        {"RID": 2, "VISCODE2": "bl", "EXAMDATE": "2019-01-01", **panel, "pT217_F": 0.0},
+        {"RID": 3, "VISCODE2": "bl", "EXAMDATE": "2019-01-01", **panel, "GFAP_Q": -1},
+        {"RID": 4, "VISCODE2": "bl", "EXAMDATE": "2019-01-01", **panel, "AB40_F": -4},
+    ]
+    path = tmp_path / "UPENN_PLASMA_FUJIREBIO_QUANTERIX_x.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    assert converter.load_plasma(path)["RID"].tolist() == [1]

@@ -27,7 +27,7 @@ up to the ADNI release downloaded:
   more missing values dropped, the **earliest** scan with a matching plasma panel kept;
 * plasma Aβ42/40, pTau217 (Fujirebio Lumipulse), NfL and GFAP (Quanterix Simoa) from the
   baseline (``VISCODE2 == 'bl'``) UPenn panel, within ±3 months of the scan, the closest draw
-  if several; ``-4`` (failed assay / below detection) counts as missing;
+  if several; ``-4`` (failed assay / below detection) and any other non-positive value count as missing;
 * demographics (first record per participant), APOE ε4 allele count from the genotype string,
   ADAS-Cog13 at baseline; ADNI's negative missing-value codes count as missing;
 * age = scan year − birth year (ADNI publishes month/year of birth only); ``is_female`` from
@@ -111,9 +111,9 @@ HIPPOCAMPUS_COLUMNS = ["ST29SV", "ST88SV"]
 #: Scans with at least this many missing values across the whole FreeSurfer row are dropped
 #: (the centralised analysis's QC rule).
 MAX_MISSING_FREESURFER_VALUES = 25
-#: UPenn plasma columns; ``-4`` marks a failed assay / value below detection.
+#: UPenn plasma columns; ``-4`` marks a failed assay / value below detection, and no real assay value is
+#: zero or negative, so every non-positive value counts as missing (the markers are log-transformed downstream).
 PLASMA_MARKERS = ["AB42_F", "AB40_F", "pT217_F", "NfL_Q", "GFAP_Q"]
-PLASMA_MISSING_CODE = -4
 #: Baseline visit code, in the harmonised ``VISCODE2`` column every ADNI table carries.
 BASELINE_VISIT = "bl"
 
@@ -158,11 +158,12 @@ def load_mri(path: Path) -> pd.DataFrame:
     """One row per FreeSurfer scan with the two volumes, earliest scan first."""
     raw = _read(path, ["RID", "EXAMDATE", *ICV_COLUMNS, *HIPPOCAMPUS_COLUMNS])
     mri = raw[raw.isnull().sum(axis=1) < MAX_MISSING_FREESURFER_VALUES]
-    mri = mri.dropna(subset=["EXAMDATE", "RID"]).sort_values("EXAMDATE", kind="stable")
+    mri = mri.dropna(subset=["EXAMDATE", "RID"]).assign(EXAMDATE=lambda m: pd.to_datetime(m["EXAMDATE"]))
+    mri = mri.sort_values("EXAMDATE", kind="stable")  # as dates, so a non-ISO export still orders correctly
     out = pd.DataFrame(
         {
             "RID": mri["RID"].astype(int),
-            "EXAMDATE": pd.to_datetime(mri["EXAMDATE"]),
+            "EXAMDATE": mri["EXAMDATE"],
             "icv_mm3": mri[ICV_COLUMNS].sum(axis=1, min_count=len(ICV_COLUMNS)),
             "hippocampus_mm3": mri[HIPPOCAMPUS_COLUMNS].sum(axis=1, min_count=len(HIPPOCAMPUS_COLUMNS)),
         }
@@ -175,7 +176,7 @@ def load_plasma(path: Path) -> pd.DataFrame:
     raw = _read(path, ["RID", "VISCODE2", "EXAMDATE", *PLASMA_MARKERS])
     plasma = raw[raw["VISCODE2"] == BASELINE_VISIT].copy()
     markers = plasma[PLASMA_MARKERS].apply(pd.to_numeric, errors="coerce")
-    markers = markers.mask(markers == PLASMA_MISSING_CODE)
+    markers = markers.mask(markers <= 0)  # -4 (failed assay) and any other non-positive value are missing
     out = pd.DataFrame(
         {
             "RID": plasma["RID"].astype(int),
