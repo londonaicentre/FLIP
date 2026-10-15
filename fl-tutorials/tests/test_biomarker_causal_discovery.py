@@ -345,6 +345,30 @@ def test_layer_step_removes_marginally_independent_pairs_and_records_the_set(ff,
     assert out_skeleton[0, 2] == 1  # a_root -> x_fluid stays
 
 
+def test_knowledge_forbidden_pairs_carry_no_separating_set(ff, config):
+    """A pair the knowledge rules out in both directions was never tested, so it must not be read as
+    "marginally independent" and orient a collider at every common neighbour (pooled mode's fas()
+    records no sepset for such a pair either, so the two modes must agree)."""
+    forbidden_config = {
+        **config,
+        "KNOWLEDGE": {**config["KNOWLEDGE"], "FORBIDDEN": [["x_fluid", "y_fluid"], ["y_fluid", "x_fluid"]]},
+    }
+    p = len(VARIABLES)
+    x, y, v = VARIABLES.index("x_fluid"), VARIABLES.index("y_fluid"), VARIABLES.index("v_mri")
+    skeleton = np.zeros((p, p))
+    skeleton[x, v] = skeleton[v, x] = skeleton[y, v] = skeleton[v, y] = 1.0  # x - v - y, x and y never tested
+    pag = ff.pag_from_skeleton(skeleton, np.zeros((p, p, p)), VARIABLES, forbidden_config, 0)
+    assert pag[v, x] == ff.MARK_CIRCLE  # no collider at v ...
+    assert pag[v, y] == ff.MARK_CIRCLE
+    assert pag[x, v] == ff.MARK_CIRCLE  # ... and nothing else oriented either
+    assert pag[y, v] == ff.MARK_CIRCLE
+    # The same skeleton with an empty *tested* separating set for (x, y) is a genuine unshielded collider.
+    tested = {**config, "KNOWLEDGE": {**config["KNOWLEDGE"], "FORBIDDEN": []}}
+    pag = ff.pag_from_skeleton(skeleton, np.zeros((p, p, p)), VARIABLES, tested, 0)
+    assert pag[v, x] == ff.MARK_ARROW
+    assert pag[v, y] == ff.MARK_ARROW
+
+
 def test_shipped_config_names_only_known_variables(ff):
     config = json.loads((APP_FILES / "config.json").read_text())
     variables = set(config["VARIABLES"])

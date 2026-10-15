@@ -216,8 +216,11 @@ def prepare_matrix(dataframe, config: dict) -> np.ndarray:
     for column in config.get("LOG_TRANSFORM", []):
         index = variables.index(column)
         values = matrix[:, index]
-        if np.any(values <= 0):
-            raise ValueError(f"{column} is listed in LOG_TRANSFORM but has non-positive values")
+        if np.all(values[np.isfinite(values)] <= 0):
+            raise ValueError(f"{column} is listed in LOG_TRANSFORM but has no positive values")
+        # A stray non-positive assay value (a below-detection 0, an unmasked missing code) drops that
+        # row with the other non-finite ones below, rather than taking the whole site down.
+        values = np.where(values > 0, values, np.nan)
         matrix[:, index] = np.log(values)
     for column, divisor in config.get("SCALE", {}).items():
         if column in variables:
@@ -510,12 +513,18 @@ def pag_from_skeleton(
     sep_sets: dict = {}
     for i in range(p):
         for j in range(i + 1, p):
+            a, c = position[i], position[j]
             if skeleton[i, j] > 0:
-                graph.add_edge(Edge(nodes[position[i]], nodes[position[j]], Endpoint.CIRCLE, Endpoint.CIRCLE))
+                graph.add_edge(Edge(nodes[a], nodes[c], Endpoint.CIRCLE, Endpoint.CIRCLE))
+            elif (a, c) in forbidden and (c, a) in forbidden:
+                # Never adjacent because the knowledge forbids both directions, not because a test
+                # separated them: no separating set, so rule 0 does not read an (absent) independence
+                # into a collider at their common neighbours — the same as fas() in pooled mode.
+                continue
             else:
                 members = {position[int(k)] for k in np.flatnonzero(sepsets[i, j] > 0)}
-                sep_sets[(position[i], position[j])] = members
-                sep_sets[(position[j], position[i])] = members
+                sep_sets[(a, c)] = members
+                sep_sets[(c, a)] = members
     orient_pag(graph, nodes, sep_sets, bk)
     return _unpermute(graph.graph.astype(np.int8), order)
 
