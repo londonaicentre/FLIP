@@ -141,7 +141,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
+.PHONY: help lint template deploy migrate-fl-client-strategy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -216,7 +216,21 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 # realign values-secrets.yaml with what they patch, so helm's apply is a no-op on those
 # fields (sync_k8s_kit.align_values_secrets). Helm 3 never applies server-side and is
 # unaffected either way, so no version switch is needed.
-deploy: preflight ## Deploy the Helm chart to the cluster
+# FLIP#1428: the fl-client Deployment uses Recreate (one FL identity must never run twice). A release
+# installed before that holds the API server's RollingUpdate defaults (maxSurge/maxUnavailable), which no
+# field manager owns, so Helm's server-side apply cannot drop them and refuses Recreate beside them.
+# Switch such a live Deployment once, before the upgrade. A no-op on a fresh install or a migrated release.
+migrate-fl-client-strategy:
+	@for d in $$($(KUBECTL) -n $(NAMESPACE) get deployment \
+		-l app.kubernetes.io/instance=$(RELEASE_NAME),app.kubernetes.io/component=fl-client -o name 2>/dev/null); do \
+		if [ "$$($(KUBECTL) -n $(NAMESPACE) get $$d -o jsonpath='{.spec.strategy.type}')" = RollingUpdate ]; then \
+			echo "🔧 $$d: RollingUpdate -> Recreate (FLIP#1428)"; \
+			$(KUBECTL) -n $(NAMESPACE) patch $$d --type=json \
+				-p='[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]'; \
+		fi; \
+	done
+
+deploy: preflight migrate-fl-client-strategy ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \

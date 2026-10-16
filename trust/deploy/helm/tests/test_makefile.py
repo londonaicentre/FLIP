@@ -62,6 +62,23 @@ def test_deploy_trust_k8s_regenerates_the_override_from_the_kit_first():
     assert regenerate < deploy, out
 
 
+def test_deploy_moves_a_live_fl_client_to_recreate_before_helm_runs():
+    """A release installed before FLIP#1428 holds the API server's RollingUpdate defaults, which no field manager
+    owns: Helm's server-side apply cannot drop them and refuses the chart's Recreate beside them."""
+    out = subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), "deploy", "NAMESPACE=flip-trust", "RELEASE_NAME=flip-trust"],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    ).stdout
+
+    patch = out.index('"op":"remove","path":"/spec/strategy/rollingUpdate"')
+    assert patch < out.index("upgrade --install")
+    assert "app.kubernetes.io/component=fl-client" in out[:patch]
+    assert "app.kubernetes.io/instance=flip-trust" in out[:patch]
+
+
 def test_xnat_init_deletes_the_previous_init_job_before_applying_it():
     """Left in place, the apply reports the Job unchanged and the wait passes at once on the old one."""
     out = subprocess.run(
