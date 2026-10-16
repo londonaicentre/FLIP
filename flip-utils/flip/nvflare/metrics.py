@@ -132,10 +132,8 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     if x_value is None:
         x_value = metrics_data.get("round")
 
-    # This is the guard that holds against old/foreign client images: a non-finite coordinate would
-    # fail TrainingMetrics validation inside send_metrics *before* its try block and propagate out of
-    # NVFLARE's event dispatch, losing the metric with a server traceback. Mirror the Flower leg
-    # (_parse_metric_key): drop it to None so the hub plots the point at the global round.
+    # Keep the finite metric when an old/foreign client sends an invalid coordinate. Mirror
+    # Flower's _parse_metric_key: None makes the hub plot it at the global round.
     if x_value is not None and not (isinstance(x_value, (int, float)) and math.isfinite(x_value)):
         flip.logger.warning(
             f"Dropping non-finite x_value {x_value!r} for metric {metrics_data.get('label')}; "
