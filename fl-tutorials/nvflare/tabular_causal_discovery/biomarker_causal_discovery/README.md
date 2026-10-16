@@ -228,36 +228,45 @@ Reference run: the shipped config (`pooled_statistics`, 50 stratified bootstraps
 2025 plasma release), two `person_id`-modulo sites of 280, NVFLARE simulator on CPU (16-thread
 i9-9900K): **under one minute** end to end, of which FCI on 50 bootstraps is about 10 s per site.
 The federated run reports the centralised analysis's stable set — 16 edges at frequency ≥ 0.5 — and
-a licence holder following the four steps gets these numbers to the second decimal. The second
-column is the centralised Fisher-z analysis (200 whole-cohort bootstraps, APOE4 as two dummies):
+a licence holder following the four steps gets these numbers to the second decimal. The table puts the
+three ways of getting the graph side by side on the same cohort: the centralised Fisher-z analysis
+(200 whole-cohort bootstraps, APOE4 as two dummies), the FedC²SL-style `pooled_statistics` mode
+(the default) and the FedPC-style `layer_voting` mode (`GLOBAL_ROUNDS=6`, `NUM_ROUNDS=6`,
+`VOTE_RATIO=0.5`), both federated runs with 50 site-stratified bootstraps:
 
-| Edge | Federated | Centralised |
-|------|-----------|-------------|
-| sex → ICV, age → hippocampus, age → NfL, APOE4 → pTau217 | 1.00 | 1.00 |
-| hippocampus → ADAS, pTau217 → ADAS | 1.00 | 1.00 |
-| NfL → pTau217 | 0.92 | 0.85 |
-| sex → ADAS | 0.84 | 0.98 |
-| APOE4 → Aβ42/40 | 0.78 | 0.92 |
-| education → ADAS | 0.74 | 0.88 |
-| ICV ↔ hippocampus (latent head size) | 0.72 | 0.79 |
-| NfL → GFAP | 0.68 | 0.57 |
-| pTau217 → hippocampus | 0.64 | 0.69 |
-| pTau217 → Aβ42/40 | 0.60 | 0.49 |
-| age → GFAP | 0.56 | 0.50 |
-| pTau217 → GFAP | 0.52 | 0.31 |
+| Edge | Centralised | Pooled (FedC²SL) | Voting (FedPC) |
+|------|-------------|------------------|----------------|
+| sex → ICV | 1.00 | 1.00 | 1.00 |
+| age → hippocampus | 1.00 | 1.00 | 0.84 |
+| age → NfL | 1.00 | 1.00 | 1.00 |
+| APOE4 → pTau217 | 1.00 | 1.00 | 0.94 |
+| hippocampus → ADAS | 1.00 | 1.00 | 1.00 |
+| pTau217 → ADAS | 1.00 | 1.00 | 1.00 |
+| NfL → pTau217 | 0.85 | 0.92 | 0.46 |
+| sex → ADAS | 0.98 | 0.84 | 0.52 |
+| APOE4 → Aβ42/40 | 0.92 | 0.78 | 0.28 |
+| education → ADAS | 0.88 | 0.74 | 0.12 |
+| ICV ↔ hippocampus (latent head size) | 0.79 | 0.72 | 0.40 |
+| NfL → GFAP | 0.57 | 0.68 | 0.82 |
+| pTau217 → hippocampus | 0.69 | 0.64 | 0.00 |
+| pTau217 → Aβ42/40 | 0.49 | 0.60 | 0.42 |
+| age → GFAP | 0.50 | 0.56 | 0.06 |
+| pTau217 → GFAP | 0.31 | 0.52 | 0.42 |
+| **edges at ≥ 0.5** | **14** | **16** | **8** |
 
-The differences sit on the weaker edges and come from the two things that genuinely differ — the
-bootstrap scheme (stratified by site versus whole-cohort) and the APOE4 encoding — not from the
-federation, which the exactness test shows adds nothing of its own. A newer plasma release or a
-different site split moves the edges below 0.8 by a few hundredths.
+Pooled statistics track the centralised run on every edge: the differences sit on the weaker edges
+and come from the two things that genuinely differ — the bootstrap scheme (stratified by site versus
+whole-cohort) and the APOE4 encoding — not from the federation, which the exactness test shows adds
+nothing of its own. A newer plasma release or a different site split moves the edges below 0.8 by a
+few hundredths.
 
-The same cohort in `layer_voting` mode (`FEDERATION=layer_voting`, `GLOBAL_ROUNDS=6`,
-`NUM_ROUNDS=6`, `VOTE_RATIO=0.5`) keeps only 8 of those 16 edges at ≥ 0.5 (age → NfL,
-hippocampus → ADAS, sex → ICV, pTau217 → ADAS at 1.00; APOE4 → pTau217 0.94; age → hippocampus
-0.84; NfL → GFAP 0.82; sex → ADAS 0.52): with 280 rows a site, an edge that one site's own test
-cannot see at α = 0.05 loses the vote, and the union of separating sets then mis-orients some of
-what survives — the two effects FedPC describes. That is the concrete reason pooled statistics is
-the default.
+Voting keeps the six strongest edges and loses most of the rest, exactly the inconsistency FedC²SL
+describes: with 280 rows a site, an edge that one site's own test cannot see at α = 0.05 loses the
+vote (education → ADAS 0.12, APOE4 → Aβ42/40 0.28), and the union of separating sets mis-orients
+some of what survives — pTau217 and GFAP stay adjacent in every bootstrap but the direction is
+decided in only 0.42 of them, and pTau217 → hippocampus is lost outright. That is the concrete reason
+pooled statistics is the default; voting exists for the kernel test, which has no sufficient
+statistics.
 
 **What a wrong run looks like.** `stable_edges` of 0 after the final round means the orientation
 round never happened: `GLOBAL_ROUNDS` (or `--num_rounds`) is too small for the mode (2 for pooled;
