@@ -110,6 +110,7 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Measuring how accurately a nucleus detector finds cell nuclei on each participating trust's "
         "whole-slide pathology images, scored against that trust's own reference annotations, without "
         "retraining it.",
+        nifti=False,
     ),
     "arkplus_fine_tuning": TutorialCopy(
         "Ark+ fine-tuning",

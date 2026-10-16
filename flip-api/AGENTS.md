@@ -285,6 +285,12 @@ screencast overlays (they survive navigations), the pointer a page-injected arro
 Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR risk-prediction tutorial: the project is created with imaging
 off and the XNAT segment is skipped), `--app spleen` (record the 3D spleen segmentation tutorial instead of chest
 X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera label upload, same contract as `e2e_smoke`),
+`--app digipath` (the IDC nuclei-detection evaluation on DICOM whole-slide imaging; NVFLARE only. Its profile carries
+its own enrichment step, `make -C fl-tutorials/datasets upload-idc-pathology-annotations` against every XNAT in
+`--xnat-urls`: the reference annotations cannot ride the imaging pull, as XNAT's DICOM receiver has no presentation
+context for the Microscopy Bulk Simple Annotations SOP class and an annotation left in Orthanc fails its study's whole
+C-MOVE. An evaluation streams no metrics, so segment 5 is skipped and segment 6 skips the curves and closes on "scored",
+not "trained"),
 `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG ROI collections via
 `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF — dcmqi in Docker for the
 conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit` caps how many sessions per trust

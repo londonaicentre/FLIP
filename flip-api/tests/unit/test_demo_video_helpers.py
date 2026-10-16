@@ -16,6 +16,7 @@
 workspace reset."""
 
 import json
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -33,6 +34,7 @@ from tests.demo_video import (
     app_files_for,
     check_reused_project_matches_profile,
     reset_researcher_workspace,
+    resolve_enrichment,
     resolve_ui_credentials,
 )
 from tests.e2e_smoke import TUTORIALS, SmokeFailure, describe_tutorial
@@ -155,7 +157,9 @@ def _stub_project_has_imaging(monkeypatch: pytest.MonkeyPatch, value: bool) -> N
     monkeypatch.setattr(demo_video.e2e_smoke, "project_has_imaging", lambda client, headers, project_id: value)
 
 
-@pytest.mark.parametrize(("app", "project_imaging"), [("xray", True), ("spleen", True), ("ehr", False)])
+@pytest.mark.parametrize(
+    ("app", "project_imaging"), [("xray", True), ("spleen", True), ("digipath", True), ("ehr", False)]
+)
 def test_reused_project_matching_its_profile_passes(monkeypatch: pytest.MonkeyPatch, app: str, project_imaging: bool):
     _stub_project_has_imaging(monkeypatch, project_imaging)
     check_reused_project_matches_profile(requests.Session(), {}, "proj-1", app, APPS[app])  # no raise
@@ -172,8 +176,52 @@ def test_resuming_an_ehr_project_under_the_default_xray_profile_is_refused(monke
 def test_resuming_an_imaging_project_under_the_ehr_profile_is_refused(monkeypatch: pytest.MonkeyPatch):
     """The inverse would skip the imaging wait and upload the EHR app onto an imaging project."""
     _stub_project_has_imaging(monkeypatch, True)
-    with pytest.raises(SmokeFailure, match=r"has_imaging=true.*tabular-only study.*pass --app spleen / xray"):
+    # The remedy names every imaging profile, so derive the list rather than pin today's roster.
+    imaging_apps = " / ".join(sorted(name for name, profile in APPS.items() if profile.get("has_imaging", True)))
+    with pytest.raises(
+        SmokeFailure, match=rf"has_imaging=true.*tabular-only study.*pass --app {re.escape(imaging_apps)}"
+    ):
         check_reused_project_matches_profile(requests.Session(), {}, "proj-1", "ehr", APPS["ehr"])
+
+
+# ---------------------------------------------------------------------------------------------
+# resolve_enrichment: a profile may carry its own off-camera enrichment step (digipath).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_a_profile_without_enrichment_runs_none() -> None:
+    assert resolve_enrichment(demo_video.parse_args([]), APPS["xray"]) == (None, None)
+
+
+def test_digipath_uploads_its_annotations_to_every_trust() -> None:
+    """The annotations cannot ride the pull, so the profile's step runs on every take, at every XNAT."""
+    args = demo_video.parse_args(["--app", "digipath", "--xnat-urls", "http://a:1 http://b:2"])
+    cwd, cmd = resolve_enrichment(args, APPS["digipath"])
+    assert cwd == str(REPO_ROOT / "fl-tutorials" / "datasets")
+    assert Path(cwd).is_dir()
+    assert cmd == (
+        'make upload-idc-pathology-annotations FLIP_PROJECT_ID="$FLIP_PROJECT_ID" XNAT_URLS="http://a:1 http://b:2"'
+    )
+    # The password travels by env var (set by the recorder), never on the command line.
+    assert "XNAT_PASS" not in cmd
+
+
+def test_explicit_enrichment_flags_beat_the_profile() -> None:
+    args = demo_video.parse_args(["--data-enrichment-cwd", "/tmp/x", "--data-enrichment-cmd", "true"])
+    assert resolve_enrichment(args, APPS["digipath"]) == ("/tmp/x", "true")
+
+
+def test_digipath_is_an_evaluation_that_says_so() -> None:
+    """No metrics to film in segment 5, and segment 6 must not claim a model was trained."""
+    profile = APPS["digipath"]
+    assert profile["streams_metrics"] is False
+    assert "trained" not in profile["closing_caption"]
+    assert all(p.get("streams_metrics", True) for name, p in APPS.items() if name != "digipath")
+
+
+def test_an_app_without_the_requested_backend_is_refused() -> None:
+    with pytest.raises(SmokeFailure, match="--app digipath has no flower tutorial"):
+        demo_video.main(["--app", "digipath", "--fl-backend", "flower"])
 
 
 def test_licence_header_is_stripped_from_the_on_camera_query() -> None:

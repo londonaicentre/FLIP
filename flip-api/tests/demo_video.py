@@ -95,6 +95,36 @@ APPS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "digipath": {
+        "project_name": "Federated Nuclei Detection on Digital Pathology",
+        "model_name": "Nuclei Detector",
+        "model_description": (
+            "Haematoxylin-peak nuclei detector, evaluated against each trust's own reference "
+            "annotations without the slides or the per-nucleus coordinates leaving the trust."
+        ),
+        # Evaluation-only, and NVFLARE-only: there is no Flower counterpart.
+        "backends": {
+            "nvflare": {
+                "app_dir": (
+                    "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation/app_files"
+                ),
+                "query_file": (
+                    "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation/query.sql"
+                ),
+                "label": "NVFLARE",
+            },
+        },
+        # An evaluation job streams no metrics to the hub (the analytics bridge is wired into the
+        # training recipes, not flip_eval_recipe), so segment 5 has no live chart to film.
+        "streams_metrics": False,
+        # It scores an existing detector and never trains one, so segment 6 must not say "trained".
+        "closing_caption": "A detector scored at every hospital — while the slides never left any of them",
+        # The reference annotations cannot travel with the slides: XNAT's DICOM receiver has no
+        # presentation context for the Microscopy Bulk Simple Annotations SOP class, and as slide and
+        # annotation share an accession, one left in Orthanc fails the whole study's C-MOVE. They are
+        # uploaded over REST instead, off camera between the pull and training, on every take.
+        "enrichment": {"cwd": "fl-tutorials/datasets", "make_target": "upload-idc-pathology-annotations"},
+    },
     "ehr": {
         "project_name": "Federated Type-2 Diabetes Risk Prediction",
         "model_name": "T2DM Risk MLP",
@@ -231,6 +261,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Name the OHIF Masks > Import dialog lists the DICOM-SEG collection under — must match the "
             "--collection-name given to tests.xnat_seg_upload during data enrichment"
+        ),
+    )
+    parser.add_argument(
+        "--xnat-urls",
+        default="http://127.0.0.1:8105 http://127.0.0.1:8107",
+        help=(
+            "Space-separated XNAT base URLs (web ports), one per trust, for a profile's own enrichment step. "
+            "Every trust must be enriched: each XNAT holds only its own studies"
         ),
     )
     parser.add_argument("--xnat-username", default=os.environ.get("XNAT_ADMIN_USER", "admin"))
@@ -566,6 +604,29 @@ def reset_researcher_workspace(
     return len(owned)
 
 
+def resolve_enrichment(args: argparse.Namespace, profile: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return the ``(cwd, cmd)`` of the off-camera data-enrichment step, or ``(None, None)``.
+
+    An explicit ``--data-enrichment-cwd``/``--data-enrichment-cmd`` pair wins. Otherwise a profile whose
+    labels cannot travel with its imaging carries its own step, so it runs on every take rather than only
+    when the flags are remembered: without it the run pulls, then fails at scoring.
+
+    Args:
+        args (argparse.Namespace): Parsed arguments.
+        profile (dict[str, Any]): The selected app profile.
+
+    Returns:
+        tuple[str | None, str | None]: Directory to run in, and the shell command.
+    """
+    if args.data_enrichment_cwd and args.data_enrichment_cmd:
+        return args.data_enrichment_cwd, args.data_enrichment_cmd
+    enrichment = profile.get("enrichment")
+    if not enrichment:
+        return None, None
+    cmd = f'make {enrichment["make_target"]} FLIP_PROJECT_ID="$FLIP_PROJECT_ID" XNAT_URLS="{args.xnat_urls}"'
+    return str(REPO_ROOT / enrichment["cwd"]), cmd
+
+
 def check_reused_project_matches_profile(
     client: requests.Session, headers: dict[str, str], project_id: str, app: str, profile: dict[str, Any]
 ) -> None:
@@ -607,6 +668,10 @@ def main(argv: list[str] | None = None) -> int:
     profile = APPS[args.app]
     # Imaging unless the app says otherwise: only the tabular tutorials opt out.
     has_imaging = bool(profile.get("has_imaging", True))
+    if args.fl_backend not in profile["backends"]:
+        raise SmokeFailure(
+            f"--app {args.app} has no {args.fl_backend} tutorial (only {', '.join(profile['backends'])})"
+        )
     tutorial = profile["backends"][args.fl_backend]
     if bool(args.data_enrichment_cwd) != bool(args.data_enrichment_cmd):
         raise SmokeFailure("--data-enrichment-cwd and --data-enrichment-cmd must be provided together")
@@ -681,6 +746,8 @@ def main(argv: list[str] | None = None) -> int:
                 model_description=model_description,
                 app_files=[app_dir / name for name in app_files_for(app_dir)],
                 backend_label=tutorial["label"],
+                streams_metrics=bool(profile.get("streams_metrics", True)),
+                closing_caption=profile.get("closing_caption", demo_segments.CLOSING_CAPTION),
             )
         finally:
             browser.close()
@@ -716,6 +783,8 @@ def record_segments(
     model_description: str,
     app_files: list[Path],
     backend_label: str,
+    streams_metrics: bool,
+    closing_caption: str,
 ) -> None:
     """Record the segments from ``--from-segment`` on, with the platform waits between them off camera."""
     scale = args.video_scale
@@ -759,8 +828,13 @@ def record_segments(
         _log("⏭️  No imaging for this study — skipping the image-pull wait")
 
     # ── Off-camera: optional data enrichment (e.g. spleen labels) ────────
-    if args.data_enrichment_cwd and args.data_enrichment_cmd:
-        e2e_smoke.run_data_enrichment(Path(args.data_enrichment_cwd), args.data_enrichment_cmd, project_id)
+    enrichment_cwd, enrichment_cmd = resolve_enrichment(args, APPS[args.app])
+    if enrichment_cwd and enrichment_cmd:
+        # A profile's own uploader reads XNAT_USER / XNAT_PASS from its environment, so the password
+        # never reaches an argv `ps` can read.
+        os.environ.setdefault("XNAT_USER", args.xnat_username)
+        os.environ.setdefault("XNAT_PASS", args.xnat_password)
+        e2e_smoke.run_data_enrichment(Path(enrichment_cwd), enrichment_cmd, project_id)
 
     # Second half of enrichment for a segmentation app: the NIfTI labels the app
     # trains on are invisible to a viewer, so republish them as DICOM-SEG for the
@@ -809,10 +883,14 @@ def record_segments(
 
     # ── Off-camera: training spins up and produces its first metrics ─────
     e2e_smoke.wait_for_model_advanced(client, headers, model_id, timeout_s=args.training_start_timeout)
-    wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
 
     # ── Segment 5: live progress ──────────────────────────────────────────
-    if args.from_segment <= 5:
+    # Only segment 5 films the live charts, so only it waits for metrics; a job that streams none
+    # (an evaluation) has nothing to film and would only wait out the timeout.
+    if args.from_segment <= 5 and not streams_metrics:
+        _log("⏭️  This app streams no metrics — skipping the live-progress segment")
+    elif args.from_segment <= 5:
+        wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
         with take(browser, segment_video(5, "follow-progress"), args.ui_url, scale) as rec:
             demo_segments.follow_progress(rec, researcher, project_id, model_id)
 
@@ -821,7 +899,7 @@ def record_segments(
 
     # ── Segment 6: download the results ──────────────────────────────────
     with take(browser, segment_video(6, "download-results"), args.ui_url, scale) as rec:
-        demo_segments.download_results(rec, researcher, project_id, model_id)
+        demo_segments.download_results(rec, researcher, project_id, model_id, closing_caption)
 
 
 if __name__ == "__main__":
