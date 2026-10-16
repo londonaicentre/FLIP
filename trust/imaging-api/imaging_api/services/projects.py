@@ -33,7 +33,7 @@ from imaging_api.services.users import create_user_from_central_hub_user, get_us
 from imaging_api.utils.enums import ProjectPreArchiveSettings
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -65,7 +65,11 @@ def _find_project(field: str, value: str, headers: dict[str, str]) -> Project | 
         return None
 
     try:
-        response = requests.get(xnat_url("data", "projects", query={"format": "json", field: value}), headers=headers)
+        response = requests.get(
+            xnat_url("data", "projects", query={"format": "json", field: value}),
+            headers=headers,
+            timeout=XNAT_REQUEST_TIMEOUT,
+        )
     except requests.RequestException as e:
         raise XnatFetchError(f"Error: XNAT project fetch failed: {e}") from e
 
@@ -138,7 +142,7 @@ def get_all_projects(headers: dict[str, str]) -> list[Project]:
         Exception: If the HTTP request to XNAT fails, or if XNAT returns a non-200 response.
     """
     try:
-        response = requests.get(xnat_url("data", "projects"), headers=headers)
+        response = requests.get(xnat_url("data", "projects"), headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     except Exception as e:
         raise Exception(f"Error: XNAT projects fetch failed: {str(e)}")
 
@@ -227,6 +231,7 @@ def create_project(
         xnat_projects_uri,
         headers={**headers, "Content-Type": "application/xml"},
         data=payload,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 200:
@@ -282,6 +287,7 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
             str(ProjectPreArchiveSettings.SEND_ALL_TO_ARCHIVE_AND_IGNORE_EXISTING.value),
         ),
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code == 200:
         logger.info(f"Project prearchive settings set for project '{project_id}'")
@@ -360,7 +366,7 @@ def get_wrapper_action_key(wrapper_id: int, headers: dict[str, str]) -> str:
     Raises:
         Exception: If the listing fails, or does not hold exactly one action for the wrapper.
     """
-    response = requests.get(xnat_url("xapi", "events", "allactions"), headers=headers)
+    response = requests.get(xnat_url("xapi", "events", "allactions"), headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     if response.status_code != 200:
         raise Exception(
             f"Error: XNAT event-service action listing failed: {response.status_code} - {_bounded_body(response.text)}"
@@ -400,6 +406,7 @@ def get_command_info(project_id: str, container: str, headers: dict[str, str]) -
     response = requests.get(
         xnat_url("xapi", "commands", "available", "site", query={"xsiType": DCM2NIIX_CONTEXT}),
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code != 200:
         logger.error("XNAT command listing failed: HTTP %s; body: %s", response.status_code, response.text)
@@ -454,6 +461,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
             "xapi", "projects", project_id, "commands", str(command_id), "wrappers", DCM2NIIX_WRAPPER_NAME, "enabled"
         ),
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code != 200:
         raise Exception(
@@ -483,6 +491,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
         xnat_url("xapi", "projects", project_id, "events", "subscription"),
         headers=headers,
         json=subscription_payload,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code in (200, 201):
         state = "active" if active else "inactive"
@@ -605,6 +614,7 @@ async def delete_queued_import_requests(project_id: str, headers: dict[str, str]
         xnat_url("xapi", "dqr", "import", "queue"),
         headers=headers,
         json=queued_imports_ids,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     # Check status code and log response
@@ -641,7 +651,11 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
     # Check if project exists
     project = get_project(project_id, headers)
 
-    response = requests.delete(xnat_url("data", "projects", project_id, query={"removeFiles": "true"}), headers=headers)
+    response = requests.delete(
+        xnat_url("data", "projects", project_id, query={"removeFiles": "true"}),
+        headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
+    )
 
     # Check status code and log response
     if response.status_code != 200:
@@ -671,7 +685,9 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
     """
     get_project(project_id, headers)
 
-    response = requests.get(xnat_url("data", "projects", project_id, "subjects"), headers=headers)
+    response = requests.get(
+        xnat_url("data", "projects", project_id, "subjects"), headers=headers, timeout=XNAT_REQUEST_TIMEOUT
+    )
     subjects = [Subject(**subject) for subject in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:
@@ -701,7 +717,9 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
     # element security, so sessions whose modality is not registered there (e.g.
     # xnat:dxSessionData for chest X-rays) are silently omitted — making the import look stuck
     # at "0 imported". The global listing returns identical fields without that filter.
-    response = requests.get(xnat_url("data", "experiments"), params={"project": project_id}, headers=headers)
+    response = requests.get(
+        xnat_url("data", "experiments"), params={"project": project_id}, headers=headers, timeout=XNAT_REQUEST_TIMEOUT
+    )
 
     # Check the status before parsing: a non-200 XNAT response carries an HTML/plain-text body, so
     # parsing it as JSON first would raise and mask the real HTTP status.
@@ -739,6 +757,7 @@ def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[s
     response = requests.get(
         url,
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 200:

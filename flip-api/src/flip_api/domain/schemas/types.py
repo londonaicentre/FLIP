@@ -43,11 +43,20 @@ class FLLogEvent(StrEnum):
     ROUND_STARTED = "ROUND_STARTED"
     CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
     ROUND_AGGREGATED = "ROUND_AGGREGATED"
+    # Sent by the fl-server's JobSchedulingReporter when NVFLARE's scheduler holds a job because a
+    # site cannot provide what its resource_spec asks for. One row per such site, attributed to it;
+    # details = {"attempt", "max_attempts", "final", "requested": the site's resource request}.
+    JOB_WAITING_FOR_RESOURCES = "JOB_WAITING_FOR_RESOURCES"
     # Hub-emitted (by the FL scheduler at queue mutations), never sent by FL
     # images: the model's 1-based place in the FL training queue, re-logged on
     # every movement. Carries no global_round; details = {"position": n,
     # "job_id": str(FLJob.id)} — job_id keys emit-on-change per training run.
     QUEUE_POSITION = "QUEUE_POSITION"
+
+
+# Ingested events that describe a job before any round exists, so they carry no global_round
+# (FLIP#1390). QUEUE_POSITION is round-less too, but the hub writes it itself and never ingests it.
+ROUND_LESS_EVENTS = frozenset({FLLogEvent.JOB_WAITING_FOR_RESOURCES.value})
 
 
 class FLBackend(StrEnum):

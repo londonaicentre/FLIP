@@ -1374,15 +1374,19 @@ def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
 
 def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
     """
-    Extract the currently-running FL job matching ``fl_backend_job_id``.
+    Extract the FL job matching ``fl_backend_job_id`` while it is running or still waiting to start.
+
+    A waiting job counts: the backend can hold a submitted job for a long time (NVFLARE retries it while a
+    trust lacks the resources it asks for), and an abort that left it queued would let it start later, or
+    report to a model the user has since queued again (FLIP#1390).
 
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The FL job ID to look for.
 
     Returns:
-        IJobMetaData | None: The running job's metadata, or ``None`` if no running job
-            matches ``fl_backend_job_id`` (the job is already terminal or never started).
+        IJobMetaData | None: The job's metadata, or ``None`` if no running or waiting job
+            matches ``fl_backend_job_id`` (the job has already ended).
 
     Raises:
         ValueError: If the FL server response is not a list, or more than one running
@@ -1406,9 +1410,9 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
 
     current_job_data = [IJobMetaData.model_validate(j) for j in current_job_data]
 
-    # Get the running jobs only
-    current_job_data = [j for j in current_job_data if j.status == FLJobStatus.RUNNING]
-    logger.debug(f"Running jobs: {current_job_data}")
+    # Get the jobs that have not ended: running, or still waiting to start
+    current_job_data = [j for j in current_job_data if j.status in (FLJobStatus.RUNNING, FLJobStatus.PENDING)]
+    logger.debug(f"Running or waiting jobs: {current_job_data}")
 
     # Filter the fl_backend_job_id
     current_job_data = [j for j in current_job_data if j.job_id == fl_backend_job_id]
@@ -1416,8 +1420,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
 
     if not current_job_data:
         logger.info(
-            f"No running job with ID {fl_backend_job_id} on FL server {net_endpoint}; "
-            f"it is already terminal or never started."
+            f"No running or waiting job with ID {fl_backend_job_id} on FL server {net_endpoint}; it has already ended."
         )
         return None
 
@@ -1485,13 +1488,14 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # If there is no running job for this model, it is already terminal — abort is an
+    # If the model's job is neither running nor waiting to start, it has already ended — abort is an
     # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
     # leaving it to the stale-BUSY watchdog.
     if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
         fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
-            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); already stopped — nothing to abort."
+            f"No running or waiting FL job for model {model_id} (job ID {fl_backend_job_id}); already ended — "
+            "nothing to abort."
         )
         return
 

@@ -135,8 +135,8 @@ create_demo_users:
 	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD \
 		-e DEMO_RESEARCHER_EMAIL -e DEMO_ADMIN_EMAIL $(service_name) \
 		python -m flip_api.scripts.create_demo_users
-# Record the end-to-end demo video against the running dev stack (Dockerised
-# Cypress segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
+# Record the end-to-end demo video against the running dev stack (Playwright
+# segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
 # e.g. DEMO_ARGS="--skip-xnat" or DEMO_ARGS="--project-id <uuid> --from-segment 4".
 demo_video:
 	@echo "🎬 Recording the end-to-end demo video..."

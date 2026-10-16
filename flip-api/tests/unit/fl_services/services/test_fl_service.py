@@ -1217,6 +1217,26 @@ def test_extract_current_job_data_not_found_returns_none(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_returns_a_job_still_waiting_to_start(mock_http_get):
+    # A job the backend has not started yet (NVFLARE waiting for a trust's resources) is aborted too. Left
+    # queued, it could still start later, or report to a model the user has since queued again (#1390).
+    mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
+
+    result = fl_service.extract_current_job_data("http://fl-api-endpoint", "job123")
+
+    assert result is not None
+    assert result.status == "PENDING"
+
+
+@pytest.mark.parametrize("status", ["FINISHED", "FAILED", "STOPPED"])
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_ignores_a_job_that_has_ended(mock_http_get, status):
+    mock_http_get.return_value = [{"job_id": "job123", "status": status}]
+
+    assert fl_service.extract_current_job_data("http://fl-api-endpoint", "job123") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_extract_current_job_data_multiple_found(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
@@ -1349,6 +1369,41 @@ def test_abort_model_training_idempotent_when_no_running_job(
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
     fl_service.abort_model_training(request, model_id, fake_session)
     mock_abort.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_aborts_a_job_still_waiting_to_start(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_http_get,
+    model_id,
+    fake_session,
+):
+    # NVFLARE holds a job no trust has the resources for; Abort job must take it out of NVFLARE's queue, or
+    # its reporter can still set the model to ERROR after the user queues the model again (#1390).
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "started"}
+    mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
+
+    request = MagicMock()
+    request.scope = {"request_id": "req-id"}
+    request.path_params = {"target": "server", "clients": None}
+
+    fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     mock_release.assert_called_once_with(model_id, fake_session)
 
 

@@ -87,6 +87,8 @@ flip/
 │   ├── runtime.py     # Runtime helpers for NVFLARE apps
 │   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
 │   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars at container start
+│   ├── server_site_config.py # Server-side entrypoint (`python -m flip.nvflare.server_site_config`):
+│   │                  # registers FLIP's server site components in `local/flip__p_resources.json`
 │   └── metrics.py     # Metrics collection and reporting
 └── flower/       # Flower helpers (mix of server-side and client-side modules)
     ├── identity.py   # Client-side: partition-id + SUPERNODE_NAME site-identity fallback

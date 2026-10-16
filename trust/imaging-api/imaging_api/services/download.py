@@ -32,7 +32,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_TRANSFER_TIMEOUT, xnat_url
 
 # Get download directory
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
@@ -389,7 +389,7 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
             downloaded file (missing/unwritable destination directory, disk full, etc.).
         Exception: If there is an upstream/transport error during the download request.
     """
-    response = requests.get(url, headers=headers, stream=True)
+    response = requests.get(url, headers=headers, stream=True, timeout=XNAT_TRANSFER_TIMEOUT)
 
     if response.status_code == 404:
         raise NotFoundError(f"No data found at: {url}")

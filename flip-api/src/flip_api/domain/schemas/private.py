@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator, valid
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
-from flip_api.domain.schemas.types import FLLogEvent
+from flip_api.domain.schemas.types import ROUND_LESS_EVENTS, FLLogEvent
 from flip_api.utils.constants import DEFAULT_X_AXIS_LABEL
 
 
@@ -119,8 +119,9 @@ class TrainingLog(BaseModel):
     # row would render in the feed and could perturb the FL scheduler's
     # emit-on-change dedup (which compares against any stored row).
     event_type: str | None = Field(default=None, max_length=64)
-    # 1-based on both backends; every event this endpoint accepts is round-scoped
-    # (the hub-emitted, round-less QUEUE_POSITION is written directly by the FL
+    # 1-based on both backends; every event this endpoint accepts is round-scoped except
+    # the ROUND_LESS_EVENTS, which describe a job NVFLARE has not started yet (the
+    # hub-emitted, round-less QUEUE_POSITION is written directly by the FL
     # scheduler and rejected at this boundary). The ceiling is the PG INTEGER max
     # of the fl_logs.global_round column — without it an oversized round passes
     # validation and 500s at insert.
@@ -139,7 +140,7 @@ class TrainingLog(BaseModel):
             raise ValueError("'event_type' must be non-blank when set")
         if self.event_type == FLLogEvent.QUEUE_POSITION:
             raise ValueError("'QUEUE_POSITION' is emitted by the hub's FL scheduler and cannot be ingested")
-        if self.event_type is not None and self.global_round is None:
+        if self.event_type is not None and self.event_type not in ROUND_LESS_EVENTS and self.global_round is None:
             raise ValueError("'global_round' is required when 'event_type' is set")
         return self
 

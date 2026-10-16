@@ -27,7 +27,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, XNAT_TRANSFER_TIMEOUT, xnat_url
 
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
@@ -292,7 +292,7 @@ def upload_file_to_xnat(
 
     # Upload the file. The PUT is its own existence check: see xnat_kept_existing_file.
     with open(file_path, "rb") as file:
-        response = requests.put(url, headers=headers, data=file)
+        response = requests.put(url, headers=headers, data=file, timeout=XNAT_TRANSFER_TIMEOUT)
 
     # XNAT may answer a file PUT with 200 or 201, so accept any 2xx
     if not response.ok:

@@ -556,7 +556,7 @@ e2e_smoke_ehr:
 	$(MAKE) -C flip-api e2e_smoke_ehr $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 # Record the end-to-end demo video against the running dev stack: six
-# Dockerised Cypress segments over the live UI (real Cognito, trusts, S3,
+# Playwright segments over the live UI (real sign-ins, trusts, uploads,
 # FL training) with the slow waits handled off-camera between segments, then
 # ffmpeg-assembled into one mp4. Local dev tool — not run in CI. Options via
 # DEMO_ARGS (see flip-api/tests/demo_video.py), e.g. DEMO_ARGS="--skip-xnat".

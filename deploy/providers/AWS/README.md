@@ -667,7 +667,10 @@ seconds, no rebuild — then **deregisters the revision it rolled away from** (i
 for forensics). The deregistration is what makes the rollback durable: `ecs_services.tf` tracks the
 *latest ACTIVE* revision, so leaving the bad revision ACTIVE would have the next `terraform apply`
 silently re-adopt it. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
-commit if the UI must move too. After a *partial* deploy (some services repointed before a
+commit if the UI must move too. On an NVFLARE hub it first empties the fl-server's `local/` on EFS and
+re-syncs the kit (the `efs-provision-certs` task, a minute or two): an fl-server image older than FLIP#1390
+fails to start while the `local/flip__p_resources.json` a newer one wrote is there. If that step fails,
+nothing is rolled back; `SKIP_FL_LOCAL_RESET=1` skips it. After a *partial* deploy (some services repointed before a
 failure), don't roll back blindly — rollback moves **every** service down one revision, including
 the ones the failed deploy never touched; fix the missing build and re-run the deploy instead.
 

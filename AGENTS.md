@@ -239,7 +239,7 @@ git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the p
 ### Demo Video Recorder
 
 `make demo-video` records the full end-to-end walkthrough against the **live dev stack** and
-assembles one mp4 (local dev tool, not run in CI; Cypress segments plus off-camera platform waits).
+assembles one mp4 (local dev tool, not run in CI; Playwright segments plus off-camera platform waits).
 Prerequisites, the `DEMO_ARGS` flags and the demo users:
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
 
