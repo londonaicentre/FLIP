@@ -18,7 +18,7 @@
 # output saying so but the venv paths in a traceback.
 #
 # The script's functions are sourced (SIM_TUTORIAL_LIB=1 stops it short of the main flow) and
-# run against a fake `uv` on PATH whose `flwr ls` answers scripted statuses in flwr 1.36's real
+# run against a fake `uv` on PATH whose `flwr ls` answers scripted statuses in flwr 1.38's real
 # reply shapes, with a real listener standing in for the SuperLink on a throwaway port. The main
 # flow is then run end to end the same way, with `flwr run` faked too. test_sim_tutorial_stale_guard.py
 # covers the stale-process cleanup that runs before the foreign-SuperLink check.
@@ -60,14 +60,15 @@ case " $* " in
            printf '      "status": "%s",\\n      "status-details": "N/A"\\n    }\\n  ]\\n}\\n' "$entry" ;;
     esac ;;
   *" flwr run . local "*)
+    port="$FLWR_LOCAL_SUPERLINK_HTTP_API_PORT"
     python3 -c 'import socket, sys, time
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(120)' "$FLWR_LOCAL_CONTROL_API_PORT" >/dev/null 2>&1 &
+s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(); time.sleep(120)' "$port" >/dev/null 2>&1 &
     echo $! > "$FAKE_LISTENER_PID"
     probe='import socket, sys; socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=1).close()'
-    until python3 -c "$probe" "$FLWR_LOCAL_CONTROL_API_PORT" 2>/dev/null; do sleep 0.05; done
+    until python3 -c "$probe" "$port" 2>/dev/null; do sleep 0.05; done
     env > "$FAKE_RUN_ENV"
-    echo "Using SuperLink: local (127.0.0.1:$FLWR_LOCAL_CONTROL_API_PORT)"
+    echo "Using SuperLink: local (127.0.0.1:$port)"
     [ -n "${FAKE_RUN_SILENT:-}" ] || echo "Successfully started run 4242"
     exit "${FAKE_RUN_RC:-0}" ;;
   *" python "*)
@@ -126,7 +127,7 @@ def fake_uv(fake_bin: Path, tmp_path: Path) -> Iterator[dict[str, str]]:
             **os.environ,
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
             "FAKE_LS_CALLS": str(tmp_path / "ls-calls"),
-            "FLWR_LOCAL_CONTROL_API_PORT": str(port),
+            "FLWR_LOCAL_SUPERLINK_HTTP_API_PORT": str(port),
             "SIM_STATUS_POLLS": "4",
             "SIM_STATUS_POLL_SECS": "0",
         }
@@ -205,7 +206,7 @@ def test_a_dead_superlink_fails_the_verdict_without_querying(fake_bin: Path, tmp
         **os.environ,
         "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
         "FAKE_LS_CALLS": str(tmp_path / "ls-calls"),
-        "FLWR_LOCAL_CONTROL_API_PORT": str(_free_port()),
+        "FLWR_LOCAL_SUPERLINK_HTTP_API_PORT": str(_free_port()),
         "FAKE_STATUSES": "running",
         "SIM_STATUS_POLL_SECS": "0",
     }
@@ -218,7 +219,7 @@ def test_a_dead_superlink_fails_the_verdict_without_querying(fake_bin: Path, tmp
 def test_run_id_is_read_off_the_streamed_output(tmp_path: Path):
     stream = tmp_path / "stream"
     stream.write_text(
-        "Using SuperLink: local (127.0.0.1:39093)\n"
+        "Using SuperLink: local (127.0.0.1:39091)\n"
         "Successfully started run 8231717412201217875\n"
         "INFO :      Starting logstream for run_id `8231717412201217875`\n"
     )
@@ -230,7 +231,7 @@ def test_run_id_is_read_off_the_streamed_output(tmp_path: Path):
 def test_a_listener_this_checkout_did_not_start_is_refused():
     listener, port = _listener()
     try:
-        env = {**os.environ, "FLWR_LOCAL_CONTROL_API_PORT": str(port)}
+        env = {**os.environ, "FLWR_LOCAL_SUPERLINK_HTTP_API_PORT": str(port)}
         result = _call('refuse_foreign_superlink "$CONTROL_PORT"', env)
         assert result.returncode != 0, result.stdout
         assert f"127.0.0.1:{port} is already served by a local SuperLink this checkout did not start" in result.stdout
@@ -242,7 +243,7 @@ def test_a_listener_this_checkout_did_not_start_is_refused():
 
 
 def test_a_free_control_port_passes_the_check():
-    env = {**os.environ, "FLWR_LOCAL_CONTROL_API_PORT": str(_free_port())}
+    env = {**os.environ, "FLWR_LOCAL_SUPERLINK_HTTP_API_PORT": str(_free_port())}
     result = _call('refuse_foreign_superlink "$CONTROL_PORT"', env)
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout == ""
@@ -259,7 +260,7 @@ def test_a_port_probe_that_cannot_tell_counts_as_taken(tmp_path: Path):
     env = {
         **os.environ,
         "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-        "FLWR_LOCAL_CONTROL_API_PORT": str(_free_port()),
+        "FLWR_LOCAL_SUPERLINK_HTTP_API_PORT": str(_free_port()),
     }
     result = _call('refuse_foreign_superlink "$CONTROL_PORT"', env)
     assert result.returncode != 0
@@ -352,7 +353,7 @@ def main_flow_env(fake_bin: Path, tmp_path: Path) -> Iterator[dict[str, str]]:
         "FAKE_LS_CALLS": str(tmp_path / "ls-calls"),
         "FAKE_LISTENER_PID": str(tmp_path / "listener.pid"),
         "FAKE_RUN_ENV": str(tmp_path / "run.env"),
-        "FLWR_LOCAL_CONTROL_API_PORT": str(_free_port()),
+        "FLWR_LOCAL_SUPERLINK_HTTP_API_PORT": str(_free_port()),
         "SIM_DATA_ROOT": str(tmp_path / "data"),
         "WORKING_DIR": str(tmp_path / "runs"),
         "SIM_STATUS_POLLS": "4",

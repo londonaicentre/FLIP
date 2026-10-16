@@ -47,6 +47,40 @@ variable "kms_key_arn" {
   default     = null
 }
 
+variable "sse_algorithm" {
+  description = <<-EOT
+    Server-side encryption algorithm for this bucket: "aws:kms" (the default,
+    using kms_key_arn) or "AES256" (SSE-S3). AES256 exists for the one bucket
+    class that a CloudFront distribution reads directly through OAC: a
+    CloudFront service principal cannot decrypt with an account CMK unless the
+    key policy grants it, and on a cross-account edge (LZA) not even that is
+    enough for the AWS-managed aws/s3 key. aws_s3_bucket.flip_ui is on AES256
+    for exactly this reason; the demo-assets bucket shares its serving path.
+  EOT
+  type        = string
+  default     = "aws:kms"
+
+  validation {
+    condition     = contains(["aws:kms", "AES256"], var.sse_algorithm)
+    error_message = "sse_algorithm must be \"aws:kms\" or \"AES256\"."
+  }
+}
+
+variable "extra_bucket_policy_statements_json" {
+  description = <<-EOT
+    Additional IAM policy statements, as a JSON array string, merged into this
+    bucket's single policy document alongside DenyHTTP (and the optional MFA
+    statement). S3 allows exactly one bucket policy per bucket, so a caller
+    that needs its own grant — e.g. the CloudFront OAC read on the demo-assets
+    bucket — cannot add a second aws_s3_bucket_policy resource and must pass it
+    here. A JSON string rather than a list(object) because the statements are
+    heterogeneous (Condition/Principal shapes differ) and Terraform would have
+    to unify them into one object type.
+  EOT
+  type        = string
+  default     = "[]"
+}
+
 variable "noncurrent_version_expiration_days" {
   description = "Days after which noncurrent object versions are expired. 0 (default) creates no lifecycle configuration. Versioning is always on, so buckets whose objects are routinely deleted or replaced (e.g. model-file staging, where the scan pipeline deletes rejected uploads and moves promoted ones) otherwise retain every superseded version forever."
   type        = number

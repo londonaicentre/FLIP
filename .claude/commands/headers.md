@@ -6,13 +6,11 @@ allowed-tools: Bash(git:*), Read, Edit, Grep
 AGENTS.md requires every source file to carry the Apache 2.0 copyright header, but **nothing
 in CI or pre-commit enforces it**. This command finds source files missing the header and adds it.
 
-The canonical header for FLIP-authored files uses this exact owner string. **Match the
-year convention already used by neighbouring files in the same directory**: the predominant
-existing style is the **dateless** form shown below (`Copyright (c) Guy's and St Thomas' ...`),
-so default to dateless; only include a year if the surrounding files in that directory
-consistently carry one, and in that case copy their year rather than stamping the current
-year. Do not "correct" the year on files that already have a header — leave existing headers
-untouched (see step 2).
+The canonical header for FLIP-authored files uses this exact owner string. Headers appear both
+with a year (`Copyright (c) 2026 Guy's and St Thomas' ...`, the majority repo-wide) and without
+(the dateless form shown below). **Match the form neighbouring files in the same directory use**,
+copying their year rather than stamping the current one. Do not "correct" the year on files that
+already have a header — leave existing headers untouched (see step 2).
 
 **Hash-comment languages** (`.py`, `.sh`, `.yml`, `.yaml`, `Dockerfile`, `Makefile`, `.toml`):
 ```

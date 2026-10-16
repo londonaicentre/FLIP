@@ -11,9 +11,9 @@
  * limitations under the License.
  */
 
-import { fetchAuthSession } from "aws-amplify/auth";
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
 
+import { getAuthProvider } from "@/auth";
 import { useAuthStore } from "@/store/auth";
 import { NO_FORCED_SIGNOUT_PATHS } from "@/utils/auth";
 import { stashPostSignOutNotice } from "@/utils/session-teardown";
@@ -58,36 +58,20 @@ class Http {
 
         http.interceptors.request.use(
             async config => {
-                // Public Ark+ demo: never touch Amplify/Cognito. Requests are
-                // answered by the in-browser Mirage server, so no bearer token
-                // is needed and no auth network call must ever leave the page.
+                // Public Ark+ demo: never touch the identity provider. Requests
+                // are answered by the in-browser Mirage server, so no bearer
+                // token is needed and no auth network call must ever leave the
+                // page.
                 if (import.meta.env.VITE_DEMO === "true") {
                     return config;
                 }
 
                 if (config.headers && config.headers.Authorization === undefined) {
-                    // Amplify v6 caches tokens asynchronously after signIn;
-                    // a call to fetchAuthSession() immediately after an
-                    // `isSignedIn=true` resolve can observe an empty
-                    // session. If tokens aren't there yet, force a refresh
-                    // so freshly-signed-in users don't hit a 401 on the
-                    // very next request (e.g. getMfaStatus from hydrate).
-                    let session = await fetchAuthSession();
-                    let token = session.tokens?.accessToken?.toString();
-                    if (!token) {
-                        try {
-                            session = await fetchAuthSession({ forceRefresh: true });
-                            token = session.tokens?.accessToken?.toString();
-                        } catch (e) {
-                            // The request will go out unauthenticated and
-                            // the 401 handler will force a sign-out, but
-                            // we log the underlying Amplify error so
-                            // DevTools surfaces *why* (throttle, expired
-                            // refresh token, storage blocked) instead of
-                            // collapsing every cause to "signed out".
-                            console.warn("Token forceRefresh failed:", e);
-                        }
-                    }
+                    // The provider owns the token cache and its refresh rules
+                    // (Cognito's post-signIn race, Keycloak's expiry skew);
+                    // null means the request goes out unauthenticated and the
+                    // 401 handler below forces a sign-out.
+                    const token = await getAuthProvider().getAccessToken();
 
                     if (token) {
                         config.headers.Authorization = "Bearer " + token;

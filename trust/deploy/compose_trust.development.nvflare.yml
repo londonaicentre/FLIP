@@ -15,6 +15,60 @@
 
 services:
 
+  # The fl-clients' section of the governance document, extracted before they start
+  # (FLIP#1259). Researcher code runs inside the fl-client as the same user as the client,
+  # so a mounted whole document would hand training code every [access] rule, other
+  # projects' ids included. This one-shot step, in the fl-client's own image, reads the
+  # document and writes only its [fl_privacy] table into each client's kit local/ dir,
+  # which that client already mounts (and writes privacy.json into), so the extract needs
+  # no volume of its own and persists across restarts. An invalid document fails the step,
+  # and the fl-clients, which wait for it to complete successfully, do not start (fail
+  # closed). With no document it removes any earlier extract and never calls Python, so a
+  # pre-governance FL image still starts.
+  #
+  # Any target that starts the fl-clients with --no-deps must name this service too, or they
+  # start on the previous extract: reload-governance and up-fl-clients-kit do.
+  fl-governance-init:
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # The same host-uid override as the clients, so it can write their kit local/ dirs.
+    user: "${UID:-1000}:1000"
+    read_only: true
+    network_mode: none
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        for dir in /extract/*/; do
+          out="$${dir}governance.fl_privacy.toml"
+          if [ -z "$${ACCESS_POLICY_FILE:-}" ]; then
+            rm -f "$$out"
+          elif grep -q fl_privacy /app/governance.toml; then
+            python -m flip.nvflare.site_policy --extract /app/governance.toml "$$out"
+          else
+            # No [fl_privacy] section: the bare table, without Python, so an FL image older than
+            # --extract (an FL tag held back) still starts under an [access]-only document.
+            printf '[fl_privacy]\n' > "$$out"
+          fi
+        done
+        [ -n "$${ACCESS_POLICY_FILE:-}" ] || echo "[site-privacy] no governance document configured — nothing to extract"
+    environment:
+      - ACCESS_POLICY_FILE=${ACCESS_POLICY_FILE:+/app/governance.toml}
+      # The overridden uid has no /etc/passwd entry — see fl-client-net-1's HOME/USER note.
+      - HOME=/tmp
+      - USER=flip
+      - LOGNAME=flip
+    volumes:
+      # /dev/null when unset — it exists on every Docker host (see data-access-api).
+      - ${ACCESS_POLICY_FILE:-/dev/null}:/app/governance.toml:ro
+      # Each client's kit local/ dir, which it mounts at /app/local.
+      - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/local:/extract/net-1
+      - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/extract/net-2
+    restart: "no"
+
   fl-client-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     security_opt:
@@ -93,9 +147,17 @@ services:
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+      # The governance document's [fl_privacy.nvflare] section (FLIP#1259), extracted into
+      # this client's kit local/ dir by fl-governance-init — never the whole document. The
+      # same filter as the three variables above: set it in one place or the other, since
+      # both set stops the client. Unset = the variables decide.
+      - ACCESS_POLICY_FILE=${ACCESS_POLICY_FILE:+/app/local/governance.fl_privacy.toml}
     networks:
       - default
       - fl-net-1
+    depends_on:
+      fl-governance-init:
+        condition: service_completed_successfully
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
@@ -151,8 +213,16 @@ services:
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+      # The governance document's [fl_privacy.nvflare] section (FLIP#1259), extracted into
+      # this client's kit local/ dir by fl-governance-init — never the whole document. The
+      # same filter as the three variables above: set it in one place or the other, since
+      # both set stops the client. Unset = the variables decide.
+      - ACCESS_POLICY_FILE=${ACCESS_POLICY_FILE:+/app/local/governance.fl_privacy.toml}
     networks:
       - default
       - fl-net-2
+    depends_on:
+      fl-governance-init:
+        condition: service_completed_successfully
     shm_size: '32gb'
     # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)

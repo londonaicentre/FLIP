@@ -92,12 +92,14 @@ overridden per run via `config.toml`):
 There is no server-side simulator run for this template on its own — it needs a real checkpoint and
 connected clients. The shipped consumer, `fl-tutorials/flower/3d_spleen_segmentation_evaluation`,
 runs on the flwr simulator via
-`make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
+`make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
 (`fl-tutorials/flower/sim-tutorial.sh`, which wraps `flwr run`). What its README discourages is a
-**raw** `flwr run`, for three reasons the script handles — a long-lived SuperLink caches its
-environment, the `ClientApp` runs from a snapshot under `~/.flwr/apps/`, and `WORKING_DIR` defaults
-to a container path. Only the compose stack exercises the deployment wiring (TLS, fl-api submit,
-SuperNode registration):
+**raw** `flwr run`, for the five reasons the script handles (listed there) — among them, a
+long-lived SuperLink caches its environment, the `ClientApp` runs from a snapshot under
+`~/.flwr/apps/`, and `WORKING_DIR` defaults to a container path. The deployment wiring (the FL
+images, fl-api submit, SuperNode registration) is exercised by
+`make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower` on the dev stack; to run the
+Flower containers by hand:
 
 ```bash
 make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt
@@ -108,5 +110,5 @@ make -C fl-services/flower submit APP=3d_spleen_segmentation_evaluation
 
 See [`fl-tutorials/flower/3d_spleen_segmentation_evaluation/README.md`](../../../fl-tutorials/flower/3d_spleen_segmentation_evaluation/README.md)
 for the full walkthrough, including how to change which metrics are reported (edit the client's own
-metric registry — nothing here needs to change) and how the dev compose stack wires
+metric registry — nothing here needs to change) and how `fl-services/flower/compose.dev.yml` wires
 `DEV_DATAFRAME` / `DEV_IMAGES_DIR` / `WORKING_DIR` into the containers.

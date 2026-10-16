@@ -19,6 +19,7 @@ the dataframe must contain a column for each of those values.
 - Key `-1` is reserved for the "Normality" label. A positive value overrides every other label to 0.
 - `value_to_numerical` maps the 0/1 classes to their dataframe representation (`"Yes"` / `"No"`).
 - Images must be DICOM (`.dcm`), 2D grayscale, stored in folders named by accession ID.
+- The app reads DICOM only, so create its project with **DICOM to NIfTI** off: conversion would produce NIfTI nothing reads.
 
 Class imbalance can produce NaN metrics; use approximately N=300 samples per site.
 

@@ -17,5 +17,6 @@ source/autoapi/flip_api/
 source/autoapi/data_access_api/
 source/autoapi/imaging_api/
 source/autoapi/trust_api/
+source/autoapi/check_governance/
 # Rendered at build time by the conf.py hook from deploy/providers/AWS/architecture/ (FLIP#364).
 source/assets/generated/

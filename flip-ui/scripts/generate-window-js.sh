@@ -26,6 +26,19 @@ json_str() {
   node -pe 'JSON.stringify(process.argv[1] || "")' -- "${1-}"
 }
 
+# Which identity provider the hub runs (FLIP#919). The same AUTH_BACKEND
+# setting drives flip-api, so the UI and the API can never disagree.
+# Unset/empty means cognito (stag/prod); "keycloak" is the dev stack.
+RAW_AUTH_BACKEND="${AUTH_BACKEND:-cognito}"
+case "${RAW_AUTH_BACKEND}" in
+  cognito|keycloak) ;;
+  *)
+    echo "generate-window-js: ERROR — AUTH_BACKEND must be 'cognito' or 'keycloak', got '${RAW_AUTH_BACKEND}'." >&2
+    echo "  Set it in the hub env file to the value flip-api runs with (unset means cognito)." >&2
+    exit 1
+    ;;
+esac
+
 # Single source of truth: the canonical backend-style names used
 # across the rest of the stack (.env.*, compose files, the flip-api
 # container). Vite-specific duplicates used to exist but drifted out
@@ -34,24 +47,51 @@ json_str() {
 # and the UI picks them up at runtime via window.js.
 RAW_USER_POOL_ID="${AWS_COGNITO_USER_POOL_ID:-}"
 RAW_CLIENT_ID="${AWS_COGNITO_APP_CLIENT_ID:-}"
+RAW_KEYCLOAK_URL="${KEYCLOAK_PUBLIC_URL:-}"
+RAW_KEYCLOAK_REALM="${KEYCLOAK_REALM:-}"
+RAW_KEYCLOAK_CLIENT_ID="${KEYCLOAK_CLIENT_ID:-}"
 
-# Cognito IDs are required. Empty strings would let Amplify.configure()
-# boot with an invalid pool and fail cryptically at first signIn(); abort
-# early with an actionable message instead. (Issue #183.)
+# The selected backend's ids are required; the other backend's are emitted
+# empty so a stale value can never be picked up by mistake. Empty Cognito
+# ids would let Amplify.configure() boot with an invalid pool and fail
+# cryptically at first signIn(); empty Keycloak values would fail at the
+# first token request. Abort early with an actionable message instead.
+# (Issue #183 for the Cognito half.)
 missing=""
-[ -z "${RAW_USER_POOL_ID}" ] && missing="${missing} AWS_COGNITO_USER_POOL_ID"
-[ -z "${RAW_CLIENT_ID}" ]    && missing="${missing} AWS_COGNITO_APP_CLIENT_ID"
-if [ -n "${missing}" ]; then
-  echo "generate-window-js: ERROR — required Cognito env var(s) not set:${missing}" >&2
-  echo "  Set them in .env.development (local dev) or .env.stag / .env.production" >&2
-  echo "  (make deploy-ui). See .env.development.example for the full list." >&2
-  exit 1
+if [ "${RAW_AUTH_BACKEND}" = "cognito" ]; then
+  [ -z "${RAW_USER_POOL_ID}" ] && missing="${missing} AWS_COGNITO_USER_POOL_ID"
+  [ -z "${RAW_CLIENT_ID}" ]    && missing="${missing} AWS_COGNITO_APP_CLIENT_ID"
+  if [ -n "${missing}" ]; then
+    echo "generate-window-js: ERROR — required Cognito env var(s) not set:${missing}" >&2
+    echo "  Set them in .env.development (local dev) or .env.stag / .env.production" >&2
+    echo "  (make deploy-ui). See .env.development.example for the full list." >&2
+    exit 1
+  fi
+  RAW_KEYCLOAK_URL=""
+  RAW_KEYCLOAK_REALM=""
+  RAW_KEYCLOAK_CLIENT_ID=""
+else
+  [ -z "${RAW_KEYCLOAK_URL}" ]       && missing="${missing} KEYCLOAK_PUBLIC_URL"
+  [ -z "${RAW_KEYCLOAK_REALM}" ]     && missing="${missing} KEYCLOAK_REALM"
+  [ -z "${RAW_KEYCLOAK_CLIENT_ID}" ] && missing="${missing} KEYCLOAK_CLIENT_ID"
+  if [ -n "${missing}" ]; then
+    echo "generate-window-js: ERROR — AUTH_BACKEND=keycloak but required env var(s) not set:${missing}" >&2
+    echo "  KEYCLOAK_PUBLIC_URL is the base URL of Keycloak as the BROWSER reaches it" >&2
+    echo "  (e.g. http://localhost:8081), not the compose-internal one. See .env.development.example." >&2
+    exit 1
+  fi
+  RAW_USER_POOL_ID=""
+  RAW_CLIENT_ID=""
 fi
 
 AWS_BASE_URL=$(json_str "${CENTRAL_HUB_API_URL:-http://localhost:8080/api}")
+AUTH_BACKEND_JS=$(json_str "${RAW_AUTH_BACKEND}")
 USER_POOL_ID=$(json_str "${RAW_USER_POOL_ID}")
 CLIENT_ID=$(json_str "${RAW_CLIENT_ID}")
 REGION=$(json_str "${AWS_REGION:-eu-west-2}")
+KEYCLOAK_URL_JS=$(json_str "${RAW_KEYCLOAK_URL}")
+KEYCLOAK_REALM_JS=$(json_str "${RAW_KEYCLOAK_REALM}")
+KEYCLOAK_CLIENT_ID_JS=$(json_str "${RAW_KEYCLOAK_CLIENT_ID}")
 BLACKLIST=$(json_str "${BLACKLISTED_MODEL_FILES:-}")
 RELEASE=$(json_str "${RELEASE_VERSION:-}")
 
@@ -66,9 +106,13 @@ cat <<EOF
 // is the single source of truth for both the enforcement query and the
 // status-widget display.
 window.AWS_BASE_URL            = ${AWS_BASE_URL};
+window.AUTH_BACKEND            = ${AUTH_BACKEND_JS};
 window.AWS_USER_POOL_ID        = ${USER_POOL_ID};
 window.AWS_CLIENT_ID           = ${CLIENT_ID};
 window.AWS_REGION              = ${REGION};
+window.KEYCLOAK_URL            = ${KEYCLOAK_URL_JS};
+window.KEYCLOAK_REALM          = ${KEYCLOAK_REALM_JS};
+window.KEYCLOAK_CLIENT_ID      = ${KEYCLOAK_CLIENT_ID_JS};
 window.BLACKLISTED_MODEL_FILES = ${BLACKLIST};
 window.RELEASE_VERSION         = ${RELEASE};
 EOF

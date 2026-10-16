@@ -33,6 +33,7 @@ from data_access_api.services.cohort import (
     get_records,
     get_sex_distribution,
     get_statistics,
+    keep_imaging_accessions,
     make_other_category,
     validate_query,
     verify_cardinality,
@@ -178,6 +179,47 @@ def test_get_statistics_genuine_zero_is_suppressed(mock_read_sql):
     assert stats.record_count == 0
     assert stats.data == []
     assert stats.suppressed is True
+
+
+@patch("pandas.read_sql")
+def test_get_records_use_cache_false_bypasses_a_poisoned_cache(mock_read_sql):
+    """Snapshot creation must freeze LIVE OMOP: a cached frame (e.g. from the statistics
+    run at submission) is skipped when use_cache=False, and the fresh read replaces it."""
+    import pandas as pd
+
+    from data_access_api.services.cohort import get_records
+    from data_access_api.services.query_cache import get_cached_result, set_cached_result
+
+    query = "SELECT person_id FROM omop.person"
+    stale = pd.DataFrame({"person_id": [1, 2]})
+    fresh = pd.DataFrame({"person_id": [1]})  # a person was removed from OMOP since
+    set_cached_result(query, stale)
+    mock_read_sql.return_value = fresh
+
+    result = get_records(query, use_cache=False)
+
+    pd.testing.assert_frame_equal(result, fresh)
+    mock_read_sql.assert_called_once()
+    # The fresh read updates the cache, so subsequent cached reads see the new state too.
+    pd.testing.assert_frame_equal(get_cached_result(query), fresh)
+
+
+@patch("pandas.read_sql")
+def test_get_records_serves_cache_by_default(mock_read_sql):
+    """Default behaviour is unchanged: a cached frame short-circuits the database read."""
+    import pandas as pd
+
+    from data_access_api.services.cohort import get_records
+    from data_access_api.services.query_cache import set_cached_result
+
+    query = "SELECT person_id FROM omop.person"
+    cached = pd.DataFrame({"person_id": [1, 2]})
+    set_cached_result(query, cached)
+
+    result = get_records(query)
+
+    pd.testing.assert_frame_equal(result, cached)
+    mock_read_sql.assert_not_called()
 
 
 @patch("pandas.read_sql")
@@ -2009,3 +2051,36 @@ def test_get_modality_distribution_survives_an_unexpected_result_shape(mock_read
     mock_read_sql.return_value = pd.DataFrame({"something_else": [1]})
 
     assert get_modality_distribution(pd.DataFrame({"accession_id": ["ACC1"]}))["results"] == []
+
+
+# ---------------------------------------------------------------------------
+# keep_imaging_accessions — what /cohort/accession-ids may release (FLIP#1259)
+# ---------------------------------------------------------------------------
+
+
+@patch("pandas.read_sql")
+def test_keep_imaging_accessions_drops_values_that_are_not_imaging_accessions(mock_read_sql):
+    """Only values omop.image_occurrence knows survive, in cohort order and with duplicates kept."""
+    mock_read_sql.return_value = pd.DataFrame({"accession_id": ["ACC2", "ACC1"]})
+    df = pd.DataFrame({"accession_id": ["ACC1", "1|1950", "ACC2", "ACC1", None]})
+
+    kept = keep_imaging_accessions(df)
+
+    assert kept["accession_id"].tolist() == ["ACC1", "ACC2", "ACC1"]
+    executed = str(mock_read_sql.call_args[0][0])
+    assert "omop.image_occurrence" in executed
+    # Bound, never interpolated, and each distinct value once.
+    assert mock_read_sql.call_args.kwargs["params"]["accession_ids"] == ["ACC1", "1|1950", "ACC2"]
+
+
+@patch("pandas.read_sql")
+def test_keep_imaging_accessions_releases_nothing_on_an_unexpected_shape(mock_read_sql):
+    mock_read_sql.return_value = pd.DataFrame({"something_else": ["ACC1"]})
+
+    assert keep_imaging_accessions(pd.DataFrame({"accession_id": ["ACC1"]})).empty
+
+
+@patch("pandas.read_sql")
+def test_keep_imaging_accessions_skips_the_lookup_for_an_empty_cohort(mock_read_sql):
+    assert keep_imaging_accessions(pd.DataFrame({"accession_id": []})).empty
+    mock_read_sql.assert_not_called()

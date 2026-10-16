@@ -19,7 +19,6 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 from imaging_api.config import get_settings
 
-PACS_ID = get_settings().PACS_ID
 XNAT_PORT = get_settings().XNAT_PORT
 XNAT_AETITLE = get_settings().XNAT_AETITLE
 
@@ -32,9 +31,9 @@ XNAT_AETITLE = get_settings().XNAT_AETITLE
 # instead of letting the corrupted entity reach XNAT.
 _XML_FORBIDDEN_CHARS = ("<", ">", "&")
 
-# Accession IDs, scan IDs and resource IDs are all interpolated directly into
-# XNAT URLs issued with the XNAT service-admin session, so a traversal payload
-# would reach XNAT before any filesystem guard could run.
+# Accession IDs, scan IDs and resource IDs become path segments in XNAT URLs
+# issued with the XNAT service-admin session. Reject unsafe input at the request
+# boundary as well as quoting it at the URL sinks, before any filesystem guard.
 #
 # Charset: RFC 3986 §2.3 *unreserved* characters — the only characters that
 # are never percent-encoded and never a URL delimiter, so a value composed
@@ -271,10 +270,9 @@ class Study(BaseModel):
 
 
 class StudyQuery(BaseModel):
-    """Represents a study query for PACS through XNAT DQR."""
+    """Represents a study query for PACS through XNAT DQR. It names no PACS, so DQR uses its default one."""
 
     accession_number: str = Field(..., alias="accessionNumber")
-    pacs_id: int = Field(default=PACS_ID, alias="pacsId")
     modality: str | None = Field(default="", alias="modality")
 
 
@@ -311,12 +309,13 @@ class ImportStudy(BaseModel):
 class ImportStudyRequest(BaseModel):
     """Represents an image import request for DQR."""
 
-    # Resolved from XNAT at request time and overwritten in services/imaging.py before the request
-    # is sent, so a caller-supplied value has no effect. Kept on the model because the resolved id
-    # is assigned here and serialised onward to DQR; the description says so in the OpenAPI schema
-    # rather than leaving a knob that silently does nothing.
-    pacs_id: int = Field(
-        default=PACS_ID,
+    # Resolved from XNAT at request time (the default query/retrieve PACS) and overwritten in
+    # services/imaging.py before the request is sent, so a caller-supplied value has no effect. Kept on
+    # the model because the resolved id is assigned here and serialised onward to DQR, whose import —
+    # unlike its query — does not fall back to the default PACS; the description says so in the
+    # OpenAPI schema rather than leaving a knob that silently does nothing.
+    pacs_id: int | None = Field(
+        default=None,
         alias="pacsId",
         description="Resolved from XNAT server-side; any value supplied here is ignored.",
     )

@@ -22,8 +22,8 @@
 # SuperNode accepts via --node-config), resolved by flip.flower.identity.client_identity,
 # so nothing in app/ knows which runtime it is in.
 #
-# For the container path — the pre-merge check that exercises TLS, fl-api submit and
-# SuperNode registration — use run-tutorial.sh instead.
+# The container path (the FL images, fl-api submit, SuperNode registration) is
+# `make e2e_smoke FL_BACKEND=flower` on the dev stack, as for NVFLARE (FLIP#1435).
 #
 # Exit status is the RUN's: 0 only when the SuperLink reports it finished:completed.
 set -euo pipefail
@@ -32,10 +32,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 # Run in flip-utils' env so the app sees the same flip package a SuperNode image carries.
 FLIP_UV=(uv run --project "$REPO_ROOT/flip-utils" --extra full)
-# flwr resolves the `local` connection to a SuperLink on these two ports (flwr/cli/constant.py)
-# and reuses whatever already answers on the control port — it does not check who started it.
-CONTROL_PORT="${FLWR_LOCAL_CONTROL_API_PORT:-39093}"
-RUNTIME_PORT="${FLWR_LOCAL_RUNTIME_API_PORT:-39091}"
+# flwr resolves the `local` connection to a SuperLink on this port (flwr/cli/constant.py) and
+# reuses whatever already answers its /health there — it does not check who started it. Since
+# flwr 1.37 the Control API is served over HTTP on this one port; the legacy gRPC control address
+# (127.0.0.1:${FLWR_LOCAL_CONTROL_API_PORT:-39093}) is still passed to the local SuperLink but
+# nothing listens on it, so it is neither probed nor waited on here.
+CONTROL_PORT="${FLWR_LOCAL_SUPERLINK_HTTP_API_PORT:-39091}"
 CONTROL_ADDRESS="127.0.0.1:$CONTROL_PORT"
 
 # flwr keeps a long-lived local SuperLink and Ray workers inherit ITS environment, not what we
@@ -92,11 +94,11 @@ listener_pid() {
   { ss -Hltnp "sport = :$1" 2>/dev/null || true; } | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true
 }
 
-# A SuperLink we just signalled may hold its ports a moment longer. flwr probes the control
-# port at once (a 0.4 s gRPC deadline) and adopts whatever answers, so the run could land on a
-# process mid-shutdown ("Connection to the SuperLink is unavailable"); and it cannot start a
-# replacement while the runtime port is still bound. Give it up to five seconds to let go of
-# each, and refuse to go on if it has not.
+# A SuperLink we just signalled may hold its port a moment longer. flwr probes /health on the
+# control port at once and adopts whatever answers, so the run could land on a process
+# mid-shutdown ("Connection to the SuperLink is unavailable"); and it cannot start a replacement
+# while the port is still bound. Give it up to five seconds to let go, and refuse to go on if it
+# has not.
 wait_for_port_release() {
   local port pid _
   for port in "$@"; do
@@ -204,8 +206,8 @@ list() { for d in "$HERE"/*/app; do basename "$(dirname "$d")"; done; }
 if [ -z "$TUTORIAL" ]; then echo "Set TUTORIAL=<name>. Available:"; list | sed 's/^/  - /'; exit 1; fi
 if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. Available:"; list | sed 's/^/  - /'; exit 1; fi
 
-# Same per-tutorial dev data mapping as run-tutorial.sh — LOCAL_DEV reads these directly
-# instead of the bind mounts the compose stack would provide.
+# The per-tutorial dev data mapping — LOCAL_DEV reads these directly instead of the bind
+# mounts the fl-services/flower containers would provide.
 DATA_ROOT="${SIM_DATA_ROOT:-$REPO_ROOT/fl-tutorials/data}"
 # Run-config overrides the simulator has to supply in place of the platform's submit step.
 RUN_CONFIG=""
@@ -214,17 +216,23 @@ case "$TUTORIAL" in
     # The MSD build both backends read, honouring NUM_CASES.
     export DEV_IMAGES_DIR="$DATA_ROOT/spleen/images"
     export DEV_DATAFRAME="$DATA_ROOT/spleen/dataframe.csv"
-    DATASET_TARGET=spleen ;;
+    DATASET_TARGET=download-spleen-data ;;
   xray_classification)
     export DEV_IMAGES_DIR="$DATA_ROOT/xrays_mini_300/accession-resources"
     export DEV_DATAFRAME="$DATA_ROOT/xrays_mini_300/dataframe.csv"
-    DATASET_TARGET=xray ;;
+    DATASET_TARGET=download-xray-data ;;
   ehr_risk_prediction)
     # Tabular-only tutorial: no images, so DEV_IMAGES_DIR stays unset (the app never reads it).
     # Every simulated site gets the same CSV; each ClientApp slices out its own person_id-modulo
     # partition, exactly as under the compose stack.
     export DEV_DATAFRAME="$DATA_ROOT/synthea/dataframe.csv"
-    DATASET_TARGET=synthea ;;
+    DATASET_TARGET=download-synthea-data ;;
+  3d_prostate_segmentation)
+    # The XNAT-export-shaped tree prepare_prostate_local_data.py writes from the PI-CAI download
+    # (three scans per study, masks beside each), honouring NUM_CASES.
+    export DEV_IMAGES_DIR="$DATA_ROOT/prostate/images"
+    export DEV_DATAFRAME="$DATA_ROOT/prostate/dataframe.csv"
+    DATASET_TARGET=prepare-prostate-local-data ;;
   *) echo "❌ No data mapping for '$TUTORIAL'"; exit 1 ;;
 esac
 REQUIRED=("$DEV_DATAFRAME")
@@ -241,20 +249,20 @@ fi
 for p in "${REQUIRED[@]}"; do
   if [ ! -e "$p" ]; then
     echo "❌ Dataset missing: $p"
-    echo "   Run: make -C fl-tutorials download-${DATASET_TARGET}-data"
+    echo "   Run: make -C fl-tutorials $DATASET_TARGET"
     exit 1
   fi
 done
 
 # The ServerApp writes results under $WORKING_DIR (default "/app/runs" — the path inside a
 # SuperNode container, which does not exist and is not writable on the host). Point it at the
-# same host directory run-tutorial.sh uses, or the run trains fine and then dies with
+# host directory fl-services/flower mounts there, or the run trains fine and then dies with
 # PermissionError: '/app' at the results-writing step.
 export WORKING_DIR="${WORKING_DIR:-$REPO_ROOT/fl-services/flower/runs}"
 mkdir -p "$WORKING_DIR"
 
 stop_stale_superlinks
-[ -n "$STOPPED_ANY" ] && wait_for_port_release "$CONTROL_PORT" "$RUNTIME_PORT"
+[ -n "$STOPPED_ANY" ] && wait_for_port_release "$CONTROL_PORT"
 refuse_foreign_superlink "$CONTROL_PORT"
 
 # How many simulated sites, from the tutorial's own flip-min-clients so the two cannot drift.
@@ -263,8 +271,22 @@ SITES="$(sed -n 's/^flip-min-clients[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\
 if [ -z "$SITES" ]; then echo "❌ No flip-min-clients in $TUTORIAL/pyproject.toml"; exit 1; fi
 
 export LOCAL_DEV=true
+# GPU share per simulated site. Ray hands a ClientApp actor no GPU unless the federation config
+# asks (client-resources-num-gpus, default 0.0 in flwr's RayBackend), which leaves the 3-D
+# tutorials training on the CPU beside an idle GPU. Default: every site gets an equal fraction of
+# one GPU when nvidia-smi sees any, so the sites train concurrently on it; SIM_NUM_GPUS=<fraction
+# per site> overrides, SIM_NUM_GPUS=0 keeps the CPU.
+if [ -z "${SIM_NUM_GPUS:-}" ]; then
+  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+    SIM_NUM_GPUS="$(python3 -c "print(round(1 / $SITES, 2))")"
+  else
+    SIM_NUM_GPUS=0
+  fi
+fi
+FEDERATION_CONFIG="num-supernodes=$SITES client-resources-num-gpus=$SIM_NUM_GPUS"
+
 echo "🧪 Simulating Flower tutorial '$TUTORIAL' (flwr simulator — no containers)"
-echo "   sites=$SITES"
+echo "   sites=$SITES  gpu share per site=$SIM_NUM_GPUS"
 echo "   DEV_IMAGES_DIR=${DEV_IMAGES_DIR:-<unset: tabular-only tutorial>}"
 echo "   DEV_DATAFRAME=$DEV_DATAFRAME"
 echo "   WORKING_DIR=$WORKING_DIR"
@@ -283,7 +305,7 @@ STREAM="$(mktemp)"
 trap 'rm -f "$STREAM"' EXIT
 # A later --run-config on the command line overrides the same keys, so "$@" comes last.
 PYTHONUNBUFFERED=1 "${FLIP_UV[@]}" \
-  flwr run . local --federation-config "num-supernodes=$SITES" --stream \
+  flwr run . local --federation-config "$FEDERATION_CONFIG" --stream \
   ${RUN_CONFIG:+--run-config "$RUN_CONFIG"} "$@" 2>&1 | tee "$STREAM"
 RUN_ID="$(run_id_from "$STREAM")" || { echo "❌ flwr run printed no run id — was the run submitted?"; exit 1; }
 assert_run_completed "$RUN_ID"

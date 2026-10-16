@@ -17,6 +17,7 @@ remains IN_PROGRESS forever. This module periodically resets such stale tasks
 back to PENDING so they can be re-dispatched.
 """
 
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from sqlmodel import Session, col, select
@@ -89,8 +90,9 @@ def recover_stale_tasks(db: Session) -> int:
 def retry_failed_post_processing(db: Session) -> int:
     """Retry post-processing for completed tasks that still need it.
 
-    If a CREATE_IMAGING task completed but its post-processing (status persistence
-    and email notifications) failed, this retries it.
+    Covers every task type whose result is post-processed on submission: CREATE_IMAGING (imaging status
+    persistence and credential emails) and PERSIST_COHORT (the cohort snapshot record). Each task is
+    dispatched to its own type's handler.
 
     Args:
         db (Session): Database session.
@@ -99,11 +101,17 @@ def retry_failed_post_processing(db: Session) -> int:
         int: Number of tasks retried.
     """
     from flip_api.private_services.imaging_notifications import handle_imaging_task_completed
+    from flip_api.private_services.snapshot_notifications import handle_snapshot_task_completed
+
+    handlers: dict[TaskType, Callable[[TrustTask, Session], None]] = {
+        TaskType.CREATE_IMAGING: handle_imaging_task_completed,
+        TaskType.PERSIST_COHORT: handle_snapshot_task_completed,
+    }
 
     statement = (
         select(TrustTask)
         .where(TrustTask.status == TaskStatus.COMPLETED)
-        .where(TrustTask.task_type == TaskType.CREATE_IMAGING)
+        .where(col(TrustTask.task_type).in_(list(handlers)))
         .where(col(TrustTask.needs_post_processing).is_(True))
     )
     tasks = db.exec(statement).all()
@@ -113,15 +121,19 @@ def retry_failed_post_processing(db: Session) -> int:
 
     retried = 0
     for task in tasks:
+        handler = handlers.get(task.task_type)
+        if handler is None:
+            logger.error(f"No post-processing handler for task {task.id} (type={task.task_type})")
+            continue
         try:
-            handle_imaging_task_completed(task, db)
+            handler(task, db)
             task.needs_post_processing = False
             db.commit()
             retried += 1
-            logger.info(f"Successfully retried post-processing for task {task.id}")
+            logger.info(f"Successfully retried post-processing for {task.task_type} task {task.id}")
         except Exception as e:
             db.rollback()
-            logger.error(f"Retry of post-processing failed for task {task.id}: {e}")
+            logger.error(f"Retry of post-processing failed for {task.task_type} task {task.id}: {e}")
 
     return retried
 

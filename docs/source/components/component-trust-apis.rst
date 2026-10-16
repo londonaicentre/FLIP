@@ -96,7 +96,9 @@ Every 30 seconds the collector probes the Trust's own services concurrently — 
 ping, and the OMOP database with a plain TCP connect (the ``trust-api`` carries no database driver) — and
 grades each ``healthy``, ``degraded`` (slow), ``down`` or ``unknown``. The snapshot rides on the next
 heartbeat and is what the hub's connection-status drawer shows. A probe cycle that fails or hangs discards
-the snapshot rather than resend a stale one, so the hub shows *no data* instead of a frozen green.
+the snapshot rather than resend a stale one, so the hub shows *no data* instead of a frozen green. The PACS
+ping opens an association to the hospital PACS, so it runs at most every five minutes and the cycles in
+between report its last result.
 
 ***********
 Imaging API
@@ -115,7 +117,9 @@ the Trust-internal service key.
      - Create, list, inspect and delete XNAT projects; the hub-driven create is
        ``POST /projects/create-project-from-central-hub-project``.
    * - ``/retrieval``
-     - Import status counts and study re-import for a project.
+     - Import status counts and study re-import for a project. The counts are read through XNAT's REST
+       API (DQR's import queue and history, and XNAT's direct-archive sessions); imaging-api holds no
+       credential for XNAT's database.
    * - ``/imaging``
      - Ping the PACS, query it by accession number, queue an import.
    * - ``/download``
@@ -144,7 +148,8 @@ The first download of an accession's resources for a net pulls the study out of 
 under that net's slice of the images directory; the ``imaging-api`` records completion with a sentinel file
 per (assessor type, resource type) and serves later requests — the same fetch loop in the next FL round, the
 next job on Flower — from disk. Training code should therefore call ``flip.get_by_accession_number`` every
-round without its own caching; ``force_refresh=true`` re-downloads after the content changed in XNAT, and
+round without its own caching; each hit checks the study's file counts and sizes in XNAT and downloads it again
+if they changed, and
 uploads through ``flip.add_resource`` invalidate the entry automatically. Each FL client mounts only its own
 net's slice, so a job cannot read another net's cached studies.
 
@@ -188,11 +193,23 @@ Disclosure threshold
 ====================
 
 ``COHORT_QUERY_THRESHOLD`` (default 10) is the Trust's own disclosure floor, set in its kit file. Aggregate
-statistics fold small categories below it, and both row-level routes refuse outright when the live cohort is
-smaller than it — with one fixed message, so a below-threshold cohort is indistinguishable from an empty one.
-The hub can pass a threshold, but only a higher one: the Trust's value is a floor the hub cannot lower.
-Because FLIP stores a cohort only as its SQL and re-runs it at every stage, a project that imported cleanly
-can start refusing later if the data changes.
+statistics fold small categories below it, and both row-level routes refuse outright when the approved
+cohort covers fewer distinct subjects than it — with one fixed message, so a below-threshold cohort is
+indistinguishable from an empty one. The hub can pass a threshold, but only a higher one: the Trust's value is
+a floor the hub cannot lower.
+
+The row-level routes serve only the cohort **frozen at project approval** (`FLIP#857
+<https://github.com/londonaicentre/FLIP/issues/857>`__): approval makes each Trust run the approved query once
+and record its membership — the query and the patient and study identifiers it returned, not their data.
+``/cohort/dataframe`` then re-runs that query and keeps only the approved patients and studies, and
+``/cohort/accession-ids`` serves the approved studies still present in OMOP; both ignore any SQL the caller
+sends. A cohort's membership can therefore shrink after approval — a patient removed from OMOP, for instance
+after an opt-out, drops out on the next fetch — but never grow: no new patient or imaging study can join it.
+What is frozen is the patients, not their records. Those are read live, so a record added after approval for
+an approved patient (a new measurement, visit or condition) is served. The national data opt-out is per
+patient, so it acts on membership, and the Trust keeps no copy of the records outside OMOP. The threshold is
+checked at approval and again on every serve, so a cohort that shrinks below the floor stops being served,
+and a Trust that raises its floor affects already-approved projects.
 
 Query cache
 ===========

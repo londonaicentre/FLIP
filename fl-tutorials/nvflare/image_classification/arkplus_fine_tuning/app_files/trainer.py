@@ -104,7 +104,7 @@ def build_lesion_dict(config: dict) -> LesionDict:
     return LesionDict(items=[Lesion(id=int(k), lesion=v) for k, v in lesions.items()])
 
 
-def _autocast(state: ArkTrainState):
+def _autocast(state: ArkTrainState) -> torch.autocast:
     """AMP autocast context — mirrors the legacy trainer so training/validation math is identical."""
     if hasattr(torch, "amp"):
         return torch.amp.autocast(device_type="cuda", dtype=state.amp_dtype, enabled=state.amp_enabled)

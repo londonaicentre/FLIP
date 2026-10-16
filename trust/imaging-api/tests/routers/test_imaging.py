@@ -77,7 +77,7 @@ def test_ping_pacs_without_id_resolves_the_registration(client):
 
         assert response.status_code == 200
         assert mock_ping_registered.called, "the id was not resolved from XNAT"
-        assert not mock_ping_pacs.called, "bypassed the resolving (stale-cache-aware) ping"
+        assert not mock_ping_pacs.called, "bypassed the ping that resolves the default PACS"
         assert response.json()["pacsId"] == 7
 
 

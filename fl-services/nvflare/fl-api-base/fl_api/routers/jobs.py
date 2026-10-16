@@ -72,9 +72,9 @@ def list_jobs(
 
     Args:
         detailed (bool, optional): whether extensive description is demanded. Defaults to False.
-        limit (Optional[int], optional): maximum number of jobs to display. Defaults to None.
-        id_prefix (str, optional): prefix for job ID search. Defaults to None.
-        name_prefix (str, optional): prefix for the job NAME search. Defaults to None.
+        limit (int | None, optional): maximum number of jobs to display. Defaults to None.
+        id_prefix (str | None, optional): prefix for job ID search. Defaults to None.
+        name_prefix (str | None, optional): prefix for the job NAME search. Defaults to None.
         reverse (bool, optional): if True, the order will be the reverse of submission time (otherwise it's the
         opposite). Defaults to False.
         session (FLIP_Session): FLIP session instance.
@@ -110,8 +110,9 @@ def show_errors(
 
     Args:
         job_id (str): ID of the job
-        target_type (str): type of target (server or client)
-        targets: list of client names if target type is "client". All clients if not specified.
+        target_type (TargetType): type of target (server or client)
+        targets (str | None): comma-separated client names if target type is "client". All clients if not
+            specified.
         session (FLIP_Session): FLIP session instance.
 
     Returns:
@@ -134,8 +135,9 @@ def show_stats(
 
     Args:
         job_id (str): ID of the job
-        target_type (str): type of target (server or client)
-        targets: list of client names if target type is "client". All clients if not specified.
+        target_type (TargetType): type of target (server or client)
+        targets (str | None): comma-separated client names if target type is "client". All clients if not
+            specified.
         session (FLIP_Session): FLIP session instance.
 
     Returns:
@@ -149,7 +151,7 @@ def show_stats(
 
 
 @router.post("/reset_errors", status_code=status.HTTP_200_OK)
-def reset_errors(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict:
+def reset_errors(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict[str, str]:
     """
     Resets the errors of a specific job.
 
@@ -168,7 +170,7 @@ def reset_errors(job_id: str, session: FLIP_Session = Depends(get_session)) -> d
 
 
 @router.delete("/delete_job/{job_id}", status_code=status.HTTP_200_OK)
-def delete_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict:
+def delete_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict[str, str]:
     """
     Deletes a job from the server if it's not running.
 

@@ -70,6 +70,37 @@ def test_task_states_the_clinical_task_not_the_harness():
     assert unknown == "Training the My custom app application across the participating trusts' data."
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize(
+    ("path", "nifti"),
+    [
+        ("../fl-tutorials/nvflare/image_classification/xray_classification/app_files", False),
+        ("../fl-tutorials/flower/3d_spleen_segmentation/app", True),
+        ("../fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/app_files", False),
+        # An unknown app keeps the hub's default, conversion on.
+        ("/srv/my_custom-app/app", True),
+    ],
+)
+def test_the_dicom_to_nifti_default_follows_the_tutorial(path, nifti):
+    assert describe_tutorial(Path(path)).nifti is nifti
+
+
+@pytest.mark.skipif(not (REPO_ROOT / "fl-tutorials").is_dir(), reason="fl-tutorials/ is not mounted in the container")
+@pytest.mark.parametrize("tutorial", sorted(TUTORIALS))
+def test_a_tutorial_converts_to_nifti_only_if_its_app_reads_nifti(tutorial):
+    """Read from the apps themselves, so a tutorial that starts or stops reading NIfTI fails here."""
+    apps = [
+        app
+        for app in (REPO_ROOT / "fl-tutorials").rglob(f"{tutorial}/app*")
+        if app.is_dir() and app.name in ("app", "app_files") and "tests" not in app.parts
+    ]
+    assert apps, f"no app directory for {tutorial}"
+    reads_nifti = any("ResourceType.NIFTI" in f.read_text() for app in apps for f in app.rglob("*.py"))
+    assert TUTORIALS[tutorial].nifti is reads_nifti
+
+
 def test_every_tutorial_task_fits_the_project_description_field():
     """A task string is posted straight through ``ProjectDetails.description``.
 

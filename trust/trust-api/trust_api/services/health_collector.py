@@ -34,6 +34,7 @@ never refresh or drop the snapshot, which is the very failure this design preven
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -52,6 +53,11 @@ OMOP_DB_PORT = get_settings().OMOP_DB_PORT
 HEALTH_COLLECT_INTERVAL_SECONDS = get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
 HEALTH_PROBE_DEGRADED_MS = get_settings().HEALTH_PROBE_DEGRADED_MS
 FL_CLIENT_IMAGE_TAG = get_settings().FL_CLIENT_IMAGE_TAG
+
+# Each PACS ping makes XNAT open a C-ECHO association to the hospital PACS and store a ping row,
+# and a PACS may refuse associations past an agreed volume (FLIP#993). So the PACS is pinged live
+# at most this often, not every cycle, and the cycles in between report the last result.
+PACS_PING_INTERVAL_SECONDS = 300
 
 _PROBE_TIMEOUT_SECONDS = 5.0
 _TEARDOWN_TIMEOUT_SECONDS = 1.0
@@ -237,6 +243,32 @@ async def _probe_dicom(client: httpx.AsyncClient) -> dict:
     return _entry(_status_from_latency(elapsed_ms), None, elapsed_ms)
 
 
+class _ThrottledProbe:
+    """Runs a probe at most once per interval and reports its last result in between.
+
+    A failed attempt is retried at the next interval, not sooner. An attempt that produced no
+    result (it raised, or the cycle deadline cancelled it) reports ``unknown``, never the
+    previous interval's result.
+    """
+
+    def __init__(self, interval_seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
+        self._interval_seconds = interval_seconds
+        self._clock = clock
+        self._attempted_at: float | None = None
+        self._result: dict | None = None
+
+    async def run(self, probe: Callable[[], Awaitable[dict]]) -> dict:
+        now = self._clock()
+        if self._attempted_at is None or now - self._attempted_at >= self._interval_seconds:
+            # Claimed before the await, so a cancelled attempt still uses up its interval.
+            self._attempted_at, self._result = now, None
+            self._result = await probe()
+        return self._result or _entry("unknown")
+
+
+_pacs_ping = _ThrottledProbe(PACS_PING_INTERVAL_SECONDS)
+
+
 async def _probe_tcp(host: str, port: int) -> dict:
     """Probe a TCP service by opening (and immediately closing) a connection.
 
@@ -298,7 +330,7 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
         _probe_health_endpoint(client, f"{IMAGING_API_URL}/health"),
         _probe_health_endpoint(client, f"{DATA_ACCESS_API_URL}/health"),
         _probe_xnat(client),
-        _probe_dicom(client),
+        _pacs_ping.run(lambda: _probe_dicom(client)),
         _probe_tcp(OMOP_DB_HOST, OMOP_DB_PORT),
         return_exceptions=True,
     )

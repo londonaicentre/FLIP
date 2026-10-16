@@ -46,7 +46,7 @@ class ServerEventHandler(FLComponent):
         validation_json_generator_id: str = "json_generator",
         persist_and_cleanup_id: str = "persist_and_cleanup",
         flip: FLIPBase = FLIP(),
-    ):
+    ) -> None:
         super(ServerEventHandler, self).__init__()
 
         self._model_id_fallback = model_id

@@ -85,8 +85,10 @@ Within that estate:
 Identity and access
 *******************
 
-**Authentication is layered.** Sign-in uses AWS Cognito with the SRP password protocol,
-which never transmits the password itself. Access tokens are verified on every request:
+**Authentication is layered.** In every deployed environment sign-in uses AWS Cognito with
+the SRP password protocol, which never transmits the password itself; the local development
+backend (Keycloak) uses the OIDC password grant on loopback only and is refused by the
+production configuration at boot. Access tokens are verified on every request:
 the signature algorithm is pinned, the issuer and audience are checked, and ID tokens
 presented in place of access tokens are rejected.
 
@@ -140,6 +142,16 @@ trust receives a different value, limiting the effect of disclosure to one trust
 rotation is performed by issuing a new trust kit and restarting the trust-side services
 together so callers and receivers change atomically.
 
+Because the FL client legitimately holds this key — it reads the approved cohort and pulls
+imaging — the key alone cannot separate reading a project's cohort from *defining* it. The
+two ``data-access-api`` routes that record or delete the frozen cohort therefore carry a
+second gate on top of the shared key: proof of possessing the trust's payload-encryption key
+(``AES_KEY_BASE64``). ``trust-api`` sends that proof when it records an approved cohort and
+``data-access-api`` checks it; ``imaging-api`` also holds the key but never calls these routes,
+and the FL client does not hold it. The proof is a one-way digest of the key, not the key itself, so it never appears on the
+wire or in logs. A caller that presents a valid shared key but not this proof is refused. No
+additional secret is provisioned; the control reuses a possession boundary that already exists.
+
 **************************
 The clinical data boundary
 **************************
@@ -161,9 +173,17 @@ independent controls would each have to fail before anything unintended could ex
   reveal that a handful of patients matched — the threshold is the trust's own
   disclosure floor (default 10), set by each trust in its deployment kit: trusts need
   not agree on a shared value, and the hub cannot lower it;
-- cached results are scoped to the requesting project and expire in minutes, so no
-  project is served another's data and no result outlives a withdrawal of consent or a
-  correction to a record.
+- row-level data is released only for the **cohort frozen at project approval**: each
+  Trust records the approved query and the patient and study identifiers it returned (no
+  clinical values), and from then on serves only that query, restricted to those
+  identifiers, ignoring any SQL supplied at request time. No patient or imaging study
+  outside the approved cohort can therefore reach training, and training code cannot run
+  queries of its own. The freeze is of patients, not records: an approved patient's
+  records are read live, so one added after approval (a new measurement, visit or
+  condition) is served. The national data opt-out is per patient, so it acts on that
+  membership: a patient removed from the Trust's database — for instance after an
+  opt-out — drops out on the next fetch, and a cohort that falls below the disclosure
+  threshold stops being served.
 
 This is achieved **without restricting researchers to a fixed menu of queries** —
 arbitrary analytical SQL remains available. The constraint is on the shape and privilege
@@ -197,16 +217,17 @@ full reasoning, so it does not need re-deciding the next time this class of find
 submitted, the net's FL API downloads the bundled app server-side from presigned S3 URLs
 handed to it by the Central Hub API. The FL API authenticates no caller of its own — it
 trusts its position on the hub's internal network — so that download is guarded as a
-server-side request forgery surface: URLs must be https on the default port, may not name
-a private, loopback or link-local address as an IP literal in any spelling, and a DNS name
-is resolved with every answer held to the same check, failing closed if it cannot be
-resolved. Above those checks sits an explicit host allow-list, ``BUNDLE_URL_ALLOWED_HOSTS``,
-consulted before any name is resolved: every deployment derives it from its AWS region as
-the regional S3 endpoint the hub presigns against (``s3.<region>.amazonaws.com``), so the
-FL API will fetch from that one host and nothing else. The allow-list is the control that
-matters — the range check on resolved addresses cannot, on its own, close a DNS-rebinding
-race between the check and the fetch — and an FL API started without it logs a warning
-naming what that leaves open.
+server-side request forgery surface: URLs may never name a private, loopback or link-local
+address as an IP literal in any spelling, and an explicit origin allow-list,
+``BUNDLE_URL_ALLOWED_ORIGINS``, is consulted before any name is resolved: every deployment
+derives it from the object store the hub presigns against — on AWS the regional S3 endpoint
+(``https://s3.<region>.amazonaws.com``), in local development the RustFS container in the
+dev compose — so the FL API will fetch from that one origin and nothing else. Without a
+list the URL must be https on the default port and a DNS name is resolved with every answer
+held to the same range check, failing closed if it cannot be resolved. The allow-list is the
+control that matters — the range check on resolved addresses cannot, on its own, close a
+DNS-rebinding race between the check and the fetch — and an FL API started without it logs
+a warning naming what that leaves open.
 
 **FL traffic is mutually authenticated.** Both supported backends — NVIDIA FLARE and
 Flower — run over TLS with per-participant certificates issued during network

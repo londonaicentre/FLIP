@@ -208,7 +208,14 @@ def main() -> None:
         raise ValueError("The dataframe must contain an 'accession_id' column.")
 
     datalist = build_datalist(flip, dataframe, args.project_id)
-    loader = DataLoader(Dataset(datalist, transform=get_eval_transforms()), batch_size=1, shuffle=False)
+    num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+; persistent across rounds (FLIP#1434)
+    loader = DataLoader(
+        Dataset(datalist, transform=get_eval_transforms()),
+        batch_size=1,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
 
     flare.init()
     while flare.is_running():

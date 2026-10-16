@@ -12,7 +12,7 @@
 import monai.transforms as mt
 
 
-def get_train_transforms(spatial_shape: tuple | list):
+def get_train_transforms(spatial_shape: tuple | list) -> mt.Compose:
     return mt.Compose(
         [
             mt.LoadImaged(keys=["image"], image_only=True),
@@ -38,7 +38,7 @@ def get_train_transforms(spatial_shape: tuple | list):
     )
 
 
-def get_val_transforms(spatial_shape: tuple | list):
+def get_val_transforms(spatial_shape: tuple | list) -> mt.Compose:
     return mt.Compose(
         [
             mt.LoadImaged(keys=["image"], image_only=True),

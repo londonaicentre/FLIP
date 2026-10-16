@@ -258,7 +258,12 @@ def test_recorder_knows_the_digipath_tutorial() -> None:
 
 
 def load_data_utils():
-    """Import app_files/data_utils.py, stubbing the flip package the FL client provides at runtime."""
+    """Import app_files/data_utils.py, stubbing the flip package the FL client provides at runtime.
+
+    The stubs replace any real flip modules only while it imports, then sys.modules is restored, so
+    other tests in the session (which import the real flip package) never see the partial stub.
+    """
+    previous = {name: sys.modules.get(name) for name in ("flip", "flip.constants")}
     for name, attrs in (
         ("flip", {}),
         (
@@ -269,9 +274,10 @@ def load_data_utils():
             },
         ),
     ):
-        module = sys.modules.setdefault(name, type(sys)(name))
+        module = type(sys)(name)
         for attr, value in attrs.items():
             setattr(module, attr, value)
+        sys.modules[name] = module
 
     app_files = REPO_ROOT / "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation/app_files"
     spec = importlib.util.spec_from_file_location("idc_seeding_data_utils", app_files / "data_utils.py")
@@ -282,6 +288,11 @@ def load_data_utils():
         spec.loader.exec_module(module)
     finally:
         sys.path.remove(str(app_files))
+        for name, original in previous.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
     return module
 
 

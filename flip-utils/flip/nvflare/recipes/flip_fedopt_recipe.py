@@ -33,6 +33,7 @@ destroys the global model in one round, so it was not carried forward.
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 from nvflare.recipe.utils import ensure_config_type_dict
 
@@ -68,8 +69,8 @@ class FlipFedOptRecipe(FlipFedAvgRecipe):
         optimizer_args: dict | None = None,
         lr_scheduler_args: dict | None = None,
         device: str = "cpu",
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         if optimizer_args is not None and not any(k in optimizer_args for k in ("path", "class_path", "name")):
             raise ValueError(
                 "optimizer_args must be a component config with a 'path', e.g. "

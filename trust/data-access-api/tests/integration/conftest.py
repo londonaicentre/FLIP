@@ -24,6 +24,7 @@ that overrides the test value — pin the env var here unconditionally so the te
 process and the container always agree on the key the compose stack uses.
 """
 
+import hashlib
 import os
 
 # Pin the AES key BEFORE any data_access_api module loads its Settings singleton.
@@ -50,6 +51,11 @@ _DATA_ACCESS_INTERNAL_PORT = 8000
 TRUST_INTERNAL_KEY = "test-trust-internal-service-key"  # pragma: allowlist secret
 AUTH_HEADERS = {"X-Trust-Internal-Service-Key": TRUST_INTERNAL_KEY}
 
+# Cohort-admin proof for the snapshot WRITE routes (FLIP#857): SHA-256 of the AES key the
+# container runs with (pinned above / baked into compose.test.yml). The read routes never
+# need it. Merged per-request onto the write calls, on top of the client's AUTH_HEADERS.
+COHORT_ADMIN_HEADERS = {"X-Cohort-Admin-Key": hashlib.sha256(os.environ["AES_KEY_BASE64"].encode()).hexdigest()}
+
 
 @pytest.fixture(scope="session")
 def compose_stack() -> Generator[DockerCompose, None, None]:
@@ -58,6 +64,10 @@ def compose_stack() -> Generator[DockerCompose, None, None]:
         context=str(_COMPOSE_DIR),
         compose_file_name=_COMPOSE_FILE,
         wait=True,
+        # Rebuild the from-source service on every session: without it, `docker compose up`
+        # reuses a previously built image, so a dependency change (pyproject/uv.lock) never
+        # reaches the stack and the suite green-lights code that cannot run in a fresh build.
+        build=True,
     ) as compose:
         yield compose
 
