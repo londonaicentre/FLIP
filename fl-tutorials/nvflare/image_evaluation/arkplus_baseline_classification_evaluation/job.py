@@ -70,9 +70,14 @@ def stage_app_files(job: FedJob) -> None:
         job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).
     """
     for src in sorted(_APP_FILES_DIR.iterdir()):
-        if src.is_file():
-            job.add_file_to_server(str(src))
-            job.add_file_to_clients(str(src))
+        if not src.is_file():
+            continue
+        # meta.json is the job's declaration to FLIP (its GPUs, FLIP#70), placed at the job root by the hub;
+        # it is not app code, and the recipe writes the simulated job's own meta.json.
+        if src.name == "meta.json":
+            continue
+        job.add_file_to_server(str(src))
+        job.add_file_to_clients(str(src))
 
 
 def main() -> None:

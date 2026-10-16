@@ -36,7 +36,7 @@ class FLIPBase(ABC):
     production environments, as well as job-type-specific behavior.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._name = self.__class__.__name__
         self.logger = logging.getLogger(self._name)
         self.logger.setLevel(logging.INFO)

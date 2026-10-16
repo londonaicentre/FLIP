@@ -17,6 +17,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, validator
 
 from flip_api.db.models.main_models import UploadedFiles
+from flip_api.domain.interfaces.fl import IJobResources
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
 
@@ -187,6 +188,9 @@ class IModelResponse(BaseModel):
     # The trusts the run was dispatched to — the latest FL job's fl_job_trust
     # roster. Empty before dispatch, when the model has no job yet.
     trusts: list[ITrustSummary] = Field(default_factory=list)
+    # The GPU override the latest run was given at submission (FLIP#70); None when it had none, or
+    # before dispatch. The request the FL API actually applied is in the model's activity log.
+    resources: IJobResources | None = None
     # The model's 1-based place in the FL training queue (position 1 = next to
     # be picked up); None unless the model has a QUEUED job waiting for a net.
     queue_position: int | None = Field(default=None, alias="queuePosition")

@@ -240,16 +240,21 @@ spec:
               subPath: prearchive
             - name: plugins
               mountPath: /data/xnat/home/plugins
+          # XNAT is Tomcat's ROOT webapp, so the old /xnat/ path only reached the login redirect.
+          # Readiness: anonymous GET /xapi/siteConfig/buildInfo (as trust-api's health check), so Ready
+          # means XAPI is serving, not that first boot is done (FLIP#1384). Liveness: `/`, redirected to
+          # the login page, which cannot 401, so an XNAT that closes buildInfo goes NotReady instead of
+          # restart-looping. No credentials, ever: XNAT locks an account after about 20 failed logins.
           livenessProbe:
             httpGet:
-              path: /xnat/
+              path: /
               port: tomcat
             initialDelaySeconds: {{ .Values.xnat.web.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.xnat.web.probes.liveness.periodSeconds }}
             timeoutSeconds: {{ .Values.xnat.web.probes.liveness.timeoutSeconds }}
           readinessProbe:
             httpGet:
-              path: /xnat/
+              path: /xapi/siteConfig/buildInfo
               port: tomcat
             initialDelaySeconds: {{ .Values.xnat.web.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.xnat.web.probes.readiness.periodSeconds }}

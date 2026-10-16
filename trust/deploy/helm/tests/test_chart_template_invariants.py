@@ -206,6 +206,29 @@ def test_the_init_container_delegates_to_configure_xnat() -> None:
     )
 
 
+def test_the_init_job_delegates_dcm2niix_to_configure_dcm2niix() -> None:
+    """One configure-dcm2niix.sh for both shapes (FLIP#1451): the chart runs the xnat-web image's copy, not its own."""
+    text = XNAT_INIT_JOB.read_text()
+    start = text.index("        - name: configure-dcm2niix\n")
+    container = "\n".join(
+        line for line in text[start : text.index("{{- end }}", start)].splitlines() if not line.strip().startswith("#")
+    )
+
+    assert "cd /data/xnat/config" in container
+    assert "bash configure-dcm2niix.sh" in container
+    image = next(line for line in container.splitlines() if line.strip().startswith("image:"))
+    assert "$xnatWebImage" in image, f"not run from the xnat-web image: {image.strip()}"
+    assert re.search(r"\$xnatWebImage := printf .*\.Values\.xnat\.web\.image\.repository", text)
+    assert re.search(r'- name: XNAT_CS_BACKEND\n\s+value: "kubernetes"', container), "the backend switch is not set"
+    for variable in ("XNAT_URL", "XNAT_CS_PVC_NAME", "XNAT_ADMIN_USER"):
+        assert f"- name: {variable}\n" in container, f"configure-dcm2niix.sh reads {variable}, which the Job never sets"
+    assert re.search(r"- name: XNAT_ADMIN_PASSWORD\n\s+valueFrom:\n\s+secretKeyRef:", container), (
+        "the admin password must come from the chart Secret, never a literal or argv"
+    )
+    assert "/xapi/" not in container, "the container calls XNAT itself again instead of delegating"
+    assert "kind: ConfigMap" not in text, "the chart ships its own copies of trust/xnat/xnat/config/ again"
+
+
 def test_the_xnat_site_is_activated_before_the_plugin_route_gate() -> None:
     """Reversed, the gate can never see a 2xx and blames itself for the ordering."""
     script = CONFIGURE_XNAT.read_text()

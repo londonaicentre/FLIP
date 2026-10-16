@@ -48,10 +48,7 @@ opened.
      - 443
    * - FL client → FL server (via NLB)
      -
-     - configured ``FL_SERVER_PORT``
-   * - FL client per-run dependency install, Flower backend (HTTPS)
-     -
-     - 443 to PyPI (``pypi.org``, ``files.pythonhosted.org``) and ``download.pytorch.org``
+     - configured ``FL_EDGE_PORT`` (else ``FL_SERVER_PORT``)
    * - Operator access to trust host
      - none (SSM Session Manager)
      -

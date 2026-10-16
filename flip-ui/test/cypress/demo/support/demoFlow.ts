@@ -93,29 +93,58 @@ export function demoVisit(url: string): void {
     });
 }
 
-function decodeJwtPayload(win: Window, token: string): { sub: string; email?: string } {
-    const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = part + "=".repeat((4 - (part.length % 4)) % 4);
+type LiveAuthUser = NonNullable<Cypress.ApplicationWindow["__cypressGetAuthUser"]> extends
+    () => Promise<infer R> ? R : never;
 
-    return JSON.parse(win.atob(padded));
+const AUTH_POLL_INTERVAL_MS = 500;
+const AUTH_POLL_ATTEMPTS = 120; // 60 s, matching the previous token-cache wait
+
+// Ask the app's build-gated `__cypressGetAuthUser` hook (src/utils/auth.ts)
+// for the live session until the provider reports a token. Backend-neutral:
+// where Cognito or Keycloak cache their tokens is the provider's business.
+function waitForLiveAuthUser(
+    win: Cypress.AUTWindow,
+    attempt = 0
+): Cypress.Chainable<LiveAuthUser> {
+    const getAuthUser = win.__cypressGetAuthUser;
+    if (typeof getAuthUser !== "function") {
+        throw new Error(
+            "window.__cypressGetAuthUser is missing — the dev server must run with VITE_E2E=true for the demo recorder."
+        );
+    }
+
+    return cy.wrap(null, { log: false })
+        .then(() => getAuthUser())
+        .then((result: LiveAuthUser) => {
+            if (result.token !== null) {
+                return cy.wrap(result, { log: false });
+            }
+            if (attempt >= AUTH_POLL_ATTEMPTS) {
+                throw new Error("Timed out waiting for the identity provider to hand the app a session token.");
+            }
+            cy.wait(AUTH_POLL_INTERVAL_MS, { log: false });
+
+            return waitForLiveAuthUser(win, attempt + 1);
+        });
 }
 
-// Real Cognito sign-in through the login form. `scenic` paces the typing and
-// cursor for the on-camera opening; later segments log in fast to keep the
-// final cut tight. Password fields are masked, so typing the real dev
-// password on camera never exposes it.
+// Real identity-provider sign-in through the login form. `scenic` paces the
+// typing and cursor for the on-camera opening; later segments log in fast to
+// keep the final cut tight. Password fields are masked, so typing the real
+// dev password on camera never exposes it.
 //
 // The dev server runs with VITE_E2E=true, which activates two Cypress test
 // seams that shape what happens after the click:
 //   1. Amplify v6's signIn promise wedges under the Cypress proxy AFTER the
-//      SRP handshake has fully succeeded and the tokens are cached in
-//      localStorage — so instead of waiting for the app's own redirect, we
-//      poll for the cached tokens and load the app fresh.
+//      SRP handshake has fully succeeded and the tokens are cached — so
+//      instead of waiting for the app's own redirect, we poll the app's
+//      `__cypressGetAuthUser` hook until the provider hands out a token,
+//      then load the app fresh.
 //   2. The route guard's Cypress branch (src/utils/auth.ts) requires the
 //      `cypress.auth.user` contract — we satisfy it with the REAL identity:
-//      sub/email decoded from the real idToken, permissions fetched from the
-//      hub with the real access token. Every subsequent API call rides the
-//      genuine Cognito session via the axios interceptor.
+//      sub/email from the provider, permissions fetched from the hub with the
+//      real access token. Every subsequent API call rides the genuine session
+//      via the axios interceptor.
 Cypress.Commands.add("demoLogin", (email: string, passwordKey: string, options?: { scenic?: boolean; stealth?: boolean }) => {
     const scenic = options?.scenic ?? false;
     const stealth = options?.stealth ?? false;
@@ -168,39 +197,35 @@ Cypress.Commands.add("demoLogin", (email: string, passwordKey: string, options?:
         0
     );
 
-    // Real SRP against the real pool — wait for the token cache to land.
-    cy.window({ timeout: 60000 }).should((win) => {
-        const cached = Object.keys(win.localStorage).some((k) => k.endsWith(".accessToken"));
-        expect(cached, "Cognito tokens cached in localStorage").to.eq(true);
-    });
+    // Real sign-in against the real provider — wait for it to hand the app a
+    // token, then satisfy the route guard's contract with the real identity.
+    cy.window({ log: false }).then((win) => {
+        return waitForLiveAuthUser(win).then((live) => {
+            const identity = live.user;
+            if (!identity) {
+                throw new Error("The identity provider issued a token but no identity could be read from it.");
+            }
 
-    cy.window().then((win) => {
-        const keys = Object.keys(win.localStorage);
-        const idToken = win.localStorage.getItem(keys.find((k) => k.endsWith(".idToken")) as string) as string;
-        const accessToken = win.localStorage.getItem(
-            keys.find((k) => k.endsWith(".accessToken")) as string
-        ) as string;
-        const identity = decodeJwtPayload(win, idToken);
-
-        return cy
-            .request({
-                url: `${apiBase}/users/${identity.sub}/permissions`,
-                headers: { Authorization: `Bearer ${accessToken}` }
-            })
-            .then((resp) => {
-                win.localStorage.setItem(
-                    "cypress.auth.user",
-                    JSON.stringify({
-                        username: identity.sub,
-                        userId: identity.sub,
-                        attributes: {
-                            sub: identity.sub,
-                            email: identity.email ?? email
-                        },
-                        permissions: resp.body?.permissions ?? []
-                    })
-                );
-            });
+            return cy
+                .request({
+                    url: `${apiBase}/users/${identity.sub}/permissions`,
+                    headers: { Authorization: `Bearer ${live.token}` }
+                })
+                .then((resp) => {
+                    win.localStorage.setItem(
+                        "cypress.auth.user",
+                        JSON.stringify({
+                            username: identity.username || identity.sub,
+                            userId: identity.sub,
+                            attributes: {
+                                sub: identity.sub,
+                                email: identity.email || email
+                            },
+                            permissions: resp.body?.permissions ?? []
+                        })
+                    );
+                });
+        });
     });
 
     demoVisit("/projects");

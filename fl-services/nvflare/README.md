@@ -79,9 +79,8 @@ are two different things and conflating them was FLIP#1171.
   hosts stage kits as.
 - **Run time** — the dev composes pass `user: "${UID:-1000}:1000"`, so the process runs as
   the **host** user with the image's gid. The host uid is what has to match the bind mounts: the
-  provisioned kit is written by whoever ran `make provision`, and the AWS SSO token cache by whoever ran
-  `aws sso login`. A `0600` token cannot be reached by group membership at all, so only a uid match works —
-  `group_add` is not an alternative here. The gid stays the image's because `/app` and `/home/flip` are
+  provisioned kit is written by whoever ran `make provision` (no dev compose mounts `~/.aws` any more,
+  FLIP#1291). The gid stays the image's because `/app` and `/home/flip` are
   group-writable (see `fl-base/Dockerfile`), which is what keeps NVFLARE's job workspace and torch's cache
   writable for a foreign uid. Production sets no `user:` and runs as `flip` unchanged.
 

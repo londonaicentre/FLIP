@@ -190,7 +190,7 @@ class FlipFedAvgRecipe(FlipRecipe):
         aggregate_only_regex: str = "",
         best_model_metric: str | None = None,
         best_model_metric_minimize: bool = False,
-    ):
+    ) -> None:
         # IntimeModelSelector always skips round 0, so a single-round job could never fire it: the
         # job would run fine but silently never save a best model. Fail fast instead, mirroring
         # fl-api's validate_config guard on the platform path.

@@ -29,6 +29,7 @@ import argparse
 import os
 import re
 import sys
+from typing import Any
 
 # Map of env-var name -> (YAML path as dotted key, is_sensitive)
 ENV_VAR_MAP = {
@@ -122,7 +123,7 @@ CHART_KEY_SLOTS = (
 SECRET_VAR_MAP = dict(CHART_KEY_SLOTS)
 
 
-def deep_set(d, key_path, value):
+def deep_set(d: dict[str, Any], key_path: str, value: Any) -> None:
     """Set a nested dict value from a dotted key path like 'a.b.c'."""
     parts = key_path.split(".")
     for part in parts[:-1]:
@@ -130,9 +131,9 @@ def deep_set(d, key_path, value):
     d[parts[-1]] = value
 
 
-def parse_env_file(path):
+def parse_env_file(path: str) -> dict[str, str]:
     """Parse a simple KEY=VALUE env file, skipping comments and blanks."""
-    env = {}
+    env: dict[str, str] = {}
     if not os.path.isfile(path):
         print("WARNING: Env file not found: {}".format(path), file=sys.stderr)
         return env
@@ -148,7 +149,7 @@ def parse_env_file(path):
     return env
 
 
-def warn_renamed(env):
+def warn_renamed(env: dict[str, str]) -> None:
     """Name any env var that has been renamed away, so its loss is not silent."""
     for old, new in RENAMED_ENV_VARS.items():
         if not env.get(old):
@@ -164,10 +165,10 @@ def warn_renamed(env):
             )
 
 
-def build_values(env):
+def build_values(env: dict[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
     """Build (values_overrides, secrets_dict) from parsed env vars."""
     warn_renamed(env)
-    overrides = {}
+    overrides: dict[str, Any] = {}
     for env_var, (yaml_path, _) in ENV_VAR_MAP.items():
         if env_var not in env or not env[env_var]:
             continue
@@ -186,7 +187,7 @@ def build_values(env):
     if fl_client_pin(env):
         deep_set(overrides, "flClient.image.pin", fl_client_pin(env))
 
-    secrets = {}
+    secrets: dict[str, str] = {}
     for env_var, secret_key in SECRET_VAR_MAP.items():
         if env_var not in env or not env[env_var]:
             continue
@@ -194,7 +195,7 @@ def build_values(env):
     return overrides, secrets
 
 
-def yaml_quote(value):
+def yaml_quote(value: Any) -> str:
     """Return a YAML-safe quoted string for a scalar value."""
     # Python bool is a subclass of int; check type first.
     if isinstance(value, bool):
@@ -214,9 +215,9 @@ def yaml_quote(value):
     return s
 
 
-def yaml_dump(data, indent=0):
+def yaml_dump(data: Any, indent: int = 0) -> str:
     """Simple YAML serializer for dict/list/scalar structures (stdlib only)."""
-    lines = []
+    lines: list[str] = []
     prefix = "  " * indent
     if isinstance(data, dict):
         for key, val in data.items():
@@ -242,7 +243,7 @@ def yaml_dump(data, indent=0):
     return "\n".join(lines)
 
 
-def write_yaml(data, path, permissions=0o644):
+def write_yaml(data: Any, path: str, permissions: int = 0o644) -> None:
     """Write a YAML file using the stdlib serializer with given file permissions."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, permissions)
@@ -251,7 +252,7 @@ def write_yaml(data, path, permissions=0o644):
         f.write("\n")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Generate Helm values override file(s) from a .env file.")
     parser.add_argument(
         "--env-file",

@@ -118,6 +118,73 @@ this env, leaving the rest of each trust stack up); the fl-client log then shows
 `[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
 ("Site-enforced privacy policy").
 
+#### Trust governance policy (optional)
+
+The two controls above are the trust's runtime access policy, and both are single settings compiled
+into the services. A trust that wants to state them together — or to vary a rule by project — can
+write a governance document instead and point `ACCESS_POLICY_FILE` at it from the kit file. Start
+from [`governance.example.toml`](governance.example.toml), which is a worked example of every
+section.
+
+One file, three sections, each read by the service that enforces it:
+
+| Section | Read by | Replaces |
+|---|---|---|
+| `[disclosure]` | data-access-api | `COHORT_QUERY_THRESHOLD` (may raise it, never lower it) |
+| `[access]` | data-access-api | nothing — new: permit/deny rules over project + operation |
+| `[fl_privacy.nvflare]` | NVFLARE fl-client | `FL_SITE_PRIVACY_*` — an alternative to them, not an override: set the filter in one place, since both set stops the client |
+
+The document is **optional and additive**. Unset means the platform defaults apply and behaviour is
+exactly as before — the two variables above stay the only controls, so no existing trust has to
+change anything. Nothing here can weaken a trust's posture: `min_cohort_size` may only raise the
+threshold, and an action no rule mentions keeps its existing behaviour (which is what lets a trust
+adopt one rule without enumerating everything).
+
+Rules are decided the same way whatever their order: for an action the document mentions, any
+matching `deny` denies; otherwise the strictest matching `permit` permits; otherwise the request is
+denied. So a deny list needs a permit for everyone else (the example shows one). Mind what the
+actions gate: `cohort.dataframe` is the FL client's own training-data fetch, so denying it for a
+project stops that project's federated training at this trust; `cohort.accession_ids` decides whose
+imaging is pulled into XNAT, and only real accessions from `omop.image_occurrence` are ever returned.
+A `cohort.dataframe` deny does not by itself stop a caller holding the trust-internal key from
+learning about that project's subjects: it can still send predicate queries to
+`/cohort/accession-ids` and compare the accession sets that clear the floor. To close a project off
+entirely, deny `cohort.accession_ids` for it too.
+
+Validation is strict and fails closed. An unknown key, a misspelt action, a project id that is not a
+UUID, a rule with no `effect`, an empty file, or a threshold below the kit's floor stops the service
+at startup rather than being ignored — a silently-dropped access rule is worse than no rule, because
+the operator believes it is in force. `check-governance` runs both halves through the loaders the
+services themselves use (data-access-api's for `[disclosure]`/`[access]`, the fl-client's own
+site-policy module for `[fl_privacy.nvflare]`) on the host's own Python, installing nothing. It also
+fails a site privacy section on a Flower trust, where nothing enforces it yet (FLIP#852), and a
+filter set in both the document and `FL_SITE_PRIVACY_*`. Validate, then apply:
+
+```sh
+make -C trust check-governance KIT=<CODE>
+make -C trust reload-governance KIT=<CODE>
+```
+
+`reload-governance` is how an edit is applied: it recreates data-access-api and, on NVFLARE, the
+fl-clients (with the step that extracts their section), and touches no data. It then waits for
+data-access-api's `[governance] policy ACTIVE … sha256=…` startup line and checks the digest is the
+document's, so an image too old to read the document fails the reload instead of passing it. **Do
+not apply a policy change with `up-trust` or `restart-trust`**: both are first-install verbs, and on
+a live trust either can destroy data — `up-trust`'s XNAT step runs `xnat-reset`, wiping the XNAT
+archive and database, and its seeding step can replace the data volumes. Recreating the fl-clients
+does interrupt any job they are running, so apply between runs.
+
+The document is mounted read-only into data-access-api — a service can never rewrite its own policy —
+and is operator-owned: the hub cannot set, read, or override it. The fl-client never mounts it:
+researcher code runs there, so a one-shot `fl-governance-init` step writes only the
+`[fl_privacy]` section into the client's kit `local/` directory. On Kubernetes, `sync-kit` embeds the
+document from the kit's `ACCESS_POLICY_FILE` as the chart's `governance.document` (see
+[deploy/helm/README.md](deploy/helm/README.md)). A remotely driven trust (the EC2 path, over an ssh
+`DOCKER_CONTEXT`) cannot use a document: Compose would resolve the path on the workstation, so those
+targets refuse one. A denied request is answered with the same fixed refusal as a below-threshold
+cohort, so a caller cannot use it to probe the trust's configuration; the rule id that caused the
+denial goes to the trust's own log.
+
 ### 3. Start the trust against the hub
 
 ```sh
@@ -281,6 +348,13 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 If you are operating a trust on a host that does not have the hub's
 `.env.<env>` file (e.g. an on-prem deployment or a third-party trust), you
 need only your trust's kit file (`trust/.env.<CODE>.<env>`).
+
+The root `onboard-onprem-trust`, `up-onprem-trust` and `upgrade-onprem-trust`
+wrappers default to production. Their readiness checklist checks the same file
+as deployment: `trust/.env.<KIT>.<env>` when present, otherwise `trust/.env.<KIT>`.
+Its heading and fix hints name that selected path, so a suffixed kit needs no
+unsuffixed copy. Pass the same `PROD` value to the checklist and deployment when
+joining stag or an LZA environment.
 
 ### One-time setup
 

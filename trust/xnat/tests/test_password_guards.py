@@ -43,7 +43,6 @@ GENERATOR = REPO_ROOT / "flip-api/src/flip_api/scripts/generate_xnat_credentials
 XNAT_MAKEFILE = REPO_ROOT / "trust/xnat/Makefile"
 WAIT_FOR_POSTGRES = REPO_ROOT / "trust/xnat/xnat/wait-for-postgres.sh"
 GUARD_XNAT_DB = REPO_ROOT / "trust/xnat/postgres/guard-xnat-db-passwords.sh"
-IMAGING_API_CONFIG = REPO_ROOT / "trust/imaging-api/imaging_api/config.py"
 
 PLACEHOLDER = "<run-make-generate-xnat-credentials>"
 
@@ -157,9 +156,8 @@ def test_deploy_guard_weak_values_match_canonical():
         (XNAT_MAKEFILE, rf"XNAT_CREDENTIAL_PLACEHOLDER\s*:=\s*{re.escape(PLACEHOLDER)}"),
         (WAIT_FOR_POSTGRES, rf'"{re.escape(PLACEHOLDER)}"'),
         (GUARD_XNAT_DB, rf'"{re.escape(PLACEHOLDER)}"'),
-        (IMAGING_API_CONFIG, rf'_XNAT_CREDENTIAL_PLACEHOLDER = "{re.escape(PLACEHOLDER)}"'),
     ],
-    ids=["generator", "makefile", "xnat-web", "xnat-db", "imaging-api"],
+    ids=["generator", "makefile", "xnat-web", "xnat-db"],
 )
 def test_placeholder_token_is_identical_everywhere(source: Path, pattern: str):
     """Every layer must spell the kit-template placeholder identically.

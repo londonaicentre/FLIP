@@ -55,7 +55,7 @@ A full, runnable reference is available in-tree:
      - ``flip_local_dp_mod`` registered by the uploaded ``client_app.py``
      - ``PercentilePrivacy`` wired by the template (nothing to do)
    * - Local run
-     - ``make sim-tutorial`` (simulator) or the ``fl-services/flower`` compose stack
+     - ``make run-tutorial`` (simulator), as on NVFLARE
      - ``job.py`` recipe: ``make export`` / ``make sim``
 
 *****************
@@ -80,7 +80,7 @@ A FLARE app that FLIP can run is a folder of user files plus, for local runs onl
 
 .. note::
 
-   Unlike a hand-written NVFLARE job, you do **not** write ``config_fed_server.json``, ``config_fed_client.json`` or ``meta.json``. Those come from the platform's template for the job type (``fl-apps/nvflare/<job_type>/``), which is itself generated from ``flip.nvflare.recipes``; an uploaded copy lands in ``custom/`` and is never read as a config file. Researchers cannot change what happens on the server side — see the *Job types* section of :ref:`flip-fl-nets`.
+   Unlike a hand-written NVFLARE job, you do **not** write ``config_fed_server.json`` or ``config_fed_client.json``. Those come from the platform's template for the job type (``fl-apps/nvflare/<job_type>/``), which is itself generated from ``flip.nvflare.recipes``; an uploaded copy lands in ``custom/`` and is never read as a config file. Researchers cannot change what happens on the server side — see the *Job types* section of :ref:`flip-fl-nets`. ``meta.json`` is optional: upload one to declare the job's GPUs (``{"resource_spec": {"@default": {"num_of_gpus": 1}}}``), and FLIP keeps its ``resource_spec`` and ``custom_props`` and writes the rest — see *NVFLARE meta.json* in :ref:`flip-fl-nets`.
 
 .. note::
 
@@ -415,7 +415,8 @@ Once your app runs locally (see the next section), upload the contents of ``app_
 
 At submit time, the FLIP FL API:
 
-- Writes the model UUID into ``meta.json`` (``custom_props.model_id``) and the server config. FLIP's server components resolve it lazily from there, which is why nothing in your files carries a model ID.
+- Writes the model UUID into ``config.json`` (``FLIP_MODEL_ID``) and the server config. FLIP's server components resolve it lazily from there, which is why nothing in your files carries a model ID.
+- Writes ``meta.json``: your ``resource_spec`` (or the run's GPU override, or the platform default) and ``custom_props``, with the job's name and its Trusts taken from the run.
 - Writes ``project_id`` and ``query`` (the project's saved cohort query) as top-level keys of ``config_fed_client.json`` — the two values the trainer reads.
 - Sets ``min_clients`` to the participating-Trust count and ``num_rounds`` to ``config.json``'s ``GLOBAL_ROUNDS`` in the ``ScatterAndGather`` workflow, and applies ``AGGREGATOR`` / ``AGGREGATION_WEIGHTS`` / ``IGNORE_RESULT_ERROR``.
 - Injects the optional server- and client-side components that ``config.json`` asks for: the head-only filter chain for ``AGGREGATE_ONLY_REGEX`` and the model selector for ``BEST_MODEL_METRIC``.
@@ -543,4 +544,4 @@ Common pitfalls
 - **Expecting ``GLOBAL_ROUNDS`` to reach your code.** It is consumed by the platform; ``LOCAL_ROUNDS`` is the one your trainer reads. A ``GLOBAL_ROUNDS`` value outside 1–1000 is silently discarded and the run defaults to a **single** round — check it if training finishes suspiciously early.
 - **``BEST_MODEL_METRIC`` with one round.** Selection skips round 0, so the platform refuses the job at Initiate Training (after the files have uploaded cleanly); use ``GLOBAL_ROUNDS >= 2`` or drop the key.
 - **Missing ``ResourceType`` or labels.** If a Trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` raises — skip the accession. If *no* accession yields a usable sample, raise with a message pointing at the data-enrichment step rather than letting the DataLoader fail on ``num_samples=0``.
-- **Uploading NVFLARE config files.** ``config_fed_server.json``, ``config_fed_client.json``, ``meta.json`` and ``job.py`` are not read on the platform; the template's copies are used. Only the files under ``app_files/`` matter.
+- **Uploading NVFLARE config files.** ``config_fed_server.json``, ``config_fed_client.json`` and ``job.py`` are not read on the platform; the template's copies are used. Only the files under ``app_files/`` matter. ``meta.json`` is the exception: an uploaded one declares the job's resources, and one carrying anything beyond what *NVFLARE meta.json* in :ref:`flip-fl-nets` lists (a ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at Initiate Training.

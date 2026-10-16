@@ -73,13 +73,21 @@ resource "null_resource" "provision_efs_certs" {
         --tasks "$TASK_ARN" \
         --region ${var.AWS_REGION}
 
+      # The task's own container, by the name its task definition gives it: describe-tasks also
+      # lists the GuardDuty Runtime Monitoring sidecar, often first, so containers[0] can be the
+      # agent's exit code rather than the task's (FLIP#1447).
+      CONTAINER='${jsondecode(aws_ecs_task_definition.efs_provision[0].container_definitions)[0].name}'
       EXIT_CODE=$(aws ecs describe-tasks \
         --cluster ${aws_ecs_cluster.flip.name} \
         --tasks "$TASK_ARN" \
         --region ${var.AWS_REGION} \
-        --query 'tasks[0].containers[0].exitCode' \
-        --output text)
+        --query "tasks[0].containers[?name=='$CONTAINER'].exitCode | [0]" \
+        --output text) || { echo "Could not read the EFS provisioning task's exit code."; exit 1; }
 
+      if [ -z "$EXIT_CODE" ] || [ "$EXIT_CODE" = "None" ]; then
+        echo "EFS provisioning task $TASK_ARN reported no exit code for its $CONTAINER container: it never ran, or the task definition names another container."
+        exit 1
+      fi
       if [ "$EXIT_CODE" != "0" ]; then
         echo "EFS provisioning task failed with exit code $EXIT_CODE"
         exit 1

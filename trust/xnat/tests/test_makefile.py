@@ -16,6 +16,7 @@ counts when complete (FLIP#1204).
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -23,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests"))
 
-from make_dry_run import dry_run, kit_with, main, run_target  # noqa: E402
+from make_dry_run import KIT, dry_run, kit_with, main, run_target  # noqa: E402
 
 
 class UpgradeXnat(unittest.TestCase):
@@ -137,6 +138,39 @@ class XnatBackup(unittest.TestCase):
         code, out, _ = self._backup(NO_DB="1")
         assert code != 0, out
         assert "refusing to upgrade XNAT without a dump" in out, out
+
+
+class XnatImageRegistry(unittest.TestCase):
+    """The registry `docker stack deploy` substitutes into the XNAT images, from make's environment (FLIP#1480)."""
+
+    ECR = "111122223333.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/"
+    STACK = (Path(__file__).resolve().parents[1] / "docker-compose-stack.yml").read_text()
+
+    def _images(self, *extra: str, **env: str) -> list[str]:
+        result = run_target(
+            "__registry",
+            "-s",
+            "--eval=__registry: ; @echo registry=[$$DOCKER_REGISTRY]",
+            *extra,
+            subdir="trust/xnat",
+            kit=KIT + f"DOCKER_REGISTRY={self.ECR}\n",
+            env=env,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        match = re.search(r"^registry=\[(.*)\]$", result.stdout, re.MULTILINE)
+        assert match, result.stdout
+        images = re.findall(r"image: \$\{DOCKER_REGISTRY\}(\S+)", self.STACK)
+        assert images, "the stack no longer takes its registry from DOCKER_REGISTRY"
+        return [match.group(1) + image for image in images]
+
+    def test_a_deployed_trust_pulls_xnat_from_ghcr_whatever_the_kit_says(self):
+        """An older kit and the admin's exported hub env can both still name an LZA hub's ECR cache."""
+        for image in self._images(DOCKER_REGISTRY=self.ECR):
+            assert image.startswith("ghcr.io/londonaicentre/xnat-"), image
+
+    def test_development_with_an_empty_registry_runs_local_images(self):
+        for image in self._images("PROD=", PROD="", DOCKER_REGISTRY=""):
+            assert image.startswith("xnat-"), image
 
 
 if __name__ == "__main__":

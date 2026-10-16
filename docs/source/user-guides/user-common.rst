@@ -567,8 +567,13 @@ When model files have been uploaded, you will then need to confirm that the data
 
 1. Navigate to project page
 2. On the right-hand side, toggle the button to confirm the dataset has been enriched
-3. Click the 'Initiate Training' button to start the training cycle
-4. Once the training cycle has been initiated, the progress bar at the top of the page will update as the various stages of the training cycle complete i.e., a green tick will appear
+3. Optionally, switch on **GPUs per trust** to set how many GPUs this run needs at every selected
+   trust. Left off, the run uses the GPUs your job's ``meta.json`` declares, or the platform default
+   when it declares none. A trust that cannot provide the request holds the run until it can, and the
+   reason appears in the activity feed; the request is never lowered to fit. On a Flower deployment the
+   request is recorded but not enforced.
+4. Click the 'Initiate Training' button to start the training cycle
+5. Once the training cycle has been initiated, the progress bar at the top of the page will update as the various stages of the training cycle complete i.e., a green tick will appear
 
 On the right-hand side of the page a window will also pop up to provided detailed status updates i.e., with date and time stamps, against each activity. The status messages show the scheduling activities, including queuing, *net* assignment, training in progress and training complete.
 
@@ -640,7 +645,7 @@ Connection Status
 
 The Connection Status page shows the live state of the federation. Each participating Trust reports the health of its core platform services (trust-api, data-access-api, imaging-api, XNAT, OMOP and the PACS/DICOM link), and its state is derived from those reports: Offline when the Trust has stopped sending heartbeats, Degraded when any other service is down or degraded, otherwise Online. The list can also be viewed as a radial topology.
 
-The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
+The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state. The PACS/DICOM link is checked every five minutes, so a PACS outage can take that long to show.
 
 .. figure:: ../assets/flip/connection-status-drawer.png
    :width: 600

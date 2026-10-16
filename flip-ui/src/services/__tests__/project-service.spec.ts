@@ -18,6 +18,7 @@ import { approveProject,
     createProject,
     deleteProject,
     editProject,
+    getCohortSnapshots,
     getImagingProjectsStatus,
     getProject,
     getProjects,
@@ -194,6 +195,30 @@ describe("project-service", () => {
 
             expect(_http.get).toHaveBeenCalledWith("/project/p-1/imaging-status");
             expect(result).toEqual(statuses);
+        });
+    });
+
+    describe("getCohortSnapshots", () => {
+        it("returns the per-trust cohort snapshot list", async () => {
+            const snapshots = [
+                {
+                    trustId: "t-1",
+                    trustName: "Trust_1",
+                    status: "frozen",
+                    error: null,
+                    rowCount: 300,
+                    approvedRecordCount: 300,
+                    hasAccessions: true,
+                    snapshotAt: "2026-09-30T00:00:00+00:00",
+                    queryId: "q-1"
+                }
+            ];
+            vi.mocked(_http.get).mockResolvedValue({ data: snapshots } as never);
+
+            const result = await getCohortSnapshots("/projects/p-1/cohort-snapshots");
+
+            expect(_http.get).toHaveBeenCalledWith("/projects/p-1/cohort-snapshots");
+            expect(result).toEqual(snapshots);
         });
     });
 });

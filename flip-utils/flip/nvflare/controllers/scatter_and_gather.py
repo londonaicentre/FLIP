@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+from typing import Any
+
 from nvflare.apis.dxo import DataKind, from_shareable
 from nvflare.apis.fl_constant import FLContextKey, ReturnCode
 from nvflare.apis.fl_context import FLContext
@@ -61,7 +63,7 @@ class ScatterAndGather(NVFlareScatterAndGather):
         ``PersistToS3AndCleanup``) can persist results on an aborted run.
     """
 
-    def __init__(self, *args, model_id: str = "", **kwargs) -> None:
+    def __init__(self, *args: Any, model_id: str = "", **kwargs: Any) -> None:
         # ``*args`` is load-bearing, not dead: NVFLARE's FedJob/recipe serialisation
         # (``get_component_init_parameters``) only walks a thin subclass's base class to capture
         # stock's __init__ args (persistor_id, aggregator_id, num_rounds, …) when the subclass

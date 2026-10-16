@@ -19,12 +19,341 @@ import pytest
 from flip.nvflare.site_policy import (
     PERCENTILE_FILTER_PATH,
     SCOPE_NAME,
+    SitePolicy,
     SitePolicyError,
     build_policy_json,
     main,
     parse_env,
+    parse_governance_file,
     render,
+    resolve_policy,
 )
+
+
+def _write(tmp_path, text: str) -> str:
+    """Write a governance document and return its path as a string."""
+    path = tmp_path / "governance.toml"
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+class TestGovernanceDocument:
+    """The [fl_privacy.nvflare] section of the shared trust governance document (FLIP#1259).
+
+    Same strictness as the env-var path: the stock PercentilePrivacy filter fails OPEN on
+    out-of-range parameters, so anything unrecognised must stop the container instead of
+    leaving a weaker filter silently in force.
+    """
+
+    def test_section_is_parsed(self, tmp_path):
+        path = _write(
+            tmp_path,
+            """
+            [fl_privacy.nvflare]
+            policy = "percentile"
+            percentile = 25
+            gamma = 0.5
+            """,
+        )
+
+        assert parse_governance_file(path) == SitePolicy(percentile=25, gamma=0.5)
+
+    def test_parameters_default_when_omitted(self, tmp_path):
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\n')
+
+        assert parse_governance_file(path) == SitePolicy(percentile=10, gamma=0.01)
+
+    def test_absent_section_is_none(self, tmp_path):
+        """A trust may use the document for disclosure rules only."""
+        path = _write(tmp_path, "[disclosure]\nmin_cohort_size = 20\n")
+
+        assert parse_governance_file(path) is None
+
+    def test_an_empty_fl_privacy_table_is_none(self, tmp_path):
+        """What --extract writes for a document with no NVFLARE section."""
+        path = _write(tmp_path, "[fl_privacy]\n")
+
+        assert parse_governance_file(path) is None
+
+    def test_other_planes_sections_are_tolerated(self, tmp_path):
+        """[disclosure]/[access] belong to data-access-api and must not be rejected here."""
+        path = _write(
+            tmp_path,
+            """
+            [disclosure]
+            min_cohort_size = 20
+
+            [[access.rule]]
+            id = "r1"
+            action = "cohort.dataframe"
+            effect = "deny"
+
+            [fl_privacy.nvflare]
+            policy = "percentile"
+            """,
+        )
+
+        assert parse_governance_file(path) == SitePolicy(percentile=10, gamma=0.01)
+
+    def test_a_flat_fl_privacy_section_is_rejected_with_the_new_name(self, tmp_path):
+        """percentile/gamma are NVFLARE's PercentilePrivacy parameters; Flower's knobs (#852) will
+        differ. The pre-release flat form is refused, naming where the keys moved."""
+        path = _write(tmp_path, '[fl_privacy]\npolicy = "percentile"\n')
+
+        with pytest.raises(SitePolicyError, match=r"\[fl_privacy\.nvflare\]"):
+            parse_governance_file(path)
+
+    def test_a_flower_section_is_rejected_until_something_enforces_it(self, tmp_path):
+        path = _write(tmp_path, '[fl_privacy.flower]\npolicy = "percentile"\n')
+
+        with pytest.raises(SitePolicyError, match="nothing enforces it"):
+            parse_governance_file(path)
+
+    def test_an_unknown_backend_section_is_rejected(self, tmp_path):
+        path = _write(tmp_path, '[fl_privacy.nvflair]\npolicy = "percentile"\n')
+
+        with pytest.raises(SitePolicyError, match="unrecognised"):
+            parse_governance_file(path)
+
+    @pytest.mark.parametrize("text", ["", "  \n", "# all commented out\n"])
+    def test_a_document_that_configures_nothing_is_rejected(self, tmp_path, text):
+        """A truncated file must not read as a valid no-op, on either plane."""
+        with pytest.raises(SitePolicyError, match="configures nothing"):
+            parse_governance_file(_write(tmp_path, text))
+
+    def test_unknown_section_is_rejected(self, tmp_path):
+        path = _write(tmp_path, "[disclosre]\nmin_cohort_size = 20\n")
+
+        with pytest.raises(SitePolicyError, match="unrecognised section"):
+            parse_governance_file(path)
+
+    def test_unknown_fl_privacy_key_is_rejected(self, tmp_path):
+        """A typo'd parameter would leave the weaker default in force — reject it."""
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\npercentil = 25\n')
+
+        with pytest.raises(SitePolicyError, match="unrecognised key"):
+            parse_governance_file(path)
+
+    def test_parameters_without_policy_are_rejected(self, tmp_path):
+        path = _write(tmp_path, "[fl_privacy.nvflare]\npercentile = 25\n")
+
+        with pytest.raises(SitePolicyError, match="no 'policy'"):
+            parse_governance_file(path)
+
+    def test_unknown_policy_is_rejected(self, tmp_path):
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "laplace"\n')
+
+        with pytest.raises(SitePolicyError, match="not a known policy"):
+            parse_governance_file(path)
+
+    @pytest.mark.parametrize("gamma", [0, -1])
+    def test_fail_open_gamma_is_rejected(self, tmp_path, gamma):
+        """gamma <= 0 makes stock PercentilePrivacy forward the update unfiltered."""
+        path = _write(tmp_path, f'[fl_privacy.nvflare]\npolicy = "percentile"\ngamma = {gamma}\n')
+
+        with pytest.raises(SitePolicyError, match="out of bounds"):
+            parse_governance_file(path)
+
+    @pytest.mark.parametrize("percentile", [-1, 101])
+    def test_out_of_range_percentile_is_rejected(self, tmp_path, percentile):
+        path = _write(tmp_path, f'[fl_privacy.nvflare]\npolicy = "percentile"\npercentile = {percentile}\n')
+
+        with pytest.raises(SitePolicyError, match="out of bounds"):
+            parse_governance_file(path)
+
+    def test_malformed_toml_is_rejected(self, tmp_path):
+        path = _write(tmp_path, "[fl_privacy\npolicy = 'percentile'\n")
+
+        with pytest.raises(SitePolicyError, match="not valid TOML"):
+            parse_governance_file(path)
+
+    def test_unreadable_file_is_rejected(self, tmp_path):
+        """Configured-but-missing must fail closed, not fall back to the env vars."""
+        with pytest.raises(SitePolicyError, match="could not be read"):
+            parse_governance_file(str(tmp_path / "nope.toml"))
+
+    def test_shipped_example_parses(self):
+        """The worked example operators copy must actually load."""
+        from pathlib import Path
+
+        example = Path(__file__).resolve().parents[4] / "trust" / "governance.example.toml"
+        assert example.is_file(), f"expected the shipped example at {example}"
+
+        assert parse_governance_file(str(example)) == SitePolicy(percentile=10, gamma=0.01)
+
+
+class TestResolvePolicy:
+    """The governance document and FL_SITE_PRIVACY_* are alternatives, never both (FLIP#1259)."""
+
+    def test_env_only(self):
+        policy, source = resolve_policy({"FL_SITE_PRIVACY_POLICY": "percentile"})
+
+        assert policy == SitePolicy(percentile=10, gamma=0.01)
+        assert "env" in source
+
+    def test_document_only(self, tmp_path):
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\npercentile = 30\n')
+
+        policy, source = resolve_policy({"ACCESS_POLICY_FILE": path})
+
+        assert policy == SitePolicy(percentile=30, gamma=0.01)
+        assert "ACCESS_POLICY_FILE" in source
+
+    def test_both_sources_set_is_an_error(self, tmp_path):
+        """The document winning let it WEAKEN the kit's filter (percentile 90 in the kit, 10 in the
+        document, and only a stderr line to say so), while every doc said it could only tighten.
+        Two descriptions of one filter are refused rather than ranked."""
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\npercentile = 10\n')
+
+        with pytest.raises(SitePolicyError, match="both"):
+            resolve_policy(
+                {"ACCESS_POLICY_FILE": path, "FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "90"}
+            )
+
+    def test_document_without_fl_privacy_leaves_the_env_in_charge(self, tmp_path):
+        """A disclosure-only document leaves the env vars in charge of this filter."""
+        path = _write(tmp_path, "[disclosure]\nmin_cohort_size = 20\n")
+
+        policy, source = resolve_policy({"ACCESS_POLICY_FILE": path, "FL_SITE_PRIVACY_POLICY": "percentile"})
+
+        assert policy == SitePolicy(percentile=10, gamma=0.01)
+        assert "env" in source
+
+    def test_neither_source_configured(self):
+        assert resolve_policy({})[0] is None
+
+    def test_invalid_env_is_rejected_even_with_a_document(self, tmp_path):
+        """A broken env var must not hide behind a document."""
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\n')
+
+        with pytest.raises(SitePolicyError, match="unrecognised site privacy variable"):
+            resolve_policy({"ACCESS_POLICY_FILE": path, "FL_SITE_PRIVACY_PERCENTIL": "5"})
+
+    def test_render_uses_the_document(self, tmp_path):
+        """End to end: a document-configured policy reaches the rendered privacy.json."""
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\npercentile = 42\ngamma = 0.25\n')
+        out_path = tmp_path / "privacy.json"
+
+        assert render({"ACCESS_POLICY_FILE": path}, out_path)[0] == "written"
+
+        document = json.loads(out_path.read_text())
+        (filter_entry,) = document["scopes"][0]["task_result_filters"]
+        assert filter_entry["args"] == {"percentile": 42, "gamma": 0.25}
+
+
+class TestExtract:
+    """--extract: the one-shot init step that hands the fl-client only its own section.
+
+    The fl-client runs researcher code as the same user as the client, so a mounted document
+    is readable by training code — every [access] rule, other projects' ids included. The init
+    step reads the whole document and writes [fl_privacy] alone for the client to mount.
+    """
+
+    FULL = """
+        [disclosure]
+        min_cohort_size = 25
+
+        [[access.rule]]
+        id = "withdrawn"
+        action = "cohort.accession_ids"
+        effect = "deny"
+        projects = ["3f1c9a70-5e42-4d8b-9c31-7a2e6b4f8d15"]
+
+        [fl_privacy.nvflare]
+        policy = "percentile"
+        percentile = 30
+        """
+
+    def test_only_the_fl_privacy_section_is_written(self, tmp_path):
+        import tomllib
+
+        source = _write(tmp_path, self.FULL)
+        dest = tmp_path / "out" / "governance.toml"
+        dest.parent.mkdir()
+
+        assert main(["--extract", source, str(dest)], env={}) == 0
+
+        extracted = dest.read_text()
+        assert "access" not in tomllib.loads(extracted)
+        assert "3f1c9a70" not in extracted
+        assert "withdrawn" not in extracted
+        assert parse_governance_file(str(dest)) == SitePolicy(percentile=30, gamma=0.01)
+
+    def test_a_document_without_the_section_extracts_to_no_policy(self, tmp_path):
+        source = _write(tmp_path, "[disclosure]\nmin_cohort_size = 25\n")
+        dest = tmp_path / "governance.extracted.toml"
+
+        assert main(["--extract", source, str(dest)], env={}) == 0
+
+        assert parse_governance_file(str(dest)) is None
+        assert "disclosure" not in dest.read_text()
+
+    def test_an_invalid_document_extracts_nothing_and_fails(self, tmp_path, capsys):
+        """The init step fails closed, so the client that depends on it never starts."""
+        source = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\ngamma = 0\n')
+        dest = tmp_path / "governance.extracted.toml"
+
+        assert main(["--extract", source, str(dest)], env={}) == 1
+
+        assert not dest.exists()
+        assert "FATAL" in capsys.readouterr().err
+
+    def test_a_stale_extract_is_replaced(self, tmp_path):
+        source = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\npercentile = 55\n')
+        dest = tmp_path / "governance.extracted.toml"
+        dest.write_text("[fl_privacy.nvflare]\npolicy = 'percentile'\npercentile = 1\n")
+
+        assert main(["--extract", source, str(dest)], env={}) == 0
+
+        assert parse_governance_file(str(dest)) == SitePolicy(percentile=55, gamma=0.01)
+
+
+def _check_on(backend: str, tmp_path, **env: str) -> int:
+    return main(["--check", "--fl-backend", backend, str(tmp_path / "privacy.json")], env=env)
+
+
+class TestBackendCheck:
+    """--check --fl-backend: a privacy control only NVFLARE enforces must fail on any other backend.
+
+    Reporting "site privacy policy ACTIVE ... jobs cannot opt out" on a Flower trust, where no
+    client reads the section, is the silent-ignore this feature exists to remove.
+    """
+
+    def test_a_document_section_fails_on_flower(self, tmp_path, capsys):
+        path = _write(tmp_path, '[fl_privacy.nvflare]\npolicy = "percentile"\n')
+
+        rc = main(
+            ["--check", "--fl-backend", "flower", str(tmp_path / "privacy.json")], env={"ACCESS_POLICY_FILE": path}
+        )
+
+        assert rc == 1
+        assert "nothing on flower enforces it" in capsys.readouterr().err
+
+    def test_env_vars_fail_on_flower(self, tmp_path, capsys):
+        rc = main(
+            ["--check", "--fl-backend", "flower", str(tmp_path / "privacy.json")],
+            env={"FL_SITE_PRIVACY_POLICY": "percentile"},
+        )
+
+        assert rc == 1
+        assert "nothing on flower enforces it" in capsys.readouterr().err
+
+    def test_a_disclosure_only_document_passes_on_flower(self, tmp_path, capsys):
+        path = _write(tmp_path, "[disclosure]\nmin_cohort_size = 20\n")
+
+        rc = main(
+            ["--check", "--fl-backend", "flower", str(tmp_path / "privacy.json")], env={"ACCESS_POLICY_FILE": path}
+        )
+
+        assert rc == 0
+        assert "not applicable" in capsys.readouterr().out
+
+    def test_an_invalid_document_still_fails_on_flower(self, tmp_path):
+        path = _write(tmp_path, "[disclosre]\n")
+
+        assert (
+            main(["--check", "--fl-backend", "flower", str(tmp_path / "p.json")], env={"ACCESS_POLICY_FILE": path}) == 1
+        )
 
 
 class TestParseEnv:
@@ -146,7 +475,7 @@ class TestRender:
     def test_absent_when_no_policy(self, tmp_path):
         out_path = tmp_path / "privacy.json"
 
-        assert render({}, out_path) == "absent"
+        assert render({}, out_path)[0] == "absent"
         assert not out_path.exists()
 
     def test_removes_stale_file_when_unset(self, tmp_path):
@@ -155,14 +484,14 @@ class TestRender:
         sample = tmp_path / "privacy.json.sample"
         sample.write_text("sample untouched")
 
-        assert render({}, out_path) == "removed"
+        assert render({}, out_path)[0] == "removed"
         assert not out_path.exists()
         assert sample.read_text() == "sample untouched"
 
     def test_writes_policy_file(self, tmp_path):
         out_path = tmp_path / "privacy.json"
 
-        assert render({"FL_SITE_PRIVACY_POLICY": "percentile"}, out_path) == "written"
+        assert render({"FL_SITE_PRIVACY_POLICY": "percentile"}, out_path)[0] == "written"
         doc = json.loads(out_path.read_text())
         assert doc["default_scope"] == SCOPE_NAME
 
@@ -171,7 +500,8 @@ class TestRender:
         out_path.write_text('{"scopes": [], "default_scope": "old"}')
 
         assert (
-            render({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "20"}, out_path) == "written"
+            render({"FL_SITE_PRIVACY_POLICY": "percentile", "FL_SITE_PRIVACY_PERCENTILE": "20"}, out_path)[0]
+            == "written"
         )
         doc = json.loads(out_path.read_text())
         assert doc["scopes"][0]["task_result_filters"][0]["args"]["percentile"] == 20
@@ -179,14 +509,14 @@ class TestRender:
     def test_check_only_never_writes(self, tmp_path):
         out_path = tmp_path / "privacy.json"
 
-        assert render({"FL_SITE_PRIVACY_POLICY": "percentile"}, out_path, check_only=True) == "written"
+        assert render({"FL_SITE_PRIVACY_POLICY": "percentile"}, out_path, check_only=True)[0] == "written"
         assert not out_path.exists()
 
     def test_check_only_never_removes(self, tmp_path):
         out_path = tmp_path / "privacy.json"
         out_path.write_text("{}")
 
-        assert render({}, out_path, check_only=True) == "removed"
+        assert render({}, out_path, check_only=True)[0] == "removed"
         assert out_path.exists()
 
 

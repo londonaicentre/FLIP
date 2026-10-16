@@ -38,6 +38,7 @@ import einops
 import nibabel as nib
 import numpy as np
 import nvflare.client as flare
+import pandas as pd
 import torch
 from flip import FLIP
 from flip.constants import FlipMetaKey, ResourceType
@@ -193,7 +194,7 @@ class DiffusionTrainer:
     executor instances — each phase's optimizer state persists across that phase's global rounds.
     """
 
-    def __init__(self, config: dict, project_id: str, query: str):
+    def __init__(self, config: dict, project_id: str, query: str) -> None:
         self.config = config
         self.project_id = project_id
         working_dir = Path(__file__).parent.resolve()
@@ -205,6 +206,7 @@ class DiffusionTrainer:
             "epochs": config.get("LOCAL_ROUNDS_AE", 5),
         }
         self.params_diffusion = {"lr": config["LR_DM"], "epochs": config.get("LOCAL_ROUNDS_DM", 5)}
+        self.num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
 
         # Model creation
         self.model = get_model()
@@ -269,7 +271,7 @@ class DiffusionTrainer:
         self._train_dataset = Dataset(self.train_items, transform=get_train_transforms(config["spatial_shape"]))
         self._val_dataset = Dataset(self.val_items, transform=get_val_transforms(config["spatial_shape"]))
 
-    def get_image_list(self, dataframe) -> tuple[list, list]:
+    def get_image_list(self, dataframe: pd.DataFrame) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
         """Fetch each accession's converted NIfTI images and split into train/validation lists.
 
         Also detects axial anisotropy (thick-slice data) from the first readable image, which
@@ -321,7 +323,7 @@ class DiffusionTrainer:
         val_size = int(self.config["VAL_SPLIT"] * len(datalist))
         return datalist[val_size:], datalist[:val_size]
 
-    def reset_perceptual_to_anisotropic(self):
+    def reset_perceptual_to_anisotropic(self) -> None:
         """If we spot axial anisotropy, we reset the perceptual loss to 2D if it was 3D to have better results."""
         if self.axial_anisotropy and self.losses_ae["perceptual_loss"].spatial_dims == 3:
             # Unreachable while the loss above is built 2-D; kept for a 3-D configuration. Same
@@ -334,12 +336,14 @@ class DiffusionTrainer:
             logger.info("Resetting perceptual loss to 2D versions due to axial anisotropy.")
 
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
-        train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
+        train_loader = DataLoader(
+            self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
+        )
+        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
         return train_loader, val_loader
 
     def val_loader(self, batch_size: int) -> DataLoader:
-        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
+        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights, strict=False)

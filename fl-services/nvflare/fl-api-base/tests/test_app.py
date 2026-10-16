@@ -83,3 +83,14 @@ def test_startup_reports_empty_bundle_allow_list():
         TestClient(app),
     ):
         warn.assert_called_once_with()
+
+
+def test_startup_refuses_a_malformed_bundle_allow_list(monkeypatch):
+    """A BUNDLE_URL_ALLOWED_ORIGINS entry that is not a bare origin fails the boot, not the first fetch (#1291)."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
+    with (
+        patch("fl_api.app.create_fl_session", return_value=MagicMock()),
+        pytest.raises(ValueError, match="not a bare scheme://host"),
+        TestClient(app),
+    ):
+        pass

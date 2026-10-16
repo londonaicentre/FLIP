@@ -15,7 +15,7 @@
 These tests prove that, with the session-scoped ``aws_mock`` fixture active,
 a vanilla ``boto3.client(...)`` constructed without an explicit ``endpoint_url``
 reaches the moto fake. That's the wiring every B2 test downstream relies on:
-production code in ``utils/s3_client.py``, ``utils/cognito_helpers.py`` and
+production code in ``utils/s3_client.py``, ``auth/identity/cognito.py`` and
 the inline ``boto3.client("sesv2", ...)`` calls all build clients the same
 way, with no test-only branch.
 

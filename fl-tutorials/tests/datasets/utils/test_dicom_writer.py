@@ -95,6 +95,17 @@ def _affine() -> np.ndarray:
     return affine
 
 
+def _msd_affine() -> np.ndarray:
+    """Axial in RAS order (``i`` to the patient's right, ``j`` anterior), like MSD's spleen and brain volumes."""
+    affine = np.diag([0.9, 0.9, 1.6, 1.0])
+    affine[:3, 3] = [-230.0, -230.0, 0.0]
+    return affine
+
+
+# Coronal: i toward the right, j superior, k anterior.
+_CORONAL = np.array([[0.9, 0.0, 0.0, 0.0], [0.0, 0.0, 0.9, 0.0], [0.0, 1.6, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]])
+
+
 def _read_all(files: list[Path]) -> list[pydicom.Dataset]:
     return [pydicom.dcmread(str(path)) for path in files]
 
@@ -103,36 +114,61 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _ras_to_lps(point: np.ndarray) -> np.ndarray:
+def _lps_to_ras(point: np.ndarray) -> np.ndarray:
     return point * np.array([-1.0, -1.0, 1.0])
 
 
 class TestGeometry:
-    def test_one_instance_per_slice_with_rows_columns_and_pixels_transposed(self, tmp_path):
-        volume, affine = _volume(), _affine()
-        files = write_series(volume, affine, tmp_path, study=STUDY, series=MR_SERIES, uid_entropy=ENTROPY)
+    def test_one_instance_per_slice_with_rows_and_columns(self, tmp_path):
+        volume = _volume()
+        files = write_series(volume, _affine(), tmp_path, study=STUDY, series=MR_SERIES, uid_entropy=ENTROPY)
 
         assert len(files) == volume.shape[2]
         for k, ds in enumerate(_read_all(files)):
             assert (ds.Rows, ds.Columns) == (volume.shape[1], volume.shape[0])
             assert ds.InstanceNumber == k + 1
-            expected = np.clip(np.rint(volume[:, :, k].T), 0, 65535).astype(np.uint16)
-            np.testing.assert_array_equal(ds.pixel_array, expected)
 
-    def test_positions_and_orientation_reproduce_the_affine(self, tmp_path):
-        volume, affine = _volume(), _affine()
+    @pytest.mark.parametrize("affine", [_affine(), _msd_affine()], ids=["rotated", "msd"])
+    def test_every_pixel_holds_the_voxel_at_its_world_position(self, tmp_path, affine):
+        """The writer may reorder pixels for display (FLIP#1495); where each value sits in the patient may not move."""
+        volume = _volume()
+        before = affine.copy()
         files = write_series(volume, affine, tmp_path, study=STUDY, series=MR_SERIES, uid_entropy=ENTROPY)
+        np.testing.assert_array_equal(affine, before, err_msg="the converters reuse one affine across series")
+        encoded = np.clip(np.rint(volume), 0, 65535).astype(np.uint16)
+        to_voxel = np.linalg.inv(affine)
 
         for k, ds in enumerate(_read_all(files)):
             iop = np.array(ds.ImageOrientationPatient, dtype=float)
             ipp = np.array(ds.ImagePositionPatient, dtype=float)
             row_spacing, column_spacing = (float(v) for v in ds.PixelSpacing)
-            for i, j in ((0, 0), (7, 0), (0, 5), (3, 2)):
-                expected = _ras_to_lps((affine @ np.array([i, j, k, 1.0]))[:3])
-                actual = ipp + i * column_spacing * iop[:3] + j * row_spacing * iop[3:]
-                np.testing.assert_allclose(actual, expected, atol=1e-4)
-            assert float(ds.SliceThickness) == pytest.approx(2.5)
-            assert float(ds.SpacingBetweenSlices) == pytest.approx(2.5)
+            rows, columns = np.mgrid[0 : ds.Rows, 0 : ds.Columns]
+            lps = ipp + columns[..., None] * column_spacing * iop[:3] + rows[..., None] * row_spacing * iop[3:]
+            ras = np.c_[_lps_to_ras(lps.reshape(-1, 3)), np.ones(ds.Rows * ds.Columns)]
+            voxel = (ras @ to_voxel.T)[:, :3]
+            np.testing.assert_allclose(voxel, np.rint(voxel), atol=1e-4)
+            i, j, slice_k = np.rint(voxel).astype(int).T
+            assert set(slice_k) == {k}
+            np.testing.assert_array_equal(ds.pixel_array.reshape(-1), encoded[i, j, slice_k])
+            spacing = float(np.linalg.norm(affine[:3, 2]))
+            assert float(ds.SliceThickness) == pytest.approx(spacing)
+            assert float(ds.SpacingBetweenSlices) == pytest.approx(spacing)
+
+    @pytest.mark.parametrize(
+        ("affine", "expected"),
+        [
+            (_msd_affine(), [1, 0, 0, 0, 1, 0]),
+            (np.diag([-0.9, -0.9, 1.6, 1.0]), [1, 0, 0, 0, 1, 0]),
+            (_CORONAL, [1, 0, 0, 0, 0, -1]),
+            (_CORONAL @ np.diag([-1.0, -1.0, 1.0, 1.0]), [1, 0, 0, 0, 0, -1]),
+        ],
+        ids=["axial-stored-ras", "axial-already-in-display-order", "coronal", "coronal-already-in-display-order"],
+    )
+    def test_images_are_stored_in_display_orientation(self, tmp_path, affine, expected):
+        """Rows toward the patient's left, columns toward posterior (or the feet): what a 2-D viewer expects."""
+        files = write_series(_volume(), affine, tmp_path, study=STUDY, series=MR_SERIES, uid_entropy=ENTROPY)
+        for ds in _read_all(files):
+            np.testing.assert_allclose(np.array(ds.ImageOrientationPatient, dtype=float), expected, atol=1e-9)
 
     def test_slice_locations_increase_along_the_normal(self, tmp_path):
         files = write_series(_volume(), _affine(), tmp_path, study=STUDY, series=MR_SERIES, uid_entropy=ENTROPY)

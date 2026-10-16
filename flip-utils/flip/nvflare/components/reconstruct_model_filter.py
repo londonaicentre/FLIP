@@ -34,7 +34,7 @@ class ReconstructFullModel(DXOFilter):
     silently training on a partial model.
     """
 
-    def __init__(self, data_kinds: list[str] | None = None):
+    def __init__(self, data_kinds: list[str] | None = None) -> None:
         """
         Args:
             data_kinds: DXO kinds to filter; defaults to WEIGHTS and WEIGHT_DIFF.
@@ -107,7 +107,9 @@ class ReconstructFullModelForEval(ReconstructFullModel):
       keys absent from the retained model (a mismatch that would otherwise validate wrong weights).
     """
 
-    def __init__(self, data_kinds: list[str] | None = None, evaluate_task_name: str = AppConstants.TASK_VALIDATION):
+    def __init__(
+        self, data_kinds: list[str] | None = None, evaluate_task_name: str = AppConstants.TASK_VALIDATION
+    ) -> None:
         """
         Args:
             data_kinds: DXO kinds to filter; defaults to WEIGHTS and WEIGHT_DIFF.

@@ -20,9 +20,9 @@ and identity is a function of the subject id (``utils.dicom_writer``, ``utils.sy
 
 Same contract as before for the rest of the chain: reads ``data/Task09_Spleen/imagesTr`` and writes
 ``dicom_output/<subject>/*.dcm``, one CT series per subject, run from ``fl-tutorials/``
-(``make -C fl-tutorials convert-spleen-to-dicom``). The published spleen DICOM set was produced by the
-plastimatch version, so this output still differs from it — the verification gate never compared
-regenerated DICOMs, only OMOP tables built from the *published* metadata table.
+(``make -C fl-tutorials convert-spleen-to-dicom``). The DICOM set itself is not published (FLIP#1221):
+the published metadata table and OMOP tables are built from this output, and ``verify-spleen-dicom``
+checks the regenerated tree against them.
 """
 
 from __future__ import annotations

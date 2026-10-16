@@ -11,21 +11,27 @@
 #
 
 import os
+from pathlib import Path
 
 import pytest
 
 from imaging_api.services.image_cache import (
     SENTINEL_PREFIX,
+    CachedDownload,
+    clear_resource,
     invalidate_accession,
-    remove_sentinel,
+    read_sentinel,
     sentinel_path,
     write_sentinel,
 )
 
+RECORD = CachedDownload("XNAT_E00004", [["173680", "NIFTI", "82", "1", "183823"]])
+
 
 def _seed_sentinel(base, net_id, project, accession, assessor="scan", resource="NIFTI"):
     accession_dir = os.path.join(str(base), net_id, project, accession)
-    write_sentinel(accession_dir, assessor, resource)
+    os.makedirs(accession_dir, exist_ok=True)
+    write_sentinel(accession_dir, assessor, resource, RECORD)
     return os.path.join(accession_dir, f"{SENTINEL_PREFIX}{assessor}-{resource}")
 
 
@@ -60,21 +66,39 @@ class TestSentinelPath:
             sentinel_path(str(tmp_path), "../" * 20 + "etc", "passwd")
 
 
-# ── write_sentinel / remove_sentinel ──
+# ── write_sentinel ──
 
 
 class TestWriteRemoveSentinel:
-    def test_write_creates_directory_and_dotfile(self, tmp_path):
+    def test_write_creates_dotfile_in_extracted_directory(self, tmp_path):
         accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
-        write_sentinel(accession_dir, "scan", "NIFTI")
+        os.makedirs(accession_dir)
+        write_sentinel(accession_dir, "scan", "NIFTI", RECORD)
         assert os.path.isfile(os.path.join(accession_dir, f"{SENTINEL_PREFIX}scan-NIFTI"))
 
-    def test_remove_is_idempotent(self, tmp_path):
+    def test_write_refuses_a_missing_accession_directory(self, tmp_path):
+        """No extracted folder means the download produced nothing: never mark that complete."""
         accession_dir = str(tmp_path / "net1" / "proj" / "ACC1")
-        write_sentinel(accession_dir, "scan", "NIFTI")
-        remove_sentinel(accession_dir, "scan", "NIFTI")
-        remove_sentinel(accession_dir, "scan", "NIFTI")  # second removal must not raise
-        assert not os.path.exists(os.path.join(accession_dir, f"{SENTINEL_PREFIX}scan-NIFTI"))
+        with pytest.raises(FileNotFoundError, match="refusing to mark the download complete"):
+            write_sentinel(accession_dir, "scan", "NIFTI", RECORD)
+        assert not os.path.exists(accession_dir)
+
+    @pytest.mark.parametrize("record", [RECORD, CachedDownload("XNAT_E00004", None)])
+    def test_the_record_reads_back(self, tmp_path, record):
+        write_sentinel(str(tmp_path), "scan", "NIFTI", record)
+        assert read_sentinel(str(tmp_path), "scan", "NIFTI") == record
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "",  # what imaging-api wrote before the record
+            '{"version": 2, "experiment_id": "XNAT_E1"}',
+            '{"version": 1, "experiment_id": ".."}',  # the ID goes into an XNAT URL path
+        ],
+    )
+    def test_anything_but_a_record_reads_as_none(self, tmp_path, content):
+        (tmp_path / f"{SENTINEL_PREFIX}scan-NIFTI").write_text(content)
+        assert read_sentinel(str(tmp_path), "scan", "NIFTI") is None
 
 
 # ── invalidate_accession ──
@@ -134,3 +158,74 @@ class TestInvalidateAccession:
     def test_path_component_values_are_rejected(self, tmp_path, project, accession):
         with pytest.raises(ValueError, match="Path traversal detected in"):
             invalidate_accession(str(tmp_path), project, accession)
+
+
+# ── clear_resource ──
+
+
+def _seed_resource(accession_dir, resource, assessor="scan"):
+    image = Path(accession_dir, f"{assessor}s", "1-x", "resources", resource, "files", "image")
+    image.parent.mkdir(parents=True, exist_ok=True)
+    image.write_text("x")
+    write_sentinel(str(accession_dir), assessor, resource, RECORD)
+    return image
+
+
+class TestClearResource:
+    def test_one_resource_takes_only_its_files_and_the_sentinels_that_cover_them(self, tmp_path):
+        nifti, dicom = _seed_resource(tmp_path, "NIFTI"), _seed_resource(tmp_path, "DICOM")
+        _seed_resource(tmp_path, "ALL")
+
+        clear_resource(str(tmp_path), "scan", "NIFTI")
+
+        assert not nifti.parent.parent.exists()
+        assert [read_sentinel(str(tmp_path), "scan", r) is None for r in ("NIFTI", "ALL", "DICOM")] == [
+            True,
+            True,
+            False,
+        ]
+        assert dicom.is_file()
+
+    def test_all_takes_every_scan_resource_but_not_assessors(self, tmp_path):
+        _seed_resource(tmp_path, "NIFTI")
+        _seed_resource(tmp_path, "ALL")
+        seg = _seed_resource(tmp_path, "SEG", assessor="assessor")
+
+        clear_resource(str(tmp_path), "scan", "ALL")
+
+        assert not (tmp_path / "scans").exists()
+        assert [read_sentinel(str(tmp_path), "scan", r) for r in ("NIFTI", "ALL")] == [None, None]
+        assert seg.is_file()
+        assert read_sentinel(str(tmp_path), "assessor", "SEG") == RECORD
+
+    def test_nothing_cached_is_a_noop(self, tmp_path):
+        clear_resource(str(tmp_path), "scan", "ALL")
+        clear_resource(str(tmp_path), "scan", "NIFTI")
+
+    def test_a_resource_folder_resolving_outside_the_accession_is_left_alone(self, tmp_path):
+        accession, outside = tmp_path / "ACC", tmp_path / "outside"
+        (outside / "files").mkdir(parents=True)
+        (outside / "files" / "keep").write_text("x")
+        link = accession / "scans" / "1-x" / "resources" / "NIFTI"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(outside, target_is_directory=True)
+
+        clear_resource(str(accession), "scan", "NIFTI")
+
+        assert (outside / "files" / "keep").is_file()
+
+    def test_a_file_that_cannot_be_removed_raises_after_its_sentinel_is_gone(self, tmp_path):
+        """Sentinels go first, so a partial delete never leaves one over missing files."""
+        files = _seed_resource(tmp_path, "NIFTI").parent
+        files.chmod(0o500)
+        try:
+            with pytest.raises(PermissionError):
+                clear_resource(str(tmp_path), "scan", "NIFTI")
+        finally:
+            files.chmod(0o700)
+        assert read_sentinel(str(tmp_path), "scan", "NIFTI") is None
+
+    @pytest.mark.parametrize(("assessor", "resource"), [("../x", "ALL"), ("scan", "a/b")])
+    def test_path_component_values_are_rejected(self, tmp_path, assessor, resource):
+        with pytest.raises(ValueError, match="Path traversal detected in"):
+            clear_resource(str(tmp_path), assessor, resource)

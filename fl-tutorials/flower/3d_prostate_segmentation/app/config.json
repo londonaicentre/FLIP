@@ -1,0 +1,16 @@
+{
+  "job_type": "standard",
+  "MODALITY": "t2w",
+  "TRAIN": {
+    "seed": 42,
+    "deep_supervision": true,
+    "custom_patch": false,
+    "bf16": true,
+    "scheduler": "Polynomial",
+    "poly_power": 0.9,
+    "max_norm": 12,
+    "norm_type": 2,
+    "momentum": 0.99,
+    "weight_decay": 3e-5
+  }
+}

@@ -14,6 +14,7 @@
 
 import importlib
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -34,7 +35,7 @@ class TestDocsGating:
         monkeypatch.setattr(
             config,
             "_settings",
-            SimpleNamespace(ENV="production", TRUST_INTERNAL_SERVICE_KEY="x"),
+            SimpleNamespace(ENV="production", TRUST_INTERNAL_SERVICE_KEY="x", COHORT_QUERY_THRESHOLD=10),
         )
         try:
             # FastAPI bakes docs_url/openapi_url/redoc_url into the router at app
@@ -53,3 +54,46 @@ class TestDocsGating:
         finally:
             monkeypatch.undo()
             importlib.reload(main)
+
+
+def test_startup_logs_which_governance_policy_is_enforced(capsys):
+    """reload-governance waits for this line: it is how an operator learns the document they
+    edited reached the service (and that the image is new enough to read one)."""
+    import logging
+
+    records: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda record: records.append(record.getMessage())  # type: ignore[method-assign]
+    logger = logging.getLogger("data_access_api.utils.logger")
+    logger.addHandler(handler)
+    try:
+        importlib.reload(main)
+    finally:
+        logger.removeHandler(handler)
+
+    assert any(line.startswith("[governance] no policy configured") for line in records), records
+
+
+def test_the_governance_line_survives_a_quiet_log_level():
+    """A trust running at TRUST_LOG_LEVEL=WARNING must still print it, or reload-governance reports
+    an image that predates governance when the policy did apply."""
+    import logging
+
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger = logging.getLogger("data_access_api.utils.logger")
+    logger.addHandler(handler)
+    try:
+        importlib.reload(main)
+    finally:
+        logger.removeHandler(handler)
+
+    (line,) = [r for r in records if r.getMessage().startswith("[governance]")]
+    assert line.levelno >= logging.WARNING
+
+
+def test_startup_checks_the_snapshot_store():
+    """The lifespan hook runs the boot-time snapshot store check (create, sweep, probe)."""
+    with patch.object(main, "ensure_store") as mock_ensure_store, TestClient(main.app):
+        mock_ensure_store.assert_called_once_with()

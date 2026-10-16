@@ -82,6 +82,9 @@ services:
       # sex/age distribution assertions test the real per-bucket counts rather
       # than always rolling into the "Other" bucket.
       COHORT_QUERY_THRESHOLD: "5"
+      # Approved-cohort snapshot store (FLIP#857). /tmp is writable by the container
+      # user and ephemeral per run — each pytest session gets a clean store.
+      COHORT_SNAPSHOT_DIR: /tmp/snapshots
     ports:
       - "8000"
     volumes:

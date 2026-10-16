@@ -171,11 +171,12 @@ unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 build_compose = docker compose -f compose.yml
 GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
 OMOP_DB_TAG ?= latest
-# S3 bucket holding the vocab bundle zips under vocab/ (the AI Centre's dev
-# bucket by default; needs AWS credentials for that account). Contributors
-# without bucket access self-serve from OHDSI Athena — see README
-# "The core vocabulary bundle".
-VOCAB_S3_BUCKET ?= flipdev-aicentre
+# S3 bucket holding the vocab bundle zips under vocab/. No default: the bundle
+# is licensed and lives only in a deploy environment's own aicentre bucket, read
+# with that environment's AWS credentials (FLIP#1371 retired the dev-account
+# copy). Contributors without bucket access self-serve from OHDSI Athena — see
+# README "The core vocabulary bundle".
+VOCAB_S3_BUCKET ?=
 
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be
@@ -248,6 +249,11 @@ fetch-vocab-core:
 	@if [ -d "data/$(VOCAB_CORE_BUNDLE)" ]; then \
 		echo "data/$(VOCAB_CORE_BUNDLE) already present — skipping."; \
 	else \
+		if [ -z "$(VOCAB_S3_BUCKET)" ]; then \
+			echo "❌ VOCAB_S3_BUCKET is not set — name the bucket holding vocab/$(VOCAB_CORE_BUNDLE).zip."; \
+			echo "   Without bucket access, self-serve the bundle from OHDSI Athena — see README."; \
+			exit 1; \
+		fi; \
 		if ! command -v aws > /dev/null 2>&1 || ! aws sts get-caller-identity > /dev/null 2>&1; then \
 			echo "❌ AWS CLI access unavailable (needed for s3://$(VOCAB_S3_BUCKET)/vocab/)."; \
 			echo "   Without bucket access, self-serve the bundle from OHDSI Athena — see README."; \

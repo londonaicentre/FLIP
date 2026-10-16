@@ -22,6 +22,7 @@ differs from segmentation in two ways that matter to app authors:
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from classifier_operator import FlipXrayClassifierOperator
 from monai.deploy.conditions import CountCondition
@@ -39,11 +40,11 @@ from monai.deploy.operators.dicom_text_sr_writer_operator import (
 class FlipXrayClassificationApp(Application):
     """Loads a radiograph study, classifies it, and writes the result as a DICOM SR instance."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._logger = logging.getLogger(f"{__name__}.{type(self).__name__}")
         super().__init__(*args, **kwargs)
 
-    def compose(self):
+    def compose(self) -> None:
         app_context: AppContext = Application.init_app_context(self.argv)
         app_input_path = Path(app_context.input_path)
         app_output_path = Path(app_context.output_path)

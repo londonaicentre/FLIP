@@ -1,0 +1,28 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The third-party XNAT artifacts every FLIP XNAT is built from: the WAR and the plugin roster for
+# the XNAT_VERSION pinned in trust/xnat/.env. FLIP does not redistribute them, so each line names
+# the public upstream download and the SHA-256 the file must have. scripts/xnat_artifacts.sh reads
+# this file for the dev plugin cache (`make -C trust prepare-artifacts`), the local image build and
+# the CI image build (.github/workflows/docker_build_xnat_web.yml). The Helm chart downloads the
+# same plugin URLs (trust/deploy/helm/values.yaml xnat.web.plugins.urls); trust/xnat/tests pins
+# the two rosters together and the WAR line to XNAT_VERSION.
+#
+# Bumping a version: replace the URL and the checksum (`sha256sum <file>` on the new download),
+# then the matching Helm URL. Check the plugin compatibility matrices linked from values.yaml.
+#
+# <kind>  <sha256>  <url>
+war     1fc24f5d8f74f62b767d5f64f2fcae81f48d4843d67f399f73f7702e3269cf04  https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war
+plugin  3783f9f5e19db5d7a7c45c5e0314fe79ecf45ef4742baac27eec4dfa43533c6e  https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar
+plugin  0b7d1ab47f48a8e07b9ef672a2d7215a70ca62d68765774c99928083d9a43c35  https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar
+plugin  c20fdf00960d0804f6d69841de05bc9ae872718fbb81b04bd3af43a4b22a3a53  https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar
+plugin  c8fa0b6f2f479dc1311dd7a3de6c5728b6bfb79dcc46a2f7e7e3929103f19f08  https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar

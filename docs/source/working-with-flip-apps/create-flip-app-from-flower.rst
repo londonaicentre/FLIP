@@ -58,11 +58,11 @@ If you are starting from scratch, ``fl-apps/flower/standard/`` provides the plat
 
 .. note::
 
-   ``config.json`` carries only ``job_type`` for a Flower app (``{"job_type": "standard"}``). The hub reads that key and nothing else from it, to pick which base template to bundle. Run configuration goes in ``config.toml``, not here — unlike NVFLARE, where ``config.json`` carries the training settings.
+   ``config.json`` carries only ``job_type`` for a Flower app (``{"job_type": "standard"}``). The hub reads that key and nothing else from it, to pick which base template to bundle. Run configuration goes in ``config.toml``, not here — unlike NVFLARE, where ``config.json`` carries the training settings. An NVFLARE job's ``meta.json`` ``resource_spec`` has no Flower counterpart: Flower's deployment runtime does not schedule jobs by GPU, so a GPU request set when initiating training is recorded in the model's activity feed but not enforced, and a SuperNode runs the job with whatever GPUs its host gives it.
 
 .. note::
 
-   The ``flip-utils`` package (imported as ``flip``) is baked into every FLIP FL node image at ``/opt/flip-utils``, and the base template's ``pyproject.toml`` pins it to that path. Do **not** declare ``flip-utils`` as a dependency in your own ``pyproject.toml``: Flower runtime-installs an app's declared dependencies into a per-run environment that it prepends to ``sys.path``, so a declared ``flip-utils`` resolves from PyPI — where the published release lags the in-repo package and has no ``flip/flower/strategy.py``, so ``from flip.flower.strategy import FlipFedAvg`` breaks outright — and shadows the image's copy (FLIP#767). Left undeclared, ``import flip`` falls through to the image's copy, which is what the platform runs; pick up ``flip-utils`` changes with ``make build-fl FL_BACKEND=flower``. See the *Wiring it up* section below for how dependencies resolve on-platform.
+   The ``flip-utils`` package (imported as ``flip``) ships installed in every FLIP FL node image, and on the platform your app imports that copy. Do **not** declare ``flip-utils`` as a dependency in your own ``pyproject.toml``: a local ``flwr run`` still installs an app's declared dependencies into a per-run environment that it prepends to ``sys.path``, so a declared ``flip-utils`` resolves from PyPI — whose release can lag the ``flip-utils`` you are developing against — and shadows the copy the run should use (FLIP#767). Left undeclared, ``import flip`` resolves to the environment running the app: the FL image's copy on the platform, and whatever environment runs your local ``flwr run`` otherwise (your checkout's ``flip-utils`` under ``make sim-tutorial``). A ``flip-utils`` change reaches the platform with a new FL image release. See the *Wiring it up* section below for how dependencies resolve on-platform.
 
 *******************************************
 ServerApp: reporting model lifecycle status
@@ -408,7 +408,7 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
    version = "1.0.0"
    dependencies = [
        # flip-utils is deliberately NOT declared — see the note under "Starting point"
-       "flwr[simulation]>=1.36.0",
+       "flwr[simulation]>=1.38.0",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]
 
@@ -444,19 +444,16 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
 
    **How dependencies resolve on-platform.** When you upload the app to FLIP, the platform bundles your
    files into its own base template (``fl-apps/flower/<job_type>/``), whose ``pyproject.toml``
-   governs the run — uploaded files cannot override it. At run time, Flower's runtime dependency
-   installer resolves that template's dependencies fresh for every run (``uv sync`` into an isolated
-   per-run environment) on the SuperLink (``ServerApp``) and on each SuperNode (``ClientApp``), with two
-   pins set by the template's ``[tool.uv.sources]``:
+   governs the run — uploaded files cannot override it. Nothing is installed at run time: the
+   ``ServerApp`` on the SuperLink and the ``ClientApp`` at each trust run in the FL image's own
+   environment, which carries every package the base template's app code imports, so no FL host
+   needs a package index during a run. ``torch``/``torchvision`` in that environment are PyTorch's CUDA 13.0 builds
+   (Torch 2.13 / torchvision 0.28), so GPU hosts require NVIDIA driver 580 or newer; upgrade older
+   drivers before deploying these images.
 
-   - ``flip-utils`` installs from the source copy shipped inside the FL images at ``/opt/flip-utils`` —
-     never from PyPI — so the platform always runs the ``flip-utils`` matching its images.
-   - ``torch``/``torchvision`` come from PyTorch's cu130 wheel index (Torch 2.13 / torchvision 0.28).
-     GPU hosts require NVIDIA driver 580 or newer; upgrade older drivers before deploying these images.
-
-   Everything else resolves from PyPI at run time, so trust and hub hosts need outbound HTTPS to PyPI
-   and ``download.pytorch.org``. If your app needs a dependency the base template does not declare,
-   ask the platform operators to add it to the template.
+   If your app needs a package the FL images do not carry, ask the platform operators to add it to
+   the images and rebuild them. Declaring it in a ``pyproject.toml`` — yours or the template's —
+   installs nothing on the platform.
 
 ``config.toml`` — run configuration on the platform
 ====================================================
@@ -495,24 +492,18 @@ At submit time, the FLIP FL API:
 Local testing before upload
 ************************************
 
-Two local paths are supported, and the app code is identical on both because site identity comes from the Flower ``Context`` rather than the environment (see the ``client_identity`` note above). ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, named by ``DEV_DATAFRAME`` and ``DEV_IMAGES_DIR``; both paths point them at the tutorial's dataset under ``fl-tutorials/data/``.
+Two local paths run an app — the flwr simulator and the Flower containers by hand — and the app code is identical on both because site identity comes from the Flower ``Context`` rather than the environment (see the ``client_identity`` note above). ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, named by ``DEV_DATAFRAME`` and ``DEV_IMAGES_DIR``; both paths point them at the tutorial's dataset under ``fl-tutorials/data/``.
 
-**Fast inner loop: the flwr simulator.** ``make sim-tutorial`` runs ``flwr run`` against a local SuperLink flwr starts itself — no SuperLink container, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
+**Fast inner loop: the flwr simulator.** ``make run-tutorial`` (or its alias ``make sim-tutorial``, the same as on NVFLARE) runs ``flwr run`` against a local SuperLink flwr starts itself — no SuperLink container, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
 
 .. code-block:: bash
 
    make -C fl-tutorials download-spleen-data FL_BACKEND=flower   # reference dataset into fl-tutorials/data/
-   make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
+   make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
 
 The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variables per tutorial, derives the simulator's site count from ``flip-min-clients`` and passes it as ``num-partitions``, and supplies the one run-config value the platform's submit step would otherwise inject — ``flip-job-dir``, pointed at the downloaded checkpoint — so the ``evaluation`` tutorial runs unchanged too. Its exit status is the run's terminal status as the SuperLink reports it (``flwr run`` alone returns 0 whatever became of the run), and it refuses to start against a local SuperLink another checkout left listening on the Control API port, which would otherwise execute the app in that checkout's environment (naming the pid and command line where ``ss`` can see them). Under the simulator every ``ClientApp`` sees the same shared cohort, so the tutorials call ``partition_cohort`` (also in ``flip.flower.identity``) to take their own disjoint slice; on the platform that is a no-op, because each trust's data-access-api already serves only its own rows.
 
-**Full-fidelity check: the compose stack.** ``fl-services/flower`` runs a SuperLink, two SuperNodes and an FL API in containers, with the dev data bind-mounted, and exercises what the simulator cannot: TLS, the FL API submit path and SuperNode registration. Run it once before uploading:
-
-.. code-block:: bash
-
-   make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower
-
-The harness brings the stack up, submits the app to the FL API exactly as the platform does, waits for the run and tears the stack down. To iterate by hand instead:
+**Full-fidelity checks: the e2e smoke, or the Flower containers by hand.** What the simulator cannot exercise — the FL images, the FL API submit path and SuperNode registration — is covered by the end-to-end smoke test against the running dev stack, as for NVFLARE: ``make e2e_smoke FL_BACKEND=flower`` (the X-ray app), ``make -C flip-api e2e_smoke_spleen FL_BACKEND=flower``, ``e2e_smoke_spleen_evaluation`` and ``e2e_smoke_prostate`` likewise, and ``make e2e_smoke_ehr FL_BACKEND=flower`` (see ``flip-api/AGENTS.md``). To run the Flower containers on their own by hand (SuperLink, two SuperNodes and an FL API, with the dev data bind-mounted; a tutorial submit there uses the tutorial's ``pyproject.toml`` values, not ``app/config.toml``):
 
 .. code-block:: bash
 
@@ -523,7 +514,7 @@ The harness brings the stack up, submits the app to the FL API exactly as the pl
 
 .. note::
 
-   Prefer ``make sim-tutorial`` to a bare ``flwr run .``: the wrapper sets the data variables, the partition count and the checkpoint run-config that a bare run needs by hand, and ``flwr run`` executes the ``ClientApp`` from a snapshot under ``~/.flwr/apps/``, so paths set after launch are not seen. ``fl-tutorials/flower/3d_spleen_segmentation/README.md`` covers the remaining caveats.
+   Prefer ``make run-tutorial`` to a bare ``flwr run .``: the wrapper sets the data variables, the partition count and the checkpoint run-config that a bare run needs by hand, and ``flwr run`` executes the ``ClientApp`` from a snapshot under ``~/.flwr/apps/``, so paths set after launch are not seen. ``fl-tutorials/flower/3d_spleen_segmentation/README.md`` covers the remaining caveats.
 
 See the tutorial README for the full local-run instructions, including the data-enrichment (label upload) step needed before the segmentation tutorials can train on a real FLIP project.
 
@@ -536,6 +527,6 @@ Common pitfalls
 - **Wrong or missing ``site``.** ``SUPERNODE_NAME`` must be the trust's **FL kit slot** (``Trust_1``, ``Trust_2``, ...), not the trust display name — metrics forwarded with any other value land under ``unknown_client`` and will not appear on the per-site chart; a reply with no ``site`` is dropped. Resolve the name with ``client_identity(context)``; reading ``SUPERNODE_NAME`` directly records ``unknown_client`` under the simulator, where the variable is absent.
 - **No DP mod.** A ``client_app.py`` without ``@app.train(mods=[flip_local_dp_mod])`` shares raw model updates. The platform does not enforce it.
 - **Run configuration in the wrong file.** ``config.json`` carries only ``job_type`` on Flower; rounds, epochs and hyperparameters for a platform run go in ``config.toml``. An app uploaded without one runs three rounds of one epoch, whatever your own ``pyproject.toml`` says.
-- **Declaring ``flip-utils`` as a dependency.** It resolves from PyPI and shadows the image's copy (FLIP#767). Leave it undeclared; the template pins it to ``/opt/flip-utils`` on-platform.
+- **Declaring ``flip-utils`` as a dependency.** In a local ``flwr run`` it resolves from PyPI and shadows the ``flip-utils`` the run should use (FLIP#767). Leave it undeclared; on the platform the app imports the FL image's copy whatever your ``pyproject.toml`` declares.
 - **Undeclared run-config keys.** ``flwr run`` (and therefore FLIP's FL API) can only override keys already declared in ``[tool.flwr.app.config]``. Declaring ``flip-model-id``, ``flip-project-id``, ``flip-cohort-query``, ``flip-job-dir`` and ``flip-min-clients`` with placeholder values is mandatory even though the real values are injected by FLIP. This matters in two places: your own ``pyproject.toml``, so a local run works; and — for the on-platform run — the base template's ``pyproject.toml`` under ``fl-apps/flower/<job_type>/``, which is the config FLIP's overrides and your ``config.toml`` are validated against, since an uploaded ``pyproject.toml`` does not become the app's project file.
 - **Missing ``ResourceType``.** If a trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` will raise. Always wrap the call in ``try / except`` and skip the accession on failure so a single bad study does not abort the whole round.

@@ -55,8 +55,8 @@ async def download_images_by_accession_number(
         net_id (str): The ID of the FL net that will run the training.
         request_data (DownloadImagesRequestData): Contains encrypted central hub project ID and accession ID.
         assessor_type (str): The type of assessor to use for the download. Default is "scan". Can be "assessor".
-        resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
-        allowed if researcher has added their own custom XNAT resource type into scans.
+        resource_type (ResourceType): XNAT resource type, one of DICOM, NIFTI, SEG or ALL. ALL will download all
+            resources.
         force_refresh (bool): Re-download even when a completed local copy is cached; the cache
         marker is rewritten after the re-download succeeds. Default False.
         headers (XNATAuthHeaders): XNAT authentication headers.
