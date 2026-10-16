@@ -163,12 +163,17 @@ demo_video:
 # silently dropped enrichment and died at the zero-pairs guard minutes later.
 # TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
+# A development stack (PROD unset) smokes the vocabulary-free copy of the cohort query: its trusts
+# carry only the DICOM vocabulary unless the licensed core vocabulary was loaded by hand, and
+# query.sql looks every concept up in omop.concept. Where the vocabulary is loaded the two return
+# the same rows. A deployed hub (PROD set) smokes query.sql.
+XRAY_QUERY_NAME := $(if $(strip $(PROD)),query.sql,query_novocab.sql)
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
-QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/query.sql
+QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/$(XRAY_QUERY_NAME)
 else
 MODEL_FILES_DIR ?= ../fl-tutorials/nvflare/image_classification/xray_classification/app_files
-QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
+QUERY_FILE ?= $(MODEL_FILES_DIR)/../$(XRAY_QUERY_NAME)
 endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."

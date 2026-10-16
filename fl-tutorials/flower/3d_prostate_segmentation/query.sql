@@ -14,15 +14,11 @@
 -- cohort can be narrowed on them (e.g. add `AND c.cspca = 'Yes'` or `AND c.isup_grade_group >= 2`).
 -- The segmentation labels themselves are not in OMOP: they arrive through XNAT data enrichment
 -- (fl-tutorials/datasets/prostate/upload_prostate_labels_to_xnat.py).
--- Concept names are resolved through omop.concept when the trust has loaded the licensed core
--- vocabulary, and fall back to the fixed names below when it has not (the AWS-free local stack
--- seeds only the DICOM vocabulary). The ids are OHDSI integers, not vocabulary content; the
--- fallbacks are the names the vocabulary gives them, so the dataframe is the same either way.
 WITH clinical AS (
     SELECT
         o.visit_occurrence_id,
         MAX(CASE WHEN o.observation_concept_id = 602257 THEN o.value_as_number END) AS isup_grade_group,
-        MAX(CASE WHEN o.observation_concept_id = 4163261 THEN COALESCE(yes_no.concept_name, CASE o.value_as_concept_id WHEN 4188539 THEN 'Yes' WHEN 4188540 THEN 'No' END) END) AS cspca,
+        MAX(CASE WHEN o.observation_concept_id = 4163261 THEN yes_no.concept_name END) AS cspca,
         MAX(CASE WHEN o.observation_concept_id = 2128008964 THEN o.value_as_number END) AS max_pirads
     FROM omop.observation o
     LEFT JOIN omop.concept yes_no ON yes_no.concept_id = o.value_as_concept_id
@@ -32,14 +28,14 @@ SELECT
     io.accession_id,
     io.image_series_uid,
     io.image_occurrence_date AS "Image date",
-    COALESCE(modality.concept_name, 'Magnetic resonance imaging') AS "Modality",
-    COALESCE(site.concept_name, 'Prostatic structure') AS "Anatomy",
+    modality.concept_name AS "Modality",
+    site.concept_name AS "Anatomy",
     c.isup_grade_group AS "ISUP grade group",
     c.cspca AS "Clinically significant cancer",
     c.max_pirads AS "PI-RADS"
 FROM omop.image_occurrence io
-LEFT JOIN omop.concept modality ON modality.concept_id = io.modality_concept_id
-LEFT JOIN omop.concept site ON site.concept_id = io.anatomic_site_concept_id
+JOIN omop.concept modality ON modality.concept_id = io.modality_concept_id
+JOIN omop.concept site ON site.concept_id = io.anatomic_site_concept_id
 LEFT JOIN clinical c ON c.visit_occurrence_id = io.visit_occurrence_id
 WHERE io.anatomic_site_concept_id = 4165732 -- Prostatic structure
   AND io.modality_concept_id = 4013636      -- Magnetic resonance imaging

@@ -45,10 +45,11 @@ studies) comes anonymously from the public Hugging Face dataset
 AWS is used for one optional step: the **OMOP core vocabulary** (Step 7). It is
 licensed (SNOMED CT, LOINC, ...), so it is never published, and
 ``make -C trust/omop-db load-omop-vocab`` fetches the AI Centre's copy from the
-``vocab/`` prefix of a FLIP deployment's S3 bucket. The shipped tutorials and
-the end-to-end smoke test run without it: their cohort queries fall back to
-fixed names for the handful of concepts the mock data uses. You need it only
-for your own queries that look concepts up by name.
+``vocab/`` prefix of a FLIP deployment's S3 bucket. The x-ray tutorial and
+the end-to-end smoke test run without it, through ``query_novocab.sql``, a
+copy of the tutorial's cohort query with the names of the handful of concepts
+the mock data uses written in. You need the vocabulary for the tutorials'
+own ``query.sql`` and for any query of yours that looks concepts up by name.
 
 .. note::
 
@@ -375,14 +376,21 @@ The smoke test talks to ``http://localhost:8080/api``. If you changed
 ``API_PORT``, point it at your port instead:
 ``FLIP_E2E_BASE_URL=http://127.0.0.1:<API_PORT>/api make e2e_smoke``.
 
+On a development stack the smoke test submits the x-ray tutorial's
+``query_novocab.sql``, which needs no vocabulary. Pass
+``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query.sql``
+to smoke the vocabulary-backed query instead, once Step 7 is done.
+
 To run the same job by hand, sign in to the UI and follow
 :doc:`../user-guides`, using the cohort query and app files of
 ``fl-tutorials/nvflare/image_classification/xray_classification/``
-(``query.sql`` and ``app_files/``). Each Trust should report about 300
-subjects. The Trusts hold only the chest X-ray project the seed loads, so a
-query for other data (``flip-api/tests/example_query.sql`` looks for spleen CT,
-for example) comes back empty, and so does any query that filters on concept
-names until you load the vocabulary (Step 7). An empty cohort and one below the
+(``query_novocab.sql`` and ``app_files/``). Each Trust should report about 300
+subjects. Use ``query.sql`` instead once you have loaded the vocabulary
+(Step 7); it returns the same cohort. The Trusts hold only the chest X-ray
+project the seed loads, so a query for other data
+(``flip-api/tests/example_query.sql`` looks for spleen CT, for example) comes
+back empty, and so does any query that filters on concept names until you load
+the vocabulary. An empty cohort and one below the
 Trust's privacy threshold are reported the same way, as suppressed.
 
 **************
