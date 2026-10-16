@@ -29,6 +29,12 @@ class _Common(BaseSettings):
 
     LOCAL_DEV: bool = True  # Defaults to dev mode
 
+    # MLflow dual-write (FLIP#745): tracking server URI for the best-effort
+    # MlflowSink (flip/core/mlflow_sink.py). Empty (the default) disables the
+    # integration entirely. Shared rather than server-only so the dev/simulator
+    # path (FLIPStandardDev) can mirror tutorial metrics to a local server too.
+    MLFLOW_TRACKING_URI: str = ""
+
 
 class DevSettings(_Common):
     """Development environment configuration.
@@ -128,6 +134,7 @@ class _FlipConstantsProxy:
 
     # _Common
     LOCAL_DEV: bool
+    MLFLOW_TRACKING_URI: str
     # DevSettings
     DEV_DATAFRAME: str
     DEV_IMAGES_DIR: str

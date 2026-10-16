@@ -396,6 +396,7 @@ OWNER_GUARDED_TARGETS = {
     "debug-all",
     "debug-off-all",
     "up-pgadmin",
+    "mlflow",
     "reset-keycloak",
     "register-trust",
 }
