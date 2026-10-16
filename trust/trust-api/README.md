@@ -28,7 +28,7 @@ The trust-api acts as the local orchestrator at each Trust:
 
 1. **Cohort queries** — polls for and executes OMOP SQL queries from the Central Hub, delegates to [data-access-api](../data-access-api/), and returns aggregated statistics
 2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) in response to approved FL studies
-3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` (imaging-api + data-access-api `/health`, XNAT via its anonymous `buildInfo` endpoint, the PACS connector transitively via imaging-api's `ping_pacs` DIMSE echo, the OMOP database via a raw TCP connect) and attaches the snapshot to the heartbeat; the hub surfaces it on the Connection Status page's per-container drawer
+3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` (imaging-api + data-access-api `/health`, XNAT via its anonymous `buildInfo` endpoint, the PACS connector transitively via imaging-api's `ping_pacs` DIMSE echo, the OMOP database via a raw TCP connect) and attaches the snapshot to the heartbeat; the hub surfaces it on the Connection Status page's per-container drawer. Each PACS echo opens an association to the hospital PACS, so it runs at most every five minutes, the cycles in between report its last result, and a PACS outage can show up to five minutes late
 4. **Audit** — logs all operations locally for governance purposes
 
 The trust-api polls the [flip-api](../../flip-api/) (Central Hub) for tasks. It does not accept inbound requests from the hub or expose an external user interface.

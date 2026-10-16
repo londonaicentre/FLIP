@@ -13,9 +13,29 @@
 import time
 from enum import Enum, IntEnum, StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from fl_api.utils.logger import logger
+
+# Sanity cap on a job's GPU count, for fast feedback on a typo. It is not a capacity check:
+# whether a site can provide the request is decided by NVFLARE's scheduler and the site's
+# GPUResourceManager, never here (FLIP#70).
+MAX_GPUS_PER_SITE = 8
+
+
+class JobResources(BaseModel):
+    """The GPUs a job needs at each participating site (FLIP#70).
+
+    The hub contract's backend-neutral shape, used for the researcher's override at submission and for
+    the fl-api default. The NVFLARE adapter writes the count into ``meta.json`` ``resource_spec`` as the
+    portable ``@default`` ``num_of_gpus``. The same count applies to every selected site. It is never
+    lowered to fit a site: a site that cannot provide it holds the job in NVFLARE's scheduler, which
+    says why.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_gpus: StrictInt = Field(ge=0, le=MAX_GPUS_PER_SITE)
 
 
 class UploadAppRequest(BaseModel):
@@ -27,6 +47,9 @@ class UploadAppRequest(BaseModel):
     cohort_query: str
     trusts: list[str]
     bundle_urls: list[str]
+    # Set when the researcher overrode the job's GPU count at submission (FLIP#70). None leaves the
+    # job's meta.json resource_spec, or the fl-api default, in force.
+    resources: JobResources | None = None
 
 
 class ServerInfoModel(BaseModel):

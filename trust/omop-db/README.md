@@ -195,10 +195,11 @@ to run the one-time `make load-omop-vocab` seeding of any stack — see
 starts cleanly but returns nothing from cohort queries that join
 `omop.concept`):
 
-1. **FLIP developers (org AWS access)** — `make fetch-vocab-core`: downloads
-   `s3://flipdev-aicentre/vocab/vocab_aicentre_core_20240916.zip` (override
-   the bucket with `VOCAB_S3_BUCKET=`) and unpacks it into `data/` — the same
-   source and technique the private repo used. Each deploy environment reads
+1. **FLIP developers (org AWS access)** — `make fetch-vocab-core VOCAB_S3_BUCKET=<bucket>`:
+   downloads `s3://<bucket>/vocab/vocab_aicentre_core_20240916.zip` and unpacks
+   it into `data/`. There is no default bucket: the AI Centre's copy lives in the
+   deploy environments' own aicentre buckets (the dev-account copy was retired
+   with that account, FLIP#1371), so name one your AWS profile can read. Each deploy environment reads
    from its **own** bucket (`AICENTRE_BUCKET_NAME`; no cross-account access) —
    when staging the zip in an env bucket, upload it with `--sse AES256`: the
    trust EC2 role has no `kms:Decrypt` on the buckets' default KMS keys.

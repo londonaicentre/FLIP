@@ -15,8 +15,15 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import { makeMockAuthProvider, NO_CAPABILITIES } from "@/auth/__tests__/mock-provider";
+import { SignInStep } from "@/auth/provider";
 import MfaVerify from "@/pages/auth/mfa-verify.vue";
 import { useAuthStore } from "@/store/auth";
+
+// The page reads the store's `capabilities` getter, which comes from the
+// provider behind the `@/auth` seam.
+const authProvider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
 
 // Route/router mocks — the page calls routeChange.* and we need to assert
 // on which navigation target it picked.
@@ -41,7 +48,7 @@ vi.mock("@/utils/snackbar", () => ({
     }
 }));
 
-const TOTP_CHALLENGE_STEP = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
+const TOTP_CHALLENGE_STEP = SignInStep.TOTP_CODE;
 
 interface AuthStoreState {
     signInStep: string | null;
@@ -93,10 +100,24 @@ describe("mfa-verify page", () => {
         mockViewProjects.mockReset();
         mockSnackbarShow.mockReset();
         mockSnackbarError.mockReset();
+        authProvider.current = makeMockAuthProvider();
     });
 
     describe("onMounted guard", () => {
-        test("stays on the page when signInStep is CONFIRM_SIGN_IN_WITH_TOTP_CODE", async () => {
+        test("bounces to /auth/login with a notice when the backend has no in-app TOTP challenge", async () => {
+            authProvider.current = makeMockAuthProvider({
+                backend: "keycloak",
+                capabilities: NO_CAPABILITIES
+            });
+
+            mountMfaVerify({ signInStep: TOTP_CHALLENGE_STEP });
+            await flushPromises();
+
+            expect(mockGotoLogin).toHaveBeenCalledTimes(1);
+            expect(mockSnackbarShow).toHaveBeenCalledWith(expect.objectContaining({ title: "Not available" }));
+        });
+
+        test("stays on the page when signInStep is TOTP_CODE", async () => {
             const wrapper = mountMfaVerify({ signInStep: TOTP_CHALLENGE_STEP });
             await flushPromises();
 

@@ -141,7 +141,7 @@ ifneq ($(strip $(TAG)),)
 	VALUES_OPTS := $(VALUES_OPTS) --set global.image.tag=$(TAG)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s upgrade-trust-k8s dry-run update-deps sync-kit sync-kit-override patch-kit-secrets xnat-init stage-kit preflight template-egress-variants smoke-cstore
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -160,6 +160,7 @@ update-deps: ## Update Helm chart dependencies
 
 preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
 	@PROD="$(PROD)" \
+	 KIT_ENV="$(ENV)" \
 	 KIT="$(KIT)" \
 	 NAMESPACE="$(NAMESPACE)" \
 	 RELEASE_NAME="$(RELEASE_NAME)" \
@@ -203,6 +204,18 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	  docker exec "$$node" sh -c 'chmod -R go-rwx "$(KIT_DEST)" && chown -R $(KIT_UID):$(KIT_UID) "$(KIT_DEST)"' && \
 	  echo "✅ Kit staged. Deploy with --set flClient.kitHostPath=$(KIT_DEST)"
 
+# Deliberately NO --force-conflicts here. Helm 4 applies the release server-side, and
+# `patch-kit-secrets` writes the kit's per-trust keys into the same Secret with field
+# manager `kubectl-patch`, so an upgrade that would CHANGE one of those keys is refused
+# with `Apply failed with N conflicts: conflict with "kubectl-patch"` and the release
+# stays on its last working revision. That refusal is a safety property, not a defect:
+# forcing it would overwrite the trust's live API key with whatever values-secrets.yaml
+# happens to hold — a stale value, or none at all (templates/secrets.yaml omits an empty
+# slot) — and the trust would poll the hub with a dead credential after a routine
+# redeploy. The conflict is removed at the source instead: sync-kit / patch-kit-secrets
+# realign values-secrets.yaml with what they patch, so helm's apply is a no-op on those
+# fields (sync_k8s_kit.align_values_secrets). Helm 3 never applies server-side and is
+# unaffected either way, so no version switch is needed.
 deploy: preflight ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
@@ -219,8 +232,13 @@ up: deploy ## Deploy the trust K8s release (alias for deploy)
 down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 	@true
 
-deploy-trust-k8s: ## Deploy trust services to K8s; KIT= selects the per-trust override file and re-patches secrets
+# With KIT=, the override is regenerated from the kit first (sync-kit-override): it is
+# generated, never edited, and redeploying the file an earlier sync-kit left behind would
+# ship a stale governance document (FLIP#1259) — and a document edit would never reach the
+# pods. upgrade-trust-k8s already regenerates it the same way.
+deploy-trust-k8s: ## Deploy trust services to K8s; KIT= regenerates the per-trust override from the kit and re-patches secrets
 ifdef KIT
+	$(MAKE) sync-kit-override KIT=$(KIT)
 	@rc=0; \
 	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
 	if [ $$rc -ne 0 ]; then \
@@ -235,13 +253,26 @@ endif
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
 	@true
 
-smoke-cstore: ## Send a real C-STORE through the PACS and read XNAT's receiver log (FLIP#1228)
+smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received it (FLIP#1228)
 	## `make status` compares the pod's plugin jars against the values; this drives the
 	## path those jars are on. Both are needed: a roster can match while the importer is
 	## broken for some other reason, and a C-ECHO can pass while every store aborts.
 	## Requires a seeded Orthanc (it stores an instance the PACS already holds).
+	## Exit 2 from the script is INCONCLUSIVE — the only evidence was a prearchive object's
+	## arrival time while received.log exists and gained no line. Not a pass, and not enough
+	## to fail a deploy on, so it is surfaced as a loud warning and this target still exits 0.
+	## 1 (a real failure) and 0 (a pass) are passed straight through.
 	@NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBE_CONTEXT=$(KUBE_CONTEXT) \
-		$(CHART_DIR)/scripts/smoke-cstore.sh
+		$(CHART_DIR)/scripts/smoke-cstore.sh; \
+	status=$$?; \
+	if [ $$status -eq 2 ]; then \
+		printf '\033[0;33m%s\033[0m\n' \
+			"⚠️  C-STORE smoke INCONCLUSIVE (exit 2) — the receiver showed only an arrival-time match" \
+			"⚠️  while received.log exists and gained no line. This is NOT a verified DICOM path:" \
+			"⚠️  re-run with the PACS idle, and see TROUBLESHOOTING.md §2.7 before trusting it." >&2; \
+		exit 0; \
+	fi; \
+	exit $$status
 
 # Move a deployed Kubernetes trust to a release, data intact (FLIP#1204). A plain
 # `helm upgrade` with the pin set: PVCs survive it, the init hooks short-circuit on
@@ -332,6 +363,10 @@ clean: ## Clean up rendered output
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
 # `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env auto-detected from $(PROD).
 xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
+	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
+	@# wait return at once, without running the configuration again.
+	@$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT)
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
@@ -349,6 +384,18 @@ xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is
 	(echo "❌  XNAT init failed — check logs:"; \
 	 $(KUBECTL) logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
 	 exit 1)
+
+sync-kit-override: ## Regenerate the k8s-trust-<KIT>.yaml override from the kit (validates its governance document) without touching the cluster Secret
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit-override KIT=Trust_K8s PROD=stag"; exit 1)
+	@python3 $(CHART_DIR)/sync_k8s_kit.py \
+		--kit $(KIT) \
+		--env $(ENV) \
+		--namespace $(NAMESPACE) \
+		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
+		--output-dir $(CHART_DIR) \
+		$(KUBE_CONTEXT_ARG) \
+		--no-apply-secret
 
 patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s PROD=stag"; exit 1)

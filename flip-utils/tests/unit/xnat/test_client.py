@@ -19,7 +19,7 @@ import requests
 
 from flip.exceptions import XnatError
 from flip.xnat.client import XnatClient, XnatScan
-from tests.unit.xnat.helpers import FakeResponse, FakeSession, make_client
+from tests.unit.xnat.helpers import FakeResponse, FakeSession, make_client, scan_listing
 
 
 class TestFromEnv:
@@ -129,6 +129,26 @@ class TestResolveProjectByFlipProjectId:
             client.resolve_project_by_flip_project_id("any")
 
 
+def _record_gets(client: XnatClient) -> list[tuple[str, dict[str, str]]]:
+    """Record the URL and query parameters of every GET the client sends, on top of its fake session.
+
+    Args:
+        client (XnatClient): A client wired to a :class:`FakeSession`.
+
+    Returns:
+        list[tuple[str, dict[str, str]]]: Filled in as the client sends GETs.
+    """
+    sent: list[tuple[str, dict[str, str]]] = []
+    fake_get = client._session.get
+
+    def get(url: str, params: dict[str, str] | None = None, timeout: int | None = None) -> FakeResponse:
+        sent.append((url, dict(params or {})))
+        return fake_get(url, params=params, timeout=timeout)
+
+    client._session.get = get  # type: ignore[method-assign]
+    return sent
+
+
 class TestListScans:
     """Scans are flattened across experiments and keyed by the accession (experiment label)."""
 
@@ -143,10 +163,60 @@ class TestListScans:
             XnatScan(accession_id="FAK002", subject_id="SUBJ_2", experiment_id="EXP_2", scan_id="1"),
         ]
 
+    def test_lists_every_scan_in_one_global_request(self):
+        """One GET, to the global listing: the project-scoped one silently drops DX sessions."""
+        client = make_client({"/data/experiments": scan_listing([("EXP_1", "FAK001", "SUBJ_1", "1")])})
+        sent = _record_gets(client)
+
+        client.list_scans("PROJ")
+
+        assert sent == [
+            (
+                "http://xnat.example/data/experiments",
+                {
+                    "format": "json",
+                    "project": "PROJ",
+                    "xsiType": "xnat:imageSessionData",
+                    "columns": "ID,label,subject_ID,xnat:imagescandata/id",
+                },
+            )
+        ]
+
+    def test_lists_every_scan_of_multi_scan_sessions(self):
+        rows = [
+            ("EXP_2", "FAK002", "SUBJ_2", "3"),
+            ("EXP_2", "FAK002", "SUBJ_2", "1"),
+            ("EXP_1", "FAK001", "SUBJ_1", "2"),
+            ("EXP_2", "FAK002", "SUBJ_2", "2"),
+        ]
+        client = make_client({"/data/experiments": scan_listing(rows)})
+
+        scans = client.list_scans("PROJ")
+
+        assert {(s.experiment_id, s.accession_id, s.subject_id, s.scan_id) for s in scans} == set(rows)
+        assert len(scans) == len(rows)
+
+    def test_a_session_without_scans_yields_none(self):
+        """XNAT reports a session with no scans as one row with an empty scan id."""
+        client = make_client(
+            {"/data/experiments": scan_listing([("EXP_1", "FAK001", "SUBJ_1", ""), ("EXP_2", "FAK002", "SUBJ_2", "1")])}
+        )
+
+        assert client.list_scans("PROJ") == [
+            XnatScan(accession_id="FAK002", subject_id="SUBJ_2", experiment_id="EXP_2", scan_id="1")
+        ]
+
     def test_empty_project_yields_no_scans(self):
-        client = make_client({"/data/projects/PROJ/experiments": FakeResponse(payload={"ResultSet": {"Result": []}})})
+        client = make_client({"/data/experiments": FakeResponse(payload={"ResultSet": {"Result": []}})})
 
         assert client.list_scans("PROJ") == []
+
+    @pytest.mark.parametrize("status", [401, 404, 500])
+    def test_a_failed_listing_raises_rather_than_reporting_no_scans(self, status):
+        client = make_client({"/data/experiments": FakeResponse(status_code=status, text="refused")})
+
+        with pytest.raises(XnatError, match=str(status)):
+            client.list_scans("PROJ")
 
 
 class TestListResourceFiles:
@@ -194,16 +264,13 @@ class TestListResourceFiles:
             client.list_resource_files(scan, "NIFTI")
 
 
-def _files(names: list[str]) -> dict:
-    """Build a resource-file listing payload.
-
-    Args:
-        names (list[str]): Filenames the resource reports.
+def _kept_response() -> FakeResponse:
+    """What XNAT answers for a file it kept instead of writing.
 
     Returns:
-        dict: An XNAT ``ResultSet`` payload.
+        FakeResponse: HTTP 200 with a JSON ``duplicates`` body.
     """
-    return {"ResultSet": {"Result": [{"Name": name} for name in names]}}
+    return FakeResponse(status_code=200, text='{"duplicates": ["label_a.nii.gz"]}')
 
 
 class TestUploadScanResourceFile:
@@ -223,25 +290,12 @@ class TestUploadScanResourceFile:
             target_filename="label_a.nii.gz",
         )
 
+        # No overwrite flag by default, and no existence pre-check before the PUT.
         assert client._session.puts == [
             "http://xnat.example/data/projects/PROJ/subjects/SUBJ_1/"
             "experiments/EXP_1/scans/1/resources/NIFTI/files/label_a.nii.gz?inbody=true"
         ]
-
-    def test_conflict_without_overwrite_raises(self, tmp_path):
-        client = make_client({})
-        client._session = FakeSession({}, put_response=FakeResponse(status_code=409, text="exists"))
-        local = tmp_path / "label_a.nii.gz"
-        local.write_bytes(b"volume")
-
-        with pytest.raises(XnatError, match="already exists"):
-            client.upload_scan_resource_file(
-                scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
-                project_id="PROJ",
-                resource="NIFTI",
-                local_path=local,
-                target_filename="label_a.nii.gz",
-            )
+        assert client._session.gets == []
 
     def test_error_status_raises_with_body(self, tmp_path):
         client = make_client({})
@@ -258,10 +312,9 @@ class TestUploadScanResourceFile:
                 target_filename="label_a.nii.gz",
             )
 
-    def test_existing_file_without_overwrite_raises_before_any_put(self, tmp_path):
-        # XNAT's PUT replaces unconditionally — there is no overwrite query parameter — so the
-        # only way overwrite=False can mean anything is to ask first, as imaging-api does.
-        client = make_client({"/resources/NIFTI/files": FakeResponse(payload=_files(["label_a.nii.gz"]))})
+    def test_duplicates_raise(self, tmp_path):
+        client = make_client({})
+        client._session = FakeSession({}, put_response=_kept_response())
         local = tmp_path / "label_a.nii.gz"
         local.write_bytes(b"volume")
 
@@ -274,10 +327,30 @@ class TestUploadScanResourceFile:
                 target_filename="label_a.nii.gz",
             )
 
-        assert client._session.puts == []
+        # One flagless PUT, with no listing GET in front of it.
+        assert len(client._session.puts) == 1
+        assert client._session.puts[0].endswith("?inbody=true")
+        assert client._session.gets == []
 
-    def test_overwrite_replaces_an_existing_file(self, tmp_path):
-        client = make_client({"/resources/NIFTI/files": FakeResponse(payload=_files(["label_a.nii.gz"]))})
+    @pytest.mark.parametrize("body", ["", "not json", "{}", '{"duplicates": []}'])
+    def test_clean_write_without_overwrite_succeeds(self, tmp_path, body):
+        client = make_client({})
+        client._session = FakeSession({}, put_response=FakeResponse(status_code=200, text=body))
+        local = tmp_path / "label_a.nii.gz"
+        local.write_bytes(b"volume")
+
+        client.upload_scan_resource_file(
+            scan=XnatScan("FAK001", "SUBJ_1", "EXP_1", "1"),
+            project_id="PROJ",
+            resource="NIFTI",
+            local_path=local,
+            target_filename="label_a.nii.gz",
+        )
+
+        assert len(client._session.puts) == 1
+
+    def test_overwrite_sends_the_flag(self, tmp_path):
+        client = make_client({})
         local = tmp_path / "label_a.nii.gz"
         local.write_bytes(b"volume")
 
@@ -290,8 +363,11 @@ class TestUploadScanResourceFile:
             overwrite=True,
         )
 
-        # The flag has to reach the wire, not just pick an error message.
-        assert len(client._session.puts) == 1
+        assert client._session.puts == [
+            "http://xnat.example/data/projects/PROJ/subjects/SUBJ_1/"
+            "experiments/EXP_1/scans/1/resources/NIFTI/files/label_a.nii.gz?inbody=true&overwrite=true"
+        ]
+        assert client._session.gets == []
 
     def test_path_characters_in_the_filename_are_escaped(self, tmp_path):
         client = make_client({})
@@ -310,8 +386,8 @@ class TestUploadScanResourceFile:
 
         url = client._session.puts[0]
         # requests splits on "?" and "#" before it quotes anything, so leaving them raw would both
-        # redirect the write and silently drop inbody=true.
-        assert url.endswith("/files/..%2Fevil%3Fx%3D1%23f.nii.gz?inbody=true")
+        # redirect the write and silently drop the query, overwrite=true included.
+        assert url.endswith("/files/..%2Fevil%3Fx%3D1%23f.nii.gz?inbody=true&overwrite=true")
         assert url.count("?") == 1
 
     def test_unreadable_local_file_raises_before_the_upload_is_claimed(self, tmp_path):

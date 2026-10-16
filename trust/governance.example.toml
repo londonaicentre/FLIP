@@ -1,0 +1,96 @@
+# Trust governance policy — worked example (FLIP#1259)
+#
+# Copy to trust/governance.<CODE>.toml, edit, point ACCESS_POLICY_FILE at it in your kit
+# file as ./governance.<CODE>.toml (a host path — compose resolves it against trust/), then:
+#
+#   make -C trust check-governance KIT=<CODE>    # validates both halves of this document
+#   make -C trust reload-governance KIT=<CODE>   # recreates only the services that read it
+#
+# reload-governance touches no data: it recreates data-access-api and, on NVFLARE, the
+# fl-clients, then checks data-access-api reports this document's digest. Do NOT apply a
+# policy edit with `up-trust` or `restart-trust` instead — both are first-install verbs, and
+# applying either to a live trust can destroy its data: up-trust's XNAT step runs xnat-reset
+# (wiping the XNAT archive and database) and its seeding step can replace the data volumes.
+#
+# This file is OPTIONAL. With no policy configured the platform defaults apply and
+# behaviour is unchanged — COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* remain the
+# only controls. Everything here can only make the trust's posture tighter.
+#
+# Validation is strict on purpose: an unknown key, a misspelt action, a project id that is
+# not a UUID, a missing `effect`, or a threshold below the configured floor stops the
+# service at startup rather than being ignored. So does a file with nothing in it. A
+# silently-ignored access rule is worse than no rule, because the operator believes it is
+# in force.
+
+
+# ── Disclosure ────────────────────────────────────────────────────────────────
+# Trust-wide minimum cohort size, in distinct subjects. May RAISE the
+# COHORT_QUERY_THRESHOLD set in the kit file; a value below it is rejected (FLIP#870).
+# Omit the section to keep the kit value.
+[disclosure]
+min_cohort_size = 25
+
+
+# ── Access ────────────────────────────────────────────────────────────────────
+# Rules over project + operation. Actions:
+#   cohort.statistics     aggregate statistics (/cohort)
+#   cohort.dataframe      row-level data (/cohort/dataframe) — this is the FL client's own
+#                         training-data fetch, so denying it for a project stops that
+#                         project's federated training at this trust
+#   cohort.accession_ids  imaging pointers for the PACS pull (/cohort/accession-ids)
+#
+# How a request is decided — document order never matters:
+#   1. An action NO rule mentions keeps its existing behaviour. That is what makes partial
+#      adoption possible: this example says nothing about cohort.statistics or
+#      cohort.dataframe, so both work as without a document — apart from the raised
+#      [disclosure] floor above, which applies to every action.
+#   2. For an action the document does mention, any matching `deny` denies.
+#   3. Otherwise any matching `permit` permits, at the strictest min_cohort_size among the
+#      matching permits (never below [disclosure] or the kit floor).
+#   4. Otherwise — the action is mentioned, but nothing matched — the request is DENIED.
+#      So a deny list needs a permit for everyone else, as below; a rule set of denies alone
+#      denies every project.
+#
+# `effect` is required (permit or deny). `projects` takes project UUIDs as the hub shows
+# them; omit it to cover every project. A rule's own min_cohort_size may only raise the
+# threshold above [disclosure], and only on a permit rule.
+#
+# Rules cannot be written over users: the site plane authenticates callers with a shared
+# per-trust secret and no user identity reaches these services. "Two approvers for
+# paediatric data" is an approval-time concept and belongs with project approval, not here.
+
+# Stop pulling imaging for one project into XNAT — here a project the trust has withdrawn
+# from. Replace the placeholder with the project's id; as written it matches no project.
+[[access.rule]]
+id = "withdrawn-project-imaging"
+action = "cohort.accession_ids"
+effect = "deny"
+projects = ["00000000-0000-0000-0000-000000000000"]
+
+# ...and keep the imaging pull for every other project, at a higher floor: 50 subjects
+# rather than the 25 above. Without this rule, point 4 would deny every other project.
+[[access.rule]]
+id = "imaging-for-everyone-else"
+action = "cohort.accession_ids"
+effect = "permit"
+min_cohort_size = 50
+
+
+# ── FL privacy (NVFLARE only) ─────────────────────────────────────────────────
+# The site update-privacy filter, read by the NVFLARE fl-client (flip.nvflare.site_policy).
+# It is the same filter as the kit's FL_SITE_PRIVACY_* variables: set it here or there,
+# never both — both set stops the fl-client, since a document able to override the kit
+# could also weaken it.
+#
+# The fl-client never sees the rest of this document: a one-shot init step extracts this
+# section for it, because researcher code runs inside the client.
+#
+# On a Flower trust, delete this section: nothing on Flower enforces it yet (FLIP#852), so
+# check-governance refuses a document that carries it rather than report it active.
+#
+# The site filter runs BEFORE any filter the researcher's app configures and a job
+# cannot opt out or select a weaker scope.
+[fl_privacy.nvflare]
+policy = "percentile"
+percentile = 10
+gamma = 0.01

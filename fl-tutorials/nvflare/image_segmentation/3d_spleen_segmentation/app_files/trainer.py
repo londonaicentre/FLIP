@@ -23,6 +23,7 @@ from flip import FLIP
 from flip.constants import ResourceType
 from models import get_model
 from monai.data import DataLoader, Dataset, decollate_batch
+from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.transforms import AsDiscrete
@@ -170,7 +171,7 @@ def validate(
     model: torch.nn.Module,
     loader: DataLoader,
     loss_fn: torch.nn.Module,
-    inferer,
+    inferer: SlidingWindowInferer,
     device: torch.device,
     post_pred: AsDiscrete,
     post_pred_gt: AsDiscrete,
@@ -232,14 +233,20 @@ def main() -> None:
     datalist = build_datalist(flip, dataframe, args.project_id)
     train_items, val_items = split_datalist(datalist, config["VAL_SPLIT"])
 
+    num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+; persistent across rounds (FLIP#1434)
     train_loader = DataLoader(
         Dataset(train_items, transform=get_train_transforms()),
         batch_size=config["BATCH_SIZE"],
         shuffle=True,
-        num_workers=1,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     val_loader = DataLoader(
-        Dataset(val_items, transform=get_val_transforms()), batch_size=1, shuffle=False, num_workers=1
+        Dataset(val_items, transform=get_val_transforms()),
+        batch_size=1,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
 
     flare.init()

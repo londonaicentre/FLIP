@@ -1,0 +1,7 @@
+{
+  "resource_spec": {
+    "@default": {
+      "num_of_gpus": 1
+    }
+  }
+}

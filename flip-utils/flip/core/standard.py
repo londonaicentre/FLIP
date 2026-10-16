@@ -116,7 +116,7 @@ class FLIPStandardProd(FLIPBase):
         - ``add_resource()`` — stage a per-accession resource under the client's images dir
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._name = self.__class__.__name__
         self.logger = logging.getLogger(self._name)
@@ -585,7 +585,7 @@ class FLIPStandardProd(FLIPBase):
 class FLIPStandardDev(FLIPBase):
     """Development implementation of FLIP for standard job types."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._name = self.__class__.__name__
         self.logger = logging.getLogger(self._name)

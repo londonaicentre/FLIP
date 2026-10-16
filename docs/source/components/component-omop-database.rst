@@ -338,8 +338,9 @@ schema pin inside ``validate_query`` is kept as a barrier in its own right eithe
 
 Row-level results are additionally gated on the Trust's ``COHORT_QUERY_THRESHOLD`` (default 10): a
 cohort smaller than the threshold is refused with a fixed message, identical to the one a cohort of
-zero produces, so the refusal itself discloses nothing. The threshold is evaluated against the live
-cohort on every call rather than frozen at approval. :doc:`/security` covers the full set of controls
+zero produces, so the refusal itself discloses nothing. The threshold is evaluated on every call
+against the approved membership as it stands in OMOP now: the cohort's patients are frozen at approval
+and can shrink, never grow, while their records are read live. :doc:`/security` covers the full set of controls
 around the clinical data boundary.
 
 .. _omop-dev-instance:
@@ -428,6 +429,7 @@ Two ways to obtain the bundle: FLIP developers with organisation AWS access run
 `OHDSI Athena <https://athena.ohdsi.org/>`_ under their own licences and unpack it into
 ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Do that first — ``load-omop-vocab`` depends on
 ``fetch-vocab-core``, which skips the download when the directory is already there but fails without
-AWS access when it is not. The DICOM vocabulary is
+AWS access when it is not. The AI Centre's copy behind ``fetch-vocab-core`` serves AI Centre nodes
+only; every other site downloads its own, as :ref:`onprem-core-vocabulary` describes. The DICOM vocabulary is
 separate — it is freely redistributable, ships inside the data volumes, and needs no seeding step.
 ``trust/omop-db/README.md`` carries the full vocabulary roster, versions and licensing.

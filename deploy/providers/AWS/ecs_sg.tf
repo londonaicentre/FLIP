@@ -147,16 +147,16 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_admin" {
 }
 
 # Flower control plane (fl_backend=flower only): the fl-api submits runs to
-# the SuperLink's Exec API (9093) and polls its health server (9097) over
+# the SuperLink's HTTP Control API (8000) and polls its health server (9097) over
 # Cloud Map — direct task-to-task, never via the NLB. The register-supernode-
 # keys one-shot (ecs_flower.tf) runs with the fl-api SG so these same rules
-# cover its 9093 calls.
+# cover its 8000 calls.
 resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_exec" {
   count                    = var.fl_backend == "flower" ? 1 : 0
   type                     = "ingress"
-  description              = "Flower SuperLink Exec API from fl-api task"
-  from_port                = local.flower_superlink_exec_port
-  to_port                  = local.flower_superlink_exec_port
+  description              = "Flower SuperLink Control API from fl-api task"
+  from_port                = local.flower_superlink_control_port
+  to_port                  = local.flower_superlink_control_port
   protocol                 = "tcp"
   security_group_id        = aws_security_group.ecs_fl_server.id
   source_security_group_id = aws_security_group.ecs_fl_api.id

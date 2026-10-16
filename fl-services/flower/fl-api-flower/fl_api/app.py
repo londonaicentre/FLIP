@@ -25,7 +25,7 @@ import grpc
 from fastapi import FastAPI, HTTPException, Query, status
 from grpc_health.v1.health_pb2 import HealthCheckRequest, HealthCheckResponse
 from grpc_health.v1.health_pb2_grpc import HealthStub
-from tomlkit import dumps, parse
+from tomlkit import TOMLDocument, document, dumps, parse
 
 from fl_api.schemas import (
     ClientInfoModel,
@@ -327,13 +327,17 @@ def list_runs() -> list[JobMetadata]:
     return _parse_runs_payload(payload)
 
 
-def _submit_from_job_dir(job_dir: Path, label: str) -> str:
+def _submit_from_job_dir(job_dir: Path, label: str, *, apply_config_toml: bool = True) -> str:
     global _submission_in_progress
 
     # config.toml holds the run-config overrides for this app. It may sit on a
     # read-only bind mount, so rather than mutating it we merge flip-job-dir into a
     # temp copy and pass that to `flwr run` -- flwr also rejects mixing a config
     # file with inline key=value overrides, so everything goes through one file.
+    #
+    # A tutorial submit (apply_config_toml=False) skips config.toml, which carries the
+    # settings the tutorial is uploaded to the platform with, so flwr runs the tutorial's
+    # own pyproject.toml values; only flip-job-dir is passed (FLIP#1432).
     config_toml_path = job_dir / "app" / "config.toml"
 
     with _state_lock:
@@ -347,18 +351,23 @@ def _submit_from_job_dir(job_dir: Path, label: str) -> str:
     run_config_path: str | None = None
     try:
         command = ["flwr", "run", ".", "local", "--format", "json"]
-        if config_toml_path.is_file():
+        run_config_doc: TOMLDocument | None = None
+        if not apply_config_toml:
+            logger.info("Tutorial submit: using %s's pyproject.toml run config, not its config.toml.", label)
+            run_config_doc = document()
+        elif config_toml_path.is_file():
             logger.info("Using config.toml overrides from %s for job submission.", job_dir)
-            # flip-job-dir points the evaluation ServerApp at the app directory,
-            # where the uploaded model checkpoint lives.
             run_config_doc = parse(config_toml_path.read_text())
+        else:
+            logger.warning("No config.toml found in %s. Using default configuration.", job_dir)
+        if run_config_doc is not None:
+            # flip-job-dir points the evaluation ServerApp at the app directory,
+            # where the model checkpoint lives.
             run_config_doc["flip-job-dir"] = str(config_toml_path.parent)
             fd, run_config_path = tempfile.mkstemp(suffix=".toml", prefix="flwr-run-config-")
             os.close(fd)
             Path(run_config_path).write_text(dumps(run_config_doc))
             command += ["--run-config", run_config_path]
-        else:
-            logger.warning("No config.toml found in %s. Using default configuration.", job_dir)
 
         try:
             result = _run_flwr_command(command, job_dir, "submit")
@@ -419,7 +428,8 @@ def submit_run(job_folder: UUID) -> str:
 def submit_tutorial(tutorial_name: str) -> str:
     # Tutorial path: pre-baked tutorial folders are submitted by name (not a UUID), e.g.
     # `xray_classification`. Charset/traversal-guarded, contained under the src root.
-    return _submit_from_job_dir(_validate_tutorial_folder(tutorial_name), tutorial_name)
+    # Runs on the tutorial's own pyproject.toml values, not its platform config.toml.
+    return _submit_from_job_dir(_validate_tutorial_folder(tutorial_name), tutorial_name, apply_config_toml=False)
 
 
 def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
@@ -481,7 +491,7 @@ def abort_run(run_id: int) -> JobMetadata:
 
 
 @app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
-def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, str]:
+def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, Any]:
     """
     Upload an application to the server.
 
@@ -490,7 +500,7 @@ def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, str]:
         body (UploadAppRequest): The request body containing the application details.
 
     Returns:
-        dict[str, str]: A dictionary containing the status of the upload.
+        dict[str, Any]: The status of the upload, with the GPU request it recorded (never enforced on Flower).
     """
     upload_dir = _get_src_root()
     return upload_application(str(model_id), body, upload_dir=upload_dir)

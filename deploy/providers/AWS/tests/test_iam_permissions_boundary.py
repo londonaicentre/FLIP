@@ -19,7 +19,8 @@ Every IAM role this root owns carries ``var.iam_permissions_boundary_name``. Whi
 policy that names depends on who owns the account's guardrails:
 
 - The self-contained modes take the ``variables.tf`` default,
-  ``AICentre-FLIPTerraformBoundary``, declared by this repo's ``ci/`` root.
+  ``AICentre-FLIPTerraformBoundary``, declared by ``modules/terraform_ci_bootstrap``
+  (through ``ci/``, or a platform repository that instantiates it).
 - The LZA modes take the platform's ``AICentre-WorkloadRoleBoundary``
   (londonaicentre/lza#51), which the accelerator deploys to every workload
   account. An LZA SCP denies creating a role, or attaching or writing a policy
@@ -95,8 +96,8 @@ def test_the_self_contained_modes_let_the_terraform_default_apply(tmp_path: Path
 def test_the_lza_modes_carry_the_platform_boundary(tmp_path: Path, prod: str) -> None:
     """The LZA modes default to the platform's boundary, never to ``""``.
 
-    ``AICentre-FLIPTerraformBoundary`` does not exist in those accounts (``ci/`` is
-    not applied there), and the platform SCP rejects a role without
+    ``AICentre-FLIPTerraformBoundary`` does not exist in those accounts (the
+    platform instantiates the bootstrap with its own boundary), and the platform SCP rejects a role without
     ``AICentre-WorkloadRoleBoundary``. Either wrong value fails every role change.
     """
     assert _probe(tmp_path, prod) == "AICentre-WorkloadRoleBoundary|exported"

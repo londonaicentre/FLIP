@@ -17,12 +17,14 @@ This module provides the FLIP() factory function that returns the appropriate
 FLIP implementation based on job type and environment.
 """
 
+from typing import Any
+
 from flip.constants.flip_constants import FlipConstants
 from flip.constants.job_types import JobType, JobTypeStr
 from flip.core.base import FLIPBase
 
 
-def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs) -> FLIPBase:
+def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs: Any) -> FLIPBase:
     """
     Factory function to create appropriate FLIP instance based on job type.
 
@@ -81,14 +83,14 @@ def FLIP(job_type: JobType | JobTypeStr = JobType.STANDARD, **kwargs) -> FLIPBas
         raise ValueError(f"Unknown job_type: {job_type}. Must be one of {valid_types}")
 
 
-def _create_standard_flip(is_dev: bool, **kwargs) -> FLIPBase:
+def _create_standard_flip(is_dev: bool, **kwargs: Any) -> FLIPBase:
     """Create a standard FLIP instance based on environment."""
     from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 
     return FLIPStandardDev(**kwargs) if is_dev else FLIPStandardProd(**kwargs)
 
 
-def _create_diffusion_flip(is_dev: bool, **kwargs) -> FLIPBase:
+def _create_diffusion_flip(is_dev: bool, **kwargs: Any) -> FLIPBase:
     """Create a diffusion model FLIP instance based on environment."""
     # For now, use the standard implementation. The diffusion tutorials only ever send metrics at the
     # default plot coordinate (no x_value/x_label), which the standard classes already cover.

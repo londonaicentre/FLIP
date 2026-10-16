@@ -14,7 +14,7 @@ import json
 import logging
 from typing import Annotated, Literal
 
-from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator
+from pydantic import EmailStr, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from flip_api.domain.schemas.types import FLBackend
@@ -47,15 +47,60 @@ class Settings(BaseSettings):
     # AWS settings
     AWS_PROFILE: str | None = None
     AWS_REGION: str
-    AWS_COGNITO_USER_POOL_ID: str
-    AWS_COGNITO_APP_CLIENT_ID: str
     AWS_SECRET_NAME: str
+
+    # Which identity provider verifies user tokens and holds the user directory
+    # (FLIP#919). "cognito" is AWS Cognito; "keycloak" is the Keycloak container
+    # in deploy/compose.development.yml, which needs no AWS account. The value
+    # selects both halves of the auth seam — the claim rules the generic OIDC
+    # verifier applies (auth/token_verifier.py) and the IdentityProvider that
+    # lists, creates and disables users (auth/identity/) — so a new provider
+    # (another cloud's IdP, an on-prem Keycloak) is a new module plus a
+    # deliberate widening of ProdSettings, never a branch in a router. The
+    # base selects none (so a bare Settings(), built to read ENV, demands no
+    # provider's coordinates); each subclass pins exactly one — DevSettings
+    # Literal["keycloak"], ProdSettings Literal["cognito"] — so the other is
+    # a boot-time ValidationError there: development reaches no AWS service,
+    # production never runs the local substitute.
+    AUTH_BACKEND: Literal["cognito", "keycloak"] | None = None
+
+    # Cognito coordinates, required when AUTH_BACKEND=cognito (production) and
+    # never read in development.
+    AWS_COGNITO_USER_POOL_ID: str | None = None
+    AWS_COGNITO_APP_CLIENT_ID: str | None = None
+
+    # Keycloak coordinates, read only when AUTH_BACKEND=keycloak. Two URLs
+    # because the browser and flip-api reach the same server by different
+    # routes: KEYCLOAK_PUBLIC_URL is what the UI signs in through and is
+    # therefore the `iss` every token carries (pinned by KC_HOSTNAME in the
+    # compose), while KEYCLOAK_URL is the docker-network address flip-api
+    # uses for the JWKS and the admin REST API. The admin client is a
+    # confidential service-account client with the realm-management roles
+    # the provider needs (see deploy/keycloak/flip-realm.json).
+    KEYCLOAK_URL: str | None = None
+    KEYCLOAK_PUBLIC_URL: str | None = None
+    KEYCLOAK_REALM: str = "flip"
+    KEYCLOAK_CLIENT_ID: str = "flip-ui"
+    KEYCLOAK_AUDIENCE: str = "flip-api"
+    KEYCLOAK_ADMIN_CLIENT_ID: str = "flip-api-admin"
+    KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = None
 
     # S3 bucket settings
     UPLOADED_MODEL_FILES_BUCKET: str
     SCANNED_MODEL_FILES_BUCKET: str
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
+
+    # The dev object store (FLIP#1291): development runs an S3-compatible
+    # RustFS container in the dev compose instead of AWS S3, reached through
+    # boto3's native AWS_ENDPOINT_URL_S3 and AWS_ACCESS_KEY_ID env like any
+    # endpoint. One thing is dev-only and therefore a setting: the public
+    # endpoint, the host-published address browser- and host-bound presigned
+    # URLs are signed for — SigV4 signs the host, so a URL the browser opens
+    # cannot be signed for the docker service name the fl-api fetches bundles
+    # from. The base declares it None — one endpoint for every audience, which
+    # is production's shape — and DevSettings carries the compose default.
+    S3_PUBLIC_ENDPOINT_URL: str | None = None
 
     # Local directory holding the base FL application templates (the repo's fl-apps/ tree),
     # baked into the flip-api image and bind-mounted in dev. The bundler walks
@@ -172,10 +217,10 @@ class Settings(BaseSettings):
     # required fields (POSTGRES_PASSWORD, AES_KEY_BASE64) rather than
     # silently logging, but do not rely on this default for that.
     # A dedicated flag rather than an ENV branch (same rationale as
-    # ENFORCE_MFA) so tests and deliberate local experiments can select the
-    # SES path without flipping ENV — which also drives DB auth, encryption
-    # and docs. See tests/integration/test_console_email_backend.py, which
-    # pins the backend rather than reading the developer's env file.
+    # ENFORCE_MFA) so the integration tests can select the SES path on the
+    # base class without flipping ENV — which also drives DB auth, encryption
+    # and docs. Each subclass pins one value (DevSettings "console",
+    # ProdSettings "ses"), so no environment ever chooses.
     EMAIL_BACKEND: Literal["ses", "console"] = "ses"
 
     @field_validator("ENV", mode="before")
@@ -188,13 +233,26 @@ class Settings(BaseSettings):
 
     @field_validator("ENFORCE_MFA", mode="before")
     @classmethod
-    def coerce_empty_mfa(cls, v: str | bool | None) -> bool:
-        """Treat empty-string or None ENFORCE_MFA as the default True."""
-        if v is None or v == "":
-            return True
+    def parse_enforce_mfa(cls, v: str | bool | int | None) -> bool:
+        """Parse ENFORCE_MFA so that only an explicit "off" disables the MFA gate.
+
+        Unset, empty or whitespace keeps the default (True) — CI environment
+        injection hands over empty strings. The usual spellings are recognised
+        after trimming, in any case: true/1/yes/on and false/0/no/off. Anything
+        else also keeps MFA on, with a warning naming the value: a typo must fail
+        closed, never be what silently switches the gate off.
+        """
         if isinstance(v, bool):
             return v
-        return v.lower() in ("true", "1")  # type: ignore[union-attr]
+        normalised = "" if v is None else str(v).strip().lower()
+        if normalised in ("", "true", "1", "yes", "on"):
+            return True
+        if normalised in ("false", "0", "no", "off"):
+            return False
+        # flip_api.utils.logger imports get_settings(), so it cannot be imported
+        # here without a cycle — use the same underlying logger.
+        logging.getLogger("uvicorn").warning(f"ENFORCE_MFA={v!r} is not a recognised boolean; keeping MFA enforced")
+        return True
 
     @field_validator("EMAIL_BACKEND", mode="before")
     @classmethod
@@ -210,6 +268,56 @@ class Settings(BaseSettings):
         if v is None or v == "":
             return cls.model_fields[info.field_name].default  # type: ignore[index]
         return v
+
+    @field_validator(
+        "AUTH_BACKEND",
+        "AWS_COGNITO_USER_POOL_ID",
+        "AWS_COGNITO_APP_CLIENT_ID",
+        "KEYCLOAK_URL",
+        "KEYCLOAK_PUBLIC_URL",
+        "KEYCLOAK_REALM",
+        "KEYCLOAK_CLIENT_ID",
+        "KEYCLOAK_AUDIENCE",
+        "KEYCLOAK_ADMIN_CLIENT_ID",
+        "KEYCLOAK_ADMIN_CLIENT_SECRET",
+        "S3_PUBLIC_ENDPOINT_URL",
+        mode="before",
+    )
+    @classmethod
+    def coerce_empty_auth_setting(cls, v: object, info: ValidationInfo) -> object:
+        """Treat an empty-string auth or object-store setting as the per-class field default.
+
+        Same env-file trap as ``coerce_empty_email_backend``: the example env
+        file carries these names commented out, and the Makefile exports the
+        bare name as an empty string. Resolving via ``model_fields`` keeps the
+        dev defaults on DevSettings and the base values elsewhere.
+        """
+        if v is None or v == "":
+            return cls.model_fields[info.field_name].default  # type: ignore[index]
+        return v
+
+    @model_validator(mode="after")
+    def check_auth_backend_fields(self) -> "Settings":
+        """Require the coordinates of the selected identity provider, naming every missing one."""
+        required: tuple[str, ...]
+        if self.AUTH_BACKEND is None:
+            return self
+        if self.AUTH_BACKEND == "cognito":
+            required = ("AWS_COGNITO_USER_POOL_ID", "AWS_COGNITO_APP_CLIENT_ID")
+        else:
+            required = ("KEYCLOAK_URL", "KEYCLOAK_PUBLIC_URL", "KEYCLOAK_ADMIN_CLIENT_SECRET")
+        missing = [name for name in required if getattr(self, name) is None]
+        if missing:
+            raise ValueError(f"AUTH_BACKEND={self.AUTH_BACKEND} requires {', '.join(missing)} to be set")
+        if self.AUTH_BACKEND == "keycloak" and self.ENFORCE_MFA:
+            # The hub-side gate works (Keycloak reports OTP credentials), but the
+            # UI's password-grant sign-in cannot enrol or answer a TOTP challenge,
+            # so every browser user is locked out until ENFORCE_MFA is false.
+            logging.getLogger("uvicorn").warning(
+                "AUTH_BACKEND=keycloak with ENFORCE_MFA=true: the UI cannot complete TOTP over the "
+                "password grant; set ENFORCE_MFA=false for the local Keycloak backend"
+            )
+        return self
 
     @field_validator("LOG_LEVEL", mode="before")
     @classmethod
@@ -234,7 +342,7 @@ class Settings(BaseSettings):
         GitHub Actions environments inject empty-string env vars for every
         var that isn't explicitly set in the environment scope; Pydantic
         treats that as a real override and rejects it against ``int``.
-        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``. Must stay
+        Same shape as ``coerce_empty_env``. Must stay
         in sync with the ``MAX_MODEL_FILE_BYTES`` field default above.
         """
         if v is None or v == "":
@@ -334,16 +442,38 @@ class DevSettings(Settings):
     ENV: Literal["development"] = "development"
     POSTGRES_PASSWORD: str  # in dev, get DB password from env variable
 
-    # Development sends no real email: the console backend logs the would-be
-    # message instead (FLIP#919), so no SES identity or verified address is
-    # needed to boot. Both address fields keep syntactically-valid defaults so
+    # Local development authenticates against the Keycloak container, and
+    # nothing else (FLIP#919): the Literal pins it the way ProdSettings pins
+    # cognito, so a dev env file selecting the AWS provider is a boot-time
+    # ValidationError. The dev stack reaches no AWS service; the Cognito
+    # provider is exercised by its tests and on stag.
+    AUTH_BACKEND: Literal["keycloak"] = "keycloak"
+
+    # Keycloak defaults that match the `keycloak` service in
+    # deploy/compose.development.yml, so a dev env file needs no KEYCLOAK_*
+    # lines at all. The admin-client secret is a dev-only placeholder shared
+    # with the realm import; it protects nothing outside a laptop and
+    # ProdSettings cannot select this backend.
+    KEYCLOAK_URL: str | None = "http://keycloak:8080"
+    KEYCLOAK_PUBLIC_URL: str | None = "http://localhost:8180"
+    KEYCLOAK_ADMIN_CLIENT_SECRET: SecretStr | None = SecretStr("flip-dev-admin-secret")  # pragma: allowlist secret
+
+    # The dev object store's published host port, matching the `object-store`
+    # service in deploy/compose.development.yml (FLIP#1291): what browser-bound
+    # presigned URLs are signed for.
+    S3_PUBLIC_ENDPOINT_URL: str | None = "http://localhost:9000"
+
+    # Development sends no real email, ever: the console backend logs the
+    # would-be message instead (FLIP#919) and the Literal pins it, so no SES
+    # identity, verified address or AWS session is needed to boot and none can
+    # be wired in. Both address fields keep syntactically-valid defaults so
     # neither is required in dev: the admin address is still read on the dev
     # path (it is the recipient the console backend logs), while the sender
     # address is read only by _send_via_ses, so its default exists purely to
     # keep the field non-required. Both tolerate empty-string env values, so a
     # stale .env.development still carrying (possibly commented-out)
     # AWS_SES_* lines can't fail EmailStr validation.
-    EMAIL_BACKEND: Literal["ses", "console"] = "console"
+    EMAIL_BACKEND: Literal["console"] = "console"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr = "flip-admin@example.com"
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr = "flip-no-reply@example.com"
 
@@ -378,6 +508,13 @@ class ProdSettings(Settings):
     """
 
     ENV: Literal["production"] = "production"
+
+    # Production authenticates with Cognito only. The Literal narrowing makes
+    # AUTH_BACKEND=keycloak a boot-time ValidationError (same pattern as
+    # EMAIL_BACKEND below), so the local identity provider cannot be enabled
+    # in production by accident (FLIP#919). A deployment on another cloud
+    # widens this deliberately, together with its own provider module.
+    AUTH_BACKEND: Literal["cognito"] = "cognito"
 
     # Production email always goes through SES. The Literal narrowing makes
     # EMAIL_BACKEND=console a boot-time ValidationError (same pattern as ENV

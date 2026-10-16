@@ -28,7 +28,6 @@ def fake_settings(tmp_path):
         LOG_LEVEL = "DEBUG"
         FL_ADMIN_DIRECTORY = str(tmp_path / "admin")
         JOB_RESOURCE_SPEC_NUM_GPUS = 2
-        JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 8
         TIMEOUT_SESSION_CONNECT = 5.0
 
     os.makedirs(Settings.FL_ADMIN_DIRECTORY, exist_ok=True)
@@ -50,3 +49,18 @@ def test_create_fl_session_success(fake_settings):
     assert session == mock_session
     assert session.upload_dir == "/tmp/upload"
     assert session.download_dir == "/tmp/download"
+
+
+def test_create_fl_session_refuses_a_gpu_default_no_job_could_use(fake_settings):
+    """A bad JOB_RESOURCE_SPEC_NUM_GPUS default would fail every upload that falls back to it; fail at boot instead."""
+    fake_settings.JOB_RESOURCE_SPEC_NUM_GPUS = 99
+
+    with (
+        patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
+        patch("fl_api.utils.job_resources.get_settings", return_value=fake_settings),
+        patch("fl_api.startup.session_manager.FLIP_Session") as session_cls,
+        pytest.raises(ValueError, match="JOB_RESOURCE_SPEC"),
+    ):
+        create_fl_session()
+
+    session_cls.assert_not_called()

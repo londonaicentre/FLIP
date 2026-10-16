@@ -370,8 +370,7 @@ means edits take effect immediately without a rebuild. A new job type needs no S
 | Command | Description |
 | --------- | ------------- |
 | `make -C fl-tutorials list-tutorials` | List the runnable tutorials for the current `FL_BACKEND` |
-| `make -C fl-tutorials run-tutorial TUTORIAL=<name>` | Run one tutorial on the local simulator |
-| `make -C fl-tutorials sim-tutorial TUTORIAL=<name> FL_BACKEND=flower` | Simulator, no containers |
+| `make -C fl-tutorials run-tutorial TUTORIAL=<name> [FL_BACKEND=flower]` | Run one tutorial on the local simulator, either backend (`sim-tutorial` is an alias) |
 | `make -C fl-tutorials run-all-tutorials` | Run every tutorial (heavy; stops on first failure) |
 | `make -C fl-tutorials download-xray-data` | Fetch the xray_classification dataset from Hugging Face |
 | `make -C fl-tutorials download-spleen-data` | Fetch the spleen segmentation dataset |

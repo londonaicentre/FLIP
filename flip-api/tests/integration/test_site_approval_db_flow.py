@@ -25,13 +25,19 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from sqlmodel import select
+from sqlmodel import col, select
 
-from flip_api.db.models.main_models import ModelTrustIntersect, ProjectTrustIntersect, TrustTask
+from flip_api.db.models.main_models import ModelTrustIntersect, ProjectTrustIntersect, Queries, TrustTask
 from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
-from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus, TrustIntersectStatus
+from flip_api.domain.schemas.status import (
+    DecisionMaker,
+    ProjectStatus,
+    TaskType,
+    TrustApprovalStatus,
+    TrustIntersectStatus,
+)
 from flip_api.project_services.approve_project import approve_project_endpoint
 from flip_api.trusts_services.start_project_imaging_creation import start_project_imaging_creation
 
@@ -47,6 +53,10 @@ def staged_project(session, user_factory, project_factory, trust_factory, projec
     for trust in trusts:
         session.add(trust)
     session.flush()
+    # The query of record: every trust that starts on the project freezes its cohort first (FLIP#857).
+    session.add(
+        Queries(name="cohort", query="SELECT person_id FROM omop.person", created_by=owner.id, project_id=project.id)
+    )
     for trust in trusts:
         session.add(
             project_trust_intersect_factory.build(
@@ -359,42 +369,45 @@ def test_decisions_on_an_unstaged_project_are_refused(session, staged_project):
 
 
 @pytest.fixture
-def no_cognito(monkeypatch):
-    """The imaging route lists the project's users from Cognito; none are needed to test who may start it."""
-    module = "flip_api.trusts_services.start_project_imaging_creation"
-    monkeypatch.setattr(f"{module}.get_user_pool_id", lambda _request: "pool")
-    monkeypatch.setattr(f"{module}.get_cognito_users", lambda params: [])
+def no_directory_users(fake_idp):
+    """The imaging route lists the project's users from the identity provider; none are needed to test who may
+    start it."""
+    fake_idp.list_users.return_value = []
+    return fake_idp
 
 
-async def _start_imaging(session, project, trust, user_id):
+async def _start_imaging(session, project, trust, user_id, idp):
     return await start_project_imaging_creation(
         request=MagicMock(),
         project_id=project.id,
         trust=ITrust(id=trust.id, name=trust.name),
         db=session,
         user_id=user_id,
+        idp=idp,
     )
 
 
-def _imaging_tasks(session, trust) -> list[TrustTask]:
-    return list(session.exec(select(TrustTask).where(TrustTask.trust_id == trust.id)).all())
+def _trust_tasks(session, trust) -> list[TrustTask]:
+    return list(
+        session.exec(select(TrustTask).where(TrustTask.trust_id == trust.id).order_by(col(TrustTask.created_at))).all()
+    )
 
 
 @pytest.mark.asyncio
-async def test_imaging_cannot_start_before_the_project_is_approved(session, staged_project, no_cognito):
+async def test_imaging_cannot_start_before_the_project_is_approved(session, staged_project, no_directory_users):
     admin_id = uuid4()
     _add(session, _grant(admin_id, RoleRef.ADMIN))
     first, _second = staged_project["trusts"]
 
     with pytest.raises(HTTPException) as exc_info:
-        await _start_imaging(session, staged_project["project"], first, admin_id)
+        await _start_imaging(session, staged_project["project"], first, admin_id, no_directory_users)
 
     assert exc_info.value.status_code == 409
-    assert _imaging_tasks(session, first) == []
+    assert _trust_tasks(session, first) == []
 
 
 @pytest.mark.asyncio
-async def test_imaging_cannot_start_at_a_trust_that_declined(session, staged_project, no_cognito):
+async def test_imaging_cannot_start_at_a_trust_that_declined(session, staged_project, no_directory_users):
     admin_id = uuid4()
     _add(session, _grant(admin_id, RoleRef.ADMIN))
     project = staged_project["project"]
@@ -402,20 +415,24 @@ async def test_imaging_cannot_start_at_a_trust_that_declined(session, staged_pro
     approve_project_endpoint(project.id, _payload([first], declined=[second]), admin_id, session)
 
     with pytest.raises(HTTPException) as exc_info:
-        await _start_imaging(session, project, second, admin_id)
+        await _start_imaging(session, project, second, admin_id, no_directory_users)
 
     assert exc_info.value.status_code == 409
-    assert _imaging_tasks(session, second) == []
+    assert _trust_tasks(session, second) == []
 
 
 @pytest.mark.asyncio
-async def test_imaging_starts_at_a_trust_that_approved(session, staged_project, no_cognito):
+async def test_imaging_starts_at_a_trust_that_approved(session, staged_project, no_directory_users):
     admin_id = uuid4()
     _add(session, _grant(admin_id, RoleRef.ADMIN))
     project = staged_project["project"]
     first, _second = staged_project["trusts"]
     approve_project_endpoint(project.id, _payload([first]), admin_id, session)
 
-    await _start_imaging(session, project, first, admin_id)
+    await _start_imaging(session, project, first, admin_id, no_directory_users)
 
-    assert len(_imaging_tasks(session, first)) == 1
+    # The trust freezes its cohort (FLIP#857) before its imaging is created.
+    assert [task.task_type for task in _trust_tasks(session, first)] == [
+        TaskType.PERSIST_COHORT,
+        TaskType.CREATE_IMAGING,
+    ]

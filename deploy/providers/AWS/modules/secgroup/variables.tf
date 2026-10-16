@@ -56,6 +56,14 @@ variable "ingress_rules" {
   }
 }
 
+variable "tags" {
+  # Set on the security group itself. Tag a module-built group here, never with a
+  # separate `aws_ec2_tag`: a key owned by both would be stripped by this
+  # resource's tag diff and restored by the other on alternate applies (#1392).
+  type    = map(string)
+  default = {}
+}
+
 variable "block_all_outbound" {
   type    = bool
   default = false

@@ -12,7 +12,7 @@
 
 [project]
 name = "imaging-api"
-version = "0.9.0"
+version = "0.12.0"
 description = "flip Trust Imaging API"
 readme = "README.md"
 authors = [
@@ -20,17 +20,14 @@ authors = [
 ]
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "asyncpg>=0.30.0",
     "cryptography>=46.0.7",
     "fastapi[standard]>=0.115.11",
-    "greenlet>=3.1.1",
     "idna>=3.15",
     "pandas>=2.2.3",
     "pydicom>=2.4.5",
     "pydantic-settings>=2.9.1",
     "python-multipart>=0.0.26",
     "requests>=2.33.0",
-    "sqlalchemy>=2.0.39",
     "starlette>=1.2.1",
     "types-requests>=2.32.0.20250328",
     "urllib3>=2.7.0",

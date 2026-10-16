@@ -115,3 +115,44 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "slow" in item.keywords:
             item.add_marker(skip_client)
+
+
+@pytest.fixture(autouse=True)
+def _reset_auth_caches():
+    """Clear the process-wide identity-provider and JWKS caches around every test.
+
+    Both are ``lru_cache``d singletons keyed on settings, so a provider or
+    JWKS client warmed by one test would otherwise be served to the next
+    even after that test patched ``get_settings``. Cleared on both sides so
+    no module depends on another's teardown discipline.
+    """
+    from flip_api.auth import token_verifier
+    from flip_api.auth.identity import factory
+
+    factory._cached_provider.cache_clear()
+    token_verifier._jwks_client.cache_clear()
+    yield
+    factory._cached_provider.cache_clear()
+    token_verifier._jwks_client.cache_clear()
+
+
+@pytest.fixture
+def fake_idp():
+    """A test double for the identity provider, installed as the FastAPI dependency.
+
+    Routers receive it through ``Depends(get_identity_provider)`` (TestClient
+    tests) or take it as the ``idp=`` argument (direct handler calls). It is
+    a ``MagicMock(spec=IdentityProvider)``: configure return values on its
+    methods, and raise ``HTTPException`` from them to exercise error paths —
+    the override bypasses the HTTP translation layer, so the double speaks
+    HTTP directly, exactly as the routers see it.
+    """
+    from unittest.mock import MagicMock
+
+    from flip_api.auth.identity import IdentityProvider, get_identity_provider
+    from flip_api.main import app
+
+    idp = MagicMock(spec=IdentityProvider)
+    app.dependency_overrides[get_identity_provider] = lambda: idp
+    yield idp
+    app.dependency_overrides.pop(get_identity_provider, None)

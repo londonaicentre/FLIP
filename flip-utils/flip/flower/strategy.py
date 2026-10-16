@@ -31,7 +31,7 @@ Keep logic in the helpers; this class is wiring.
 
 from collections.abc import Iterable, Mapping
 from logging import INFO
-from typing import cast
+from typing import Any, cast
 
 from flwr.app import ArrayRecord, Message, MetricRecord, UserConfigValue
 from flwr.common import ConfigRecord, log
@@ -119,12 +119,12 @@ class FlipFedAvg(FedAvg):
         self,
         flip: FLIPBase,
         model_id: str,
-        *args,
+        *args: Any,
         best_model_metric: str | None = None,
         best_model_metric_minimize: bool = False,
         min_clients: int | None = None,
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> None:
         # flwr defaults all three node thresholds to 2, so a single-trust run waits for a second
         # node that never arrives — and flwr's sample_nodes polls in an UNBOUNDED sleep(1) loop,
         # so the job hangs for good rather than failing. Deriving them from the trust count also
@@ -161,7 +161,7 @@ class FlipFedAvg(FedAvg):
         # wires the FedAvg hooks to it.
         self._telemetry = RoundTelemetry()
 
-    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, *args, **kwargs) -> Result:
+    def start(self, grid: Grid, initial_arrays: ArrayRecord, num_rounds: int = 3, *args: Any, **kwargs: Any) -> Result:
         """Capture the round total and mark the run as executing on the hub."""
         # *args keeps FedAvg's optional params (timeout, …) passable positionally — a
         # kwargs-only override silently breaks such callers.

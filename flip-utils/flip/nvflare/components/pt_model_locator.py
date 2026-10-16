@@ -180,8 +180,8 @@ class EvaluationModelLocator(ModelLocator):
     The checkpoints are loaded server-side only — from the app's ``custom/`` directory when bundled
     (simulator / legacy bundling), else from the FL API's de-bundled staging volume at
     ``<SERVER_CHECKPOINT_ROOT>/<model_id>/`` (production). Clients never read the ``.pt`` files —
-    they receive the weights over the ``validate`` task. ``model_id`` is resolved lazily from
-    ``meta.json['custom_props']`` (recipe-built job types carry no component args).
+    they receive the weights over the ``validate`` task. ``model_id`` is resolved lazily by
+    ``get_flip_model_id`` (recipe-built job types carry no component args).
     """
 
     def __init__(self) -> None:
@@ -201,7 +201,7 @@ class EvaluationModelLocator(ModelLocator):
                 self.log_error(
                     fl_ctx,
                     f"Checkpoint for model '{name}' not bundled at '{bundled_path}' and no model_id "
-                    "available (meta.json custom_props) to resolve the shared-volume path.",
+                    "available (config.json FLIP_MODEL_ID) to resolve the shared-volume path.",
                     fire_event=True,
                 )
                 return None

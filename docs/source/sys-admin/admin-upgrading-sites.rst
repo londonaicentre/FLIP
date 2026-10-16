@@ -27,6 +27,7 @@ Two rules shape everything below:
   (an NVFLARE 2.9 client cannot join a 2.8 server), the payload cipher, the task contract — so
   the upgrade command defaults to the hub's release, read from the hub's ``/api/health``, and
   refuses to guess when the hub cannot say. "Latest on GitHub" is not the target; the hub is.
+  The command does tell you when a newer release exists, and offers it only once the Central Hub runs it.
 - **The operator triggers it.** Nothing on the hub pushes an upgrade. The prompt is the
   release's *Site upgrade* section (below); the site's operator runs the command when they are
   ready, on their own host, with the same readiness checklist that gated the first install.
@@ -53,6 +54,14 @@ follow.
    ``.env.<CODE>.production`` into yours. Your Host-local profile (ports, data directories,
    ``FL_KIT_DIR``) and Trust-local credentials stay as they are — do not copy the whole file
    over yours.
+
+   .. important::
+
+      **Put any agreed PACS retrieval window in the kit first.** The upgrade sets XNAT's PACS
+      availability schedule from the kit (``PACS_AVAILABILITY_*``, ``PACS_THREADS``,
+      ``PACS_UTILIZATION_PERCENT``), reverting a window changed in XNAT's DQR admin page, which
+      earlier docs said to use. A kit window that crosses midnight (``19:00``–``07:00``) is
+      refused (FLIP#1465): use ``19:00``–``24:00``, ``00:00``–``07:00`` or whole days.
 
 3. **Move your FLIP checkout to the release.** The images are only half of a release: the
    compose files, the Makefiles, the XNAT stack files and the upgrade command itself all come
@@ -92,7 +101,11 @@ follow.
    - runs the readiness checklist (``make onboard-onprem-trust``) — the same gate as the first
      install, now with a *Hub-shared block current* row that compares your kit's AES key with
      the hub's (as your running trust-api last heard it), and warns when the kit pins a release
-     behind the hub. A kit you have just refreshed passes with a warning that trust-api still
+     behind the hub. The checklist and upgrade use the same kit: the root on-prem
+     verbs default to ``PROD=true``, prefer ``trust/.env.<KIT>.production``, and fall
+     back to ``trust/.env.<KIT>``. Pass ``PROD=stag|lza|lza-stag`` for another
+     deployed environment; the checklist names the selected path in its diagnostics.
+     A kit you have just refreshed passes with a warning that trust-api still
      runs the old key: this upgrade is what recreates it;
    - resolves the target: ``TAG=`` if given, else the hub's ``/api/health`` ``version``. A hub
      deployed by the CI Terraform apply reports the ``sha-`` build of its commit; from a
@@ -100,6 +113,12 @@ follow.
      instead — the same code, and the tag every image is published at. It prints
      ``site <current> → target <release>``. A move to an older release — a release's own
      release candidates included — is refused unless ``FORCE=1``;
+   - looks on GitHub for a platform release newer than the target, and says so with both
+     release dates. If the Central Hub already runs it, you choose: continue to the target, or stop
+     and move to the newer release. Stopping changes nothing and prints the ``git checkout`` to
+     run first, since the command comes from the checkout (``YES=1`` continues without
+     asking). If the Central Hub does not run it yet, it is a warning only: a site cannot run
+     ahead of the Central Hub. A host that cannot reach GitHub prints one line and carries on;
    - confirms this checkout is at the target release (step 3) — a ``sha-`` target is never
      checked, since a CI build has no git tag to be at. If git cannot read the checkout (for
      example "dubious ownership" when it belongs to another user and the upgrade runs under
@@ -123,8 +142,9 @@ follow.
      — only a complete dump is kept, and without one (a failed dump, or no running ``xnat-db``
      to take it from) the upgrade stops before XNAT is touched — then the Swarm stack
      redeployed onto the new image (XNAT migrates its own schema on boot), then the configure
-     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, Container Service
-     backend, dcm2niix command — against the live instance.
+     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, PACS availability
+     schedule (from the kit, see step 2), Container Service backend, dcm2niix command — against
+     the live instance.
 
    It never runs ``ensure-seeded`` or ``xnat-reset``. Those belong to
    ``make up-onprem-trust`` / ``make -C trust up-trust``, the **first-install** verbs, which
@@ -178,6 +198,12 @@ The kit's ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` opt-outs reach the ch
 for that one image. That is the only way to move a Kubernetes site to a ``sha-`` tag one of
 them was never built at — a StatefulSet rolled onto a tag that does not exist stays down — and
 a release tag never needs one.
+
+Since FLIP#1451 the chart's ``xnat-init`` Job runs ``configure-dcm2niix.sh`` from the xnat-web
+image, so ``xnat.image.pin`` (the kit's ``XNAT_TAG``) also picks the configure script. An xnat-web
+image built before FLIP#1451 (v0.12.0, for one) carries a Docker-only script: the Job refuses it,
+naming the image, rather than letting ``helm upgrade`` fail on its own. Hold XNAT back only on an
+xnat-web image from the release that ships the chart, or later.
 
 Cloud (EC2) trust
 =================
@@ -255,6 +281,20 @@ sequence, all on the admin workstation:
 
 Then note *Refreshed kit needed: yes* in the release's Site upgrade section, and which keys
 changed, so operators know to replace the block before upgrading.
+
+Approved cohorts after an upgrade
+=================================
+
+From FLIP#857 a site releases row-level data only for a cohort membership frozen when the project
+was approved. A project approved on an earlier release has none, so every site refuses it — training
+and the imaging pull both stop — until its membership is frozen. The project page shows those sites
+as *not frozen*. A project approver re-freezes them with ``POST /api/projects/{project_id}/cohort-snapshots``;
+on a hub run with Docker Compose, ``make -C flip-api backfill_cohort_snapshots`` does it for every
+approved project at once (``EXTRA_ARGS="--dry-run"`` previews). Neither touches a site whose
+membership is already frozen unless asked to (``?include_frozen=true`` on the endpoint,
+``EXTRA_ARGS="--include-frozen"`` on the backfill) — the recovery for a site that lost its snapshot
+store. A site that still holds its membership keeps it unchanged, so its patients cannot change; one that
+lost it freezes afresh from its live database.
 
 Deploying the hub itself — ``make deploy-centralhub PROD=true TAG=v<X.Y.Z>`` after enabling
 Deployment Mode and waiting for ``GET /fl/quiesce`` — is described in ``deploy/providers/AWS/README.md``

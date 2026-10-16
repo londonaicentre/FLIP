@@ -18,19 +18,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
+from flip_api.auth.identity import IdentityProvider, get_identity_provider
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.trust import ITrust
 from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.approve_project import approve_project_endpoint
-from flip_api.trusts_services.start_project_imaging_creation import queue_imaging_creation
+from flip_api.trusts_services.start_project_imaging_creation import queue_cohort_snapshot, queue_imaging_creation
 from flip_api.utils.logger import logger
 from flip_api.utils.project_manager import get_project_by_id
 
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 
 
-async def process_trust(request: Request, project_id: UUID, trust: ITrust, db: Session) -> dict[str, Any]:
+async def process_trust(
+    request: Request, project_id: UUID, trust: ITrust, db: Session, idp: IdentityProvider
+) -> dict[str, Any]:
     """
     Process a single trust by starting the imaging project creation.
 
@@ -40,6 +43,8 @@ async def process_trust(request: Request, project_id: UUID, trust: ITrust, db: S
         trust (ITrust): The trust to process (one element of the list returned by
             ``approve_project_endpoint``).
         db (Session): The database session.
+        idp (IdentityProvider): The identity provider, resolved once by the endpoint and handed to
+            ``queue_imaging_creation``, a plain function with no ``Depends()`` of its own.
 
     Returns:
         dict[str, Any]: A dictionary containing the result of the imaging creation for the trust.
@@ -47,12 +52,33 @@ async def process_trust(request: Request, project_id: UUID, trust: ITrust, db: S
     try:
         # Start creating an imaging project for this trust. Not through the route's per-trust authority
         # check: the trusts include any approved by an earlier call, at which this caller may hold none.
-        await queue_imaging_creation(request=request, project_id=project_id, trust=trust, db=db)
+        await queue_imaging_creation(request=request, project_id=project_id, trust=trust, db=db, idp=idp)
 
         return {"trust": trust.name, "success": True, "message": "Imaging started successfully"}
 
     except Exception as e:
         logger.exception(f"Error processing trust {trust.name}: {str(e)}")
+        return {"trust": trust.name, "success": False, "message": str(e)}
+
+
+def freeze_trust_cohort(project_id: UUID, trust: ITrust, db: Session) -> dict[str, Any]:
+    """
+    Freeze the approved cohort at a single trust of a project created without imaging (FLIP#857, FLIP#1071).
+
+    Args:
+        project_id (UUID): The ID of the project.
+        trust (ITrust): The trust to process (one element of the list returned by ``approve_project_endpoint``).
+        db (Session): The database session.
+
+    Returns:
+        dict[str, Any]: A dictionary containing the result of queuing the trust's cohort snapshot.
+    """
+    try:
+        queue_cohort_snapshot(project_id=project_id, trust=trust, db=db)
+        return {"trust": trust.name, "success": True, "message": "Cohort snapshot queued (project has no imaging)"}
+
+    except Exception as e:
+        logger.exception(f"Error freezing the cohort at trust {trust.name}: {str(e)}")
         return {"trust": trust.name, "success": False, "message": str(e)}
 
 
@@ -63,12 +89,14 @@ async def approve_project_step_function_endpoint(
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
+    idp: IdentityProvider = Depends(get_identity_provider),
 ) -> dict[str, Any]:
     """
     Records trust decisions on a project and starts image creation on every trust they activate — on the call that
     approves the project every trust approved so far, on a later call the trusts it newly approved (FLIP#1258) —
     unless the project was created without imaging (``has_imaging=False``, FLIP#1071), in which case the imaging
-    stage is skipped. Decisions that activate no trust dispatch nothing.
+    stage is skipped. Every trust it activates freezes the approved cohort either way (FLIP#857). Decisions that
+    activate no trust dispatch nothing.
 
     This mimics the AWS Step Functions workflow defined in approveProject.yml
 
@@ -78,6 +106,7 @@ async def approve_project_step_function_endpoint(
         request (Request): The FastAPI request object.
         db (Session): The database session.
         user_id (UUID): The ID of the current user.
+        idp (IdentityProvider): The identity provider, handed to the per-trust imaging fan-out.
 
     Returns:
         dict[str, Any]: The project's status after the decisions and the result of the imaging creation process.
@@ -121,17 +150,21 @@ async def approve_project_step_function_endpoint(
         # place the hub decides what it dispatches for a tabular-only project. The project is
         # approved above exactly as before; what changes is that no CREATE_IMAGING task is queued, so
         # no trust creates an XNAT project or calls the accession-ids route — the flag is never sent
-        # to a trust. An empty result set then reports zero trusts processed through the one response
-        # contract below.
+        # to a trust. Each trust still freezes the approved cohort (FLIP#857): training reads it
+        # through /cohort/dataframe, which serves only the frozen members. Either way the per-trust results
+        # report through the one response contract below.
         if has_imaging:
             logger.info(f"Processing {len(trusts)} trusts for project {project_id}")
             # Execute trust processing in parallel
-            trust_tasks = [process_trust(request, project_id, trust, db) for trust in trusts]
+            trust_tasks = [process_trust(request, project_id, trust, db, idp) for trust in trusts]
             start_image_results = await asyncio.gather(*trust_tasks)
             message = "Project approval workflow completed"
         else:
-            logger.info(f"Project {project_id} has no imaging: skipping the imaging fan-out to {len(trusts)} trust(s)")
-            start_image_results = []
+            logger.info(
+                f"Project {project_id} has no imaging: skipping the imaging fan-out to {len(trusts)} trust(s), "
+                "freezing the cohort at each"
+            )
+            start_image_results = [freeze_trust_cohort(project_id, trust, db) for trust in trusts]
             message = "Project approved; imaging stage skipped (project has no imaging)"
 
         # Check if any trust processing failed

@@ -71,7 +71,7 @@ def test_validate_bundle_url_rejects_non_https(bad):
 
 
 def test_validate_bundle_url_enforces_host_allow_list(monkeypatch):
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal, s3.eu-west-2.amazonaws.com")
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://objectstore.internal, https://s3.eu-west-2.amazonaws.com")
     assert validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url("https://evil.example.com/key")
@@ -260,30 +260,68 @@ def test_validate_bundle_url_rejects_non_public_ip_literal_without_resolving(mon
     assert calls == []
 
 
-def test_validate_bundle_url_checks_allow_list_before_resolving(monkeypatch):
-    """An off-list name is refused without a lookup, so an attacker-chosen name is never resolved.
-
-    The resolver query itself is the out-of-band signal of a blind SSRF: a name under an attacker's zone
-    tells them the API looked. With the list set, only the listed host is ever resolved — and it still is,
-    because the allow-list does not skip the resolution recheck.
-    """
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "s3.eu-west-2.amazonaws.com")
-    calls = _resolver(monkeypatch, "52.95.150.1")
+def test_validate_bundle_url_resolves_nothing_when_allow_list_set(monkeypatch):
+    """With the list set no name is ever resolved: an off-list origin is refused without a lookup, so an
+    attacker-chosen name never reaches the resolver (the resolver query itself is the out-of-band signal
+    of a blind SSRF), and a listed origin is operator-declared — the dev store resolves to a private
+    docker address by design, so a recheck would refuse exactly the origin the operator admitted."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com, http://object-store:9000")
+    calls = _resolver(monkeypatch, "10.0.0.5")
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url("https://exfil.attacker.example/bundle/app/custom/train.py")
     assert exc.value.status_code == 400
-    assert calls == []
     assert validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
-    assert calls == ["s3.eu-west-2.amazonaws.com"]
+    assert validate_bundle_url("http://object-store:9000/bucket/key")
+    assert calls == []
 
 
-def test_validate_bundle_url_rechecks_resolution_of_allowed_host(monkeypatch):
-    """Defence in depth: an allow-listed name that resolves to a non-public address is still refused."""
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "s3.eu-west-2.amazonaws.com")
-    _resolver(monkeypatch, "10.0.0.5")
+@pytest.mark.parametrize(
+    ("origin", "url"),
+    [
+        ("http://object-store:9000", "http://object-store:9000/bucket/key"),  # the dev compose store
+        ("https://s3.eu-west-2.amazonaws.com", "https://s3.eu-west-2.amazonaws.com:443/bucket/key"),
+        ("https://s3.eu-west-2.amazonaws.com:443", "https://s3.eu-west-2.amazonaws.com/bucket/key"),
+        ("http://object-store:80", "http://object-store/bucket/key"),
+    ],
+)
+def test_validate_bundle_url_allow_list_admits_the_origin_triple(monkeypatch, origin, url):
+    """An entry is a (scheme, host, port) triple: a missing port is the scheme's default on either side."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", origin)
+    assert validate_bundle_url(url) == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://object-store:9000/bucket/key",  # scheme differs
+        "http://object-store:9001/bucket/key",  # port differs
+        "http://object-store/bucket/key",  # default port is not the listed one
+        "http://object-store.attacker.example:9000/bucket/key",  # host differs
+    ],
+)
+def test_validate_bundle_url_allow_list_rejects_a_near_miss_origin(monkeypatch, url):
+    """Scheme, host and port must all match: an http origin does not admit https, nor one port another."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "http://object-store:9000")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(url)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "10.0.0.5", "169.254.169.254", "localhost", "[::1]"])
+def test_validate_bundle_url_rejects_non_public_ip_literal_even_when_listed(monkeypatch, host):
+    """The IP-literal range check is unconditional: listing a loopback or private address does not admit it."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", f"http://{host}:9000")
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(f"http://{host}:9000/bucket/key")
+    assert exc.value.status_code == 400
+
+
+def test_validate_bundle_url_answers_500_on_a_malformed_allow_list(monkeypatch):
+    """The startup hook refuses to boot on a malformed list; a process that bypassed it answers 500, not 400."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
-    assert exc.value.status_code == 400
+    assert exc.value.status_code == 500
 
 
 @pytest.mark.parametrize(
@@ -297,7 +335,7 @@ def test_validate_bundle_url_rechecks_resolution_of_allowed_host(monkeypatch):
 )
 def test_validate_bundle_url_allow_list_match_is_exact(monkeypatch, host):
     """No suffix or wildcard form: the presigned origin is one exact host, s3.<region>.amazonaws.com."""
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "s3.eu-west-2.amazonaws.com")
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com")
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url(f"https://{host}/bucket/key")
     assert exc.value.status_code == 400
@@ -306,7 +344,7 @@ def test_validate_bundle_url_allow_list_match_is_exact(monkeypatch, host):
 @pytest.mark.parametrize("host", ["S3.EU-WEST-2.AMAZONAWS.COM", "s3.eu-west-2.amazonaws.com."])
 def test_validate_bundle_url_allow_list_ignores_case_and_root_label(monkeypatch, host):
     """Case and a trailing root label are spelling, not identity: neither dodges nor defeats the list."""
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", " s3.eu-west-2.amazonaws.com. ")
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", " https://s3.eu-west-2.amazonaws.com. ")
     url = f"https://{host}/bucket/key"
     assert validate_bundle_url(url) == url
 
@@ -316,13 +354,68 @@ def test_validate_bundle_url_allow_list_ignores_case_and_root_label(monkeypatch,
     [
         ("", set()),
         (" , ,", set()),
-        (". ,", set()),
-        ("A.Example., b.example", {"a.example", "b.example"}),
+        ("https://A.Example., http://b.example:9000", {("https", "a.example", 443), ("http", "b.example", 9000)}),
+        ("https://h:443, https://h", {("https", "h", 443)}),
     ],
 )
-def test_bundle_url_allowed_hosts_parsing(monkeypatch, raw, expected):
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", raw)
-    assert validation.bundle_url_allowed_hosts() == expected
+def test_bundle_url_allowed_origins_parsing(monkeypatch, raw, expected):
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", raw)
+    assert validation.bundle_url_allowed_origins() == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "s3.eu-west-2.amazonaws.com",  # the pre-#1291 bare-host form: no scheme
+        "ftp://h",
+        "https://",
+        "https://h/bucket",
+        "https://h/",
+        "https://h?x=1",
+        "https://user@h",
+        "https://h:bad",
+        "https://h:99999",
+        "https://ok.example, h",  # one bad entry poisons the list
+    ],
+)
+def test_bundle_url_allowed_origins_rejects_malformed_entries(monkeypatch, raw):
+    """A malformed entry raises rather than being skipped, so the startup hook fails the boot on it."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", raw)
+    with pytest.raises(ValueError, match="not a bare scheme://host"):
+        validation.bundle_url_allowed_origins()
+
+
+_S3 = ("https", "s3.eu-west-2.amazonaws.com", 443)
+
+
+@pytest.mark.parametrize(
+    ("hosts", "origins", "expected"),
+    [
+        ("s3.eu-west-2.amazonaws.com", "", {_S3}),
+        ("s3.eu-west-2.amazonaws.com", "https://s3.eu-west-2.amazonaws.com", {_S3}),
+        (
+            " A.Example. , b.example",
+            "http://object-store:9000",
+            {("https", "a.example", 443), ("https", "b.example", 443), ("http", "object-store", 9000)},
+        ),
+    ],
+)
+def test_bundle_url_allowed_origins_reads_the_legacy_hosts_as_https_origins(monkeypatch, hosts, origins, expected):
+    """An image/environment skew across the #1291 rename must not fail open: the old name still pins the list."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", hosts)
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", origins)
+    assert validation.bundle_url_allowed_origins() == expected
+    monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
+    validation.warn_if_bundle_url_allow_list_empty()
+    assert validation._warned_empty_allow_list is False
+
+
+def test_warn_if_bundle_url_allow_list_empty_parses_before_the_once_only_gate(monkeypatch):
+    """A process that already warned still refuses a malformed list: parsing is not behind the flag."""
+    monkeypatch.setattr(validation, "_warned_empty_allow_list", True)
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
+    with pytest.raises(ValueError, match="not a bare scheme://host"):
+        validation.warn_if_bundle_url_allow_list_empty()
 
 
 def test_resolve_bundle_host_returns_every_answer_in_both_families(monkeypatch, stub_public_resolver):
@@ -346,11 +439,11 @@ def test_resolve_bundle_host_returns_every_answer_in_both_families(monkeypatch, 
 
 
 def _allow_list_warnings(caplog):
-    return [record for record in caplog.records if "BUNDLE_URL_ALLOWED_HOSTS" in record.getMessage()]
+    return [record for record in caplog.records if "BUNDLE_URL_ALLOWED_ORIGINS" in record.getMessage()]
 
 
 def test_warn_if_bundle_url_allow_list_empty_logs_once_per_process(monkeypatch, caplog):
-    monkeypatch.delenv("BUNDLE_URL_ALLOWED_HOSTS", raising=False)
+    monkeypatch.delenv("BUNDLE_URL_ALLOWED_ORIGINS", raising=False)
     monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
     with caplog.at_level(logging.WARNING, logger=validation.logger.name):
         validation.warn_if_bundle_url_allow_list_empty()
@@ -358,11 +451,12 @@ def test_warn_if_bundle_url_allow_list_empty_logs_once_per_process(monkeypatch, 
     (warning,) = _allow_list_warnings(caplog)
     assert warning.levelno == logging.WARNING
     assert "ANY public https host" in warning.getMessage()
-    assert "s3.<AWS_REGION>.amazonaws.com" in warning.getMessage()
+    assert "https://s3.<AWS_REGION>.amazonaws.com" in warning.getMessage()
+    assert "http://object-store:9000" in warning.getMessage()
 
 
 def test_warn_if_bundle_url_allow_list_empty_is_silent_when_set(monkeypatch, caplog):
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "s3.eu-west-2.amazonaws.com")
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com")
     monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
     with caplog.at_level(logging.WARNING, logger=validation.logger.name):
         validation.warn_if_bundle_url_allow_list_empty()
@@ -371,7 +465,7 @@ def test_warn_if_bundle_url_allow_list_empty_is_silent_when_set(monkeypatch, cap
 
 def test_validate_bundle_url_warns_on_first_validation_when_allow_list_empty(monkeypatch, caplog):
     """The fallback for a process that reached a fetch without the startup hook: warn on the first URL only."""
-    monkeypatch.delenv("BUNDLE_URL_ALLOWED_HOSTS", raising=False)
+    monkeypatch.delenv("BUNDLE_URL_ALLOWED_ORIGINS", raising=False)
     monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
     with caplog.at_level(logging.WARNING, logger=validation.logger.name):
         validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")

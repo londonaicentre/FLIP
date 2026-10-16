@@ -133,6 +133,24 @@ def check_command(command: str) -> bool:
         return False
 
 
+def unexpected_exits(listing: str) -> list[str]:
+    """Names of exited containers worth a warning, from ``docker ps --format '{{.Names}}\t{{.Status}}'``.
+
+    A trust's ``fl-governance-init`` is a one-shot that exits 0 once it has extracted the
+    fl-clients' section of the governance document (FLIP#1259); a completed one is expected, a
+    failed one is not.
+    """
+    names = []
+    for line in listing.splitlines():
+        name, _, status = line.partition("\t")
+        if not name.strip():
+            continue
+        if "fl-governance-init" in name and status.startswith("Exited (0)"):
+            continue
+        names.append(name.strip())
+    return names
+
+
 def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
     """Run a shell command.
 
@@ -653,11 +671,12 @@ def main(
                         "--filter",
                         "status=exited",
                         "--format",
-                        "{{.Names}}",
+                        "{{.Names}}\t{{.Status}}",
                     ]
                 )
-                if success and exited:
-                    print_status("WARN", f"Exited containers found: {exited}")
+                unexpected = unexpected_exits(exited) if success else []
+                if unexpected:
+                    print_status("WARN", f"Exited containers found: {' '.join(unexpected)}")
         except Exception as e:
             print_status("FAIL", f"Could not check Docker containers: {e}")
 

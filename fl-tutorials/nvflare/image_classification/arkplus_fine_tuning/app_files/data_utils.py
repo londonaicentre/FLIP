@@ -20,10 +20,12 @@ one scalar label per lesion.
 from __future__ import annotations
 
 import json
+import logging
 import os
-from collections.abc import Sequence
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import monai.transforms as mt
 import numpy as np
@@ -61,12 +63,12 @@ class RepeatChannelImageNetNormalized(MapTransform):
     mean/std per channel.
     """
 
-    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False):
+    def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False) -> None:
         super().__init__(keys, allow_missing_keys)
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
         self.std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
-    def __call__(self, data):
+    def __call__(self, data: Mapping[Hashable, Any]) -> dict[Hashable, Any]:
         d = dict(data)
         for key in self.key_iterator(d):
             img = d[key]
@@ -94,7 +96,7 @@ class SiteDataConfig:
 
 
 class LesionDict:
-    def __init__(self, items: Sequence[Lesion]):
+    def __init__(self, items: Sequence[Lesion]) -> None:
         self.items = list(items)
 
     def contains(self, element_value: str) -> bool:
@@ -127,7 +129,9 @@ def get_normal_key(config: dict | None = None) -> str:
     return "Lungs in normal arrangement"
 
 
-def get_labels_from_radiology_row(radiology_row, lesions: LesionDict, value_to_numerical: dict, normal_label: str):
+def get_labels_from_radiology_row(
+    radiology_row: pd.Series, lesions: LesionDict, value_to_numerical: dict, normal_label: str
+) -> dict[str, int]:
     # JSON gives string keys; support both str and int access.
     yes_str = value_to_numerical.get("1", value_to_numerical.get(1, "Yes"))
     no_str = value_to_numerical.get("0", value_to_numerical.get(0, "No"))
@@ -151,7 +155,7 @@ def get_lesion_label(in_batch: dict, lesions: LesionDict) -> torch.Tensor:
     return torch.stack(out_tensor, dim=1).float()
 
 
-def _ensure_image_channel_first(image):
+def _ensure_image_channel_first(image: Any) -> np.ndarray:
     array = np.asarray(image)
     if array.ndim == 2:
         return array[None, ...]
@@ -163,7 +167,7 @@ def _ensure_image_channel_first(image):
     return array
 
 
-def get_xray_transforms(is_validation: bool = False):
+def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
     cfg = load_config()
     input_size = int(cfg.get("ARKPLUS", {}).get("INPUT_SIZE", 224))
     transforms = [
@@ -294,7 +298,7 @@ def cap_dataframe(
     return df.iloc[sorted(selected)]
 
 
-def _cap_for_sim(df: pd.DataFrame, cfg: dict, site_name: str, logger=None) -> pd.DataFrame:
+def _cap_for_sim(df: pd.DataFrame, cfg: dict, site_name: str, logger: logging.Logger | None = None) -> pd.DataFrame:
     """Apply the ``MAX_SAMPLES`` cap to a simulator site's dataframe, balanced over the config's classes."""
     max_samples = get_sim_max_samples()
     lesions = cfg.get("LESIONS", {})
@@ -321,7 +325,7 @@ def _load_dataframe(
     project_id: str = "",
     query: str = "",
     config: dict | None = None,
-    logger=None,
+    logger: logging.Logger | None = None,
 ) -> pd.DataFrame:
     """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust.
 
@@ -341,7 +345,13 @@ def _find_accession_column(df: pd.DataFrame) -> str:
     raise KeyError(f"Could not find accession column in dataframe columns: {list(df.columns)}")
 
 
-def _label_aware_split(datalist, label_names, val_split: float, seed: int, logger=None):
+def _label_aware_split(
+    datalist: Sequence[dict],
+    label_names: Sequence[str],
+    val_split: float,
+    seed: int,
+    logger: logging.Logger | None = None,
+) -> tuple[list[dict], list[dict]]:
     """
     Guarantee at least one positive sample per label in train and val splits,
     then fill remaining capacity with unassigned items.
@@ -361,10 +371,10 @@ def _label_aware_split(datalist, label_names, val_split: float, seed: int, logge
     limits = {"train": n_train, "val": n_val}
     assigned = set()
 
-    def can_add(split_name):
+    def can_add(split_name: str) -> bool:
         return len(splits[split_name]) < limits[split_name]
 
-    def add_item(index, split_name):
+    def add_item(index: int, split_name: str) -> bool:
         if index in assigned or not can_add(split_name):
             return False
         splits[split_name].append(datalist[index])
@@ -414,7 +424,7 @@ def _label_aware_split(datalist, label_names, val_split: float, seed: int, logge
     return splits["train"], splits["val"]
 
 
-def _log_split_balance(splits, label_names, logger):
+def _log_split_balance(splits: dict[str, list[dict]], label_names: Sequence[str], logger: logging.Logger) -> None:
     for split_name, split_rows in splits.items():
         logger.info("%s split label balance (%s samples):", split_name.upper(), len(split_rows))
         for label in label_names:
@@ -475,8 +485,8 @@ def build_datalist(
     site_name: str | None = None,
     project_id: str | None = None,
     query: str | None = None,
-    logger=None,
-):
+    logger: logging.Logger | None = None,
+) -> tuple[list[dict], list[dict]]:
     cfg = config or load_config()
     site_cfg = get_site_data_config(cfg, site_name)
     lesions = get_lesions(cfg)

@@ -53,9 +53,13 @@ fi
 
 cat <<EOF
 window.AWS_BASE_URL = "/api";
+window.AUTH_BACKEND = "cognito";
 window.AWS_REGION = "eu-west-2";
 window.AWS_USER_POOL_ID = "demo-user-pool";
 window.AWS_CLIENT_ID = "demo-client";
+window.KEYCLOAK_URL = "";
+window.KEYCLOAK_REALM = "";
+window.KEYCLOAK_CLIENT_ID = "";
 window.BLACKLISTED_MODEL_FILES = "";
 window.RELEASE_VERSION = "ark-demo/${CAPTURE_DATE}+${SHORT_SHA}";
 EOF

@@ -128,6 +128,9 @@ class PersistToS3AndCleanup(FLComponent):
         run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_job_id())
 
         try:
+            # Resolved before app_server is removed below: the model id lives in its custom/config.json (FLIP#70).
+            model_id = self._resolve_model_id(fl_ctx)
+
             self.log_info(fl_ctx, "Attempting to upload the final aggregated model to the s3 bucket...")
 
             app_server_path = os.path.join(run_dir, "app_server")
@@ -185,7 +188,7 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Removing cross-site-eval model artefacts before upload: {cross_val_models_dir}")
                 shutil.rmtree(cross_val_models_dir)
 
-            self.flip.upload_results_to_s3(run_dir, self._resolve_model_id(fl_ctx))
+            self.flip.upload_results_to_s3(run_dir, model_id)
 
         except Exception as e:
             self.log_error(fl_ctx, "Upload to the s3 bucket failed. Attempting to cleanup")

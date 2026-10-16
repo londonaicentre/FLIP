@@ -95,6 +95,7 @@ import { Form } from "vee-validate";
 import { onBeforeMount, ref } from "vue";
 import { object } from "yup";
 
+import { SignInStep } from "@/auth/provider";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import { routeChange } from "@/router";
@@ -130,6 +131,19 @@ interface INewPassword {
 }
 
 onBeforeMount(async () => {
+    // A backend without an in-app temporary-password step (Keycloak runs
+    // that as a required action in its own UI) has nothing for this page
+    // to do.
+    if (!authStore.capabilities.newPasswordChallenge) {
+        Snackbar.show({
+            type: "info",
+            title: "Not available",
+            text: "Password changes are handled by the identity provider for this deployment."
+        });
+        routeChange.gotoLogin();
+
+        return;
+    }
     if (!(await isUserUnconfirmedCheck(authStore))) {
         routeChange.viewProjects();
     }
@@ -162,13 +176,13 @@ const submit = async (v: unknown): Promise<void> => {
 
     // The pool runs on OPTIONAL with MFA enforced at the app layer, so
     // Cognito may chain the new-password challenge straight into TOTP
-    // setup (signInStep === CONTINUE_SIGN_IN_WITH_TOTP_SETUP) — honour
-    // that nextStep so we keep the enrolment state instead of showing a
-    // "log in again" success screen. `needsMfaEnrolment` covers the
-    // companion case: the user is signed in but Cognito reports no
-    // active TOTP (e.g. immediately after an admin reset).
+    // setup (signInStep === TOTP_SETUP) — honour that nextStep so we keep
+    // the enrolment state instead of showing a "log in again" success
+    // screen. `needsMfaEnrolment` covers the companion case: the user is
+    // signed in but the provider reports no active TOTP (e.g. immediately
+    // after an admin reset).
     if (
-        authStore.signInStep === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP" ||
+        authStore.signInStep === SignInStep.TOTP_SETUP ||
         authStore.needsMfaEnrolment
     ) {
         buttonLoader.value = false;

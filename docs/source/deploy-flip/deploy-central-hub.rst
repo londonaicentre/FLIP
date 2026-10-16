@@ -314,6 +314,14 @@ or only send to verified destination addresses for testing.
    invites or password resets, and conversely verifying the SES identity does
    not fix them; those have their own delivery limits (see FLIP#592).
 
-   In development neither is needed: flip-api defaults to
+   In development neither is used: flip-api pins
    ``EMAIL_BACKEND=console``, which logs the would-be email instead of calling
-   SES.
+   SES, and to ``AUTH_BACKEND=keycloak``, a local Keycloak container in place
+   of Cognito (``KEYCLOAK_URL``, ``KEYCLOAK_PUBLIC_URL``, ``KEYCLOAK_REALM``,
+   ``KEYCLOAK_CLIENT_ID``, ``KEYCLOAK_AUDIENCE``, ``KEYCLOAK_ADMIN_CLIENT_ID``
+   and ``KEYCLOAK_ADMIN_CLIENT_SECRET`` carry working defaults for the dev
+   compose and are read only under that backend). The dev Keycloak has no
+   mail server, so a newly registered user is given the shared dev password
+   (``ADMIN_USER_PASSWORD``) as a temporary one instead of an invitation
+   email. Development accepts only ``keycloak`` and ``console``, production
+   only ``cognito`` and ``ses``; each refuses the other's at boot (FLIP#919).

@@ -56,6 +56,11 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `com.docker.compose.project.environment_file` container label (verified live on Compose v5.1.3);
   a Compose too old to record that label does not lose the protection — the guard fails closed,
   refusing the operation with an explicit "the kit that owns them cannot be identified" stop
+- On a **shared host** (one Docker daemon, several developers) set `FLIP_INSTANCE=<name>` before your
+  first `make up` and give the stack its own host ports (see `FLIP_INSTANCE` in
+  [`deploy/AGENTS.md`](deploy/AGENTS.md#multi-instance-environment-variables)). Compose project names are
+  daemon-global, so `make up`, `down` and the other hub targets refuse a project whose containers another
+  checkout created (`ALLOW_FOREIGN_PROJECT=1` skips the check)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
@@ -68,7 +73,10 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The AWS CLI configured for SSO access to the development environment
+- No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
+  [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
+  downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
+  the AWS-backed targets: the optional OMOP vocabulary load, FL kit uploads and `deploy/providers/AWS`
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -234,28 +242,90 @@ For the full local stack, replace every placeholder in these minimum groups befo
 
 | Group | Required development values |
 | --- | --- |
-| AWS session | `AWS_PROFILE`, `AWS_REGION` |
-| Central Hub auth | `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `ADMIN_USER_PASSWORD` |
+| AWS region | `AWS_REGION` — what SigV4 signs with; the dev object store accepts any. `AWS_PROFILE` stays commented out unless you run an AWS-backed target (below) |
+| Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
-| Runtime S3 | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME`, `FLIP_APP_BUNDLES_BUCKET_NAME`, `AICENTRE_BUCKET_NAME` |
-| XNAT artifacts | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+| Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
+| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave the placeholder for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
+| XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` before the first `make up`, and again after a pull that changes `trust/xnat/artifacts.manifest`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
-Development uses these configured AWS services directly; there is no LocalStack fallback. Authorised FLIP developers
-can use the shared development values. Other deployers should create their own resources with the
+**Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
+[RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
+top-level directory there is a bucket, so `make up` pre-creates one per bucket name before the store starts, the way
+it pre-creates `jobs/`. flip-api and both fl-servers reach it through boto3's native `AWS_ENDPOINT_URL_S3` with
+static dev keys, and the fl-apis through the presigned bundle URLs flip-api signs for it, so model uploads and
+scanning, FL app bundles, training and results download run the same code as production, against a local store. `ls object-store/<bucket>/` shows the key tree
+(each object in RustFS's own on-disk format); `http://localhost:9001` browses it (sign in with the two keys from
+`deploy/compose.development.yml`, `flip-dev` / `flip-dev-object-store` unless `OBJECT_STORE_ACCESS_KEY` /
+`OBJECT_STORE_SECRET_KEY` are set); `make clean-object-store` empties it; a second stack moves `OBJECT_STORE_PORT` and
+`OBJECT_STORE_CONSOLE_PORT` (and `OBJECT_STORE_DIR` if it must not share the directory). One detail is worth knowing: presigned URLs are signed for the host they will be
+opened from — the browser's for `localhost:9000` (`S3_PUBLIC_ENDPOINT_URL`), the fl-api's for `object-store:9000`,
+which is also the origin its bundle-fetch allow-list admits (`BUNDLE_URL_ALLOWED_ORIGINS`). The store's static keys
+reach flip-api and the fl-servers as plain `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, the only AWS credentials
+the dev stack holds. Staging and production are unchanged: real S3 buckets, the task role, the regional endpoint;
+the public endpoint is unset there, so every audience signs against the one endpoint.
+
+**The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
+object storage (RustFS) are all local, and so are the Trusts' XNAT plugins once `make -C trust prepare-artifacts` has
+downloaded them from upstream. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the optional OMOP
+vocabulary fetch — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up` no longer
+runs. Authorised FLIP developers can use the shared development values for those; other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
 
-**Email needs no configuration in development** (FLIP#919). flip-api defaults to `EMAIL_BACKEND=console` in dev, which
+#### What still needs AWS in development
+
+The step-by-step local-deployment walkthrough is
+[`docs/source/deploy-flip/deploy-local-dev.rst`](docs/source/deploy-flip/deploy-local-dev.rst); this
+table is the capability matrix behind it.
+
+| Capability | Needs | Without AWS |
+| --- | --- | --- |
+| Hub: sign-in, email, model files, FL bundles, training, results | Nothing | Keycloak, the console email backend and RustFS are local |
+| The example Trusts' XNAT plugins (first `make up`) | Nothing | `make -C trust prepare-artifacts` downloads them from upstream, checksum-verified |
+| Building the XNAT images locally (`make -C trust/xnat build`) | Nothing | The build downloads the WAR and plugins from upstream the same way; most developers pull the published `xnat-*` images and never build |
+| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | `VOCAB_S3_BUCKET` + AWS CLI | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
+| Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
+| Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
+| `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
+
+**Email needs no configuration in development** (FLIP#919). flip-api pins `EMAIL_BACKEND=console` in dev (`DevSettings` rejects `ses` at boot), which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
 and XNAT-credentials paths work with no SES identity, verified address or templates. Staging and production keep
 `EMAIL_BACKEND=ses` and still require `AWS_SES_ADMIN_EMAIL_ADDRESS` / `AWS_SES_SENDER_EMAIL_ADDRESS`; the setting is
-type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Note Cognito still sends real invite
-and password-reset emails in dev — those come from the user pool, not SES.
+type-narrowed in `ProdSettings`, so the console backend cannot be selected there. Invitations are the identity
+provider's own, not SES's: under the Keycloak backend (the only one dev accepts) dev has no mail server, so a user registered from the
+Admin Area is given the shared dev password (`ADMIN_USER_PASSWORD`) as a temporary one (flip-api logs that it did,
+never the password) — they sign in once with it, Keycloak's account console
+(`http://localhost:8180/realms/flip/account`) asks for a new password (the UI links there when the sign-in answers
+"Account is not fully set up"), then they sign in to FLIP. In staging and production the Cognito user pool sends
+real invite and password-reset emails.
+
+**Sign-in in development goes through Keycloak** (FLIP#919). `make up` starts a `keycloak` service that imports the
+dev realm `deploy/keycloak/flip-realm.json` at every boot and keeps no volume. Sign in as any well-known dev identity
+from `flip-api/src/flip_api/utils/constants.py` (e.g. `aicentreflip@gmail.com`) with `ADMIN_USER_PASSWORD`; roles are
+granted by flip-api's boot seed as before. Keycloak's admin console is `http://localhost:8180/admin` (`admin`/`admin`
+unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set; `KEYCLOAK_PORT` moves the host port). After
+editing the realm run `make reset-keycloak` — the import skips a realm that already exists. Not available in-app under
+Keycloak, because the browser uses the OIDC password grant, which has no equivalent: TOTP enrolment/challenge (keep
+`ENFORCE_MFA=false`, which the dev compose sets — `true` only logs a warning and locks browser users out),
+forgot-password, and the admin "Reset password" button; use the Keycloak console for those. Everything else —
+register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
+that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
+the demo recorder) go through the configured provider, so they need no AWS session either. Details:
+[`deploy/keycloak/README.md`](deploy/keycloak/README.md).
 
 Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
 `make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
 `api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
 carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
 automatically once the hub is up.
+
+For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
+that `up-onprem-trust` and `upgrade-onprem-trust` use: `.env.<CODE>.<env>` first,
+then the legacy `.env.<KIT>`, under `trust/`. These root wrappers default to
+`PROD=true`; pass `PROD=stag`, `lza` or `lza-stag` for another deployed environment.
+The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
+resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
 
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
@@ -286,7 +356,11 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 ### Setting up AWS access
 
-Some services (e.g. `flip-api`) interact with AWS via `boto3`. You will need AWS credentials configured locally.
+Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and production. In development none
+of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
+container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291), and the example Trusts' XNAT plugins
+are public upstream downloads (FLIP#1292). AWS SSO is needed only for the optional OMOP vocabulary fetch, FL kit
+uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
 
 Configure AWS SSO:
 
@@ -314,8 +388,9 @@ export AWS_PROFILE=<your-profile-name>
 
 ### GitHub Secrets for CI
 
-The CI/CD pipeline requires GitHub repository secrets to run tests and deployments. See
-[.github/SECRETS.md](.github/SECRETS.md) for the complete list, how to generate them, and security best practices.
+Test workflows need no secrets beyond `CODECOV_TOKEN`: the credentials of their throwaway stacks are generated per
+run, so they behave the same on a pull request from a fork. Deployments read GitHub environment secrets. See
+[.github/SECRETS.md](.github/SECRETS.md) for the complete list and how to add one.
 
 ### Running the CI pipeline locally
 
@@ -370,8 +445,8 @@ restrictable data-access action, data exfiltration or privilege-escalation shape
 infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
 No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
 (e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
-`make checkov-lint` from the repo root (deliberately not the `deploy/providers/AWS` Makefile, whose parse-time
-env guard needs the gitignored deploy env files).
+`make checkov-lint`, from the repo root or `-C deploy/providers/AWS`, or with `make -C deploy/providers/AWS lint`,
+which also runs terraform fmt and tflint (both must be installed). None needs the gitignored deploy env files.
 
 Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
 put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
@@ -380,6 +455,25 @@ list — including the classes triaged in FLIP#1058 and deliberately *not* promo
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### TFLint (Terraform)
+
+`validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset
+(recommended preset) plus the AWS ruleset, configured in `deploy/providers/AWS/.tflint.hcl`. It catches what
+`terraform validate` accepts: a variable nothing reads, a module with no provider version constraint, an AWS
+argument value the API would reject at apply time. Every directory holding `.tf` files is linted on its own, so
+a module is checked even where no root calls it. Run it locally with `make tflint-lint` (repo root or
+`-C deploy/providers/AWS`, or as part of `make -C deploy/providers/AWS lint`); it needs tflint at the version
+pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on GitHub — Homebrew no longer
+packages it) and downloads the pinned AWS ruleset plugin on first run.
+
+A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on the line above the
+flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
+separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
+removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AWS/Makefile`, the key in
+`scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
+deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
+against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
 
 ### Secret scanning (detect-secrets)
 
@@ -568,8 +662,14 @@ make -C trust/deploy/helm validate
 # Place this trust's FL participant kit onto the node, BEFORE deploying
 make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
+# Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
+# without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
+make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
+
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
-# receiver log (a C-ECHO cannot see an importer crash — FLIP#1228)
+# receiver log (a C-ECHO cannot see an importer crash — FLIP#1228). Exits 0 pass, 1 fail,
+# 2 inconclusive (arrival-time-only evidence while received.log exists and stayed silent);
+# the Make target turns 2 into a loud warning rather than a failure.
 make -C trust/deploy/helm smoke-cstore
 ```
 
@@ -615,7 +715,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 A test belongs in `tests/integration/` **if and only if it touches a real backing service**. Examples of "real backing service":
 
 - A real Postgres (via the `session` fixture or Testcontainers)
-- A real AWS service (S3, Cognito, SES)
+- A real AWS service (S3, Cognito, SES) or a real identity provider (Keycloak under Testcontainers)
 - A running sibling API (trust-api, data-access-api, etc.) reachable over HTTP
 - A real Orthanc / XNAT / OMOP fixture
 
@@ -640,7 +740,7 @@ Two trees sit outside any service and have their own home. `fl-tutorials/tests/`
 
 `flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
-CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `flip-api/tests/local_auth_smoke.py` (sign in as the seeded admin) and `flip-api/tests/local_storage_smoke.py` (a model file through the store: presigned upload, scan promotion, presigned download, delete — FLIP#1291).
 
 ##### flip-api: database migrations (Alembic)
 
@@ -688,6 +788,12 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
+`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the twelve image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
+
+- **The release job runs as long as the slowest image build** (xnat-web, ~30 min). A red build, or an expired wait budget, fails the release job and names what to re-run; production stays on the sha pin it got from the push apply. Re-running `release.yml` is safe — everything after the tag is keyed on the GitHub Release not existing, so a re-run re-dispatches the builds and re-tries the apply.
+- **Nothing may merge to `main` during the wait.** The release apply runs `main` as it is when the dispatch fires, so a hotfix merged in that window would have the *release's* images applied over its code — a silent production rollback. Both ends refuse it: `release.yml` checks `main`'s HEAD before dispatching, and `terraform_apply.yml` refuses unless `release_tag` resolves to the very commit it has checked out. Recovery is to cut a release from the newer commit, not to re-run the old one.
+- **The release apply can hold on the FL gate.** Re-pinning changes the FL task-definition tag, which `scripts/check-fl-plan-impact.sh` treats as FL-affecting, so the apply holds for an operator attestation. Quiesce FL and re-dispatch `terraform_apply.yml` with both `fl_quiesced: true` and the same `release_tag` — see [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md#release-applies-pinning-vxyz-instead-of-the-sha-flip1283).
+
 ### Two release trains, two tag namespaces
 
 A push to `main` cuts **two independent releases**, from two independently-versioned artefacts. They must never share a tag namespace: each workflow skips its own release when it finds its tag already present, so a version number claimed by one artefact would silently suppress the other's release — or, for flip-utils, its PyPI publish.
@@ -732,8 +838,8 @@ Before opening the release PR from `develop` to `main`:
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file listed under [Versioning](#versioning) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
 - If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, **Site upgrade**, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push. The *Site upgrade* section is the prompt trust operators act on (FLIP#1204): say whether the upgrade is required, the ordering (hub first / sites first / one Deployment-Mode window — a flag-day such as FLIP#1179's cipher change or an FL-framework bump is the latter), and whether a **refreshed kit** is needed because the Hub-shared block changed.
-- Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Download each dataset first (`make -C fl-tutorials download-<dataset>-data`; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and build the FL images for the backend you run (`make build-fl`, `make build-fl FL_BACKEND=flower`).
-- Run the **full-platform smoke test, for both backends, against a running deployment**: `make e2e_smoke`, then `make e2e_smoke FL_BACKEND=flower`. It drives the whole path a user sees — create project, trust approval, training, download results — and is likewise out of CI, being heavy and long-running. [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test) carries the flags, the spleen and EHR variants, and how to smoke a remote hub.
+- Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Both run the simulator in the `flip-utils` environment, so no FL image is needed; the FL images are exercised by the smoke test below. Fetch every input first, since a missing one fails its tutorial at once: each dataset (`make -C fl-tutorials download-<dataset>-data`, and `prepare-prostate-local-data NUM_CASES=12` for prostate; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and the Ark+ checkpoint the three Ark+ tutorials load (`make download-raw-checkpoint` in each, or request access through the Ark+ form; it is not in any dataset download).
+- Run the **full-platform smoke test, for both backends, against a running deployment**: `make e2e_smoke`, then `make e2e_smoke FL_BACKEND=flower`. It drives the whole path a user sees — create project, trust approval, training, download results — and is likewise out of CI, being heavy and long-running. [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test) carries the flags, the spleen, prostate and EHR variants, and how to smoke a remote hub.
 - Record both runs in the *Release checks* section of [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md). That section is published with the release, so an unticked box is visible on the PR and on the release page.
 - Run `make unit_test` and `make integration_test` locally.
 
@@ -857,10 +963,20 @@ To create projects in various pipeline stages (`unstaged`, `staged`, `approved`)
 make -C flip-api create_testing_projects
 ```
 
+The script signs in through the configured identity provider — in development the local Keycloak, so it needs
+no AWS session.
+
 To clean up the test data:
 
 ```bash
 make -C flip-api delete_testing_projects
+```
+
+Projects approved before FLIP#857 have no frozen cohort membership, so every trust refuses their row-level data.
+Freeze it for all of them from the running dev stack (`EXTRA_ARGS="--dry-run"` previews):
+
+```bash
+make -C flip-api backfill_cohort_snapshots
 ```
 
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and

@@ -18,7 +18,11 @@ from fastapi import HTTPException, Request, status
 from pydantic import ValidationError
 
 from flip_api.db.models.main_models import Trust
-from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
+from flip_api.domain.interfaces.fl import (
+    MAX_GPUS_PER_SITE,
+    IInitiateTrainingInputPayload,
+    IJobResources,
+)
 from flip_api.fl_services.initiate_training import initiate_training
 from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 
@@ -261,3 +265,70 @@ class TestIInitiateTrainingInputPayloadSchema:
         id_1, id_2 = uuid4(), uuid4()
         payload = IInitiateTrainingInputPayload(trust_ids=[id_1, id_2])
         assert payload.trust_ids == [id_1, id_2]
+
+
+# ── GPU request override (FLIP#70) ──────────────────────────────────────────────────
+
+
+class TestGpuOverride:
+    def test_no_override_by_default(self):
+        assert IInitiateTrainingInputPayload(trust_ids=[uuid4()]).resources is None
+
+    def test_an_override_is_a_gpu_count(self):
+        payload = IInitiateTrainingInputPayload(trust_ids=[uuid4()], resources={"num_gpus": 1})
+
+        assert payload.resources == IJobResources(num_gpus=1)
+
+    @pytest.mark.parametrize(
+        "resources",
+        [
+            {"num_gpus": -1},
+            {"num_gpus": True},
+            {"num_gpus": 1.5},
+            {"num_gpus": "1"},
+            {"num_gpus": MAX_GPUS_PER_SITE + 1},
+            {"num_gpus": 1, "mem_per_gpu_gib": 7},
+            {"num_gpus": 1, "num_cpus": 4},
+        ],
+    )
+    def test_a_malformed_override_is_refused_at_the_boundary(self, resources):
+        with pytest.raises(ValidationError):
+            IInitiateTrainingInputPayload(trust_ids=[uuid4()], resources=resources)
+
+    def test_the_override_is_stored_with_the_job_and_logged(
+        self,
+        model_id,
+        fake_request,
+        mock_db,
+        client1,
+        mock_can_modify_model,
+        mock_add_fl_job,
+        mock_update_model_status,
+        mock_add_log,
+        mock_log_queue_positions,
+    ):
+        resources = IJobResources(num_gpus=2)
+        payload = IInitiateTrainingInputPayload(trust_ids=[client1.id], resources=resources)
+
+        initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+        assert mock_add_fl_job.call_args.kwargs["resources"] == resources
+        logged = [c.args[1] for c in mock_add_log.call_args_list]
+        assert "GPU request per trust set for this run: 2 GPUs" in logged
+
+    def test_without_an_override_nothing_extra_is_logged(
+        self,
+        model_id,
+        fake_request,
+        mock_db,
+        client1,
+        mock_can_modify_model,
+        mock_add_fl_job,
+        mock_update_model_status,
+        mock_add_log,
+        mock_log_queue_positions,
+    ):
+        initiate_training(model_id, IInitiateTrainingInputPayload(trust_ids=[client1.id]), fake_request, mock_db, "u")
+
+        assert mock_add_fl_job.call_args.kwargs["resources"] is None
+        assert mock_add_log.call_count == 1

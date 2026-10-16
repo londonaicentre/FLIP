@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 
+from flip_api.auth.identity import build_identity_provider
 from flip_api.cohort_services import (
     get_cohort_query_results,
     save_cohort_query,
@@ -65,11 +66,13 @@ from flip_api.project_services import (
     create_project,
     delete_project,
     edit_project,
+    get_cohort_snapshots,
     get_imaging_project_status,
     get_models,
     get_project,
     get_project_approved_trusts,
     get_projects,
+    requeue_cohort_snapshots,
     stage_project,
     unstage_project,
 )
@@ -101,27 +104,29 @@ from flip_api.user_services import (
     set_user_roles,
     update_user,
 )
-from flip_api.utils.cors import get_cors_allowed_origins
 from flip_api.utils.rate_limiter import limiter
 from flip_api.utils.security_headers import SecurityHeadersMiddleware
 from flip_api.utils.version import build_identity
 
-# Module-level holder for the CORS allowlist. Populated from Cognito at app startup (see
-# `lifespan`). CORSMiddleware stores this list by reference and reads it per-request via
-# `origin in self.allow_origins`, so mutating it in place updates the live allowlist without
-# re-registering middleware. Starts empty so module import never touches AWS — tests and any
-# environment without Cognito access can run without mocking boto3 at import time.
+# Module-level holder for the CORS allowlist. Populated from the identity provider at app
+# startup (see `lifespan`). CORSMiddleware stores this list by reference and reads it
+# per-request via `origin in self.allow_origins`, so mutating it in place updates the live
+# allowlist without re-registering middleware. Starts empty so module import never touches
+# the provider — tests and any environment without one can run without mocking at import time.
 _cors_allowed_origins: list[str] = []
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Start scheduler and populate CORS allowlist from Cognito callback URLs.
+    """Start scheduler and populate the CORS allowlist from the identity provider.
 
     Args:
         app (FastAPI): The FastAPI application instance being started.
+
+    Yields:
+        None: Control to the running application until shutdown.
     """
-    _cors_allowed_origins.extend(get_cors_allowed_origins())
+    _cors_allowed_origins.extend(build_identity_provider().allowed_origins())
     start_scheduler()
     print("Starting up the app...")
     yield
@@ -216,11 +221,13 @@ ROUTERS: tuple[APIRouter, ...] = (
     create_project.router,
     delete_project.router,
     edit_project.router,
+    get_cohort_snapshots.router,
     get_imaging_project_status.router,
     get_models.router,
     get_project_approved_trusts.router,
     get_project.router,
     get_projects.router,
+    requeue_cohort_snapshots.router,
     stage_project.router,
     unstage_project.router,
     # Roles services

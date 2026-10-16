@@ -110,7 +110,7 @@ class BestModelSelector:
         minimize (bool): Whether lower metric values are better (e.g. a loss).
     """
 
-    def __init__(self, metric: str, minimize: bool = False):
+    def __init__(self, metric: str, minimize: bool = False) -> None:
         self.metric = metric
         self.minimize = minimize
         self.best_round: int | None = None
