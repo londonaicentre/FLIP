@@ -17,6 +17,7 @@ from fastapi import status
 
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
+from fl_api.utils.prepare_config import configure_client, configure_server, validate_config
 
 # A valid Central Hub model_id (uuid4); the upload endpoint validates model_id as a UUID.
 MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
@@ -135,3 +136,46 @@ def test_get_available_apps_error(client, override_session):
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     body = response.json()
     assert "disk error" in body["detail"].lower()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"AGGREGATOR": "unknown"},
+        {"AGGREGATION_WEIGHTS": ["Trust_1"]},
+        {"AGGREGATION_WEIGHTS": {"Trust_1": -1}},
+        {"AGGREGATE_ONLY_REGEX": 12},
+        {"AGGREGATE_ONLY_REGEX": "["},
+        {"BEST_MODEL_METRIC": ""},
+        {"BEST_MODEL_METRIC": "loss", "BEST_MODEL_METRIC_MINIMIZE": "yes"},
+        {"BEST_MODEL_METRIC": "loss", "GLOBAL_ROUNDS": 1},
+        {"BEST_MODEL_METRIC_MINIMIZE": True},
+    ],
+)
+def test_upload_config_refusals_are_marked_for_researchers(client, config):
+    with patch("fl_api.routers.application.upload_application", side_effect=lambda *a, **k: validate_config(config)):
+        response = client.post(f"/upload_app/{MODEL_ID}", json=make_upload_payload())
+    assert response.status_code == 400
+    assert response.json()["refusal"] == response.json()["detail"]
+
+
+@pytest.mark.parametrize("file", ["client", "server"])
+def test_missing_required_config_is_marked_for_researchers(client, tmp_path, file):
+    def configure(*args, **kwargs):
+        if file == "client":
+            return configure_client(tmp_path, MODEL_ID, "project", "SELECT 1")
+        return configure_server(tmp_path, MODEL_ID, 1, ["Trust_1"], False, "unused", {})
+
+    with patch("fl_api.routers.application.upload_application", side_effect=configure):
+        response = client.post(f"/upload_app/{MODEL_ID}", json=make_upload_payload())
+    assert response.status_code == 404
+    assert f"config_fed_{file}.json" in response.json()["refusal"]
+    assert str(tmp_path) not in response.json()["refusal"]
+
+
+@pytest.mark.parametrize("failure", [ValueError("private /app/src"), FileNotFoundError("private /abs/file")])
+def test_unmarked_exceptions_do_not_become_researcher_refusals(client, failure):
+    with patch("fl_api.routers.application.upload_application", side_effect=failure):
+        response = client.post(f"/upload_app/{MODEL_ID}", json=make_upload_payload())
+    assert response.status_code in (400, 404)
+    assert "refusal" not in response.json()

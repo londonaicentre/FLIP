@@ -38,6 +38,7 @@ from fl_api.schemas import (
     UploadAppRequest,
     normalize_status,
 )
+from fl_api.utils.refusals import ResearcherRefusal, researcher_refusal_handler
 from fl_api.utils.upload import upload_application
 from fl_api.utils.validation import safe_join, validate_tutorial_folder_name, warn_if_bundle_url_allow_list_empty
 from fl_api.utils.version import build_identity
@@ -52,6 +53,7 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+app.add_exception_handler(ResearcherRefusal, researcher_refusal_handler)
 
 
 @app.on_event("startup")

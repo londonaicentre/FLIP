@@ -34,6 +34,7 @@ from fl_api.utils.prepare_config import (
     configure_server,
     validate_config,
 )
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
 from fl_api.utils.validation import safe_join, validate_bundle_url
 
@@ -151,7 +152,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         upload_dir (str): directory where the application will be uploaded (session's upload dir.)
     Raises:
         HTTPException: if the application fails to upload, an error is raised.
-        FileNotFoundError: if the application path is not found, an error is raised.
+        ResearcherRefusal: If required multi-app metadata or application config is missing.
     Returns:
         dict[str, str]: a dictionary containing a success message and the path where the application was uploaded.
 
@@ -274,7 +275,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 " multiple app sub-folders indicating different behaviors per site."
             )
             logger.error(error_message)
-            raise FileNotFoundError(error_message)
+            raise ResearcherRefusal(error_message, status_code=404)
 
     # A federated learning job consists of, at least, a CONFIG and CUSTOM folder. Within CONFIG, two files,
     # config_fed_server.json and config_fed_client.json. Within custom, all uploaded files. In addition to

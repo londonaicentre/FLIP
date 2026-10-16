@@ -8,6 +8,7 @@ from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.validation import safe_join, validate_bundle_url
 
 
@@ -82,8 +83,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         dict[str, str]: A dictionary containing a success message and the location where the application was uploaded.
 
     Raises:
-        HTTPException: 400 if the request names no participating trusts, or a bundle URL is
-            rejected; 500 if a bundle file cannot be downloaded.
+        ResearcherRefusal: 400 if the request names no participating trusts.
+        HTTPException: 400 if a bundle URL is rejected; 500 if a bundle file cannot be downloaded.
     """
     logger.info(f"Received request to upload app: {model_id}")
 
@@ -96,9 +97,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # the model, and keeps the previous bundle intact — the job dir is cleared further down.
     if not body.trusts:
         logger.error(f"Upload request for model {model_id} names no participating trusts")
-        raise HTTPException(
-            status_code=400,
-            detail="No participating trusts in the upload request: a run needs at least one trust to train on.",
+        raise ResearcherRefusal(
+            "No participating trusts in the upload request: a run needs at least one trust to train on."
         )
 
     # model_id is the Central Hub model UUID (validated as a UUID by the endpoint); it names

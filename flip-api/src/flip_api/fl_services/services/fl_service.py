@@ -36,7 +36,7 @@ from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
-from flip_api.utils.http import http_delete, http_get, http_post
+from flip_api.utils.http import fl_api_error_message, http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import PresignAudience, S3Client
 
@@ -1306,6 +1306,8 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         ValueError: If the FL server is not running, or if ``target`` is invalid.
         DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
             rather than swallowed, so a failed abort is never reported as a success.
+        httpx.HTTPStatusError: If an FL API status check or abort request fails. The error
+            is recorded in the model activity feed before it is re-raised.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
@@ -1339,7 +1341,12 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
-    server_status = fetch_server_status(net_endpoint)
+    try:
+        server_status = fetch_server_status(net_endpoint)
+    except httpx.HTTPStatusError as error:
+        logger.exception("FL API request failed: %s; response body: %s", error, error.response.text)
+        add_log(model_id, fl_api_error_message(error), session, success=False)
+        raise
     logger.debug(f"Server status: {server_status}")
 
     if not server_status:  # or server_status.status != FLStatus.SUCCESS.value:
@@ -1350,7 +1357,13 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     # If there is no running job for this model, it is already terminal — abort is an
     # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
     # leaving it to the stale-BUSY watchdog.
-    if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+    try:
+        current_job = extract_current_job_data(net_endpoint, fl_backend_job_id)
+    except httpx.HTTPStatusError as error:
+        logger.exception("FL API request failed: %s; response body: %s", error, error.response.text)
+        add_log(model_id, fl_api_error_message(error), session, success=False)
+        raise
+    if current_job is None:
         fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
             f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); already stopped — nothing to abort."
@@ -1369,7 +1382,12 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
     logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
-    response = abort_job(net_endpoint, fl_backend_job_id)
+    try:
+        response = abort_job(net_endpoint, fl_backend_job_id)
+    except httpx.HTTPStatusError as error:
+        logger.exception("FL API request failed: %s; response body: %s", error, error.response.text)
+        add_log(model_id, fl_api_error_message(error), session, success=False)
+        raise
 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 

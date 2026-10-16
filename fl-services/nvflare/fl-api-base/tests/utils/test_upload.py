@@ -16,6 +16,7 @@ import pytest
 import requests
 from fastapi import HTTPException
 
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
 
@@ -172,10 +173,11 @@ def test_upload_multiple_apps_missing_meta_json(
     mock_requests_get_success,
     mock_upload_multiple_apps_request_missing_meta_json,
 ):
-    with pytest.raises(FileNotFoundError) as exc_info:
+    with pytest.raises(ResearcherRefusal) as exc_info:
         _ = upload_application(TEST_MODEL_ID, mock_upload_multiple_apps_request_missing_meta_json, TMP_PATH_UPLOAD_DIR)
 
     assert "Application must contain a meta.json file" in str(exc_info.value)
+    assert exc_info.value.status_code == 404
 
 
 @patch("fl_api.utils.upload.configure_environment", MagicMock())
