@@ -83,6 +83,14 @@ Each net trains one job at a time; the queue is first-come, first-served, and a 
 shown in the UI while it waits. The backend of each net (NVFLARE or Flower) is recorded on the hub when the
 nets are seeded and decides which template is bundled: a deployment chooses the backend, a model does not.
 
+A job's server-side process reports the model's final status to the hub itself. If that process dies first (out of
+memory, killed, or lost when its server restarts), the hub notices on its own: every ``SCHEDULER_FL_JOB_WATCHDOG_RATE``
+minutes it compares each running job with its net's job list, and a job the FL server has ended or no longer has, while
+its model is still running, is set to ``ERROR`` after ``FL_JOB_WATCHDOG_STRIKES`` checks in a row (default 3). The
+model's log says what the FL server reported, and the net takes the next queued job. A job still being prepared
+``FL_JOB_PREPARE_TIMEOUT_MINUTES`` (default 30) after pickup is treated the same way. An FL API the hub cannot reach
+fails nothing: the net shows offline on the Connection Status page instead.
+
 Deployment mode (quiescing the nets)
 ====================================
 

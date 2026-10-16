@@ -701,20 +701,22 @@ def abort_job(endpoint: str, job_id: str) -> dict:
 
 def _raise_if_job_aborted(fl_job_id: UUID, session: Session) -> None:
     """
-    Abort gate for the prepare window: raise if the FL job was DELETED mid-prepare.
+    Abort gate for the prepare window: raise if the FL job is no longer IN_PROGRESS.
 
-    Selects the status column (not the entity) so the check bypasses the session identity map
-    and sees the latest committed value from a concurrent abort (READ COMMITTED).
+    A concurrent abort DELETEs the job; the job watchdog (#727) COMPLETEs a job still being prepared past
+    ``FL_JOB_PREPARE_TIMEOUT_MINUTES``, and has by then freed its net. Either way the job must not reach the
+    fl-server. Selects the status column (not the entity) so the check bypasses the session identity map and sees
+    the latest committed value (READ COMMITTED).
 
     Args:
         fl_job_id (UUID): The ID of the FL job to check.
         session (Session): SQLModel session.
 
     Raises:
-        JobAbortedError: If the job no longer exists or was DELETED by a concurrent abort.
+        JobAbortedError: If the job no longer exists or is no longer IN_PROGRESS.
     """
     job_status = session.exec(select(col(FLJob.status)).where(FLJob.id == fl_job_id)).one_or_none()
-    if job_status is None or job_status == JobStatus.DELETED:
+    if job_status != JobStatus.IN_PROGRESS:
         raise JobAbortedError(f"FL job {fl_job_id} was aborted before submission")
 
 
@@ -1343,6 +1345,32 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         error_msg = f"Failed to generate presigned URLs: {e}"
         logger.error(error_msg)
         raise RuntimeError(error_msg)
+
+
+def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
+    """List every job one net's FL API knows about, whatever its status.
+
+    Unlike ``extract_current_job_data`` (the abort path, which fails loudly), this answers ``None`` when the FL API
+    cannot be reached or replies with something that is not a job list. The job watchdog reads ``None`` as "unknown"
+    and acts on nothing, so a briefly unavailable FL API never fails a model.
+
+    Args:
+        net_endpoint (str): The net's FL API base URL.
+
+    Returns:
+        list[IJobMetaData] | None: The jobs, or ``None`` if the FL API could not say.
+    """
+    url = f"{net_endpoint}/list_jobs"
+    try:
+        # Same timeout as the other FL status calls: the Flower FL API lists runs through the flwr CLI.
+        response = http_get(url, timeout=30)
+        if not isinstance(response, list):
+            raise ValueError(f"expected a list of jobs, got {type(response).__name__}")
+        # pydantic's ValidationError is a ValueError, so an unknown status lands in the except below.
+        return [IJobMetaData.model_validate(job) for job in response]
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"Could not list the jobs on {url}: {e}")
+        return None
 
 
 def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
