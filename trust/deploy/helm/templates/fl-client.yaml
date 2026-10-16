@@ -10,6 +10,9 @@
 # limitations under the License.
 
 {{- if .Values.flClient.enabled }}
+{{- if and (eq .Values.flBackend "nvflare") .Values.flClient.gpu.enabled (gt (int .Values.flClient.gpu.count) 1) }}
+{{- fail "flClient.gpu.count is above 1, but the fl-client pod sees GPU 0 only (CUDA_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES are 0), so the NVFLARE client would refuse to start. Set flClient.gpu.count to 1." }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -34,7 +37,8 @@ metadata:
     app.kubernetes.io/component: fl-client
 data:
   NET_ID: {{ .Values.flClient.netId | quote }}
-  NUM_AVAILABLE_GPUS: {{ .Values.flClient.gpu.count | quote }}
+  # The GPUs the NVFLARE client offers its scheduler: none when the pod is given none.
+  NUM_AVAILABLE_GPUS: {{ ternary .Values.flClient.gpu.count 0 .Values.flClient.gpu.enabled | quote }}
   MEMORY_PER_GPU_IN_GIB: "7"
   LOCAL_DEV: "false"
   IMAGES_DIR: {{ .Values.flClient.imagesDir | quote }}
@@ -244,12 +248,19 @@ spec:
               export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
               export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
               export LOG_LEVEL=${LOG_LEVEL:-INFO}
-              # Copy .default configs shipped in the kit to the expected runtime paths.
-              # The image bakes resources.template.json/log_config.template.json into
-              # /app/local/, but the kit volume-mount replaces that directory, hiding the
-              # templates. The kit ships *.default equivalents — copy them as-is (no
-              # envsubst needed: the values are already correct for this deployment).
-              cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
+              # Tell NVFLARE's scheduler the GPUs this pod has. The kit ships resources.template.json, the
+              # provisioned resources.json with the GPU count and memory left as ${NUM_AVAILABLE_GPUS} and
+              # ${MEMORY_PER_GPU_IN_GIB} (fl-services/nvflare/provision/scripts/restructure-lib.sh). Fill in those
+              # two, as the Compose client's entrypoint does, from flClient.gpu.count. resources.json.default holds
+              # what provisioning wrote, not this deployment's count, so it is only the fallback for a kit from
+              # before the template existed. A local/ the client cannot write stops the pod.
+              if [ -f /app/local/resources.template.json ]; then
+                envsubst '${NUM_AVAILABLE_GPUS} ${MEMORY_PER_GPU_IN_GIB}' < /app/local/resources.template.json > /app/local/resources.json \
+                  || { echo "cannot write /app/local/resources.json" >&2; exit 1; }
+              else
+                cp /app/local/resources.json.default /app/local/resources.json \
+                  || { echo "cannot copy the kit's local/resources.json.default to /app/local/resources.json" >&2; exit 1; }
+              fi
               cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
               # Site privacy policy (FLIP#851, FLIP#1259): render or remove /app/local/privacy.json
               # from FL_SITE_PRIVACY_* or the governance document's [fl_privacy.nvflare] section.

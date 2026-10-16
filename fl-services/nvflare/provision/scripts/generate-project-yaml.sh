@@ -23,7 +23,7 @@
 # The base project YAML declares the server, admin, builders and a single
 # canonical client participant (the template). This script clones that template
 # into Trust_1 .. Trust_N, preserving the template's env-specific fields
-# (connect_to, enable_byoc, resource, ...) and substituting only the name. The
+# (connect_to, enable_byoc, ...) and substituting only the name. The
 # expanded project YAML is written to a (gitignored) output path that
 # provision-network.sh then feeds to `nvflare provision`.
 #

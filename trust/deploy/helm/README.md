@@ -752,6 +752,11 @@ images ship PyTorch built for CUDA 13. The operator installs the driver itself, 
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
 
+On NVFLARE, `flClient.gpu.count` is also the number of GPUs the client offers its scheduler: 0 or 1, since the pod
+sees GPU 0 only. A job that declares more is not scheduled on this trust; NVFLARE retries it ten times, over about 40
+minutes, then ends it as `FINISHED:CAN_NOT_SCHEDULE`. With a count of 1, the client stops at start unless
+`nvidia-smi` in the pod sees a GPU (see [Pods in CrashLoopBackOff](#pods-in-crashloopbackoff)).
+
 ### Autoscaling
 
 ```yaml
@@ -1151,6 +1156,8 @@ The chart is validated in CI via:
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | data-access-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
+| **NVFLARE GPU count** | fl-client log shows `num_of_gpus specified (1) exceeds available GPUs: 0` | The pod does not see the GPU `flClient.gpu.count` promises. Check `kubectl exec <fl-client> -n <ns> -- nvidia-smi -L`; fix the node's NVIDIA runtime, or set `flClient.gpu.enabled: false`. |
+| **NVFLARE kit not writable** | fl-client log shows `cannot write /app/local/resources.json` | The client renders `resources.json` into the kit's `local/` at start. `chown` the staged kit's `local/` to uid 1000 on the node. |
 | **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client (`images-init`): the shared images volume must be writable by the init's root user — check the PVC is bound. For omop-db-init: verify PVC is bound. |
 
 ### FL client won't connect
@@ -1161,7 +1168,7 @@ The chart is validated in CI via:
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (NVFLARE 1000, Flower 49999).
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (NVFLARE 1000, Flower 49999). On NVFLARE its `local/` must also be writable.
 
 ### Network policy blocking intra-service traffic
 
