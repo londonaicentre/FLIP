@@ -127,7 +127,7 @@ class FlipDiffusionRecipe(FlipRecipe):
         query: str = "SELECT * FROM Table;",
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
-    ):
+    ) -> None:
         self.num_rounds_ae = num_rounds_ae
         self.num_rounds_dm = num_rounds_dm
         self.min_clients = min_clients

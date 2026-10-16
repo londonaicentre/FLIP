@@ -38,9 +38,9 @@ make up
 
 The UI is accessible over plain HTTP at the port defined by `UI_PORT` in
 [`.env.development.example`](../.env.development.example): `http://localhost:<UI_PORT>`. Only a port the
-dev Cognito client registers as a browser origin works — take one from 44350–44359, since the shipped
-`443` is registered for `https` only and the dev server serves no TLS. See "Browser-usable UI ports" in
-[deploy/providers/AWS/dev/README.md](../deploy/providers/AWS/dev/README.md).
+local Keycloak realm registers as a browser origin works — take one from 44350–44359, since the shipped
+`443` is registered for `https` only and the dev server serves no TLS. See
+[deploy/keycloak/README.md](../deploy/keycloak/README.md).
 
 ### Staging and production (AWS)
 

@@ -190,10 +190,10 @@ environment of the one-off ``flip-api`` Fargate task
 (``flip-api/src/flip_api/scripts/register_trust.py``, ``HUB_SHARED_ENV_KEYS`` — a filtered
 comprehension that silently skips absent keys), and that task definition
 (``deploy/providers/AWS/locals.tf``) carries only ``TRUST_API_KEY_HEADER`` and
-``FL_BACKEND`` of the twelve: ``AES_KEY_BASE64`` is read from Secrets Manager at
+``FL_BACKEND`` of the eleven: ``AES_KEY_BASE64`` is read from Secrets Manager at
 use time and never placed in the environment, and ``CENTRAL_HUB_API_URL``, the
-image registries/tags, the two kit dates, ``NLB_SUBDOMAIN`` and
-``FL_SERVER_PORT`` are not in the task definition at all. Those ten stay at their
+image tags, the two kit dates, ``NLB_SUBDOMAIN``, ``FL_SERVER_PORT`` and
+``FL_EDGE_PORT`` are not in the task definition at all. Those nine stay at their
 placeholder until the next step. The hub stores only SHA-256 hashes of the
 credentials and cannot re-emit them, so the credentials half is write-once —
 re-register to rotate.
@@ -321,6 +321,52 @@ is the first-install verb and resets XNAT.
 the release the hub runs. See :doc:`/sys-admin/admin-upgrading-sites` for the runbook,
 including when the admin has to re-issue kits first.
 
+.. _onprem-core-vocabulary:
+
+*****************************
+Load the OMOP core vocabulary
+*****************************
+
+The node's OMOP database starts without the OMOP core vocabulary — SNOMED CT, LOINC and the other
+licensed vocabularies that cohort queries resolve concepts through. Each site downloads its own copy
+under its own licences: the vocabularies belong to their owners, and handing the AI Centre's copy to
+another organisation would be redistribution those licences do not clearly allow.
+
+**What to download.** At least the vocabularies in the
+`core vocabulary roster <https://github.com/londonaicentre/FLIP/blob/develop/trust/omop-db/README.md#the-core-vocabulary-bundle>`_.
+
+**Where from.** `OHDSI Athena <https://athena.ohdsi.org/>`_, with your own account, accepting each
+vocabulary's licence there. The UK editions (SNOMED CT UK, dm+d, Read v2) come from
+`NHS TRUD <https://isd.hscic.gov.uk/trud/>`_ under the NHS national licences. Unzip the export into
+one directory: the loader reads the nine Athena table files from its top level (``CONCEPT.csv``,
+``CONCEPT_ANCESTOR.csv``, ``CONCEPT_CLASS.csv``, ``CONCEPT_RELATIONSHIP.csv``,
+``CONCEPT_SYNONYM.csv``, ``DOMAIN.csv``, ``DRUG_STRENGTH.csv``, ``RELATIONSHIP.csv``,
+``VOCABULARY.csv``).
+
+**Load it** once, after the first ``up-onprem-trust``, from the checkout on the trust host. It needs
+``psql`` (``sudo apt-get install postgresql-client``); take the four values from your kit file:
+
+.. code-block:: shell
+
+   cd trust/omop-db
+   OMOP_DB_HOST=127.0.0.1 OMOP_DB_PORT=<OMOP_DB_PORT> OMOP_POSTGRES_DB=<OMOP_POSTGRES_DB> \
+     OMOP_POSTGRES_USER=<OMOP_POSTGRES_USER> OMOP_POSTGRES_PASSWORD='<OMOP_POSTGRES_PASSWORD>' \
+     ./files/load_core_vocab.sh <export dir> files/OMOPCDM_postgresql_5.4_constraints.sql
+
+The full roster takes about 25 minutes. Re-running is safe: tables that already hold the vocabulary are
+skipped. With the same variables, ``./files/load_core_vocab.sh --check`` loads nothing and exits 0 once
+every table is loaded. If a cohort query ran before the load, restart data-access-api
+(``sudo docker restart trust<N>-data-access-api-1``): it caches query results and would replay the
+empty answer.
+
+On a Helm-deployed node, leave ``omopDb.vocabLoad.s3Bucket`` empty and run the same loader over a
+``kubectl port-forward`` to the ``omop-db`` service, as the chart README
+(``trust/deploy/helm/README.md``, "Local clusters (kind)") shows — with your own export in place of
+its ``make fetch-vocab-core`` step.
+
+**Without it** the node starts and passes every health check, but a cohort query that resolves
+core-vocabulary concepts returns nothing.
+
 ***********************
 Trust authentication
 ***********************
@@ -381,8 +427,9 @@ The trust host must be able to make outbound connections to two **separate** Cen
 endpoints — different hostnames behind different load balancers, so both must be allowlisted:
 
 - The Central Hub FLIP API over HTTPS (port 443) — the ALB (e.g. ``app.flip.aicentre.co.uk``).
-- The FL Server endpoint over gRPC or HTTP (port set by ``FL_SERVER_PORT``,
-  default 8002) — the NLB (e.g. ``fl.app.flip.aicentre.co.uk``).
+- The FL Server endpoint over gRPC or HTTP (the kit's ``FL_EDGE_PORT``, else
+  ``FL_SERVER_PORT``; 8002 on production, 8003 on LZA staging) — the NLB
+  (e.g. ``fl.app.flip.aicentre.co.uk``).
 
 If the trust's public IP changes (common with residential broadband), update
 the NLB security group. Add the new IP to the ``LOCAL_TRUST_PUBLIC_IPS`` HCL
@@ -404,10 +451,10 @@ Troubleshooting
 |                                  | Check ``trust-api`` logs for polling errors.               |
 +----------------------------------+------------------------------------------------------------+
 | ``Connection timed out`` (FL)    | Trust's public IP changed? Update the NLB security group.  |
-|                                  | Host/router firewall blocking outbound on port 8002?       |
+|                                  | Firewall blocking outbound 8002 (8003 on LZA staging)?     |
 +----------------------------------+------------------------------------------------------------+
 | Firewall blocking outbound       | Confirm the host/router firewall allows outbound HTTPS     |
-|                                  | (443) and the FL gRPC port (``FL_SERVER_PORT``, def. 8002).|
+|                                  | (443) and the FL gRPC port (``FL_EDGE_PORT``, def. 8002).  |
 +----------------------------------+------------------------------------------------------------+
 | Ansible ``Permission denied``    | SSH key correct? User has ``sudo``? ``ANSIBLE_BECOME_PASS``|
 |                                  | set if running in local-host mode?                         |

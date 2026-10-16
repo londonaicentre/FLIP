@@ -20,9 +20,10 @@ from fastapi import HTTPException
 
 from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
-from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TaskType
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.trusts_services.start_project_imaging_creation import (
+    queue_cohort_snapshot,
     queue_imaging_creation,
     start_project_imaging_creation,
 )
@@ -185,9 +186,22 @@ async def test_successful_imaging_creation(
     )
 
     assert response["success"] == "Imaging project creation task queued successfully"
-    # Verify task was added and committed
-    mock_get_session.add.assert_called_once()
-    mock_get_session.commit.assert_called_once()
+    # Two tasks, in this order: the cohort snapshot (FLIP#857) is queued and committed
+    # FIRST so its created_at strictly precedes the imaging task's — pending-task dispatch
+    # orders by created_at and the trust poller is sequential, so the frozen accession set
+    # exists by the time imaging retrieval asks for it.
+    assert mock_get_session.add.call_count == 2
+    assert mock_get_session.commit.call_count == 2
+    persist_task = mock_get_session.add.call_args_list[0][0][0]
+    imaging_task = mock_get_session.add.call_args_list[1][0][0]
+    assert persist_task.task_type == TaskType.PERSIST_COHORT
+    assert imaging_task.task_type == TaskType.CREATE_IMAGING
+    # The task row records which Queries row was frozen, and the payload carries both the
+    # encrypted id (forwarded to data-access-api) and the query of record.
+    assert persist_task.query_id is not None
+    persist_payload = json.loads(persist_task.payload)
+    assert persist_payload["encrypted_project_id"]
+    assert persist_payload["query"] == "SELECT * FROM table"
 
     # The directory is listed once and narrowed to the project's members for the trust payload.
     fake_idp.list_users.assert_called_once_with()
@@ -213,7 +227,43 @@ async def test_queue_imaging_creation_does_not_check_the_caller(
 
     assert response["success"] == "Imaging project creation task queued successfully"
     mock_has_permissions.assert_not_called()
-    mock_get_session.add.assert_called_once()
+    queued = [call.args[0].task_type for call in mock_get_session.add.call_args_list]
+    assert queued == [TaskType.PERSIST_COHORT, TaskType.CREATE_IMAGING]
+
+
+@pytest.mark.asyncio
+async def test_a_late_trust_freezes_its_own_cohort_before_its_imaging(
+    mock_request,
+    mock_get_session,
+    mock_get_project,
+    mock_get_approved_trusts,
+    mock_get_users_with_access,
+    mock_list_users,
+):
+    """A trust approving an already-APPROVED project (FLIP#1258) joins through this same entry point.
+
+    So it gets its own PERSIST_COHORT task (FLIP#857), committed before its CREATE_IMAGING task: the row-level
+    routes serve only the frozen members, and a late trust without a frozen membership would refuse its imaging
+    and training.
+    """
+    late_trust = ITrust(id=uuid.uuid4(), name="Late Trust")
+    mock_get_approved_trusts.return_value = [trust_example, late_trust]
+
+    await queue_imaging_creation(
+        request=mock_request, project_id=project_id, trust=late_trust, db=mock_get_session, idp=mock_list_users
+    )
+
+    persist_task, imaging_task = [call.args[0] for call in mock_get_session.add.call_args_list]
+    assert (persist_task.task_type, imaging_task.task_type) == (TaskType.PERSIST_COHORT, TaskType.CREATE_IMAGING)
+    assert persist_task.trust_id == imaging_task.trust_id == late_trust.id
+    assert json.loads(persist_task.payload)["trust_id"] == str(late_trust.id)
+    # Each task in its own commit, the snapshot's first, so its created_at is the earlier.
+    assert [name for name, _, _ in mock_get_session.mock_calls if name in ("add", "commit")] == [
+        "add",
+        "commit",
+        "add",
+        "commit",
+    ]
 
 
 # Test case for DB error during task creation
@@ -267,9 +317,10 @@ async def test_dicom_to_nifti_false_forwarded_to_trust(
         idp=fake_idp,
     )
 
-    # Verify the task payload includes dicom_to_nifti=False
-    mock_get_session.add.assert_called_once()
-    task = mock_get_session.add.call_args[0][0]
+    # Verify the task payload includes dicom_to_nifti=False.
+    # The imaging task is queued second, after the cohort-snapshot task.
+    task = mock_get_session.add.call_args_list[-1][0][0]
+    assert task.task_type == TaskType.CREATE_IMAGING
     payload = json.loads(task.payload)
     assert payload["dicom_to_nifti"] is False
 
@@ -323,6 +374,83 @@ async def test_imaging_follows_the_trusts_approval(
     with pytest.raises(HTTPException) as excinfo:
         await queue_imaging_creation(
             request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session, idp=fake_idp
+        )
+
+    assert excinfo.value.status_code == 409
+    mock_get_session.add.assert_not_called()
+
+
+def test_queue_cohort_snapshot_freezes_a_project_without_imaging(mock_get_session, mock_get_project):
+    """FLIP#1071 x FLIP#857: no imaging stage, but training reads the frozen cohort — so the trust freezes it."""
+    mock_get_project.return_value.has_imaging = False
+
+    response = queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert response["success"] == "Cohort snapshot task queued successfully"
+    (persist_task,) = [call.args[0] for call in mock_get_session.add.call_args_list]
+    assert (persist_task.task_type, persist_task.trust_id) == (TaskType.PERSIST_COHORT, trust_id)
+    payload = json.loads(persist_task.payload)
+    assert payload["encrypted_project_id"]
+    assert payload["query"] == "SELECT * FROM table"
+    mock_get_session.commit.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("project_status", "approved_trusts"),
+    [(ProjectStatus.STAGED, [trust_example]), (ProjectStatus.APPROVED, [])],
+    ids=["project not approved", "trust not approved"],
+)
+def test_queue_cohort_snapshot_follows_the_trusts_approval(
+    mock_get_session, mock_get_project, mock_get_approved_trusts, project_status, approved_trusts
+):
+    """As for imaging (FLIP#1258): a trust that has not approved never runs the cohort query."""
+    mock_get_project.return_value.status = project_status
+    mock_get_approved_trusts.return_value = approved_trusts
+
+    with pytest.raises(HTTPException) as excinfo:
+        queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert excinfo.value.status_code == 409
+    mock_get_session.add.assert_not_called()
+
+
+def test_queue_cohort_snapshot_rolls_back_a_db_error(mock_get_session, mock_get_project):
+    mock_get_session.add.side_effect = Exception("DB write failed")
+
+    with pytest.raises(HTTPException) as excinfo:
+        queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert excinfo.value.status_code == 500
+    assert excinfo.value.detail == "Internal server error"
+    mock_get_session.rollback.assert_called_once()
+
+
+def test_queue_cohort_snapshot_refuses_a_project_without_a_query(mock_get_session, mock_get_project):
+    """No query of record means nothing to freeze: the step fails for this trust instead of reporting success."""
+    mock_get_project.return_value.query = None
+
+    with pytest.raises(HTTPException) as excinfo:
+        queue_cohort_snapshot(project_id=project_id, trust=trust_example, db=mock_get_session)
+
+    assert excinfo.value.status_code == 409
+    assert "no cohort query" in excinfo.value.detail
+    mock_get_session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_imaging_is_not_queued_for_a_project_without_a_query(
+    mock_request,
+    mock_get_session,
+    mock_get_project,
+    mock_get_users_with_access,
+    mock_list_users,
+):
+    """The snapshot failure stops the trust's imaging too: imaging without a frozen membership would be refused."""
+    mock_get_project.return_value.query = None
+
+    with pytest.raises(HTTPException) as excinfo:
+        await queue_imaging_creation(
+            request=mock_request, project_id=project_id, trust=trust_example, db=mock_get_session, idp=mock_list_users
         )
 
     assert excinfo.value.status_code == 409

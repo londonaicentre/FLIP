@@ -54,23 +54,42 @@ for the full per-service capability table.
 
 ## Runtime dependency installation (and where flip-utils comes from)
 
-Flower ≥1.32 installs an app's declared dependencies **at run time**: when a run starts, the
-SuperLink (ServerApp side) and each SuperNode (ClientApp side, opted in with
-`--allow-runtime-dependency-installation` in the composes) run `uv sync` against the FAB's
-`pyproject.toml` into an isolated per-run environment, which is prepended to `sys.path`.
+Flower ≥1.32 can install an app's declared dependencies **at run time**: the app process runs
+`uv sync` against the FAB's `pyproject.toml` into an isolated per-run environment, which is
+prepended to `sys.path`. **FLIP turns this off on both sides** (FLIP#1418): the SuperLink sets
+`FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1` (every compose file, and the ECS task on every
+estate), and the SuperNodes do not pass `--allow-runtime-dependency-installation`, which is
+Flower's default. The ServerApp and the ClientApps run in the image's own environment: `flwr/base`
+plus `flip-utils[full]`, which `fl-base` installs from `/opt/flip-utils`. That environment carries
+every package the template app code imports. Nothing checks it against the templates'
+`[project].dependencies`, whose version floors and extras (`pandas>=3.0.0`, `flwr[simulation]`) no
+longer apply at run time, so a package the image lacks fails as an import error when the app starts
+on the SuperLink or at a trust, not at build time. A dependency an app needs ships by adding it to
+flip-utils' `full` extra (what `fl-base` installs) and rebuilding the FL images.
 
-Left alone, that would resolve `flip-utils` from **PyPI**, silently shadowing the in-repo copy baked
-into the images ([#767](https://github.com/londonaicentre/FLIP/issues/767)). Two `[tool.uv]` tables
-in the `fl-apps/flower/*` template pyprojects steer the per-run resolution instead:
+Two failures made the per-run install unusable, in flwr 1.36 through 1.39:
 
-- `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }` — `fl-base` keeps the in-repo
-  flip-utils **source** at `/opt/flip-utils` after installing it, and every run builds flip-utils
-  from that path. uv never consults PyPI for a name with a source override, so the platform always
-  runs the flip-utils matching its images.
-- `torch`/`torchvision` are pinned to PyTorch's cu130 index and require NVIDIA driver ≥580.
+- **A cold sync outlives the task heartbeat.** The first run after a container starts syncs torch and
+  MONAI from scratch (about two to three minutes); Flower's task liveness window is a 30 s heartbeat
+  with a patience of 2, so the task token expires mid-install (`Runtime task-token authentication
+  failed`). On the SuperLink the run never issues a round; on a SuperNode round 1 reports
+  `ClientApp stopped responding`.
+- **SuperNodes share one per-run env and delete it.** Flower names the environment after the run
+  id, so every ClientApp launch in a run (one per round and per evaluation) uses the same directory,
+  and each launch's exit handler `shutil.rmtree`s it. A later launch then syncs into a directory
+  being removed: `uv` falls through to the base interpreter and fails with `Permission denied`
+  removing setuptools' `_distutils_hack`, or the ClientApp loses its environment mid-round.
 
-All other dependencies resolve from PyPI per run, so SuperLink/SuperNode hosts need outbound HTTPS
-to PyPI and `download.pytorch.org`.
+With nothing installed at run time, no FL host needs a route to PyPI or `download.pytorch.org`
+during a run, which is what the LZA estate's sealed egress (FLIP#749) already required.
+
+The `[tool.uv]` tables in the `fl-apps/flower/*` template pyprojects stay as a guard for anything
+that does run `uv sync` against a template inside an FL image (per-run install re-enabled; the
+`/opt/flip-utils` path exists nowhere else, so a template cannot be synced on a workstation):
+`[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }` stops uv resolving flip-utils from
+**PyPI**, which would shadow the in-repo copy baked into the images
+([#767](https://github.com/londonaicentre/FLIP/issues/767)), and `torch`/`torchvision` are pinned
+to PyTorch's cu130 index (NVIDIA driver ≥580).
 
 **Testing an unpublished flip-utils** therefore needs no PyPI release and no version bump: rebuild
 the images from your branch (`make build-fl FL_BACKEND=flower` — the source lands at
@@ -80,22 +99,15 @@ Every flip-utils change ships via an image rebuild — the containers run whatev
 so confirm the running container carries your change by inspecting the file you edited
 (`docker exec <supernode> cat /opt/flip-utils/flip/<changed file>`) before trusting a run.
 
-> ⚠️ The pin lives in the **fl-apps templates**, so it covers hub-stack runs (flip-api bundles every
-> uploaded app with a template). The standalone stacks below submit apps straight from
-> `fl-tutorials/flower/`, bypassing the templates — and a tutorial pyproject **cannot** carry the
-> same pin, because `/opt/flip-utils` does not exist on a workstation and `uv sync` then fails
-> outright (breaking local linting of the tutorial). The tutorials therefore **do not declare
-> flip-utils at all**: with nothing to install, the per-run environment has no `flip`, and
-> `import flip` falls through the prepended per-run path to the image's baked-in copy — the same
-> flip-utils the platform runs.
->
-> Declaring it is the trap: `uv sync` would resolve `flip-utils` from **PyPI** (whatever release is
-> current there) into the per-run environment, which is prepended to `sys.path` and so shadows the
-> image copy. Any drift between that PyPI release and the repo's in-tree `flip-utils/` means the
-> tutorials no longer exercise the same code the platform runs, and a symbol added since (for
-> example the Flower-side strategy helpers) is silently unavailable — the import fails before
-> training starts. Either way, a flip-utils change reaches the tutorials only via an image rebuild
-> (`make build-fl FL_BACKEND=flower`).
+> ⚠️ The tutorials under `fl-tutorials/flower/` **do not declare flip-utils at all**. A tutorial
+> pyproject cannot carry the template's `/opt/flip-utils` pin (the path does not exist on a
+> workstation, so a local `uv sync` would fail), and declaring flip-utils without the pin would make
+> any `uv sync` resolve it from **PyPI**, a release that can drift from the in-repo `flip-utils/`.
+> That includes a local `flwr run` (`sim-tutorial`), whose SuperLink still runtime-installs an app's
+> declared dependencies into a per-run environment prepended to `sys.path`. Undeclared, `import flip`
+> resolves to the environment running the app and never to PyPI: the image's baked-in copy on the
+> compose stacks, where a flip-utils change arrives only via an image rebuild
+> (`make build-fl FL_BACKEND=flower`), and the checkout's `flip-utils/` under `sim-tutorial`.
 
 ## Step-by-step provisioning
 

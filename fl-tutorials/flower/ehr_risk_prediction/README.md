@@ -26,7 +26,7 @@ app/
   feature_engineering.py # shared byte-identical with the NVFLARE copy
   models.py              # shared byte-identical with the NVFLARE copy — the MLP factory
   config.json            # per-tutorial hyperparameters read at runtime
-  config.toml            # Flower run-config overrides applied by fl-api at submit
+  config.toml            # Flower run-config overrides applied by fl-api on a platform submit
 pyproject.toml           # flwr app definition + run-config defaults (incl. DP knobs)
 query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
 ```
@@ -44,12 +44,14 @@ query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
   reads this at runtime. It is the only per-tutorial knob that rides through the FLIP upload flow,
   because the deployed bundle's `pyproject.toml` comes from the base template, not from here.
 - **`app/config.toml`** — Flower run-config overrides that fl-api-flower feeds to
-  `flwr run --run-config` at submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
+  `flwr run --run-config` on a platform submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
+  A tutorial run (`run-tutorial`, or `make submit` on `fl-services/flower`) uses `pyproject.toml`'s values instead (FLIP#1432).
 
-> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — Flower
-> runtime-installs an app's declared deps and prepends them to `sys.path`, so declaring it would
-> shadow the in-image `/opt/flip-utils` copy the platform actually runs (FLIP#767). Pick up a
-> flip-utils change with `make build-fl FL_BACKEND=flower`.
+> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — a local
+> `flwr run` still runtime-installs an app's declared deps and prepends them to `sys.path`, so
+> declaring it would pull a PyPI release over the flip-utils the run should use (FLIP#767). On the
+> platform nothing installs at run time (FLIP#1418) and the app imports the FL image's copy; pick
+> up a flip-utils change on the compose stacks with `make build-fl FL_BACKEND=flower`.
 
 ## The model and cohort
 
@@ -120,25 +122,15 @@ fetched at run time, never committed).
 
 ## How to run
 
-### Local run (standalone Flower stack)
+### Local run (the flwr simulator)
 
-Brings up the standalone Flower compose stack (SuperLink + 2 SuperNodes + fl-api), submits the job,
-polls to completion and tears down — no imaging, CPU only:
+No SuperLink container, no SuperNodes, no fl-api, no Docker — `flwr` starts a local SuperLink of
+its own. No imaging, CPU only. Every site reads the same CSV and each `ClientApp` slices out its own
+`person_id`-modulo partition, so the run is genuinely federated off one file:
 
 ```bash
 make -C fl-tutorials download-synthea-data FL_BACKEND=flower           # once
 make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
-```
-
-Both SuperNodes read the same mounted CSV; each `ClientApp` slices out its own `person_id`-modulo
-partition, so the run is genuinely federated off one file.
-
-For the fast inner loop, the same app runs on the `flwr` simulator — no SuperLink container, no
-SuperNodes, no fl-api, no Docker; `flwr` starts a local SuperLink of its own — with the same
-partitioning:
-
-```bash
-make -C fl-tutorials sim-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
 ```
 
 ### On the platform (or `make e2e_smoke`)

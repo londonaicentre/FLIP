@@ -36,7 +36,7 @@ class InitEvaluation(Controller):
         min_clients: int = 1,
         flip: FLIPBase = FLIP(),
         cleanup_timeout: int = 600,
-    ):
+    ) -> None:
         """The controller that is executed pre-evaluation and is a part of the FLIP evaluation model.
 
         The InitEvaluation workflow sends a request to the Central Hub, stating that evaluation has initiated
@@ -44,7 +44,7 @@ class InitEvaluation(Controller):
 
         Args:
             model_id (str, optional): ID of the model that the evaluation is being performed under. When omitted
-                the ID is resolved lazily from the job's meta.json custom_props at first use.
+                the ID is resolved lazily from the app's config.json at first use (``get_flip_model_id``).
             min_clients (int, optional): Minimum number of clients that must respond to the cleanup task.
                 Defaults to 1; on the platform fl-api sets it to the participating-trust count for every job
                 (``config["min_clients"] = len(trusts)`` in ``prepare_config.py``), so it is never a
@@ -182,6 +182,11 @@ class InitEvaluation(Controller):
 
     def _accept_cleanup_result(self, client_name: str, result: Shareable, fl_ctx: FLContext) -> bool | None:
         """Accept one client's cleanup result, panicking the run on an execution failure.
+
+        Args:
+            client_name (str): Name of the client that returned the result.
+            result (Shareable): The client's cleanup task result.
+            fl_ctx (FLContext): The FL context of the run.
 
         Returns:
             bool | None: ``False`` once the run has been panicked; ``None`` when the result needs

@@ -32,11 +32,9 @@ services:
       - BUNDLE_URL_ALLOWED_ORIGINS=http://object-store:9000
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
-      # Per-job GPU request written into meta.json resource_spec by configure_meta. Default 0 =>
-      # empty resource_spec => NVFLARE hides the GPU from the training worker (CPU). Set >0 (with
-      # mem <= the client's advertised mem_per_gpu_in_GiB) so jobs train on the GPU.
+      # GPUs written into the meta.json resource_spec of a job that declares none (configure_meta).
+      # Default 0 => empty resource_spec => NVFLARE hides the GPU from the training worker (CPU).
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
-      - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
     ports:
       - "${FL_API_PORT}:8000"
       # Loopback-only — an exposed debugpy port is arbitrary code execution for anyone
@@ -77,7 +75,6 @@ services:
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # Per-job GPU request (see fl-api-net-1). Default 0 => CPU; set >0 to train on the GPU.
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
-      - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
     # The 640 admin client.key, through the host group (see fl-api-net-1).
     group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     security_opt:

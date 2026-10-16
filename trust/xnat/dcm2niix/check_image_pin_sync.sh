@@ -13,7 +13,7 @@
 # Guard: the dcm2niix Container Service image pin has one source of truth (FLIP#980).
 #
 # `ARG DCM2NIIX_VERSION` in trust/xnat/dcm2niix/Dockerfile decides which tag the publish workflow
-# pushes; three deploy-time configs then carry the resulting
+# pushes; two deploy-time configs then carry the resulting
 # `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` string as a literal. Nothing at runtime notices
 # when a version bump leaves one of them behind — the old immutable tag simply keeps being pulled,
 # and imaging-api's per-project event subscription looks the XNAT command up by that exact string,
@@ -32,7 +32,6 @@ IMAGE="ghcr.io/londonaicentre/xnat-dcm2niix"
 # Every file that pins the image by its full `<image>:<tag>` string.
 REFERENCES=(
     "trust/xnat/xnat/config/dcm2niix_command.json"
-    "trust/deploy/helm/templates/xnat-init-job.yaml"
     "trust/imaging-api/imaging_api/config.py"
 )
 

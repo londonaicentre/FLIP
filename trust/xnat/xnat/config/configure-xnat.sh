@@ -21,6 +21,9 @@
 
 set -euo pipefail
 
+# shellcheck source=./xnat-lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/xnat-lib.sh"
+
 # Required, non-empty (":?" also rejects set-but-empty, which `set -u` does
 # not): an empty value interpolated into a JSON payload produces invalid JSON
 # that XNAT rejects — the failure mode behind the silent PACS registration
@@ -79,95 +82,87 @@ case "${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS}" in
   *) echo "ERROR: PACS_SUPPORTS_EXTENDED_NEGOTIATIONS must be true or false, got '${PACS_SUPPORTS_EXTENDED_NEGOTIATIONS}'" >&2; exit 1 ;;
 esac
 
+# The availability schedule is validated before XNAT is touched: the converge at the end removes
+# intervals before it writes, so a value DQR refused part-way would leave days with no window. The
+# accepted forms are DQR 3.0.0's: DayOfWeek names in capitals, HH:MM / H:MM / 24:00, and threads and
+# utilisation of at least 1 (DQR stores 0 for both if either is 0, and 0% never runs). Commas and
+# spaces both separate days.
+read -r -a avail_day_list <<< "${PACS_AVAILABILITY_DAYS//,/ }"
+if [[ ${#avail_day_list[@]} -eq 0 ]]; then
+  echo "ERROR: PACS_AVAILABILITY_DAYS lists no days, got '${PACS_AVAILABILITY_DAYS}'. DQR retrieves only" \
+    "inside a scheduled window, so an empty schedule would stop retrieval altogether." >&2
+  exit 1
+fi
+for avail_day in "${avail_day_list[@]}"; do
+  case "$avail_day" in
+    MONDAY|TUESDAY|WEDNESDAY|THURSDAY|FRIDAY|SATURDAY|SUNDAY) ;;
+    *) echo "ERROR: PACS_AVAILABILITY_DAYS must list days as MONDAY ... SUNDAY in capitals, separated by" \
+         "commas, got '${avail_day}' in '${PACS_AVAILABILITY_DAYS}'" >&2; exit 1 ;;
+  esac
+done
+for avail_var in PACS_AVAILABILITY_START PACS_AVAILABILITY_END; do
+  if ! [[ "${!avail_var}" =~ ^(([01][0-9]|2[0-3]):[0-5][0-9]|[0-9]:[0-5][0-9]|24:00)$ ]]; then
+    echo "ERROR: ${avail_var} must be a time of day, HH:MM from 00:00 to 23:59 or 24:00 for the end of" \
+      "the day, got '${!avail_var}'" >&2
+    exit 1
+  fi
+done
+if ! [[ "${PACS_THREADS}" =~ ^[1-9][0-9]{0,8}$ ]]; then
+  echo "ERROR: PACS_THREADS must be a whole number from 1, got '${PACS_THREADS}'" >&2
+  exit 1
+fi
+if ! [[ "${PACS_UTILIZATION_PERCENT}" =~ ^([1-9][0-9]?|100)$ ]]; then
+  echo "ERROR: PACS_UTILIZATION_PERCENT must be a whole number from 1 to 100, got '${PACS_UTILIZATION_PERCENT}'" >&2
+  exit 1
+fi
+
+# A time as DQR stores and returns it: H:MM zero-padded, 24:00 as 00:00 (still the end of the day).
+# The converge compares the kit with what DQR returns, so the kit's times get the same form.
+dqr_time() {
+  case "$1" in
+    24:00) printf '00:00' ;;
+    ?:??) printf '0%s' "$1" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+avail_start=$(dqr_time "${PACS_AVAILABILITY_START}")
+avail_end=$(dqr_time "${PACS_AVAILABILITY_END}")
+
+# DQR (PacsAvailability.isAvailableAtTime) runs a window whose start is not before its end inverted,
+# during the day, so refuse one (FLIP#1465). An end of 24:00, stored as 00:00, is the end of the day.
+avail_minutes() { printf '%d' $(( 10#${1%%:*} * 60 + 10#${1##*:} )); }  # HH:MM, already validated
+avail_end_minutes=1440
+[[ "$avail_end" == "00:00" ]] || avail_end_minutes=$(avail_minutes "$avail_end")
+if (( $(avail_minutes "$avail_start") >= avail_end_minutes )); then
+  echo "ERROR: PACS_AVAILABILITY_START=${PACS_AVAILABILITY_START} must be before" \
+    "PACS_AVAILABILITY_END=${PACS_AVAILABILITY_END}: DQR runs a window that crosses midnight inverted, during the" \
+    "day (FLIP#1465). For out-of-hours retrieval use 19:00-24:00, 00:00-07:00 or whole days." >&2
+  exit 1
+fi
+
 # jq parses the /xapi/dicomscp and /xapi/pacs listings below. It ships in the xnat-web image
 # (trust/xnat/xnat/Dockerfile), but fail loudly here rather than let a missing binary degrade into a
 # silently-empty lookup that would re-register a PACS that already exists.
 command -v jq >/dev/null || { echo "ERROR: jq is required by configure-xnat.sh" >&2; exit 1; }
 
-# Wait for XNAT to be available (wall-clock bounded, and each probe carries
-# its own timeout, so a dead or wedged XNAT fails the deploy loudly instead
-# of printing dots forever — same shape as configure-dcm2niix.sh).
-echo "Waiting for XNAT to be available..."
-wait_start=$SECONDS
-deadline=$((wait_start + 900))
-until curl --output /dev/null --silent --head --fail \
-  --connect-timeout 5 --max-time 10 "$XNAT_URL/app/template/Login.vm"; do
-  if [[ "$SECONDS" -ge "$deadline" ]]; then
-    echo "ERROR: XNAT did not become available within $((SECONDS - wait_start))s" >&2
-    exit 1
-  fi
-  printf '.'
-  sleep 1
-done
-echo "XNAT is up!"
+# XNAT_AETITLE against XNAT's own AE-title rule (DicomSCPManager.AE_TITLE_PATTERN in XNAT 1.10): 1 to
+# 16 printable ASCII characters, no backslash, neither starting nor ending with a space. XNAT applies
+# it when a receiver is created, but not when one is updated in place, and in-place update is how a
+# changed XNAT_AETITLE now reaches an existing receiver (FLIP#1456). So the script applies it itself,
+# before XNAT is touched. jq rather than [[ =~ ]]: its ranges are code points whatever the locale.
+if ! jq -en --arg ae "${XNAT_AETITLE}" \
+    '$ae | test("^[!-~]([ -~]{0,14}[!-~])?$") and (contains("\\") | not)' >/dev/null; then
+  echo "ERROR: XNAT_AETITLE must be 1 to 16 printable ASCII characters, with no backslash and no" \
+    "leading or trailing space (XNAT's own rule for a DICOM AE title), got '${XNAT_AETITLE}'" >&2
+  exit 1
+fi
+
+wait_for_xnat 900
 
 # NOTE: the plugin-readiness wait deliberately does NOT run here. It cannot: the probe is an
 # authenticated plugin route, and an uninitialized XNAT redirects every authenticated route to
 # /setup, so it can only answer once the site has been initialized below. See FLIP#966 — running
 # it here deadlocked every fresh bring-up against a step downstream of itself.
-
-# Helper: curl wrapper for XNAT's REST API — same contract as xnat_curl in
-# configure-dcm2niix.sh, except credentials are passed by the caller: this
-# script authenticates its first two calls with the *initial* admin password
-# and everything after the rotation with the new one. On 2xx, emits the
-# response body on stdout. On any other status — or a curl transport failure —
-# reports the request (and, for HTTP failures, the response body) on stderr
-# and returns non-zero, which `set -e` turns into an abort at the call site.
-# Bare `curl -s` exits 0 on HTTP errors, so a rejected configuration call
-# used to skip that step invisibly — silently-unregistered PACS was how the
-# empty-PACS_DICOM_PORT bug stayed hidden (FLIP#822 / FLIP#862).
-# Unlike the dcm2niix variant, credentials and payloads travel through "$@"
-# here, so the args echoed on failure are scrubbed first: the value following
-# -u (credentials) or -d/--data-binary (payloads carry the admin and service
-# passwords) must never reach the tee'd configure log.
-scrub_args() {
-  local redact_next=""
-  local arg
-  local out=""
-  for arg in "$@"; do
-    if [[ -n "$redact_next" ]]; then
-      out+=" <redacted>"
-      redact_next=""
-    elif [[ "$arg" == "-u" || "$arg" == "-d" || "$arg" == "--data-binary" ]]; then
-      out+=" $arg"
-      redact_next=1
-    else
-      out+=" $arg"
-    fi
-  done
-  printf '%s' "${out# }"
-}
-
-xnat_curl() {
-  local response
-  local status
-  local body
-  local curl_exit=0
-  response=$(curl -sS --connect-timeout 10 --max-time 120 -w '\n%{http_code}' "$@") || curl_exit=$?
-  if [[ "$curl_exit" -ne 0 ]]; then
-    echo "ERROR: curl transport failure (exit $curl_exit)" >&2
-    echo "  args: $(scrub_args "$@")" >&2
-    return 1
-  fi
-  status=$(printf '%s' "$response" | tail -n1)
-  body=$(printf '%s' "$response" | sed '$d')
-  # Strip CRs so a middlebox emitting \r\n line endings can't make the
-  # callers' guards fail on an invisible character (a raw CR is not valid
-  # inside JSON strings, so this is lossless).
-  status=${status//$'\r'/}
-  body=${body//$'\r'/}
-  # Fail closed: anything other than a literal 2xx status line (including
-  # an empty or non-numeric one) is an error.
-  if ! [[ "$status" =~ ^2[0-9]{2}$ ]]; then
-    echo "ERROR: XNAT request failed with HTTP $status" >&2
-    echo "  args: $(scrub_args "$@")" >&2
-    echo "  body: $body" >&2
-    return 1
-  fi
-  if [[ -n "$body" ]]; then
-    printf '%s\n' "$body"
-  fi
-}
 
 # Which admin password this XNAT accepts decides the mode. FIRST BOOT: the initial password still
 # authenticates — activate with it, then rotate it. CONVERGE: only the configured (rotated) password
@@ -178,10 +173,10 @@ xnat_curl() {
 # NOTE: when the configured admin password equals the initial one (the dev kits do this), every run
 # is a first boot — so the conflict-prone calls below (service account, PACS registration,
 # availability intervals) carry their own already-configured guards rather than relying on the mode.
-# (These probes check status codes explicitly — a non-200 here is a signal, not an error, so they
-# stay bare curl rather than xnat_curl. They carry xnat_curl's deadlines even so, and `|| true` so a
-# timeout reaches the checks below instead of ending the script under set -e with no output: the
-# wall-clock wait above proves XNAT serves the login page, not that an authenticated route answers.)
+# (These probes check status codes explicitly — a non-200 here is a signal, not an error, so they use
+# xnat_request rather than xnat_curl, with their own deadlines. A timeout reads as status 000 and
+# reaches the checks below: the wait above proves XNAT serves the login page, not that an
+# authenticated route answers.)
 #
 # On a first boot XNAT serves that login page before its database initialisation finishes, and until
 # then both passwords get 401 (FLIP#1384), so the probes are retried a few times. The cap is a count,
@@ -204,18 +199,16 @@ if ! [[ "$auth_wait" =~ ^[1-9][0-9]*$ ]]; then
 fi
 ADMIN_PASSWORD_ROTATED=false
 for ((attempt = 1; ; attempt++)); do
-  init_pw_status=$(curl -s --connect-timeout 5 --max-time 15 -o /dev/null -w '%{http_code}' \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
-    "$XNAT_URL/xapi/siteConfig/initialized") || true
+  xnat_request 5 15 -o /dev/null -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
+    "$XNAT_URL/xapi/siteConfig/initialized"
+  init_pw_status=$xnat_status
   [[ "${init_pw_status}" == "200" ]] && break
   if [[ "${XNAT_ADMIN_PASSWORD}" == "${XNAT_ADMIN_INITIAL_PASSWORD}" ]]; then
     rotated_status="${init_pw_status}"
   else
-    rotated_probe=$(curl -s --connect-timeout 5 --max-time 15 -w '\n%{http_code}' \
-      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-      "$XNAT_URL/xapi/siteConfig/initialized") || true
-    rotated_status="${rotated_probe##*$'\n'}"
-    initialized="${rotated_probe%$'\n'*}"
+    xnat_request 5 15 -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/siteConfig/initialized"
+    rotated_status=$xnat_status
+    initialized=$xnat_body
     [[ "${rotated_status}" == "200" ]] && break
   fi
   statuses="initial: HTTP ${init_pw_status:-000}, configured: HTTP ${rotated_status:-000}"
@@ -301,8 +294,7 @@ fi
 # already exists (re-run on an already-configured instance — see the
 # idempotency note above); anything else non-2xx fails the deploy.
 echo "Creating service account..."
-create_user_status=$(curl -s -o /tmp/create-user-response.json --connect-timeout 10 --max-time 120 \
-  -w '%{http_code}' -X POST "$XNAT_URL/xapi/users" \
+xnat_request 10 120 -X POST "$XNAT_URL/xapi/users" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d "{
@@ -311,14 +303,15 @@ create_user_status=$(curl -s -o /tmp/create-user-response.json --connect-timeout
     \"firstName\": \"flip Service Account\",
     \"lastName\": \"flip Service Account\",
     \"email\": \"xnat@example.com\"
-  }") || create_user_status="000"
+  }"
+create_user_status=$xnat_status
 if [[ "$create_user_status" == 2* ]]; then
   echo "Service account created."
 elif [[ "$create_user_status" == "409" ]]; then
   echo "Service account already exists (HTTP 409) — leaving as-is."
 else
   echo "ERROR: creating service account failed (HTTP $create_user_status)" >&2
-  cat /tmp/create-user-response.json >&2 || true
+  printf '%s\n' "$xnat_body" >&2
   exit 1
 fi
 
@@ -395,12 +388,20 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
   -H "Content-Type: application/json" \
   -d 'true'
 
-# Remove the pre-existing SCP receivers this script owns, so the POST below can re-create exactly
-# one. Ownership is a property of the receiver itself, not of the port it binds or the title it
-# carries: every receiver FLIP creates is stamped with identifier "dqrObjectIdentifier" by the POST
-# below, and XNAT's stock receiver — created by the webapp on first boot, always called "XNAT" — is
-# the other one that has to go. `GET /xapi/dicomscp` returns `identifier` per receiver, so both
-# markers are readable from the listing.
+# The DICOM SCP receiver is converged onto the kit, not re-created (FLIP#1456): this runs on every
+# redeploy and `helm upgrade`, and a delete-then-POST left no receiver for the C-STORE return leg of a
+# retrieval in flight. FLIP's receiver is kept (the one at XNAT_AETITLE:XNAT_PORT, else the oldest), and:
+#   - it is PUT only when a field drifted, because XNAT restarts the port's listener on every PUT;
+#   - the PUT is not validated as the POST is, so the AE title is checked at the top of this script, and
+#     a receiver is only created by POST (on first boot, after the stock one is deleted);
+#   - the other receivers this script owns are deleted first, so the PUT never takes a title and port
+#     another receiver holds.
+#
+# Which receivers this script owns is a property of the receiver itself, not of the port it binds or the
+# title it carries: every receiver FLIP creates is stamped with identifier "dqrObjectIdentifier" by the
+# POST below, and XNAT's stock receiver — created by the webapp on first boot, always called "XNAT" — is
+# the other one it reclaims. `GET /xapi/dicomscp` returns `identifier` per receiver, so both markers are
+# readable from the listing.
 #
 # Matching instead on "our port or our AE title" left an orphan whenever both moved in one change:
 # an existing FLIPXNAT:8104 under new config XNAT_AETITLE=FLIPXNAT2 XNAT_PORT=11112 matched neither,
@@ -410,22 +411,17 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
 # left alone — it would otherwise be deleted on every redeploy and `helm upgrade`, with the deletion
 # visible only in a Job pod log that is discarded on success.
 #
-# If such a receiver is squatting the port we are about to bind, refuse BEFORE deleting anything.
-# The POST below does fail loud on the duplicate port, but by then the reclamation loop has already
-# removed FLIP's own working receiver, so a redeploy that changed nothing else leaves XNAT with no
-# DICOM receiver at all — worse than the state it started in. The PACS-side guard further down gets
-# this ordering right (it refuses ahead of its deletes), and the listing this check needs has
-# already been fetched, so the check is free.
-#
-# Both markers are literals in the filter, so nothing operator-supplied is spliced into jq.
+# Both markers are literals in the filters, so nothing operator-supplied is spliced into jq.
 response=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
 
 if [[ -z "$response" || "$response" == "[]" ]]; then
     echo "No SCP receivers found."
+    response='[]'
 else
     # Pre-flight: a receiver carrying neither ownership marker, already bound to the port this
-    # deployment is about to register, blocks the POST below. Refuse now, while FLIP's own receiver
-    # is still in place.
+    # deployment is about to register, is refused before anything is written, as the PACS-side guard
+    # further down refuses ahead of its deletes. XNAT itself would accept a second AE title on the
+    # port; this refusal is also what keeps the unvalidated PUT below off a port another receiver holds.
     squatters=$(printf '%s' "$response" \
       | jq -r --argjson port "${XNAT_PORT}" \
               '.[] | select(.port == $port)
@@ -434,37 +430,19 @@ else
     if [[ -n "$squatters" ]]; then
         echo "ERROR: another DICOM SCP receiver already holds port ${XNAT_PORT}, and it carries" >&2
         echo "       neither FLIP ownership marker (identifier 'dqrObjectIdentifier', AE title" >&2
-        echo "       'XNAT'). Refusing to delete this deployment's receiver for a registration" >&2
-        echo "       that would then be rejected as a duplicate port, which would leave XNAT with" >&2
-        echo "       no receiver at all. Free the port or remove the receiver in XNAT's admin UI," >&2
-        echo "       or point this deployment at another port via XNAT_PORT. Found:" >&2
+        echo "       'XNAT'). Refusing to configure this deployment's receiver on a port it would" >&2
+        echo "       share with a receiver it does not own. Free the port or remove the receiver in" >&2
+        echo "       XNAT's admin UI, or point this deployment at another port via XNAT_PORT. Found:" >&2
         printf '         %s\n' "$squatters" >&2
         exit 1
     fi
-
-    stale_ids=$(printf '%s' "$response" \
-      | jq -r '.[] | select(.identifier == "dqrObjectIdentifier" or .aeTitle == "XNAT")
-                   | "\(.id):\(.aeTitle):\(.port)"')
-
-    if [[ -z "$stale_ids" ]]; then
-        echo "No existing SCP receiver to replace."
-    else
-        while IFS=: read -r scp_receiver_id scp_receiver_ae scp_receiver_port; do
-            [[ -n "$scp_receiver_id" ]] || continue
-            echo "Removing SCP receiver '${scp_receiver_ae}:${scp_receiver_port}' (id ${scp_receiver_id})..."
-            xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
-                -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
-        done <<< "$stale_ids"
-    fi
 fi
 
-# Configure SCP receiver to have dqrObjectIdentifier as the identifier (the default is not). That
-# identifier is also what marks the receiver as FLIP-owned for the reclamation above.
-echo "Configuring SCP receiver '${XNAT_AETITLE}' on port ${XNAT_PORT}..."
-xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-  -H "Content-Type: application/json" \
-  -d "$(jq -n --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" '{
+# The kit's receiver. dqrObjectIdentifier (the default identifier is not it) is what routes an arriving
+# study to the project DQR requested it for, and it is also what marks the receiver as FLIP-owned. The
+# body never carries an id: the PUT merges every property of the body into the stored receiver, an id
+# included.
+scp_payload=$(jq -n --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" '{
     aeTitle: $ae,
     port: $port,
     enabled: true,
@@ -473,12 +451,84 @@ xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
     identifier: "dqrObjectIdentifier",
     anonymizationEnabled: true,
     whitelistEnabled: false,
-    whitelistText: "",
     routingExpressionsEnabled: false,
     projectRoutingExpression: "",
     subjectRoutingExpression: "",
     sessionRoutingExpression: ""
-  }')"
+  }')
+
+# Drift is any field of the payload that differs. A routing expression XNAT returns as null is the
+# empty one the kit sends, or a receiver made another way would drift on every run.
+# shellcheck disable=SC2016 # jq's variables, not the shell's
+scp_jq_defs="$XNAT_JQ_DRIFT"'
+def owned: .identifier == "dqrObjectIdentifier" or .aeTitle == "XNAT";
+'
+
+scp_keep=$(printf '%s' "$response" | jq -c --arg ae "${XNAT_AETITLE}" --argjson port "${XNAT_PORT}" \
+  'map(select(.identifier == "dqrObjectIdentifier")) | sort_by(.id)
+   | (map(select(.aeTitle == $ae and .port == $port)) + .) | .[0] // empty')
+scp_keep_id=""
+if [[ -n "$scp_keep" ]]; then
+    scp_keep_id=$(printf '%s' "$scp_keep" | jq -r '.id')
+    require_numeric_id "XNAT listed the DICOM SCP receiver" "$scp_keep_id"
+fi
+
+stale_ids=$(printf '%s' "$response" | jq -r --argjson keep "${scp_keep_id:-null}" "$scp_jq_defs"'
+  .[] | select(owned and .id != $keep) | "\(.id):\(.aeTitle):\(.port)"')
+
+scp_written=false
+while IFS=: read -r scp_receiver_id scp_receiver_ae scp_receiver_port; do
+    [[ -n "$scp_receiver_id" ]] || continue
+    require_numeric_id "XNAT listed a DICOM SCP receiver" "$scp_receiver_id"
+    echo "Removing SCP receiver '${scp_receiver_ae}:${scp_receiver_port}' (id ${scp_receiver_id})..."
+    xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" \
+        -X DELETE "$XNAT_URL/xapi/dicomscp/$scp_receiver_id" >/dev/null
+    scp_written=true
+done <<< "$stale_ids"
+
+if [[ -z "$scp_keep_id" ]]; then
+    echo "Creating SCP receiver '${XNAT_AETITLE}' on port ${XNAT_PORT}..."
+    xnat_curl -X POST "$XNAT_URL/xapi/dicomscp" \
+      -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+      -H "Content-Type: application/json" \
+      -d "$scp_payload"
+    scp_written=true
+else
+    scp_drift=$(jq -cn --argjson entry "$scp_keep" --argjson desired "$scp_payload" \
+      "$scp_jq_defs"'drift($entry; $desired)')
+    if [[ "$scp_drift" == "[]" ]]; then
+        echo "SCP receiver '${XNAT_AETITLE}:${XNAT_PORT}' (id ${scp_keep_id}) already matches the kit" \
+             "— leaving as-is."
+    else
+        echo "SCP receiver id ${scp_keep_id} drifted on $(printf '%s' "$scp_drift" | jq -r 'join(", ")')," \
+             "updating it in place to '${XNAT_AETITLE}:${XNAT_PORT}'..."
+        xnat_curl -X PUT "$XNAT_URL/xapi/dicomscp/${scp_keep_id}" \
+          -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          -d "$scp_payload" >/dev/null
+        scp_written=true
+    fi
+fi
+
+# After any write, read the receivers back and fail unless exactly one that this script owns is left,
+# at the kit's values, under the id it was kept with. A 200 that persisted nothing is how FLIP#822
+# stayed hidden on the PACS side, and the PUT runs none of XNAT's own checks to catch a body it
+# misapplied. With nothing written, the listing above already is the read-back.
+if [[ "$scp_written" == true ]]; then
+    scp_after=$(xnat_curl -u "$XNAT_ADMIN_USER:$XNAT_ADMIN_PASSWORD" "$XNAT_URL/xapi/dicomscp")
+    scp_problem=$(printf '%s' "${scp_after:-[]}" \
+      | jq -r --argjson desired "$scp_payload" --argjson keep "${scp_keep_id:-null}" "$scp_jq_defs"'
+          map(select(owned)) as $ours
+          | if ($ours | length) != 1 then "\($ours | length) receivers this script owns are left, not one"
+            elif $keep != null and $ours[0].id != $keep then "its id changed from \($keep) to \($ours[0].id)"
+            else drift($ours[0]; $desired) | select(length > 0) | "it still differs on \(join(", "))"
+            end')
+    if [[ -n "$scp_problem" ]]; then
+        echo "ERROR: the DICOM SCP receiver did not converge on '${XNAT_AETITLE}:${XNAT_PORT}': ${scp_problem}" >&2
+        exit 1
+    fi
+    echo "SCP receiver '${XNAT_AETITLE}:${XNAT_PORT}' is configured."
+fi
 
 # Configure OHIF viewer
 echo "Configuring OHIF viewer..."
@@ -588,8 +638,10 @@ else
   # and keeps the old flag forever, exactly the silently-ignored kit change the in-place update
   # exists to prevent. Comparison against the desired payload rather than the env vars keeps type
   # handling in jq (port and the flag are JSON number/boolean in both documents, not strings).
+  # The two DQR flags are compared too: imaging-api's queries need the default one, and a PACS
+  # registered by hand (the admin UI's "Default Q/R AE" starts at No) is adopted without it.
   pacs_drift=$(jq -cn --argjson entry "$pacs_entry" --argjson desired "$pacs_payload" \
-    '[("host","queryRetrievePort","label","supportsExtendedNegotiations")
+    '[("host","queryRetrievePort","label","supportsExtendedNegotiations","defaultQueryRetrievePacs","queryable")
       | select($entry[.] != $desired[.])]')
 
   if [[ "$pacs_drift" == "[]" ]]; then
@@ -607,50 +659,148 @@ fi
 # The availability schedule below is written against the registered PACS, so resolve its id whether
 # it was just created or already existed.
 PACS_ID=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$XNAT_URL/xapi/pacs" \
-  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae)) | .[0].id // empty')
-: "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered after configuration}"
+  | jq -r --arg ae "${PACS_AETITLE}" 'map(select(.aeTitle == $ae and .defaultQueryRetrievePacs and .queryable)) | .[0].id // empty')
+: "${PACS_ID:?PACS '${PACS_AETITLE}' is not registered as the DQR default queryable PACS after configuration}"
 
-# Configure the PACS availability schedule — the throttle for a production PACS, which may refuse
-# further associations after a certain volume, and which a trust may want restricted to out-of-hours
-# (FLIP#993). Defaults are all week, all day, one thread.
-#
-# DQR appears to pre-create availability intervals when the PACS is registered: on XNAT 1.10 +
-# DQR 3.0.0 this POST returns 400 "probable overlap with existing interval" for an already-scheduled
-# day, so that specific 400 is treated as "already configured" rather than a failure.
-#
-# The overlap text is matched, not the bare status: the payload is now built from operator-supplied
-# values, so a bad day name or window also returns 400. Treating every 400 as an overlap reported a
-# rejected schedule as applied, and a trust that had negotiated an out-of-hours window would have
-# been told it was in force while DQR retrieved around the clock (FLIP#993).
-for DAY in ${PACS_AVAILABILITY_DAYS//,/ }; do
-  echo "Setting PACS availability for $DAY..."
-  avail_body=/tmp/pacs-availability-response.json
-  avail_status=$(curl -s -o "$avail_body" --connect-timeout 10 --max-time 120 -w '%{http_code}' \
-    -X POST "$XNAT_URL/xapi/pacs/${PACS_ID}/availability" \
-    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-    -H "Content-Type: application/json" \
-    -d "$(jq -n --arg start "${PACS_AVAILABILITY_START}" --arg end "${PACS_AVAILABILITY_END}" \
-          --arg day "$DAY" --argjson pacs "${PACS_ID}" --argjson threads "${PACS_THREADS}" \
-          --argjson util "${PACS_UTILIZATION_PERCENT}" '{
-      availabilityEnd: $end,
-      availabilityStart: $start,
-      availableNow: true,
+# Converge the PACS availability schedule (the retrieval throttle, FLIP#993) onto the kit, which owns
+# it: one window per listed day. Removals come first (days no longer listed, extra intervals on a
+# listed day), then in-place updates of drifted intervals, then creations, so a run that fails
+# part-way leaves less retrieval scheduled, never more. A day that matches is not written, and the
+# schedule is read back whenever something was. DQR 3.0.0 behaviour this relies on (DqrPacsApi):
+#   - PUT {pacsId}/availability/{id} answers 304 when nothing it copies has changed;
+#   - PUT takes the day and pacsId from the body, so both are sent (without pacsId the interval would
+#     move to PACS 0);
+#   - overlap is judged per day, so a create on a day emptied above cannot collide; POST answers 400
+#     on overlap, which xnat_curl turns into a failed run.
+avail_url="$XNAT_URL/xapi/pacs/${PACS_ID}/availability"
+# The plan walks the week, so a day listed twice is scheduled once.
+avail_days_json=$(jq -cn '$ARGS.positional' --args "${avail_day_list[@]}")
+
+# The kit's window for one day, as DQR's PacsAvailability takes it.
+availability_payload() {  # availability_payload <day>
+  jq -cn --arg day "$1" --arg start "$avail_start" --arg end "$avail_end" \
+    --argjson pacs "${PACS_ID}" --argjson threads "${PACS_THREADS}" \
+    --argjson util "${PACS_UTILIZATION_PERCENT}" '{
       dayOfWeek: $day,
-      enabled: true,
-      pacsId: $pacs,
+      availabilityStart: $start,
+      availabilityEnd: $end,
       threads: $threads,
-      utilizationPercent: $util
-    }')") || avail_status="000"
-  if [[ "$avail_status" == 2* ]]; then
-    continue
-  elif [[ "$avail_status" == "400" ]] && grep -qi 'overlap' "$avail_body"; then
-    echo "  Availability interval for $DAY already exists (HTTP 400 overlap) — leaving as-is."
-  else
-    echo "ERROR: setting PACS availability for $DAY failed (HTTP $avail_status)" >&2
-    cat "$avail_body" >&2 || true
+      utilizationPercent: $util,
+      pacsId: $pacs,
+      enabled: true
+    }'
+}
+
+# What to do to each day, as tab-separated lines: action, day, interval id ("-" for a creation, since
+# `read` collapses an empty field) and a description for the log, ordered removals, updates,
+# creations, unchanged. Drift is judged on the four fields the kit sets. When a listed day has
+# several intervals, one matching the kit is kept, otherwise the oldest.
+availability_plan() {  # availability_plan <schedule JSON from GET {pacsId}/availability>
+  jq -rn --argjson current "$1" --argjson days "$avail_days_json" \
+    --arg start "$avail_start" --arg end "$avail_end" \
+    --argjson threads "${PACS_THREADS}" --argjson util "${PACS_UTILIZATION_PERCENT}" '
+    def window: {availabilityStart, availabilityEnd, threads, utilizationPercent};
+    def shown: "\(.availabilityStart)-\(if .availabilityEnd == "00:00" then "24:00" else .availabilityEnd end),"
+      + " \(.threads) thread(s), \(.utilizationPercent)%";
+    {availabilityStart: $start, availabilityEnd: $end, threads: $threads, utilizationPercent: $util} as $want
+    | ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUNDAY"]
+    | [ to_entries[]
+        | .key as $order | .value as $day
+        | (($current[$day] // []) | sort_by(.id)) as $intervals
+        | if any($days[]; . == $day) | not then
+            $intervals[] | {rank: 0, $order, op: "remove", $day, id, detail: (window | shown)}
+          else
+            (first($intervals[] | select(window == $want)) // $intervals[0]) as $keep
+            | ( $intervals[] | select(.id != $keep.id)
+                | {rank: 0, $order, op: "remove-extra", $day, id, detail: (window | shown)} ),
+              ( if $keep == null then
+                  {rank: 2, $order, op: "create", $day, id: null, detail: ($want | shown)}
+                elif ($keep | window) == $want then
+                  {rank: 3, $order, op: "unchanged", $day, id: $keep.id, detail: ($want | shown)}
+                else
+                  {rank: 1, $order, op: "update", $day, id: $keep.id,
+                   detail: (([$want | keys_unsorted[] | select($keep[.] != $want[.])] | join(", "))
+                     + " (\($keep | window | shown) -> \($want | shown))")}
+                end )
+          end ]
+    | sort_by(.rank, .order, .id)[]
+    | [.op, .day, (.id // "-" | tostring), .detail] | @tsv'
+}
+
+# The current schedule, shape-checked so an unexpected answer fails naming the call.
+availability_schedule() {
+  local schedule
+  schedule=$(xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" "$avail_url") || return 1
+  if ! printf '%s' "$schedule" | jq -e 'type == "object" and all(.[]; type == "array")' >/dev/null 2>&1; then
+    echo "ERROR: GET $avail_url did not return DQR's schedule (intervals listed by day), got: ${schedule}" >&2
+    return 1
+  fi
+  printf '%s' "$schedule"
+}
+
+echo "Converging the PACS availability schedule onto the kit (days ${PACS_AVAILABILITY_DAYS}," \
+  "${PACS_AVAILABILITY_START}-${PACS_AVAILABILITY_END}, ${PACS_THREADS} thread(s), ${PACS_UTILIZATION_PERCENT}%)..."
+# Two assignments rather than a nested $(...): set -e does not see a failure inside an argument.
+avail_current=$(availability_schedule)
+avail_plan=$(availability_plan "$avail_current")
+if printf '%s\n' "$avail_plan" | grep -qE $'^(update|remove-extra)\t'; then
+  echo "  The kit owns this schedule: a change made in XNAT's DQR admin page is replaced below."
+fi
+avail_wrote=false
+while IFS=$'\t' read -r avail_op avail_day avail_id avail_detail; do
+  [[ -n "$avail_op" ]] || continue
+  [[ "$avail_op" == "create" ]] || require_numeric_id "DQR reported an availability interval for ${avail_day}" "$avail_id"
+  case "$avail_op" in
+    remove|remove-extra)
+      if [[ "$avail_op" == "remove" ]]; then
+        echo "  ${avail_day}: removing interval ${avail_id} (${avail_detail}); ${avail_day} is no longer in PACS_AVAILABILITY_DAYS."
+      else
+        echo "  ${avail_day}: removing extra interval ${avail_id} (${avail_detail}); the kit sets one window per day."
+      fi
+      xnat_curl -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" -X DELETE "${avail_url}/${avail_id}" >/dev/null
+      ;;
+    update)
+      echo "  ${avail_day}: interval ${avail_id} drifted on ${avail_detail}; updating it in place."
+      avail_payload=$(availability_payload "$avail_day")
+      xnat_curl --allow-not-modified -X PUT "${avail_url}/${avail_id}" \
+        -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d "$avail_payload" >/dev/null
+      ;;
+    create)
+      echo "  ${avail_day}: no interval scheduled; creating ${avail_detail}."
+      avail_payload=$(availability_payload "$avail_day")
+      xnat_curl -X POST "$avail_url" \
+        -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+        -H "Content-Type: application/json" \
+        -d "$avail_payload" >/dev/null
+      ;;
+    unchanged)
+      echo "  ${avail_day}: already ${avail_detail}; leaving as-is."
+      continue
+      ;;
+    *)
+      echo "ERROR: unexpected availability action '${avail_op}' for ${avail_day}" >&2
+      exit 1
+      ;;
+  esac
+  avail_wrote=true
+done <<< "$avail_plan"
+
+# Read back what was written rather than trust each 2xx: XNAT answering 2xx without persisting is
+# how the PACS registration bug stayed hidden (FLIP#822).
+if [[ "$avail_wrote" == true ]]; then
+  avail_current=$(availability_schedule)
+  avail_residue=$(availability_plan "$avail_current")
+  avail_residue=$(printf '%s\n' "$avail_residue" | grep -v $'^unchanged\t' || true)
+  if [[ -n "$avail_residue" ]]; then
+    echo "ERROR: after configuration DQR's availability schedule for PACS ${PACS_ID} still differs from the kit." \
+      "Outstanding (action, day, interval id, detail):" >&2
+    printf '%s\n' "$avail_residue" | sed 's/^/         /' >&2
     exit 1
   fi
-done
+fi
+echo "PACS availability schedule matches the kit."
 
 # Configure FLIP site branding on the login page: a trust-named welcome description and the FLIP
 # FLIP logo (baked into the webapp image at /images/flip-logo.png). XNAT is enclave-only and this is a

@@ -101,7 +101,7 @@ class FlipEvalRecipe(FlipRecipe):
         evaluate_task_name: str = "validate",
         params_exchange_format: str = "numpy",
         params_transfer_type: str = "FULL",
-    ):
+    ) -> None:
         self.min_clients = min_clients
         self.eval_script = eval_script if eval_script.startswith("custom/") else f"custom/{eval_script}"
         self.eval_args = eval_args

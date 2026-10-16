@@ -595,7 +595,7 @@ wheels = [
 
 [[package]]
 name = "flip-fl-api"
-version = "0.10.0"
+version = "0.12.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },

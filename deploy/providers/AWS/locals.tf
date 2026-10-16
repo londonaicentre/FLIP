@@ -46,7 +46,7 @@ locals {
     fl_server = "fl-server-net-1.${local.flip_local_domain}"
   }
 
-  # Container port for flip-api. On EC2 + Docker Compose, var.API_PORT is the
+  # Container port for flip-api. On EC2 + Docker Compose, the compose API_PORT is the
   # host-side port (8080) mapped to container port 8000. ECS Fargate has no
   # host mapping - the container port IS the reachable port. Service Discovery
   # resolves to the task IP, so fl-server calls flip-api on port 8000.
@@ -194,11 +194,10 @@ locals {
       # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
       # fl-server reads. Mounted from the fl_checkpoints EFS access point.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
-      # Per-job GPU resource spec the fl-api stamps onto an NVFLARE job's meta.
+      # GPUs the fl-api writes into an NVFLARE job's meta when the job declares none.
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
-      # CPU-only. Default 0; set via TF_VAR_JOB_RESOURCE_SPEC_* for GPU jobs.
-      JOB_RESOURCE_SPEC_NUM_GPUS           = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
-      JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = tostring(var.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB)
+      # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
+      JOB_RESOURCE_SPEC_NUM_GPUS = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
       # Both names for one release (FLIP#1291): an fl-api image from before the
@@ -219,13 +218,13 @@ locals {
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
-      }, var.lza_managed_network ? {
-      # Sealed egress (FLIP#749): the SuperLink's per-run `uv sync` cannot reach any
-      # package index, so the ServerApp runs in the image's preinstalled environment
-      # instead — Flower's documented restricted-network mode (exit-code 608 docs).
+      # The ServerApp runs in the image's preinstalled environment on every estate:
+      # Flower's documented restricted-network mode (exit-code 608 docs). Sealed egress
+      # (FLIP#749) leaves the per-run `uv sync` no package index to reach, and elsewhere a
+      # cold sync outlives Flower's task heartbeat, so the run never starts (FLIP#1418).
       # Researcher package additions ship via image rebuild, not pyproject.
       FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION = "1"
-    } : {})
+    })
     # Flower fl-api (compose.production.flower.yml fl-api-net-1). SuperLink
     # addresses use the Cloud Map name — the provisioned server cert must
     # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).

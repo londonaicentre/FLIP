@@ -27,6 +27,15 @@ endif
 # overwrite) still maps to staging here.
 ENV_MODE_PROD := $(or $(strip $(PROD)),stag)
 include ../../env_mode.mk
+
+# Goals that need no env file and call no AWS API. When every goal on the command line is one of
+# these, the parse-time env guards below stand aside, so a contributor without the gitignored
+# deploy env files can run them. Any other goal, alone or beside these, keeps every guard (FLIP#1440).
+# `override`, and trusting MAKECMDGOALS only when make set it, keep the switch out of reach of the
+# command line, MAKEFLAGS and the environment: one variable must not turn off the account guard.
+override STATIC_GOALS := lint fmt-check tflint-lint checkov-lint help
+_GOALS_FROM_OUTSIDE := $(or $(findstring environment,$(origin MAKECMDGOALS)),$(findstring command,$(origin MAKECMDGOALS)),$(findstring override,$(origin MAKECMDGOALS)))
+override STATIC_ONLY := $(if $(_GOALS_FROM_OUTSIDE),,$(if $(MAKECMDGOALS),$(if $(filter-out $(STATIC_GOALS),$(MAKECMDGOALS)),,yes)))
 MAIN_ENV_FILE=../../../$(ENV_FILE_NAME)
 
 # The trust node's two deployment shapes live beside the trust compose files, not in
@@ -63,7 +72,6 @@ _AWS_ENV := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_
 
 # Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
 FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
-$(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
 
 # Logical AWS profile names. Defaults match the short-alias pattern recommended
 # in deploy/providers/AWS/README.md (operators add `[profile prod]` / `[profile stag]`
@@ -77,25 +85,14 @@ STAG_AWS_PROFILE ?= stag
 LZA_AWS_PROFILE ?= lza-prod
 LZA_STAG_AWS_PROFILE ?= lza-stag
 
-# Refuse to operate against an unintended AWS account. Profile name is the safety
-# guard because Make has no easy way to read the account ID without an `aws` call.
-# One knob per environment, looked up by ENV.
+# The AWS profile each environment expects, checked by the account guard in the env guards
+# below. Profile name is the safety guard because Make has no easy way to read the account ID
+# without an `aws` call. One knob per environment, looked up by ENV.
 _AWS_PROFILE_KNOB_production := PROD_AWS_PROFILE
 _AWS_PROFILE_KNOB_stag       := STAG_AWS_PROFILE
 _AWS_PROFILE_KNOB_lza-prod   := LZA_AWS_PROFILE
 _AWS_PROFILE_KNOB_lza-stag   := LZA_STAG_AWS_PROFILE
 EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
-ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
-$(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
-endif
-# The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
-# there is no defaultable name for the staging VPC, so require it explicitly rather
-# than letting the data lookup fail with an opaque "no results" in the wrong account.
-ifeq ($(ENV),lza-stag)
-ifeq ($(LZA_VPC_NAME),)
-$(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
-endif
-endif
 
 ## SETTING VARIABLES FOR TERRAFORM
 # The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
@@ -113,7 +110,7 @@ export TF_VAR_lza_managed_network=$(if $(IS_LZA),true,false)
 # Name tag of the platform-managed VPC; only consulted on the LZA modes. Set
 # LZA_VPC_NAME in the env file to override the variables.tf default
 # (AWSAccelerator-eu-west-2-prod) — optional on PROD=lza if the platform template
-# keeps that name, mandatory on PROD=lza-stag (guard above).
+# keeps that name, mandatory on PROD=lza-stag (the env guards below).
 ifneq ($(LZA_VPC_NAME),)
 export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
@@ -156,6 +153,30 @@ export TF_VAR_ACCESS_LOGS_BUCKET_NAME=${ACCESS_LOGS_BUCKET_NAME}
 # trust/xnat/Makefile.
 unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),placeholder,),unset)
 
+export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
+export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
+export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
+export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
+export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
+export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+# ── Fail-fast env guards ────────────────────────────────────────────────────────────────────
+# Parse-time refusals of a deploy env file that cannot work. They stand aside only when every
+# goal is static (STATIC_ONLY, at the top); any other goal keeps all of them.
+ifeq ($(STATIC_ONLY),)
+$(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
+# Refuse to operate against an unintended AWS account (the profile knobs above).
+ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
+$(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
+endif
+# The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
+# there is no defaultable name for the staging VPC, so require it explicitly rather
+# than letting the data lookup fail with an opaque "no results" in the wrong account.
+ifeq ($(ENV),lza-stag)
+ifeq ($(LZA_VPC_NAME),)
+$(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
+endif
+endif
 # Fail fast with a useful message if the per-tenant bucket names are missing
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
@@ -166,13 +187,6 @@ $(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 F
 # AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
 # default, and it also names the bucket the FL participant-kit targets below read and write.
 $(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
-export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
-export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
-export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
-export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
-export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
-export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # Fail fast with a useful message when these are missing — the variable is
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
@@ -180,17 +194,16 @@ export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
-# Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
-# 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
-# env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
+endif
+
+# The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
+# Default 0 in variables.tf, and keep it there: jobs declare their own in their
+# meta.json (FLIP#70), and a non-zero default keeps every job off a CPU-only trust.
 # Export only when set: an unconditional export turns a missing env key into
 # TF_VAR_…="" and Terraform rejects the empty string for a number variable
 # instead of falling back to the variables.tf default.
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
-endif
-ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
-export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
 endif
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
@@ -313,6 +326,15 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 
 prettier: ## Format Terraform files. YAML files are formatted by the prettier pre-commit hook.
 	terraform fmt -recursive
+
+.PHONY: lint fmt-check tflint-lint
+lint: fmt-check tflint-lint checkov-lint ## terraform fmt, TFLint and Checkov, as validate_terraform.yml runs them — no env file or credentials needed (FLIP#1440)
+
+fmt-check: ## terraform fmt -check over this tree (CI's fmt step)
+	terraform fmt -check -recursive
+
+tflint-lint: ## Static tflint lint (terraform recommended preset + AWS ruleset, .tflint.hcl) — no credentials needed
+	bash scripts/tflint_lint.sh
 
 .PHONY: checkov-lint
 checkov-lint: ## Static checkov security lint (IAM policy content + promoted posture checks) over this Terraform tree — no credentials or init needed (FLIP#1052, FLIP#1058)
@@ -672,7 +694,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## tag (builds are path-filtered — a merge that didn't touch a service publishes no new
 	## tag for it) aborts with nothing deployed. Non-ghcr.io registries skip the manifest
 	## check (LZA ECR pull-through cache, FLIP#749). The app container is selected BY NAME —
-	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.9
+	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.8
 	## and staying robust to sidecar/ordering changes; only its image tag is swapped before
 	## registering the new revision. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to

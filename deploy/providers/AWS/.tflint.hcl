@@ -10,7 +10,7 @@
 # limitations under the License.
 
 # tflint configuration for the AWS Terraform tree, used by
-# scripts/tflint_lint.sh (`make tflint-lint` from the repo root).
+# scripts/tflint_lint.sh (`make tflint-lint` or `make lint`, here or from the repo root).
 
 config {
   # Evaluate calls to modules in this tree; registry modules are not installed

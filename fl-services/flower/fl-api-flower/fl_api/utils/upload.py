@@ -1,5 +1,6 @@
 import shutil
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -67,7 +68,7 @@ def upsert_flwr_run_config(
     config_path.write_text(dumps(doc))
 
 
-def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) -> dict[str, str]:
+def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) -> dict[str, Any]:
     """
     Handles the logic of uploading an application to the server. This involves downloading the files uploaded by the
     user to a specific location on the server, and then returning a success message.
@@ -79,7 +80,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         upload_dir (Path): The base directory on the server where uploaded applications should be stored.
 
     Returns:
-        dict[str, str]: A dictionary containing a success message and the location where the application was uploaded.
+        dict[str, Any]: A success message naming where the application was uploaded, the GPU request the hub sent
+        (``resources``, None when none) and ``resources_enforced``, always False: Flower places no job by GPU (FLIP#70).
 
     Raises:
         HTTPException: 400 if the request names no participating trusts, or a bundle URL is
@@ -168,7 +170,18 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
 
     logger.info("config.toml updated with FLIP runtime parameters")
 
-    response = {"message": f"Application uploaded successfully to: {job_dir}"}
+    # Flower's deployment runtime places no job by GPU, and flwr rejects run-config keys an app does not
+    # declare, so the request is not injected anywhere: it is recorded and reported as not enforced (FLIP#70).
+    if body.resources is not None and body.resources.num_gpus:
+        logger.warning(
+            f"Model {model_id} asks for {body.resources.model_dump()} per site; Flower does not schedule by GPU, "
+            "so the request is recorded, not enforced"
+        )
+    response = {
+        "message": f"Application uploaded successfully to: {job_dir}",
+        "resources": body.resources.model_dump() if body.resources is not None else None,
+        "resources_enforced": False,
+    }
 
     logger.info(response)
 

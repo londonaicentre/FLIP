@@ -233,14 +233,20 @@ def main() -> None:
     datalist = build_datalist(flip, dataframe, args.project_id)
     train_items, val_items = split_datalist(datalist, config["VAL_SPLIT"])
 
+    num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+; persistent across rounds (FLIP#1434)
     train_loader = DataLoader(
         Dataset(train_items, transform=get_train_transforms()),
         batch_size=config["BATCH_SIZE"],
         shuffle=True,
-        num_workers=1,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     val_loader = DataLoader(
-        Dataset(val_items, transform=get_val_transforms()), batch_size=1, shuffle=False, num_workers=1
+        Dataset(val_items, transform=get_val_transforms()),
+        batch_size=1,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
 
     flare.init()

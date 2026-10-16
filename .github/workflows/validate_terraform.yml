@@ -19,6 +19,10 @@ on:
       - "deploy/providers/AWS/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
+      # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
+      - "trust/deploy/ansible/roles/flip_fl_kit/**"
+      # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
+      - ".gitignore"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
@@ -29,6 +33,10 @@ on:
       - "deploy/providers/AWS/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
+      # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
+      - "trust/deploy/ansible/roles/flip_fl_kit/**"
+      # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
+      - ".gitignore"
       - ".github/workflows/validate_terraform.yml"
       - ".github/workflows/terraform_plan.yml"
       - ".github/workflows/terraform_apply.yml"
@@ -43,11 +51,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Both Terraform roots share the modules under deploy/providers/AWS/modules;
-        # validating each root exercises the module code from the caller's side.
+        # Validating each root exercises the shared modules under
+        # deploy/providers/AWS/modules from the caller's side.
         root:
           - ./deploy/providers/AWS
-          - ./deploy/providers/AWS/dev
           # The adopters' wrapper around modules/terraform_ci_bootstrap, the
           # Terraform-CI bootstrap the platform repositories pin by commit.
           # Never applied by CI, but validating it exercises the module — so a

@@ -13,6 +13,7 @@
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from fastapi import HTTPException, Request
 
@@ -221,3 +222,96 @@ def test_get_status_endpoint_client_status_none(
     assert result[0].online is False
     assert result[0].fl_backend == FLBackend.NVFLARE
     assert result[0].clients == []
+
+
+def test_get_status_endpoint_reports_offline_net_without_failing_others(
+    fake_request,
+    mock_db,
+    mock_get_trusts,
+    mock_get_slot_names_by_trust_ids,
+):
+    class Net:
+        def __init__(self, name, endpoint, fl_backend):
+            self.name = name
+            self.endpoint = endpoint
+            self.fl_backend = fl_backend
+
+    with patch("flip_api.fl_services.get_status.get_nets") as mock_get_nets:
+        mock_get_nets.return_value = [
+            Net("down-net", "down-endpoint", FLBackend.NVFLARE),
+            Net("up-net", "up-endpoint", FLBackend.NVFLARE),
+        ]
+        with (
+            patch("flip_api.fl_services.get_status.fetch_server_status") as mock_fetch_server_status,
+            patch("flip_api.fl_services.get_status.fetch_client_status") as mock_fetch_client_status,
+        ):
+            mock_fetch_server_status.side_effect = lambda endpoint: (
+                None if endpoint == "down-endpoint" else IServerStatus(status="started")
+            )
+            mock_fetch_client_status.return_value = [IClientStatus(name="trust-1", status="no_jobs")]
+
+            result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
+
+    assert len(result) == 2
+    down = next(net for net in result if net.name == "down-net")
+    up = next(net for net in result if net.name == "up-net")
+    assert down.online is False
+    assert down.fl_backend == FLBackend.NVFLARE
+    assert down.registered_clients == 0
+    assert down.clients == []
+    assert up.online is True
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.HTTPStatusError(
+            "500 Internal Server Error",
+            request=httpx.Request("GET", "http://down-endpoint/check_server_status"),
+            response=httpx.Response(500),
+        ),
+    ],
+    ids=["fl-api-unreachable", "fl-api-answers-500"],
+)
+def test_get_status_endpoint_survives_a_failing_fl_api(
+    error,
+    fake_request,
+    mock_db,
+    mock_get_trusts,
+    mock_get_slot_names_by_trust_ids,
+):
+    """One net's FL API failing over HTTP shows that net offline instead of failing the whole response.
+
+    Drives the real check_server_status / check_client_status: only the HTTP call is patched.
+    """
+
+    class Net:
+        def __init__(self, name, endpoint, fl_backend):
+            self.name = name
+            self.endpoint = endpoint
+            self.fl_backend = fl_backend
+
+    def fake_http_get(url, *args, **kwargs):
+        if url.startswith("down-endpoint/"):
+            raise error
+        if url.endswith("/check_server_status"):
+            return {"status": "started"}
+        return [{"name": "trust-1", "status": "no_jobs"}, {"name": "trust-2", "status": "no_jobs"}]
+
+    with (
+        patch("flip_api.fl_services.get_status.get_nets") as mock_get_nets,
+        patch("flip_api.fl_services.services.fl_service.http_get", side_effect=fake_http_get),
+    ):
+        mock_get_nets.return_value = [
+            Net("down-net", "down-endpoint", FLBackend.NVFLARE),
+            Net("up-net", "up-endpoint", FLBackend.NVFLARE),
+        ]
+        result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
+
+    down = next(net for net in result if net.name == "down-net")
+    up = next(net for net in result if net.name == "up-net")
+    assert down.online is False
+    assert down.clients == []
+    assert up.online is True
+    assert {c.name for c in up.clients} == {"trust-1", "trust-2"}

@@ -290,8 +290,8 @@ module "cognito" {
   # (Cognito callback_urls)".
   #
   # localhost is deliberately absent: this root stack is stag/prod only. Local
-  # development uses the separate ./dev root, whose var.cognito_callback_urls
-  # carries the localhost origins.
+  # development has no Cognito — it signs in through Keycloak, whose realm
+  # registers the localhost origins (deploy/keycloak/flip-realm.json).
   #
   # The one origin is local.ui_origin (cloudfront.tf) rather than a literal
   # "https://${var.flip_alb_subdomain}": the two are the same string wherever DNS
@@ -306,8 +306,7 @@ module "cognito" {
   # unset (provider default false), so the hosted UI is not enabled for this
   # client. Kept non-empty and localhost-free so the stag/prod client advertises
   # no redirect target that isn't a real FLIP origin. logout_urls is Optional in
-  # the provider schema and need not mirror callback_urls — the ./dev root
-  # already passes lists of differing length.
+  # the provider schema and need not mirror callback_urls.
   logout_urls = [local.ui_origin]
 }
 

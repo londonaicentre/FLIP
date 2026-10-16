@@ -14,21 +14,27 @@ from typing import Annotated
 
 import pandas as pd
 from fastapi import Depends, HTTPException, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
 
-from imaging_api.db.get_direct_archive_sessions_by_project import (
-    get_direct_archive_sessions_by_project,
-)
-from imaging_api.db.get_executed_pacs_request_by_project import get_executed_pacs_request_by_project
-from imaging_api.db.get_queued_pacs_request_by_project import get_queued_pacs_request_by_project
-from imaging_api.db.get_session import get_session
 from imaging_api.routers.schemas import (
     ImportStatus,
     ImportStudy,
     ImportStudyRequest,
     Study,
 )
-from imaging_api.services.imaging import query_by_accession_number, queue_image_import_request
+from imaging_api.services.imaging import (
+    query_by_accession_number,
+    queue_image_import_request,
+    resolve_default_pacs_id,
+)
+from imaging_api.services.import_requests import (
+    DirectArchiveSession,
+    PacsRequest,
+    get_direct_archive_sessions,
+    get_executed_import_requests,
+    get_queued_import_requests,
+)
 from imaging_api.services.projects import get_experiments, get_project
 from imaging_api.services_external.data_access import get_accession_ids
 from imaging_api.utils.auth import get_xnat_auth_headers
@@ -45,11 +51,11 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 # `PrearcStatus.ERROR` re-verified present in the XNAT 1.10.0 source. The DQR value IS verified for
 # DQR 3.0.0 (the 1.10-targeting major bump that also swaps dcm4che2 for dcm4che5): the released JAR
 # (public download on bitbucket.org/xnatdev/dicom-query-retrieve) keeps
-# `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary: QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED),
-# and the `xhbm_*_pacs_request` columns read by imaging_api/db/get_*_pacs_request_by_project.py were
-# confirmed unchanged against a live 3.0.0 instance during the 1.10.0 upgrade smoke test.
+# `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary: QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED).
+# imaging-api reads these statuses from DQR's and XNAT's REST listings (services/import_requests.py), so
+# an upgrade re-checks those listings rather than database columns.
 # Any other status on a row that exists means the import is still in flight. A successful directArchive
-# deletes its row, so "successful" is never read from these tables — only from the experiment listing.
+# deletes its row, so "successful" is never read from these records — only from the experiment listing.
 _PACS_REQUEST_FAILED_STATUS = "FAILED"
 _DIRECT_ARCHIVE_FAILED_STATUS = "ERROR"
 
@@ -90,6 +96,28 @@ def select_study_for_accession(accession_number: str, studies_found: list[Study]
     return None
 
 
+def has_default_pacs(project_id: str, headers: dict[str, str]) -> bool:
+    """Whether XNAT has the default query/retrieve PACS that an import run's C-FINDs depend on.
+
+    Without it DQR answers every query 404, and the run would end "No studies found to import", which
+    reads as a data problem. Logged rather than raised, like a cohort below the threshold, because the
+    run is a background task.
+
+    Args:
+        project_id (str): The imaging project the run imports into, for the log line.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        bool: True when the PACS resolves; False, with the reason logged, otherwise.
+    """
+    try:
+        resolve_default_pacs_id(headers)
+    except Exception as e:
+        logger.error(f"Not importing images for project {project_id}: {e}")
+        return False
+    return True
+
+
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
     """
     Queues an import request for the images associated with the given project.
@@ -117,27 +145,31 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
     """
     # Check if project exists
     try:
-        get_project(project_id, headers)
+        project = get_project(project_id, headers)
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Get accession IDs from data access API. The endpoint projects the cohort
-    # query to the accession_id column server-side, so no other columns are
-    # transmitted across the trust boundary.
-    encrypted_project_id = encrypt(project_id, context=PROJECT_ID_CONTEXT)
+    # Get accession IDs from data access API — the frozen approved-cohort pointer set
+    # (FLIP#857), keyed on the HUB project id. XNAT projects mint their own uuid and stash
+    # the hub id in secondary_ID, so that is what data-access-api's snapshot store is
+    # keyed on; sending the XNAT id would never match a snapshot.
+    encrypted_project_id = encrypt(project.secondary_ID, context=PROJECT_ID_CONTEXT)
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
-    except CohortBelowThresholdError:
+    except CohortBelowThresholdError as e:
         # A settled outcome, not a failure to retry: the trust will not release identifiers
-        # for a cohort this small, so there is nothing to import. Logged rather than raised
+        # for this cohort now, so there is nothing to import. Logged rather than raised
         # because this runs as a background task — the create-project response has already
         # been sent, so an exception here would only reach the server log as a traceback.
         logger.warning(
-            f"Not importing images for project {project_id}: the cohort is below the trust's "
-            "minimum size, so the Data Access API withheld its accession IDs."
+            f"Not importing images for project {project_id}: the Data Access API withheld its "
+            f"accession IDs — {e.detail or 'no reason given'}"
         )
+        return False
+
+    if not has_default_pacs(project_id, headers):
         return False
 
     studies_list: list[ImportStudy] = []
@@ -195,6 +227,29 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         return False
 
 
+def _read_import_records(
+    project_id: str, headers: dict[str, str]
+) -> tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]]:
+    """Reads the project's DQR queue, direct-archive sessions and DQR history, in that order.
+
+    A request only moves forward, from DQR's queue to its history (where it stays), so reading the
+    queue first sees a request that moves between the two reads in at least one of them.
+
+    Args:
+        project_id (str): The XNAT project ID.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]]: The queued requests,
+        the direct-archive sessions and the executed requests.
+    """
+    return (
+        get_queued_import_requests(project_id, headers),
+        get_direct_archive_sessions(project_id, headers),
+        get_executed_import_requests(project_id, headers),
+    )
+
+
 async def get_import_status(project_id: str, query: str, headers: XNATAuthHeaders) -> ImportStatus:
     """
     Returns information about the status of study imports:
@@ -225,29 +280,43 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
         ImportStatus: An object containing the status of study imports.
 
     Raises:
-        HTTPException: 403 if the cohort has fallen below the trust's ``COHORT_QUERY_THRESHOLD``
-            so its accession IDs cannot be released — note the cohort query is re-run against
-            live OMOP on every status check, so a project that imported cleanly can start
-            refusing later if its cohort shrinks (see FLIP#857). Otherwise, if the request
-            cannot be processed.
+        HTTPException: 403 if the trust refuses to release the cohort's accession IDs (below its
+            ``COHORT_QUERY_THRESHOLD``, or no approved-cohort membership), with data-access-api's
+            reason. 500 if the XNAT project cannot be read. Otherwise, if the request cannot be
+            processed.
+        imaging_api.utils.exceptions.XnatFetchError: If XNAT's experiment listing, DQR's import
+            queue or history, or the direct-archive sessions cannot be read. The route answers it
+            with a 500, never the 404 the hub reads as a missing project.
     """
-    # Encrypt project ID to send to the data access API
-    encrypted_project_id = encrypt(project_id, context=PROJECT_ID_CONTEXT)
+    # Resolve the HUB project id: data-access-api serves the frozen approved-cohort
+    # snapshot (FLIP#857) keyed on it, and the XNAT project stores it as secondary_ID.
+    try:
+        project = get_project(project_id, headers)
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Could not read XNAT project {project_id} for its import status")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Could not read the XNAT project ({type(e).__name__}).",
+        )
+    encrypted_project_id = encrypt(project.secondary_ID, context=PROJECT_ID_CONTEXT)
 
-    # Get accession IDs from data access API (server-side projection — no other
-    # cohort columns leave the trust).
+    # Get accession IDs from data access API — the approved cohort's pointer set; the query
+    # travels only as an advisory field (data-access-api ignores it), so the status poll never
+    # runs cohort SQL.
     try:
         accession_ids: list[str] = await get_accession_ids(encrypted_project_id, query)
     except CohortBelowThresholdError as e:
         # Unlike the import path, this one has a caller waiting on a response, so surface the
         # reason: trust-api relays this detail to the hub, and without it the per-trust status
         # shows only a raw transport error for what is actually a policy decision.
+        # data-access-api's detail is one of its fixed refusal texts, so relaying it tells a
+        # missing approved cohort apart from a small one without revealing anything more.
+        reason = e.detail or "The trust refused to release the cohort's accession IDs."
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Cohort is below the trust's minimum size, so its accession IDs cannot be "
-                "released and import status cannot be reported."
-            ),
+            detail=f"{reason} Import status cannot be reported.",
         ) from e
 
     # Fetches a list of XNAT experiments associated with a given XNAT project.
@@ -263,15 +332,15 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # TODO What if the XNAT project contains experiments that aren't actually in the cohort dataframe?
     # Could this even happen?
 
-    # Go through the accession numbers and find its import status
-    async for session in get_session():
-        direct_archive_sessions = await get_direct_archive_sessions_by_project(project_id, session)
-
-    async for session in get_session():
-        executed_pacs_requests = await get_executed_pacs_request_by_project(project_id, session)
-
-    async for session in get_session():
-        queued_pacs_requests = await get_queued_pacs_request_by_project(project_id, session)
+    # Go through the accession numbers and find its import status. An archived accession is
+    # `successful` whatever DQR holds for it, so when every accession is archived the DQR records
+    # cannot change the answer, and a finished project polled by an open page reads none of them.
+    # They are blocking calls, so they run off the event loop.
+    archived = set(successfully_imported_accession_numbers)
+    records: tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]] = ([], [], [])
+    if not all(accession_number in archived for accession_number in accession_ids):
+        records = await run_in_threadpool(_read_import_records, project_id, headers)
+    queued_pacs_requests, direct_archive_sessions, executed_pacs_requests = records
 
     logger.debug(f"Direct Archive Sessions: {len(direct_archive_sessions)}")
     logger.debug(f"Executed PACS requests: {len(executed_pacs_requests)}")
@@ -305,7 +374,7 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
 
         # "successful" means archived as a queryable experiment — a directArchive that has only been
         # RECEIVED is not yet archived, so it stays `processing` until the experiment appears.
-        if accession_number in successfully_imported_accession_numbers:
+        if accession_number in archived:
             import_status.successful.append(accession_number)
         elif accession_number in failed_accessions:
             import_status.failed.append(accession_number)
@@ -376,6 +445,9 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     # Create list of accession numbers that have failed
     failed_accession_numbers = import_status.failed + import_status.queue_failed
     logger.info(f"Retrying import for {len(failed_accession_numbers)} failed accession numbers")
+
+    if not has_default_pacs(project_id, headers):
+        return False
 
     # For each accession ID, unencrypt it and find the study
     studies_list: list[ImportStudy] = []

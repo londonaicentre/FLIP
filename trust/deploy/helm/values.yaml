@@ -89,7 +89,7 @@ governance:
 # existing values file pinning the old ones keeps installing and silently stops taking effect —
 # see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
-  version: "20260917"
+  version: "20261014"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
@@ -327,11 +327,8 @@ imagingApi:
     # XNAT_PORT and XNAT_AETITLE are deliberately absent here. They describe XNAT's DICOM SCP
     # receiver, so they come from xnat.web.dicomPort / xnat.web.dicomAet — the same values the init
     # job registers the receiver with. Restating them here made two sources for one number, which is
-    # the defect FLIP#993 set out to remove.
-    PACS_ID: "1"
-    # Topology only — no password here (FLIP-PT-056): imaging-api splices in the
-    # xnat-datasource-password secret at startup (see templates/imaging-api.yaml).
-    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
+    # the defect FLIP#993 set out to remove. There is no PACS id either: imaging-api's queries let
+    # DQR use its default query/retrieve PACS, and each import reads that PACS's id from XNAT.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
 
@@ -383,6 +380,24 @@ dataAccessApi:
     OMOP_DB_SERVICE_NAME: "omop-db"
     OMOP_POSTGRES_DB: "trustomopdb"
     DATA_ACCESS_POSTGRES_USER: "data_analyst_reader"
+  # Approved-cohort membership store (FLIP#857): one small JSON record per approved project
+  # (the query of record + the approved person/accession ids, no clinical values). Back the
+  # PV up — losing it refuses every approved project until the hub re-queues its snapshot
+  # (POST /projects/{id}/cohort-snapshots?include_frozen=true, or the backfill's
+  # --include-frozen), which re-freezes from live OMOP. Serving is
+  # fail-closed: with this disabled (or the volume unwritable) every project is
+  # refused row-level data, so only disable it deliberately. accessMode RWO matches
+  # replicas: 1 — scaling data-access-api out needs a ReadWriteMany storage class so every
+  # replica reads the same store.
+  snapshots:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+    accessMode: ReadWriteOnce
+    # The GHCR image runs non-root (uid 1000); fsGroup makes a fresh PVC group-writable
+    # for it. The chart otherwise avoids fsGroup (see README "Known Limitations") — this
+    # one is load-bearing, not cosmetic.
+    fsGroup: 1000
 
 # ---------------------------------------------------------------------------
 # Shared images PVC — used by imaging-api and fl-client to share downloaded
@@ -626,8 +641,8 @@ omopDb:
   # on another environment's bucket. `make -C trust/deploy/helm
   # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
   # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
-  # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
-  # bucket).
+  # a hub-managed key — a kit scaffolded from trust/.env.example ships it commented
+  # out, so the release loads no core vocabulary until it is set).
   #
   # The AWS *credentials* live on this block too (vocabLoad.awsProfile /
   # vocabLoad.hostAwsMount, below): this is the chart's only AWS-bearing Job now
@@ -810,6 +825,7 @@ xnat:
       limits:
         memory: "4Gi"
         cpu: "2"
+    # Timing only. The probe paths, and why, are in templates/xnat-web.yaml.
     probes:
       liveness:
         initialDelaySeconds: 120
@@ -840,6 +856,8 @@ xnat:
       # key with the jars on the pod by exactly that shape; a key spelled otherwise still
       # deploys fine, but a version skew under it reports as a missing download rather
       # than a stale jar, sending the operator to init-container logs that are clean.
+      # A new plugin also needs its XNAT plugin id in check_status.py's XNAT_PLUGIN_IDS
+      # (README "Verify the DICOM ingest path"); its test fails until it has one.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
@@ -998,6 +1016,8 @@ pacs:
   supportsExtendedNegotiations: true
   # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
+  # Every helm upgrade sets XNAT's schedule from these, reverting edits made in XNAT's UI. The window
+  # must not cross midnight (FLIP#1465): for out-of-hours use 19:00-24:00, 00:00-07:00 or whole days.
   availability:
     days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
     start: "00:00"

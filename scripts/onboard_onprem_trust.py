@@ -68,7 +68,9 @@ def quote_make_assignment(key: str, value: str | Path) -> str:
 
 # Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
 # scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
-# flip-api/src/flip_api/scripts/register_trust.py.
+# flip-api/src/flip_api/scripts/register_trust.py, except FL_EDGE_PORT: a kit synced before
+# FLIP#1365 lacks it and every reader falls back to FL_SERVER_PORT, so requiring it would fail
+# every existing site's upgrade checklist.
 HUB_SHARED_KEYS: tuple[str, ...] = (
     "AES_KEY_BASE64",
     "CENTRAL_HUB_API_URL",
@@ -77,9 +79,7 @@ HUB_SHARED_KEYS: tuple[str, ...] = (
     "FLOWER_KIT_DATE",
     "FLARE_KIT_DATE",
     "DOCKER_TAG",
-    "DOCKER_REGISTRY",
     "DOCKER_FL_TAG",
-    "DOCKER_FL_REGISTRY",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
 )
@@ -304,18 +304,18 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
 
 def check_hub_shared(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
-        return Check("Hub-shared block (12 keys)", Status.PENDING, "pending — needs kit file")
+        return Check("Hub-shared block (10 keys)", Status.PENDING, "pending — needs kit file")
     missing = [k for k in HUB_SHARED_KEYS if not is_filled(kit_vars.get(k))]
     if not missing:
         hub_url = kit_vars.get("CENTRAL_HUB_API_URL", "").removesuffix("/api")
         return Check(
-            "Hub-shared block (12 keys)",
+            "Hub-shared block (10 keys)",
             Status.PASS,
             "populated",
             hints=[f"UI URL: {hub_url or '<unset>'}"],
         )
     return Check(
-        "Hub-shared block (12 keys)",
+        "Hub-shared block (10 keys)",
         Status.FAIL,
         f"{len(missing)} unfilled: {', '.join(missing)}",
         hints=["Ask the FLIP admin to run 'make sync-trust-kit KIT=<slot>' and re-send the kit."],

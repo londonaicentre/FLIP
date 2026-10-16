@@ -17,6 +17,10 @@ from imaging_api.config import get_settings
 
 XNAT_URL = get_settings().XNAT_URL
 
+# Seconds an XNAT metadata call may take. Unbounded, a call to a wedged XNAT would hang its caller
+# rather than fail.
+XNAT_REQUEST_TIMEOUT = 30
+
 
 def quote_path_segment(value: str) -> str:
     """Quote one XNAT identifier, rejecting segments that cannot identify a resource.
@@ -40,7 +44,7 @@ def xnat_url(*segments: str, query: Mapping[str, str] | None = None) -> str:
     """Build an XNAT URL from raw path segments, quoting each one.
 
     Args:
-        segments (str): Raw path segments, including literal endpoint names.
+        *segments (str): Raw path segments, including literal endpoint names.
         query (Mapping[str, str] | None): Optional raw query parameters.
 
     Returns:

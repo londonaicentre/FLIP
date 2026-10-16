@@ -37,15 +37,16 @@
 
 | Alias | Environment | Account alias |
 | ------- | ------------- | --------- |
-| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (legacy; retiring with the LZA migration) |
-| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (legacy; retiring with the LZA migration) |
-| `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (provisioning tracked on FLIP#749) |
+| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (account closed 2026-09-28) |
+| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (account closed 2026-10-06) |
+| `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`, `TF_PROD=lza-stag`) |
 | `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
-| `dev` | Development (the `dev/` root: Cognito + SES; `FlipDeveloperAccess` permission set) | `flipdev` |
 
-The last two are where FLIP's estate is being migrated to; the `stag` / `prod` aliases
-the CI workflows default to are the LZA pair once `TF_PROD` is set (`README`,
-"Repointing CI at the LZA accounts"). Profile names are local aliases in
+The `lza-stag` / `lza-prod` profiles are where FLIP's estate now lives; the `aws-stag` /
+`aws-prod` GitHub environments the CI workflows read carry `TF_PROD=lza-stag` /
+`TF_PROD=lza`, so both legs target the LZA pair (`README`, "Repointing CI at the LZA
+accounts"). The `stag` / `prod` aliases above remain only as the workflows'
+pre-`TF_PROD` fallback. Profile names are local aliases in
 `~/.aws/config` — one that encodes the old account ID has to be re-created, not
 edited.
 
@@ -54,7 +55,7 @@ edited.
 ```bash
 make full-deploy PROD=stag                   # Full staging deploy
 make full-deploy PROD=true                    # Full prod deploy
-make init/plan/apply PROD=lza                 # LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
+make init/plan/apply PROD=lza                 # BREAK-GLASS ONLY on the LZA estate — CI applies it (apply on push to `main`, nightly drift; see "Terraform CI" below and README "Repointing CI at the LZA accounts"), and the next CI run reverts a laptop apply. LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
 make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
@@ -79,8 +80,9 @@ make aws-login                                # AWS SSO login
 make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)
 make -C ci init/plan/apply/migrate-state      # Adopters only: CI bootstrap in your own account (see ci/README.md); AI Centre's accounts are the platform repos'
 make -C ci check-oidc-provider               # Does the account have GitHub's OIDC provider? (plan runs it, and check-not-managed-elsewhere, first)
-make tflint-lint                              # Static tflint lint (terraform recommended preset + AWS ruleset, .tflint.hcl) — CI counterpart is the TFLint job in validate_terraform.yml; acknowledge a deliberate exception in-code with `# tflint-ignore: <rule> # <why>` (the rationale needs that second `#` — `-- why` silently voids the annotation), never by disabling the rule. Run from the REPO ROOT (same parse-time env guard reason as checkov-lint)
-make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. NB this Makefile's parse-time env guard needs the deploy env file — the REPO-ROOT `make checkov-lint` (or `bash deploy/providers/AWS/scripts/checkov_lint.sh`) runs env-free
+make lint                                     # fmt-check + tflint-lint + checkov-lint: three of validate_terraform.yml's checks (terraform fmt, TFLint, Checkov). No env file or credentials needed (FLIP#1440): the parse-time env guards stand aside when every goal is in STATIC_GOALS, and both lint scripts clear TF_VAR_* so the source is linted as CI lints it. It stops at the first failing check; `make -k lint` runs all three
+make tflint-lint                              # Static tflint lint (terraform recommended preset + AWS ruleset, .tflint.hcl) — CI counterpart is the TFLint job in validate_terraform.yml; acknowledge a deliberate exception in-code with `# tflint-ignore: <rule> # <why>` (the rationale needs that second `#` — `-- why` silently voids the annotation), never by disabling the rule. Runs here or from the repo root, no env file needed
+make checkov-lint                             # Static checkov security lint (IAM policy content + promoted posture checks) — CI counterpart is the Checkov Security Lint job in validate_terraform.yml (FLIP#1052, FLIP#1058); suppress deliberate breadth/posture in-code with `# checkov:skip=<ID>:<rationale>`. Runs here without the deploy env file: this Makefile's parse-time env guards stand aside when every goal is in STATIC_GOALS (FLIP#1440)
 uv run --no-project --with pytest --with jinja2 --with click --with diagrams pytest tests/   # Credential-free static checks over the stack's artefacts (rendered templates, deploy scripts, and Terraform source itself — incl. the Cognito `callback_urls` = browser CORS allowlist invariants). CI counterpart: the AWS deploy tests job in validate_terraform.yml (which also installs graphviz first, so the render smoke test in test_architecture_diagram.py runs instead of skipping). Deps named explicitly rather than `uv sync`d: the dev group pulls ansible-core + pyqt5, the tests need four packages (`diagrams` is imported at module level by architecture/central_hub.py, so it's required for collection even without graphviz installed)
 ```
 
@@ -151,8 +153,19 @@ Things worth knowing before touching any of it:
   It is ignored when `RESOLVE_SHA_TAG=false` (plan, drift). `active_tag()` reads a
   running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
   pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
-  `repo:<tag>`. Nothing sets `RELEASE_TAG` yet: `release.yml` dispatching
-  `terraform_apply.yml` after the release builds are green is PR 2 of FLIP#1283.
+  `repo:<tag>`. `RELEASE_TAG` is set by exactly one caller: `release.yml`, which
+  after creating the `v<X.Y.Z>` tag dispatches the twelve image builds at it, waits
+  for them to conclude green (bounded by `RELEASE_BUILD_WAIT_SECONDS`, default
+  5400s), and only then dispatches `terraform_apply.yml` on **`refs/heads/main`**
+  with `release_tag: v<X.Y.Z>`. The ref is not negotiable: the apply role's trust
+  policy pins `job_workflow_ref` to `terraform_apply.yml@refs/heads/{develop,main}`,
+  so a dispatch at the tag cannot assume it. The wait is what makes the fail-closed
+  probe safe, since asking for a release whose builds have not finished makes the
+  resolver refuse and stops production's apply. `terraform_apply.yml` validates the
+  input (`^v\d+\.\d+\.\d+$`, `main` only, because the ref chooses the estate) before
+  forwarding it. The push apply of the same commit pins the sha and the release
+  dispatch pins the release on top; they serialise on the `tf-apply-main`
+  concurrency group (`cancel-in-progress: false`) rather than racing.
 - **An apply holds if the plan touches FL** (`scripts/check-fl-plan-impact.sh`):
   `fl-server-net-1` / `fl-api-net-1` task definitions or services, or any EFS
   deletion. `flip-api` is deliberately not watched. The hub cannot be asked
@@ -183,10 +196,10 @@ Things worth knowing before touching any of it:
   `main` rather than by widening the policy.
 - **`TF_STAG_DISABLED=true` (repository variable) pauses the staging leg** of plan,
   apply and drift, so a develop merge cannot rebuild a staging estate that has been
-  torn down; production never reads it. Set while the legacy staging account is
-  gone and `aws-stag` has not yet been repointed at LZA staging (`TF_PROD=lza-stag`);
-  delete it when the repoint lands. `.github/tests/workflows/test_terraform_stag_pause.py`
-  pins the three guards.
+  torn down; production never reads it. **Leave it unset while a staging estate exists**:
+  it was deleted when `aws-stag` was repointed at LZA staging (`TF_PROD=lza-stag`), so
+  all three staging legs run against LZA staging. The guards remain for the next teardown;
+  `.github/tests/workflows/test_terraform_stag_pause.py` pins them.
 - **Every IAM role this root owns carries a permissions boundary**
   (`var.iam_permissions_boundary_name`, the policy declared by
   `modules/terraform_ci_bootstrap`). The CI apply role may only create a role, or
@@ -269,7 +282,8 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 - `aws ecs describe-tasks` returns `containers` as an array, and the **GuardDuty Runtime Monitoring sidecar** (`aws-guardduty-agent-*`) usually sorts first. Querying `containers[0].imageDigest` reads the *agent's* digest, not the FL container's.
 - The GuardDuty agent image lives in an AWS-internal ECR, **never GHCR**, so its digest returns **HTTP 404** when looked up in `ghcr.io`. A 404 digest is the sidecar — not a stale FL image. (This burned a full investigation on 2026-06-24: `66446df3…` was the GuardDuty agent; the real `fl-server-net-1` digest `29b10362…` matched `:stag` exactly. Both `flare-fl-server:stag` and `flare-fl-api:stag` were rebuilt by the #624 FL-deps merge, configs created `15:54–15:55Z`.)
-- Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md).
+- Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.8](TROUBLESHOOTING.md).
+- The same applies to exit codes. The two one-shot tasks `terraform apply` runs (`provision_efs_certs`, `flower_register_supernode_keys`) read `containers[?name=='<container>'].exitCode`, where the name comes from the task definition. They treat a missing code as a failure (FLIP#1447). `tests/test_ecs_task_exit_code.py` fails on any `containers[0]` in a `.tf` file.
 
 ## State Management
 

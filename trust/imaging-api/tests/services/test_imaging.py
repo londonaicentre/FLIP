@@ -11,7 +11,11 @@
 #
 
 import json
+import re
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 import requests
@@ -23,16 +27,24 @@ from imaging_api.services.imaging import (
     XNAT_REQUEST_TIMEOUT,
     check_pacs,
     ping_pacs,
+    ping_registered_pacs,
     query_by_accession_number,
     queue_image_import_request,
-    resolve_pacs_id,
+    resolve_default_pacs_id,
 )
-from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
 
 
 @pytest.fixture
 def headers():
     return {}
+
+
+@pytest.fixture
+def default_pacs_resolved() -> Iterator[MagicMock]:
+    """Stands in for the default-PACS lookup, for import tests about what happens after it."""
+    with patch("imaging_api.services.imaging.resolve_default_pacs_id", return_value=1) as resolved:
+        yield resolved
 
 
 # Test for ping_pacs function
@@ -127,10 +139,24 @@ def test_query_by_accession_number(mock_post, headers):
     assert mock_post.call_args.kwargs["timeout"] == XNAT_DQR_REQUEST_TIMEOUT
 
 
+@patch("imaging_api.services.imaging.requests.get")
+@patch("imaging_api.services.imaging.requests.post")
+def test_query_by_accession_number_names_no_pacs(mock_post, mock_get, headers):
+    """DQR queries its default PACS when the body has no pacsId, so imaging-api resolves nothing for a query."""
+    mock_post.return_value = MagicMock(status_code=204, reason="No Content")
+
+    query_by_accession_number("ACC1", headers)
+
+    assert mock_post.call_args.kwargs["json"] == {"accessionNumber": "ACC1", "modality": ""}
+    assert not mock_get.called, "a query must not list XNAT's PACS: DQR picks the default itself"
+
+
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request(mock_check_pacs, mock_requests_post, mock_get_project, headers):
+def test_queue_image_import_request(
+    mock_get_project, mock_requests_post, mock_check_pacs, default_pacs_resolved, headers
+):
     # Mock checking if the PACS is reachable
     mock_check_pacs.return_value = None
 
@@ -195,20 +221,6 @@ def test_ping_pacs_server_error(mock_get):
 def test_check_pacs_success(mock_ping):
     mock_ping.return_value = MagicMock(successful=True, enabled=True)
     check_pacs({}, pacs_id=1)  # should not raise
-
-
-# ---------------------------------------------------------------------------
-# check_pacs — no id supplied
-# ---------------------------------------------------------------------------
-@patch("imaging_api.services.imaging.resolve_pacs_id", return_value=7)
-@patch("imaging_api.services.imaging.ping_pacs")
-def test_check_pacs_without_id_resolves_rather_than_assuming_the_configured_one(mock_ping, mock_resolve):
-    """The configured PACS_ID is the unreachable-XNAT fallback, not a description of what exists."""
-    mock_ping.return_value = MagicMock(successful=True, enabled=True)
-
-    check_pacs({})
-
-    assert mock_ping.call_args[0][0] == 7
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +308,8 @@ def test_query_by_accession_number_server_error(mock_post, headers):
     mock_response.reason = "Internal Server Error"
     mock_post.return_value = mock_response
 
-    with pytest.raises(Exception, match="Failed to query PACS"):
+    # The status is kept: with no pacsId in the query, it is the only trace of DQR lacking a default PACS
+    with pytest.raises(Exception, match=re.escape("Failed to query PACS via DQR (HTTP 500)")):
         query_by_accession_number("ACC123", headers)
 
 
@@ -306,7 +319,9 @@ def test_query_by_accession_number_server_error(mock_post, headers):
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_dqr_404(mock_get_project, mock_post, mock_check_pacs, headers):
+def test_queue_image_import_request_dqr_404(
+    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
+):
     mock_get_project.return_value = None
     mock_check_pacs.return_value = None
 
@@ -325,7 +340,9 @@ def test_queue_image_import_request_dqr_404(mock_get_project, mock_post, mock_ch
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_dqr_500(mock_get_project, mock_post, mock_check_pacs, headers):
+def test_queue_image_import_request_dqr_500(
+    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
+):
     mock_get_project.return_value = None
     mock_check_pacs.return_value = None
 
@@ -344,7 +361,9 @@ def test_queue_image_import_request_dqr_500(mock_get_project, mock_post, mock_ch
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_empty_response(mock_get_project, mock_post, mock_check_pacs, headers):
+def test_queue_image_import_request_empty_response(
+    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
+):
     mock_get_project.return_value = None
     mock_check_pacs.return_value = None
 
@@ -363,7 +382,9 @@ def test_queue_image_import_request_empty_response(mock_get_project, mock_post, 
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_mismatched_count(mock_get_project, mock_post, mock_check_pacs, headers):
+def test_queue_image_import_request_mismatched_count(
+    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
+):
     mock_get_project.return_value = None
     mock_check_pacs.return_value = None
 
@@ -401,7 +422,9 @@ def test_queue_image_import_request_mismatched_count(mock_get_project, mock_post
 @patch("imaging_api.services.imaging.check_pacs")
 @patch("imaging_api.services.imaging.requests.post")
 @patch("imaging_api.services.imaging.get_project")
-def test_queue_image_import_request_partial_failure(mock_get_project, mock_post, mock_check_pacs, headers):
+def test_queue_image_import_request_partial_failure(
+    mock_get_project, mock_post, mock_check_pacs, default_pacs_resolved, headers
+):
     mock_get_project.return_value = None
     mock_check_pacs.return_value = None
 
@@ -438,132 +461,234 @@ def test_queue_image_import_request_partial_failure(mock_get_project, mock_post,
     assert response[1].status == "FAILED"
 
 
-# --- PACS id resolution (FLIP#993) ---------------------------------------------------
+# --- The default query/retrieve PACS, read from XNAT per call (FLIP#1456 E1) ---------
 
 
-@pytest.fixture(autouse=True)
-def _clear_resolved_pacs_id():
-    """Resets the module-level PACS id cache so each test resolves independently."""
-    import imaging_api.services.imaging as imaging_module
-
-    imaging_module._resolved_pacs_id = None
-    yield
-    imaging_module._resolved_pacs_id = None
+def _pacs(pacs_id: int, ae_title: str, default: bool = True) -> dict[str, Any]:
+    """One PACS registration as XNAT's ``GET /xapi/pacs`` lists it (the fields imaging-api reads)."""
+    return {"id": pacs_id, "aeTitle": ae_title, "defaultQueryRetrievePacs": default, "queryable": True, "enabled": True}
 
 
-@patch("imaging_api.services.imaging.requests.get")
-def test_resolve_pacs_id_uses_the_registered_pacs(mock_get, headers):
-    """The id is read from XNAT, not assumed to be 1: an XNAT that carried the mock first won't be."""
-    from imaging_api.services.imaging import resolve_pacs_id
-
-    mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"id": 7, "aeTitle": "SECTRA_QR"}])
-
-    assert resolve_pacs_id(headers) == 7
-
-
-@patch("imaging_api.services.imaging.requests.get")
-def test_resolve_pacs_id_is_cached(mock_get, headers):
-    """XNAT is queried once; ids are fixed for the life of a registration."""
-    from imaging_api.services.imaging import resolve_pacs_id
-
-    mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"id": 4, "aeTitle": "ORTHANC"}])
-
-    assert resolve_pacs_id(headers) == 4
-    assert resolve_pacs_id(headers) == 4
-    assert mock_get.call_count == 1
+def _status(pacs_id: int) -> dict[str, Any]:
+    return {
+        "pacsId": pacs_id,
+        "successful": True,
+        "pingTime": 123,
+        "created": 1610000000,
+        "enabled": True,
+        "timestamp": 1610001234,
+        "id": pacs_id,
+        "disabled": 0,
+    }
 
 
-@patch("imaging_api.services.imaging.requests.get")
-def test_resolve_pacs_id_falls_back_when_none_registered(mock_get, headers):
-    """No registration degrades to the configured fallback rather than failing the import."""
-    from imaging_api.services.imaging import PACS_ID, resolve_pacs_id
+class _FakeXnat:
+    """A ``requests.get`` stand-in for XNAT's PACS endpoints that records each listing and ping it serves.
 
-    mock_get.return_value = MagicMock(status_code=200, json=lambda: [])
+    Successive listings are served in order and the last one repeats, so a test can re-register the
+    PACS under a new id between two calls.
+    """
 
-    assert resolve_pacs_id(headers) == PACS_ID
+    def __init__(self, *listings: list[dict[str, Any]]) -> None:
+        self._listings = list(listings)
+        self.listing_queries: list[dict[str, list[str]]] = []
+        self.pinged: list[int] = []
+
+    def get(self, url: str, **kwargs: Any) -> MagicMock:
+        parts = urlsplit(url)
+        path = parts.path.split("/")
+        if path[-2:] == ["xapi", "pacs"]:
+            self.listing_queries.append(parse_qs(parts.query))
+            listing = self._listings.pop(0) if len(self._listings) > 1 else self._listings[0]
+            return MagicMock(status_code=200, json=lambda: listing)
+        if path[-1] == "status":
+            pacs_id = int(path[-2])
+            self.pinged.append(pacs_id)
+            return MagicMock(status_code=200, json=lambda: _status(pacs_id))
+        raise AssertionError(f"unexpected XNAT GET {url}")
 
 
-@patch("imaging_api.services.imaging.requests.get", side_effect=Exception("XNAT unreachable"))
-def test_resolve_pacs_id_falls_back_when_xnat_unreachable(mock_get, headers):
-    """A transient XNAT failure must not take out retrieval; it falls back to the configured id."""
-    from imaging_api.services.imaging import PACS_ID, resolve_pacs_id
-
-    assert resolve_pacs_id(headers) == PACS_ID
-
-
-@patch("imaging_api.services.imaging.requests.get")
-def test_resolve_pacs_id_prefers_the_default_query_retrieve_pacs(mock_get, headers):
-    """With a stray extra registration, the flagged default wins over list order."""
-    from imaging_api.services.imaging import resolve_pacs_id
-
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=lambda: [
-            {"id": 3, "aeTitle": "STRAY"},
-            {"id": 9, "aeTitle": "SECTRA_QR", "defaultQueryRetrievePacs": True},
-        ],
+def _import_request(pacs_id: int | None = None) -> ImportStudyRequest:
+    return ImportStudyRequest.model_validate(
+        {
+            "projectId": "test",
+            "pacsId": pacs_id,
+            "studies": [{"studyInstanceUid": "1.2.3.4", "accessionNumber": "ACC1"}],
+        }
     )
 
-    assert resolve_pacs_id(headers) == 9
+
+def _queued(pacs_id: int) -> MagicMock:
+    """DQR's 200 reply to an import of the one study ``_import_request`` names."""
+    queued = {
+        "id": 1,
+        "pacsId": pacs_id,
+        "status": "QUEUED",
+        "accessionNumber": "ACC1",
+        "queuedTime": 100,
+        "created": 100,
+        "priority": 1,
+    }
+    return MagicMock(status_code=200, text=json.dumps([queued]))
 
 
-@patch("imaging_api.services.imaging.requests.get")
-def test_resolve_pacs_id_falls_back_when_the_id_is_unusable(mock_get, headers):
-    """A registration without a usable id degrades to the fallback, which must not be cached."""
-    import imaging_api.services.imaging as imaging_module
-    from imaging_api.services.imaging import PACS_ID, resolve_pacs_id
+def test_resolve_default_pacs_id_reads_the_flagged_pacs_from_the_queryable_listing(headers):
+    """The id is XNAT's, from the queryable listing, and the default flag — not list order — picks it."""
+    xnat = _FakeXnat([_pacs(3, "STRAY", default=False), _pacs(9, "SECTRA_QR")])
 
-    mock_get.return_value = MagicMock(status_code=200, json=lambda: [{"aeTitle": "SECTRA_QR"}])
+    with patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get) as mock_get:
+        assert resolve_default_pacs_id(headers) == 9
 
-    assert resolve_pacs_id(headers) == PACS_ID
-    assert imaging_module._resolved_pacs_id is None, "a fallback pinned in the cache would outlive the failure"
-
-
-PACS_STATUS_OK = {
-    "pacsId": 9,
-    "successful": True,
-    "pingTime": 123,
-    "created": 1610000000,
-    "enabled": True,
-    "timestamp": 1610001234,
-    "id": 9,
-    "disabled": 0,
-}
+    assert xnat.listing_queries == [{"queryable": ["true"]}]
+    assert mock_get.call_args.kwargs["timeout"] == XNAT_REQUEST_TIMEOUT
 
 
-@patch("imaging_api.services.imaging.requests.get")
-def test_ping_registered_pacs_drops_a_stale_cached_id_and_retries(mock_get, headers):
-    """A re-registration under a new id must heal on the next probe, not after a restart."""
-    import imaging_api.services.imaging as imaging_module
-    from imaging_api.services.imaging import ping_registered_pacs
+def test_resolve_default_pacs_id_reads_xnat_on_every_call(headers):
+    """No module-level cache: a PACS re-registered under a new id is found on the very next call."""
+    xnat = _FakeXnat([_pacs(7, "SECTRA_QR")], [_pacs(9, "SECTRA_QR")])
 
-    imaging_module._resolved_pacs_id = 7  # stale: the registration it came from is gone
-    mock_get.side_effect = [
-        MagicMock(status_code=404),  # ping of the stale id
-        MagicMock(status_code=200, json=lambda: [{"id": 9, "aeTitle": "SECTRA_QR"}]),  # re-resolve
-        MagicMock(status_code=200, json=lambda: PACS_STATUS_OK),  # ping of the fresh id
-    ]
+    with patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get):
+        assert resolve_default_pacs_id(headers) == 7
+        assert resolve_default_pacs_id(headers) == 9
 
-    status = ping_registered_pacs(headers)
-
-    assert status.successful is True
-    assert imaging_module._resolved_pacs_id == 9, "the fresh id was not cached"
+    assert len(xnat.listing_queries) == 2
 
 
-@patch("imaging_api.services.imaging.requests.get")
-def test_ping_registered_pacs_raises_when_the_fresh_id_is_no_better(mock_get, headers):
-    """When re-resolving lands on the same missing id (e.g. the fallback), the 404 must surface."""
-    import imaging_api.services.imaging as imaging_module
-    from imaging_api.services.imaging import ping_registered_pacs
+@pytest.mark.parametrize(
+    ("listing", "found"),
+    [([], "none"), ([_pacs(3, "STRAY", default=False)], "'STRAY' (id 3)")],
+    ids=["nothing registered", "registered but not the default"],
+)
+def test_resolve_default_pacs_id_without_a_default_fails_naming_what_was_found(listing, found, headers):
+    """No guessed fallback id: an XNAT without a default PACS is reported as exactly that."""
+    xnat = _FakeXnat(listing)
 
-    imaging_module._resolved_pacs_id = 7
-    mock_get.side_effect = [
-        MagicMock(status_code=404),  # ping of the stale id
-        MagicMock(status_code=200, json=lambda: [{"id": 7, "aeTitle": "SECTRA_QR"}]),  # same id again
-    ]
+    with (
+        patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get),
+        pytest.raises(NotFoundError) as excinfo,
+    ):
+        resolve_default_pacs_id(headers)
 
-    with pytest.raises(NotFoundError):
+    assert "no PACS flagged as the default query/retrieve PACS" in str(excinfo.value)
+    assert f"(queryable PACS found: {found})" in str(excinfo.value)
+    # The advice: the configure step restores a missing flag, but cannot re-enable a disabled PACS,
+    # which DQR leaves out of the listing altogether.
+    assert "restores the flag" in str(excinfo.value)
+    assert "configure step does not re-enable it" in str(excinfo.value)
+
+
+def test_resolve_default_pacs_id_with_two_defaults_fails_naming_both(headers):
+    """Two flagged PACS make DQR's own choice ambiguous, so neither is picked."""
+    xnat = _FakeXnat([_pacs(3, "ORTHANC"), _pacs(9, "SECTRA_QR")])
+
+    named = "flags 2 PACS as the default query/retrieve PACS ('ORTHANC' (id 3), 'SECTRA_QR' (id 9))"
+    with (
+        patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get),
+        pytest.raises(Exception, match=re.escape(named)) as excinfo,
+    ):
+        resolve_default_pacs_id(headers)
+
+    assert excinfo.type is Exception, "two defaults is a misconfiguration, not a missing PACS (404)"
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (MagicMock(status_code=500), "HTTP 500"),
+        (MagicMock(status_code=200, json=MagicMock(side_effect=ValueError("no JSON"))), "not JSON"),
+        (MagicMock(status_code=200, json=lambda: {"id": 1}), "not a list"),
+        (MagicMock(status_code=200, json=lambda: [1]), "not a list"),
+        (MagicMock(status_code=200, json=lambda: [{"aeTitle": "SECTRA_QR", "defaultQueryRetrievePacs": True}]), "id"),
+        (
+            MagicMock(status_code=200, json=lambda: [{"id": None, "defaultQueryRetrievePacs": True}]),
+            "no usable id",
+        ),
+    ],
+    ids=["http error", "not json", "object", "not registrations", "no id", "null id"],
+)
+def test_resolve_default_pacs_id_fails_on_a_listing_it_cannot_use(response, message, headers):
+    """Anything but a usable listing is an XNAT failure (500), never a reason to guess an id."""
+    with (
+        patch("imaging_api.services.imaging.requests.get", return_value=response),
+        pytest.raises(XnatFetchError, match=message),
+    ):
+        resolve_default_pacs_id(headers)
+
+
+def test_resolve_default_pacs_id_fails_when_xnat_is_unreachable(headers):
+    with (
+        patch("imaging_api.services.imaging.requests.get", side_effect=requests.ConnectionError("refused")),
+        pytest.raises(XnatFetchError, match="Could not list the PACS registered in XNAT: refused"),
+    ):
+        resolve_default_pacs_id(headers)
+
+
+@patch("imaging_api.services.imaging.requests.post")
+@patch("imaging_api.services.imaging.get_project")
+def test_import_resolves_the_default_pacs_once_per_import_and_sends_its_id(mock_get_project, mock_post, headers):
+    """One listing per import, its id pinged and sent to DQR — whatever the caller put in pacsId.
+
+    The second import runs after the PACS was re-registered under a new id: it must use the new id,
+    so nothing from the first import is held over.
+    """
+    xnat = _FakeXnat([_pacs(7, "SECTRA_QR")], [_pacs(9, "SECTRA_QR")])
+    mock_post.side_effect = [_queued(7), _queued(9)]
+
+    with patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get):
+        queue_image_import_request(_import_request(pacs_id=5), headers)
+        queue_image_import_request(_import_request(), headers)
+
+    assert len(xnat.listing_queries) == 2, "expected exactly one PACS listing per import"
+    assert xnat.pinged == [7, 9]
+    assert [c.kwargs["json"]["pacsId"] for c in mock_post.call_args_list] == [7, 9]
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [[], [_pacs(3, "STRAY", default=False)], [_pacs(3, "ORTHANC"), _pacs(9, "SECTRA_QR")]],
+    ids=["no PACS", "no default", "two defaults"],
+)
+@patch("imaging_api.services.imaging.requests.post")
+@patch("imaging_api.services.imaging.get_project")
+def test_import_without_exactly_one_default_pacs_fails_and_imports_nothing(
+    mock_get_project, mock_post, listing, headers
+):
+    """No static fallback: the import stops with the resolution error and DQR is never asked to import."""
+    xnat = _FakeXnat(listing)
+
+    with (
+        patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get),
+        pytest.raises(Exception, match="default query/retrieve PACS"),
+    ):
+        queue_image_import_request(_import_request(), headers)
+
+    assert not mock_post.called, "an import was sent without a resolved PACS"
+    assert xnat.pinged == []
+
+
+def test_ping_registered_pacs_pings_the_default_pacs_resolved_on_every_call(headers):
+    """trust-api's health probe: a PACS re-registered under a new id is pinged at that id next time."""
+    xnat = _FakeXnat([_pacs(7, "SECTRA_QR")], [_pacs(9, "SECTRA_QR")])
+
+    with patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get):
+        assert ping_registered_pacs(headers).pacs_id == 7
+        assert ping_registered_pacs(headers).pacs_id == 9
+
+    assert xnat.pinged == [7, 9]
+    assert len(xnat.listing_queries) == 2
+
+
+def test_ping_registered_pacs_without_a_default_raises_not_found_and_pings_nothing(headers):
+    """The router turns this into the 404 the probe already treated as "unknown"."""
+    xnat = _FakeXnat([])
+
+    with (
+        patch("imaging_api.services.imaging.requests.get", side_effect=xnat.get),
+        pytest.raises(NotFoundError),
+    ):
         ping_registered_pacs(headers)
+
+    assert xnat.pinged == []
 
 
 def test_import_request_ae_title_follows_settings():
@@ -593,12 +718,12 @@ def test_pacs_urls_are_unchanged_and_take_an_integer_id(sent_xnat_requests):
         "disabled": 0,
         "timestamp": 1,
     }
-    with patch.object(requests.Response, "json", side_effect=[[{"id": 3}], status]):
-        pacs_id = resolve_pacs_id({})
+    with patch.object(requests.Response, "json", side_effect=[[{"id": 3, "defaultQueryRetrievePacs": True}], status]):
+        pacs_id = resolve_default_pacs_id({})
         ping_pacs(pacs_id, {})
 
     xnat = get_settings().XNAT_URL
     assert [(r.method, r.url) for r in sent_xnat_requests] == [
-        ("GET", requests.Request("GET", f"{xnat}/xapi/pacs").prepare().url),
+        ("GET", requests.Request("GET", f"{xnat}/xapi/pacs", params={"queryable": "true"}).prepare().url),
         ("GET", requests.Request("GET", f"{xnat}/xapi/pacs/3/status").prepare().url),
     ]

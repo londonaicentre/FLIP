@@ -162,6 +162,71 @@ def test_retry_failed_post_processing_failure(mock_handle, mock_db):
     assert mock_db.rollback.called
 
 
+def _post_processing_task(task_type):
+    task = MagicMock(spec=TrustTask)
+    task.id = uuid4()
+    task.status = TaskStatus.COMPLETED
+    task.task_type = task_type
+    task.needs_post_processing = True
+    return task
+
+
+@patch("flip_api.private_services.snapshot_notifications.handle_snapshot_task_completed")
+@patch("flip_api.private_services.imaging_notifications.handle_imaging_task_completed")
+def test_retry_failed_post_processing_dispatches_on_task_type(mock_imaging, mock_snapshot, mock_db):
+    """A PERSIST_COHORT task is retried through the snapshot handler, never the imaging one."""
+    imaging_task = _post_processing_task(TaskType.CREATE_IMAGING)
+    snapshot_task = _post_processing_task(TaskType.PERSIST_COHORT)
+    mock_db.exec.return_value.all.return_value = [imaging_task, snapshot_task]
+
+    count = retry_failed_post_processing(mock_db)
+
+    assert count == 2
+    mock_imaging.assert_called_once_with(imaging_task, mock_db)
+    mock_snapshot.assert_called_once_with(snapshot_task, mock_db)
+    assert imaging_task.needs_post_processing is False
+    assert snapshot_task.needs_post_processing is False
+
+
+def test_retry_failed_post_processing_selects_both_post_processed_task_types(mock_db):
+    """The query covers every post-processed type, so a failed snapshot record is retried too."""
+    mock_db.exec.return_value.all.return_value = []
+
+    retry_failed_post_processing(mock_db)
+
+    statement = mock_db.exec.call_args[0][0]
+    compiled = statement.compile(compile_kwargs={"literal_binds": True})
+    assert TaskType.CREATE_IMAGING.name in str(compiled)
+    assert TaskType.PERSIST_COHORT.name in str(compiled)
+
+
+@patch("flip_api.private_services.snapshot_notifications.handle_snapshot_task_completed")
+def test_retry_failed_snapshot_post_processing_keeps_the_flag_on_failure(mock_snapshot, mock_db):
+    mock_snapshot.side_effect = ValueError("bad snapshot result")
+    task = _post_processing_task(TaskType.PERSIST_COHORT)
+    mock_db.exec.return_value.all.return_value = [task]
+
+    count = retry_failed_post_processing(mock_db)
+
+    assert count == 0
+    assert task.needs_post_processing is True
+    assert mock_db.rollback.called
+
+
+@patch("flip_api.private_services.imaging_notifications.handle_imaging_task_completed")
+def test_retry_failed_post_processing_skips_a_type_without_a_handler(mock_imaging, mock_db):
+    """A task type with no post-processing handler is logged and left flagged, and the rest still run."""
+    orphan = _post_processing_task(TaskType.DELETE_IMAGING)
+    imaging_task = _post_processing_task(TaskType.CREATE_IMAGING)
+    mock_db.exec.return_value.all.return_value = [orphan, imaging_task]
+
+    count = retry_failed_post_processing(mock_db)
+
+    assert count == 1
+    assert orphan.needs_post_processing is True
+    mock_imaging.assert_called_once_with(imaging_task, mock_db)
+
+
 def test_retry_failed_post_processing_none_pending(mock_db):
     """Should return 0 when no tasks need post-processing."""
     mock_db.exec.return_value.all.return_value = []

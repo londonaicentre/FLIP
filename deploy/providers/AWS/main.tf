@@ -130,7 +130,7 @@ removed {
 
 # Egress allowlist for the trust EC2 (#876, GHSA-8465). Security groups can't match on hostname, so
 # every CDN-fronted / dynamic-IP destination (GHCR, Docker Hub, the Central Hub's CloudFront domain,
-# Hugging Face mock-data seeding, PyPI + download.pytorch.org, OS/package install sources, and the
+# Hugging Face mock-data seeding, PyPI for that seeding's `uv run`, OS/package install sources, and the
 # AWS services with no VPC endpoint — ssmmessages, ec2messages, monitoring) collapses into a single
 # 0.0.0.0/0 rule per port. That is the practical floor for an SG-only design — accepted as a
 # permanent, documented limitation, not a gap slated for a domain-aware firewall follow-up.
@@ -166,8 +166,8 @@ locals {
       for r in [
         # The 443 floor. One rule, because every destination behind it is the same AWS tuple:
         # Central Hub API (CloudFront), GHCR, Docker Hub, Hugging Face seeding, download.docker.com,
-        # awscli.amazonaws.com, apt/esm over HTTPS, PyPI + download.pytorch.org (Flower's per-run
-        # uv sync), the us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
+        # awscli.amazonaws.com, apt/esm over HTTPS, PyPI (seed_trust.sh's `uv run`), the
+        # us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
         # (ssmmessages, ec2messages, monitoring).
         {
           port        = 443

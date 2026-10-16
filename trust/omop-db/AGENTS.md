@@ -53,8 +53,8 @@ tolerate the DICOM vocab the seed has already loaded):
 - **Vocabulary licensing**: the core vocab bundle — an OHDSI Athena export, 59 vocabularies incl.
   SNOMED CT, LOINC, Read, dm+d (roster + versions in README "The core vocabulary bundle") — is licensed
   material: `data/` is gitignored and must never be committed or published. Acquisition: org members via
-  `make fetch-vocab-core` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (default `flipdev-aicentre`, org AWS
-  needed); external users self-serve an equivalent export from OHDSI Athena under their own licences.
+  `make fetch-vocab-core VOCAB_S3_BUCKET=<bucket>` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (no default — a
+  deploy environment's own aicentre bucket since FLIP#1371 retired the dev-account copy; org AWS needed); external users self-serve an equivalent export from OHDSI Athena under their own licences.
   The DICOM vocab (byte-identical to DICOM2OMOP `files/OMOP CDM Staging/` @ upstream `1ef3354`, Apache
   2.0, pickle converted to CSV) is freely redistributable: it lives on the HF dataset, and the seed loads it
   before the OMOP rows.

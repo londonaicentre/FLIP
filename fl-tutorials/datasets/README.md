@@ -21,7 +21,7 @@ backend tree. Everything downloads at run time; nothing is committed.
 
 All outputs land under the shared, gitignored [`fl-tutorials/data/`](../) root, so one
 download serves both backends' harnesses (the NVFLARE simulator via each tutorial's
-`.env.app`, the Flower compose stack via `flower/run-tutorial.sh`).
+`.env.app`, Flower's via `flower/sim-tutorial.sh`).
 
 Invoke the targets through the fl-tutorials root Makefile (which forwards here):
 
@@ -228,6 +228,11 @@ reloads spleen; then `make -C trust seed-omop KIT=GSTT PROJECTS=cxr_project` for
 `CLEAR=1` on the PACS half. There are no volume snapshots to re-cut: since FLIP#1190 a bring-up
 seeds from the dataset at the pinned version (`make -C trust ensure-seeded`), and the projects it
 seeds by default are the ones that publish a DICOM set — spleen and brain_mri are not among them.
+
+**Moving a trust seeded before FLIP#1495.** The writer now stores slices in display order, so the
+regenerated spleen and brain_mri DICOMs changed while every UID stayed the same: a plain `seed-spleen` /
+`seed-brain-mri` gets Orthanc's `AlreadyStored` and keeps the rotated instances. Pass `CLEAR=1` once.
+Sessions already in XNAT keep the old layout until the study is pulled again.
 
 ### Brain MRI: the same chain, four MR series per study
 

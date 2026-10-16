@@ -14,6 +14,7 @@
 
 import importlib
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -90,3 +91,9 @@ def test_the_governance_line_survives_a_quiet_log_level():
 
     (line,) = [r for r in records if r.getMessage().startswith("[governance]")]
     assert line.levelno >= logging.WARNING
+
+
+def test_startup_checks_the_snapshot_store():
+    """The lifespan hook runs the boot-time snapshot store check (create, sweep, probe)."""
+    with patch.object(main, "ensure_store") as mock_ensure_store, TestClient(main.app):
+        mock_ensure_store.assert_called_once_with()

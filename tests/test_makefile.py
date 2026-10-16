@@ -9,8 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""The root Makefile's site upgrade verb is gated and data-safe (FLIP#1204), and the hub-only
-bring-up creates every network it needs (FLIP#1344).
+"""The root Makefile's site upgrade verb is gated and data-safe (FLIP#1204), the hub-only
+bring-up creates every network it needs (FLIP#1344), and the targets that drive the hub compose
+project refuse one that another checkout created (FLIP#1227).
 
 `make upgrade-onprem-trust` must run the readiness checklist and then reach the trust-level
 upgrade, never the first-install steps (`ensure-seeded` re-seeds OMOP / Orthanc, `xnat-reset`
@@ -374,6 +375,125 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     else:
                         assert f"Using kit file trust/{filename}" in output, output
                 kit_file.unlink()
+
+
+# Every root target that acts on the hub compose project: the ones whose recipe runs compose on
+# it (see compose_targets), plus central-hub and restart-no-trust, which hand it to
+# flip-api/Makefile. `restart` is `down up`, so the guard reaches it through both.
+OWNER_GUARDED_TARGETS = {
+    "up",
+    "up-no-trust",
+    "central-hub",
+    "down",
+    "clean",
+    "clean-object-store",
+    "restart-fl",
+    "restart-no-trust",
+    "ui",
+    "ui-off",
+    "debug",
+    "debug-off",
+    "debug-all",
+    "debug-off-all",
+    "up-pgadmin",
+    "reset-keycloak",
+    "register-trust",
+}
+
+
+COMPOSE_COMMAND = re.compile(r"\b(DEBUG_OVERRIDE_COMPOSE_COMMAND|DOCKER_COMMAND)\b")
+
+
+def compose_targets(makefile: str) -> set[str]:
+    """The targets whose recipe runs `$(DOCKER_COMMAND)` or its debug-override twin."""
+    targets: set[str] = set()
+    current = None
+    for line in makefile.splitlines():
+        if header := re.match(r"^([\w.-]+):(?![:=])", line):
+            current = header[1]
+        elif current and line.startswith("\t") and COMPOSE_COMMAND.search(line):
+            targets.add(current)
+    return targets
+
+
+class HubProjectOwnerGuard(unittest.TestCase):
+    """Targets that drive the hub compose project refuse one another checkout created (FLIP#1227)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name).resolve()
+        self.root = base / "checkout"
+        for rel in ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk"):
+            target = self.root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(REPO / rel, target)
+        self.link = base / "link"
+        self.link.symlink_to(self.root)
+        bin_dir = base / "bin"
+        bin_dir.mkdir()
+        docker = bin_dir / "docker"
+        # Lists one working_dir label per container, and only for a filter on project $PROJECT.
+        docker.write_text(
+            f"#!{sys.executable}\nimport json, os, sys\n"
+            "project = 'label=com.docker.compose.project=' + os.environ['PROJECT']\n"
+            "if sys.argv[1:3] == ['ps', '-a'] and project in sys.argv:\n"
+            "    for working_dir in json.loads(os.environ['WORKING_DIRS']): print(working_dir)\n"
+        )
+        docker.chmod(0o755)
+        excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "ALLOW_FOREIGN_PROJECT", "FORCE"}
+        self.env = {key: value for key, value in os.environ.items() if key not in excluded}
+        self.env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", PROJECT="deploy")
+
+    def guard(self, *working_dirs, extra=()):
+        self.env["WORKING_DIRS"] = json.dumps([str(working_dir) for working_dir in working_dirs])
+        return subprocess.run(
+            ["make", "--no-print-directory", "-C", str(self.root), "_check-compose-project-owner", *extra],
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_an_empty_project_or_one_this_checkout_created_passes(self):
+        for working_dirs in ((), (self.root / "deploy",), (self.root / "deploy", self.link / "deploy")):
+            with self.subTest(working_dirs=working_dirs):
+                result = self.guard(*working_dirs)
+                assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_another_checkout_is_refused_and_named(self):
+        result = self.guard(self.root / "deploy", "/home/someone/FLIP/deploy")
+        assert result.returncode != 0, result.stdout
+        assert "Compose project 'deploy' has containers created from another checkout" in result.stdout, result.stdout
+        assert "/home/someone/FLIP/deploy" in result.stdout, result.stdout
+        assert str(self.root / "deploy") not in result.stdout, result.stdout
+        assert "FLIP_INSTANCE=<name>" in result.stdout, result.stdout
+
+    def test_an_unlabelled_container_is_refused(self):
+        result = self.guard("")
+        assert result.returncode != 0, result.stdout
+        assert "<no working_dir label>" in result.stdout, result.stdout
+
+    def test_the_project_follows_flip_instance(self):
+        self.env["PROJECT"] = "kc-deploy"
+        assert self.guard("/elsewhere/deploy", extra=("FLIP_INSTANCE=kc",)).returncode != 0
+        assert self.guard("/elsewhere/deploy").returncode == 0  # project `deploy` is not kc-deploy
+
+    def test_only_allow_foreign_project_1_skips_the_check(self):
+        # Not FORCE: `up` hands it on to generate-internal-service-key, which rotates the key.
+        cases = (("ALLOW_FOREIGN_PROJECT=1", True), ("ALLOW_FOREIGN_PROJECT=true", False), ("FORCE=1", False))
+        for extra, allowed in cases:
+            with self.subTest(extra=extra):
+                result = self.guard("/elsewhere/deploy", extra=(extra,))
+                assert (result.returncode == 0) == allowed, result.stdout + result.stderr
+
+    def test_it_is_the_first_prerequisite_of_every_target_that_drives_the_project(self):
+        makefile = (REPO / "Makefile").read_text()
+        unguarded = compose_targets(makefile) - {"build"} - OWNER_GUARDED_TARGETS  # build only builds images
+        assert not unguarded, f"add these to OWNER_GUARDED_TARGETS and gate them: {sorted(unguarded)}"
+        for target in sorted(OWNER_GUARDED_TARGETS):
+            with self.subTest(target=target):
+                assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
 
 
 if __name__ == "__main__":

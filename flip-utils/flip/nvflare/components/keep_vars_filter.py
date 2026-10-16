@@ -34,7 +34,7 @@ class KeepOnlyVars(DXOFilter):
     global value and a head-only update lands correctly.
     """
 
-    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None):
+    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None) -> None:
         """
         Args:
             include_vars: regex; only weight keys whose name matches (``re.search``) are kept.

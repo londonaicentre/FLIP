@@ -10,13 +10,14 @@
 # limitations under the License.
 #
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 from fastapi import HTTPException
 
-from fl_api.utils.schemas import UploadAppRequest
+from fl_api.utils.schemas import JobResources, UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
 
 TEST_MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
@@ -142,7 +143,8 @@ def test_error_requests_get(
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
 @patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_app_success(
     mock_requests_get_success,
     mock_upload_correct_request,
@@ -158,7 +160,8 @@ def test_upload_app_success(
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
 @patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_multiple_apps_success(
     mock_requests_get_success,
     mock_upload_multiple_apps_request,
@@ -184,7 +187,8 @@ def test_upload_multiple_apps_missing_meta_json(
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
 @patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_path, monkeypatch):
     """A bundle file under ``/server_checkpoints/`` is staged on the shared checkpoint volume
     (``SERVER_CHECKPOINT_ROOT/<model_id>/<file>``), NOT placed in the NVFLARE job dir — so it is
@@ -222,7 +226,8 @@ def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
 @patch("fl_api.utils.upload.validate_config", MagicMock())
-@patch("fl_api.utils.upload.read_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock(return_value={}))
+@patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_clears_stale_server_checkpoints(
     mock_requests_get_success, mock_upload_correct_request, tmp_path, monkeypatch
 ):
@@ -446,3 +451,124 @@ def test_upload_app_raises_on_http_error_response(mock_requests_get_success, moc
 
     with pytest.raises(requests.HTTPError):
         upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+
+
+# ── the job's meta.json and the model id (FLIP#70) ──────────────────────────────────
+
+
+def _assemble(tmp_path, monkeypatch, meta=None, resources=None, default_gpus=0, app="app"):
+    """Run upload_application end to end on real files: a minimal app, plus the job's meta.json if given."""
+    import fl_api.utils.upload as upload_module
+
+    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+    files = {
+        f"{app}/config/config_fed_server.json": {"workflows": [], "components": []},
+        f"{app}/config/config_fed_client.json": {"executors": []},
+        f"{app}/custom/config.json": {"LOCAL_ROUNDS": 1, "GLOBAL_ROUNDS": 2, "FLIP_MODEL_ID": "stale"},
+    }
+    if meta is not None:
+        files["meta.json"] = meta
+
+    def fake_get(url, **_):
+        resp = MagicMock(is_redirect=False, is_permanent_redirect=False)
+        content = files[url.removeprefix(f"{base}/")]
+        resp.content = (content if isinstance(content, str) else json.dumps(content)).encode()
+        return resp
+
+    monkeypatch.setattr(upload_module.requests, "get", fake_get)
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(tmp_path / "server-checkpoints"))
+    monkeypatch.setattr(
+        "fl_api.utils.job_resources.get_settings", lambda: MagicMock(JOB_RESOURCE_SPEC_NUM_GPUS=default_gpus)
+    )
+    body = UploadAppRequest(
+        bundle_urls=[f"{base}/{path}" for path in files],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1", "Trust_2"],
+        resources=resources,
+    )
+    response = upload_application(TEST_MODEL_ID, body, str(tmp_path / "jobs"))
+    job_dir = tmp_path / "jobs" / TEST_MODEL_ID
+    return response, json.loads((job_dir / "meta.json").read_text()), job_dir
+
+
+def test_a_researchers_recipe_export_keeps_its_request_and_flip_writes_the_runs_sites(tmp_path, monkeypatch):
+    exported = {
+        "name": "fedavg",
+        "resource_spec": {"@default": {"num_of_gpus": 1, "memory": "16Gi"}},
+        "min_clients": 1,
+        "deploy_map": {"app": ["@ALL"]},
+        "custom_props": {"model_id": "00000000-0000-0000-0000-000000000001", "team": "radiology"},
+    }
+
+    response, meta, _ = _assemble(tmp_path, monkeypatch, meta=exported)
+
+    assert meta == {
+        "name": TEST_MODEL_ID,
+        "resource_spec": {"@default": {"num_of_gpus": 1, "memory": "16Gi"}},
+        "deploy_map": {"app": ["server", "Trust_1", "Trust_2"]},
+        "min_clients": 2,
+        "mandatory_clients": ["Trust_1", "Trust_2"],
+        "custom_props": {"team": "radiology"},
+    }
+    assert response["resources"] == {"num_gpus": 1}
+    assert response["resources_source"] == "meta.json"
+
+
+def test_the_model_id_goes_in_the_apps_config_json_not_meta_json(tmp_path, monkeypatch):
+    """Where FLIP's server components read it, as Flower's flip-model-id lives in config.toml."""
+    _, meta, job_dir = _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}})
+
+    config = json.loads((job_dir / "app" / "custom" / "config.json").read_text())
+    assert config["FLIP_MODEL_ID"] == TEST_MODEL_ID
+    assert "custom_props" not in meta
+
+
+def test_without_a_meta_json_the_default_applies(tmp_path, monkeypatch):
+    response, meta, _ = _assemble(tmp_path, monkeypatch, default_gpus=1)
+
+    assert meta["resource_spec"] == {"@default": {"num_of_gpus": 1}}
+    assert response["resources_source"] == "default"
+
+
+def test_a_templates_empty_resource_spec_leaves_the_default_in_force(tmp_path, monkeypatch):
+    response, meta, _ = _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}}, default_gpus=1)
+
+    assert meta["resource_spec"] == {"@default": {"num_of_gpus": 1}}
+    assert response["resources_source"] == "default"
+
+
+def test_a_submission_override_beats_the_jobs_meta_json(tmp_path, monkeypatch):
+    response, meta, _ = _assemble(
+        tmp_path,
+        monkeypatch,
+        meta={"resource_spec": {"@default": {"num_of_gpus": 1, "num_of_cpus": 4}}},
+        resources=JobResources(num_gpus=0),
+    )
+
+    assert meta["resource_spec"] == {"@default": {"num_of_cpus": 4}}
+    assert response["resources"] == {"num_gpus": 0}
+    assert response["resources_source"] == "submission"
+
+
+def test_a_meta_json_that_is_not_json_is_refused_naming_the_file(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="meta.json is not valid JSON"):
+        _assemble(tmp_path, monkeypatch, meta='{"resource_spec": ')
+
+
+def test_a_meta_json_choosing_how_a_trust_runs_the_job_is_refused(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="launcher_spec"):
+        _assemble(tmp_path, monkeypatch, meta={"launcher_spec": {"default": {"k8s": {"image": "x"}}}})
+
+
+def test_a_job_of_per_site_variants_alone_is_refused(tmp_path, monkeypatch):
+    """FLIP deploys app/ to every selected trust. The hub always ships meta.json, which is not an app folder."""
+    with pytest.raises(ValueError, match="no app/ folder"):
+        _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}}, app="app-trust1")
+
+
+def test_a_run_override_still_uploads_when_the_default_is_misconfigured(tmp_path, monkeypatch):
+    """The default is read only when nothing else sets the count, so a bad one cannot block other jobs."""
+    response, _, _ = _assemble(tmp_path, monkeypatch, resources=JobResources(num_gpus=1), default_gpus=99)
+
+    assert response["resources_source"] == "submission"

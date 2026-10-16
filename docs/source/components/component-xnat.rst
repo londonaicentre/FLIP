@@ -203,13 +203,25 @@ The script is configured automatically during XNAT initialization via ``configur
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
 
-The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Three boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Four boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
 - **Vendor private tags are not removed.** Real PACS populate these heavily and they routinely carry identifiers. No rule in the script reaches them.
 - **Dates are not shifted or removed.** Only patient birth date and time are dropped; study, series and acquisition dates pass through unchanged.
 - **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
+- **Faces are untouched.** A recognisable face can be rendered from the pixel data of a head CT or MRI. See :ref:`dicom-defacing` below.
 
 The script nevertheless sets ``Patient Identity Removed`` to ``YES`` on every object it processes. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Declaring a DICOM PS3.15 confidentiality profile, with coded ``De-identification Method Code Sequence`` values, is tracked as separate work.
+
+.. _dicom-defacing:
+
+De-facing (future work)
+^^^^^^^^^^^^^^^^^^^^^^^
+
+FLIP does not de-face images today. A possible future addition (`FLIP#1514 <https://github.com/londonaicentre/FLIP/issues/1514>`__) is an XNAT Container Service command that removes the face from head CT. An XNAT admin would enable it only for the projects that need it, then run it over a project from XNAT's **Run Containers** launcher. Candidate tools:
+
+- **TotalSegmentator's** ``face`` **task** (`TotalSegmentator <https://github.com/wasserth/TotalSegmentator>`__) is built for anonymisation. It is a licensed task: free for non-commercial use, with a commercial licence available from its author.
+- **CTA-DEFACE** (`CTA-DEFACE <https://github.com/neuroAI-HD/CTA-DEFACE>`__) is a deep-learning de-facing model for CT. Its repository publishes no licence.
+- **An openly licensed fallback.** TotalSegmentator's open model finds the brain and skull, then a `quickshear <https://github.com/nipy/quickshear>`__-style plane cut blanks everything in front of and below the brain. It removes more than the face, but carries no licence fees.
 
 Anonymize API Endpoints
 =======================
@@ -239,7 +251,7 @@ DICOM to NIfTI Conversion
 
 XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). On the Docker/swarm backend the setup script also registers ``ghcr.io`` as a credential-less Container Service *image host*: without an image-host entry matching the image's registry hostname, container-service 3.8.1's swarm launch path fails with a ``NullPointerException`` before any container exists, even for a public image (the Kubernetes backend pulls via kubelet and does not need the entry). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
 
-The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — the same listing imaging-api returns when no command matches the image it requests — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) re-registers against the current pin.
+The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — imaging-api refuses to create a project's trigger on a ``dcm2niix-scan`` wrapper that runs another image and names both images — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) moves the command to the current pin. Both update the existing command in place (``POST /xapi/commands/{id}``), which keeps its command and wrapper ids: every project's trigger names the wrapper by id, so a delete and re-register would silently stop every existing project converting (FLIP#1451).
 
 Commands vs Event Subscriptions
 ================================
@@ -257,6 +269,8 @@ When a FLIP project is created, the ``dicom_to_nifti`` setting controls the even
 - **Disabled** (``dicom_to_nifti=False``): An inactive event subscription is created. No automatic conversion occurs, but ``dcm2niix`` can still be triggered manually from the XNAT UI if needed.
 
 The event subscription can be activated or deactivated later via the XNAT Event Service API.
+
+The subscription's action key names the dcm2niix *wrapper* by id, as XNAT lists it at ``GET /xapi/events/allactions``. Redeploying keeps that id, because the command is updated in place. A subscription fires on new scans only; scans archived while it was missing or invalid are converted with ``reconvert-nifti`` (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3e).
 
 A project created with 'Includes imaging data' turned off (``has_imaging=False``) never reaches XNAT at all: the Central Hub skips the imaging stage at approval, so no XNAT project, event subscription or PACS pull is created at any trust.
 
@@ -287,6 +301,12 @@ The following XNAT Event Service API endpoints are used by FLIP for managing per
     * - POST
       - ``/xapi/projects/{project}/events/subscription/{id}/deactivate``
       - Deactivates an active subscription
+    * - GET
+      - ``/xapi/events/allactions``
+      - Lists the action key of every command wrapper (imaging-api reads dcm2niix's from it)
+    * - PUT
+      - ``/xapi/events/subscription/{id}``
+      - Re-points a subscription at the current dcm2niix wrapper (the configure step, admin only)
 
 *****************
 FLIP XNAT methods

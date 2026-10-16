@@ -30,39 +30,7 @@ make full-deploy PROD=stag
 
 ---
 
-### 1.2 IAM permission denied for EFS or Service Discovery
-
-**Symptom**:
-
-```
-Error: AccessDeniedException: elasticfilesystem:TagResource
-Error: AccessDeniedException: servicediscovery:CreatePrivateDnsNamespace
-```
-
-**Root cause**: The `FlipDeveloperAccess` SSO permission set lacks `elasticfilesystem:*` and `servicediscovery:*` actions.
-
-**Fix**: Add these permissions to the IAM inline policy in the `aicentre-iac` repository at `iam_flip_developer_inline_policy.tf`:
-
-```hcl
-statement {
-  sid    = "EFSFullAccess"
-  effect = "Allow"
-  actions = ["elasticfilesystem:*"]
-  resources = ["*"]
-}
-statement {
-  sid    = "ServiceDiscoveryFullAccess"
-  effect = "Allow"
-  actions = ["servicediscovery:*"]
-  resources = ["*"]
-}
-```
-
-Merge the PR and re-sign in to AWS SSO.
-
----
-
-### 1.3 Resource already exists in AWS but not in state
+### 1.2 Resource already exists in AWS but not in state
 
 **Symptom**: `terraform apply` fails with "already exists" for resources like CloudWatch log groups, SSH key pairs, Route53 records, or VPC endpoints.
 
@@ -89,7 +57,7 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 
 ---
 
-### 1.4 Ansible `community.general.terraform` fails on S3 backend
+### 1.3 Ansible `community.general.terraform` fails on S3 backend
 
 **Symptom**: `make ansible-init` fails with `Missing required argument on backend.tf` even after `terraform init`.
 
@@ -118,7 +86,7 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 
 ---
 
-### 1.5 Trust EC2 runs out of disk during `make deploy-trust`
+### 1.4 Trust EC2 runs out of disk during `make deploy-trust`
 
 **Symptom**: `make deploy-trust` fails partway through `docker compose pull` with:
 
@@ -141,21 +109,21 @@ Then retry `make deploy-trust`. Verify with `df -h /` (should show ~100 GB).
 
 ---
 
-### 1.6 AWS SSO token expired
+### 1.5 AWS SSO token expired
 
 **Symptom**: All `aws` commands return `Unable to locate credentials` or `AccessDenied`.
 
 **Fix**:
 
 ```bash
-aws sso login --profile FlipDeveloperAccess-<account-id> --use-device-code
+aws sso login --profile lza-stag --use-device-code   # or lza-prod
 ```
 
 Use `--use-device-code` for headless/SSH environments.
 
 ---
 
-### 1.7 ALB returns 502 / NLB shows unhealthy targets after ECS cutover
+### 1.6 ALB returns 502 / NLB shows unhealthy targets after ECS cutover
 
 **Symptom**: After bringing ECS Fargate up alongside the legacy EC2 stack, the ALB still returns 502 for `/api/*` and the NLB target group shows the legacy EC2 target as unhealthy. Trust-side fl-client cannot reach fl-server. trust-api heartbeats may also return 401 because they hit the legacy flip-api whose secret hashes are stale.
 
@@ -167,7 +135,7 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ---
 
-### 1.8 ECS-internal call from fl-api → fl-server hangs in `try_connect`
+### 1.7 ECS-internal call from fl-api → fl-server hangs in `try_connect`
 
 **Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its NVFLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
 
@@ -177,7 +145,7 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ---
 
-### 1.9 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
+### 1.8 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
 
 **Symptom**: After a `make deploy-centralhub` (or a legacy `--force-new-deployment`) of `fl-server-net-1` / `fl-api-net-1`, you check the running task's image digest against the GHCR tag — the pinned `sha-<short7>` tag since FLIP#751, the mutable `:stag`/`:prod` tag before it — to confirm the new build is live. One container's `imageDigest` does **not** match the GHCR manifest, and worse, querying GHCR for that digest returns **HTTP 404** (it does not exist in GHCR at all). Looks like the task is running a stale/unknown image.
 
@@ -355,7 +323,7 @@ make: *** [Makefile:388: deploy-ui] Error 1
 
 `aws sso login` reported success seconds earlier, and other Make targets (`make plan`, `make apply`, `make status`) work in the same shell.
 
-**Root cause**: Same class of bug as 1.6 / handoff §2 (Terraform SSO poisoning). The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_AWS_ENV` macro at the top of the Makefile, or `_TF` for `terraform` calls), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
+**Root cause**: Same class of bug as 1.5 / handoff §2 (Terraform SSO poisoning). The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_AWS_ENV` macro at the top of the Makefile, or `_TF` for `terraform` calls), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
 
 **Fix**: Prefix every `aws` call in the `deploy-ui` recipe with `$(_AWS_ENV)` (which expands to `unset AWS_* … ; AWS_PROFILE=$(AWS_PROFILE)`). Already applied — if you see this on a fresh checkout, confirm the recipe matches:
 
@@ -686,7 +654,7 @@ kit, not `.env.stag`).
 **Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
 
 ```bash
-aws ec2 reboot-instances --instance-ids <instance-id> --profile FlipDeveloperAccess
+aws ec2 reboot-instances --instance-ids <instance-id> --profile lza-stag   # or lza-prod
 ```
 
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).

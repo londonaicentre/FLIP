@@ -17,13 +17,15 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 
 from flip_api.config import Settings
-from flip_api.db.models.main_models import Trust
+from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
+    IJobResources,
     IServerStatus,
     IStartTrainingBody,
 )
@@ -111,6 +113,55 @@ def test_upload_app_calls_http_post(mock_post, model_id):
     mock_post.return_value = {"status": "ok"}
     result = fl_service.upload_app(model_id, body, "endpoint")
     assert result == {"status": "ok"}
+
+
+def _refusal(status_code: int, body) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://fl-api-net-1:8000/upload_app/m")
+    response = httpx.Response(status_code, request=request, json=body)
+    return httpx.HTTPStatusError(f"Client error '{status_code}'", request=request, response=response)
+
+
+def _upload_body() -> IStartTrainingBody:
+    return IStartTrainingBody(project_id="proj", cohort_query="query", trusts=["client1"], bundle_urls=[])
+
+
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_upload_app_passes_the_fl_apis_reason_on_to_the_model_log(mock_post, model_id):
+    """A refused job's model log said only "Client error '400 Bad Request' for url ..." (FLIP#70). The FL API's
+    detail says which meta.json key it refused and why; the researcher needs that, not the status line."""
+    detail = "meta.json has key(s) FLIP does not accept: ['launcher_spec']."
+    mock_post.side_effect = _refusal(400, {"detail": detail})
+
+    with pytest.raises(ValueError, match=r"^The FL API refused the job: meta\.json has key\(s\)") as raised:
+        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
+
+    assert str(raised.value) == f"The FL API refused the job: {detail}"
+
+
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_upload_app_redacts_urls_from_the_reason(mock_post, model_id):
+    """A bundle URL is presigned: it must not land in a log every project member can read."""
+    detail = "Bundle URL returned a redirect: 'https://s3/b/f?X-Amz-Signature=abc'."
+    mock_post.side_effect = _refusal(400, {"detail": detail})
+
+    with pytest.raises(ValueError, match="^The FL API refused the job") as raised:
+        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
+
+    assert "X-Amz-Signature" not in str(raised.value)
+    assert "Bundle URL returned a redirect: '<url>'" in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "body"),
+    [(500, {"detail": "Internal server error: boom"}), (400, ["x"]), (400, {"detail": "  "}), (400, {"detail": 42})],
+)
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_upload_app_leaves_other_failures_as_they_were(mock_post, status_code, body, model_id):
+    """A server error, or a refusal without a readable detail, keeps httpx's own error."""
+    mock_post.side_effect = _refusal(status_code, body)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
 
 
 def test_get_fl_backend_job_id_by_model_id(model_id, fake_session):
@@ -255,6 +306,7 @@ def test_start_training_with_config(
 ):
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
 
     fl_service.start_training(
         model_id=model_id,
@@ -286,6 +338,7 @@ def test_start_training_skips_upload_when_job_already_deleted(
     # must fire before the (up to 900s) app transfer even starts.
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
     fake_session.exec.return_value.one_or_none.return_value = JobStatus.DELETED
 
     with pytest.raises(JobAbortedError):
@@ -320,6 +373,7 @@ def test_start_training_skips_submit_when_job_deleted_during_upload(
     # run and stamps fl_backend_job_id onto the DELETED row).
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
     fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.DELETED]
 
     with pytest.raises(JobAbortedError):
@@ -1295,6 +1349,56 @@ def test_check_server_status_returns_none_when_no_response(mock_http_get):
     mock_http_get.return_value = None
 
     assert fl_service.check_server_status("endpoint") is None
+
+
+def _fl_api_unreachable() -> httpx.HTTPError:
+    return httpx.RequestError("connection refused")
+
+
+def _fl_api_answers_500() -> httpx.HTTPError:
+    # NVFLARE's FL API answers 500 from its catch-all handler when the fl-server behind it is down.
+    request = httpx.Request("GET", "http://fl-api/check_server_status")
+    return httpx.HTTPStatusError("500 Internal Server Error", request=request, response=httpx.Response(500))
+
+
+FL_API_FAILURES = pytest.mark.parametrize(
+    "error_factory", [_fl_api_unreachable, _fl_api_answers_500], ids=["fl-api-unreachable", "fl-api-answers-500"]
+)
+
+
+@FL_API_FAILURES
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_server_status_returns_none_when_request_fails(mock_http_get, error_factory):
+    mock_http_get.side_effect = error_factory()
+
+    assert fl_service.check_server_status("endpoint") is None
+
+
+@FL_API_FAILURES
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_returns_none_when_request_fails(mock_http_get, error_factory):
+    mock_http_get.side_effect = error_factory()
+
+    assert fl_service.check_client_status("endpoint") is None
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "expected_error_logs"),
+    [(_fl_api_unreachable, 0), (_fl_api_answers_500, 1)],
+    ids=["fl-api-unreachable", "fl-api-answers-500"],
+)
+@pytest.mark.parametrize(
+    "check", [fl_service.check_server_status, fl_service.check_client_status], ids=["server", "client"]
+)
+@patch("flip_api.fl_services.services.fl_service.logger")
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_status_logs_a_failed_request_once(mock_http_get, mock_logger, check, error_factory, expected_error_logs):
+    # http_get logs a RequestError itself before re-raising it, so logging it here too would print the same
+    # line twice on every status poll; an error response is not logged by http_get, so it is logged here.
+    mock_http_get.side_effect = error_factory()
+
+    assert check("endpoint") is None
+    assert mock_logger.error.call_count == expected_error_logs
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -2537,3 +2641,107 @@ class TestRealRequiredFilesManifests:
             "config.json",
             "models.py",
         ]
+
+
+# ── GPU request (FLIP#70) ───────────────────────────────────────────────────────────
+
+
+def test_add_fl_job_stores_a_gpu_override(model_id, fake_session):
+    fl_service.add_fl_job(model_id, [], fake_session, resources=IJobResources(num_gpus=1))
+
+    job = fake_session.add.call_args.args[0]
+    assert job.num_gpus == 1
+
+
+def test_add_fl_job_without_an_override_leaves_the_column_null(model_id, fake_session):
+    fl_service.add_fl_job(model_id, [], fake_session)
+
+    job = fake_session.add.call_args.args[0]
+    assert job.num_gpus is None
+
+
+def _start(model_id, fl_job_id, fake_session, job, upload_reply=None):
+    """Run start_training against a stored job row; return what was uploaded and what was logged."""
+    fake_session.get.return_value = job
+    with (
+        patch("flip_api.fl_services.services.fl_service.submit_job"),
+        patch("flip_api.fl_services.services.fl_service.upload_app", return_value=upload_reply) as upload,
+        patch("flip_api.fl_services.services.fl_service.encrypt", return_value="encrypted"),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_required_training_details",
+            return_value=MagicMock(project_id="proj", cohort_query="query"),
+        ),
+        patch("flip_api.model_services.services.model_service.add_log") as add_log,
+    ):
+        fl_service.start_training(model_id, fl_job_id, ["Trust_1"], "endpoint", ["url"], fake_session)
+    return upload.call_args.args[1], [(c.args[1], c.kwargs.get("success", True)) for c in add_log.call_args_list]
+
+
+def test_start_training_sends_the_runs_override_to_the_fl_api(model_id, fl_job_id, fake_session):
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=2)
+
+    body, _ = _start(model_id, fl_job_id, fake_session, job)
+
+    assert body.resources == IJobResources(num_gpus=2)
+
+
+def test_start_training_without_an_override_sends_none(model_id, fl_job_id, fake_session):
+    body, _ = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id))
+
+    assert body.resources is None
+
+
+def test_start_training_logs_the_request_the_fl_api_applied_and_where_it_came_from(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": {"num_gpus": 1}, "resources_source": "meta.json"}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
+
+    assert ("GPU request per trust: 1 GPU (from the job's meta.json)", True) in logged
+
+
+def test_start_training_logs_a_cpu_only_override(model_id, fl_job_id, fake_session):
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=0)
+    reply = {"message": "ok", "resources": {"num_gpus": 0}, "resources_source": "submission"}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, job, reply)
+
+    assert ("GPU request per trust: no GPU (set for this run)", True) in logged
+
+
+@patch("flip_api.fl_services.services.fl_service.logger")
+def test_start_training_skips_the_log_for_an_unreadable_gpu_request(mock_logger, model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": {"num_gpus": "lots"}}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
+
+    assert logged == []
+    assert "Unreadable GPU request" in mock_logger.warning.call_args.args[0]
+
+
+def test_start_training_says_when_flower_records_but_does_not_enforce_the_request(model_id, fl_job_id, fake_session):
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=1)
+    reply = {"message": "ok", "resources": {"num_gpus": 1}, "resources_enforced": False}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, job, reply)
+
+    assert (
+        "GPU request per trust: 1 GPU, recorded but not enforced: Flower does not schedule jobs by GPU",
+        False,
+    ) in logged
+
+
+def test_start_training_warns_when_the_fl_api_ignored_an_override(model_id, fl_job_id, fake_session):
+    """An fl-api that predates per-job requests drops the field silently; say so instead of implying it applied."""
+    job = FLJob(id=fl_job_id, model_id=model_id, num_gpus=1)
+
+    _, logged = _start(model_id, fl_job_id, fake_session, job, {"message": "ok"})
+
+    assert any("did not report applying the GPU request" in text and not ok for text, ok in logged)
+
+
+def test_start_training_logs_nothing_about_gpus_for_an_older_fl_api_when_none_was_asked(
+    model_id, fl_job_id, fake_session
+):
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), {"message": "ok"})
+
+    assert logged == []

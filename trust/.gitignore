@@ -54,3 +54,6 @@ governance.*.toml
 # Image data folder
 data/**/*.dcm
 data/**/*.nii.gz
+
+# Approved-cohort memberships (FLIP#857): patient/study identifiers, never committed
+data-access-api/.snapshots/

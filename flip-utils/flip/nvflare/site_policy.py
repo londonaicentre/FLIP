@@ -468,8 +468,13 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     ``--check``, validates) ``privacy.json``. ``python -m flip.nvflare.site_policy --extract SRC DEST``
     is the fl-client's init step: it writes the governance document's ``[fl_privacy]`` table alone.
 
+    Args:
+        argv (list[str] | None): Command-line arguments; ``None`` reads ``sys.argv``.
+        env (Mapping[str, str] | None): Environment to read the policy settings from; ``None`` uses
+            ``os.environ``.
+
     Returns:
-        ``0`` on success (policy written, removed, extracted or not configured), ``1`` on invalid
+        int: ``0`` on success (policy written, removed, extracted or not configured), ``1`` on invalid
         configuration or I/O failure — callers must treat ``1`` as fatal (fail closed).
     """
     parser = argparse.ArgumentParser(prog="flip.nvflare.site_policy", description=__doc__)

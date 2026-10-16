@@ -45,6 +45,11 @@ uvx flwr run . local --format json
 
 It parses the JSON output from Flower and returns the full payload from the API response.
 
+Both pass `flip-job-dir` (the app directory) in a `--run-config` file. `/submit_run` merges the uploaded
+`app/config.toml` into it, which is how a platform run gets its settings. `/submit_tutorial` does not: a tutorial's
+`config.toml` holds the settings it is uploaded to the platform with, so a tutorial run uses the tutorial's own
+`pyproject.toml` values, as the Flower simulator does (FLIP#1432).
+
 The list endpoint runs:
 
 ```bash

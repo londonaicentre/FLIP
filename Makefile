@@ -12,7 +12,7 @@
 
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
-		check-aws-access generate-internal-service-key generate-xnat-credentials \
+		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
@@ -153,7 +153,7 @@ build-fl:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -198,8 +198,35 @@ _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
 		FL_API_KEY_GID='$(if $(filter development,$(ENV)),$(DOCKER_GID))' scripts/check-fl-provisioned.sh
 
+# Refuse to drive the hub compose project when another checkout created its containers
+# (FLIP#1227). Compose project names are global to the Docker daemon and this one is
+# $(COMPOSE_PROJECT), plain `deploy` unless FLIP_INSTANCE is set, so a second checkout on the
+# same host lands on the first one's stack and `up` recreates it from the wrong env file.
+# Compose stamps each container with the deploy/ directory it was created from (the
+# working_dir label); both sides are compared with symlinks resolved, an unlabelled container
+# counts as foreign, and `ps -a` because a stopped stack still owns the name. The first
+# prerequisite of every target here that drives the project. ALLOW_FOREIGN_PROJECT=1 skips
+# it: deliberately not FORCE, which `up` hands on to generate-internal-service-key, where it
+# rotates the key.
+_check-compose-project-owner:
+	@mine=$$(cd deploy && pwd -P); \
+	others=$$(docker ps -a --filter "label=com.docker.compose.project=$(COMPOSE_PROJECT)" \
+		--format '{{.Label "com.docker.compose.project.working_dir"}}' 2>/dev/null | sort -u | \
+		while IFS= read -r dir; do \
+			[ -n "$$dir" ] && [ "$$(cd "$$dir" 2>/dev/null && pwd -P)" = "$$mine" ] || echo "      $${dir:-<no working_dir label>}"; \
+		done); \
+	if [ -n "$$others" ] && [ "$(ALLOW_FOREIGN_PROJECT)" != 1 ]; then \
+		echo "❌ Compose project '$(COMPOSE_PROJECT)' has containers created from another checkout:"; \
+		echo "$$others"; \
+		echo "   Acting on it from here would recreate or remove that checkout's stack."; \
+		echo "   To run a second stack beside it, set FLIP_INSTANCE=<name> (and give it its own ports)."; \
+		echo "   To hand the stack over, run 'make down' in that checkout first."; \
+		echo "   ALLOW_FOREIGN_PROJECT=1 skips this check."; \
+		exit 1; \
+	fi
+
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
+up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -218,7 +245,7 @@ up-trust-ec2: create-networks
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-central-hub: create-networks-centralhub _ensure-object-store-dir
+central-hub: _check-compose-project-owner create-networks-centralhub _ensure-object-store-dir
 	$(MAKE) -C flip-api up
 
 # On-prem operator flow — start a trust on the local host pointing at a
@@ -280,7 +307,7 @@ onboard-onprem-trust:
 	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) PROD=$(or $(PROD),true) ONBOARD_ARGS="$(ONBOARD_ARGS)"
 
 # Stop all containers
-down:
+down: _check-compose-project-owner
 	@echo "🛑 Stopping all services..."
 	$(MAKE) -C trust down
 
@@ -310,12 +337,12 @@ _ensure-object-store-dir:
 # Empty the dev object store (FLIP#1291): stop the RustFS service and remove its host
 # directory. `make down` keeps the directory, like the jobs/ dir; this is the purge knob.
 # The parse-time guard on OBJECT_STORE_DIR above is what keeps this `rm -rf` off the checkout.
-clean-object-store:
+clean-object-store: _check-compose-project-owner
 	${DOCKER_COMMAND} rm -sf object-store
 	rm -rf "$(OBJECT_STORE_DIR)"
 
 # Clean Docker resources
-clean:
+clean: _check-compose-project-owner
 	${DOCKER_COMMAND} down --rmi local && \
 	docker system prune -f && \
 	rm -rf ./flip-fl-api/*/transfer/*/
@@ -340,7 +367,7 @@ restart: down up
 #       services depend on object-store, so compose recreates it from this tree; without
 #       ./object-store the bind mount is refused and make stops after step 1 has removed every
 #       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
-restart-fl: _ensure-fl-jobs-dir _ensure-object-store-dir
+restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
@@ -357,22 +384,20 @@ restart-fl: _ensure-fl-jobs-dir _ensure-object-store-dir
 	@echo "✅ FL services restarted successfully!"
 
 # Stop and start all services except the trust services related services
-restart-no-trust:
+restart-no-trust: _check-compose-project-owner
 	@echo "Debug mode: '${DEBUG}'"
 	@echo "Passing DEBUG=${DEBUG} to the downstream $(MAKE) commands..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C flip-api restart
 ci:
 	act --env-file .env.development
-# Runs the script directly (not via deploy/providers/AWS/Makefile) so it stays
-# credential-free: that Makefile's parse-time FL_KIT_DATE guard needs the
-# gitignored deploy env files, which contributors don't have.
+# Runs the script directly; `make -C deploy/providers/AWS lint` runs it too, with
+# terraform fmt and tflint. Both are credential-free and need no deploy env file.
 checkov-lint:
 	bash deploy/providers/AWS/scripts/checkov_lint.sh
 # Static tflint lint over deploy/providers/AWS: unused declarations, missing provider
 # version constraints, AWS argument values the API would reject. Credential-free;
 # needs tflint at the version pinned in the script, and downloads the pinned AWS
-# ruleset plugin on first run. Runs the script directly for the same reason as
-# checkov-lint.
+# ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
 # Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
@@ -383,7 +408,8 @@ tflint-lint:
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
 # runs), and a host `dot` of another graphviz version produces a different file for an unchanged
 # diagram, so don't commit a re-render that only differs by graphviz. Runs the script directly
-# rather than via deploy/providers/AWS/Makefile for the same credential-free reason as checkov-lint.
+# rather than via deploy/providers/AWS/Makefile, whose env guards need the gitignored deploy env
+# file for any goal but its static lint ones.
 aws-diagram:
 ifneq ($(shell command -v dot 2>/dev/null),)
 	cd deploy/providers/AWS && uv run --no-project --with diagrams python -m architecture.central_hub --out docs
@@ -393,7 +419,7 @@ else
 	   pip -q install --root-user-action=ignore diagrams >/dev/null && \
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
 endif
-ui:
+ui: _check-compose-project-owner
 ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
@@ -401,7 +427,7 @@ else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when PROD=$(PROD); no container to start."
 	@echo "    Run \`make -C deploy/providers/AWS deploy-ui PROD=$(PROD)\` to publish the bundle."
 endif
-ui-off:
+ui-off: _check-compose-project-owner
 ifeq ($(strip $(PROD)),)
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
@@ -413,11 +439,11 @@ tests:
 	$(MAKE) -C flip-ui e2e_test
 	$(MAKE) -C flip-api test
 
-debug-all:
+debug-all: _check-compose-project-owner
 	@echo "🚨 Starting debug mode by overriding the DEBUG environment variable..."
 	DEBUG=true $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug
-debug-off-all:
+debug-off-all: _check-compose-project-owner
 	@echo "🚨 Stopping debug mode by removing the DEBUG environment variable override..."
 	$(MAKE) -C flip-api delete_testing_projects
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
@@ -446,7 +472,7 @@ recreate-networks: remove-networks create-networks
 	@echo "ℹ️  Trust networks now use overlay driver for swarm compatibility"
 
 # Add a parameterized debug command
-debug:
+debug: _check-compose-project-owner
 	@if [ -z "$(SERVICE)" ]; then \
 		echo "❌ Usage: make debug SERVICE=<service-name>"; \
 		echo "   Available services: data-access-api, imaging-api, trust-api, flip-api, fl-api-net-1"; \
@@ -462,7 +488,7 @@ debug:
 			echo "❌ Unknown service: $(SERVICE)"; exit 1 ;; \
 	esac
 
-debug-off:
+debug-off: _check-compose-project-owner
 	@if [ -z "$(SERVICE)" ]; then \
 		echo "❌ Usage: make debug-off SERVICE=<service-name>"; \
 		exit 1; \
@@ -484,7 +510,7 @@ debug-off:
 print-docker-tag:  ## Print the current DOCKER_TAG value
 	@echo "DOCKER_TAG=$(DOCKER_TAG)"
 
-up-pgadmin:
+up-pgadmin: _check-compose-project-owner
 	${DOCKER_COMMAND} up -d pgadmin
 
 unit_test:
@@ -548,7 +574,7 @@ demo-users:
 # container: this removes it and the next `make up`/`make central-hub` (or the
 # `up -d keycloak` here) re-imports. Users registered from the Admin Area
 # since the last import are lost with it — they live only in that container.
-reset-keycloak:
+reset-keycloak: _check-compose-project-owner
 	@echo "🔁 Recreating the keycloak service from deploy/keycloak/flip-realm.json..."
 	$(DOCKER_COMMAND) rm -sf keycloak
 	$(DOCKER_COMMAND) up -d keycloak
@@ -581,7 +607,7 @@ _wait-for-hub:
 # already-registered name is skipped, credentials preserved), then writes the
 # minted credentials + assigned FL kit slot + hub-shared block back into the
 # kit. The hub keeps no trust list — the kit files ARE the list.
-register-trust: _wait-for-hub
+register-trust: _check-compose-project-owner _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit="trust/.env.$(KIT).$(ENV)"; ex="$$kit.example"; \
 	  if [ ! -f "$$kit" ]; then \
@@ -689,8 +715,8 @@ check-aws-access:
 	fi
 	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
 		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
-		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. It guards the"; \
-		echo "    AWS-backed targets — deploy/providers/AWS, FL kit uploads, the trusts' artifact fetches.)"; \
+		echo "   (The dev stack itself needs no AWS: 'make up' no longer runs this check. Only the"; \
+		echo "    AWS-backed targets need it — deploy/providers/AWS, FL kit uploads, the optional OMOP vocabulary load.)"; \
 		exit 1; \
 	fi
 	@echo "✅ AWS access confirmed."

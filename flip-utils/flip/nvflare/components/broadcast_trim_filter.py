@@ -37,7 +37,7 @@ class TrimBroadcastVars(DXOFilter):
     server aliases the retained global model — popping would corrupt the server's own weights.
     """
 
-    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None):
+    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None) -> None:
         """
         Args:
             include_vars: regex; only weight keys whose name matches (``re.search``) stay in the

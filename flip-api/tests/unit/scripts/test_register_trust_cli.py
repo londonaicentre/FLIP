@@ -296,11 +296,10 @@ HUB_SHARED_KEYS = (
     "FLOWER_KIT_DATE",
     "FLARE_KIT_DATE",
     "DOCKER_TAG",
-    "DOCKER_REGISTRY",
     "DOCKER_FL_TAG",
-    "DOCKER_FL_REGISTRY",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
+    "FL_EDGE_PORT",
 )
 
 
@@ -323,11 +322,10 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
         "FLOWER_KIT_DATE": "20260401",
         "FLARE_KIT_DATE": "20260318",
         "DOCKER_TAG": "stag",
-        "DOCKER_REGISTRY": "ghcr.io/londonaicentre/",
         "DOCKER_FL_TAG": "stag",
-        "DOCKER_FL_REGISTRY": "ghcr.io/londonaicentre/",
         "NLB_SUBDOMAIN": "fl-server.example.internal",
         "FL_SERVER_PORT": "8002",
+        "FL_EDGE_PORT": "8003",
     }
     for k, v in env.items():
         monkeypatch.setenv(k, v)
@@ -335,6 +333,22 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
     kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
 
     assert kit["hub_shared"] == env
+
+
+@pytest.mark.parametrize("edge_port", [None, ""])
+def test_hub_shared_edge_port_defaults_to_the_server_port(monkeypatch, session, edge_port):
+    """An unset or empty FL_EDGE_PORT hands trusts FL_SERVER_PORT, so prod and dev kits dial as before."""
+    monkeypatch.setattr("flip_api.scripts.register_trust.register_trust", lambda **kw: _kit(kw["name"]))
+    session.exec.return_value.first.return_value = None
+    for key in HUB_SHARED_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("FL_SERVER_PORT", "8002")
+    if edge_port is not None:
+        monkeypatch.setenv("FL_EDGE_PORT", edge_port)
+
+    kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
+
+    assert kit["hub_shared"] == {"FL_SERVER_PORT": "8002", "FL_EDGE_PORT": "8002"}
 
 
 def test_kit_dict_hub_shared_omits_unset_env_vars(monkeypatch, session):
@@ -348,6 +362,21 @@ def test_kit_dict_hub_shared_omits_unset_env_vars(monkeypatch, session):
     kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
 
     assert kit["hub_shared"] == {"AES_KEY_BASE64": "Zm9vYmFy"}
+
+
+def test_kit_dict_never_carries_the_hub_registry(monkeypatch, session):
+    """A site pulls from GHCR, so the hub's registry (on LZA an ECR cache no site can log in to) stays out."""
+    monkeypatch.setattr("flip_api.scripts.register_trust.register_trust", lambda **kw: _kit(kw["name"]))
+    session.exec.return_value.first.return_value = None
+    for key in HUB_SHARED_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    ecr = "111122223333.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/"
+    monkeypatch.setenv("DOCKER_REGISTRY", ecr)
+    monkeypatch.setenv("DOCKER_FL_REGISTRY", ecr)
+
+    kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
+
+    assert kit["hub_shared"] == {}
 
 
 def test_skip_path_also_emits_hub_shared(monkeypatch, session):

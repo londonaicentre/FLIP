@@ -20,6 +20,7 @@ from imaging_api.routers.schemas import (
     DownloadImagesRequestData,
     ImportStudy,
     ImportStudyRequest,
+    StudyQuery,
     UploadDataRequest,
 )
 
@@ -137,3 +138,14 @@ def test_import_study_request_deduplicates_studies():
     assert len(import_request.studies) == 1
     assert import_request.studies[0].study_instance_uid == "1"
     assert import_request.studies[0].accession_number == "SecondAccessionNumber"
+
+
+def test_study_query_names_no_pacs():
+    """The query body has no pacsId, so DQR uses its default PACS."""
+    assert StudyQuery(accessionNumber="ACC1").model_dump(by_alias=True) == {"accessionNumber": "ACC1", "modality": ""}
+
+
+def test_import_study_request_has_no_static_pacs_default():
+    """The import's PACS is resolved from XNAT per request; the model carries no guessed default."""
+    import_request = ImportStudyRequest(projectId="test", studies=[{"studyInstanceUid": "1", "accessionNumber": "A"}])
+    assert import_request.pacs_id is None

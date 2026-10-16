@@ -22,8 +22,8 @@
 # SuperNode accepts via --node-config), resolved by flip.flower.identity.client_identity,
 # so nothing in app/ knows which runtime it is in.
 #
-# For the container path — the pre-merge check that exercises TLS, fl-api submit and
-# SuperNode registration — use run-tutorial.sh instead.
+# The container path (the FL images, fl-api submit, SuperNode registration) is
+# `make e2e_smoke FL_BACKEND=flower` on the dev stack, as for NVFLARE (FLIP#1435).
 #
 # Exit status is the RUN's: 0 only when the SuperLink reports it finished:completed.
 set -euo pipefail
@@ -206,8 +206,8 @@ list() { for d in "$HERE"/*/app; do basename "$(dirname "$d")"; done; }
 if [ -z "$TUTORIAL" ]; then echo "Set TUTORIAL=<name>. Available:"; list | sed 's/^/  - /'; exit 1; fi
 if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. Available:"; list | sed 's/^/  - /'; exit 1; fi
 
-# Same per-tutorial dev data mapping as run-tutorial.sh — LOCAL_DEV reads these directly
-# instead of the bind mounts the compose stack would provide.
+# The per-tutorial dev data mapping — LOCAL_DEV reads these directly instead of the bind
+# mounts the fl-services/flower containers would provide.
 DATA_ROOT="${SIM_DATA_ROOT:-$REPO_ROOT/fl-tutorials/data}"
 # Run-config overrides the simulator has to supply in place of the platform's submit step.
 RUN_CONFIG=""
@@ -256,7 +256,7 @@ done
 
 # The ServerApp writes results under $WORKING_DIR (default "/app/runs" — the path inside a
 # SuperNode container, which does not exist and is not writable on the host). Point it at the
-# same host directory run-tutorial.sh uses, or the run trains fine and then dies with
+# host directory fl-services/flower mounts there, or the run trains fine and then dies with
 # PermissionError: '/app' at the results-writing step.
 export WORKING_DIR="${WORKING_DIR:-$REPO_ROOT/fl-services/flower/runs}"
 mkdir -p "$WORKING_DIR"

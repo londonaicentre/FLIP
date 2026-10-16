@@ -256,8 +256,8 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 1. Fetch the Cognito user pool ID from Terraform (or read it from the AWS Console):
 
    ```bash
-   # From the stack the admin belongs to — prod/stag root or dev root
-   cd deploy/providers/AWS         # or deploy/providers/AWS/dev
+   # From the stag/prod root (development signs in through Keycloak, not Cognito)
+   cd deploy/providers/AWS
    tofu output -raw cognito_user_pool_id
    ```
 
@@ -349,26 +349,27 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
 longer run as root, the host-side bind-mount source directories must be owned by the matching
-UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
-`trust/deploy/ansible/onprem.yml` provision `/opt/flip/xnat/**` as UID 1001 and
-`/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
-storage archive (which `tar` writes as root). `make -C trust/xnat xnat-reset` is the third path
-onto the same invariant and provisions the XNAT directories as UID 1001 too, verifying it
-afterwards and failing with the exact `chown` to run rather than leaving a host half-provisioned
-(FLIP#1095 — it previously used a hardcoded 1000 on its remote branch and the invoking user's UID
-on the others). What the three paths share is the **UID, not the directory**: the playbooks
-provision `/opt/flip/xnat/**`, while `xnat-reset` and the compose stacks both read `XNAT_DATA_DIR`,
-which in stag/prod defaults to the per-slot `/opt/flip/xnat-trust<N>` so two trusts on one host stay
-isolated. `xnat-reset` is therefore the path that provisions the tree XNAT actually writes to, and
-an ownership change made against the playbooks' `/opt/flip/xnat` would not reach it. If you
-provision a trust host outside all three, you must replicate this ownership or first-boot writes
+UID. For XNAT, the shared Ansible roles (`flip_trust_dirs` in `trust/deploy/ansible/roles/`, composed by
+both `deploy/providers/AWS/site.yml` and `trust/deploy/ansible/onprem.yml`) provision
+`/opt/flip/xnat/**` as UID 1001. `make -C trust/xnat xnat-reset` is the third path onto the same
+invariant and provisions the XNAT directories as UID 1001 too, verifying it afterwards and failing with
+the exact `chown` to run rather than leaving a host half-provisioned (FLIP#1095 — it previously used a
+hardcoded 1000 on its remote branch and the invoking user's UID on the others). What the three paths
+share is the **UID, not the directory**: the playbooks provision `/opt/flip/xnat/**`, while `xnat-reset`
+and the compose stacks both read `XNAT_DATA_DIR`, which in stag/prod defaults to the per-slot
+`/opt/flip/xnat-trust<N>` so two trusts on one host stay isolated. `xnat-reset` is therefore the path
+that provisions the tree XNAT actually writes to, and an ownership change made against the playbooks'
+`/opt/flip/xnat` would not reach it. Orthanc's storage directory is not a role's job: on EC2,
+`site.yml`'s seed play creates `/opt/flip/orthanc/orthanc-storage` as UID 999 before Orthanc first
+starts, and on every other host `make -C trust up-trust` (which the on-prem `up-onprem-trust` calls)
+runs `trust/Makefile`'s `ensure_data_dirs`, which chowns it to UID 999 first. If you provision a trust
+host outside these paths, you must replicate this ownership or first-boot writes
 (archive ingest, SQLite index, log rotation) will fail with EACCES. That
 failure is worth recognising because it does not look like a permissions problem: XNAT accepts the
 inbound DICOM association, fails the write and aborts it, so the PACS reports a *network* fault
 (`Peer aborted Association`), while the same EACCES stops XNAT writing the application logs that
-would name the cause. In dev, `trust/Makefile`'s `ensure_data_dirs` instead chowns the mock
-storage directory to uid 999 before the first start (through a throwaway alpine container when the
-caller is not root), so a developer needs no `sudo` to seed it.
+would name the cause. `ensure_data_dirs` chowns through a throwaway alpine container when the
+caller is not root, so a developer needs no `sudo` to seed the mock storage directory in dev.
 
 XNAT's dev tree deliberately does **not** follow that convention. `xnat-reset` creates
 `trust/xnat/xnat-data-trust<N>/` owned by UID 1001 — unprivileged when the invoking developer is

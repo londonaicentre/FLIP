@@ -10,29 +10,30 @@
 # limitations under the License.
 #
 
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
-from urllib.parse import urlsplit
 
 import pytest
 import requests
 
 
 @pytest.fixture
-def headers():
+def headers() -> dict[str, str]:
     return {}
 
 
 @pytest.fixture
-def sent_xnat_requests():
+def sent_xnat_requests() -> Iterator[list[requests.PreparedRequest]]:
     """Prepare real Requests URLs while replacing only the network dispatch."""
-    sent = []
+    sent: list[requests.PreparedRequest] = []
 
-    def respond(request, **kwargs):
+    def respond(request: requests.PreparedRequest, **kwargs: Any) -> requests.Response:
         sent.append(request)
         response = requests.Response()
-        response.status_code = 404 if request.method == "GET" and urlsplit(request.url).query == "inbody=true" else 200
+        response.status_code = 200
         response._content = b"{}"
-        response._content_consumed = True
+        setattr(response, "_content_consumed", True)  # private requests field, absent from the stubs
         response.request = request
         return response
 
@@ -52,6 +53,6 @@ def sent_xnat_requests():
         ("αβ", "%CE%B1%CE%B2"),
     ]
 )
-def xnat_path_segment(request):
+def xnat_path_segment(request: pytest.FixtureRequest) -> tuple[str, str]:
     """Raw identifiers and literal expected encodings, independent of the URL helper."""
     return request.param

@@ -75,7 +75,7 @@ PROSTATE_UV := uv run --project prostate
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
 # One canonical CSV name (dataframe.csv): the NVFLARE .env.app files and the Flower
-# run-tutorial.sh both point at it. Script + README live in xrays_mini_300/ (see its README).
+# sim-tutorial.sh all point at it. Script + README live in xrays_mini_300/ (see its README).
 download-xray-data:
 	@uv run --no-project --with huggingface_hub python xrays_mini_300/download_xrays_dataset.py \
 		--cache-dir $(HF_CACHE) \

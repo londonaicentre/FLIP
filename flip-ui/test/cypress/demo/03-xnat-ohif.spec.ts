@@ -21,32 +21,114 @@
 
 import { requireEnv, requireSecret } from "./support/demoFlow";
 
-// Scroll the viewer to a slice that actually carries the imported segmentation,
-// and prove one was found. The mask occupies a contiguous run of slices that is
-// nowhere near the middle of the stack (a spleen sits at the bottom of an
-// abdominal CT), so picking a slice by guesswork films an empty viewport.
-// cornerstoneTools keys its labelmap by image index, which is the ground truth.
-function scrollToSegmentedSlice(): void {
-    cy.window().then((win) => {
-        /* eslint-disable @typescript-eslint/no-explicit-any */
-        const cs = (win as any).cornerstone;
-        const csTools = (win as any).cornerstoneTools;
-        const enabled = cs.getEnabledElements()[0];
-        const element = enabled.element;
-        const stack = csTools.getToolState(element, "stack").data[0];
-        const labelmap = csTools.getModule("segmentation").getters.labelmap3D(element, 0);
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+interface IViewportStack {
+    cs: any;
+    element: HTMLElement;
+    stack: any;
+}
+
+// The viewport's image stack, as cornerstoneTools tracks it.
+function viewportStack(win: any): IViewportStack {
+    const cs = win.cornerstone;
+    const element = cs.getEnabledElements()[0].element;
+    const stack = win.cornerstoneTools.getToolState(element, "stack").data[0];
+
+    return {
+        cs,
+        element,
+        stack
+    };
+}
+
+// World z of the middle labelled slice of the enrichment label (the label_*.nii.gz beside the
+// scan's NIfTI input). The DICOM-SEG collection was built from this same mask, so it says where
+// the segmentation will be drawn before the collection is imported.
+async function labelledSliceZ(win: any, experimentId: string): Promise<number> {
+    const scans = await (await win.fetch(`/data/experiments/${experimentId}/scans?format=json`)).json();
+    for (const scan of scans.ResultSet.Result) {
+        const files = await win.fetch(`/data/experiments/${experimentId}/scans/${scan.ID}/resources/NIFTI/files?format=json`);
+        const label = files.ok ? (await files.json()).ResultSet.Result.find((f: any) => f.Name.startsWith("label_")) : null;
+        if (!label) {
+            continue;
+        }
+        let buffer: ArrayBuffer = await (await win.fetch(label.URI)).arrayBuffer();
+        const magic = new Uint8Array(buffer, 0, 2);
+        if (magic[0] === 0x1f && magic[1] === 0x8b) {
+            const inflated = new win.Blob([buffer]).stream().pipeThrough(new win.DecompressionStream("gzip"));
+            buffer = await new win.Response(inflated).arrayBuffer();
+        }
+        // NIfTI-1 header: dim[1..3] at 42, bitpix at 72, vox_offset at 108, sform_code at 254, srow_z at 312.
+        const header = new DataView(buffer);
+        const le = header.getInt32(0, true) === 348;
+        expect(header.getInt16(254, le), "label sform_code").to.be.greaterThan(0);
+        const [nx, ny, nz] = [42, 44, 46].map((offset) => header.getInt16(offset, le));
+        const plane = nx * ny * (header.getInt16(72, le) / 8);
+        const voxels = new Uint8Array(buffer, header.getFloat32(108, le));
+        const labelled = Array.from({ length: nz }, (_, k) => k).filter((k) =>
+            voxels.subarray(k * plane, (k + 1) * plane).some((byte) => byte !== 0)
+        );
+        expect(labelled, `labelled slices in ${label.Name}`).to.have.length.greaterThan(0);
+        const k = labelled[Math.floor(labelled.length / 2)];
+
+        return header.getFloat32(312 + 8, le) * k + header.getFloat32(312 + 12, le);
+    }
+    throw new Error(`No label_* NIfTI on ${experimentId} to locate the segmentation`);
+}
+
+// Step the viewport one slice at a time to `target`, the way a reader scrolls, rather than jumping.
+async function stepToSlice(win: any, target: number, delayMs: number): Promise<void> {
+    const { cs, element, stack } = viewportStack(win);
+    const step = Math.sign(target - stack.currentImageIdIndex);
+    for (let index = stack.currentImageIdIndex; index !== target; ) {
+        index += step;
+        stack.currentImageIdIndex = index;
+        cs.displayImage(element, await cs.loadAndCacheImage(stack.imageIds[index]));
+        await new Promise((resolve) => win.setTimeout(resolve, delayMs));
+    }
+}
+
+// Scroll to the slice the segmentation crosses before importing it, so the mask appears the
+// moment it is selected. The slice is matched on z (NIfTI and DICOM share the superior axis),
+// not on index, which depends on how the viewer sorts the stack.
+function scrollToLabelledSlice(experimentId: string): void {
+    cy.window().then({ timeout: 120000 }, async (win: any) => {
+        const z = await labelledSliceZ(win, experimentId);
+        const { cs, stack } = viewportStack(win);
+        const offsets = stack.imageIds.map((id: string) =>
+            Math.abs(cs.metaData.get("imagePlaneModule", id).imagePositionPatient[2] - z)
+        );
+        await stepToSlice(win, offsets.indexOf(Math.min(...offsets)), 40);
+    });
+}
+
+// Once imported, sweep through every slice the mask covers (to one end, the other, and back) so
+// the segmentation reads as a volume. cornerstoneTools keys its labelmap by image index.
+function scrollThroughSegmentation(): void {
+    cy.window().then({ timeout: 120000 }, async (win: any) => {
+        const { element, stack } = viewportStack(win);
+        const labelmap = win.cornerstoneTools.getModule("segmentation").getters.labelmap3D(element, 0);
         const slices = Object.keys(labelmap?.labelmaps2D ?? {})
             .map(Number)
             .filter((index) => !Number.isNaN(index))
             .sort((a, b) => a - b);
-        expect(slices, "slices carrying the imported segmentation").to.have.length.greaterThan(0);
+        const middle = stack.currentImageIdIndex;
+        for (const target of [slices[0], slices[slices.length - 1], middle]) {
+            await stepToSlice(win, target, 70);
+        }
+    });
+}
 
-        const target = slices[Math.floor(slices.length / 2)];
-        stack.currentImageIdIndex = target;
-
-        return cs.loadAndCacheImage(stack.imageIds[target]).then((image: unknown) => {
-            cs.displayImage(element, image);
-        });
+// Prove the slice in view carries the imported mask, so a z mismatch fails loudly instead of
+// filming an empty viewport. cornerstoneTools keys its labelmap by image index.
+function expectSegmentationInView(): void {
+    cy.window().then((win: any) => {
+        const { element, stack } = viewportStack(win);
+        const labelmap = win.cornerstoneTools.getModule("segmentation").getters.labelmap3D(element, 0);
+        expect(labelmap?.labelmaps2D?.[stack.currentImageIdIndex], "segmentation on the slice in view").to.not.equal(
+            undefined
+        );
     });
 }
 
@@ -141,6 +223,11 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
         cy.get("canvas", { timeout: 180000 }).should("be.visible");
         cy.get("canvas").last().should("be.visible");
 
+        if (Cypress.expose("DEMO_XNAT_SEG_NAME")) {
+            scrollToLabelledSlice(xnatExperimentId);
+            cy.demoPause(600);
+        }
+
         // Once OHIF has drawn the study the page is completely static, and
         // Chrome only feeds the screencast on compositor updates — a still
         // page records as almost no frames, which is how an earlier take shipped
@@ -186,8 +273,9 @@ describe("FLIP demo — XNAT + OHIF at the trust", () => {
             // The import decodes the SEG frame by frame; the labelmap is only
             // complete once that settles.
             cy.demoPause(7000);
-            scrollToSegmentedSlice();
-            cy.demoPause(1500);
+            expectSegmentationInView();
+            scrollThroughSegmentation();
+            cy.demoPause(800);
             cy.get("canvas").last().demoHover({
                 fx: 0.5,
                 fy: 0.45,

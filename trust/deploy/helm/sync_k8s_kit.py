@@ -706,7 +706,11 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
     hub_url = kit.get("CENTRAL_HUB_API_URL", "")
     fl_backend = kit.get("FL_BACKEND", "nvflare").strip() or "nvflare"
+    # A still-scaffolded `<...>` bucket counts as unset: emitted, it would name a bucket that
+    # does not exist, and the vocab-load hook failing fails the whole release (FLIP#881).
     kit_bucket = kit.get("AICENTRE_BUCKET_NAME", "").strip()
+    if _is_placeholder(kit_bucket):
+        kit_bucket = ""
     # Where the operator placed this trust's kit ON THE NODE. FL_KIT_DIR is the same
     # value the Compose path uses, so one kit field serves both deployment shapes.
     # The fallback is the canonical FLIP kit path: every shipped kit sets FL_KIT_DIR
@@ -759,6 +763,10 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # built `dev` or the floating `stag` leaves it on the release pin (generate_values.py
     # fl_client_pin applies the same rule).
     fl_tag = kit.get("DOCKER_FL_TAG", "").strip()
+    # The port the fl-client dials. It differs from FL_SERVER_PORT only behind an edge that remaps
+    # it (LZA staging dials :8003, FLIP#1365); a kit synced before that carries no FL_EDGE_PORT.
+    fl_port = kit.get("FL_EDGE_PORT", "").strip() or kit.get("FL_SERVER_PORT", "").strip()
+    fl_host = kit.get("NLB_SUBDOMAIN", "").strip()
     fl_client_pin = fl_tag if IMMUTABLE_IMAGE_TAG.match(fl_tag) else ""
     lines += [
         "trustApi:",
@@ -805,6 +813,9 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     if any(value for _, value in site_privacy):
         fl_section += ["  nvflare:", "    sitePrivacy:"]
         fl_section += [f'      {value_key}: "{value}"' for value_key, value in site_privacy if value]
+    # A Flower SuperNode dials the same edge address the Compose client does.
+    if fl_backend == "flower" and fl_host and fl_port:
+        fl_section += ["  flower:", f'    superlink: "{fl_host}:{fl_port}"']
     lines += fl_section
 
     # The trust's own disclosure floor. The chart passed none before, so every chart-deployed
@@ -814,11 +825,11 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
         lines += ["", "dataAccessApi:", f"  cohortQueryThreshold: {threshold}"]
 
     # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
-    # drops the fl-client's outbound gRPC to the FL server unless FL_SERVER_PORT
+    # drops the fl-client's outbound gRPC to the FL server unless its dial port
     # is allow-listed. The FL server sits behind an internet-facing NLB with
     # AWS-managed IPs that rotate on recreation (and DNS returns a reordered
     # subset), so pinning resolved /32s would relocate the very drift it tries to
-    # fix. Instead emit a PORT-ONLY egress rule: add FL_SERVER_PORT to
+    # fix. Instead emit a PORT-ONLY egress rule: add the dial port to
     # allowedEgressPorts (the template supports a no-CIDR port entry). This is
     # immune to NLB IP churn — K8s NetworkPolicy can't match DNS names anyway —
     # and re-running sync-kit regenerates it deterministically rather than
@@ -828,7 +839,6 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # allowedEgressPorts must restate the chart defaults (DNS/HTTP/HTTPS, kept in
     # sync with values.yaml) alongside the FL-server port — otherwise the
     # override would wipe the default egress allowlist.
-    fl_port = kit.get("FL_SERVER_PORT", "").strip()
     if fl_port:
         lines += [
             "",
@@ -844,7 +854,7 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
             "      protocol: TCP",
             "    - port: 443",
             "      protocol: TCP",
-            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL_SERVER_PORT)",
+            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL dial port)",
             "      protocol: TCP",
         ]
 

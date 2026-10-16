@@ -67,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 echo "${dir}" >> "${MOCK_LINTED}"
+if env | grep -q '^TF_VAR_'; then echo "TF_VAR_LEAK" >> "${MOCK_LINTED}"; fi
 if [[ "${dir}" == */tflint_canary ]]; then
     if [[ -n "${MOCK_CANARY_OUTPUT+set}" ]]; then
         printf '%s\n' "${MOCK_CANARY_OUTPUT}"
@@ -145,6 +146,12 @@ run_case "finding in a module fails the run" MOCK_FAIL_DIR=/modules/a
 [[ "${LAST_RC}" -ne 0 ]]; check "exits non-zero" $?
 has "tflint found issues"; check "says so" $?
 grep -qx "${FAKE_AWS_ROOT}" "${LINTED}"; check "still lints the other directories" $?
+
+# TF_VAR_* never reach tflint: it resolves variables from them, the AWS Makefile exports them,
+# and CI sets none.
+run_case "TF_VAR_* are cleared before tflint runs" TF_VAR_FL_SERVER_PORT= TF_VAR_bucket=x
+check "exits 0" "${LAST_RC}"
+! grep -q TF_VAR_LEAK "${LINTED}"; check "tflint saw no TF_VAR_*" $?
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

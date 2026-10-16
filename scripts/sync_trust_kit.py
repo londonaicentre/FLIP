@@ -42,12 +42,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import trust_kit_lib as tkl  # noqa: E402
 
-# Hub-shared keys that legitimately default downstream and so may be absent from
-# a populated env file. DOCKER_FL_REGISTRY falls back to DOCKER_REGISTRY in
-# deploy/fl_backend.mk, so prod env files routinely omit it — its absence must
-# not abort the sync (it just isn't written to the kit; the trust defaults it).
-OPTIONAL_HUB_SHARED_KEYS: tuple[str, ...] = ("DOCKER_FL_REGISTRY",)
-
 
 def die(msg: str) -> NoReturn:
     """Print an error and exit 1.
@@ -73,20 +67,27 @@ def main() -> None:
     if not target.is_file():
         die(f"❌ Kit file {target} not found — create it from the matching .example first.")
 
-    # Require every NON-optional hub-shared key; an absent optional key (one
-    # that defaults downstream) is tolerated. This still catches the common
-    # footgun — forgetting to source the env file leaves the required keys unset.
-    missing = [k for k in tkl.HUB_SHARED_KEYS if k not in OPTIONAL_HUB_SHARED_KEYS and not os.environ.get(k)]
+    # FL_EDGE_PORT, the port trusts dial (FLIP#1365), defaults to FL_SERVER_PORT as register_trust
+    # does, except on LZA staging: its edge serves staging on :8003 and :8002 is production's.
+    edge_port = os.environ.get("FL_EDGE_PORT", "").strip()
+    if not edge_port:
+        if args.kit.endswith(".lza-stag"):
+            die("❌ FL_EDGE_PORT is unset. Set FL_EDGE_PORT=8003 in .env.lza-stag (the edge's staging listener).")
+        edge_port = os.environ.get("FL_SERVER_PORT", "").strip()
+    if edge_port and not edge_port.isdigit():
+        die(f"❌ FL_EDGE_PORT must be a port number, got {edge_port!r}.")
+    if edge_port:
+        os.environ["FL_EDGE_PORT"] = edge_port
+
+    # Require every hub-shared key: forgetting to source the env file leaves them unset.
+    missing = [k for k in tkl.HUB_SHARED_KEYS if not os.environ.get(k)]
     if missing:
         die(
             f"❌ These Hub-shared keys are unset in the environment: {', '.join(missing)}\n"
             f"   Make sure the matching .env.<env> file is present and populated."
         )
 
-    # Write only the keys present (non-empty) in the environment — like
-    # register_trust's _hub_shared_from_env. An absent optional key is skipped,
-    # so the kit never carries a stale/empty value the trust would default anyway.
-    new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS if os.environ.get(k)}
+    new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS}
 
     # Surface the source env file + destination URL up-front — doubles as a
     # footgun guard: an on-prem-pointed kit accidentally synced without PROD=true

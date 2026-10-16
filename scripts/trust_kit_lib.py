@@ -62,11 +62,10 @@ HUB_SHARED_KEYS: tuple[str, ...] = (
     "FLOWER_KIT_DATE",
     "FLARE_KIT_DATE",
     "DOCKER_TAG",
-    "DOCKER_REGISTRY",
     "DOCKER_FL_TAG",
-    "DOCKER_FL_REGISTRY",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
+    "FL_EDGE_PORT",
 )
 
 # Plaintext credentials — written once on a new registration, never on skip.

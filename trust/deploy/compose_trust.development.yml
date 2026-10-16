@@ -109,7 +109,7 @@ services:
     cap_add:
       - CHOWN
     environment:
-      # XNAT_URL, PACS_ID, XNAT_DATABASE_URL, DATA_ACCESS_API_URL and
+      # XNAT_URL, DATA_ACCESS_API_URL and
       # TRUST_INTERNAL_SERVICE_KEY_HEADER are internal-topology constants and now
       # default in imaging_api/config.py — do not inject them (an empty ${VAR}
       # from a kit that omits them would override the code default).
@@ -124,12 +124,6 @@ services:
       XNAT_AETITLE: ${XNAT_AETITLE:-XNAT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
-      # Minted per-trust XNAT DB password (FLIP-PT-056): imaging_api/config.py
-      # splices it over the password in the XNAT_DATABASE_URL default, keeping
-      # the URL itself a non-secret topology constant. Empty/placeholder (a
-      # pre-mint kit) is a documented no-op there, so unconditional injection
-      # is safe.
-      XNAT_DATASOURCE_PASSWORD: ${XNAT_DATASOURCE_PASSWORD}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       DEBUG_PORT: ${IMAGING_DEBUG_PORT}
       DEBUG: ${DEBUG}
@@ -191,6 +185,9 @@ services:
       # kit file to release less. The `:-10` keeps an unset variable from arriving as an
       # empty string, which pydantic would reject against `int`.
       COHORT_QUERY_THRESHOLD: ${COHORT_QUERY_THRESHOLD:-10}
+      # Approved-cohort snapshot store (FLIP#857): the container-side path of the bind
+      # mount below. Fixed here; the HOST side is the kit's COHORT_SNAPSHOT_STORAGE_DIR.
+      COHORT_SNAPSHOT_DIR: /snapshots
       # The trust's governance document (FLIP#1259). Optional: unset means the platform
       # defaults apply and only COHORT_QUERY_THRESHOLD above is in force. Points at the
       # read-only mount below, not the host path, since the service resolves it inside
@@ -207,6 +204,11 @@ services:
       - ./data-access-api/data_access_api:/app/data_access_api
       - ./data-access-api/tests:/app/tests
       - ./observability/log_config:/app/log_config:ro
+      # Approved-cohort snapshots: per-trust host dir from the kit's Host-local profile
+      # (pre-created by `make up-trust` so it is host-user-owned, not docker-root-owned —
+      # the service runs non-root; if it cannot write, every freeze fails). Holds the
+      # approved person/accession ids; gitignored, never committed.
+      - ${COHORT_SNAPSHOT_STORAGE_DIR:-./data-access-api/.snapshots/Trust_${TRUST_NUMBER}}:/snapshots
       # The governance document, read-only — the service must never be able to rewrite its
       # own policy. When ACCESS_POLICY_FILE is unset, /dev/null is mounted and the env var
       # above is empty, so nothing reads it. /dev/null rather than a file in the checkout

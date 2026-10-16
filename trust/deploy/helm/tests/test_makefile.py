@@ -77,3 +77,18 @@ def test_deploy_moves_a_live_fl_client_to_recreate_before_helm_runs():
     assert patch < out.index("upgrade --install")
     assert "app.kubernetes.io/component=fl-client" in out[:patch]
     assert "app.kubernetes.io/instance=flip-trust" in out[:patch]
+
+
+def test_xnat_init_deletes_the_previous_init_job_before_applying_it():
+    """Left in place, the apply reports the Job unchanged and the wait passes at once on the old one."""
+    out = subprocess.run(
+        ["make", "-n", "-C", str(CHART_DIR), "xnat-init", "KUBE_CONTEXT=test"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.replace("\\\n", " ")
+
+    delete = next(line for line in out.splitlines() if " delete job " in line)
+    assert "--selector app.kubernetes.io/component=xnat-init" in delete
+    assert "--ignore-not-found" in delete
+    assert out.index(" delete job ") < out.index(" apply -n ") < out.index(" wait job"), out

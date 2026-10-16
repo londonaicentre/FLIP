@@ -206,6 +206,7 @@ class DiffusionTrainer:
             "epochs": config.get("LOCAL_ROUNDS_AE", 5),
         }
         self.params_diffusion = {"lr": config["LR_DM"], "epochs": config.get("LOCAL_ROUNDS_DM", 5)}
+        self.num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
 
         # Model creation
         self.model = get_model()
@@ -335,12 +336,14 @@ class DiffusionTrainer:
             logger.info("Resetting perceptual loss to 2D versions due to axial anisotropy.")
 
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
-        train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
+        train_loader = DataLoader(
+            self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
+        )
+        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
         return train_loader, val_loader
 
     def val_loader(self, batch_size: int) -> DataLoader:
-        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
+        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights, strict=False)

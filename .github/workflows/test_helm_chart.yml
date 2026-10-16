@@ -18,8 +18,10 @@ on:
   pull_request:
     paths:
       - "trust/deploy/helm/**"
-      # Read by the chart's pytest suite, so a change there can break it too.
+      # Read by the chart's pytest suite, so a change there can break it too. The anon script
+      # is the premise of the C-STORE smoke's received.log evidence (tests/test_cstore_verdict.py).
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/xnat/xnat/config/anon_script.das"
       # The procedure the trust-seed hook fetches and runs; tests/test_trust_seed_job.py
       # asserts the Job's env against it.
       - "trust/seed_trust.sh"
@@ -35,6 +37,7 @@ on:
     paths:
       - "trust/deploy/helm/**"
       - "trust/xnat/xnat/config/configure-xnat.sh"
+      - "trust/xnat/xnat/config/anon_script.das"
       - "trust/seed_trust.sh"
       - "trust/omop-db/**"
       - ".gitignore"

@@ -25,6 +25,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 
@@ -58,6 +59,29 @@ class UpgradeTrust(unittest.TestCase):
         assert ".gpu.yml" in dry_run("_upgrade-trust-apply", kit=gpu_kit), "a GPU kit should get the overlay"
         out = dry_run("_upgrade-trust-apply", "NUM_AVAILABLE_GPUS=0", kit=gpu_kit)
         assert ".gpu.yml" not in out, f"the CPU-only override did not drop the GPU overlay:\n{out}"
+
+    def test_apply_phase_prepares_the_membership_store_before_compose_does(self):
+        """A site upgrading into the membership store (FLIP#857) has no directory for it; compose would create it
+        root-owned and the non-root data-access-api would disable the store. The production default is absolute and
+        prepared by a container on the docker host, so it also works over a remote DOCKER_CONTEXT (EC2)."""
+        out = dry_run("_upgrade-trust-apply")
+        assert 'dir="/opt/flip/cohort-snapshots/trust-9"; owner="1000:1000"' in out, out
+        assert out.index('dir="/opt/flip/cohort-snapshots/trust-9"') < out.index(" up -d"), out
+
+    def test_compose_mounts_the_directory_the_makefile_prepared(self):
+        """One resolved path: the Makefile's default and the compose default can no longer disagree."""
+        out = dry_run("_upgrade-trust-apply")
+        assert 'COHORT_SNAPSHOT_STORAGE_DIR="/opt/flip/cohort-snapshots/trust-9"' in out, out
+        kit = KIT + "COHORT_SNAPSHOT_STORAGE_DIR=/srv/flip/members\n"  # pragma: allowlist secret
+        out = dry_run("_upgrade-trust-apply", kit=kit)
+        assert 'dir="/srv/flip/members"' in out, out
+        assert 'COHORT_SNAPSHOT_STORAGE_DIR="/srv/flip/members"' in out, out
+
+    def test_the_prepared_store_image_is_pinned(self):
+        """An unpinned alpine is a moving target and a surprise pull on a host behind a firewall."""
+        out = dry_run("_upgrade-trust-apply")
+        assert "alpine:3.20" in out, out
+        assert " alpine " not in out.replace("alpine:3.20", ""), out
 
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""
@@ -217,6 +241,40 @@ class DevelopmentFlRegistry(unittest.TestCase):
 
     def test_an_explicit_empty_fl_registry_still_selects_local_images(self):
         assert self.fl_registry("DOCKER_FL_REGISTRY=") == "[]"
+
+
+class ReconvertNifti(unittest.TestCase):
+    """reconvert-nifti reports unless LAUNCH is set, and hands each option to the command (FLIP#1456 G3)."""
+
+    COMMAND = "python -m imaging_api.scripts.reconvert_nifti"
+
+    def test_by_default_it_only_reports(self):
+        out = dry_run("reconvert-nifti")
+        assert self.COMMAND in out, out
+        for flag in ("--launch", "--project", "--wait", "--max-attempts", "--relaunch-unfinished"):
+            assert flag not in out, f"{flag} without being asked:\n{out}"
+        assert_data_safe(out, "reconvert-nifti")
+
+    def test_each_option_reaches_the_command(self):
+        out = dry_run(
+            "reconvert-nifti", "PROJECT=P1 P2", "LAUNCH=1", "WAIT=5", "MAX_ATTEMPTS=2", "RELAUNCH_UNFINISHED=1"
+        )
+        expected = f"{self.COMMAND} --project P1 --project P2 --launch --wait 5 --max-attempts 2 --relaunch-unfinished"
+        assert expected in " ".join(out.replace("\\\n", " ").split()), out
+
+    def test_the_seeding_projects_list_does_not_narrow_it(self):
+        """PROJECTS is the datasets to seed (default cxr_project), not XNAT projects."""
+        out = dry_run("reconvert-nifti", "PROJECTS=cxr_project prostate_project")
+        assert "--project" not in out, out
+
+
+class DeployedPull(unittest.TestCase):
+    def test_a_deployed_trust_without_a_kit_registry_still_pulls_fresh(self):
+        """Kits carry no registry since FLIP#1480; the FL client's `--pull always` must not go with it."""
+        # A calling make (this suite's own runner) exports an empty DOCKER_FL_REGISTRY, which would decide it.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k != "MAKEFLAGS"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            assert "up -d --pull always" in dry_run("up-trust")
 
 
 if __name__ == "__main__":

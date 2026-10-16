@@ -111,7 +111,8 @@ down:
 
 # Submit a tutorial folder to the running stack (no published host port): exec into fl-api
 # and POST to its loopback API (the image ships Python, not curl). Usage: make submit APP=<folder>.
-# By name → /submit_tutorial; /submit_run is UUID-only (flip-api's production model_id path).
+# By name → /submit_tutorial, which runs the folder's pyproject.toml values, not its app/config.toml
+# (FLIP#1432); /submit_run is UUID-only (flip-api's production model_id path).
 submit:
 	$(DEV_COMPOSE) -p flwr exec -T fl-api \
 		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$(APP)', method='POST')).read().decode())"

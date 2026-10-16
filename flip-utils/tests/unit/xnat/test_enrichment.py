@@ -19,7 +19,13 @@ import pytest
 from flip.exceptions import XnatError
 from flip.xnat.client import XnatClient
 from flip.xnat.enrichment import EnrichmentItem, read_manifest, run_enrichment, upload_enrichment_files
-from tests.unit.xnat.helpers import FakeResponse, FakeSession, project_routes, resolvable_project_routes
+from tests.unit.xnat.helpers import (
+    FakeResponse,
+    FakeSession,
+    project_routes,
+    resolvable_project_routes,
+    scan_listing,
+)
 
 
 def _client(files: list[str], put_response: FakeResponse | None = None) -> XnatClient:
@@ -188,7 +194,25 @@ class TestUploadEnrichmentFiles:
         summary = upload_enrichment_files(client, "PROJ", items, overwrite=True)
 
         assert summary.uploaded == ["FAK001"]
-        assert len(client._session.puts) == 1
+        assert client._session.puts == [
+            "http://xnat.example/data/projects/PROJ/subjects/SUBJ_1/experiments/EXP_1/scans/1/"
+            "resources/NIFTI/files/label_spleen_2.nii.gz?inbody=true&overwrite=true"
+        ]
+
+    def test_target_written_since_the_listing_is_a_failure_not_an_upload(self, tmp_path):
+        """The listing showed no label, but XNAT kept one that landed before the PUT."""
+        client = _client(
+            ["input_spleen_2.nii.gz"],
+            put_response=FakeResponse(status_code=200, text='{"duplicates": ["label_spleen_2.nii.gz"]}'),
+        )
+        items = [EnrichmentItem("FAK001", _label(tmp_path))]
+
+        summary = upload_enrichment_files(client, "PROJ", items)
+
+        assert summary.uploaded == []
+        assert summary.failed[0][0] == "FAK001"
+        assert "already exists" in summary.failed[0][1]
+        assert summary.ok is False
 
     def test_dry_run_reports_without_uploading(self, tmp_path):
         client = _client(["input_spleen_2.nii.gz"])
@@ -224,8 +248,8 @@ class TestUploadEnrichmentFiles:
         client = XnatClient(server="http://xnat.example", user="u", password="p")
         routes = project_routes(["input_spleen_2.nii.gz"])
         # Give EXP_1 a second scan; the accession FAK001 now maps to two destination scans.
-        routes["/data/experiments/EXP_1/scans"] = FakeResponse(
-            payload={"ResultSet": {"Result": [{"ID": "1"}, {"ID": "2"}]}}
+        routes["/data/experiments"] = scan_listing(
+            [("EXP_1", "FAK001", "SUBJ_1", "1"), ("EXP_1", "FAK001", "SUBJ_1", "2"), ("EXP_2", "FAK002", "SUBJ_2", "1")]
         )
         client._session = FakeSession(routes)  # type: ignore[assignment]
 

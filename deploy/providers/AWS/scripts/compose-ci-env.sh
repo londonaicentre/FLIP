@@ -257,7 +257,6 @@ REQUIRED_KEYS=(
 # variables.tf already has a defined fallback.
 OPTIONAL_KEYS=(
     FLIP_BUCKET_NAME
-    JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
     JOB_RESOURCE_SPEC_NUM_GPUS
 
     # Not stored in either GitHub environment and not normally in an env file:

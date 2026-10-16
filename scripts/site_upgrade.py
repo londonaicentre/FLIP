@@ -114,12 +114,15 @@ _GITHUB_TIMEOUT_SECONDS = 5.0
 #: A stable platform release. Not `v0.7.0-rc.1`, and not a component release (`flip-utils-v0.10.0`).
 _STABLE_RELEASE = re.compile(r"^v\d+\.\d+\.\d+$")
 
+#: Where a deployed site pulls every image from, whatever its kit says: the production compose
+#: files hardcode it and trust/xnat/Makefile pins it (FLIP#1480).
+_SITE_REGISTRY = "ghcr.io/londonaicentre/"
+
 #: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.production.yml`,
 #: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.production.<backend>.yml`)
 #: with the kit key that pins it away from ``DOCKER_TAG`` when set — the compose files'
 #: ``${OMOP_DB_TAG:-${DOCKER_TAG}}`` / ``${ORTHANC_TAG:-…}`` opt-outs and the XNAT Makefile's
 #: ``XNAT_TAG ?= ${DOCKER_TAG}``. A pinned image is checked at its pin, not at the target.
-_DEFAULT_REGISTRY = "ghcr.io/londonaicentre/"
 _SITE_IMAGE_PINS = {
     "trust-api": None,
     "imaging-api": None,
@@ -374,10 +377,9 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
 
 def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
     """Every image reference the site would pull once the kit pins ``tag`` (FL client at ``fl_tag``)."""
-    registry = kit.get("DOCKER_REGISTRY") or _DEFAULT_REGISTRY
-    refs = [f"{registry}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
+    refs = [f"{_SITE_REGISTRY}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
     fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
-    return [*refs, f"{registry}{fl_client}:{fl_tag or tag}"]
+    return [*refs, f"{_SITE_REGISTRY}{fl_client}:{fl_tag or tag}"]
 
 
 class RegistryUnavailable(Exception):

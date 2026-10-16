@@ -166,21 +166,42 @@ stack first.
 Deploying
 *********
 
+**CI applies this estate.** The Terraform pipeline plans the LZA staging root on
+every pull request into ``main`` or ``develop`` touching ``deploy/providers/AWS/**``,
+applies it on a push to ``develop``, and plans nightly to report drift — all
+authenticated by GitHub OIDC with no long-lived AWS keys. Pointing a GitHub
+environment at an account is a value change (the ``TF_PROD`` mode token plus the two
+role ARNs), described under "Repointing CI at the LZA accounts" in the deployment
+README. Production is on LZA too (`FLIP#1199
+<https://github.com/londonaicentre/FLIP/issues/1199>`_, repointed 2026-10-06):
+merges to ``main`` apply to LZA production.
+
 ``PROD=lza`` selects ``.env.lza-prod``, production semantics (``TF_VAR_environment=prod``, so RDS deletion
 protection and the final snapshot stay on) and deploys from ``origin/main``; ``PROD=lza-stag`` selects
 ``.env.lza-stag``, staging semantics and ``origin/develop``. Each keeps its own trust-kit suffix
 (``trust/.env.<CODE>.lza-prod`` / ``.lza-stag``), so self-contained kits are never overwritten.
 
+The same targets run from a laptop as the **break-glass** path — when CI is wedged,
+and for the one-off account bootstrap steps that must precede the first CI plan:
+
 .. code-block:: shell
 
    cd deploy/providers/AWS
-   export PROD=lza      # or: export PROD=lza-stag
+   export AWS_PROFILE=lza-stag   # or: lza-prod
+   export PROD=lza-stag          # or: PROD=lza
 
    make init
    make plan
    make apply
    make deploy-centralhub
    make deploy-ui
+
+.. warning::
+
+   On an account CI applies, a laptop ``apply`` is reverted by the next pipeline
+   run and shows up as drift in between. Use it only as a recovery action; see
+   "Break-glass" in the deployment README for the conditions and the per-estate
+   commands.
 
 .. note::
 
