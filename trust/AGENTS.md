@@ -47,7 +47,7 @@ that `scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kit
 `flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
 `FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_FL_TAG`,
-`NLB_SUBDOMAIN`, `FL_SERVER_PORT`). No registry: a deployed trust pulls from `ghcr.io/londonaicentre/`
+`NLB_SUBDOMAIN`, `FL_SERVER_PORT`, `FL_EDGE_PORT`). No registry: a deployed trust pulls from `ghcr.io/londonaicentre/`
 whatever an older kit says, as an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
 `UPLOADED_FEDERATED_DATA_BUCKET` is hub-only (fl-server uploads aggregated
 results to S3); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by

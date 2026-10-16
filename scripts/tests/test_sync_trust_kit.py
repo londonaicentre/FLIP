@@ -218,6 +218,37 @@ def test_6_hub_registry_stays_out_of_the_kit() -> None:
         _assert("REGISTRY" not in kit.read_text(), "no registry key in the kit", kit.read_text())
 
 
+def _sync_one(kit_name: str, overrides: dict[str, str]) -> tuple[subprocess.CompletedProcess[str], str]:
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "trust").mkdir()
+        kit = root / "trust" / f".env.{kit_name}"
+        kit.write_text("TRUST_API_KEY=k\n")
+        result = _run(root, kit_name, env_overrides=overrides)
+        return result, kit.read_text()
+
+
+def test_7_edge_port_defaults_to_server_port_unless_set() -> None:
+    """FL_EDGE_PORT falls back to FL_SERVER_PORT when unset or empty; an explicit value wins (FLIP#1365)."""
+    print("▶ FL_EDGE_PORT defaults to FL_SERVER_PORT, an explicit value wins")
+    for overrides, want in (({}, "8002"), ({"FL_EDGE_PORT": ""}, "8002"), ({"FL_EDGE_PORT": "8003"}, "8003")):
+        result, content = _sync_one("Trust_1", overrides)
+        _assert(result.returncode == 0, f"exit 0 for {overrides}", result.stderr)
+        _assert(f"FL_EDGE_PORT={want}\n" in content, f"FL_EDGE_PORT={want} for {overrides}")
+
+
+def test_8_edge_port_is_required_on_lza_staging() -> None:
+    """An LZA staging kit never inherits FL_SERVER_PORT, production's edge listener, and a port must be numeric."""
+    print("▶ LZA staging refuses a defaulted FL_EDGE_PORT; a non-numeric one is refused everywhere")
+    result, content = _sync_one("Trust_1.lza-stag", {})
+    _assert(result.returncode != 0 and "FL_EDGE_PORT" in result.stderr, "lza-stag without FL_EDGE_PORT refused")
+    _assert("FL_EDGE_PORT=" not in content, "lza-stag kit left untouched")
+    result, content = _sync_one("Trust_1.lza-stag", {"FL_EDGE_PORT": "8003"})
+    _assert(result.returncode == 0 and "FL_EDGE_PORT=8003\n" in content, "lza-stag with FL_EDGE_PORT=8003 syncs")
+    result, _ = _sync_one("Trust_1", {"FL_EDGE_PORT": "8003 # staging"})
+    _assert(result.returncode != 0, "non-numeric FL_EDGE_PORT refused", result.stderr)
+
+
 def main() -> None:
     if not SYNC_SCRIPT.is_file():
         sys.exit(f"❌ {SYNC_SCRIPT} not found")
@@ -230,6 +261,8 @@ def main() -> None:
     test_4_missing_env_var_is_error()
     test_5_in_place_replacement_on_template()
     test_6_hub_registry_stays_out_of_the_kit()
+    test_7_edge_port_defaults_to_server_port_unless_set()
+    test_8_edge_port_is_required_on_lza_staging()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

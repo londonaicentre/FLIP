@@ -48,7 +48,7 @@ opened.
      - 443
    * - FL client → FL server (via NLB)
      -
-     - configured ``FL_SERVER_PORT``
+     - configured ``FL_EDGE_PORT`` (else ``FL_SERVER_PORT``)
    * - Operator access to trust host
      - none (SSM Session Manager)
      -

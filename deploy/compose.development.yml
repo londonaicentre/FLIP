@@ -366,6 +366,7 @@ services:
       - DOCKER_FL_CLIENT_NAME=${DOCKER_FL_CLIENT_NAME}
       - NLB_SUBDOMAIN=${NLB_SUBDOMAIN}
       - FL_SERVER_PORT=${FL_SERVER_PORT}
+      - FL_EDGE_PORT=${FL_EDGE_PORT:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:

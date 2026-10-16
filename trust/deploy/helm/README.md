@@ -229,7 +229,8 @@ helm upgrade --install trust-release ./trust/deploy/helm/ \
 
 `sync-kit` stamps a newly created Secret with Helm ownership metadata so the
 first install can adopt it. It also regenerates the FL-server egress port from
-the kit on every run, so upgrades do not lose the fl-client gRPC allowance.
+the kit on every run, so upgrades do not lose the fl-client gRPC allowance, and,
+for a Flower trust, `flClient.flower.superlink`.
 
 #### Secret field ownership under Helm 4 (server-side apply)
 

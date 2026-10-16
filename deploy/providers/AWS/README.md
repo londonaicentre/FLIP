@@ -1156,10 +1156,20 @@ Getting that order wrong does not fail gently: the attach fails the whole run, t
 same configuration with it. Staging downtime between the two applies is expected and accepted.
 
 **Staging trusts need reissued kits; production trusts do not.** Both `fl.app.flip` and `fl.stag.flip` resolve to
-the *same* edge NLB — one address, two listeners — so the port in the trust kit is the only thing separating the
-environments: `:8003` is staging, `:8002` is **production**. Legacy staging kits embed `:8002`, which was
-unambiguous when it pointed at legacy staging's own NLB. After the cutover a staging trust on an un-updated kit
-joins the production FL net, and it does so silently, by succeeding.
+the *same* edge NLB — one address, two listeners — so the port in the trust kit chooses which listener it reaches:
+`:8003` is staging, `:8002` is **production**. Legacy staging kits embed `:8002`, which was unambiguous when it
+pointed at legacy staging's own NLB. After the cutover a staging trust on an un-updated kit reaches the production
+listener and fails the TLS handshake, because each estate's FL net has its own root CA: the client logs it and never
+registers, so it cannot train until its kit is reissued.
+
+Staging's FL server still listens on `:8002`, so `FL_SERVER_PORT` stays 8002 in `.env.lza-stag` and the port trusts
+dial is set separately (FLIP#1365):
+
+- **NVFLARE:** `connect_to.port: 8003` in `fl-services/nvflare/provision/net-1_project_stag.yml`, minted into each
+  kit's `fed_client.json`.
+- **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.lza-stag`, which `sync-trust-kit` copies
+  into each kit (and refuses to default on `lza-stag`). It drives the Flower `--superlink`, the Kubernetes egress rule and the
+  Helm Flower superlink; unset, it falls back to `FL_SERVER_PORT`, so production needs nothing.
 
 **Rollback is not a DNS revert.** This account keeps its zone, records, certificate and data, so it remains a
 rollback target — but only once the alias is back, which means `RELEASE_WEB_ALIAS=false` and an apply, a CloudFront

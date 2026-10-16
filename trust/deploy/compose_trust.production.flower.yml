@@ -77,7 +77,7 @@ services:
       - --root-certificates
       - /certs/ca.crt
       - --superlink
-      - ${NLB_SUBDOMAIN}:${FL_SERVER_PORT}
+      - ${NLB_SUBDOMAIN}:${FL_EDGE_PORT:-${FL_SERVER_PORT}}
       - --auth-supernode-private-key
       - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
       # flwr>=1.36 split the old --clientappio-api-address into --host/--port;

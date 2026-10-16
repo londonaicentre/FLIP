@@ -59,7 +59,7 @@ ifeq ($(ENV),development)
 # guard then rejects ''), so it is exported after that include instead, once the default has applied.
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
-       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT
+       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT FL_EDGE_PORT
 # UID/GID/UNAME come from the same hub .env and must be exported too:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this

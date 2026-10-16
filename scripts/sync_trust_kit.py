@@ -67,6 +67,18 @@ def main() -> None:
     if not target.is_file():
         die(f"❌ Kit file {target} not found — create it from the matching .example first.")
 
+    # FL_EDGE_PORT, the port trusts dial (FLIP#1365), defaults to FL_SERVER_PORT as register_trust
+    # does, except on LZA staging: its edge serves staging on :8003 and :8002 is production's.
+    edge_port = os.environ.get("FL_EDGE_PORT", "").strip()
+    if not edge_port:
+        if args.kit.endswith(".lza-stag"):
+            die("❌ FL_EDGE_PORT is unset. Set FL_EDGE_PORT=8003 in .env.lza-stag (the edge's staging listener).")
+        edge_port = os.environ.get("FL_SERVER_PORT", "").strip()
+    if edge_port and not edge_port.isdigit():
+        die(f"❌ FL_EDGE_PORT must be a port number, got {edge_port!r}.")
+    if edge_port:
+        os.environ["FL_EDGE_PORT"] = edge_port
+
     # Require every hub-shared key: forgetting to source the env file leaves them unset.
     missing = [k for k in tkl.HUB_SHARED_KEYS if not os.environ.get(k)]
     if missing:
