@@ -108,6 +108,13 @@ tolerate the DICOM vocab the seed has already loaded):
   8507/8532 (`query.sql` reads it), every other `*_concept_id` is zeroed to `0` ("No matching
   concept"), conditions match on the `condition_source_value` SNOMED string. Idempotent; unit-tested
   in `tests/unit/test_synthea_ehr.py`.
+- **ADNI biomarker cohort** (`src/omop_db_tools/adni_cohort.py`, `make load-adni-cohort`): the populate
+  side of the biomarker causal-discovery tutorial on a LOCAL dev stack. Downloads nothing — ADNI is
+  access-controlled, so it reads the licence holder's own converted cohort
+  (`fl-tutorials/data/ad_biomarkers/dataframe.csv`, from `make -C fl-tutorials convert-adni-cohort`) and
+  appends this trust's `person_id`-modulo slice as `person` / `measurement` / `observation` rows, ids
+  shifted to `PERSON_ID_OFFSET` (1.2e9, clear of the imaging and Synthea bands), reloads deleting by
+  provenance (`person_source_value` `adni-cohort-…`). Never point it at a shared or published trust.
 - The populate scripts run on the **host** against published ports (`OMOP_DB_HOST` defaults to
   localhost) and need postgresql-client (`psql`/`pg_isready`).
 
@@ -116,6 +123,10 @@ tolerate the DICOM vocab the seed has already loaded):
 ```bash
 make load-omop-vocab [OMOP_DB_PORT=5436]  # seed the licensed vocab + constraints into a running trust DB
 make load-dicom-vocab [OMOP_DB_PORT=5436] # the Apache-licensed DICOM vocab (anonymous HF fetch); no-op when present
+make load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434  # biomarker causal-discovery tutorial: load the user's
+                                    # OWN converted ADNI cohort (fl-tutorials/data/ad_biomarkers/dataframe.csv,
+                                    # from `make -C fl-tutorials convert-adni-cohort`) into a LOCAL trust DB —
+                                    # nothing downloaded, nothing ADNI-derived may reach a shared trust
 make load-synthea-ehr TRUST_INDEX=1 OMOP_DB_PORT=5434  # EHR risk-prediction tutorial: load public
                                     # Synthea-in-OMOP conditions/visits/persons into a running trust DB
                                     # (once per trust; downloads ~5MB from AWS Open Data at run time)

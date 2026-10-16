@@ -60,6 +60,7 @@ for why the plan is pooled and the measured per-center figures.
 | brain_mri | MSD Task01_BrainTumour (`download-brain-mri-msd-raw`, 7.6 GB; `NUM_CASES` for the simulator layout) | `Task01_BrainTumour/`, `brain_mri/{images/, dataframe.csv, dicom/, source/, canonical/}` | the latent-diffusion tutorial once retargeted (FLIP#1221 follow-up); the mock trust data via `seed-brain-mri` |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (NVFLARE) |
 | synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
+| ad_biomarkers | the user's own ADNI download (access-controlled; `convert-adni-cohort ADNI_DIR=`, no download target) | `ad_biomarkers/{dataframe.csv, site{1,2}/dataframe.csv, cohort_summary.json}` | biomarker_causal_discovery (both backends); `make -C trust load-adni-cohort` seeds a local trust from it |
 | prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |
 | weights | `download.pytorch.org` (torchvision checkpoints, sha256-prefix checked; `weights/fetch_weights.py` lists them) | `weights/<torchvision filename>` (flat, e.g. `squeezenet1_1-b8a52dc0.pth`) | latent_diffusion_model via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
 
@@ -117,6 +118,25 @@ script imports, like the others):
   (see the [EHR tutorial README](../nvflare/tabular_classification/ehr_risk_prediction/README.md)).
   `tests/datasets/synthea/` keeps the two honest: it runs the actual `query.sql` on SQLite over the
   same tiny tables and diffs it against `derive_features` row for row.
+
+[`ad_biomarkers/`](ad_biomarkers/) owns the biomarker causal-discovery tutorial's cohort, in a uv
+project as small as synthea's (numpy + pandas). The data is ADNI, which is **access-controlled** —
+every user signs a Data Use Agreement that forbids redistributing participant-level data in any
+form — so there is no download target and no synthetic stand-in: the user applies for ADNI access
+(the tutorial README's "Running on real ADNI data" has the steps), downloads five study tables, and
+
+- `make_adni_cohort.py` — *converts* (`convert-adni-cohort ADNI_DIR=<IDA downloads> [OUT=…]`) that
+  download — the `PTDEMOG`, `APOERES`, `ADAS`, `UCSFFSX7` and `UPENN_PLASMA_FUJIREBIO_QUANTERIX`
+  tables, found by prefix — into the twelve-column cohort the tutorial's `query.sql` returns
+  (demographics, APOE4 count, four plasma markers, two brain volumes, ADAS-Cog13), the
+  `person_id`-modulo site splits and a counts-only summary, applying the centralised analysis's
+  rules (earliest FreeSurfer scan with a baseline plasma draw within ±3 months, ADNI missing-value
+  codes, left + right hippocampus, APOE ε4 count from the genotype). Code only: `OUT` defaults to the
+  gitignored `data/ad_biomarkers/` and the target refuses any path inside the repository that git
+  does not ignore; the script prints counts, never a row. `to_omop_tables` writes a cohort frame as
+  `person` / `measurement` / `observation`, and `tests/datasets/ad_biomarkers/` pins the cohort rules
+  on invented ADNI-shaped tables and runs the actual `query.sql` over those OMOP tables on SQLite,
+  so the simulator's CSV and a deployed query agree row for row.
 
 [`prostate/`](prostate/) owns the prostate download/preprocessing scripts. The dataset class that
 reads this data lives with the tutorial instead, at

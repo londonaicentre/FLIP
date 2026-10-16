@@ -8,8 +8,10 @@ built on the templates in `fl-apps/`; the images they run on are built from
 |------|---------|
 | `nvflare/image_*` | NVFLARE imaging tutorials — all Client-API apps |
 | `nvflare/tabular_classification` | NVFLARE tabular (OMOP-only) EHR risk-prediction tutorial |
+| `nvflare/tabular_causal_discovery` | NVFLARE tabular (OMOP-only) biomarker causal-discovery tutorial: bootstrapped FCI federated through the ordinary FedAvg job (`federated_fci.py` — pooled sufficient statistics, or FedPC-style layer voting); the cohort is real ADNI data the user obtains under their own licence and converts with `datasets/ad_biomarkers/make_adni_cohort.py` (`convert-adni-cohort`) — ADNI is access-controlled, so the repo ships the converter, never rows |
 | `flower/{xray_classification,3d_spleen_segmentation*,3d_prostate_segmentation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |
 | `flower/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
+| `flower/biomarker_causal_discovery` | Flower twin of the causal-discovery tutorial (shared module, model, config and query byte-identical with the NVFLARE copy via `scripts/check_tutorial_sync.sh`) |
 | `datasets/` | Shared dataset tooling (download/derive/enrich), one copy for both backends |
 | `datasets/utils/` | The OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, per-project surrogate-key blocks (`omop_ids.py`), and the one verification gate (`verify_omop_tables.py --project <name>`) |
 | `data/` | Gitignored output of the dataset targets |
@@ -62,7 +64,9 @@ checkout's environment with nothing in the output saying so. The stale-process c
 spares other checkouts (it matches this checkout's `flip-utils/` venv path, so the main checkout never
 matches a worktree nested under it), so the fix is to stop the named pid (or run from that checkout);
 an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
-`DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from `download-synthea-data`).
+`DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from `download-synthea-data`), as does the
+causal-discovery one (`fl-tutorials/data/ad_biomarkers/dataframe.csv`, from `convert-adni-cohort ADNI_DIR=<the user's
+own ADNI download>` — there is no public or synthetic stand-in; the tutorial README has the application steps).
 
 The three NVFLARE Ark+ tutorials (`arkplus_fine_tuning` and the two `arkplus_*_evaluation` apps) cap
 the dataframe rows each simulated site reads with `MAX_SAMPLES` (Makefile default `128`, a

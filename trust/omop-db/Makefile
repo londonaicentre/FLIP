@@ -101,6 +101,20 @@ load-synthea-ehr:
 		--trust-index $(TRUST_INDEX) --num-trusts $(NUM_TRUSTS) \
 		--base-url $(SYNTHEA_EHR_BASE_URL) --cache-dir $(SYNTHEA_EHR_CACHE_DIR)
 
+# Load a licence holder's converted ADNI biomarker cohort into a RUNNING trust omop-db — the populate
+# side of the biomarker causal-discovery tutorial on a LOCAL dev stack. Downloads nothing: ADNI_COHORT
+# is the dataframe.csv that `make -C fl-tutorials convert-adni-cohort` built from the user's own IDA
+# download (gitignored, never committed). Appends this trust's person_id-modulo slice (ids shifted
+# clear of the imaging and Synthea bands) as person + measurement + observation rows; idempotent by
+# provenance (person_source_value 'adni-cohort-…'). The Data Use Agreement covers the user's own
+# machines only — never point this at a shared or published trust.
+#   make load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+#   make load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+ADNI_COHORT ?= ../../fl-tutorials/data/ad_biomarkers/dataframe.csv
+load-adni-cohort:
+	OMOP_DB_PORT=$(OMOP_DB_PORT) uv run python -m omop_db_tools.adni_cohort \
+		--cohort "$(ADNI_COHORT)" --trust-index $(TRUST_INDEX) --num-trusts $(NUM_TRUSTS)
+
 # Seed a RUNNING trust omop-db with the listed projects' rows for this trust
 # (FLIP#1100). Idempotent to re-run; `make -C trust ensure-seeded` runs it at
 # bring-up and again on a .data_version bump. Scoped, not destructive — only the
