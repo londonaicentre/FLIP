@@ -124,7 +124,9 @@ follow.
      images that commit changed, so ``TAG=sha-…`` is refused whenever one of them was never
      built at it — hold that one image at its own build if you must move to a ``sha-`` tag:
      ``FL_TAG=sha-…`` for the FL client (it becomes the kit's ``DOCKER_FL_TAG``),
-     ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` in the kit for the data services;
+     ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` in the kit for those data services. ``XNAT_TAG``
+     pins all three XNAT images together, but their builds no longer share ``sha-`` tags.
+     Set it to a release tag (or ``stag``/``prod``) published for all three images;
    - asks you to confirm (``YES=1`` skips the prompt for a scripted run), then writes the tag
      into your kit (``DOCKER_TAG`` and ``DOCKER_FL_TAG``), so the kit always records what is
      installed;
@@ -186,9 +188,11 @@ override for a site whose stores hold real data only.
 The kit's ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` opt-outs reach the chart as
 ``omopDb.image.pin`` / ``orthanc.image.pin`` / ``xnat.image.pin``, and ``DOCKER_FL_TAG`` as
 ``flClient.image.pin`` when it names a release or ``sha-`` tag; each beats ``global.image.tag``
-for that one image. That is the only way to move a Kubernetes site to a ``sha-`` tag one of
-them was never built at — a StatefulSet rolled onto a tag that does not exist stays down — and
-a release tag never needs one.
+for that image (or all three XNAT images for ``xnat.image.pin``). That is the only way to
+move a Kubernetes site to a ``sha-`` tag one of them was never built at — a StatefulSet
+rolled onto a tag that does not exist stays down — and a release tag never needs one.
+The three XNAT image builds no longer share ``sha-`` tags, so set ``XNAT_TAG`` (or
+``xnat.image.pin``) to a release tag (or ``stag``/``prod``) published for all three.
 
 Cloud (EC2) trust
 =================
