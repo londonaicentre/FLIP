@@ -386,7 +386,7 @@ Per-round, per-client metrics reach the FLIP UI through the reply ``Message``: p
 
 .. note::
 
-   **Arbitrary x-axis.** The key grammar is ``<label>[@<x_label>][.x_<V>]``: ``@<x_label>`` names the x-axis (e.g. ``epoch``) and ``.x_<V>`` is the coordinate on it (any float, e.g. ``"loss@wall_clock_s.x_12.5"``). A key with neither suffix is plotted at its FL global round on an axis titled "Global Rounds". The older ``.round_<N>`` suffix still parses but is deprecated. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI. This is the same grammar the NVFLARE ``SummaryWriter`` tags use, minus the ``.x_<V>`` part, which there is carried by ``global_step``.
+   **Arbitrary x-axis.** The key grammar is ``<label>[@<x_label>][.x_<V>]``: ``@<x_label>`` names the x-axis (e.g. ``epoch``) and ``.x_<V>`` is the coordinate on it (any float, e.g. ``"loss@wall_clock_s.x_12.5"``). A key with neither suffix is plotted at its FL global round on an axis titled "Global Rounds". A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI. This is the same grammar the NVFLARE ``SummaryWriter`` tags use, minus the ``.x_<V>`` part, which there is carried by ``global_step``.
 
 .. _flower-config-toml:
 

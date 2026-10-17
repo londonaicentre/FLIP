@@ -160,18 +160,6 @@ class TestHandleClientMetrics:
         assert by_label["TRAIN_LOSS"]["x_value"] == 1.5
         assert by_label["LR"]["x_value"] == 0.001
 
-    def test_legacy_round_suffix_still_parses(self):
-        """.round_<N> is the deprecated pre-x_value spelling and must keep working."""
-        msg = _build_message(metrics={"train_loss.round_5": 0.42}, site="Trust_1")
-        flip = Mock()
-
-        handle_client_metrics(msg, server_round=99, model_id=VALID_MODEL_ID, flip=flip)
-
-        ((_, kwargs),) = flip.send_metrics.call_args_list
-        assert kwargs["label"] == "TRAIN_LOSS"
-        assert kwargs["x_value"] == 5.0
-        assert kwargs["global_round"] == 99
-
     def test_malformed_x_suffix_leaves_key_intact(self):
         msg = _build_message(metrics={"train_loss.x_notanumber": 0.42}, site="Trust_1")
         flip = Mock()

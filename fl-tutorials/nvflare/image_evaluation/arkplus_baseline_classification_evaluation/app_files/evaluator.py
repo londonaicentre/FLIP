@@ -80,13 +80,6 @@ def load_config() -> dict:
         return json.load(f)
 
 
-def _autocast(enabled: bool = False):
-    """AMP autocast context — mirrors the legacy evaluator so inference results are identical."""
-    if hasattr(torch, "amp"):
-        return torch.amp.autocast(device_type="cuda", enabled=enabled)
-    return torch.cuda.amp.autocast(enabled=enabled)
-
-
 def resolve_model_config(config: dict) -> tuple[str, dict, list[tuple[int, str]], LesionDict]:
     """Resolve the single model's evaluation config and the target lesion order from ``config.json``.
 
@@ -149,7 +142,7 @@ def predict(
     """
     head_id = model_cfg["head_id"]
     with torch.no_grad():
-        with _autocast(enabled=model_cfg["amp"]):
+        with torch.amp.autocast(device_type="cuda", enabled=model_cfg["amp"]):
             _features, logits = model(images, head_n=head_id)
             probs = torch.sigmoid(logits).cpu().numpy()
 

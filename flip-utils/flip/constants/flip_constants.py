@@ -113,8 +113,6 @@ def get_flip_constants() -> DevSettings | ProdSettings:
     return _flip_constants_instance
 
 
-# For backward compatibility, provide FlipConstants as a property-like access
-# Users should migrate to get_flip_constants() for better lazy loading
 class _FlipConstantsProxy:
     """Proxy to provide lazy loading via attribute access.
 
