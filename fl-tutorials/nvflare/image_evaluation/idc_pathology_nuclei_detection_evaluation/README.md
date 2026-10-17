@@ -293,13 +293,16 @@ What turned out **not** to be in the way, despite looking like it might be:
   `sessionArchiveTimeoutInterval` (default 600 s) elapses after the last instance, so sessions
   appear ~10 minutes after transfer completes rather than immediately.
 
-Two operational notes worth having before the first run:
+Three operational notes worth having before the first run:
 
 - The cohort must clear the trust's `COHORT_QUERY_THRESHOLD` (default 10) before any row-level data
   is released, which is why the tutorial ships twelve slides per site rather than five.
 - An Orthanc seeded by an older version of this tutorial still holds the annotation series;
   `seed-idc-pathology` prunes them, because leaving them behind reintroduces the C-MOVE failure
   above.
+- A fresh pull of the twelve slides into XNAT took about 5 minutes per trust on the dev stack
+  (2026-10-17). To iterate on a demo recording without re-pulling, reuse an approved project with
+  `--project-id`.
 
 The tutorial also runs under `LOCAL_DEV`, reading slides from disk, so it can still be developed and
 reviewed without a trust.
