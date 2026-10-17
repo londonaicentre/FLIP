@@ -148,7 +148,11 @@ class TestConfigureFindsItsOwnStack:
 
         assert result.returncode == 0, f"xnat-configure failed:\n{result.stdout}{result.stderr}"
         execs = host.execs()
-        assert len(execs) == 2, f"expected configure-xnat.sh then configure-dcm2niix.sh, got {execs}"
+        # One exec per configuration script, in the order the recipe chains them; setup-datatypes.sh
+        # registers the slide-microscopy data type after the viewer and converter are configured.
+        expected = ["configure-xnat.sh", "configure-dcm2niix.sh", "setup-datatypes.sh"]
+        ran = [script for argv in execs for script in expected if f"bash {script}" in argv[-1]]
+        assert ran == expected, f"expected {expected} in order, got {execs}"
         for argv in execs:
             # `docker exec [-e K=V] <container> bash -c …` — one container, then the program.
             while argv[0] == "-e":
@@ -161,10 +165,11 @@ class TestConfigureFindsItsOwnStack:
         host = _Host(tmp_path, TWO_STACKS)
         host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
-        configure_xnat, configure_dcm2niix = host.execs()
+        configure_xnat, *later = host.execs()
         assert configure_xnat[:3] == ["-e", "XNAT_PLUGIN_READINESS_ROSTER=1", WANTED_ID], configure_xnat
         assert "configure-xnat.sh" in configure_xnat[-1]
-        assert "XNAT_PLUGIN_READINESS_ROSTER=1" not in configure_dcm2niix, "only configure-xnat.sh runs the wait"
+        for argv in later:
+            assert "XNAT_PLUGIN_READINESS_ROSTER=1" not in argv, "only configure-xnat.sh runs the wait"
 
     def test_refuses_an_ambiguous_match(self, tmp_path: Path) -> None:
         """Two containers of the wanted service is not a lookup to resolve — it is an error to name."""

@@ -31,6 +31,8 @@ from playwright.sync_api import Locator, Page, expect
 from tests.demo_recorder import Take
 
 UUID_PATH = r"[0-9a-f-]{36}$"
+# Segment 6's last line, for the training apps; a profile that trains nothing supplies its own.
+CLOSING_CAPTION = "A model trained across every hospital — while the data never left any of them"
 
 
 @dataclass(frozen=True)
@@ -314,16 +316,31 @@ SEGMENTATION_IN_VIEW_JS = """
 """
 
 
+def clear_xnat_timeout_cookies(page: Page) -> None:
+    """Reset the sticky cookies behind XNAT's "User session ended" dialog.
+
+    XNAT's sessionTimer.js stamps ``SESSION_ACTIVE`` from ``window.loggedIn``, which is false on the
+    login page, so a timer tick there raises the dialog and latches ``SESSION_TIMED_OUT=true``; every
+    later page re-raises it, and its OK button only reloads into it. Only "renew" on the warning dialog
+    clears the latch, which a take never sees, so clear it here instead.
+    """
+    origin = re.match(r"https?://[^/]+", page.url)
+    if origin:
+        names = ("SESSION_TIMED_OUT", "SESSION_DIALOG_OPEN", "SESSION_DIALOG_CANCELLED")
+        page.context.add_cookies([{"name": name, "value": "false", "url": origin.group(0)} for name in names])
+
+
 def clear_xnat_session_mask(rec: Take) -> None:
     """Dismiss XNAT's "User session ended" dialog and its greyed "Session Expired" mask, if up.
 
-    XNAT pops the dialog when an older session of the user is culled mid-page, and its timeout widget
-    can read a stale expiration cookie and grey the whole page; a fresh load re-stamps the cookie.
+    Dismissing the dialog alone does not stop it coming back (``clear_xnat_timeout_cookies``), and it
+    can leave the shade greying the page; a fresh load re-runs the timer signed in and repaints.
     """
     page = rec.page
     ok = page.locator("button:visible", has_text=re.compile(r"^\s*OK\s*$"))
     if ok.count():
         ok.first.click()
+    clear_xnat_timeout_cookies(page)
     if page.get_by_text("Session Expired").count():
         page.reload()
         if ok.count():
@@ -342,6 +359,8 @@ def xnat_ohif(
     page.goto("/")
     form = page.locator("form#login_form")
     form.wait_for()
+    # Before the login, too: the login page's own timer tick is what latches the dialog.
+    clear_xnat_timeout_cookies(page)
     rec.start()
     rec.caption("Meanwhile, inside the trust: the cohort's imaging has been imported into XNAT", 1200)
     rec.type(form.locator("input[name='username']"), username)
@@ -485,38 +504,58 @@ def follow_progress(rec: Take, researcher: Persona, project_id: str, model_id: s
     rec.pause(7000)
 
 
-def download_results(rec: Take, researcher: Persona, project_id: str, model_id: str) -> None:
-    """Segment 6: the finished run, and its aggregated results downloaded through a presigned URL."""
+def download_results(
+    rec: Take,
+    researcher: Persona,
+    project_id: str,
+    model_id: str,
+    closing_caption: str = CLOSING_CAPTION,
+    evaluation: bool = False,
+) -> None:
+    """Segment 6: the finished run, and its aggregated results downloaded through a presigned URL.
+
+    An evaluation trains nothing: its charts are each trust's final scores, and the download is the
+    evaluation results rather than a global model.
+    """
     page = rec.page
     sign_in(rec, researcher, scenic=False)
     page.goto(f"/project/{project_id}/model/{model_id}")
     by_test(page, "training-timeline").wait_for()
     # The download button and an empty chart both render before /metrics and /logs answer; a
     # rendered log line means the run's data has arrived, so the dashboard is shown complete.
+    # Not a canvas: a run with no metrics (an evaluation) renders the empty-state panel and none.
     by_test(page, "download-results-btn").wait_for(state="attached", timeout=120000)
-    page.locator("canvas").first.wait_for(timeout=120000)
     by_test(page, "log-timestamp").first.wait_for(timeout=120000)
     rec.start()
 
-    rec.caption("Training complete — results are uploaded from the FL network", 1200)
+    rec.caption(
+        f"{'Evaluation' if evaluation else 'Training'} complete — results are uploaded from the FL network", 1200
+    )
     rec.pause(2000)
-    rec.caption("The finished training curves, every trust side by side", 600)
-    rec.scroll_to(page.locator("canvas").first)
-    rec.click(by_test(page, "metrics-view-grid"))
-    by_test(page, "metrics-grid").wait_for()
-    rec.pause(3000)
-    # The grid sorts by metric name, so an app with many TEST-* plots (xray) pushes its
-    # training curves below the fold; scroll down to them.
-    train_cell = page.locator('[data-test^="metrics-grid-cell-train" i]')
-    if train_cell.count():
-        rec.scroll_to(train_cell.first, pause_ms=1500)
-        rec.pause(4000)
-    rec.caption("Downloading the aggregated global model", 800)
+    # No metrics means no view switcher, so the curves beat only plays when there are curves.
+    if by_test(page, "metrics-view-grid").count():
+        rec.caption(
+            "Each trust's scores, side by side"
+            if evaluation
+            else "The finished training curves, every trust side by side",
+            600,
+        )
+        rec.scroll_to(page.locator("canvas").first)
+        rec.click(by_test(page, "metrics-view-grid"))
+        by_test(page, "metrics-grid").wait_for()
+        rec.pause(3000)
+        # The grid sorts by metric name, so an app with many TEST-* plots (xray) pushes its
+        # training curves below the fold; scroll down to them.
+        train_cell = page.locator('[data-test^="metrics-grid-cell-train" i]')
+        if train_cell.count():
+            rec.scroll_to(train_cell.first, pause_ms=1500)
+            rec.pause(4000)
+    rec.caption("Downloading the evaluation results" if evaluation else "Downloading the aggregated global model", 800)
     download_btn = by_test(page, "download-results-btn")
     rec.scroll_to(download_btn)
     expect(download_btn).to_be_enabled(timeout=120000)
     with page.expect_download(timeout=60000):
         rec.click(download_btn)
     rec.pause(3500)
-    rec.caption("A model trained across every hospital — while the data never left any of them", 500)
+    rec.caption(closing_caption, 500)
     rec.pause(4000)

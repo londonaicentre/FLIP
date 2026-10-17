@@ -189,6 +189,11 @@ trust's PACS team supplies; what they supply is covered above.
      - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM; the receiver is
        host-published too, so this must differ from ``XNAT_PORT`` — the deploy refuses a collision
      - ``8105``
+   * - ``XNAT_SITE_URL``
+     - The URL a browser opens XNAT at, written to XNAT's ``siteUrl``. Set it on any host whose XNAT is
+       opened from another machine: the OHIF viewer fetches its images from that URL, so a wrong value
+       renders the viewport black. Helm: ``xnat.web.siteUrl``
+     - ``http://127.0.0.1:${XNAT_WEB_PORT}``
    * - ``PACS_SUPPORTS_EXTENDED_NEGOTIATIONS``
      - Whether the PACS supports relational queries / extended negotiation. A capability of the
        PACS, not a preference — see the table above

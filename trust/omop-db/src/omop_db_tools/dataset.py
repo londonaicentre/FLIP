@@ -64,8 +64,10 @@ CANONICAL_TABLES = [
 ]
 
 # Not every project ships every table (e.g. the cxr project has observations but
-# no measurements; spleen the other way round).
-OPTIONAL_TABLES = frozenset({"measurement", "observation"})
+# no measurements; spleen the other way round). image_feature is optional too: it
+# holds labels projected into OMOP, and a project whose labels live in XNAT instead
+# (the pathology project's nuclei annotations arrive by data enrichment) has none.
+OPTIONAL_TABLES = frozenset({"image_feature", "measurement", "observation"})
 
 DEFAULT_PROJECTS = ["cxr_project", "spleen_project"]
 

@@ -318,6 +318,33 @@ prefixes of spleen/cxr and of Synthea's band. PI-CAI is **CC BY-NC 4.0** (images
 which the dataset card records — the prostate-derived content is the one non-commercial part of
 `aicentreflip/trust-data`.
 
+### IDC pathology: from a published slide manifest
+
+[`idc_pathology/`](idc_pathology/) is another shape. Its imaging is neither generated in-tree
+(spleen) nor private (cxr) but **public and fetched on demand** from the NCI Imaging Data Commons,
+so nothing of it is re-hosted on `aicentreflip/trust-data` — there is no
+`dicom/pathology_project.tar.gz` and no snapshot. What is published is the fixed input and the
+export it yields, in the cxr shape: `omop-csv/pathology_project/source/manifest.csv` (the lockfile
+naming every selected slide, its UIDs, its site and the IDC index version) and the four tables
+`build_omop_project.py` derives from it, first published as tag `20260911`. No `image_feature`:
+the labels are nuclei annotations that reach a trust's XNAT by data enrichment, not OMOP rows.
+
+```bash
+make -C fl-tutorials fetch-idc-pathology-manifest      # the published canonical input -> data/idc_pathology/
+make -C fl-tutorials build-idc-pathology-omop          # -> omop/<trust>/pathology_project/*.csv
+make -C fl-tutorials verify-idc-pathology-omop-tables  # faithfulness gate
+make -C fl-tutorials reproduce-idc-pathology-omop      # the three above, chained
+```
+
+`download-idc-pathology-data` runs the fetch itself before pulling the slides, so every developer
+downloads the same subset. Re-selecting (`IDC_RESOLVE=1`) writes a fresh manifest to the same
+gitignored place and is published as a **new data version** rather than committed: build the
+canonical tree from the per-trust output (`trust/omop-db`: `omop_db_tools.dataset build`), drop the
+manifest in as `pathology_project/source/manifest.csv`, `make -C trust publish-trust-data
+VERSION=<tag> OMOP_CSV=<tree>`, bump `trust/.data_version`, and re-run the gate. Seeding a running
+trust follows the same split: OMOP through `make -C trust seed-omop PROJECTS=pathology_project`,
+slides from the local IDC download (`seed-idc-pathology`).
+
 ### The shared contract
 
 [`utils/`](utils/) holds what every dataset's converter agrees on, and nothing that is a property
