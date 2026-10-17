@@ -15,22 +15,24 @@ import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import { FileUploadStatus, IRequiredFile } from "@/interfaces/model/types";
 import TrainingOptions from "@/partials/models/TrainingOptions.vue";
 import type { IProjectTrust } from "@/services/project-service";
 
 // AiSwitch is the vee-validate field; we stub it to expose the `name` and `value`
 // it is bound to, so we can assert the trust is selected by its UUID id (not name).
 const aiSwitchStub = {
-    props: ["name", "value", "dataTest", "label", "hideError", "disabled"],
+    props: ["name", "value", "dataTest", "label", "ariaLabel", "hideError", "disabled"],
     template: "<button :data-test=\"dataTest\" :data-name=\"name\" :data-value=\"value\" " +
-        ":disabled=\"disabled\" />"
+        ":aria-label=\"ariaLabel\" :data-label=\"label && JSON.stringify(label)\" :disabled=\"disabled\" />"
 };
 
 function mountTrainingOptions(
     approvedTrusts: IProjectTrust[],
     disabled = false,
     hasImaging: boolean | undefined = undefined,
-    flBackendLabel: string | undefined = undefined
+    flBackendLabel: string | undefined = undefined,
+    files: { requiredFiles?: IRequiredFile[] } = {}
 ) {
     return mount(TrainingOptions, {
         global: {
@@ -53,7 +55,8 @@ function mountTrainingOptions(
         props: {
             errors: {},
             disabled,
-            flBackendLabel
+            flBackendLabel,
+            ...files
         }
     });
 }
@@ -97,6 +100,14 @@ describe("TrainingOptions trust selection", () => {
         expect(switches[1].attributes("data-value")).toBe("id-beta");
         // The display name must never leak into the value.
         expect(switches[0].attributes("data-value")).not.toBe("Alpha Trust");
+    });
+
+    it("names each trust switch after its trust, with no Included/Excluded text", () => {
+        const wrapper = mountTrainingOptions(trusts);
+        const switches = wrapper.findAll("[data-test^='trust-selection-']");
+
+        expect(switches[0].attributes("aria-label")).toBe("Alpha Trust (ALPHA)");
+        expect(switches[0].attributes("data-label")).toBeUndefined();
     });
 
     it("collects the selected trusts under the `trust_ids` form field", () => {
@@ -248,5 +259,106 @@ describe("TrainingOptions GPU request (FLIP#70)", () => {
         const wrapper = mountTrainingOptions([], false, undefined, "NVFlare");
 
         expect(wrapper.text()).not.toContain("Flower does not schedule jobs by GPU");
+    });
+});
+
+describe("TrainingOptions required files row", () => {
+    const { COMPLETED, SCANNING, UPLOADING, ERROR, INFECTED } = FileUploadStatus;
+    const mountWithFiles = (requiredFiles: IRequiredFile[]) =>
+        mountTrainingOptions([], false, undefined, undefined, { requiredFiles });
+    const summary = (w: ReturnType<typeof mountWithFiles>) => w.find("[data-test=required-files-summary]");
+    const pill = (w: ReturnType<typeof mountWithFiles>) => w.find("[data-test=required-files-status]");
+
+    it("lists the missing files and counts the ready ones", () => {
+        const wrapper = mountWithFiles([
+            { name: "client_app.py" },
+            {
+                name: "config.json",
+                status: COMPLETED
+            },
+            { name: "models.py" }
+        ]);
+
+        expect(summary(wrapper).text()).toBe("Missing client_app.py, models.py");
+        expect(pill(wrapper).text()).toBe("1 of 3");
+        expect(pill(wrapper).classes()).toContain("bg-amber-100");
+    });
+
+    it("reads Checking while the only thing left is uploads and checks finishing", () => {
+        const wrapper = mountWithFiles([
+            {
+                name: "client_app.py",
+                status: UPLOADING
+            },
+            {
+                name: "config.json",
+                status: SCANNING
+            },
+            {
+                name: "models.py",
+                status: COMPLETED
+            }
+        ]);
+
+        expect(summary(wrapper).text()).toBe("Uploading client_app.py · Checking config.json");
+        expect(pill(wrapper).text()).toBe("Checking");
+        expect(pill(wrapper).classes()).toContain("bg-amber-100");
+    });
+
+    it("names failed and unsafe files first and keeps counting", () => {
+        const wrapper = mountWithFiles([
+            {
+                name: "client_app.py",
+                status: SCANNING
+            },
+            {
+                name: "config.json",
+                status: ERROR
+            },
+            {
+                name: "model.pt",
+                status: INFECTED
+            },
+            {
+                name: "models.py",
+                status: COMPLETED
+            }
+        ]);
+
+        expect(summary(wrapper).text())
+            .toBe("Unsafe content model.pt · Upload failed config.json · Checking client_app.py");
+        expect(pill(wrapper).text()).toBe("1 of 4");
+    });
+
+    it("reads complete, in green, once every required file has passed its check", () => {
+        const wrapper = mountWithFiles([{
+            name: "config.json",
+            status: COMPLETED
+        }]);
+
+        expect(summary(wrapper).text()).toBe("All required files uploaded");
+        expect(pill(wrapper).text()).toBe("Complete");
+        expect(pill(wrapper).classes()).toContain("bg-green-100");
+    });
+
+    it("is the first row of the checklist", () => {
+        const wrapper = mountWithFiles([{ name: "config.json" }]);
+        const row = wrapper.find("[data-test=required-files-row]");
+
+        expect(row.element.parentElement?.firstElementChild).toBe(row.element);
+    });
+
+    it("is hidden when the required files are unknown", () => {
+        const wrapper = mountWithFiles([]);
+
+        expect(wrapper.find("[data-test=required-files-row]").exists()).toBe(false);
+    });
+
+    it("escapes file names so user-controlled values cannot inject HTML", () => {
+        const payload = "<img src=x onerror=alert(1)>";
+        const wrapper = mountWithFiles([{ name: payload }]);
+
+        expect(summary(wrapper).find("img").exists()).toBe(false);
+        expect(summary(wrapper).html()).toContain("&lt;img");
     });
 });

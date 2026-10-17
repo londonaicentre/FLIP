@@ -70,7 +70,8 @@ describe("Model Dashboard - Post Training", () => {
         cy.getBySel("initiate-training-btn").should("not.exist");
         // TrainingActionsMenu now exposes stop-training-btn / download-results-btn
         // directly — the old "user-btn" dropdown wrapper is gone.
-        cy.getBySel("stop-training-btn").should("be.disabled");
+        cy.getBySel("download-results-btn").should("exist");
+        cy.getBySel("stop-training-btn").should("not.exist");
     });
 
 

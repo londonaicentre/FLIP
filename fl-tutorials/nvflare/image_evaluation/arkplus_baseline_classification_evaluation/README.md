@@ -168,12 +168,12 @@ Useful targets: `make prepare-checkpoint` (convert the raw checkpoint only), `ma
 ## Output metrics
 
 The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collected by the server into
-`evaluation_results.json` keyed by site then model:
+`evaluation_results.json` keyed by site then model (NVFLARE prefixes server-side models with `SRV_`):
 
 ```json
 {
     "site-1": {
-        "arkplus_pretrained": {
+        "SRV_arkplus_pretrained": {
             "auroc_Effusion": 0.998,
             "auroc_Consolidation": 0.989,
             "auroc_Infiltration": 0.863,

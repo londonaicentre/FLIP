@@ -105,10 +105,9 @@ also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matchin
 service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
 for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`
 kit whose ownership doesn't match is not fixed by a capability either — it is fixed by the `user:` override
-above, which runs the container as the host user that already owns the kit. Production adds back `DAC_OVERRIDE` and `FOWNER`, equally inert for the current non-root image
-but retained for legacy root-image compat — a trust pinning a pre-GHSA-8465 `DOCKER_FL_TAG` still runs that
-entrypoint as root, and `cap_drop: ALL` would strip the DAC bypass its unguarded kit writes rely on (see
-[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions) for the full rationale). None of
+above, which runs the container as the host user that already owns the kit. Production adds nothing back
+either: the provisioning Ansible pre-chowns its kit directory to the container's uid (see
+[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)). None of
 this covers the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
 which remains unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way
 whenever someone picks it up.

@@ -588,7 +588,8 @@ Stop Training
 
 .. note::
 
-   If the training has already completed the 'Stop Training' option will be greyed out (see :ref:`view-results`).
+   The 'Stop Training' button only shows while the model is queued or training; once training has ended it is
+   hidden (see :ref:`view-results`).
 
 1. Click the 'Actions' drop-down menu
 2. Click the 'Stop Training' button

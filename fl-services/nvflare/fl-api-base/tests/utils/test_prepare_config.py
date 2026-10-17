@@ -462,7 +462,7 @@ class TestConfigureServer:
         modified_config = args[0]
         assert modified_config["model_id"] == MOCK_APP_NAME
         assert modified_config["global_rounds"] == 3
-        assert modified_config["min_clients"] == 2
+        assert "min_clients" not in modified_config
         assert modified_config["workflows"][2]["args"]["participating_clients"] == MOCK_APP_CLIENTS
         assert modified_config["workflows"][1]["args"]["ignore_result_error"] is True
         assert modified_config["components"][2]["name"] == "new_aggregator"
@@ -523,11 +523,9 @@ class TestConfigureServer:
         """Recipe-generated templates also carry a LITERAL min_clients (default 1) — with 2 trusts
         that lets ScatterAndGather close every round on the fastest trust's update alone, silently
         dropping the slower trust's contributions (observed live: a 2-trust 20-round job aggregated
-        20/20 updates from one trust, 0 from the other). Must be overridden to the trust count;
-        the executor templates' "{min_clients}" string placeholder must survive untouched."""
+        20/20 updates from one trust, 0 from the other). Must be overridden to the trust count."""
         config = self._minimal_server_config()
         config["workflows"][0]["args"]["min_clients"] = 1  # literal, as FedJob serialises it
-        config["workflows"].append({"args": {"min_clients": "{min_clients}"}})  # executor-style
         mock_read_config.return_value = config
 
         configure_server(
@@ -542,8 +540,6 @@ class TestConfigureServer:
 
         (modified_config, _), _ = mock_write_config.call_args
         assert modified_config["workflows"][0]["args"]["min_clients"] == len(MOCK_APP_CLIENTS)
-        assert modified_config["workflows"][1]["args"]["min_clients"] == "{min_clients}"
-        assert modified_config["min_clients"] == len(MOCK_APP_CLIENTS)
 
     def test_configure_server_diffusion_recipe_overrides_min_clients_only(
         self, mock_isfile, mock_read_config, mock_write_config
@@ -841,7 +837,7 @@ class TestConfigureServer:
     def test_configure_server_evaluation_recipe_config(self, mock_isfile, mock_read_config, mock_write_config):
         """The recipe-generated ``evaluation`` server config has no aggregator component and
         workflows without ``participating_clients``/``ignore_result_error`` (GlobalModelEval discovers
-        clients at runtime). The generic assembly must still set model_id/global_rounds/min_clients and
+        clients at runtime). The generic assembly must still set model_id/global_rounds and
         leave those args untouched — i.e. a new recipe job type needs no prepare_config changes."""
         mock_server_config = {
             "format_version": 2,
@@ -878,7 +874,9 @@ class TestConfigureServer:
         args, _ = mock_write_config.call_args
         modified = args[0]
         assert modified["model_id"] == MOCK_APP_NAME
-        assert modified["min_clients"] == 2
+        assert "min_clients" not in modified
+        # InitEvaluation waits for every client itself, so nothing is injected into it.
+        assert modified["workflows"][0]["args"] == {"model_id": None}
         # No participating_clients/ignore_result_error keys are injected (not present in the recipe args),
         # and no component is treated as an aggregator.
         assert "participating_clients" not in modified["workflows"][1]["args"]

@@ -12,8 +12,8 @@
 -->
 
 <template>
-    <!-- The card fills the height its column is given; the file list is what
-         scrolls, so the heading and the uploader stay put. -->
+    <!-- The card fills the height its column is given; only the file list and the
+         uploader below it scroll, so the heading and the required-files summary stay put. -->
     <section class="flex flex-col flex-1 min-h-0">
         <AiCard class="flex flex-col flex-1 min-h-0">
             <div class="flex flex-col flex-1 min-h-0">
@@ -35,126 +35,165 @@
                     </AiButton>
                 </div>
                 <div class="flex flex-col flex-1 min-h-0 border-t border-gray-200 dark:border-dark-border">
-                    <!-- Suppressed while the job types are unknown: `jobType` is still the
-                         "standard" default then, so stating it would be a guess. Training.vue
-                         carries the explanation and the retry. -->
-                    <AiAlert
-                        v-if="canUpload && !jobTypesError"
-                        variant="info"
-                        class="w-full"
-                        :rounded="false"
-                        :bordered="false"
-                    >
-                        <div class="text-xs leading-snug">
-                            Your current job type is: <strong><code>{{ jobType }}</code></strong>.
-                            If you want to change it, add it as a <code>job_type</code> variable in your
-                            <code>config.json</code> file.
+                    <!-- Hidden while the job types are unknown: `jobType` is still the "standard"
+                         default then and `requiredFiles` is empty, so stating either would be a
+                         guess. Training.vue carries the explanation and the retry. -->
+                    <div v-if="showRequired" class="px-4 pt-3 pb-2 space-y-2.5 shrink-0" data-test="required-files-header">
+                        <div class="flex items-baseline justify-between gap-2">
+                            <span class="text-xs font-semibold tracking-[0.08em] text-gray-500 dark:text-gray-300">
+                                FILES · REQUIRED
+                            </span>
+                            <span
+                                data-test="required-files-counter"
+                                class="font-mono text-xs"
+                                :class="requiredComplete ? 'text-green-600 dark:text-green-400' : 'text-amber-700 dark:text-amber-400'"
+                            >
+                                {{ requiredUploadedCount }} / {{ requiredFiles.length }}
+                            </span>
                         </div>
-                    </AiAlert>
-                    <div v-if="canUpload" class="flow-root p-2">
-                        <div class="flex flex-col">
-                            <template v-if="loading">
-                                <AiSkeleton class="w-full h-32 border-2 border-dashed rounded-lg border-primary-300" />
-                            </template>
+                        <div class="flex flex-wrap items-center gap-1.5 text-[13px] text-gray-600 dark:text-gray-300">
+                            <span v-if="flBackendLabel" :class="backendChipClass" data-test="fl-backend-chip">
+                                {{ flBackendLabel }}
+                            </span>
+                            <span :class="[CHIP_CLASS, 'font-mono text-xs']" data-test="job-type-chip">
+                                job_type: {{ jobType }}
+                            </span>
+                            <span
+                                v-if="canUpload"
+                                v-tippy="'Set job_type in your config.json to change'"
+                                tabindex="0"
+                                class="underline cursor-help decoration-dotted underline-offset-[3px]"
+                            >
+                                How to change
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Scrolling with the list keeps the drop zone after the last file
+                         instead of squeezing the list. -->
+                    <div class="flex-1 min-h-0 overflow-y-auto">
+                        <template v-if="loading">
+                            <AiSkeleton class="w-full h-10" />
+                            <AiSkeleton class="w-full h-6" />
+                            <AiSkeleton class="w-full h-6" />
+                            <AiSkeleton class="w-full h-6" />
+                        </template>
+
+                        <!-- Required files first, in the backend's order, as placeholders until
+                             uploaded; then everything else. -->
+                        <ul
+                            v-else-if="fileRows.length"
+                            role="list"
+                        >
+                            <li
+                                v-for="row in fileRows"
+                                :key="row.file?.id ?? `required-${row.name}`"
+                                :data-test="row.file ? 'model-file-row' : 'required-file-placeholder'"
+                                class="flex flex-row items-center gap-2.5 mx-4 py-2 border-t border-gray-100 dark:border-dark-border transition group"
+                            >
+                                <span
+                                    v-if="!row.file"
+                                    class="w-[18px] h-[18px] rounded-full bg-white dark:bg-dark-canvas border-[1.5px] border-dashed border-gray-300 dark:border-gray-600 shrink-0"
+                                    data-test="file-status-missing"
+                                    aria-label="Missing"
+                                />
+                                <div
+                                    v-else
+                                    class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-dark-canvas ring-2 ring-offset-1 dark:ring-offset-dark-canvas shrink-0"
+                                    :class="[
+                                        row.file.status === FileUploadStatus.COMPLETED &&
+                                            'ring-green-600/70 dark:ring-green-400',
+                                        row.file.status === FileUploadStatus.UPLOADING &&
+                                            'ring-gray-400/70 dark:ring-gray-600',
+                                        row.file.status === FileUploadStatus.SCANNING &&
+                                            'ring-amber-500/70 dark:ring-amber-400',
+                                        row.file.status === FileUploadStatus.ERROR && 'ring-red-600/70 dark:ring-red-400',
+                                        row.file.status === FileUploadStatus.INFECTED && 'ring-red-600 dark:ring-red-500',
+                                    ]"
+                                >
+                                    <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
+                                        <Transition name="fade" mode="out-in">
+                                            <AiLoader v-if="row.file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" aria-label="Uploading" />
+                                            <!-- Its own mark, not the upload spinner: the bytes are safely
+                                                 stored, what's pending is the release check (#52). Worded as
+                                                 "checked" rather than "scanned for malware" because only
+                                                 pickle-bearing files get a scan that can block release —
+                                                 Python source instead gets a non-blocking Bandit pass (#877)
+                                                 that never gates promotion, so a malware claim here would
+                                                 still be false. -->
+                                            <icon-ph-magnifying-glass-duotone
+                                                v-else-if="row.file.status === FileUploadStatus.SCANNING"
+                                                class="text-amber-600 dark:text-amber-400 animate-pulse"
+                                                data-test="file-upload-status-scanning"
+                                                aria-label="Checking file"
+                                                title="Being checked before it can be used for training. Model checkpoints and other pickle files are also scanned for unsafe content."
+                                            />
+                                            <icon-ph-file-duotone v-else-if="row.file.status === FileUploadStatus.COMPLETED" data-test="file-upload-status-completed" aria-label="Ready" />
+                                            <icon-ph-virus-duotone
+                                                v-else-if="row.file.status === FileUploadStatus.INFECTED"
+                                                class="text-red-600 dark:text-red-400"
+                                                data-test="file-upload-status-infected"
+                                                aria-label="Unsafe content detected"
+                                                title="Unsafe content detected — the file was removed. Delete this entry and upload a fixed file."
+                                            />
+                                            <icon-ph-x-circle-duotone v-else-if="row.file.status === FileUploadStatus.ERROR" data-test="file-upload-status-error" aria-label="Upload failed" />
+                                        </Transition>
+                                    </div>
+                                </div>
+                                <div class="flex flex-col min-w-0 grow">
+                                    <div class="flex flex-row items-center gap-2 min-w-0">
+                                        <p
+                                            data-test="file-name"
+                                            class="font-mono text-[13px] truncate"
+                                            :class="row.file
+                                                ? 'font-semibold text-primary-500 dark:text-primary-200'
+                                                : 'text-gray-500 dark:text-gray-300'"
+                                            :title="row.name"
+                                        >
+                                            {{ row.name }}
+                                        </p>
+                                        <!-- Advisory only (#877) — the file is still COMPLETED and usable;
+                                             this is a signal for the reviewer, not a rejection. -->
+                                        <icon-ph-warning-fill
+                                            v-if="row.file?.bandit_findings?.length"
+                                            class="text-amber-500 dark:text-amber-400 shrink-0 w-4 h-4"
+                                            data-test="file-bandit-findings-indicator"
+                                            :aria-label="`${row.file.bandit_findings.length} static-analysis finding(s)`"
+                                            :title="banditFindingsTooltip(row.file.bandit_findings)"
+                                        />
+                                    </div>
+                                    <p
+                                        class="text-xs"
+                                        :class="row.file ? 'text-gray-500 dark:text-gray-300' : 'text-amber-700 dark:text-amber-400'"
+                                    >
+                                        {{ rowMeta(row) }}
+                                    </p>
+                                </div>
+                                <div v-if="row.file" class="flex gap-2 shrink-0">
+                                    <Transition name="fade">
+                                        <AiButton
+                                            v-if="!isViewer && row.file.status === FileUploadStatus.COMPLETED"
+                                            small
+                                            :loading="downloadingFile === row.name"
+                                            :aria-label="`Download ${row.name}`"
+                                            @click="() => downloadFile(row.name)"
+                                        >
+                                            <icon-ph-download-duotone />
+                                        </AiButton>
+                                    </Transition>
+                                    <Transition name="fade">
+                                        <AiButton v-if="canUpload && DELETABLE_STATUSES.includes(row.file.status)" small :aria-label="`Delete ${row.name}`" @click="() => confirmDeleteFile(row.name)">
+                                            <icon-ph-trash-duotone class="text-red-500 dark:text-red-400" />
+                                        </AiButton>
+                                    </Transition>
+                                </div>
+                            </li>
+                        </ul>
+
+                        <div v-if="canUpload" class="px-4 pt-2 pb-4">
                             <FileUpload @new-files="uploadFile" />
                         </div>
                     </div>
-                    <template v-if="loading">
-                        <AiSkeleton class="w-full h-10" />
-                        <AiSkeleton class="w-full h-6" />
-                        <AiSkeleton class="w-full h-6" />
-                        <AiSkeleton class="w-full h-6" />
-                    </template>
-
-
-                    <ul
-                        v-else-if="internalFiles.concat(uploadingFiles).length"
-                        role="list"
-                        class="flex-1 min-h-0 overflow-y-auto border-t divide-y divide-gray-200 border-t-gray-200 dark:divide-dark-border dark:border-t-gray-700"
-                    >
-                        <li v-for="file in internalFiles.concat(uploadingFiles)" :key="file.id" class="flex flex-row items-center gap-3 px-4 py-1.5 transition group">
-                            <div
-                                class="relative flex items-center justify-end transition bg-white rounded-full w-5 h-5 dark:bg-dark-canvas ring-2 ring-offset-1 dark:ring-offset-dark-canvas shrink-0"
-                                :class="[
-                                    file.status === FileUploadStatus.COMPLETED &&
-                                        'ring-green-600/70 dark:ring-green-400',
-                                    file.status === FileUploadStatus.UPLOADING &&
-                                        'ring-gray-400/70 dark:ring-gray-600',
-                                    file.status === FileUploadStatus.SCANNING &&
-                                        'ring-amber-500/70 dark:ring-amber-400',
-                                    file.status === FileUploadStatus.ERROR && 'ring-red-600/70 dark:ring-red-400',
-                                    file.status === FileUploadStatus.INFECTED && 'ring-red-600 dark:ring-red-500',
-                                ]"
-                            >
-                                <div class="relative flex items-center justify-center w-full h-full text-gray-700 bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-dark-surface dark:text-gray-300 dark:border-dark-border-strong text-[10px]">
-                                    <Transition name="fade" mode="out-in">
-                                        <AiLoader v-if="file.status === FileUploadStatus.UPLOADING" small data-test="file-upload-status-uploading" aria-label="Uploading" />
-                                        <!-- Its own mark, not the upload spinner: the bytes are safely
-                                             stored, what's pending is the release check (#52). Worded as
-                                             "checked" rather than "scanned for malware" because only
-                                             pickle-bearing files get a scan that can block release —
-                                             Python source instead gets a non-blocking Bandit pass (#877)
-                                             that never gates promotion, so a malware claim here would
-                                             still be false. -->
-                                        <icon-ph-magnifying-glass-duotone
-                                            v-else-if="file.status === FileUploadStatus.SCANNING"
-                                            class="text-amber-600 dark:text-amber-400 animate-pulse"
-                                            data-test="file-upload-status-scanning"
-                                            aria-label="Checking file"
-                                            title="Being checked before it can be used for training. Model checkpoints and other pickle files are also scanned for unsafe content."
-                                        />
-                                        <icon-ph-file-duotone v-else-if="file.status === FileUploadStatus.COMPLETED" data-test="file-upload-status-completed" aria-label="Ready" />
-                                        <icon-ph-virus-duotone
-                                            v-else-if="file.status === FileUploadStatus.INFECTED"
-                                            class="text-red-600 dark:text-red-400"
-                                            data-test="file-upload-status-infected"
-                                            aria-label="Unsafe content detected"
-                                            title="Unsafe content detected — the file was removed. Delete this entry and upload a fixed file."
-                                        />
-                                        <icon-ph-x-circle-duotone v-else-if="file.status === FileUploadStatus.ERROR" data-test="file-upload-status-error" aria-label="Upload failed" />
-                                    </Transition>
-                                </div>
-                            </div>
-                            <div class="flex flex-row items-baseline gap-2 min-w-0 grow">
-                                <p
-                                    class="text-sm font-semibold text-primary-600 dark:text-primary-200 truncate"
-                                    :title="file.name"
-                                >
-                                    {{ file.name }}
-                                </p>
-                                <div class="text-xs font-mono text-gray-500 dark:text-gray-300 shrink-0">
-                                    {{ formatBytes(file.size) }}
-                                </div>
-                                <!-- Advisory only (#877) — the file is still COMPLETED and usable;
-                                     this is a signal for the reviewer, not a rejection. -->
-                                <icon-ph-warning-fill
-                                    v-if="file.bandit_findings?.length"
-                                    class="text-amber-500 dark:text-amber-400 shrink-0 w-4 h-4"
-                                    data-test="file-bandit-findings-indicator"
-                                    :aria-label="`${file.bandit_findings.length} static-analysis finding(s)`"
-                                    :title="banditFindingsTooltip(file.bandit_findings)"
-                                />
-                            </div>
-                            <div class="flex gap-2 shrink-0">
-                                <Transition name="fade">
-                                    <AiButton
-                                        v-if="!isViewer && file.status === FileUploadStatus.COMPLETED"
-                                        small
-                                        :loading="downloadingFile === file.name"
-                                        :aria-label="`Download ${file.name}`"
-                                        @click="() => downloadFile(file.name)"
-                                    >
-                                        <icon-ph-download-duotone />
-                                    </AiButton>
-                                </Transition>
-                                <Transition name="fade">
-                                    <AiButton v-if="canUpload && DELETABLE_STATUSES.includes(file.status)" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
-                                        <icon-ph-trash-duotone class="text-red-500 dark:text-red-400" />
-                                    </AiButton>
-                                </Transition>
-                            </div>
-                        </li>
-                    </ul>
                 </div>
             </div>
         </AiCard>
@@ -178,7 +217,6 @@ import JSZip from "jszip";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
-import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
@@ -204,12 +242,17 @@ interface IModelUploadProps {
     modelId: string;
     requiredFiles: string[];
     jobType: JobType;
+    // "NVFlare" or "Flower", when known.
+    flBackendLabel?: string;
     // True when the job-types map could not be loaded, so `jobType` is a default rather than this
     // model's actual job type.
     jobTypesError?: boolean;
 }
 
-const props = withDefaults(defineProps<IModelUploadProps>(), { jobTypesError: false });
+const props = withDefaults(defineProps<IModelUploadProps>(), {
+    flBackendLabel: undefined,
+    jobTypesError: false
+});
 
 const emits = defineEmits(["uploaded", "deletedFile"]);
 
@@ -246,14 +289,76 @@ const banditFindingsTooltip = (findings: BanditFinding[]): string => {
     return `Static analysis flagged ${findings.length} advisory finding(s) — does not block use:\n${lines.join("\n")}`;
 };
 
+interface IFileRow {
+    name: string;
+    required: boolean;
+    // Absent for a required file that has not been uploaded yet.
+    file?: FileInfo;
+}
+
+const CHIP_CLASS = "px-2 py-0.5 font-semibold rounded-full bg-primary-100 text-primary-500 "
+    + "dark:bg-dark-raised dark:text-primary-200";
+
+// Each FL backend's brand colour, both light enough to need dark text: NVIDIA green, Flower yellow.
+const BACKEND_CHIP_CLASSES: Record<string, string> = {
+    NVFlare: "px-2 py-0.5 font-semibold rounded-full bg-[#76B900] text-ink",
+    Flower: "px-2 py-0.5 font-semibold rounded-full bg-[#F2B705] text-ink"
+};
+
+const backendChipClass = computed(() => BACKEND_CHIP_CLASSES[props.flBackendLabel ?? ""] ?? CHIP_CLASS);
+
+const allFiles = computed(() => internalFiles.value.concat(uploadingFiles.value));
+
+const showRequired = computed(() => !props.jobTypesError && props.requiredFiles.length > 0);
+
+const IN_FLIGHT_STATUSES = [FileUploadStatus.UPLOADING, FileUploadStatus.SCANNING];
+
+// A required slot shows an upload in progress, else the server's copy, else a failed attempt. Any
+// other entry for that name (say a failed re-upload over a good copy) gets its own row, so it
+// never hides the copy training will use.
+const slotFile = (name: string): FileInfo | undefined =>
+    uploadingFiles.value.find(f => f.name === name && IN_FLIGHT_STATUSES.includes(f.status))
+    ?? internalFiles.value.find(f => f.name === name)
+    ?? uploadingFiles.value.find(f => f.name === name);
+
+const fileRows = computed((): IFileRow[] => {
+    const required = props.requiredFiles.map(name => ({
+        name,
+        required: true,
+        file: slotFile(name)
+    }));
+    const shown = new Set(required.map(r => r.file));
+
+    return [
+        ...required,
+        ...allFiles.value
+            .filter(f => !shown.has(f))
+            .map(f => ({
+                name: f.name,
+                required: false,
+                file: f
+            }))
+    ];
+});
+
+// Only a file that passed its check counts, the same bar training holds it to.
+const requiredUploadedCount = computed(() => props.requiredFiles.filter(name =>
+    internalFiles.value.some(f => f.name === name && f.status === FileUploadStatus.COMPLETED)).length);
+
+const requiredComplete = computed(() => requiredUploadedCount.value === props.requiredFiles.length);
+
+const rowMeta = (row: IFileRow): string => {
+    if (!row.file) return "Required · missing";
+    const size = formatBytes(row.file.size);
+
+    return row.required ? `Required · ${size}` : size;
+};
+
 // "Download all" is offered only when every visible file finished uploading
 // + scanning. Any in-flight or errored file would either be missing from S3
 // or unsafe to bundle, so we hide the button rather than partial-zip.
-const canDownloadAll = computed(() => {
-    const all = internalFiles.value.concat(uploadingFiles.value);
-
-    return all.length > 0 && all.every(f => f.status === FileUploadStatus.COMPLETED);
-});
+const canDownloadAll = computed(() =>
+    allFiles.value.length > 0 && allFiles.value.every(f => f.status === FileUploadStatus.COMPLETED));
 
 watch(props, () => {
     handleFiles();
@@ -472,7 +577,7 @@ const downloadAllAsZip = async () => {
     }
     downloadingAll.value = true;
     try {
-        const all = internalFiles.value.concat(uploadingFiles.value);
+        const all = allFiles.value;
         const zip = new JSZip();
         for (let i = 0; i < all.length; i += DOWNLOAD_ALL_CONCURRENCY) {
             const batch = all.slice(i, i + DOWNLOAD_ALL_CONCURRENCY);
