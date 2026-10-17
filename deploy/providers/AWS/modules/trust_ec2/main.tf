@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-data "aws_ssm_parameter" "ubuntu" {
-  name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+data "aws_ssm_parameter" "ami" {
+  name = var.ami_ssm_parameter
 }
 
 resource "aws_instance" "trust_host" {
-  ami                         = data.aws_ssm_parameter.ubuntu.value
+  ami                         = data.aws_ssm_parameter.ami.value
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id
   key_name                    = var.key_name
@@ -33,7 +33,7 @@ resource "aws_instance" "trust_host" {
     # space left on device" mid-pull. 100 GB leaves headroom for image
     # archive growth on /opt/flip/xnat/xnat-data/archive too. Grows in
     # place; no instance replacement.
-    volume_size           = 100
+    volume_size           = var.root_volume_size
     volume_type           = "gp3"
     delete_on_termination = true
     encrypted             = true

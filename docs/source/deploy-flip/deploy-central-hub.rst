@@ -116,7 +116,7 @@ configuration.
    it provisions and by how long that instance is busy, which follows from the number
    and size of the projects the trust takes part in, so it is a per-trust decision
    rather than a property of the hub. The mock trust EC2 in the self-contained runbook
-   (a ``t3.xlarge`` with no GPU) is a test fixture, not a sizing recommendation. For
+   (a ``t3.xlarge`` with no GPU by default) is a test fixture, not a sizing recommendation. For
    always-on versus on-demand GPU provisioning at a trust, see the *GPU Resource
    Management* section of :doc:`deploy-flip-node-in-tre`.
 

@@ -101,7 +101,7 @@ This runs, in order:
     and rollback" section of ``deploy/providers/AWS/README.md`` for the tag
     resolution, the ``TAG=`` override, and the production rollout timing.
 11. ``register-trusts`` — register the shipped trust roster on the hub (after ``deploy-centralhub`` seeds the FL kit-slot pool).
-12. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts).
+12. ``deploy-trust`` — deploy any AWS-hosted trust services (skip when only using on-prem trusts). For the cloud trust host itself, including a GPU instance, see :doc:`deploy-flip-node-on-aws-ec2`.
 13. ``status`` — comprehensive health checks.
 
 The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,

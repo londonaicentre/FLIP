@@ -16,3 +16,10 @@
 # reachable only through SSM; the on-prem play leaves it empty and operators run
 # docker via sudo. trust/deploy/ansible/tests/test_onprem_playbook.py pins that.
 flip_docker_users: []
+
+# Keep a Docker engine + compose plugin the image already carries instead of
+# (re)installing through geerlingguy.docker. Off by default so a stock host
+# provisions as before; the EC2 play turns it on for a pre-baked GPU AMI. A kept
+# install grants no docker group (that is geerlingguy.docker's job), so a play
+# that needs one adds it itself — site.yml does for ubuntu.
+flip_docker_keep_preinstalled: false

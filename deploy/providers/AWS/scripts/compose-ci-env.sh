@@ -258,6 +258,9 @@ REQUIRED_KEYS=(
 OPTIONAL_KEYS=(
     FLIP_BUCKET_NAME
     JOB_RESOURCE_SPEC_NUM_GPUS
+    TRUST_AMI_SSM_PARAMETER
+    TRUST_INSTANCE_TYPE
+    TRUST_ROOT_VOLUME_SIZE
 
     # Not stored in either GitHub environment and not normally in an env file:
     # CI's resolve-image-tags.sh emits it into $GITHUB_ENV, and the Makefile

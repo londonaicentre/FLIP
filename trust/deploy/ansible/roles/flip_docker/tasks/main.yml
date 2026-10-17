@@ -10,8 +10,21 @@
 # limitations under the License.
 #
 ---
+- name: Probe for an existing Docker engine and compose plugin
+  shell: docker version --format '{{ "{{" }}.Server.Version{{ "}}" }}' && docker compose version --short
+  register: flip_docker_probe
+  changed_when: false
+  failed_when: false
+  when: flip_docker_keep_preinstalled | bool
+
 - name: Install Docker
   include_role:
     name: geerlingguy.docker
   vars:
     docker_users: "{{ flip_docker_users }}"
+  when: not (flip_docker_keep_preinstalled | bool) or flip_docker_probe.rc != 0
+
+- name: Report the preinstalled Docker kept as-is
+  debug:
+    msg: "Docker already present (engine / compose): {{ flip_docker_probe.stdout_lines | join(' / ') }} — install skipped"
+  when: flip_docker_keep_preinstalled | bool and flip_docker_probe.rc == 0
