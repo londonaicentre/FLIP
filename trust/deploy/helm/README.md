@@ -418,12 +418,9 @@ upgrading**:
 | ------ | ----- |
 | `omopDb.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` |
 | `orthanc.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` (same value — one pin covers both) |
-| `OMOP_DATA_VERSION=<v>` (env, via `generate_values.py`) | `TRUST_DATA_VERSION=<v>` |
 
 Pinning a version that predates the single-copy dataset layout is not supported: from `20260729`
-onwards every artefact is fetched at an unversioned path resolved at the tag. `archiveName` is
-unaffected — it names an **S3** object, and S3 has no revisions, so a version still lives in that
-filename.
+onwards every artefact is fetched at an unversioned path resolved at the tag.
 
 The templates read the pin through Helm's `required`, so an empty `trustData.version` fails at
 template time instead of 404-ing inside the seed hook.
@@ -959,13 +956,12 @@ second layer over that grant, not the only one.
 
 The two paths differ only in *when* the file runs. Compose runs it once, from
 `/docker-entrypoint-initdb.d` at first initdb. The chart runs it from a
-`postStart` hook on the omop-db container on **every** pod start, because the
-PVC is normally restored by the `seed-data` initContainer from a pgdata
-snapshot, which already carries `PG_VERSION` — so the entrypoint skips
-`initdb.d` and the roles are whatever the snapshot held. The file is
+`postStart` hook on the omop-db container on **every** pod start, because a
+PVC that already holds a database carries `PG_VERSION` — so the entrypoint
+skips `initdb.d` and the roles are whatever that database holds. The file is
 idempotent and converges an existing role on the same membership and limits.
 The hook then adds only what the file cannot know: it re-applies the password
-from the Secret unconditionally (a snapshot carries the hash it was initialised
+from the Secret unconditionally (the database carries the hash it was initialised
 with, and a rotated secret would otherwise never reach the live role), and sets
 the database `search_path` so unqualified table references resolve to `omop`.
 Rotation is therefore the same as for the `xnat` role above — update the secret,

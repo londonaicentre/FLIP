@@ -84,10 +84,10 @@ governance:
 # trust/.data_version) and every artefact — the canonical OMOP tables omop-csv/<project>/
 # and the DICOM sets dicom/<project>.tar.gz — is fetched at that tag from an unversioned path.
 #
-# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
-# OMOP_DATA_VERSION became TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
-# existing values file pinning the old ones keeps installing and silently stops taking effect —
-# see README "Upgrading: trustData.version replaces the two per-store pins".
+# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion.
+# Helm ignores unknown keys, so an existing values file pinning the old ones keeps installing
+# and silently stops taking effect — see README "Upgrading: trustData.version replaces the two
+# per-store pins".
 trustData:
   version: "20261014"
   hfRepo: "aicentreflip/trust-data"
@@ -587,7 +587,7 @@ omopDb:
       timeoutSeconds: 15
       failureThreshold: 10
   # Streams the licensed core vocabulary into the running database after
-  # install/upgrade (the published image and pgdata tarballs are vocab-free —
+  # install/upgrade (the published image and the seeded data carry no licensed vocabulary —
   # FLIP#842/843).
   #
   # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
