@@ -223,6 +223,21 @@ variable "fl_api_image_tag" {
   }
 }
 
+# Flower's fleet proxy sidecar (FLIP#1517), a repository of its own: CI's
+# resolve-image-tags.sh pins its own `v<X.Y.Z>@sha256:…` on a release apply. Empty
+# means "the FL server's tag, minus any digest" (ecs_tasks.tf), right for every
+# caller that does not pin by digest. Unused on NVFLARE.
+variable "fl_fleet_proxy_image_tag" {
+  description = "Docker image tag for Flower's fleet proxy sidecar. Empty falls back to flip_fl_image_tag without its digest."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = lower(var.fl_fleet_proxy_image_tag) != "latest" && !endswith(lower(var.fl_fleet_proxy_image_tag), "-latest")
+    error_message = "fl_fleet_proxy_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
+  }
+}
+
 variable "docker_registry" {
   description = "Docker image registry prefix (e.g. ghcr.io/londonaicentre/). On the LZA account point it at the ECR pull-through cache mirror (<account>.dkr.ecr.<region>.amazonaws.com/ghcr/londonaicentre/) — there is no internet egress to reach GHCR directly (FLIP#749)."
   type        = string

@@ -114,7 +114,7 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {
   count       = var.lza_managed_network ? 0 : 1
   type        = "ingress"
   description = "gRPC from NLB (FL client connections)"
-  # Backend-dependent container port (Flower: SuperLink Fleet 9092) — the
+  # Backend-dependent container port (Flower: the fleet proxy's 9092, FLIP#1517) — the
   # NLB forwards its FL_SERVER_PORT listener here.
   from_port                = local.fl_server_container_port
   to_port                  = local.fl_server_container_port
@@ -173,7 +173,14 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_health" 
   source_security_group_id = aws_security_group.ecs_fl_api.id
 }
 
+# NVFLARE only. On Flower this port is the SuperLink's Control and Runtime API,
+# which open-source Flower does not authenticate, so it is open to its callers alone:
+# the fl-api and the key-registration one-shot, both on the fl-api SG
+# (ecs_fl_server_ingress_fl_api_flower_exec).
+# A VPC-wide rule would hand it to anything in the VPC and route around the fleet
+# proxy (FLIP#1517), including the optional cloud trust EC2.
 resource "aws_security_group_rule" "ecs_fl_server_ingress_vpc_http" {
+  count             = var.fl_backend == "flower" ? 0 : 1
   type              = "ingress"
   description       = "HTTP from VPC (internal API calls)"
   from_port         = local.api_container_port
@@ -181,6 +188,13 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_vpc_http" {
   protocol          = "tcp"
   security_group_id = aws_security_group.ecs_fl_server.id
   cidr_blocks       = [local.vpc_cidr_block]
+}
+
+# State migration for the count added above (FLIP#1517), so the NVFLARE estates plan
+# no change. Safe to remove once every live state file has been migrated.
+moved {
+  from = aws_security_group_rule.ecs_fl_server_ingress_vpc_http
+  to   = aws_security_group_rule.ecs_fl_server_ingress_vpc_http[0]
 }
 
 resource "aws_security_group_rule" "ecs_fl_server_egress_all" {

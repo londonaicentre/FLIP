@@ -217,6 +217,10 @@ export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
 ifneq ($(DOCKER_FL_API_TAG),)
 export TF_VAR_fl_api_image_tag=${DOCKER_FL_API_TAG}
 endif
+# Flower's fleet proxy, likewise its own repository and so its own digest (FLIP#1517).
+ifneq ($(DOCKER_FL_PROXY_TAG),)
+export TF_VAR_fl_fleet_proxy_image_tag=${DOCKER_FL_PROXY_TAG}
+endif
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
 # One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
 # in variables.tf). The LZA account has no internet egress, so .env.lza-prod
@@ -696,7 +700,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## check (LZA ECR pull-through cache, FLIP#749). The app container is selected BY NAME —
 	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.8
 	## and staying robust to sidecar/ordering changes; only its image tag is swapped before
-	## registering the new revision. Task-def tags are carried over only when non-empty
+	## registering the new revision — plus, on Flower's fl-server-net-1, the fleet-proxy sidecar
+	## (FLIP#1517), whose allowlist must track the SuperLink's flwr: it moves to the same TAG
+	## through the same base_ref and GHCR check. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
 	## deploy a hotfix / feature-branch image (build it first via workflow_dispatch — see
 	## AGENTS.md); revert with `make rollback-centralhub`.
@@ -722,6 +728,49 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	    esac;; \
 	  esac; \
 	  printf '%s' "$$_base"; \
+	}; \
+	verify_image() { \
+	  _svc="$$1"; _img="$$2"; \
+	  case "$$_img" in \
+	  ghcr.io/*) \
+	    repo=$${_img#ghcr.io/}; repo=$${repo%:*}; \
+	    token=$$(curl -fsSL "https://ghcr.io/token?scope=repository:$$repo:pull" | jq -r '.token // empty'); \
+	    [ -n "$$token" ] || { \
+	      echo "❌ GHCR token fetch failed (network/registry problem) — cannot verify $$_img."; \
+	      echo "   This is NOT a missing build; retry once GHCR is reachable. Nothing has been deployed."; \
+	      exit 1; }; \
+	    accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json'; \
+	    accept="$$accept, application/vnd.docker.distribution.manifest.list.v2+json"; \
+	    accept="$$accept, application/vnd.docker.distribution.manifest.v2+json"; \
+	    status=$$(curl -sSI -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$token" \
+	      -H "Accept: $$accept" "https://ghcr.io/v2/$$repo/manifests/$$TAG") || status=000; \
+	    case "$$status" in \
+	    200) echo "   ✓ $$_svc: $$_img verified in GHCR";; \
+	    404) \
+	      case "$$_svc" in \
+	        flip-api) wf=docker_build_flip_api.yml; is_fl=false;; \
+	        *) wf=fl-docker-build-$(FL_BACKEND).yml; is_fl=true;; \
+	      esac; \
+	      echo "❌ $$_img not found in GHCR."; \
+	      echo "   Builds are path-filtered (a merge that didn't touch this service publishes no new"; \
+	      echo "   tag for it), and flip-api's is additionally test-gated so it may still be running:"; \
+	      echo "     gh run list --workflow=$$wf"; \
+	      if [ "$$is_fl" = true ]; then \
+	        echo "   $$wf builds every image of the backend together, so their sha-<short7>"; \
+	        echo "   tags publish as one set — a 404 here means that whole backend build did not run for"; \
+	        echo "   this commit, not that a single image within the multi-image build is missing."; \
+	      fi; \
+	      echo "   To build a missing / branch / hotfix image: gh workflow run $$wf --ref <branch>"; \
+	      echo "   Nothing has been deployed."; \
+	      exit 1;; \
+	    *) \
+	      echo "❌ GHCR manifest check for $$_img returned HTTP $$status — a registry/auth/"; \
+	      echo "   network problem, not a missing build. Do not dispatch rebuilds; retry the deploy."; \
+	      echo "   Nothing has been deployed."; \
+	      exit 1;; \
+	    esac;; \
+	  *) echo "   ⚠️  $$_img is not on ghcr.io — skipping the registry existence check (FLIP#749)";; \
+	  esac; \
 	}; \
 	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
 	echo "   training run and strands its model at TRAINING_STARTED with its net stuck BUSY."; \
@@ -761,46 +810,12 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
 	  base_image=$$(base_ref "$$image" "$$service") || exit 1; \
 	  new_image="$${base_image%:*}:$$TAG"; \
-	  case "$$new_image" in \
-	  ghcr.io/*) \
-	    repo=$${new_image#ghcr.io/}; repo=$${repo%:*}; \
-	    token=$$(curl -fsSL "https://ghcr.io/token?scope=repository:$$repo:pull" | jq -r '.token // empty'); \
-	    [ -n "$$token" ] || { \
-	      echo "❌ GHCR token fetch failed (network/registry problem) — cannot verify $$new_image."; \
-	      echo "   This is NOT a missing build; retry once GHCR is reachable. Nothing has been deployed."; \
-	      exit 1; }; \
-	    accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json'; \
-	    accept="$$accept, application/vnd.docker.distribution.manifest.list.v2+json"; \
-	    accept="$$accept, application/vnd.docker.distribution.manifest.v2+json"; \
-	    status=$$(curl -sSI -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $$token" \
-	      -H "Accept: $$accept" "https://ghcr.io/v2/$$repo/manifests/$$TAG") || status=000; \
-	    case "$$status" in \
-	    200) echo "   ✓ $$service: $$new_image verified in GHCR";; \
-	    404) \
-	      case "$$service" in \
-	        flip-api) wf=docker_build_flip_api.yml; is_fl=false;; \
-	        *) wf=fl-docker-build-$(FL_BACKEND).yml; is_fl=true;; \
-	      esac; \
-	      echo "❌ $$new_image not found in GHCR."; \
-	      echo "   Builds are path-filtered (a merge that didn't touch this service publishes no new"; \
-	      echo "   tag for it), and flip-api's is additionally test-gated so it may still be running:"; \
-	      echo "     gh run list --workflow=$$wf"; \
-	      if [ "$$is_fl" = true ]; then \
-	        echo "   $$wf builds fl-server, fl-api, fl-client and fl-base together, so their sha-<short7>"; \
-	        echo "   tags publish as one set — a 404 here means that whole backend build did not run for"; \
-	        echo "   this commit, not that a single image within the multi-image build is missing."; \
-	      fi; \
-	      echo "   To build a missing / branch / hotfix image: gh workflow run $$wf --ref <branch>"; \
-	      echo "   Nothing has been deployed."; \
-	      exit 1;; \
-	    *) \
-	      echo "❌ GHCR manifest check for $$new_image returned HTTP $$status — a registry/auth/"; \
-	      echo "   network problem, not a missing build. Do not dispatch rebuilds; retry the deploy."; \
-	      echo "   Nothing has been deployed."; \
-	      exit 1;; \
-	    esac;; \
-	  *) echo "   ⚠️  $$new_image is not on ghcr.io — skipping the registry existence check (FLIP#749)";; \
-	  esac; \
+	  verify_image "$$service" "$$new_image"; \
+	  proxy=$$(printf '%s' "$$td_json" | jq -r '.taskDefinition.containerDefinitions[] | select(.name == "fleet-proxy").image'); \
+	  if [ -n "$$proxy" ]; then \
+	    proxy_base=$$(base_ref "$$proxy" "$$service fleet-proxy") || exit 1; \
+	    verify_image "$$service" "$${proxy_base%:*}:$$TAG"; \
+	  fi; \
 	done; \
 	deployed=""; tmp_td=""; \
 	trap 'rm -f $$tmp_td' EXIT; \
@@ -826,12 +841,19 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
 	  new_image=$$(base_ref "$$image" "$$service") || { warn_mixed; exit 1; }; \
 	  new_image="$${new_image%:*}:$$TAG"; \
-	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
+	  proxy=$$(printf '%s' "$$td_json" | jq -r '.taskDefinition.containerDefinitions[] | select(.name == "fleet-proxy").image'); \
+	  new_proxy=""; \
+	  if [ -n "$$proxy" ]; then \
+	    new_proxy=$$(base_ref "$$proxy" "$$service fleet-proxy") || { warn_mixed; exit 1; }; \
+	    new_proxy="$${new_proxy%:*}:$$TAG"; \
+	  fi; \
+	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image'; \
+	  jq_prog="$$jq_prog elif .name == \"fleet-proxy\" then .image = \$$proxy_image else . end)"; \
 	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
 	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \
 	  jq_prog="$$jq_prog + (if ((.tags // []) | length) > 0 then {tags: .tags} else {} end)"; \
 	  tmp_td=$$(mktemp); \
-	  printf '%s' "$$td_json" | jq --arg name "$$service" --arg image "$$new_image" "$$jq_prog" > $$tmp_td; \
+	  printf '%s' "$$td_json" | jq --arg name "$$service" --arg image "$$new_image" --arg proxy_image "$$new_proxy" "$$jq_prog" > $$tmp_td; \
 	  if ! new_td_arn=$$($(_AWS_ENV) aws ecs register-task-definition --cli-input-json file://$$tmp_td \
 	      --query 'taskDefinition.taskDefinitionArn' --output text); then \
 	    echo "❌ $$service: register-task-definition failed."; \

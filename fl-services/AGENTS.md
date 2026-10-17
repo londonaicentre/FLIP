@@ -8,7 +8,7 @@ Docker services and network provisioning for both FL backends. Each backend's
 |------|---------|
 | `nvflare/{fl-base,fl-server,fl-client,fl-api-base}` | NVFLARE images |
 | `nvflare/provision/` | `net-*_project_*.yml`, `scripts/`, gitignored `workspace-{dev,stag,prod}/` |
-| `flower/{fl-base,superlink,supernode,fl-api-flower}` | Flower images |
+| `flower/{fl-base,superlink,supernode,fl-api-flower,fleet-proxy}` | Flower images; `fleet-proxy` is the SuperLink's only trust-facing listener, passing the Fleet API alone (FLIP#1517, see `flower/README.md`) |
 | `flower/provision/` | `scripts/`, gitignored `creds/` |
 | `nvflare/README.md`, `flower/README.md` | Per-backend provisioning and onboarding runbooks |
 

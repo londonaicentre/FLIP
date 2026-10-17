@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.38.0-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.40.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
 WORKDIR /app
@@ -48,15 +48,9 @@ WORKDIR /app
 COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
-# flwr/base ships flwr==1.38.0, which pins cryptography>=46.0.7,<47.0.0 (GHSA-537c-gmf6-5ccf
-# needs >=48.0.1). This is a plain `pip install`, not a `uv sync`, so the
-# `[tool.uv] override-dependencies` escape hatch used in fl-api-flower/pyproject.toml
-# doesn't apply here — listing cryptography directly on the install line is the pip
-# equivalent, forcing the upgrade past flwr's declared ceiling. Safe for the same reason
-# recorded there: flwr only uses cryptography for TLS cert loading in secure aggregation,
-# a stable surface across majors.
+# No cryptography pin: flwr>=1.40 requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf.
 # pip does not apply flip-utils' UV constraints; carry the setuptools security floor here too.
-RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" "setuptools>=83.0.0" \
+RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=83.0.0" \
       --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to

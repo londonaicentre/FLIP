@@ -30,7 +30,9 @@ What a net is made of
 =====================
 
 - **FL server** — orchestrates the training process across sites and aggregates the weights; it also uploads
-  the results at the end of training. NVFLARE: the FLARE server. Flower: the SuperLink.
+  the results at the end of training. NVFLARE: the FLARE server. Flower: the SuperLink, which Trusts reach
+  only through a *fleet proxy* that passes the SuperNodes' own API and nothing else — the SuperLink's run
+  control is unauthenticated in open-source Flower, so it is never exposed to a Trust.
 - **FL client** — performs local training on the data at its site and sends weight updates to the server. One
   per Trust per net, and the only component that runs deep learning — so the only one that needs a GPU.
   NVFLARE: a FLARE client holding that Trust's signed startup kit. Flower: a SuperNode.

@@ -481,7 +481,9 @@ networks:
     name: ${FLIP_INSTANCE:+$FLIP_INSTANCE-}deploy_trust-network-2
 
   # The FL data plane, one per FL net. Membership is exactly two services: the hub's
-  # `fl-server-net-<N>` and every trust's `fl-client-net-<N>`. It is the FL twin of
+  # `fl-server-net-<N>` and every trust's `fl-client-net-<N>` — on flower, the hub side is
+  # `fl-fleet-proxy-net-<N>` answering to `fl-server-net-<N>`, with the SuperLink itself on
+  # `default` only, because its one port also serves Control and Runtime (FLIP#1517). It is the FL twin of
   # `central-hub-trust-apis-network` (flip-api ↔ trust-api) — one hub service meeting one
   # trust service, and nothing else crossing.
   #

@@ -34,6 +34,11 @@ locals {
   fl_api_tag      = var.fl_api_image_tag != "" ? var.fl_api_image_tag : var.flip_fl_image_tag
   fl_api_image    = "${var.docker_registry}${var.fl_api_name}:${local.fl_api_tag}"
   fl_server_image = "${var.docker_registry}${var.fl_server_name}:${var.flip_fl_image_tag}"
+  # Flower's fleet proxy (FLIP#1517), built and tagged with the SuperLink by
+  # fl-docker-build-flower.yml. Its own tag when CI resolved one (a release pins its
+  # own digest); otherwise the server's, minus any digest, which is that repository's.
+  fl_fleet_proxy_tag   = var.fl_fleet_proxy_image_tag != "" ? var.fl_fleet_proxy_image_tag : split("@", var.flip_fl_image_tag)[0]
+  fl_fleet_proxy_image = "${var.docker_registry}flower-fleet-proxy:${local.fl_fleet_proxy_tag}"
 
   # FL backend shape (#566): the same task FAMILIES (fl-api-net-1,
   # fl-server-net-1 — deploy-centralhub addresses services by family) serve
@@ -41,14 +46,19 @@ locals {
   # fl_backend.mk), container ports, command, env map and mounts. NVFLARE
   # mirrors compose.production.nvflare.yml; Flower mirrors
   # compose.production.flower.yml.
-  flower_superlink_fleet_port   = 9092
+  # flwr>=1.40 serves every SuperLink API — Fleet, Control, Runtime — on control_port;
+  # trusts reach only the fleet proxy sidecar on its own port (FLIP#1517).
+  flower_fleet_proxy_port       = 9092
   flower_superlink_control_port = 8000
   flower_superlink_health_port  = 9097
+
+  # The container the NLB target group binds: the proxy on Flower, the server on NVFLARE.
+  fl_server_lb_container = var.fl_backend == "flower" ? "fleet-proxy" : "fl-server-net-1"
 
   # Container port the NLB target group forwards to. The EXTERNAL listener
   # port stays var.FL_SERVER_PORT for both backends — compose maps
   # ${FL_SERVER_PORT}:9092 the same way for Flower.
-  fl_server_container_port = var.fl_backend == "flower" ? local.flower_superlink_fleet_port : var.FL_SERVER_PORT
+  fl_server_container_port = var.fl_backend == "flower" ? local.flower_fleet_proxy_port : var.FL_SERVER_PORT
 
   # EFS volumes per backend and task, name → access-point key (efs.tf).
   # Flower shares one RW jobs volume (/app/src — uploaded bundles +
@@ -274,12 +284,13 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
   execution_role_arn = aws_iam_role.ecs_task_execution.arn
   task_role_arn      = aws_iam_role.ecs_fl_server_task.arn
 
-  container_definitions = jsonencode([
+  container_definitions = jsonencode(concat([
     {
-      name              = "fl-server-net-1"
-      image             = local.fl_server_image
-      cpu               = 2048
-      memoryReservation = 8192
+      name  = "fl-server-net-1"
+      image = local.fl_server_image
+      cpu   = 2048
+      # The Flower fleet proxy below reserves the remaining 128 MiB of the task.
+      memoryReservation = var.fl_backend == "flower" ? 8064 : 8192
 
       # Flower-only settings, null (dropped by the ECS API) for NVFLARE. The
       # SuperLink image's entrypoint takes the TLS + SuperNode-auth flags as
@@ -299,10 +310,10 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
       # NVFLARE serves client gRPC + admin multiplexed on one port. Flower's
-      # SuperLink splits Fleet (9092, what the NLB forwards to), the HTTP
-      # Control API (8000, fl-api submits runs here) and health (9097).
+      # SuperLink serves its HTTP APIs on 8000 (fl-api submits runs to the
+      # Control API there) and health on 9097; the NLB's 9092 is the fleet
+      # proxy's, below.
       portMappings = var.fl_backend == "flower" ? [
-        { containerPort = local.flower_superlink_fleet_port, protocol = "tcp" },
         { containerPort = local.flower_superlink_control_port, protocol = "tcp" },
         { containerPort = local.flower_superlink_health_port, protocol = "tcp" },
         ] : [
@@ -381,7 +392,54 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         }
       }
     }
-  ])
+    ],
+    # Flower only (FLIP#1517): the SuperLink's one trust-facing listener. It shares the
+    # task's network namespace (awsvpc), takes the NLB's 9092 and forwards only the
+    # Fleet API routes to the SuperLink on localhost:8000, so a trust can never reach
+    # the Control or Runtime API there. The image's defaults are this shape; see
+    # fl-services/flower/fleet-proxy. NVFLARE has no sidecar.
+    var.fl_backend == "flower" ? [
+      {
+        name              = "fleet-proxy"
+        image             = local.fl_fleet_proxy_image
+        essential         = true
+        memoryReservation = 128
+
+        portMappings = [
+          { containerPort = local.flower_fleet_proxy_port, protocol = "tcp" },
+        ]
+
+        # The image's own check: a Fleet request must get through to the SuperLink. A
+        # proxy that cannot reach or verify it answers every SuperNode 503 while the
+        # NLB's TCP check still passes. Generous retries, as a failing check replaces
+        # the whole task, SuperLink and any run in flight included.
+        healthCheck = {
+          command     = ["CMD", "/usr/local/bin/fleet-proxy-healthcheck"]
+          interval    = 30
+          timeout     = 10
+          retries     = 5
+          startPeriod = 120
+        }
+
+        # The SuperLink's own server certificate, so trust kits and SANs are unchanged.
+        mountPoints = [
+          {
+            sourceVolume  = "efs-fl-net-1-certs"
+            containerPath = "/certs"
+            readOnly      = true
+          },
+        ]
+
+        logConfiguration = {
+          logDriver = "awslogs"
+          options = {
+            awslogs-group         = aws_cloudwatch_log_group.ecs_fl_server_net_1.name
+            awslogs-region        = var.AWS_REGION
+            awslogs-stream-prefix = "fleet-proxy"
+          }
+        }
+      },
+  ] : []))
 
   # Volume set per backend (local.fl_server_task_volumes). Shared-volume
   # notes: the NVFLARE checkpoints volume is the SAME access point

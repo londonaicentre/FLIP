@@ -185,9 +185,9 @@ resource "aws_ecs_service" "fl_server_net_1" {
   # account's edge NLB over the TGW.
   load_balancer {
     target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
-    container_name   = "fl-server-net-1"
-    # Backend-dependent container port (Flower: SuperLink Fleet 9092); the
-    # NLB listener port trusts connect to stays var.FL_SERVER_PORT.
+    container_name   = local.fl_server_lb_container
+    # Backend-dependent container and port (Flower: the fleet proxy's 9092,
+    # FLIP#1517); the NLB listener port trusts connect to stays var.FL_SERVER_PORT.
     container_port = local.fl_server_container_port
   }
 
