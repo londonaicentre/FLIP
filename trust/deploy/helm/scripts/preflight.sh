@@ -283,7 +283,7 @@ else
     hint "Or generate it before deploying (never hand-write it — it is gitignored):"
     hint "  python3 ${CHART_DIR}/scripts/generate_values.py \\"
     hint "    --env-file ${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX} --output-dir ${CHART_DIR}"
-    hint "Then hand-fill the slots no kit carries: orthanc-registered-users and the S3 keys"
+    hint "Then hand-fill any slot it reports unfilled"
 fi
 
 if [ -n "$OVERRIDES_FILE" ]; then

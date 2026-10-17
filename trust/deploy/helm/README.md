@@ -115,8 +115,8 @@ python3 trust/deploy/helm/scripts/generate_values.py \
 ```
 
 That writes `values-secrets.yaml` with mode `0600` (and `values-override.yaml`
-beside it). One slot it **cannot** fill, because no trust kit carries the source
-env var: `orthanc-registered-users`. Hand-fill it before deploying Orthanc. There
+beside it). It builds `orthanc-registered-users` from the kit's `ORTHANC_USERNAME` and
+`ORTHANC_PASSWORD`, as Compose does. There
 are no AWS slots — the fl-client never fetches its own kit (see step 4). An empty slot
 is omitted from the Secret by `templates/secrets.yaml` and the pod that mounts it
 then fails with `CreateContainerConfigError` — deliberate (it is why copying the
@@ -908,7 +908,7 @@ with `secrets.create=true` or pre-created externally):
 | `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
-| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated from the `ORTHANC_REGISTERED_USERS` env var by `scripts/generate_values.py` |
+| `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated by `scripts/generate_values.py` from `ORTHANC_REGISTERED_USERS`, else from the kit's `ORTHANC_USERNAME` / `ORTHANC_PASSWORD` |
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |

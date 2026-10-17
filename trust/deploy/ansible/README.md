@@ -257,7 +257,7 @@ images tree). Roles are found beside the play, so no `roles_path` configuration 
 `make -C trust up-trust` seeds them from the canonical dataset at bring-up (FLIP#1187,
 `ensure-seeded`) — there is no snapshot to restore any more. The licensed core vocabulary is not part
 of that either: its bundle comes from the hub's S3 bucket through an instance role, so on-prem it stays
-`make -C trust load-omop-vocab`.
+`make -C trust/omop-db load-omop-vocab`.
 
 **Direct usage** (without the Makefile):
 

@@ -21,13 +21,23 @@ AZURE_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = AZURE_DIR.parent.parent.parent
 
 # $AZ_FAIL names one command ("storage blob", "aks update") that fails; $AZ_ACCOUNT_ID replaces
-# the subscription id `account show` answers.
+# the subscription id `account show` answers; `group exists` is true only for $AZ_EXISTING_RG.
 STUB_AZ = """#!/bin/bash
 printf '%s\\n' "$*" >> "$AZ_LOG"
 if [[ -n "${AZ_FAIL:-}" && "$1 $2" == "$AZ_FAIL" ]]; then echo "stub az: $1 $2 failed" >&2; exit 1; fi
 case "$1 $2" in
     "account show") echo "${AZ_ACCOUNT_ID-00000000-0000-0000-0000-000000000000}" ;;
     "vm run-command") echo ok ;;
+    "group exists") [[ " $* " == *" ${AZ_EXISTING_RG:-none} "* ]] && echo true || echo false ;;
+esac
+"""
+
+# kubectl logs its arguments; `get jobs` answers $KUBECTL_JOBS (a JSON list), and `apply -f -` reads stdin.
+STUB_KUBECTL = """#!/bin/bash
+printf 'kubectl %s\\n' "$*" >> "$AZ_LOG"
+case " $* " in
+    *" get jobs "*) cat "${KUBECTL_JOBS:-/dev/null}" ;;
+    *" apply -f - "*) cat > /dev/null ;;
 esac
 """
 
@@ -63,19 +73,22 @@ def run_make(
     ipify: list[str] | None = None,
     az_fail: str | None = None,
     account_id: str | None = None,
+    existing_rg: str | None = None,
+    kubectl_jobs: str | None = None,
+    stdin: str = "",
     tf_output: str | None = None,
     makefiles: tuple[Path, ...] = (),
     **variables: str,
 ) -> tuple[subprocess.CompletedProcess, list[str]]:
     """Run real Makefile goals with `az` stubbed on PATH; return the result and every stubbed call.
 
-    `terraform` and `git` are always stubbed. With `ipify`, `curl` is stubbed too and answers the IP
+    `terraform`, `git` and `kubectl` are always stubbed. With `ipify`, `curl` is stubbed too and answers the IP
     lookups in that order. az calls are logged bare, the others as `terraform ...`, `git ...` and
     `curl ...`. `makefiles` are read after the Makefile, for probe targets.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    stubs = {"az": STUB_AZ, "terraform": STUB_TERRAFORM, "git": STUB_GIT}
+    stubs = {"az": STUB_AZ, "terraform": STUB_TERRAFORM, "git": STUB_GIT, "kubectl": STUB_KUBECTL}
     if ipify is not None:
         stubs["curl"] = STUB_CURL
     for name, body in stubs.items():
@@ -92,6 +105,11 @@ def run_make(
         env["AZ_FAIL"] = az_fail
     if account_id is not None:
         env["AZ_ACCOUNT_ID"] = account_id
+    if existing_rg is not None:
+        env["AZ_EXISTING_RG"] = existing_rg
+    if kubectl_jobs is not None:
+        (tmp_path / "jobs.json").write_text(kubectl_jobs)
+        env["KUBECTL_JOBS"] = str(tmp_path / "jobs.json")
     if tf_output is not None:
         env["TF_OUTPUT"] = tf_output
     files = [arg for f in ("Makefile", *map(str, makefiles)) for arg in ("-f", f)] if makefiles else []
@@ -100,6 +118,7 @@ def run_make(
         ["make", "-s", "-C", str(AZURE_DIR), *files, *goals, *args],
         env=env,
         cwd=tmp_path,
+        input=stdin,
         capture_output=True,
         text=True,
         timeout=60,

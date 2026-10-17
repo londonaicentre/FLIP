@@ -19,6 +19,7 @@ falling back and the other dropping the key.
 """
 
 import importlib.util
+import json
 from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "generate_values.py"
@@ -162,3 +163,23 @@ def test_no_rename_target_is_itself_retired():
     overlap = set(generate_values.RENAMED_ENV_VARS) & set(generate_values.ENV_VAR_MAP)
 
     assert overlap == set(), f"these are both retired and mapped: {sorted(overlap)}"
+
+
+def test_orthanc_users_come_from_the_kits_orthanc_login():
+    """Compose builds the same map from the same two keys (trust/deploy/compose_trust.*.yml)."""
+    _, secrets = generate_values.build_values({"ORTHANC_USERNAME": "admin", "ORTHANC_PASSWORD": 'p"w'})
+
+    assert json.loads(secrets["orthanc-registered-users"]) == {"admin": 'p"w'}
+
+
+def test_an_explicit_orthanc_user_map_wins():
+    login = {"ORTHANC_USERNAME": "admin", "ORTHANC_PASSWORD": "pw"}  # pragma: allowlist secret
+    _, secrets = generate_values.build_values({**login, "ORTHANC_REGISTERED_USERS": '{"a": "b"}'})
+
+    assert secrets["orthanc-registered-users"] == '{"a": "b"}'
+
+
+def test_no_orthanc_users_without_both_halves_of_the_login():
+    _, secrets = generate_values.build_values({"ORTHANC_USERNAME": "admin"})
+
+    assert "orthanc-registered-users" not in secrets

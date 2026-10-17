@@ -18,8 +18,9 @@
 # `make -C deploy/providers/azure reprovision`):
 #   ansible-playbook -i localhost, -c local trust/deploy/ansible/azure.yml \
 #     -e flip_owner=azureuser -e fl_backend=nvflare
-# The node holds no credentials for the hub's cloud, so the OMOP vocabulary role and the
-# bucket-based FL kit download are not used; seeding pulls the public trust data instead.
+# The node holds no credentials for the hub's cloud, so the bucket-based FL kit download is not
+# used, and the site loads its own licensed OMOP vocabulary instead of the vocabulary role;
+# seeding pulls the public trust data.
 
 ---
 - name: Provision an Azure Trust node

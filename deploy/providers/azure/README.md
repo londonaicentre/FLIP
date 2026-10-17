@@ -109,8 +109,17 @@ Azure never upgrades the cluster on its own (no upgrade channel, and the node OS
 place). An upgrade is yours to run with `az aks upgrade`, and on one node it surges a second
 `node_size` node first: 8 vCPUs at the default size, so raise the quota before it.
 
-Deploying the chart onto the cluster:
-[`trust/deploy/helm`](../../../trust/deploy/helm/README.md).
+The trust goes onto the cluster from the hub admin's kit tarball (see [Joining a hub](#joining-a-hub)):
+
+```bash
+make aks-join     TARBALL=<flip-trust-kit-…tar.gz> KIT=<slot> PROD=<env>   # MOCK_PACS=1 on a test node
+make aks-selftest
+make aks-deploy   KIT=<slot> PROD=<env>      # redeploy or upgrade from the installed kit
+make aks-clear-jobs                          # dcm2niix Jobs from before the conversion cap
+```
+
+These drive [`trust/deploy/helm`](../../../trust/deploy/helm/README.md) on the cluster's kube context,
+with `values-aks.yaml`, `values-small-node.yaml` and no vocabulary load.
 
 ## Joining a hub
 
