@@ -11,7 +11,7 @@
 #
 # The only requests a trust's SuperNode may send to the SuperLink (FLIP#1517): the
 # Fleet API routes of flwr's superlink/routers/fleet/router.py, POST only. Keyed on
-# "$request_method $request_uri" — the raw request line, before nginx normalises it —
+# "$request_method $request_uri" — the method and raw request URI, before nginx normalises it —
 # so a dot-segment or percent-encoded path cannot match an entry and still reach a
 # Control (/v1/control/*) or Runtime (/v1/runtime/*) route behind it. The SuperNode
 # sends no query string, so none is allowed. Everything else answers 404.

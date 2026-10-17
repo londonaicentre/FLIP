@@ -48,8 +48,7 @@ WORKDIR /app
 COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
-# flwr>=1.40 itself requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf (>=48.0.1), so
-# the old forced cryptography upgrade on this line is gone (FLIP#1517).
+# No cryptography pin: flwr>=1.40 requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf.
 # pip does not apply flip-utils' UV constraints; carry the setuptools security floor here too.
 RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=83.0.0" \
       --extra-index-url https://download.pytorch.org/whl/cu130

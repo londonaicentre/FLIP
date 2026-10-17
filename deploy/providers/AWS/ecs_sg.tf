@@ -175,9 +175,10 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_flower_health" 
 
 # NVFLARE only. On Flower this port is the SuperLink's Control and Runtime API,
 # which open-source Flower does not authenticate, so it is open to its callers alone:
-# the fl-api and the key-registration one-shot, both on the fl-api SG (rule above).
+# the fl-api and the key-registration one-shot, both on the fl-api SG
+# (ecs_fl_server_ingress_fl_api_flower_exec).
 # A VPC-wide rule would hand it to anything in the VPC and route around the fleet
-# proxy (FLIP#1517) — today that includes the optional cloud trust EC2.
+# proxy (FLIP#1517), including the optional cloud trust EC2.
 resource "aws_security_group_rule" "ecs_fl_server_ingress_vpc_http" {
   count             = var.fl_backend == "flower" ? 0 : 1
   type              = "ingress"

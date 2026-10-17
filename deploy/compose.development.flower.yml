@@ -140,10 +140,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.40: every SuperLink API — Control, Fleet, the ServerApp's /v1/runtime/* — is
-      # HTTP on port 8000, loopback-only unless --host says otherwise; fl-api, the key
-      # registration and the fleet proxy reach it over `default`, and the host port below is
-      # published on loopback only.
+      # Every SuperLink API is on 8000 (see the header); loopback-only unless --host says
+      # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address
@@ -172,10 +170,8 @@ services:
     restart: unless-stopped
     init: true
 
-  # The trusts' only route to the net-1 SuperLink (FLIP#1517). On `fl-net-1` it answers to
-  # `fl-server-net-1` on 9092, where the trust kits already dial, with the SuperLink's own
-  # certificate, and forwards only the Fleet API routes in fleet-proxy/fleet-routes.map;
-  # Control and Runtime answer 404. Non-root with no capabilities: the host group reads the key.
+  # The trusts' only route to the net-1 SuperLink (see the header and fleet-proxy/), on the
+  # address and port the kits already dial. No capabilities: the host group reads the key.
   fl-fleet-proxy-net-1:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
     group_add: ["${DOCKER_GID:-1000}"]
@@ -275,10 +271,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.40: every SuperLink API — Control, Fleet, the ServerApp's /v1/runtime/* — is
-      # HTTP on port 8000, loopback-only unless --host says otherwise; fl-api, the key
-      # registration and the fleet proxy reach it over `default`, and the host port below is
-      # published on loopback only.
+      # Every SuperLink API is on 8000 (see the header); loopback-only unless --host says
+      # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address

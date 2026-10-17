@@ -89,9 +89,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.40 serves every SuperLink API — Control, Fleet and the ServerApp's
-      # /v1/runtime/* — over HTTP on port 8000, loopback-only unless --host says otherwise
-      # (see compose.dev.yml). Only flwr-dev-net reaches it; no host port is published here.
+      # Every SuperLink API is on 8000 (see the header); loopback-only unless --host says
+      # otherwise. Only flwr-dev-net reaches it; no host port is published here.
       - --host
       - 0.0.0.0
       - --health-server-address
@@ -103,9 +102,8 @@ services:
         aliases:
           - superlink-internal
 
-  # The SuperNodes' only route to the SuperLink (FLIP#1517): forwards the Fleet API routes
-  # in fleet-proxy/fleet-routes.map to superlink-internal:8000 and answers everything
-  # else — Control, Runtime — 404. Serves the SuperLink's own certificate (SAN `superlink`).
+  # The SuperNodes' only route to the SuperLink (see the header and fleet-proxy/), serving
+  # the SuperLink's own certificate (SAN `superlink`).
   fleet-proxy:
     image: flower-fleet-proxy:dev
     build:

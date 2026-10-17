@@ -28,15 +28,22 @@ ENV FLEET_PROXY_LISTEN_PORT=9092 \
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY fleet-routes.map /etc/nginx/fleet-routes.map
 COPY templates/ /etc/nginx/templates/
+COPY healthcheck.sh /usr/local/bin/fleet-proxy-healthcheck
 
 # The entrypoint renders the template into /tmp (NGINX_ENVSUBST_OUTPUT_DIR), and every
 # other writable path is under /tmp too, so the image needs no writable path of its own.
 RUN rm -f /etc/nginx/conf.d/default.conf \
-    && chmod 644 /etc/nginx/nginx.conf /etc/nginx/fleet-routes.map
+    && chmod 644 /etc/nginx/nginx.conf /etc/nginx/fleet-routes.map \
+    && chmod 755 /usr/local/bin/fleet-proxy-healthcheck
 
 # The SuperLink's own uid/gid (flwr/base's `app`), so the proxy reads the server key
 # wherever the SuperLink can: the production harness's host-owned certs, with no compose
 # `user:` override (scripts/tests/test_container_identity.py). Dev compose adds the host
-# group instead, and ECS's EFS access point maps every reader to its own uid.
+# group instead, and on ECS the EFS access point maps every reader to its uid (1001, efs.tf).
 USER 49999:49999
 EXPOSE 9092
+
+# Healthy only while a Fleet request gets through to the SuperLink: a proxy that cannot
+# reach or verify it answers every SuperNode 503, which they retry forever, and the NLB's
+# TCP check would still pass. Compose reads this; the ECS task restates it.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 CMD ["/usr/local/bin/fleet-proxy-healthcheck"]

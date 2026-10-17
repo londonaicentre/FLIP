@@ -91,7 +91,9 @@
 # CannotPullContainer after a green resolve and a green apply, and `active_tag`
 # then reads the bad reference back on every later infrastructure-only apply.
 # Hence three outputs (DOCKER_TAG / DOCKER_FL_TAG / DOCKER_FL_API_TAG) and
-# Terraform's separate `fl_api_image_tag` variable.
+# Terraform's separate `fl_api_image_tag` variable — four on Flower, whose
+# fleet-proxy sidecar (FLIP#1517) is a repository of its own: DOCKER_FL_PROXY_TAG,
+# Terraform's `fl_fleet_proxy_image_tag`, empty on NVFLARE.
 #
 # When RELEASE_TAG is unset, nothing below behaves differently — the release path
 # is entirely additive and ships dark until a caller sets it.
@@ -120,6 +122,7 @@
 #     DOCKER_TAG=...
 #     DOCKER_FL_TAG=...
 #     DOCKER_FL_API_TAG=...
+#     DOCKER_FL_PROXY_TAG=...  (empty on NVFLARE)
 
 set -euo pipefail
 
@@ -184,10 +187,12 @@ case "${FL_BACKEND}" in
     nvflare)
         FL_SERVER_IMAGE="flare-fl-server"
         FL_API_IMAGE="flare-fl-api"
+        FL_PROXY_IMAGE=""
         ;;
     flower)
         FL_SERVER_IMAGE="flower-superlink"
         FL_API_IMAGE="flower-fl-api"
+        FL_PROXY_IMAGE="flower-fleet-proxy"
         ;;
     *) die "FL_BACKEND must be 'nvflare' or 'flower' (got '${FL_BACKEND}')" ;;
 esac
@@ -460,7 +465,15 @@ fl_tag="${RESOLVED_TAG}"
 # workflow publishes both, so the second one never waits a second full budget.
 resolve "FL API image" "${FL_API_IMAGE}" "fl-api-net-1" "fl-api-net-1" "${FALLBACK_DOCKER_FL_TAG}" "fl"
 fl_api_tag="${RESOLVED_TAG}"
+# Flower's fleet proxy: the sidecar container in the fl-server task, so the live tag
+# is read off that task's `fleet-proxy` container. Same wait group again.
+fl_proxy_tag=""
+if [[ -n "${FL_PROXY_IMAGE}" ]]; then
+    resolve "FL fleet proxy image" "${FL_PROXY_IMAGE}" "fl-server-net-1" "fleet-proxy" "${FALLBACK_DOCKER_FL_TAG}" "fl"
+    fl_proxy_tag="${RESOLVED_TAG}"
+fi
 
 echo "DOCKER_TAG=${hub_tag}"
 echo "DOCKER_FL_TAG=${fl_tag}"
 echo "DOCKER_FL_API_TAG=${fl_api_tag}"
+echo "DOCKER_FL_PROXY_TAG=${fl_proxy_tag}"

@@ -15,8 +15,8 @@
 # So trusts never reach that port: they reach this proxy, which forwards only the Fleet
 # routes in fleet-routes.map and answers everything else 404.
 #
-# The base image's entrypoint substitutes only the FLEET_PROXY_* variables the image
-# defines (NGINX_ENVSUBST_FILTER), so nginx's own $variables pass through untouched.
+# The base image's entrypoint substitutes only variables named FLEET_PROXY_*
+# (NGINX_ENVSUBST_FILTER), so nginx's own $variables pass through untouched.
 resolver ${FLEET_PROXY_RESOLVER} valid=10s ipv6=off;
 
 server {
@@ -39,13 +39,14 @@ server {
     }
 
     location / {
-        # A variable upstream is re-resolved (resolver above) when the SuperLink's address
-        # changes — a compose restart — and, with no URI part, is sent the client's
-        # request URI unchanged, which the map has already matched exactly.
+        # A variable upstream is looked up per request (resolver above), so a restarted
+        # SuperLink on a new address is found at once and an absent one fails fast into the
+        # 503 below; with no URI part it is sent the client's request URI unchanged, which
+        # the map has already matched exactly. (An upstream{} block with `server … resolve`
+        # and a keepalive pool instead holds requests while the name does not resolve.)
         set $fleet_upstream https://${FLEET_PROXY_UPSTREAM};
         proxy_pass $fleet_upstream;
         proxy_http_version 1.1;
-        proxy_set_header Connection "";
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
 

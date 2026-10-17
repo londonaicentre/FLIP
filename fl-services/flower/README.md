@@ -175,17 +175,19 @@ Since flwr 1.40 the SuperLink serves **every** API from one HTTP app on one port
 the **Control API** (`/v1/control/*` — start, stop and list runs, register and unregister nodes),
 the **Fleet API** (`/v1/fleet/*` — what a SuperNode calls) and the **Runtime API**
 (`/v1/runtime/*` — the ServerApp's own routes for messaging SuperNodes). Open-source Flower
-authenticates none of Control, and Runtime only behind a flag that subprocess isolation (FLIP's
-mode) ignores; SuperNode auth signs Fleet requests alone. So a trust that could reach port 8000
+does not authenticate the Control API at all, and authenticates Runtime only behind a flag that
+subprocess isolation (FLIP's mode) ignores; SuperNode auth signs Fleet requests alone. So a trust that could reach port 8000
 could submit its own ServerApp, stop another project's run or forge instructions to other trusts'
 SuperNodes — and there is no flag to serve Fleet on its own listener.
 
 Trusts therefore never reach port 8000. They reach `flower-fleet-proxy`, an nginx that listens on
 the trust-facing port 9092 with the SuperLink's own server certificate (so trust kits, SANs and
 `FL_SERVER_PORT` are unchanged), forwards only the 12 Fleet routes in
-[`fleet-proxy/fleet-routes.map`](fleet-proxy/fleet-routes.map) — POST only, matched on the raw
-request line — to the SuperLink over TLS, and answers everything else 404. A SuperLink it cannot
-reach answers 503, which the SuperNode retries.
+[`fleet-proxy/fleet-routes.map`](fleet-proxy/fleet-routes.map) — POST only, matched on the method
+and raw request URI — to the SuperLink over TLS, and answers everything else 404. When it cannot
+reach or verify the SuperLink it answers 503, which the SuperNode retries, and its health check
+(`fleet-proxy/healthcheck.sh`, also on the ECS sidecar) fails, since the NLB's TCP check alone would
+still pass. The access log's `upstream=` field tells the two apart.
 
 | Where | Shape |
 |---|---|

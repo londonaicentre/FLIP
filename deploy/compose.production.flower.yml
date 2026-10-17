@@ -95,9 +95,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.40: every SuperLink API — Control, Fleet, the ServerApp's /v1/runtime/* — is
-      # HTTP on port 8000, loopback-only unless --host says otherwise; fl-api and the key
-      # registration reach it over the compose network, and nothing publishes it.
+      # Every SuperLink API is on 8000 (FLIP#1517); loopback-only unless --host says
+      # otherwise. Reached over the compose network, never published.
       - --host
       - 0.0.0.0
       - --health-server-address
@@ -112,14 +111,10 @@ services:
     restart: unless-stopped
     init: true
 
-  # The SuperLink's only trust-facing listener (FLIP#1517): serves FL_SERVER_PORT with the
-  # SuperLink's own certificate and forwards only the Fleet API routes in
-  # fleet-proxy/fleet-routes.map to fl-server-net-1:8000; Control and Runtime answer 404.
-  # Its own container, not the SuperLink's namespace as on ECS: compose restarts containers one
-  # at a time, and a proxy sharing the namespace of a restarted SuperLink keeps the dead one,
-  # taking the trust-facing port down for good. Here it re-resolves the SuperLink instead. The
-  # image runs as the SuperLink's own uid (49999, flwr/base's `app`), so it reads the same
-  # server key with no capabilities.
+  # The SuperLink's only trust-facing listener (FLIP#1517, fl-services/flower/README.md). Its
+  # own container rather than an ECS-style sidecar: compose restarts containers one at a time,
+  # and a proxy in a restarted SuperLink's namespace keeps the dead one. Runs as the
+  # SuperLink's uid, so it reads the same server key with no capabilities.
   fl-fleet-proxy-net-1:
     image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
     environment:

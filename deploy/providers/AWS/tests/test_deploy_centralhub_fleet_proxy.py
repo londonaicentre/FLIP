@@ -20,13 +20,10 @@ deploy that follows a successful one.
 """
 
 import json
-import os
-import subprocess
 from pathlib import Path
 
-from test_rollback_centralhub import STUB_ENV
+from stub_make import StubRun, run_make_with_stubs
 
-AWS_DIR = Path(__file__).resolve().parents[1]
 REGISTRY = "ghcr.io/londonaicentre/"
 TAG = "sha-abc1234"
 DIGEST = "sha256:" + "a" * 64
@@ -56,11 +53,18 @@ case "$2" in
 esac
 """
 
-# The GHCR token, then the manifest probe's status code: every image is published.
+# The GHCR token, then the manifest probe's status code: 404 for a repository named in
+# $MISSING_REPO, else published. Each manifest probe is logged to $CALLS.
 STUB_CURL = """#!/usr/bin/env bash
 case "$*" in
     *ghcr.io/token*) echo '{"token":"probe"}' ;;
-    *) printf 200 ;;
+    *)
+        printf 'curl %s\\n' "$*" >>"$CALLS"
+        if [ -n "${MISSING_REPO:-}" ] && [[ "$*" == *"/v2/londonaicentre/${MISSING_REPO}/manifests/"* ]]; then
+            printf 404
+        else
+            printf 200
+        fi ;;
 esac
 """
 
@@ -78,14 +82,11 @@ def _task_definition(family: str, containers: list[tuple[str, str]]) -> dict:
     }
 
 
-def _deploy(tmp_path: Path, fl_server_containers: list[tuple[str, str]], fl_api_image: str) -> dict[str, dict]:
-    """Run ``make deploy-centralhub TAG=…`` against the stubs; returns the registered task definitions by family."""
-    bin_dir, fixtures, out = tmp_path / "bin", tmp_path / "fixtures", tmp_path / "out"
-    for d in (bin_dir, fixtures, out):
-        d.mkdir()
-    for name, body in (("aws", STUB_AWS), ("curl", STUB_CURL)):
-        (bin_dir / name).write_text(body)
-        (bin_dir / name).chmod(0o755)
+def _run(tmp_path: Path, fl_server_containers: list[tuple[str, str]], fl_api_image: str, **env: str) -> StubRun:
+    """Run ``make deploy-centralhub TAG=…`` against the stubs; ``registered/`` gets each new task definition."""
+    fixtures, out = tmp_path / "fixtures", tmp_path / "registered"
+    fixtures.mkdir()
+    out.mkdir()
     families = {
         "flip-api": [("flip-api", f"{REGISTRY}flip-api:sha-0000000")],
         "fl-api-net-1": [("fl-api-net-1", fl_api_image)],
@@ -93,26 +94,23 @@ def _deploy(tmp_path: Path, fl_server_containers: list[tuple[str, str]], fl_api_
     }
     for family, containers in families.items():
         (fixtures / f"{family}.json").write_text(json.dumps(_task_definition(family, containers)))
-    calls = tmp_path / "calls"
-    calls.touch()
-    env_file = tmp_path / ".env.probe-stag"
-    env_file.write_text("".join(f"{k}={v}\n" for k, v in STUB_ENV.items()))
-
-    env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
-    env.update(PATH=f"{bin_dir}{os.pathsep}{env['PATH']}", CALLS=str(calls), FIXTURES=str(fixtures), OUT=str(out))
-    args = {"PROD": "stag", "MAIN_ENV_FILE": str(env_file), "TAG": TAG}
-    result = subprocess.run(
-        ["make", "-s", "deploy-centralhub", *(f"{k}={v}" for k, v in args.items())],
-        cwd=AWS_DIR,
-        env=env,
-        text=True,
-        capture_output=True,
+    return run_make_with_stubs(
+        tmp_path,
+        "deploy-centralhub",
+        {"aws": STUB_AWS, "curl": STUB_CURL},
+        {"FIXTURES": str(fixtures), "OUT": str(out), **env},
+        TAG=TAG,
     )
+
+
+def _deploy(tmp_path: Path, fl_server_containers: list[tuple[str, str]], fl_api_image: str) -> dict[str, dict]:
+    """A deploy that registers and repoints every service; returns the registered task definitions by family."""
+    run = _run(tmp_path, fl_server_containers, fl_api_image)
     # Every service is registered and repointed before the stubbed wait fails the run.
-    assert result.returncode != 0, result.stdout + result.stderr
-    assert "did not stabilise" in result.stdout + result.stderr, result.stdout + result.stderr
-    registered = {path.stem: json.loads(path.read_text()) for path in out.glob("*.json")}
-    assert sorted(registered) == sorted(families), result.stdout + result.stderr
+    assert run.returncode != 0, run.output
+    assert "did not stabilise" in run.output, run.output
+    registered = {path.stem: json.loads(path.read_text()) for path in (tmp_path / "registered").glob("*.json")}
+    assert sorted(registered) == ["fl-api-net-1", "fl-server-net-1", "flip-api"], run.output
     return registered
 
 
@@ -157,3 +155,34 @@ def test_an_nvflare_deploy_swaps_the_server_alone(tmp_path: Path) -> None:
     assert _images(registered["fl-server-net-1"]) == {"fl-server-net-1": f"{REGISTRY}flare-fl-server:{TAG}"}
     assert _images(registered["fl-api-net-1"]) == {"fl-api-net-1": f"{REGISTRY}flare-fl-api:{TAG}"}
     assert _images(registered["flip-api"]) == {"flip-api": f"{REGISTRY}flip-api:{TAG}"}
+
+
+def test_a_missing_proxy_image_stops_the_deploy_before_anything_moves(tmp_path: Path) -> None:
+    run = _run(
+        tmp_path,
+        [
+            ("fl-server-net-1", f"{REGISTRY}flower-superlink:sha-0000000"),
+            ("fleet-proxy", f"{REGISTRY}flower-fleet-proxy:sha-0000000"),
+        ],
+        f"{REGISTRY}flower-fl-api:sha-0000000",
+        MISSING_REPO="flower-fleet-proxy",
+    )
+    assert run.returncode != 0, run.output
+    assert f"{REGISTRY}flower-fleet-proxy:{TAG} not found in GHCR" in run.output, run.output
+    assert not any("register-task-definition" in call for call in run.calls), run.calls
+    # The proxy is checked as an image of its own, not vouched for by the SuperLink's check.
+    assert any(f"/v2/londonaicentre/flower-fleet-proxy/manifests/{TAG}" in call for call in run.calls), run.calls
+
+
+def test_a_digest_only_proxy_reference_is_refused_before_anything_moves(tmp_path: Path) -> None:
+    run = _run(
+        tmp_path,
+        [
+            ("fl-server-net-1", f"{REGISTRY}flower-superlink:sha-0000000"),
+            ("fleet-proxy", f"{REGISTRY}flower-fleet-proxy@{DIGEST}"),
+        ],
+        f"{REGISTRY}flower-fl-api:sha-0000000",
+    )
+    assert run.returncode != 0, run.output
+    assert "digest-only image" in run.output, run.output
+    assert not any("register-task-definition" in call for call in run.calls), run.calls
