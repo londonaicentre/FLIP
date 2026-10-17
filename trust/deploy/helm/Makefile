@@ -216,8 +216,13 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 # realign values-secrets.yaml with what they patch, so helm's apply is a no-op on those
 # fields (sync_k8s_kit.align_values_secrets). Helm 3 never applies server-side and is
 # unaffected either way, so no version switch is needed.
+#
+# A Deployment the chart now renders as Recreate but the cluster still runs as RollingUpdate is
+# switched first, or Helm 4's server-side apply refuses it (FLIP#1524; scripts/migrate-strategy.sh).
 deploy: preflight ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
+		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout $(HELM_TIMEOUT) \

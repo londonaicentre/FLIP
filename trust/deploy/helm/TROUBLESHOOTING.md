@@ -39,6 +39,7 @@ services, with a focus on the XNAT DICOM import pipeline.
 8. [Trust Governance Policy (FLIP#1259)](#8-trust-governance-policy-flip1259)
 9. [Deploy Refused: Secret Field Conflict (Helm 4 SSA)](#9-deploy-refused-secret-field-conflict-helm-4-ssa)
 10. [Preflight Looks for the Wrong Kit File (PROD tokens)](#10-preflight-looks-for-the-wrong-kit-file-prod-tokens)
+11. [Upgrade Refused: rollingUpdate Forbidden on Recreate (Helm 4 SSA)](#11-upgrade-refused-rollingupdate-forbidden-on-recreate-helm-4-ssa)
 
 ---
 
@@ -1652,3 +1653,37 @@ a message naming the Makefile target, instead of defaulting to `development`. Ex
 | `true` | `trust/.env.<CODE>.production` |
 | `lza` | `trust/.env.<CODE>.lza-prod` |
 | `lza-stag` | `trust/.env.<CODE>.lza-stag` |
+
+---
+
+## 11. Upgrade Refused: rollingUpdate Forbidden on Recreate (Helm 4 SSA)
+
+### Symptom
+
+```
+Error: UPGRADE FAILED: server-side apply failed for object flip-trust/trust-release-flip-trust-data-access-api
+apps/v1, Kind=Deployment: Deployment.apps "trust-release-flip-trust-data-access-api" is invalid:
+spec.strategy.rollingUpdate: Forbidden: may not be specified when strategy `type` is 'Recreate'
+```
+
+The release stays on its previous revision.
+
+### Cause
+
+The chart now renders a Deployment as `Recreate` that the cluster created as `RollingUpdate`. FLIP#857
+did this to data-access-api when its snapshot store is ReadWriteOnce. The API server filled in
+`rollingUpdate` defaults when the Deployment was created, and no field manager owns them, so Helm 4's
+server-side apply keeps them beside the new `type: Recreate` and the object is invalid.
+
+### Fix
+
+`make deploy` (and so `deploy-trust-k8s` and `upgrade-trust-k8s`) switches such Deployments before the
+upgrade (FLIP#1524, `scripts/migrate-strategy.sh`). A plain `helm upgrade` does not; patch the named
+Deployment once, then upgrade:
+
+```bash
+kubectl -n flip-trust patch deploy trust-release-flip-trust-data-access-api --type=json \
+  -p '[{"op":"remove","path":"/spec/strategy/rollingUpdate"},{"op":"replace","path":"/spec/strategy/type","value":"Recreate"}]'
+```
+
+Setting `rollingUpdate: null` in the chart does not help. Helm 3 applies client-side and never raises this.
