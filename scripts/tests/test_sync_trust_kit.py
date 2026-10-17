@@ -34,6 +34,7 @@ from pathlib import Path
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 SYNC_SCRIPT = SCRIPTS_DIR / "sync_trust_kit.py"
 LIB_SCRIPT = SCRIPTS_DIR / "trust_kit_lib.py"
+UPGRADE_SCRIPT = SCRIPTS_DIR / "site_upgrade.py"
 
 # Minimal valid env: every HUB_SHARED_KEYS value populated.
 HUB_SHARED_DEFAULTS: dict[str, str] = {
@@ -66,7 +67,9 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
         FAIL += 1
 
 
-def _run(repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(
+    repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None, env_class: str = "stag"
+) -> subprocess.CompletedProcess[str]:
     """Run sync_trust_kit.py against a temp repo root, return CompletedProcess."""
     env = {**HUB_SHARED_DEFAULTS, **(env_overrides or {}), "PATH": os.environ.get("PATH", "")}
     # Copy the script into the temp repo (symlinking won't work — the script
@@ -81,8 +84,9 @@ def _run(repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None)
     lib_copy = scripts_dir / "trust_kit_lib.py"
     if not lib_copy.exists():
         shutil.copy2(LIB_SCRIPT, lib_copy)
+        shutil.copy2(UPGRADE_SCRIPT, scripts_dir / "site_upgrade.py")
     return subprocess.run(
-        ["uv", "run", "--no-config", str(copy), kit],
+        ["uv", "run", "--no-config", str(copy), "--env-class", env_class, kit],
         cwd=repo_root,
         env=env,
         capture_output=True,
@@ -164,10 +168,11 @@ def test_4_missing_env_var_is_error() -> None:
         copy = scripts_dir / "sync_trust_kit.py"
         shutil.copy2(SYNC_SCRIPT, copy)
         shutil.copy2(LIB_SCRIPT, scripts_dir / "trust_kit_lib.py")
+        shutil.copy2(UPGRADE_SCRIPT, scripts_dir / "site_upgrade.py")
         env = {k: v for k, v in HUB_SHARED_DEFAULTS.items() if k != "AES_KEY_BASE64"}
         env["PATH"] = os.environ.get("PATH", "")
         result = subprocess.run(
-            ["uv", "run", "--no-config", str(copy), "Trust_1"],
+            ["uv", "run", "--no-config", str(copy), "--env-class", "stag", "Trust_1"],
             cwd=root,
             env=env,
             capture_output=True,
@@ -250,6 +255,31 @@ def test_8_edge_port_is_required_on_lza_staging() -> None:
     _assert(result.returncode != 0, "non-numeric FL_EDGE_PORT refused", result.stderr)
 
 
+def test_9_sha_tag_becomes_a_site_tag() -> None:
+    """For a hub sha- tag, a kit gets a tag every site image exists at; a release tag passes through."""
+    print("▶ sync swaps a sha- tag for the branch tag")
+    result, content = _sync_one("Trust_1", {"DOCKER_TAG": "sha-3e4fd83", "DOCKER_FL_TAG": "v0.12.0"})
+    _assert(result.returncode == 0, "exit 0", result.stderr)
+    _assert("DOCKER_TAG=stag" in content, "a sha- tag outside its release checkout becomes the branch tag")
+    _assert("DOCKER_FL_TAG=v0.12.0" in content, "a release tag passes through")
+
+
+def test_10_prod_refuses_a_sha_tag_without_its_release() -> None:
+    """A prod site pins a release, so a sha- tag this checkout cannot map to one is refused."""
+    print("▶ sync for a prod hub refuses a sha- tag with no release")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "trust").mkdir()
+        kit = root / "trust" / ".env.Trust_1"
+        kit.write_text("TRUST_API_KEY=preserved\n")
+
+        result = _run(root, "Trust_1", env_overrides={"DOCKER_TAG": "sha-3e4fd83"}, env_class="prod")
+
+        _assert(result.returncode != 0, "exit non-zero")
+        _assert("DOCKER_TAG=sha-3e4fd83" in result.stderr, "stderr names the tag", result.stderr)
+        _assert("DOCKER_TAG=" not in kit.read_text(), "kit file not mutated")
+
+
 def main() -> None:
     if not SYNC_SCRIPT.is_file():
         sys.exit(f"❌ {SYNC_SCRIPT} not found")
@@ -264,6 +294,8 @@ def main() -> None:
     test_6_hub_registry_stays_out_of_the_kit()
     test_7_edge_port_defaults_to_server_port_unless_set()
     test_8_edge_port_is_required_on_lza_staging()
+    test_9_sha_tag_becomes_a_site_tag()
+    test_10_prod_refuses_a_sha_tag_without_its_release()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

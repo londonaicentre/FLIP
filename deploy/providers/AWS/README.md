@@ -191,6 +191,8 @@ Then, per kit, it:
    environment carried — which on ECS is only `TRUST_API_KEY_HEADER` and `FL_BACKEND`
    (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other
    hub-shared keys are not in the task definition at all).
+   It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`),
+   runtime-only trust-side secrets the hub never holds.
 4. **Required follow-up:** fill the rest of the hub-shared block from the admin's local
    `.env.<hub>` — from the repo root, `make sync-trust-kit KIT=<CODE> HUB=<hub>` (or
    `make sync-trust-kits` for every local kit). Without it the kit's `AES_KEY_BASE64`,
@@ -202,17 +204,9 @@ refreshing hub-shared block*. Delivery to a host is deliberately separate and
 command-driven, and nothing copies the kit file anywhere: `make deploy-trust KIT=<CODE>`
 reads `trust/.env.<CODE>.<hub>` locally and drives the Trust EC2's Docker daemon over the
 `flip-trust` SSH context (`up-trust-ec2`), so the values reach the host only as container
-environment. For an on-prem operator, `make package-onprem-trust-kit KIT=<slot>` tarballs a
-kit plus its FL-kit slice — it reads `trust/.env.<slot>.<hub>` (or the kit named by
-`KIT_FILE=<path>`) and requires its `FL_KIT_SLOT` to equal `KIT`, so populate
-that kit as its own instructions describe (UI *Add Trust* lines + `make sync-trust-kit`) first.
-
-Then mint the XNAT stack passwords, which are runtime-only trust-side secrets and are
-**not** part of the hub kit:
-
-```bash
-make -C ../../.. generate-xnat-credentials KIT=<CODE> HUB=<hub>
-```
+environment. For an on-prem operator, `make package-onprem-trust-kit KIT=<CODE>` tarballs
+`trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<path>`) plus the FL-kit slice of its
+`FL_KIT_SLOT`, once `sync-trust-kit` has filled it.
 
 Registration is backend-agnostic — the kit inherits `FL_BACKEND` (e.g. `flower`) from
 the hub's env, and the claimed FL kit slot maps onto the matching SuperNode key

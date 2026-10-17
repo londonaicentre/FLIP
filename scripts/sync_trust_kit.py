@@ -40,6 +40,7 @@ from typing import NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import site_upgrade  # noqa: E402
 import trust_kit_lib as tkl  # noqa: E402
 
 
@@ -60,6 +61,7 @@ def main() -> None:
     """CLI entry point: refresh the Hub-shared block in trust/.env.<KIT>."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("kit", help="Slot/handle (e.g. Trust_2). Selects trust/.env.<kit>.")
+    parser.add_argument("--env-class", required=True, choices=("stag", "prod"), help="ENV_CLASS from env_mode.mk")
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
@@ -88,6 +90,15 @@ def main() -> None:
         )
 
     new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS}
+    # Most site images were never built at a sha- tag (path-filtered CI, see site_upgrade.py):
+    # use its release, else (staging only; prod sites pin releases) the stag tag every image carries.
+    for key in ("DOCKER_TAG", "DOCKER_FL_TAG"):
+        tag = new_values[key]
+        if tag.startswith("sha-"):
+            release = site_upgrade.release_for_sha(tag)
+            if not release and args.env_class == "prod":
+                die(f"❌ {key}={tag} is not a release: deploy the hub at one, or check out the release it is from.")
+            new_values[key] = release or "stag"
 
     # Surface the source env file + destination URL up-front — doubles as a
     # footgun guard: an on-prem-pointed kit accidentally synced without HUB=prod

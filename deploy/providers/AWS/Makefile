@@ -1106,6 +1106,8 @@ generate-internal-service-key: ## Generate a new internal service key (fl-server
 	@echo "🔑 Generating internal service key..."
 	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
 
+REGISTER_KIT_FILES = $(if $(KIT),$(KIT_FILE),$(sort $(wildcard $(REPO_ROOT)/trust/.env.*.$(ENV))))
+
 .PHONY: register-trusts
 register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/.env.<CODE>.<env>
 	## Mirrors the dev `make register-trusts` (same register_trust CLI + kit-writer); the only
@@ -1116,21 +1118,24 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	##   KIT=<CODE> → register that one kit (trust/.env.<CODE>.<env>)
 	##   (no KIT)   → register every live trust/.env.*.<env> kit (an old-named one only with KIT=);
 	##                 none is an error unless DEPLOY_TRUST_EC2=false (a hub-only deploy may register later)
-	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(if $(KIT),$(KIT_FILE),$(call old_kits_hint,$(REPO_ROOT)/trust/)$(sort $(wildcard $(REPO_ROOT)/trust/.env.*.$(ENV))))" bash scripts/register-trusts.sh
+	@:$(if $(KIT),,$(call old_kits_hint,$(REPO_ROOT)/trust/))
+	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
+	@# The XNAT stack passwords are trust-side secrets the hub never mints, as in the dev register-trust.
+	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE=$$kit || exit 1; done
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator
 	## Does NOT edit the kit file. The admin populates trust/.env.<KIT>.<env> first:
 	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into it.
-	##   2. `make sync-trust-kit KIT=<slot> HUB=prod` (from repo root) — fills Hub-shared.
+	##   2. `make sync-trust-kit KIT=<CODE> HUB=prod` (from repo root) — fills Hub-shared.
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one
 	## supernode_credentials_<N> for flower), and tarballs the kit file + slice
 	## into deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 	## Hand the tarball to the operator over an encrypted channel.
-	## Required: KIT=<slot> (e.g. KIT=Trust_2).
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	## Required: KIT=<CODE> (e.g. KIT=GSTT); the FL kit slice is the kit's FL_KIT_SLOT.
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required (e.g. KIT=GSTT)"; exit 1)
 	@KIT=$(KIT) KIT_FILE=$(KIT_FILE) bash scripts/package-onprem-trust-kit.sh
 
 .PHONY: delete-trust
