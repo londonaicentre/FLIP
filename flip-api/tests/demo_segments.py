@@ -505,9 +505,18 @@ def follow_progress(rec: Take, researcher: Persona, project_id: str, model_id: s
 
 
 def download_results(
-    rec: Take, researcher: Persona, project_id: str, model_id: str, closing_caption: str = CLOSING_CAPTION
+    rec: Take,
+    researcher: Persona,
+    project_id: str,
+    model_id: str,
+    closing_caption: str = CLOSING_CAPTION,
+    evaluation: bool = False,
 ) -> None:
-    """Segment 6: the finished run, and its aggregated results downloaded through a presigned URL."""
+    """Segment 6: the finished run, and its aggregated results downloaded through a presigned URL.
+
+    An evaluation trains nothing: its charts are each trust's final scores, and the download is the
+    evaluation results rather than a global model.
+    """
     page = rec.page
     sign_in(rec, researcher, scenic=False)
     page.goto(f"/project/{project_id}/model/{model_id}")
@@ -519,11 +528,18 @@ def download_results(
     by_test(page, "log-timestamp").first.wait_for(timeout=120000)
     rec.start()
 
-    rec.caption("Training complete — results are uploaded from the FL network", 1200)
+    rec.caption(
+        f"{'Evaluation' if evaluation else 'Training'} complete — results are uploaded from the FL network", 1200
+    )
     rec.pause(2000)
     # No metrics means no view switcher, so the curves beat only plays when there are curves.
     if by_test(page, "metrics-view-grid").count():
-        rec.caption("The finished training curves, every trust side by side", 600)
+        rec.caption(
+            "Each trust's scores, side by side"
+            if evaluation
+            else "The finished training curves, every trust side by side",
+            600,
+        )
         rec.scroll_to(page.locator("canvas").first)
         rec.click(by_test(page, "metrics-view-grid"))
         by_test(page, "metrics-grid").wait_for()
@@ -534,7 +550,7 @@ def download_results(
         if train_cell.count():
             rec.scroll_to(train_cell.first, pause_ms=1500)
             rec.pause(4000)
-    rec.caption("Downloading the aggregated global model", 800)
+    rec.caption("Downloading the evaluation results" if evaluation else "Downloading the aggregated global model", 800)
     download_btn = by_test(page, "download-results-btn")
     rec.scroll_to(download_btn)
     expect(download_btn).to_be_enabled(timeout=120000)

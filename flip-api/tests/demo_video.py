@@ -68,6 +68,8 @@ DEMO_DIR = REPO_ROOT / "flip-api" / "demo-video"
 STATE_FILE = DEMO_DIR / "state.json"
 SEGMENTS_DIR = DEMO_DIR / "segments"
 OUT_DIR = DEMO_DIR / "out"
+# How long segment 6 waits for an evaluation's scores once the run has finished.
+EVALUATION_METRICS_TIMEOUT_S = 180
 
 # Per-app recording profiles: on-camera names plus the per-backend tutorial locations (mirroring
 # the e2e_smoke Makefile defaults). CLI name flags override the profile values.
@@ -116,9 +118,9 @@ APPS: dict[str, dict[str, Any]] = {
                 "prepare": {"files": ["detector_specification.pt"], "make_target": "prepare-model"},
             },
         },
-        # An evaluation job streams no metrics to the hub (the analytics bridge is wired into the
-        # training recipes, not flip_eval_recipe), so segment 5 has no live chart to film.
-        "streams_metrics": False,
+        # An evaluation reports its scores once, when the run ends (FLIP#1526), so segment 5 has no
+        # live chart to film and segment 6 shows the scores instead.
+        "evaluation": True,
         # It scores an existing detector and never trains one, so segment 6 must not say "trained".
         "closing_caption": "A detector scored at every hospital — while the slides never left any of them",
         # The reference annotations cannot travel with the slides: XNAT's DICOM receiver has no
@@ -528,13 +530,13 @@ def resolve_xnat_ids(
 
 
 def wait_for_first_metrics(client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int) -> None:
-    """Block until the model has at least one training metric point.
+    """Block until the model has at least one metric point.
 
-    Segment 5's charts are only worth recording once real data exists. Not
-    fatal on timeout — the dashboard still shows the live timeline — so this
-    degrades to a loud warning.
+    Charts are only worth recording once real data exists. Not fatal on
+    timeout — the dashboard still shows the timeline — so this degrades to a
+    loud warning.
     """
-    _log(f"⏳ Waiting for first training metrics (timeout {timeout_s}s)")
+    _log(f"⏳ Waiting for first metrics (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         resp = e2e_smoke._try_request(_get, client, f"/model/{model_id}/metrics", headers)
@@ -548,7 +550,7 @@ def wait_for_first_metrics(client: requests.Session, headers: dict[str, str], mo
                 _log(f"  ✅ metrics flowing ({points} point(s))")
                 return
         time.sleep(10)
-    _log("⚠️  No metrics appeared in time — recording segment 5 anyway (charts may show the empty state)")
+    _log("⚠️  No metrics appeared in time — recording anyway (charts may show the empty state)")
 
 
 def check_prepared_files(app_dir: Path, tutorial: dict[str, Any]) -> None:
@@ -794,7 +796,7 @@ def main(argv: list[str] | None = None) -> int:
                 model_description=model_description,
                 app_files=[app_dir / name for name in app_files_for(app_dir)],
                 backend_label=tutorial["label"],
-                streams_metrics=bool(profile.get("streams_metrics", True)),
+                evaluation=bool(profile.get("evaluation", False)),
                 closing_caption=profile.get("closing_caption", demo_segments.CLOSING_CAPTION),
                 xnat_session_label=args.xnat_session_label or profile.get("xnat_session_label"),
             )
@@ -832,7 +834,7 @@ def record_segments(
     model_description: str,
     app_files: list[Path],
     backend_label: str,
-    streams_metrics: bool,
+    evaluation: bool,
     closing_caption: str,
     xnat_session_label: str | None,
 ) -> None:
@@ -937,10 +939,10 @@ def record_segments(
     e2e_smoke.wait_for_model_advanced(client, headers, model_id, timeout_s=args.training_start_timeout)
 
     # ── Segment 5: live progress ──────────────────────────────────────────
-    # Only segment 5 films the live charts, so only it waits for metrics; a job that streams none
-    # (an evaluation) has nothing to film and would only wait out the timeout.
-    if args.from_segment <= 5 and not streams_metrics:
-        _log("⏭️  This app streams no metrics — skipping the live-progress segment")
+    # Only segment 5 films the live charts, so only it waits for metrics; an evaluation reports
+    # none until it ends, so it has nothing to film and would only wait out the timeout.
+    if args.from_segment <= 5 and evaluation:
+        _log("⏭️  An evaluation reports its scores only when it ends — skipping the live-progress segment")
     elif args.from_segment <= 5:
         wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
         with take(browser, segment_video(5, "follow-progress"), args.ui_url, scale) as rec:
@@ -948,10 +950,13 @@ def record_segments(
 
     # ── Off-camera: training runs to completion + results upload ─────────
     e2e_smoke.wait_for_training_finished(client, headers, model_id, timeout_s=args.training_finish_timeout)
+    if evaluation:
+        # The FL server forwards the scores at the end of the run, so give them a moment to land.
+        wait_for_first_metrics(client, headers, model_id, timeout_s=EVALUATION_METRICS_TIMEOUT_S)
 
     # ── Segment 6: download the results ──────────────────────────────────
     with take(browser, segment_video(6, "download-results"), args.ui_url, scale) as rec:
-        demo_segments.download_results(rec, researcher, project_id, model_id, closing_caption)
+        demo_segments.download_results(rec, researcher, project_id, model_id, closing_caption, evaluation)
 
 
 if __name__ == "__main__":

@@ -213,11 +213,11 @@ def test_explicit_enrichment_flags_beat_the_profile() -> None:
 
 
 def test_digipath_is_an_evaluation_that_says_so() -> None:
-    """No metrics to film in segment 5, and segment 6 must not claim a model was trained."""
+    """No live chart in segment 5, and segment 6 must not claim a model was trained."""
     profile = APPS["digipath"]
-    assert profile["streams_metrics"] is False
+    assert profile["evaluation"] is True
     assert "trained" not in profile["closing_caption"]
-    assert all(p.get("streams_metrics", True) for name, p in APPS.items() if name != "digipath")
+    assert not any(p.get("evaluation") for name, p in APPS.items() if name != "digipath")
 
 
 def test_an_app_without_the_requested_backend_is_refused() -> None:
