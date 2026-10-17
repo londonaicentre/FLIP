@@ -23,7 +23,7 @@ prompting us to re-sync the local enum.
 
 from enum import Enum
 
-from nvflare.fuel.flare_api.api_spec import TargetType as NVFlareTargetType
+from nvflare.fuel.flare_api.api_spec import TargetType as FlareTargetType
 
 from fl_api.utils.schemas import TargetType
 
@@ -48,7 +48,7 @@ def _values(target_type_cls: type) -> set[str]:
 
 
 def test_target_type_matches_nvflare_target_type() -> None:
-    assert _values(TargetType) == _values(NVFlareTargetType), (
+    assert _values(TargetType) == _values(FlareTargetType), (
         "fl_api.utils.schemas.TargetType is out of sync with "
         "nvflare.fuel.flare_api.api_spec.TargetType — re-sync the local StrEnum "
         "after this NVFLARE upgrade."

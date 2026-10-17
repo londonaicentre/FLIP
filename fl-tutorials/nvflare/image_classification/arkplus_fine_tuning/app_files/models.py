@@ -74,7 +74,7 @@ def _build_arkplus_raw(arkplus_config: dict) -> nn.Module:
     raise ValueError(f"Unknown ARKPLUS model_name: {model_name!r}")
 
 
-class ArkPlusNVFlareWrapper(nn.Module):
+class ArkPlusFlareWrapper(nn.Module):
     """Wrap Ark+'s multi-head output into the simple classifier shape FLIP expects.
 
     The real Ark+ model returns ``(features, logits)`` when called with a head id.
@@ -156,7 +156,7 @@ def get_model() -> nn.Module:
             pretrained_weights=pretrained_weights,
         )
         ark_model = arkplus_flat_models.build_omni_model(args, num_classes_list=num_classes_list)
-        return ArkPlusNVFlareWrapper(
+        return ArkPlusFlareWrapper(
             ark_model=ark_model,
             head_id=head_id,
             num_classes=num_classes_list[head_id],

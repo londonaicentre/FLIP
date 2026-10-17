@@ -21,7 +21,7 @@ from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.widgets.validation_json_generator import (
-    ValidationJsonGenerator as NVFlareValidationJsonGenerator,
+    ValidationJsonGenerator as FlareValidationJsonGenerator,
 )
 
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
@@ -258,8 +258,8 @@ class TestValidationJsonGenerator:
 
     def test_subclasses_stock_validation_json_generator(self):
         """De-fork guard: subclass stock so the COLLECTION/T2 branch + numpy encoder track upstream."""
-        assert issubclass(ValidationJsonGenerator, NVFlareValidationJsonGenerator)
-        assert isinstance(ValidationJsonGenerator(), NVFlareValidationJsonGenerator)
+        assert issubclass(ValidationJsonGenerator, FlareValidationJsonGenerator)
+        assert isinstance(ValidationJsonGenerator(), FlareValidationJsonGenerator)
 
     def test_handle_event_is_a_noop(self):
         """FLIP dispatches manually via handle_evaluation_events (ServerEventHandler). The

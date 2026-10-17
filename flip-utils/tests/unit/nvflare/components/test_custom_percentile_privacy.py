@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 from nvflare.apis.dxo import DXO, DataKind, MetaKey
-from nvflare.app_common.filters.percentile_privacy import PercentilePrivacy as NVFlarePercentilePrivacy
+from nvflare.app_common.filters.percentile_privacy import PercentilePrivacy as FlarePercentilePrivacy
 
 from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 
@@ -40,8 +40,8 @@ class TestPercentilePrivacy:
 
     def test_subclasses_stock_percentile_privacy(self):
         """De-fork guard: FLIP's filter must subclass stock so it inherits upstream fixes."""
-        assert issubclass(PercentilePrivacy, NVFlarePercentilePrivacy)
-        assert isinstance(PercentilePrivacy(), NVFlarePercentilePrivacy)
+        assert issubclass(PercentilePrivacy, FlarePercentilePrivacy)
+        assert isinstance(PercentilePrivacy(), FlarePercentilePrivacy)
 
     def test_init_default_values(self):
         f = PercentilePrivacy()
@@ -91,7 +91,7 @@ class TestPercentilePrivacy:
         flip_result = PercentilePrivacy(percentile=40, gamma=0.5).process_dxo(
             self._weight_diff_dxo(data, total_steps=3), self.shareable, self.fl_ctx
         )
-        stock_result = NVFlarePercentilePrivacy(percentile=40, gamma=0.5).process_dxo(
+        stock_result = FlarePercentilePrivacy(percentile=40, gamma=0.5).process_dxo(
             self._weight_diff_dxo(data, total_steps=3), self.shareable, self.fl_ctx
         )
 

@@ -31,7 +31,7 @@ from nvflare.app_common.abstract.model_locator import ModelLocator
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
-from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
+from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as FlareScatterAndGather
 
 from flip.constants import FlipEvents, PTConstants
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
@@ -310,7 +310,7 @@ class TestScatterAndGatherLDM:
         # verbatim, and that override IS the guard under test — patching it would mock the guard
         # away and leave the assertion below passing whatever _is_running_a_round returned.
         controller._current_num_targets = 2
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, fl_ctx)
 
         controller.system_panic.assert_not_called()
@@ -334,7 +334,7 @@ class TestScatterAndGatherLDM:
 
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, fl_ctx)
 
         controller.system_panic.assert_called_once()

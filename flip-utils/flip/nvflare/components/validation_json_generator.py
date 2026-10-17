@@ -12,11 +12,11 @@
 
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.widgets.validation_json_generator import (
-    ValidationJsonGenerator as NVFlareValidationJsonGenerator,
+    ValidationJsonGenerator as FlareValidationJsonGenerator,
 )
 
 
-class ValidationJsonGenerator(NVFlareValidationJsonGenerator):
+class ValidationJsonGenerator(FlareValidationJsonGenerator):
     """Stock NVFLARE ``ValidationJsonGenerator``, dispatched manually by FLIP's ServerEventHandler.
 
     Subclasses ``nvflare.app_common.widgets.validation_json_generator.ValidationJsonGenerator`` so

@@ -13,10 +13,10 @@
 from nvflare.apis.dxo import DXO
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
-from nvflare.app_common.filters.percentile_privacy import PercentilePrivacy as NVFlarePercentilePrivacy
+from nvflare.app_common.filters.percentile_privacy import PercentilePrivacy as FlarePercentilePrivacy
 
 
-class PercentilePrivacy(NVFlarePercentilePrivacy):
+class PercentilePrivacy(FlarePercentilePrivacy):
     """Stock NVFLARE ``PercentilePrivacy`` differential-privacy filter plus an ``off`` toggle.
 
     Subclasses ``nvflare.app_common.filters.percentile_privacy.PercentilePrivacy`` so the

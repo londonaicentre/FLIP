@@ -26,7 +26,7 @@ from nvflare.apis.shareable import Shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
-from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
+from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as FlareScatterAndGather
 
 from flip.constants import FlipEvents, FlipProps
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
@@ -230,7 +230,7 @@ class TestZeroAcceptancePanic:
 
     def test_panics_and_relays_when_round_accepted_nothing(self):
         controller = self._controller()
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         controller.system_panic.assert_called_once()
         controller.flip.send_handled_exception.assert_called_once()
@@ -240,14 +240,14 @@ class TestZeroAcceptancePanic:
     def test_panic_names_the_data_kind_cause_when_recorded(self):
         controller = self._controller()
         controller._round_kind_mismatches.add(1)
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         assert "data kind" in controller.system_panic.call_args.args[0]
 
     def test_no_panic_when_round_has_acceptances(self):
         controller = self._controller()
         controller._round_acceptances[1] = {"site-1"}
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         controller.system_panic.assert_not_called()
 
@@ -257,7 +257,7 @@ class TestZeroAcceptancePanic:
         controller's rounds."""
         controller = self._controller(round_no=1)
         controller._current_round = None
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         controller.system_panic.assert_not_called()
 
@@ -275,7 +275,7 @@ class TestZeroAcceptancePanic:
         controller._num_rounds = 1
         controller._round_acceptances[start_round] = {"site-1", "site-2"}
 
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
 
         controller.system_panic.assert_not_called()
@@ -287,7 +287,7 @@ class TestZeroAcceptancePanic:
         controller._start_round = start_round
         controller._num_rounds = 3
 
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
 
         controller.system_panic.assert_called_once()
@@ -308,7 +308,7 @@ class TestZeroAcceptancePanic:
         # It ran round 0 and accepted both clients; the loop then left _current_round at 1.
         controller._round_acceptances[0] = {"site-1", "site-2"}
 
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
 
         controller.system_panic.assert_not_called()
@@ -326,7 +326,7 @@ class TestZeroAcceptancePanic:
         controller._start_round = 0
         controller._num_rounds = 3  # round 1 of 3 — still running
 
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
 
         controller.system_panic.assert_called_once()
@@ -335,7 +335,7 @@ class TestZeroAcceptancePanic:
     def test_relay_failure_still_panics(self):
         controller = self._controller()
         controller.flip.send_handled_exception.side_effect = RuntimeError("hub down")
-        with patch.object(NVFlareScatterAndGather, "handle_event"):
+        with patch.object(FlareScatterAndGather, "handle_event"):
             controller.handle_event(AppEventType.BEFORE_AGGREGATION, _ctx())
         controller.system_panic.assert_called_once()
 
@@ -552,7 +552,7 @@ class TestClientResultTelemetry:
         result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
         result.set_header("exception", "boom")
 
-        with patch.object(NVFlareScatterAndGather, "_accept_train_result", return_value=False):
+        with patch.object(FlareScatterAndGather, "_accept_train_result", return_value=False):
             controller._accept_train_result(client_name="Trust_1", result=result, fl_ctx=_ctx())
 
         controller.flip.send_event.assert_not_called()

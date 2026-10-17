@@ -52,7 +52,7 @@ NVFLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_fi
 `get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
 sized from the `ARKPLUS` block, loads the backbone-only checkpoint that `make prepare-checkpoint` derives
 from the raw Ark6 file (`preprocess_checkpoints.py` strips `omni_heads.*` unconditionally, so the heads
-start fresh), and wraps it in `ArkPlusNVFlareWrapper` (which adapts Ark+'s
+start fresh), and wraps it in `ArkPlusFlareWrapper` (which adapts Ark+'s
 `model(images, head_id) -> (features, logits)` to the `model(images) -> logits` interface, and exposes
 `forward_with_features` for the teacher/student loop). The trainer freezes every parameter that is not
 under `ark_model.omni_heads`, so only the classifier head trains.
@@ -261,7 +261,7 @@ run's `GLOBAL_ROUNDS`). If the simulation finished but packing failed (or you wa
   (checkpoint → server only), and runs SimEnv / exports the job.
 - [`app_files/trainer.py`](app_files/trainer.py): Client-API training loop — frozen backbone,
   teacher/student EMA, AMP, per-lesion metrics via `SummaryWriter`; returns the weight DIFF.
-- [`app_files/models.py`](app_files/models.py): `get_model()` factory + `ArkPlusNVFlareWrapper`.
+- [`app_files/models.py`](app_files/models.py): `get_model()` factory + `ArkPlusFlareWrapper`.
 - [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py): `ArkSwinTransformer` + `build_omni_model`.
 - [`app_files/data_utils.py`](app_files/data_utils.py): data loading, per-site resolution, DICOM parsing, transforms.
 - [`app_files/config.json`](app_files/config.json): model, training, finetuning and per-site data settings.

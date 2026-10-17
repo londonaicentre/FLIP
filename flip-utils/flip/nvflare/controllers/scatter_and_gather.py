@@ -18,7 +18,7 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_event_type import AppEventType
-from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as NVFlareScatterAndGather
+from nvflare.app_common.workflows.scatter_and_gather import ScatterAndGather as FlareScatterAndGather
 
 from flip import FLIP
 from flip.constants import FlipEvents, FlipProps
@@ -27,7 +27,7 @@ from flip.nvflare.runtime import get_flip_model_id
 from flip.schemas import FLLogEvent
 
 
-class ScatterAndGather(NVFlareScatterAndGather):
+class ScatterAndGather(FlareScatterAndGather):
     """FLIP's FedAvg controller — a thin subclass of NVFLARE's stock ``ScatterAndGather``.
 
     FLIP previously vendored a full copy of the stock controller, which drifted out of date. This
