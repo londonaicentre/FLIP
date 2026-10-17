@@ -290,7 +290,8 @@ its own enrichment step, `make -C fl-tutorials/datasets upload-idc-pathology-ann
 `--xnat-urls`: the reference annotations cannot ride the imaging pull, as XNAT's DICOM receiver has no presentation
 context for the Microscopy Bulk Simple Annotations SOP class and an annotation left in Orthanc fails its study's whole
 C-MOVE. An evaluation streams no metrics, so segment 5 is skipped and segment 6 skips the curves and closes on "scored",
-not "trained"),
+not "trained". The detector it scores, `detector_specification.pt`, is gitignored: the take refuses to start until
+`make -C fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation prepare-model` has made it),
 `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG ROI collections via
 `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF — dcmqi in Docker for the
 conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit` caps how many sessions per trust

@@ -32,6 +32,7 @@ from tests.demo_video import (
     APPS,
     REPO_ROOT,
     app_files_for,
+    check_prepared_files,
     check_reused_project_matches_profile,
     reset_researcher_workspace,
     resolve_enrichment,
@@ -222,6 +223,20 @@ def test_digipath_is_an_evaluation_that_says_so() -> None:
 def test_an_app_without_the_requested_backend_is_refused() -> None:
     with pytest.raises(SmokeFailure, match="--app digipath has no flower tutorial"):
         demo_video.main(["--app", "digipath", "--fl-backend", "flower"])
+
+
+def test_digipath_refuses_to_start_without_its_generated_detector(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    tutorial = APPS["digipath"]["backends"]["nvflare"]
+    app_dir = tmp_path / "tutorial" / "app_files"
+    app_dir.mkdir(parents=True)
+    monkeypatch.setattr(demo_video, "REPO_ROOT", tmp_path)
+
+    with pytest.raises(SmokeFailure, match=r"detector_specification\.pt.*make -C tutorial prepare-model"):
+        check_prepared_files(app_dir, tutorial)
+
+    (app_dir / "detector_specification.pt").write_bytes(b"")
+    check_prepared_files(app_dir, tutorial)  # no raise
+    check_prepared_files(app_dir, APPS["xray"]["backends"]["nvflare"])  # nothing to prepare
 
 
 def test_licence_header_is_stripped_from_the_on_camera_query() -> None:

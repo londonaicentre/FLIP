@@ -112,6 +112,8 @@ APPS: dict[str, dict[str, Any]] = {
                     "fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation/query.sql"
                 ),
                 "label": "NVFLARE",
+                # Gitignored and generated: uploaded without it, the server finds no checkpoint to score.
+                "prepare": {"files": ["detector_specification.pt"], "make_target": "prepare-model"},
             },
         },
         # An evaluation job streams no metrics to the hub (the analytics bridge is wired into the
@@ -525,6 +527,27 @@ def wait_for_first_metrics(client: requests.Session, headers: dict[str, str], mo
     _log("⚠️  No metrics appeared in time — recording segment 5 anyway (charts may show the empty state)")
 
 
+def check_prepared_files(app_dir: Path, tutorial: dict[str, Any]) -> None:
+    """Refuse to record an app whose generated, gitignored files have not been made yet.
+
+    Uploading the app without them only fails on the FL server, well into the take.
+
+    Args:
+        app_dir (Path): The tutorial's app directory.
+        tutorial (dict[str, Any]): The profile's backend entry; its optional ``prepare`` names the files
+            and the tutorial Makefile target that generates them.
+    """
+    prepare = tutorial.get("prepare")
+    if not prepare:
+        return
+    missing = [name for name in prepare["files"] if not (app_dir / name).is_file()]
+    if missing:
+        raise SmokeFailure(
+            f"{', '.join(missing)} not found in {app_dir.relative_to(REPO_ROOT)} — generate it first with: "
+            f"make -C {app_dir.parent.relative_to(REPO_ROOT)} {prepare['make_target']}"
+        )
+
+
 def app_files_for(app_dir: Path) -> list[str]:
     """List the uploadable app files, mirroring the UI's blacklist filter."""
     blacklist = e2e_smoke._blacklisted_filenames()
@@ -682,6 +705,7 @@ def main(argv: list[str] | None = None) -> int:
     for required in (app_dir, query_file):
         if not required.exists():
             raise SmokeFailure(f"Tutorial path missing: {required}")
+    check_prepared_files(app_dir, tutorial)
 
     project_name = args.project_name or profile["project_name"]
     # One description of this study, shared with the smoke and guarded against the 250-char cap there.
