@@ -189,7 +189,8 @@ reach answers 503, which the SuperNode retries.
 
 | Where | Shape |
 |---|---|
-| ECS task, prod compose harness | sidecar in the SuperLink's network namespace; upstream `127.0.0.1:8000` (the image defaults) |
+| ECS task | sidecar in the SuperLink's network namespace; upstream `127.0.0.1:8000` (the image defaults) |
+| prod compose harness | its own container publishing `FL_SERVER_PORT`, upstream `fl-server-net-1:8000` — compose restarts containers one at a time, and a proxy sharing a restarted SuperLink's namespace would keep the dead one |
 | hub dev compose | `fl-fleet-proxy-net-<N>`, the only hub service on `fl-net-<N>`, answering there to `fl-server-net-<N>`; the SuperLink stays on `default` |
 | `compose.secure.yml` | `fleet-proxy` on both networks, answering to `superlink` on `flwr-trust-net` where the SuperNodes are |
 | `compose.dev.yml` (insecure) | none: no trusts, so the SuperNodes dial `superlink:8000` |
