@@ -15,6 +15,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException, Request
+from fastapi.routing import APIRoute
 
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.stop_training import stop_training
@@ -29,7 +30,6 @@ def model_id():
 def fake_request():
     request = MagicMock(spec=Request)
     request.scope = {"request_id": "req-123"}
-    request.path_params = {"target": "SERVER", "clients": None}
     return request
 
 
@@ -96,3 +96,11 @@ def test_stop_training_failure(
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Internal server error"
     assert "oops" not in exc_info.value.detail
+
+
+def test_stop_route_is_registered():
+    """flip-ui and the e2e smoke call POST /api/fl/stop/{model_id}; the route inventory only counts routes."""
+    from flip_api.main import app
+
+    routes = {(r.path, m) for r in app.routes if isinstance(r, APIRoute) for m in r.methods}
+    assert ("/api/fl/stop/{model_id}", "POST") in routes

@@ -28,8 +28,6 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 # [#114] ✅
 @router.post("/stop/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-@router.post("/stop/{model_id}/{target}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-@router.post("/stop/{model_id}/{target}/{clients}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def stop_training(
     model_id: UUID,
     request: Request,

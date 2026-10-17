@@ -58,9 +58,9 @@ class FLNets(SQLModel, table=True):
 class FLScheduler(SQLModel, table=True):
     __tablename__ = "fl_scheduler"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    net_id: UUID = Field(foreign_key="fl_nets.id", alias="netid")
+    net_id: UUID = Field(foreign_key="fl_nets.id")
     status: NetStatus = Field(default=NetStatus.AVAILABLE)
-    job_id: UUID | None = Field(default=None, foreign_key="fl_job.id", alias="jobid")
+    job_id: UUID | None = Field(default=None, foreign_key="fl_job.id")
 
     job: Optional["FLJob"] = Relationship(back_populates="scheduler")
     net: Optional["FLNets"] = Relationship(back_populates="schedulers")
