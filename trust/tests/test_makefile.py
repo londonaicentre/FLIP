@@ -90,6 +90,23 @@ class UpgradeTrust(unittest.TestCase):
         assert "up-xnat" in out, out
 
 
+MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
+
+
+class MonaiLabelArchive(unittest.TestCase):
+    """up-xnat's xnat-reset recreates the archive under a running monailabel, whose mount keeps the deleted one."""
+
+    def test_up_trust_checks_the_fresh_archive_then_recreates_monailabel_onto_it(self):
+        out = dry_run("up-trust", "MONAI_LABEL=true", kit=MONAI_KIT)
+        reset = out.index("xnat-reset")
+        check = out.index('[ ! -d "/nonexistent/xnat/xnat-data/archive" ]')
+        recreate = out.index("up -d --force-recreate --no-deps monailabel")
+        assert reset < check < recreate, out
+
+    def test_a_trust_without_monai_label_recreates_nothing(self):
+        assert "--force-recreate" not in dry_run("up-trust")
+
+
 GOVERNED_KIT = KIT + "ACCESS_POLICY_FILE=./governance.SCR.toml\n"
 FLOWER_GOVERNED_KIT = GOVERNED_KIT.replace("FL_BACKEND=nvflare", "FL_BACKEND=flower")
 # Also on the command line: CI runs this suite from `make ... FL_BACKEND=nvflare`, whose MAKEFLAGS

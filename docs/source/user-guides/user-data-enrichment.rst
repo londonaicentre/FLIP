@@ -37,6 +37,7 @@ Supervised models need a label for every image, but **enrichment is not how most
 The chest X-ray classification tutorial is the worked example of the first route: its ``query.sql`` joins ``image_feature`` to ``observation`` to project ``Effusion``, ``Edema`` and ``Lungs in normal arrangement`` as columns, and the app reads those per row. It performs **no enrichment at all**.
 
 The spleen segmentation tutorials are the worked example of the second: a segmentation mask is a 3D volume, so there is nowhere in OMOP for it to live and it has to be uploaded alongside the image.
+If the masks have not been drawn yet, see :ref:`enrichment-draw-labels`.
 
 .. note::
 
@@ -73,6 +74,8 @@ For the standard NIfTI workflow that means:
 The apps rely on that filename pairing directly. The spleen tutorials, for example, find each label by taking the image path and substituting ``/input_`` with ``/label_``. Deriving the label name *from the image already in XNAT* — rather than assuming it — is what keeps the pair matched whatever the conversion produced.
 
 .. warning:: Do not upload an enrichment file under the image's own name. It will overwrite the imaging data for that scan.
+
+.. note:: Masks saved from the XNAT viewer (for example with MONAI Label) are the exception: they live in ROI collections, not in the scan's ``NIFTI`` resource, and an app reads them with ``ResourceType.SEGMENTATION``. See :ref:`monai-label-labelling`.
 
 .. _enrichment-manual:
 
@@ -220,6 +223,21 @@ OMOP data partition and **not** the FL kit slot of the same ``Trust_N`` name, wh
 at registration — the two numberings are unrelated.
 
 See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
+
+.. _enrichment-draw-labels:
+
+*************************************
+Drawing labels with MONAI Label
+*************************************
+
+When the masks do not exist yet, they can be drawn at the Trust in the XNAT viewer, with MONAI Label
+proposing them. They are saved as ROI collections rather than in the scan's ``NIFTI`` resource, so the
+app reads them differently; the page below covers drawing, saving and reading them.
+
+.. toctree::
+   :maxdepth: 1
+
+   data-enrichment/monai-label
 
 .. _confirm-enrichment:
 

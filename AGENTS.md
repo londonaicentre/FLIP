@@ -243,6 +243,11 @@ assembles one mp4 (local dev tool, not run in CI; Playwright segments plus off-c
 Prerequisites, the `DEMO_ARGS` flags and the demo users:
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
 
+`make -C trust/monailabel-demo demo-video KIT=<CODE> XNAT_EXPERIMENT=<session>` records the MONAI Label
+walkthrough on a live trust (Playwright on the trust host: spleen CT segmented in the XNAT OHIF viewer,
+exported, converted by `export_mask`); it fails unless the NIfTI appears. See
+[`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md).
+
 ### Database migrations (flip-api)
 
 flip-api's PostgreSQL schema is owned by **Alembic** (`flip-api/src/flip_api/db/migrations/`), not `SQLModel.metadata.create_all`. The flip-api entrypoint runs `alembic upgrade head` before seeding at boot (fail-fast). Any schema-affecting change to `flip-api/src/flip_api/db/models/*.py` **must** ship a revision in the same PR — the integration drift guard (`flip-api/tests/integration/test_migrations.py`) fails otherwise.
@@ -499,8 +504,10 @@ accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS
 `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow
 passes on `develop` or `main`** — they trigger via `workflow_run` and a job-level `if` gates on
 success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
-build still only fires when that service changed. (`orthanc` and `xnat_*` keep their direct push
-trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead. `flip-ui`
+build still only fires when that service changed. (`orthanc`, `xnat_*` and `monailabel` keep their direct push
+trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead, and
+`monailabel` an in-job import smoke after reclaiming runner disk — its image is ~10.4 GB against
+ubuntu-latest's ~14 GB free. `flip-ui`
 is a CI smoke test that never publishes — it is rebuilt locally by `make deploy-ui` and never consumed
 from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
 hub ECS deploys pin — see
@@ -511,7 +518,7 @@ A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that 
 `:v<X.Y.Z>` (FLIP#1204) — release identity for the sites — and **only** that tag: the `sha-` tags belong to
 the branch build of the same commit and stay immutable (a second push would swap the image under a
 sha-pinned hub, with a different `FLIP_RELEASE` baked in). For a real release `release.yml`
-**dispatches** the twelve builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
+**dispatches** the fourteen builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
 pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
 workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).
 `.github/tests/workflows/test_release.py` pins the dispatch roster to the publishing workflows. Every

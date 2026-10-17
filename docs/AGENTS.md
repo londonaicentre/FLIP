@@ -59,5 +59,9 @@ A fetch failure is a `SphinxError` naming the URL; `FLIP_DOCS_SKIP_GIF_FETCH=1` 
 local recording is previewed — without it the pin wins per file). `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION`
 override the dataset / the pin. New versions are published by `.github/workflows/regenerate_docs_gifs.yml`
 (`scripts/publish_docs_gifs.py`, one commit + one immutable tag `YYYYMMDDTHHMMSSZ-<sha7>`, then a one-line pin
-PR reviewed through its RTD preview); the card is `scripts/docs_gifs_card.md`. Adding a GIF is a spec + an rst
+PR reviewed through its RTD preview); the card is `scripts/docs_gifs_card.md`. GIFs that need a live trust (the MONAI Label walkthrough: GPU + the real XNAT OHIF viewer) are listed in
+`scripts/live-recorded-gifs.txt` instead of having a spec; `expected_gifs()` joins them to the spec set, so the
+wiring test and the publisher treat them alike. They are cut by `make -C trust/monailabel-demo demo-gifs` and
+published by hand; a CI publish, which cannot record them, carries them forward from the pinned version
+(`--carry-from`, sha256-checked against that version's manifest). Adding a GIF is a spec + an rst
 figure in one PR, then the bot's pin PR — `tests/test_docs_gifs_wiring.py` keeps figures and specs in step.

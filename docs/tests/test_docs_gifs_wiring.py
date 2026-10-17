@@ -24,7 +24,10 @@ import subprocess
 
 from conftest import DOCS_DIR, REPO_ROOT
 
-RST_FIGURE_RE = re.compile(r"^\.\. figure:: \.\./assets/generated/gifs/(?P<path>[a-z-]+/[a-z0-9-]+\.gif)\s*$", re.M)
+# Relative to the page, so one ../ per directory level below docs/source/.
+RST_FIGURE_RE = re.compile(
+    r"^\.\. figure:: (?:\.\./)+assets/generated/gifs/(?P<path>[a-z-]+/[a-z0-9-]+\.gif)\s*$", re.M
+)
 OLD_FIGURE_RE = re.compile(r"assets/(admin|flip)/[a-z0-9-]+\.gif")
 SPECS_DIR = REPO_ROOT / "flip-ui" / "test" / "cypress" / "docs"
 
@@ -34,6 +37,7 @@ def rst_figures() -> set[str]:
 
 
 def test_every_figure_has_a_spec_and_every_spec_a_figure(publisher):
+    """Specs and docs/scripts/live-recorded-gifs.txt together are the set; each needs exactly one figure."""
     assert rst_figures() == set(publisher.expected_gifs(SPECS_DIR))
 
 

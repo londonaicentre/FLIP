@@ -277,6 +277,7 @@ FLIP_IMAGE_VALUES = (
     "xnat.web.image.tag",
     "xnat.db.image.tag",
     "xnat.nginx.image.tag",
+    "monailabel.image.tag",
 )
 
 

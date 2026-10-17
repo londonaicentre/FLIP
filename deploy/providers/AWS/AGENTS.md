@@ -154,7 +154,7 @@ Things worth knowing before touching any of it:
   running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
   pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
   `repo:<tag>`. `RELEASE_TAG` is set by exactly one caller: `release.yml`, which
-  after creating the `v<X.Y.Z>` tag dispatches the twelve image builds at it, waits
+  after creating the `v<X.Y.Z>` tag dispatches the fourteen image builds at it, waits
   for them to conclude green (bounded by `RELEASE_BUILD_WAIT_SECONDS`, default
   5400s), and only then dispatches `terraform_apply.yml` on **`refs/heads/main`**
   with `release_tag: v<X.Y.Z>`. The ref is not negotiable: the apply role's trust

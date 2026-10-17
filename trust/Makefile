@@ -167,7 +167,14 @@ endef
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.development.debug.override.yml
+# $(MONAILABEL_OVERRIDE) is load-bearing here even though nothing in the debug override
+# touches monailabel: the debug targets run `up --remove-orphans`, so a compose invocation
+# that omits this overlay sees the running monailabel container as an orphan and DELETES it.
+# GPU_OVERRIDE / TRUST_OVERRIDE only ever modify existing services, which is why omitting
+# them was harmless; MONAILABEL_OVERRIDE is the first overlay here that ADDS one. Defined
+# below at MONAILABEL_OVERRIDE — safe to reference here because this is a recursive (`=`)
+# assignment, expanded when the recipe runs.
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(MONAILABEL_OVERRIDE) -f deploy/compose_trust.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
@@ -240,6 +247,57 @@ TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-
 # Docker exposure and the app stay in lockstep. Mirrors the TRUST_OVERRIDE pattern.
 GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
 GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
+
+# MONAI Label: AI-assisted annotation for the XNAT OHIF viewer. Off unless the kit (or the
+# command line) sets MONAI_LABEL=true, because it needs an NVIDIA GPU and pulls a large
+# image — a trust that does not want it must be unaffected. Same overlay mechanism as
+# GPU_OVERRIDE above.
+MONAI_LABEL ?= false
+MONAILABEL_OVERRIDE := $(if $(filter true,$(strip $(MONAI_LABEL))),-f deploy/compose_trust.$(__DCKR_SUFFIX).monailabel.yml,)
+
+# The overlay bind-mounts this trust's XNAT archive read-only so MONAI Label reads DICOM
+# off disk instead of pulling every scan over HTTP. XNAT_DATA_DIR comes from the kit but is
+# written relative to trust/xnat/ (that Makefile abspath's it from there), so anchor a
+# relative value at xnat/ — abspath'ing it from trust/ would silently resolve one level
+# too high and mount a non-existent directory. Keeps the default in step with
+# trust/xnat/Makefile's XNAT_DATA_DIR.
+__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM)))
+MONAI_LABEL_XNAT_ARCHIVE_DIR := $(abspath $(if $(filter /%,$(__MONAI_LABEL_XNAT_DIR)),$(__MONAI_LABEL_XNAT_DIR),xnat/$(__MONAI_LABEL_XNAT_DIR)))/xnat-data/archive
+export MONAI_LABEL_XNAT_ARCHIVE_DIR
+
+# A GPU-less host cannot run MONAI Label at all, so that stays a hard refusal. Under PROD
+# it runs from the published ghcr.io/londonaicentre/monailabel image
+# (docker_build_monailabel.yml). The XNAT OHIF viewer plugin it registers through ships by
+# default in every deployment mode (#1243), so there is no plugin trade-off to warn about.
+define require_monailabel_supported
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -z "$(GPU_OVERRIDE)" ]; then \
+		echo "❌ MONAI_LABEL=true needs a GPU, but NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset)"; \
+		echo "   for KIT=$(KIT). Set NUM_AVAILABLE_GPUS>0 in trust/$(KIT_FILE) on a GPU host."; \
+		exit 1; \
+	fi
+endef
+
+# up-trust starts monailabel before up-xnat, whose xnat-reset deletes and recreates the XNAT
+# data dir; the container's bind mount still holds the deleted archive, so it would never see
+# a study. Once XNAT is up, check the archive exists where the overlay mounts it from (a local
+# daemon only: a remote one resolves the path on its own host), then recreate monailabel onto it.
+define rebind_monailabel_archive
+	@host="$${DOCKER_HOST:-}"; \
+	if [ -z "$$host" ]; then \
+	  host=$$(docker context inspect $${DOCKER_CONTEXT:+"$$DOCKER_CONTEXT"} --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true); \
+	fi; \
+	case "$$host" in tcp://localhost[:/]*|tcp://localhost|tcp://127.0.0.1*|tcp://\[::1\]*) host="";; esac; \
+	case "$$host" in ssh://*|tcp://*) ;; *) \
+	  if [ ! -d "$(MONAI_LABEL_XNAT_ARCHIVE_DIR)" ]; then \
+	    echo "❌ MONAI Label mounts the XNAT archive from $(MONAI_LABEL_XNAT_ARCHIVE_DIR),"; \
+	    echo "   which does not exist after up-xnat. Check XNAT_DATA_DIR in $(KIT_FILE_LABEL)."; \
+	    exit 1; \
+	  fi;; \
+	esac
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --force-recreate --no-deps monailabel
+endef
+
+MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — serving $(or $(strip $(MONAI_LABEL_MODELS)),deepedit) at $(or $(strip $(MONAI_LABEL_PUBLIC_URL)),http://localhost:$(or $(strip $(MONAI_LABEL_PORT)),8030)),)
 
 # TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
 # registered name, falling back to the assigned slot then the CODE so a
@@ -427,7 +485,7 @@ define check_slot_not_taken
 endef
 
 build:
-	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) -p $(or $(TRUST_PROJECT),trust) build
 
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
@@ -463,16 +521,19 @@ up-trust: require-xnat-aetitle create-networks
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(require_monailabel_supported)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)
 	@echo "$(GPU_STATUS_MSG)"
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
+	@$(if $(MONAILABEL_OVERRIDE),echo "$(MONAI_LABEL_STATUS_MSG)",:)
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	$(MAKE) ensure-seeded KIT=$(KIT) PROD=$(PROD)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
+	$(if $(MONAILABEL_OVERRIDE),$(rebind_monailabel_archive))
 
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
 # The services fail closed on an invalid policy, so an operator editing rules wants the
@@ -637,7 +698,7 @@ down-trust:
 	$(require_kit)
 	$(check_slot_not_taken)
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
@@ -680,8 +741,8 @@ _upgrade-trust-apply:
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
 	$(ensure_snapshot_dir)
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
 	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) PROD=$(PROD)
 	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
@@ -713,6 +774,16 @@ up-trust-ec2: require-xnat-aetitle
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
+	@# Refuse rather than silently drop the overlay. require_monailabel_supported is not
+	@# enough here: it keys off GPU_OVERRIDE, which a kit seeded with the template default
+	@# NUM_AVAILABLE_GPUS=1 leaves non-empty even though the t3.xlarge has no GPU. Without
+	@# this the kit says MONAI Label is on, the deploy says nothing, and no server ever runs.
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ]; then \
+		echo "❌ MONAI_LABEL=true is not supported on the EC2 trust path — this instance type"; \
+		echo "   has no GPU (that is why the GPU overlay is omitted above). Set MONAI_LABEL=false"; \
+		echo "   in trust/$(KIT_FILE), or deploy this trust on a GPU host with up-trust."; \
+		exit 1; \
+	fi
 	$(ensure_snapshot_dir)
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."

@@ -54,6 +54,12 @@ class FakeApi:
         self.created_tags.append({"tag": tag, "revision": revision})
 
 
+@pytest.fixture(autouse=True)
+def no_live_gifs(publisher, monkeypatch, tmp_path):
+    """The repo's own live-recorded list stays out of these tests; TestLiveRecorded opts back in explicitly."""
+    monkeypatch.setattr(publisher, "DEFAULT_LIVE_LIST", tmp_path / "no-live-list.txt")
+
+
 def write(path: Path, data: bytes = b"GIF89a") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
@@ -356,3 +362,88 @@ class TestCli:
         monkeypatch.setattr(publisher, "HfApi", lambda: FakeApi())
         with pytest.raises(SystemExit, match="full 40-hex"):
             publisher.main(["--source-commit", "5945242", "--gifs-dir", str(tree.gifs), "--specs-dir", str(tree.specs)])
+
+
+class TestLiveRecorded:
+    """GIFs recorded on a live trust: listed by hand, published with the Cypress set, never dropped by CI."""
+
+    def test_listed_gifs_join_the_spec_set(self, publisher, tree, tmp_path):
+        live = write(tmp_path / "live.txt", b"# comment\n\nmonailabel/monailabel-export.gif  # trailing note\n")
+        assert publisher.expected_gifs(tree.specs, live) == [
+            "admin/create-user.gif",
+            "flip/approve-project.gif",
+            "flip/create-model.gif",
+            "monailabel/monailabel-export.gif",
+        ]
+
+    def test_a_malformed_line_is_refused(self, publisher, tree, tmp_path):
+        live = write(tmp_path / "live.txt", b"MonaiLabel/Export.GIF\n")
+        with pytest.raises(SystemExit, match="is not <category>/<name>.gif"):
+            publisher.expected_gifs(tree.specs, live)
+
+    def test_a_gif_cannot_be_both_a_spec_and_a_live_recording(self, publisher, tree, tmp_path):
+        live = write(tmp_path / "live.txt", b"flip/create-model.gif\n")
+        with pytest.raises(SystemExit, match="both a Cypress spec and a live recording"):
+            publisher.expected_gifs(tree.specs, live)
+
+    def test_the_repo_list_is_well_formed_and_disjoint_from_the_specs(self, publisher):
+        specs = publisher.DEFAULT_SPECS_DIR
+        live = publisher.live_gifs(publisher.DOCS_DIR / "scripts" / "live-recorded-gifs.txt")
+        assert live, "the repo's live-recorded list is empty"
+        assert set(live) <= set(
+            publisher.expected_gifs(specs, publisher.DOCS_DIR / "scripts" / "live-recorded-gifs.txt")
+        )
+
+
+class TestCarryForward:
+    """A CI publish has only the Cypress GIFs; the live ones come from the pinned version, byte for byte."""
+
+    GIF = "monailabel/monailabel-export.gif"
+
+    @staticmethod
+    def hub(tmp_path: Path, files: dict[str, bytes], manifest: dict | None = None):
+        """A fake ``download(filename)`` serving ``files`` and a manifest recording their sha256."""
+        root = tmp_path / "hub"
+        for name, data in files.items():
+            write(root / name, data)
+        if manifest is None:
+            manifest = {
+                "files": {n: {"sha256": hashlib.sha256(d).hexdigest(), "bytes": len(d)} for n, d in files.items()}
+            }
+        write(root / "manifest.json", json.dumps(manifest).encode())
+        calls: list[str] = []
+
+        def download(filename: str) -> str:
+            calls.append(filename)
+            return str(root / filename)
+
+        return download, calls
+
+    def test_a_missing_live_gif_is_copied_from_the_pinned_version(self, publisher, tree, tmp_path):
+        download, _ = self.hub(tmp_path, {self.GIF: b"GIF89a live"})
+        copied = publisher.carry_forward(tree.gifs, [self.GIF], "repo", TAG, download)
+        assert copied == [self.GIF]
+        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a live"
+
+    def test_a_local_live_gif_wins_and_nothing_is_fetched(self, publisher, tree, tmp_path):
+        write(tree.gifs / self.GIF, b"GIF89a re-recorded")
+        download, calls = self.hub(tmp_path, {self.GIF: b"GIF89a old"})
+        assert publisher.carry_forward(tree.gifs, [self.GIF], "repo", TAG, download) == []
+        assert calls == []
+        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a re-recorded"
+
+    def test_bytes_that_do_not_match_the_manifest_are_refused(self, publisher, tree, tmp_path):
+        manifest = {"files": {self.GIF: {"sha256": "0" * 64, "bytes": 1}}}
+        download, _ = self.hub(tmp_path, {self.GIF: b"GIF89a tampered"}, manifest)
+        with pytest.raises(SystemExit, match="does not match that version's manifest"):
+            publisher.carry_forward(tree.gifs, [self.GIF], "repo", TAG, download)
+        assert not (tree.gifs / self.GIF).exists()
+
+    def test_a_gif_the_pinned_version_never_had_is_refused(self, publisher, tree, tmp_path):
+        download, _ = self.hub(tmp_path, {})
+        with pytest.raises(SystemExit, match="record it on a live trust first"):
+            publisher.carry_forward(tree.gifs, [self.GIF], "repo", TAG, download)
+
+    def test_no_pinned_version_is_refused(self, publisher, tree):
+        with pytest.raises(SystemExit, match="no pinned version"):
+            publisher.carry_forward(tree.gifs, [self.GIF], "repo", None, lambda f: f)
