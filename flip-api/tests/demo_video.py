@@ -126,6 +126,8 @@ APPS: dict[str, dict[str, Any]] = {
         # annotation share an accession, one left in Orthanc fails the whole study's C-MOVE. They are
         # uploaded over REST instead, off camera between the pull and training, on every take.
         "enrichment": {"cwd": "fl-tutorials/datasets", "make_target": "upload-idc-pathology-annotations"},
+        # The first session (TCGA-A8-A081) opens zoomed in on empty background; this one shows nuclei.
+        "xnat_session_label": "TCGA-A8-A06Y",
     },
     "ehr": {
         "project_name": "Federated Type-2 Diabetes Risk Prediction",
@@ -236,6 +238,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Docker Swarm ingress, which accepts but never answers ::1 connections — python-requests "
             "resolves localhost to ::1 and read-times-out (browsers fall back to IPv4 on their own)."
         ),
+    )
+    parser.add_argument(
+        "--xnat-session-label",
+        default=None,
+        help="Label of the XNAT session segment 3 opens (default: the app profile's, else the first session)",
     )
     parser.add_argument(
         "--publish-segmentations",
@@ -352,23 +359,34 @@ def segment_video(number: int, name: str) -> Path:
     return SEGMENTS_DIR / f"{number:02d}-{name}.mp4"
 
 
-def _pick_experiment(xnat: requests.Session, xnat_url: str, experiments: list[dict[str, Any]]) -> dict[str, Any]:
+def _pick_experiment(
+    xnat: requests.Session, xnat_url: str, experiments: list[dict[str, Any]], session_label: str | None = None
+) -> dict[str, Any]:
     """Choose the session to open in OHIF, preferring one with a segmentation to show.
 
     Data enrichment only reaches the sessions it has labels for, so the first session of
     a project is not necessarily one carrying a DICOM-SEG collection — opening that one
     would film the viewer with nothing to overlay. Scan for a session that has an ROI
     collection and take it; fall back to the first session when none do (the classification
-    apps, where there is nothing to import).
+    apps, where there is nothing to import). A ``session_label`` found in the project narrows
+    the choice to that session.
 
     Args:
         xnat (requests.Session): Authenticated XNAT session.
         xnat_url (str): Base URL of the trust's XNAT.
         experiments (list[dict[str, Any]]): Experiment rows from the project listing.
+        session_label (str | None): Label of the session to open, when one is preferred.
 
     Returns:
         dict[str, Any]: The chosen row, flagged with ``_has_roi_collection``.
     """
+    if session_label:
+        preferred = [e for e in experiments if e.get("label") == session_label]
+        if preferred:
+            _log(f"  🎯 opening preferred session {session_label}")
+            experiments = preferred
+        else:
+            _log(f"  ⚠️  session {session_label} not in this project; picking the default session")
     for experiment in experiments:
         resp = xnat.get(f"{xnat_url}/data/experiments/{experiment['ID']}/assessors?format=json", timeout=60)
         if resp.status_code >= 300:
@@ -444,7 +462,12 @@ def wait_for_xnat_conversions(
 
 
 def resolve_xnat_ids(
-    xnat_url: str, username: str, password: str, flip_project_id: str, timeout_s: int = 600
+    xnat_url: str,
+    username: str,
+    password: str,
+    flip_project_id: str,
+    timeout_s: int = 600,
+    session_label: str | None = None,
 ) -> dict[str, str]:
     """Find the trust-XNAT project mirroring a FLIP project, plus one session to open in OHIF.
 
@@ -459,6 +482,7 @@ def resolve_xnat_ids(
         password (str): XNAT password.
         flip_project_id (str): FLIP project UUID to match against secondary_ID.
         timeout_s (int): How long to keep polling for the project/experiments.
+        session_label (str | None): Label of the session to open, when one is preferred.
 
     Returns:
         dict[str, str]: project and experiment ids, and ``has_segmentation`` ("yes" or "").
@@ -484,7 +508,7 @@ def resolve_xnat_ids(
                     if exp_resp.status_code < 300:
                         experiments = exp_resp.json()["ResultSet"]["Result"]
                         if experiments:
-                            experiment = _pick_experiment(xnat, xnat_url, experiments)
+                            experiment = _pick_experiment(xnat, xnat_url, experiments, session_label)
                             resolved = {
                                 "project": xnat_project_id,
                                 "experiment": experiment["ID"],
@@ -772,6 +796,7 @@ def main(argv: list[str] | None = None) -> int:
                 backend_label=tutorial["label"],
                 streams_metrics=bool(profile.get("streams_metrics", True)),
                 closing_caption=profile.get("closing_caption", demo_segments.CLOSING_CAPTION),
+                xnat_session_label=args.xnat_session_label or profile.get("xnat_session_label"),
             )
         finally:
             browser.close()
@@ -809,6 +834,7 @@ def record_segments(
     backend_label: str,
     streams_metrics: bool,
     closing_caption: str,
+    xnat_session_label: str | None,
 ) -> None:
     """Record the segments from ``--from-segment`` on, with the platform waits between them off camera."""
     scale = args.video_scale
@@ -881,7 +907,9 @@ def record_segments(
     # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
     # A non-imaging study has no XNAT project and never will, so the skip follows the app.
     if not args.skip_xnat and has_imaging and args.from_segment <= 3:
-        xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
+        xnat_ids = resolve_xnat_ids(
+            args.xnat_url, args.xnat_username, args.xnat_password, project_id, session_label=xnat_session_label
+        )
         with take(browser, segment_video(3, "xnat-ohif"), args.xnat_url, scale) as rec:
             demo_segments.xnat_ohif(
                 rec,

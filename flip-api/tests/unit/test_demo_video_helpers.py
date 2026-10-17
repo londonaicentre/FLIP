@@ -503,6 +503,29 @@ def test_xnat_sessions_are_cleared_after_the_last_poll(clock: FakeClock, monkeyp
     assert _container_polls(xnat) == 2
 
 
+SESSIONS = [{"ID": "XNAT_E1", "label": "TCGA-A8-A081"}, {"ID": "XNAT_E2", "label": "TCGA-A8-A06Y"}]
+
+
+def test_segment_3_opens_the_preferred_session(capsys) -> None:
+    chosen = demo_video._pick_experiment(FakeXnat([[]]), "http://xnat", list(SESSIONS), "TCGA-A8-A06Y")
+
+    assert chosen["ID"] == "XNAT_E2"
+    assert "opening preferred session TCGA-A8-A06Y" in capsys.readouterr().out
+
+
+def test_an_unknown_preferred_session_falls_back_to_the_first(capsys) -> None:
+    chosen = demo_video._pick_experiment(FakeXnat([[]]), "http://xnat", list(SESSIONS), "TCGA-NOPE")
+
+    assert chosen["ID"] == "XNAT_E1"
+    assert "session TCGA-NOPE not in this project" in capsys.readouterr().out
+
+
+def test_digipath_opens_a_session_showing_nuclei_unless_told_otherwise() -> None:
+    assert APPS["digipath"]["xnat_session_label"] == "TCGA-A8-A06Y"
+    assert demo_video.parse_args([]).xnat_session_label is None
+    assert demo_video.parse_args(["--xnat-session-label", "X"]).xnat_session_label == "X"
+
+
 def test_workspace_reset_spares_kept_projects(monkeypatch: pytest.MonkeyPatch) -> None:
     hub = _hub(
         monkeypatch,
