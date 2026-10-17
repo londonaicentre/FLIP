@@ -68,10 +68,26 @@ Run from `trust/xnat/tests/` or via `make -C trust/xnat/tests unit_test`.
 
 ## When to update
 
-If you add a tag to `anon_script.das`, also add it to the
-`PHI_TAGS_REQUIRED` allowlist in `test_anon_script_static.py` (if it is
-a tag FLIP guarantees handling for) and to the synthetic study fixture
-in `conftest.py`.
+`anon_script.das` handles every row of DICOM PS3.15 Table E.1-1, which is
+copied into `ps315_table_e1_1.csv`; `test_every_table_e1_1_attribute_is_handled`
+fails when a row is not removed at any depth, hashed, or replaced. When a new
+edition of the standard adds rows, refresh the copy with
+`extract_ps315_table.py` (its docstring has the commands) and add a rule per
+new row. Write removals as `- */(gggg,eeee)`: a bare tag matches the top level
+only, and the static tests fail on one. A tag the script replaces at the top
+level needs `- +/(gggg,eeee)` for its nested copies. A tag a test should name
+explicitly also goes in `PHI_TAGS_REQUIRED` in `test_anon_script_static.py`,
+and in the synthetic study fixture in `conftest.py`.
+
+`anon_engine.py` is a stand-in for DicomEdit, so it only proves what it
+models. Its `*/`, `+/`, `X`/`@` tag wildcards, `removeAllPrivateTags`,
+`hashUID` on an absent tag, and `\\` semantics were checked against DicomEdit
+6.9.0 from the `xnat-web` image (FLIP#1513), and the two engines gave the same
+output on the fixture and on real CT, MR, enhanced MR, RT structure set,
+secondary capture, ultrasound and X-ray samples. Check any new construct the
+same way before relying on it. DicomEdit rejects some forms outright (a space
+inside the tag brackets, a lowercase `x`, `removeallprivatetags`), and then
+XNAT cannot parse the script at all.
 
 If you change what counts as a weak XNAT password, change it in **all four**
 places and update `CANONICAL_WEAK_VALUES` in `test_password_guards.py` — the

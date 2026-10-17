@@ -189,28 +189,37 @@ The default script performs only basic label mapping:
 FLIP Anonymization Script
 =========================
 
-FLIP replaces the default script with a site-wide anonymization script (``anon_script.das``) that removes considerably more PHI than the XNAT default, including:
+FLIP replaces the default script with a site-wide anonymization script (``anon_script.das``) built from DICOM PS3.15 Table E.1-1, the list of attributes the Basic Application Level Confidentiality Profile acts on (2026d edition). It takes none of the profile's options, so it:
 
-- **Patient identifiers**: birth date, address, telephone numbers, other patient IDs
-- **Institutional identifiers**: institution name, address, department
-- **Physician/operator identifiers**: referring, performing, and requesting physicians
-- **Other identifying tags**: accession number, medical record locator, ethnic group, occupation
-- **UID pseudonymization**: study and series instance UIDs are hashed for repeatable pseudonymization
-- **De-identification recording**: sets ``Patient Identity Removed`` and ``De-identification Method`` tags
+- **Removes every attribute in the table**, wherever it occurs, including inside sequences. That covers names, IDs and addresses, the accession number, dates and times, the patient's age, sex, size and weight, free-text descriptions and comments, device and institution identifiers, overlays and curves, and whole sequences such as Original Attributes Sequence and Request Attributes Sequence. Where the table says to empty an attribute or give it a dummy value, the script removes it.
+- **Removes every vendor private tag**, at any depth.
+- **Replaces Patient Name and Patient ID** with the XNAT subject label, a random UUID for each import, and removes their nested copies.
+- **Hashes every single-valued UID** at the top level, repeatably, so the objects of one study still reference each other. Copies inside sequences are removed instead, because DicomEdit cannot assign to an attribute there; so are the three multi-valued UID attributes, which ``hashUID`` does not take.
+- **Records de-identification**: sets ``Patient Identity Removed`` to ``YES``, and a ``De-identification Method`` that states where the script falls short of PS3.15.
 
-The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``.
+Dates, times and patient characteristics are not needed in the images: OMOP holds them. FL code joins an image to its OMOP row through the accession number it asked imaging-api for, never through the DICOM headers.
+
+The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``. A copy of the table lives in ``trust/xnat/tests/ps315_table_e1_1.csv``, and a test fails when the script does not handle a row of it.
+
+XNAT names each archived file from the header as it arrived, before the script runs, and its default name starts with the original Study Instance UID. Those names reach the FL client, which unpacks its downloads as they are. ``configure-xnat.sh`` therefore sets the site's ``dicomFileNameTemplate`` to the series number, the instance number and a hash of the SOP Class and Instance UIDs, so ``<original Study Instance UID>-602172-1-1a8m7ai.dcm`` is archived as ``602172-1-1a8m7ai.dcm``. Files archived before the setting keep their old names.
 
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
 
-The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Four boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+The script is not a conformant PS3.15 profile. Five boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
-- **Vendor private tags are not removed.** Real PACS populate these heavily and they routinely carry identifiers. No rule in the script reaches them.
-- **Dates are not shifted or removed.** Only patient birth date and time are dropped; study, series and acquisition dates pass through unchanged.
+- **It removes where the profile empties.** Some attributes the table empties, such as Study Date and Patient's Sex, are ones a DICOM object must carry. Without them a strict validator reports the object as non-conformant; XNAT, viewers and dcm2niix accept it.
+- **Nested UIDs are removed, not replaced.** A reference held inside a sequence, such as a segmentation's link to the image it was drawn on, no longer resolves. ``hashUID`` is also unkeyed, so anyone holding an original UID can recompute its hash, and the hash in each archived file's name.
+- **The accession number is still the XNAT session label**, and the name of the folder FL code receives each study in. The headers no longer carry it. Replacing it with a per-project pseudonym is tracked in `FLIP#1541 <https://github.com/londonaicentre/FLIP/issues/1541>`__.
 - **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
 - **Faces are untouched.** A recognisable face can be rendered from the pixel data of a head CT or MRI. See :ref:`dicom-defacing` below.
 
-The script nevertheless sets ``Patient Identity Removed`` to ``YES`` on every object it processes. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Declaring a DICOM PS3.15 confidentiality profile, with coded ``De-identification Method Code Sequence`` values, is tracked as separate work.
+The script sets ``Patient Identity Removed`` to ``YES`` on every object it processes, and ``De-identification Method`` lists where it falls short. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Closing the remaining gaps to the PS3.15 Basic Profile is tracked in `FLIP#1513 <https://github.com/londonaicentre/FLIP/issues/1513>`__.
+
+What the images lose:
+
+- **Vendor fields dcm2niix reads** for Siemens mosaic images (fMRI, diffusion), for diffusion directions, and for Philips' precise intensity scaling, which are private tags. CT, X-ray and structural MR convert without them.
+- **The descriptive parts of NIfTI file names.** With no Protocol Name and no acquisition time, a CT series that converted as ``input_CT_Spleen_20140510112057_1.nii.gz`` now converts as ``input_000000_1.nii.gz``. The ``input_`` prefix, the series number, the voxels and the geometry are unchanged, so select scans by series number, not by name.
 
 .. _dicom-defacing:
 

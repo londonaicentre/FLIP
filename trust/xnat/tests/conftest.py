@@ -37,8 +37,8 @@ def anon_rules(anon_script_path: Path) -> list[Rule]:
 @pytest.fixture
 def xnat_labels() -> XnatLabels:
     # In production the XNAT session label is set by imaging-api's
-    # `relabelMap.Session = accession_number` (see
-    # trust/imaging-api/imaging_api/routers/schemas.py:201-206), so the
+    # `relabelMap.Session = accession_number` (`ImportStudy.set_relabel_map`
+    # in trust/imaging-api/imaging_api/routers/schemas.py), so the
     # session label IS the accession number. Encode that here so tests
     # exercise the same invariant the OMOP <-> XNAT linkage relies on.
     return XnatLabels(project="FLIP_TEST_PROJECT", subject="FLIP_SUBJ_001", session="ACC-FAK-77115197")
@@ -70,7 +70,7 @@ def _phi_study() -> Dataset:
     ds.OtherPatientNames = "DOE^J^PHI"
 
     # Other Patient IDs Sequence (SQ): nested item carrying PHI. The whole
-    # sequence must be stripped by the `- (0010,1002)` rule. We embed a
+    # sequence must be stripped by the `- */(0010,1002)` rule. We embed a
     # recognisable PHI string inside the sequence item so iterall()-based
     # leak-scans flag it if the sequence ever survives anonymization.
     other_id_item = Dataset()
@@ -110,10 +110,61 @@ def _phi_study() -> Dataset:
     ds.StudyInstanceUID = "1.2.3.4.5.6.7.8.9.10"
     ds.SeriesInstanceUID = "1.2.3.4.5.6.7.8.9.11"
 
-    # Optional: a structured-report-style Person Name (we don't put it in a
-    # sequence; the rule targets the top-level tag). DicomEdit traversal of
-    # nested sequences is out of scope for this lightweight interpreter.
+    # A structured-report Person Name, at the top level and where real reports
+    # carry it: inside Content Sequence
     ds.add_new(0x0040A123, "PN", "PERSON^IN^SR")
+    sr_item = Dataset()
+    sr_item.ValueType = "PNAME"
+    sr_item.PersonName = "SR^NESTED^PHI"
+    ds.ContentSequence = [sr_item]
+
+    # Nested copies of identifiers the script removes or replaces at the top level
+    request = Dataset()
+    request.AccessionNumber = "NESTED-ACC-PHI"
+    request.add_new(0x00110010, "LO", "ACME PRIVATE")
+    request.add_new(0x00111001, "LO", "NESTED-PRIV-PHI")
+    ds.RequestAttributesSequence = [request]
+    # What a PACS keeps after overwriting values, two sequence levels down
+    original = Dataset()
+    original.PatientName = "ORIG^NAME^PHI"
+    original.PatientID = "ORIG-MRN-PHI"
+    original.PatientBirthDate = "19800101"
+    modification = Dataset()
+    modification.ModifiedAttributesSequence = [original]
+    ds.OriginalAttributesSequence = [modification]
+
+    # Vendor private block
+    ds.add_new(0x00090010, "LO", "GEMS_IDEN_01")
+    ds.add_new(0x00091002, "LO", "PRIV-MRN-PHI")
+
+    # Dates, times and patient characteristics: OMOP holds these, so the script drops them
+    ds.StudyDate = "20240315"
+    ds.SeriesDate = "20240315"
+    ds.AcquisitionDateTime = "20240315101512"
+    ds.StudyTime = "101512"
+    ds.PatientAge = "043Y"
+    ds.PatientSex = "F"
+    ds.PatientSize = "1.68"
+    ds.PatientWeight = "61.5"
+
+    # Free text and other IDs a PACS fills in
+    ds.StudyDescription = "CT CHEST FOR MRN-12345-PHI"
+    ds.SeriesDescription = "SERIES-DESC-PHI"
+    ds.StudyID = "STUDY-ID-PHI"
+    ds.add_new(0x60004000, "LT", "OVERLAY-PHI")  # Overlay Comments, group 6000
+    ds.add_new(0x60024000, "LT", "OVERLAY-PHI")  # ...and the next overlay group
+    ds.add_new(0x50000022, "LO", "CURVE-PHI")  # Curve Description
+
+    # Other UIDs: hashed at the top level, removed where nested (DicomEdit cannot assign there).
+    # Referenced Series Sequence is not in Table E.1-1, so it survives with its UIDs gone.
+    ds.FrameOfReferenceUID = "1.2.3.4.5.6.7.8.9.12"
+    instance = Dataset()
+    instance.ReferencedSOPClassUID = CTImageStorage
+    instance.ReferencedSOPInstanceUID = "1.2.3.4.5.6.7.8.9.13"
+    series = Dataset()
+    series.SeriesInstanceUID = "1.2.3.4.5.6.7.8.9.11"
+    series.ReferencedInstanceSequence = [instance]
+    ds.ReferencedSeriesSequence = [series]
 
     return ds
 
