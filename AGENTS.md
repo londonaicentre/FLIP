@@ -173,6 +173,7 @@ make -C fl-tutorials list-tutorials
 make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
 make -C fl-tutorials download-arkplus-finetuning-data    # Ark+ TRAIN splits (HF, ~6.3 GB): arkplus_fine_tuning
 make -C fl-tutorials download-arkplus-eval-data          # Ark+ HOLD-OUT splits (HF, ~1.6 GB): the two arkplus evaluation tutorials
+make -C fl-tutorials download-idc-pathology-data         # IDC whole-slide images (~6.4 GB, public IDC): idc_pathology_nuclei_detection_evaluation
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower   # Flower's simulator (sim-tutorial is the same)
 make -C fl-tutorials test                                # ruff + both CPU-only pytest suites (tutorial-app + per-dataset)
@@ -228,6 +229,8 @@ make -C trust seed-trusts PROJECTS="cxr_project"   # Seed the RUNNING dev trusts
 make -C trust seed KIT=GSTT PROJECTS="…"   # one trust; seed-omop / seed-orthanc for one half
 make -C fl-tutorials seed-spleen KIT=GSTT      # spleen / brain_mri: DICOMs regenerate locally (#1221), so their
 make -C fl-tutorials seed-brain-mri KIT=GSTT   # seeding runs from fl-tutorials (CANONICAL_DIR / DICOM_SOURCE / TABLES_DIR)
+make -C fl-tutorials seed-idc-pathology        # pathology: OMOP rows + IDC slides into every IDC_KITS trust (default GSTT KCH);
+                                               # its annotations go to XNAT after the pull: upload-idc-pathology-annotations
 ```
 
 **Trust data has one path — seeding (FLIP#1101/#1187).** `make up` starts each trust's omop-db and
