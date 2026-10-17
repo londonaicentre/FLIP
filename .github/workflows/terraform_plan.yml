@@ -111,18 +111,14 @@ jobs:
       # header, and `make print-tf-env` below.
       - name: Compose the Terraform env file
         env:
-          # Which mode this run composes for: the deploy/env_mode.mk token, taken
-          # from the TF_PROD variable on the environment (stag | true | lza-stag |
-          # lza). Unset keeps the legacy staging value, so a repository that has
-          # not set it behaves exactly as before. The script derives the env-file
-          # name, the AWS_PROFILE the Makefile's guard expects, and which keys are
-          # required — one token, one table.
-          PROD: ${{ vars.TF_PROD || 'stag' }}
+          # The estate: TF_HUB (stag | prod) on the environment. No fallback, so an
+          # unset TF_HUB fails this step instead of composing some default estate.
+          HUB: ${{ vars.TF_HUB }}
           # The class this run is allowed to compose, asserted by the script: this
-          # workflow declares `environment: aws-stag` unconditionally, so a TF_PROD
-          # on aws-stag naming a prod-grade estate (true / lza) is a mis-set
-          # variable, and the plan it would produce is one nobody asked for. Literal
-          # rather than ref-derived: plans are staging-only by construction.
+          # workflow declares `environment: aws-stag` unconditionally, so
+          # TF_HUB=prod on aws-stag is a mis-set variable, and the plan it would
+          # produce is one nobody asked for. Literal rather than ref-derived: plans
+          # are staging-only by construction.
           EXPECTED_ENV_CLASS: stag
           AWS_REGION: ${{ vars.AWS_REGION }}
           FLIP_TFSTATE_BUCKET_NAME: ${{ vars.FLIP_TFSTATE_BUCKET_NAME }}
@@ -131,7 +127,6 @@ jobs:
           FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
-          FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
@@ -147,30 +142,19 @@ jobs:
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
-          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
-          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
-          # The LZA keys (FLIP#749). Required when TF_PROD selects a
-          # platform-managed estate (lza-stag / lza), expected absent on the
-          # legacy tokens — see compose-ci-env.sh, which is the one place that
-          # decides. The last four have no `export TF_VAR_…` line in the Makefile,
-          # so the script writes them into the env file as raw exports. The two
-          # web-edge values are optional on purpose: the edge is built from this
-          # stack's outputs, so they are legitimately empty on a first apply.
+          # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
+          # `export TF_VAR_…` line in the Makefile, so the script writes them into
+          # the env file as raw exports. The two web-edge values are optional on
+          # purpose: the edge is built from this stack's outputs, so they are
+          # legitimately empty on a first apply.
           ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}
           NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
-          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
-          # NOT one of the LZA keys above: this one is for a self-contained
-          # account, set to "true" on aws-prod (or aws-stag) for the single apply
-          # that hands the public web name to another estate's edge. Unset is the
-          # everyday value — see compose-ci-env.sh and README, "Handing the public
-          # name over".
-          RELEASE_WEB_ALIAS: ${{ vars.RELEASE_WEB_ALIAS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
@@ -211,10 +195,9 @@ jobs:
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
         env:
-          # Same token as the compose step above, for the same reason: `make` is
-          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
-          # it has to be looking at the environment this run composed for.
-          PROD: ${{ vars.TF_PROD || 'stag' }}
+          # The compose step's HUB, so `make` reads the env file it wrote and maps
+          # it onto TF_VAR_* exactly as a laptop plan would.
+          HUB: ${{ vars.TF_HUB }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 
       - name: Terraform plan

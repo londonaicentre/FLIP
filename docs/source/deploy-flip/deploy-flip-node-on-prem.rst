@@ -112,47 +112,9 @@ by the deployment itself; a gap surfaces only when the first project's imaging
 pull runs.
 
 **Central Hub deployed in AWS** — required so the trust can resolve the hub
-URL, fetch the FL participant kit from S3, and so the operator can update the
-FL load balancer's security group with the trust's public IP
-(:doc:`deploy-central-hub-aws`; on a Landing Zone Accelerator estate the FL
-entry point is the networking account's edge instead, see
-:doc:`deploy-central-hub-aws-lza`). See :doc:`deploy-central-hub` for the
-shared prerequisites.
-
-************************************
-Recommended end-to-end (hybrid) flow
-************************************
-
-The wrapper target ``full-deploy-hybrid`` performs the full Central Hub deploy,
-registers the trusts on the hub (``register-trusts``), and provisions the
-on-prem trust:
-
-.. code-block:: shell
-
-   cd deploy/providers/AWS
-   make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
-
-If ``LOCAL_TRUST_IP`` is omitted, the operator workstation's public IP is
-auto-detected via ``curl -s https://api.ipify.org``. ``PROD`` is inherited
-from the environment and supports both staging (``stag``) and production
-(``true``).
-
-After the wrapper exits, you still need to start the trust stack on the host
-itself. ``sudo`` is required: the provisioning playbook deliberately does
-**not** add the login user to the ``docker`` group (docker group membership is
-root-equivalent — any member can mount ``/`` into a container and chroot in),
-so all docker-touching commands on the trust host run via ``sudo``:
-
-.. code-block:: shell
-
-   cd ../../..
-   sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>   # the trust code you scaffolded
-
-Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
-show successful task polls against the Central Hub. No trust service sets
-``container_name``, so compose names the container from the trust's project —
-``trust<N>``, where ``<N>`` is the FL kit slot number the hub assigned
-(``FL_KIT_SLOT_NUMBER`` in the kit file).
+URL and fetch the FL participant kit from S3. FL clients reach the FL server
+through the networking account's edge (:doc:`deploy-central-hub-aws-lza`).
+See :doc:`deploy-central-hub` for the shared prerequisites.
 
 ******************************************
 Onboarding an on-prem trust (step by step)
@@ -162,16 +124,18 @@ When the Central Hub is already deployed, an on-prem trust is onboarded
 asynchronously: the FLIP admin (who holds prod AWS creds) scaffolds,
 registers, and packages a kit; the operator (who does not) extracts it and
 brings the stack up. There is no SSH path — each side runs its own step
-locally. ``<CODE>`` is the trust's short code; the kit file is
-``trust/.env.<CODE>.production``.
+locally. ``<CODE>`` is the trust's short code; the admin's kit file is
+``trust/.env.<CODE>.prod``. On the trust host the kit is named by its FL kit slot
+instead — ``<slot>``, the ``FL_KIT_SLOT`` step 2 writes (e.g. ``Trust_3``) — as
+``trust/.env.<slot>.prod``.
 
 **1. Scaffold the kit (FLIP admin).** On a workstation with prod AWS creds:
 
 .. code-block:: shell
 
-   make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" PROD=true
+   make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" HUB=prod
 
-This writes ``trust/.env.<CODE>.production`` from the base template
+This writes ``trust/.env.<CODE>.prod`` from the base template
 (``trust/.env.example``): a host-local profile, mock-stack default
 credentials, and ``<run-make-register-trust>`` placeholders for the
 hub-managed blocks.
@@ -180,7 +144,7 @@ hub-managed blocks.
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=true
+   make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod
 
 This registers the trust on the prod hub and fills the Kit credentials
 (``TRUST_API_KEY``, ``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``,
@@ -199,11 +163,11 @@ credentials and cannot re-emit them, so the credentials half is write-once —
 re-register to rotate.
 
 **2b. Fill the rest of the Hub-shared block (FLIP admin, required).** From the
-repo root, with the admin's local ``.env.production`` present:
+repo root, with the admin's local ``.env.prod`` present:
 
 .. code-block:: shell
 
-   make sync-trust-kit KIT=<CODE> PROD=true
+   make sync-trust-kit KIT=<CODE> HUB=prod
 
 This upserts the Hub-shared block from the local env file and preserves the
 credentials written in step 2. Skip it and the operator receives a kit whose
@@ -217,10 +181,11 @@ operator's slice of the FL participant kit:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true
+   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
 
-The script reads ``FL_BACKEND`` / ``FL_KIT_SLOT`` out of
-``trust/.env.<CODE>.production`` (it does not edit the file), slices only this
+The packager is keyed on the slot, so it takes the kit by path and ships it as
+``.env.<slot>.prod``. It reads ``FL_BACKEND`` / ``FL_KIT_SLOT`` out of the kit
+(it does not edit the file), slices only this
 operator's portion of the FL participant kit out of S3
 (``net-1/services/<slot>/`` for nvflare; ``net-1/certificates/`` + one
 ``supernode_credentials_<N>`` for flower), and writes a tarball under
@@ -238,24 +203,23 @@ the Host-local profile, then bring the stack up:
 .. code-block:: shell
 
    tar -xzf flip-trust-kit-<slot>-<date>.tar.gz
-   cp .env.<CODE>.production trust/
-   # Edit trust/.env.<CODE>.production (Host-local profile section only):
+   cp .env.<slot>.prod trust/
+   # Edit trust/.env.<slot>.prod (Host-local profile section only):
    #   - FL_KIT_DIR=<path to extracted fl-kit>
    #   - adjust ports / bind-mount dirs to match your host
    #   - rotate the Trust-local passwords
-   sudo -E make onboard-onprem-trust KIT=<CODE> PROD=true   # readiness checklist
-   sudo -E make up-onprem-trust KIT=<CODE> PROD=true         # comes up after all checks pass
+   sudo -E make onboard-onprem-trust KIT=<slot>   # readiness checklist (HUB=prod by default)
+   sudo -E make up-onprem-trust KIT=<slot>         # comes up after all checks pass
 
 Both run via ``sudo``: the provisioning playbook deliberately does not add the
 login user to the ``docker`` group (membership is root-equivalent), and the
 checklist's docker-swarm row needs the docker socket.
 
-``make onboard-onprem-trust`` prints a ✅/❌ checklist (your public IP, docker
-swarm state, Hub-shared / Kit credentials populated, FL_KIT_DIR set and on
-disk, FL kit contents present) — fix any ❌ rows before ``up-onprem-trust``,
+``make onboard-onprem-trust`` prints a ✅/❌ checklist (docker swarm state,
+Hub-shared / Kit credentials populated, FL_KIT_DIR set and on disk, FL kit
+contents present) — fix any ❌ rows before ``up-onprem-trust``,
 which gates on the same checks. The checklist is read-only, so you can run it
-at any point — including before the kit is fully staged — just to read off the
-``Your public IP`` row and report it to the FLIP admin for step 5.
+at any point, including before the kit is fully staged.
 
 The prod trust compose mounts the extracted ``net-1/`` hierarchy into the
 fl-client container, so preserve it as extracted.
@@ -279,28 +243,20 @@ fl-client container, so preserve it as extracted.
 holder you can enforce your own update-privacy filter on everything the
 fl-client sends to the FL server, independently of the researcher's app
 configuration: uncomment ``FL_SITE_PRIVACY_POLICY`` (and optionally its
-parameters) in the Host-local profile of ``trust/.env.<CODE>.production``.
+parameters) in the Host-local profile of ``trust/.env.<slot>.prod``.
 ``make onboard-onprem-trust`` validates the values (an invalid combination
 stops the fl-client at startup, by design), and after ``up-onprem-trust`` the
 fl-client log shows a ``[site-privacy] site privacy policy ACTIVE: ...`` line.
 To change or drop the policy later, edit the kit file and restart the
-fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE> PROD=true``). See
+fl-clients (``make -C trust up-fl-clients-kit KIT=<slot> HUB=prod``). See
 :doc:`../components/component-fl-nets` ("Site-enforced privacy policy") for
 the parameter reference and enforcement semantics.
 
-**5. Open the AWS firewall (FLIP admin).** Once the operator reports their
-host's public IP, open the FL-server NLB to it:
-
-.. code-block:: shell
-
-   make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip> PROD=true
-
-``allow-local-trust-nlb`` runs a normal ``terraform plan``/``apply`` — the IPs
-are real config, so later full applies stay idempotent (no drift).
-
 Then verify the trust is polling: ``sudo docker logs -f trust<N>-trust-api-1`` should
-show successful task polls against the Central Hub (``<N>`` is the assigned FL kit
-slot number, as above).
+show successful task polls against the Central Hub. No trust service sets
+``container_name``, so compose names the container from the trust's project —
+``trust<N>``, where ``<N>`` is the FL kit slot number the hub assigned
+(``FL_KIT_SLOT_NUMBER`` in the kit file).
 
 **Rotation (later, no re-mint).** ``sync-trust-kit`` is the same command that
 completed the kit in step 2b, so when the admin later rotates a Hub-shared value
@@ -309,7 +265,7 @@ Hub-shared block from the admin's local env file — credentials are preserved:
 
 .. code-block:: shell
 
-   make sync-trust-kit KIT=<CODE> PROD=true
+   make sync-trust-kit KIT=<CODE> HUB=prod
 
 Re-transmit the refreshed kit to the operator over the same encrypted channel. The
 operator replaces only the Hub-shared block and re-applies it with
@@ -404,9 +360,9 @@ connect):
 
 1. The trust must be registered on the hub — a row in the ``trust`` table with
    its ``api_key_hash`` — via ``make -C deploy/providers/AWS register-trusts
-   KIT=<CODE>`` or the Add-Trust admin flow (``POST /admin/trusts``).
+   KIT=<CODE> HUB=<hub>`` or the Add-Trust admin flow (``POST /admin/trusts``).
 2. That same target mints the trust's API key and internal service key into the
-   kit file (``trust/.env.<CODE>.production`` for the on-prem trust) as part of
+   kit file (``trust/.env.<CODE>.prod`` for the on-prem trust) as part of
    registration.
 3. No hub redeploy is needed — the trust registry is the live database, read
    on every request.
@@ -420,25 +376,18 @@ Network requirements
 
 **No inbound port forwarding from the internet is needed.** (Retrieval from a trust PACS needs
 one rule inside the trust's own network — see :doc:`../components/component-pacs`.) Trusts poll the hub outbound for
-tasks, and FL clients connect outbound to the FL server via the NLB. All
-communication is trust-initiated.
+tasks, and FL clients connect outbound to the FL server through the networking
+account's edge NLB. All communication is trust-initiated.
 
 The trust host must be able to make outbound connections to two **separate** Central Hub
 endpoints — different hostnames behind different load balancers, so both must be allowlisted:
 
-- The Central Hub FLIP API over HTTPS (port 443) — the ALB (e.g. ``app.flip.aicentre.co.uk``).
+- The Central Hub FLIP API over HTTPS (port 443) — the edge CloudFront (e.g. ``app.flip.aicentre.co.uk``).
 - The FL Server endpoint over gRPC or HTTP (the kit's ``FL_EDGE_PORT``, else
-  ``FL_SERVER_PORT``; 8002 on production, 8003 on LZA staging) — the NLB
+  ``FL_SERVER_PORT``; 8002 on production, 8003 on staging) — the edge NLB
   (e.g. ``fl.app.flip.aicentre.co.uk``).
 
-If the trust's public IP changes (common with residential broadband), update
-the NLB security group. Add the new IP to the ``LOCAL_TRUST_PUBLIC_IPS`` HCL
-list in the hub env file (``.env.stag`` / ``.env.production``), then apply
-the targeted security-group change:
-
-.. code-block:: shell
-
-   make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<new-ip> PROD=<stag|true>
+The hub keeps no per-trust allowlist, so a changed public IP needs no hub-side change.
 
 ***************
 Troubleshooting
@@ -450,8 +399,8 @@ Troubleshooting
 | Trust not polling hub            | Trust stack running? ``sudo docker ps`` on the trust host. |
 |                                  | Check ``trust-api`` logs for polling errors.               |
 +----------------------------------+------------------------------------------------------------+
-| ``Connection timed out`` (FL)    | Trust's public IP changed? Update the NLB security group.  |
-|                                  | Firewall blocking outbound 8002 (8003 on LZA staging)?     |
+| ``Connection timed out`` (FL)    | Host/router firewall blocking outbound on the FL port      |
+|                                  | (8002 for production, 8003 for staging)?                   |
 +----------------------------------+------------------------------------------------------------+
 | Firewall blocking outbound       | Confirm the host/router firewall allows outbound HTTPS     |
 |                                  | (443) and the FL gRPC port (``FL_EDGE_PORT``, def. 8002).  |

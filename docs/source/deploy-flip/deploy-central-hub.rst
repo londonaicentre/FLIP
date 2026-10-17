@@ -7,9 +7,8 @@ Deploy the Central Hub
 The Central Hub is the cloud-hosted side of FLIP — it manages projects, users,
 the federated learning server, and the public UI. It runs in AWS and is
 provisioned with Terraform/OpenTofu from **one root module**,
-``deploy/providers/AWS/``, in one of **two deployment modes**. This page holds
-what the two modes share; each mode's architecture, diagrams and runbook has its
-own page below. For trust-side deployment see :doc:`deploy-flip-node-on-prem`
+``deploy/providers/AWS/``. This page holds what every hub deployment shares.
+For trust-side deployment see :doc:`deploy-flip-node-on-prem`
 and :doc:`deploy-flip-node-in-tre`.
 
 .. contents:: On this page
@@ -17,52 +16,28 @@ and :doc:`deploy-flip-node-in-tre`.
    :depth: 1
 
 ****************
-Deployment modes
+Deployment shape
 ****************
 
-Both modes are permanently supported. They share the one root module — the
-second is selected by an environment flag, not a fork of the code.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 18 31 31
-
-   * - Mode
-     - Selected by
-     - Network
-     - Ingress
-   * - **Self-contained** (default)
-     - ``PROD=stag`` / ``PROD=true``
-     - FLIP creates its own VPC, subnets, internet gateway and NAT
-     - In-account CloudFront for the UI and ``/api/*``; a public NLB for FL traffic
-   * - **Platform-managed**
-     - ``PROD=lza`` (production) / ``PROD=lza-stag`` (staging)
-     - Discovered from a VPC provisioned by the AWS `Landing Zone Accelerator
-       <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_;
-       FLIP creates no network resources
-     - A shared networking account's edge, reached over a Transit Gateway; no public load
-       balancer in the workload account
-
-**Self-contained** is the default. Everything FLIP needs lives in one AWS
-account, which is the simplest way to stand up a Central Hub, and it is the
-shape the open-source project targets. Its architecture and the full runbook are
-on :doc:`deploy-central-hub-aws`.
-
-**Platform-managed** suits an AWS estate already governed by the Landing Zone
-Accelerator, where a platform team owns the network, the guardrails and a shared
-edge, and workload accounts are denied VPC-layer creation. FLIP then discovers
-the network it is given instead of building one, and ingress arrives through the
-estate's own edge. Deploying this way means coordinating with whoever operates
-that estate. :doc:`deploy-central-hub-aws-lza` describes what the mode changes
-and what the estate has to provide; the operator-facing detail (the environment
-file, the flag's exact gating, the handoff to the networking account) is in the
-"Deploying onto an LZA estate" section of `deploy/providers/AWS/README.md
+The hub deploys onto an AWS estate governed by the `Landing Zone Accelerator
+<https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_,
+where a platform team owns the network, the guardrails and a shared edge, and
+workload accounts are denied VPC-layer creation. FLIP discovers the network it
+is given instead of building one, and ingress arrives through the estate's own
+edge. Deploying this way means coordinating with whoever operates that estate.
+:doc:`deploy-central-hub-aws-lza` describes the architecture and what the estate
+has to provide; the operator-facing detail (the environment file, the handoff to
+the networking account) is in the "Deploying onto an LZA estate" section of
+`deploy/providers/AWS/README.md
 <https://github.com/londonaicentre/FLIP/blob/main/deploy/providers/AWS/README.md>`_.
+
+The self-contained single-account mode, in which FLIP built its own VPC and
+in-account edge, is no longer supported and has been removed
+(`FLIP#1479 <https://github.com/londonaicentre/FLIP/issues/1479>`_).
 
 .. toctree::
    :maxdepth: 1
 
-   deploy-central-hub-aws
    deploy-central-hub-aws-lza
 
 .. _deploy-central-hub-costs:
@@ -79,22 +54,14 @@ whatever Cost Explorer reports for the account in question.
 
 .. list-table::
    :header-rows: 1
-   :widths: 18 44 12 26
+   :widths: 50 14 36
 
-   * - Mode
-     - What bills to the workload account
+   * - What bills to the workload account
      - Roughly
      - Notes
-   * - **Self-contained**
-     - ECS Fargate (three tasks), RDS and RDS Proxy, EFS, the internal ALB and the public
-       FL NLB, a NAT gateway and in-account VPC endpoints, CloudFront and its WAF,
-       CloudWatch, GuardDuty and Security Hub
-     - $500 a month
-     - Fargate is about a third of it; the NAT gateway and endpoints about a fifth.
-       Everything is in the one account, so this is the whole bill.
-   * - **Platform-managed**
-     - The same compute and data services, minus the NAT gateway, endpoints, CloudFront,
-       WAF and ALB, which the estate provides centrally
+   * - ECS Fargate (three tasks), RDS and RDS Proxy, EFS, the internal NLB, CloudWatch,
+       GuardDuty and Security Hub; the NAT gateway, endpoints, CloudFront and WAF are the
+       estate's
      - $400 a month
      - Plus a share of the **platform layer**: Transit Gateway attachments, the central
        Network Firewall, central endpoints and NAT, and the shared edge. For the AI
@@ -102,25 +69,21 @@ whatever Cost Explorer reports for the account in question.
        whether or not FLIP is deployed, so attribute all of it to FLIP only when FLIP is
        the estate's sole workload.
 
-The platform-managed mode is therefore not the cheaper hub; it becomes the cheaper
-mode per workload once the estate hosts several, and its firewall and attachment
-charges land on the platform team's accounts rather than the workload's, so agree
-with them how that layer is recharged. A staging environment costs about the same as
-production in either mode, since nothing in the hub scales with the number of users.
-The AI Centre keeps an itemised estimate of its platform layer alongside its LZA
-configuration.
+The platform layer's firewall and attachment charges land on the platform team's
+accounts rather than the workload's, so agree with them how that layer is recharged.
+A staging environment costs about the same as production, since nothing in the hub
+scales with the number of users. The AI Centre keeps an itemised estimate of its
+platform layer alongside its LZA configuration.
 
 .. note::
 
    **Trust hosts are not included.** A trust's running cost is set by the GPU instance
    it provisions and by how long that instance is busy, which follows from the number
    and size of the projects the trust takes part in, so it is a per-trust decision
-   rather than a property of the hub. The mock trust EC2 in the self-contained runbook
+   rather than a property of the hub. The mock trust EC2 Terraform can provision
    (a ``t3.xlarge`` with no GPU) is a test fixture, not a sizing recommendation. For
    always-on versus on-demand GPU provisioning at a trust, see the *GPU Resource
    Management* section of :doc:`deploy-flip-node-in-tre`.
-
-Everything below applies to both modes.
 
 *************
 Prerequisites
@@ -130,28 +93,21 @@ Prerequisites
 2. **Terraform >= 1.13.1** (or OpenTofu).
 3. **Python 3.12 or 3.13** with `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
 4. **GitHub CLI** — needed to authenticate against GitHub Container Registry for image pulls.
-5. **SSH key pair** at ``~/.ssh/host-aws`` — uploaded to AWS and used as the
-   identity file for the SSM ProxyCommand-based SSH config (self-contained mode;
-   the platform-managed mode has no SSH or Ansible step).
-6. **Environment file** — ``.env.stag`` (staging) or ``.env.production``
-   (production) for the self-contained mode, ``.env.lza-stag`` or
-   ``.env.lza-prod`` for the platform-managed mode, in the project root.
+5. **SSH key pair** at ``~/.ssh/host-aws`` — Terraform registers its public half
+   as the EC2 key pair, and it is the identity file for the SSM ProxyCommand-based
+   SSH config.
+6. **Environment file** — ``.env.stag`` (staging) or ``.env.prod``
+   (production) in the project root.
 7. **AWS Session Manager plugin** — required for ``ssh flip`` and
-   ``make forward-trust`` (self-contained mode).
+   ``make forward-trust``.
 
-AWS profile aliases (``prod``, ``stag``, ``dev``, and ``lza-prod`` / ``lza-stag``
-for a platform-managed deployment) should be configured in ``~/.aws/config`` so
+AWS profile aliases (``lza-prod``, ``lza-stag`` and ``dev``) should be configured in ``~/.aws/config`` so
 the Makefile guards can verify the active profile against the chosen environment.
 
-The ``PROD`` variable selects the environment file (``stag`` → ``.env.stag``,
-``true`` → ``.env.production``, ``lza`` → ``.env.lza-prod``, ``lza-stag`` →
-``.env.lza-stag``) and is mapped onto ``TF_VAR_environment`` — ``prod`` for
-``true`` and ``lza``, ``stag`` otherwise — so Terraform can gate prod-only RDS
-hardening (deletion protection, final snapshot). The two ``lza`` values
-additionally set the platform-managed-network flag, which is orthogonal to the
-environment name: ``PROD=lza`` is a production estate and keeps every prod-only
-control, while ``PROD=lza-stag`` is staging semantics on the same
-platform-managed network.
+The ``HUB`` variable (``stag`` or ``prod``, required by every
+``deploy/providers/AWS`` target) selects the environment file (``.env.stag`` /
+``.env.prod``) and is mapped onto ``TF_VAR_environment`` so Terraform can gate
+prod-only RDS hardening (deletion protection, final snapshot).
 
 ************************
 Required IAM permissions
@@ -167,9 +123,8 @@ policies (or equivalent custom permissions):
 - ``CloudWatchLogsFullAccess``
 - ``SecretsManagerReadWrite``
 - ``IAMFullAccess``
-- ``ElasticLoadBalancingFullAccess`` (covers ALB and NLB)
+- ``ElasticLoadBalancingFullAccess``
 - ``CloudFrontFullAccess``
-- ``AWSWAFFullAccess``
 - ``AWSCertificateManagerFullAccess``
 - ``AmazonRoute53FullAccess``
 - ``AWSCloudMapFullAccess``
@@ -179,9 +134,8 @@ policies (or equivalent custom permissions):
 Deployed EC2 instances themselves use **scoped least-privilege roles** rather
 than these broad permissions — see ``deploy/providers/AWS/iam_ecs.tf`` for the
 exact policy attachments. The canonical list lives in
-``deploy/providers/AWS/README.md`` under "Required IAM permissions". On a
-platform-managed estate the workload account's Identity Center permission set
-stands in for this list, and the estate's service control policies bound it:
+``deploy/providers/AWS/README.md`` under "Required IAM permissions". The
+workload account's Identity Center permission set stands in for this list, and the estate's service control policies bound it:
 network-layer creation is denied there by design.
 
 ***********************
@@ -194,10 +148,10 @@ for full details):
 - **Trust API keys** — minted by the ``register_trust`` service when a trust is
   registered. The hub stores only the SHA-256 hash in the ``api_key_hash``
   column of the ``trust`` table; the plaintext is written once into that
-  trust's kit file (``trust/.env.<CODE>.<env>``). Trusts are registered from
-  ``deploy/providers/AWS`` with ``make register-trusts KIT=<CODE>`` for a single
-  kit, or ``make register-trusts`` with no ``KIT`` for every
-  ``trust/.env.*.<env>`` kit present.
+  trust's kit file (``trust/.env.<CODE>.<hub>``). Trusts are registered from
+  ``deploy/providers/AWS`` with ``make register-trusts KIT=<CODE> HUB=<hub>`` for a
+  single kit, or ``make register-trusts HUB=<hub>`` with no ``KIT`` for every
+  ``trust/.env.*.<hub>`` kit present.
 - **Internal service key** — single hub-internal key for fl-server → flip-api
   calls. Generated with ``make generate-internal-service-key``.
 - **Trust-internal service keys** — per-trust shared secret used inside each
@@ -206,7 +160,7 @@ for full details):
   trust API key and written into the trust's kit file.
 
 ``make generate-internal-service-key`` populates the active env file
-(``.env.stag``, ``.env.production``, ``.env.lza-stag`` or ``.env.lza-prod``) and
+(``.env.stag`` or ``.env.prod``) and
 preserves any keys that already exist; ``make register-trusts`` writes the
 per-trust keys into the kit files.
 
@@ -233,7 +187,7 @@ The same page's ``AES_KEY_BASE64`` must be byte-identical on the hub and on ever
 trust container that decrypts. On staging and production the hub's copy is whatever
 the CI Terraform apply wrote into Secrets Manager from the GitHub environment; recover
 the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` rather than
-trusting a checked-out ``.env.<env>``.
+trusting a checked-out ``.env.<hub>``.
 
 Applying schema changes
 ***********************
@@ -265,7 +219,7 @@ applies any pending revisions in order against the existing database:
 - **Development**: ``make restart`` re-creates the ``flip-api`` service's container
   (``deploy-flip-api-1`` — compose names it from the project, no service sets
   ``container_name``); revisions apply on boot.
-- **Staging / Production, in either mode**: a normal ECS redeploy
+- **Staging / Production**: a normal ECS redeploy
   (``make deploy-centralhub`` from ``deploy/providers/AWS/``) applies the
   revisions before the new task serves traffic.
 

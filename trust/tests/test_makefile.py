@@ -210,8 +210,8 @@ class DevelopmentFlRegistry(unittest.TestCase):
                 (root / rel).write_text((Path(__file__).resolve().parents[2] / rel).read_text())
             (root / ".env.development").write_text(hub_env)
             (root / "trust" / ".env.SCR.development").write_text(self.DEV_KIT)
-            # The caller's DOCKER_*/PROD/MAKEFLAGS would pre-empt the scratch env files.
-            dropped = {"PROD", "MAKEFLAGS"}
+            # The caller's DOCKER_*/HUB/MAKEFLAGS would pre-empt the scratch env files.
+            dropped = {"PROD", "HUB", "MAKEFLAGS"}
             env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k not in dropped}
             out = subprocess.run(
                 [

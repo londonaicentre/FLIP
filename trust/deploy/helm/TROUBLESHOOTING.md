@@ -38,7 +38,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)](#710-grpc-async-connect-fails-on-kernel-7-ubuntu-2604)
 8. [Trust Governance Policy (FLIP#1259)](#8-trust-governance-policy-flip1259)
 9. [Deploy Refused: Secret Field Conflict (Helm 4 SSA)](#9-deploy-refused-secret-field-conflict-helm-4-ssa)
-10. [Preflight Looks for the Wrong Kit File (PROD tokens)](#10-preflight-looks-for-the-wrong-kit-file-prod-tokens)
+10. [Preflight Looks for the Wrong Kit File](#10-preflight-looks-for-the-wrong-kit-file)
 
 ---
 
@@ -978,15 +978,15 @@ Registration is done **on the hub**, by the same CODE-named kit flow every
 trust uses — not by a K8s-specific script. From the repo root:
 
 ```bash
-make new-trust TRUST_CODE=Trust_MyNew TRUST_NAME="My New Trust"
-make -C deploy/providers/AWS register-trusts KIT=Trust_MyNew PROD=stag  # mints creds + FL slot
-make sync-trust-kit KIT=Trust_MyNew PROD=stag                           # fills Hub-shared block
+make new-trust TRUST_CODE=Trust_MyNew TRUST_NAME="My New Trust" HUB=stag
+make -C deploy/providers/AWS register-trusts KIT=Trust_MyNew HUB=stag  # mints creds + FL slot
+make sync-trust-kit KIT=Trust_MyNew HUB=stag                           # fills Hub-shared block
 ```
 
 Then translate the kit into the cluster and deploy:
 
 ```bash
-make -C trust/deploy/helm sync-kit KIT=Trust_MyNew PROD=stag  # patches Secret + writes override
+make -C trust/deploy/helm sync-kit KIT=Trust_MyNew HUB=stag  # patches Secret + writes override
 make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_MyNew.yaml
 ```
 
@@ -1598,8 +1598,8 @@ Re-run the kit patch once; it now realigns the `values-secrets.yaml` slots with 
 it patched, so helm's next apply is a no-op on those fields:
 
 ```bash
-make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>
-make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> HUB=<env>
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 ```
 
 Inspect who owns what:
@@ -1625,30 +1625,7 @@ Helm 3 does a client-side three-way merge and never raises this; no version swit
 
 ---
 
-## 10. Preflight Looks for the Wrong Kit File (PROD tokens)
+## 10. Preflight Looks for the Wrong Kit File
 
-### Symptom
-
-`make -C trust/deploy/helm preflight KIT=<CODE> PROD=lza-stag` fails check 4 with
-`Kit file not found: .../trust/.env.<CODE>.development`, while the Makefile's own targets
-resolve the same kit correctly.
-
-### Cause
-
-`scripts/preflight.sh` carried its own `PROD` → suffix mapping, written before the LZA env
-tokens existed, so `lza` / `lza-stag` fell through to `development`.
-
-### Fix
-
-Fixed in-tree: `deploy/env_mode.mk` is now the only `PROD` → suffix map. The Makefile derives
-the token from it and injects it (`KIT_ENV=` into `preflight.sh`, `--env` into `sync_k8s_kit.py`);
-neither script keeps a copy, and running one bare with `PROD` set but no token is refused with
-a message naming the Makefile target, instead of defaulting to `development`. Expected mapping:
-
-| `PROD` | kit file |
-|---|---|
-| (unset) | `trust/.env.<CODE>.development` |
-| `stag` | `trust/.env.<CODE>.stag` |
-| `true` | `trust/.env.<CODE>.production` |
-| `lza` | `trust/.env.<CODE>.lza-prod` |
-| `lza-stag` | `trust/.env.<CODE>.lza-stag` |
+Pass the hub the site joins (`HUB=prod` or `HUB=stag`): the kit file is `trust/.env.<CODE>.<hub>`, and without
+`HUB` the chart reads the development kit; a kit under its pre-FLIP#1479 name gets a one-line rename hint.

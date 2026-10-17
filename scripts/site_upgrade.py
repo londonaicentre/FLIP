@@ -114,12 +114,12 @@ _GITHUB_TIMEOUT_SECONDS = 5.0
 #: A stable platform release. Not `v0.7.0-rc.1`, and not a component release (`flip-utils-v0.10.0`).
 _STABLE_RELEASE = re.compile(r"^v\d+\.\d+\.\d+$")
 
-#: Where a deployed site pulls every image from, whatever its kit says: the production compose
+#: Where a deployed site pulls every image from, whatever its kit says: the prod compose
 #: files hardcode it and trust/xnat/Makefile pins it (FLIP#1480).
 _SITE_REGISTRY = "ghcr.io/londonaicentre/"
 
-#: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.production.yml`,
-#: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.production.<backend>.yml`)
+#: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.prod.yml`,
+#: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.prod.<backend>.yml`)
 #: with the kit key that pins it away from ``DOCKER_TAG`` when set — the compose files'
 #: ``${OMOP_DB_TAG:-${DOCKER_TAG}}`` / ``${ORTHANC_TAG:-…}`` opt-outs and the XNAT Makefile's
 #: ``XNAT_TAG ?= ${DOCKER_TAG}``. A pinned image is checked at its pin, not at the target.

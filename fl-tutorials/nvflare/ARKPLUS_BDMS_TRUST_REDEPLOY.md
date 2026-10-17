@@ -100,10 +100,10 @@ ls "$FL_KIT_DIR/net-1/services/Trust_2/startup/fed_client.json"   # must exist
 sudo (the login user is deliberately not in the docker group; `-E` keeps `$HOME` so root's docker
 reuses your `docker login ghcr.io` credentials):
 ```bash
-sudo -E env PROD=true make up-onprem-trust KIT=<HANDLE>
+sudo -E make up-onprem-trust KIT=<HANDLE>
 ```
 This re-pulls all images at their configured tags and recreates only `fl-client` and `imaging-api`
-(the two whose tags changed). *If you prefer a clean restart:* `sudo -E env PROD=true make
+(the two whose tags changed). *If you prefer a clean restart:* `sudo -E make
 down-onprem-trust KIT=<HANDLE>` first, then the command above. Your data is in persistent volumes
 and is **not** removed.
 

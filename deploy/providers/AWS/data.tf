@@ -29,3 +29,11 @@ data "aws_canonical_user_id" "current" {}
 # iam_ecs.tf:21 (kept there for state-locality with the IAM resources
 # that consume it) and referenced elsewhere as
 # `data.aws_caller_identity.current.account_id`.
+
+# Referenced by the trust security group's egress allowlist (#876) to scope
+# S3 traffic (FL kit sync) to AWS's own managed prefix list instead of a raw
+# CIDR — S3's edge IP ranges are dynamic, so the prefix list is the only
+# mechanism that stays correct as AWS rotates them.
+data "aws_ec2_managed_prefix_list" "s3" {
+  name = "com.amazonaws.${var.AWS_REGION}.s3"
+}

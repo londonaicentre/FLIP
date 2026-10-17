@@ -54,7 +54,7 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
 
-The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
+The on-prem trust kit (`trust/.env.<CODE>.prod`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
 
 ## Prerequisites
 
@@ -69,7 +69,7 @@ The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_
    - SSH access from the operator workstation (if remote), or local access
    - Internet connectivity (to pull Docker images and packages)
 
-3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs, FL participant kits in S3, and NLB security group configuration). See [`deploy/providers/AWS/`](../../../deploy/providers/AWS/README.md).
+3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs and the FL participant kits in S3). See [`deploy/providers/AWS/`](../../../deploy/providers/AWS/README.md).
 
 ## Quick Start
 
@@ -79,30 +79,23 @@ All commands are run from the `deploy/providers/AWS/` directory since the Makefi
 cd deploy/providers/AWS
 ```
 
-### Recommended end-to-end target (hybrid)
+### Running docker on the trust host
 
-```bash
-make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
-```
-
-This wrapper target runs the full AWS + on-prem trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
-
-You still need to start the on-prem trust stack on the trust host. The playbook
-deliberately does **not** add the SSH login user to the `docker` group (docker
+The playbook deliberately does **not** add the SSH login user to the `docker` group (docker
 group membership is equivalent to root on the host — any member can mount `/`
 into a container and chroot in), so docker commands and `make -C trust up-trust`
 must be run via `sudo`:
 
 ```bash
 cd ../../..
-sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
+sudo -E make -C trust up-trust KIT=<CODE> HUB=<stag|prod>
 ```
 
-Use the trust code you registered, whose kit file is `trust/.env.<CODE>.production`.
+Use the trust code you registered, whose kit file is `trust/.env.<CODE>.<stag|prod>`.
 `-E` is load-bearing: it preserves `$HOME`, so root's docker client reuses your
 `~/.docker/config.json` GHCR login for the image pulls — a plain `sudo` looks in
-`/root/.docker` and the pulls fail. (`PROD` needs no preserving; `env PROD=…` sets
-it explicitly for the command.) Any direct `docker`, `docker compose`, or
+`/root/.docker` and the pulls fail. (`HUB` needs no preserving: it is a make argument.)
+Any direct `docker`, `docker compose`, or
 `docker swarm` invocations on the trust host should likewise be prefixed with `sudo`.
 
 > **Hosts provisioned before this change are not remediated by re-running the
@@ -129,7 +122,7 @@ so run it from `deploy/providers/AWS/`:
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 
 cd deploy/providers/AWS       # first time only, if you didn't `cd` earlier
-make provision-local-trust
+make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 ```
 
 ### What `provision-local-trust` does
@@ -190,7 +183,7 @@ make provision-local-trust
 > `XNAT_DATA_DIR=./xnat-data`, resolved against `trust/xnat/` (so
 > `<checkout>/trust/xnat/xnat-data`). Only when the kit omits the key does the
 > Makefile fall back to the **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` under
-> `PROD=stag|true` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
+> `HUB=stag|prod` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
 > in dev) — a deliberate split so two trusts sharing a host stay isolated. Compose,
 > `xnat-reset` and the ownership check all read that same variable, so the live tree
 > is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache}` plus
@@ -201,8 +194,6 @@ make provision-local-trust
 > in effect, then verifies it and fails naming the exact `chown` when it is wrong — so
 > treat it as destructive, not as a repair tool for a populated archive.
 
-Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
-
 ### Post-provisioning manual steps
 
 1. **Start the trust stack** on the trust host. The login user is intentionally
@@ -211,7 +202,7 @@ Opening the AWS FL-server NLB to the trust's public IP is a **separate** step �
 
    ```bash
    cd ../../..
-   sudo -E env PROD=stag make -C trust up-trust KIT=<CODE>   # the trust code you registered
+   sudo -E make -C trust up-trust KIT=<CODE> HUB=stag   # the trust code you registered
    ```
 
 2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling — `sudo docker compose logs trust-api`).
@@ -234,7 +225,7 @@ Any machine with the correct credentials can act as a trust — the hub identifi
 
 1. The trust must be registered on the hub — run `make register-trusts`, or use the Add-Trust button on the Connection status page. Registration inserts the `trust` row with its `api_key_hash` and claims an FL kit slot. No hub redeploy is needed.
 
-The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust registration automatically (both honour `PROD=stag|true`). When provisioning a trust standalone with `provision-local-trust`, the trust must already be registered.
+`provision-local-trust` does not register the trust: it must already be registered.
 
 ## Ansible Playbook Details
 
@@ -288,29 +279,23 @@ uv run ansible-galaxy install -r trust/deploy/ansible/requirements.yml
 
 ### Port Forwarding (NAT)
 
-**No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server via the NLB. All communication is trust-initiated.
+**No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server through the networking account's edge NLB. All communication is trust-initiated.
 
 The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
 
-- **`app.flip.aicentre.co.uk`** — the ALB (HTTPS API, port 443).
-- **`fl.app.flip.aicentre.co.uk`** — the NLB (FL gRPC, default port 8002).
+- **`app.flip.aicentre.co.uk`** — the edge CloudFront (HTTPS API, port 443).
+- **`fl.app.flip.aicentre.co.uk`** — the edge NLB (FL gRPC, default port 8002).
 
 ### Dynamic Public IP
 
-The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it. Set `LOCAL_TRUST_PUBLIC_IPS` (an HCL list of every allowlisted IP) in the env file and reconcile with `allow-local-trust-nlb`:
-
-```bash
-LOCAL_TRUST_PUBLIC_IPS='["<new-ip>"]' make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<new-ip>
-```
-
-Re-running with an already-listed IP is a no-op (idempotent).
+The hub keeps no per-trust allowlist, so a changed public IP (common with residential broadband) needs no hub-side change.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
 | Trust not polling hub | Trust stack running? (`sudo docker ps` on trust host). Check trust-api logs for polling errors. |
-| `Connection timed out` (FL) | Trust's public IP changed? Update NLB security group. Host/router firewall blocking outbound on port 8002? |
+| `Connection timed out` (FL) | Host/router firewall blocking outbound on port 8002? |
 | Firewall blocking outbound | Check host/router firewall allows outbound HTTPS (443) and gRPC (8002) |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |
 

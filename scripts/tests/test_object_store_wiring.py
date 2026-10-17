@@ -167,11 +167,11 @@ def test_dev_presign_origin_matches_every_fl_api_and_fl_server() -> None:
 
 def test_prod_presign_origin_matches_every_fl_api() -> None:
     print("test_prod_presign_origin_matches_every_fl_api")
-    hub = _compose_env(REPO_ROOT / "deploy/compose.production.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
+    hub = _compose_env(REPO_ROOT / "deploy/compose.prod.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
     _assert(len(hub) == 1, "prod flip-api sets AWS_ENDPOINT_URL_S3 exactly once", detail=str(hub))
     for backend in ("nvflare", "flower"):
         allowed = _compose_env(
-            REPO_ROOT / f"deploy/compose.production.{backend}.yml", "fl-api-net-1", "BUNDLE_URL_ALLOWED_ORIGINS"
+            REPO_ROOT / f"deploy/compose.prod.{backend}.yml", "fl-api-net-1", "BUNDLE_URL_ALLOWED_ORIGINS"
         )
         _assert(allowed == hub, f"prod {backend} fl-api-net-1 admits exactly the presign origin", detail=str(allowed))
 

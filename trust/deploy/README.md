@@ -23,7 +23,7 @@ combination for the environment, FL backend, GPU availability and kit slot. Star
 
 ```bash
 make -C trust up-trust KIT=GSTT              # dev
-make -C trust up-trust KIT=<CODE> PROD=true  # against a remote hub
+make -C trust up-trust KIT=<CODE> HUB=prod   # against a remote hub
 ```
 
 ## File matrix
@@ -32,7 +32,7 @@ make -C trust up-trust KIT=<CODE> PROD=true  # against a remote hub
 backend overlay + GPU + `Trust_1` override, via `up-trust` (and identically `up-fl-clients-kit`). The debug
 path is a separate three-file command that never picks up the GPU or `Trust_1` overlays, and
 `compose.test.yml` is never combined with any of them. `<env>` is `development` or `production`, selected
-by `PROD` (`true`/`stag` → `production`).
+by `HUB` (`stag`/`prod` → `production`).
 
 | File | Role | When applied |
 | ---- | ---- | ------------ |
@@ -41,7 +41,7 @@ by `PROD` (`true`/`stag` → `production`).
 | `compose_trust.<env>.flower.yml` | FL client overlay for the Flower backend | Always, backend-selected |
 | `compose_trust.<env>.gpu.yml` | NVIDIA device reservation for the fl-client | Only when the kit sets `NUM_AVAILABLE_GPUS > 0` (`GPU_OVERRIDE`). Never applied by `up-trust-ec2` — the EC2 test host is GPU-less |
 | `compose_trust-1_override.yml` | Publishes the trust APIs on host ports | Dev only, and only for the trust holding FL slot `Trust_1` (`TRUST_OVERRIDE`) — the override binds one fixed port set, so exactly one trust can claim it |
-| `compose_trust.development.debug.override.yml` | debugpy ports + `DEBUG` env on the three APIs | `make debug-trust-api` / `debug-imaging-api` / `debug-data-access-api`. **Dev only** — there is no `production` variant, and the filename is hardcoded rather than `<env>`-interpolated, so these targets do not work under `PROD` |
+| `compose_trust.development.debug.override.yml` | debugpy ports + `DEBUG` env on the three APIs | `make debug-trust-api` / `debug-imaging-api` / `debug-data-access-api`. **Dev only** — there is no `production` variant, and the filename is hardcoded rather than `<env>`-interpolated, so these targets do not work under `HUB` |
 | `compose.test.yml` | Integration-test stack (`omop-db-test` + `data-access-api-test`) | Testcontainers from pytest, and CI (`test_trust_{trust_api,data_access_api}.yml`). Not part of any `make up` path |
 
 Dev pulls repo-built images from GHCR by default (`pull_policy: always`); `BUILD=true` rebuilds from the

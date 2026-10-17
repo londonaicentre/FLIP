@@ -15,8 +15,7 @@
 # FLIP Cognito user pool + client + domain + seed users.
 
 resource "aws_cognito_user_pool" "flip_user_pool" {
-  # Feature tier. Null = never sent (legacy pools keep their grandfathered
-  # tier). The LZA mode pins LITE: ESSENTIALS -- the default for new pools --
+  # Feature tier. FLIP pins LITE: ESSENTIALS -- the default for new pools --
   # counts as "ManagedLogin configured", which Cognito refuses to serve over
   # PrivateLink, and the interface endpoint is that account's only route to
   # cognito-idp (FLIP#749). FLIP uses classic flows (SDK sign-in, TOTP MFA),

@@ -24,8 +24,8 @@ terraform state rm aws_efs_file_system.fl_data
 # ... repeat for all stale resources
 
 # Alternatively, destroy everything and start fresh:
-make destroy PROD=stag
-make full-deploy PROD=stag
+make destroy HUB=stag
+make full-deploy HUB=stag
 ```
 
 ---
@@ -186,7 +186,7 @@ invalid spec: :/var/lib/orthanc/db: empty section between colons
 
 **Root cause**: `ORTHANC_STORAGE_DIR` is missing from the per-trust kit file
 (`trust/.env.<KIT>`), so the Orthanc compose mount expands to an empty host
-path. The compose files (`trust/deploy/compose_trust.{development,production}.yml`)
+path. The compose files (`trust/deploy/compose_trust.{development,prod}.yml`)
 both consume the unsuffixed `${ORTHANC_STORAGE_DIR}` — the older
 `_TRUST_{1,2}` suffixed names from `.env.stag` were retired by the
 per-trust-kit refactor.
@@ -287,17 +287,17 @@ requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: http://da
 
 **Root cause**: The running fl-client / fl-server / fl-api images predate the change that added `headers=_trust_internal_headers()` to every outbound `flip.get_dataframe` / `flip.get_by_accession_number` / `flip.add_resource` call. Without that header, the data-access-api / imaging-api router-level auth check rejects the request with 401.
 
-**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.production` for prod) to an FL image build that includes the trust-internal-header change, then redeploy. A single tag bump rolls all three images:
+**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.prod` for prod) to an FL image build that includes the trust-internal-header change, then redeploy. A single tag bump rolls all three images:
 
 ```bash
 # Pick an FL image tag (a develop SHA) that includes the trust-internal-header change
 sed -i 's/^DOCKER_FL_TAG=.*/DOCKER_FL_TAG=<sha>/' .env.stag
 
 # fl-api + fl-server (ECS task defs read TF_VAR_flip_fl_image_tag)
-make apply PROD=stag
+make apply HUB=stag
 
 # fl-client (trust EC2 compose pulls the same tag)
-make deploy-trust PROD=stag
+make deploy-trust HUB=stag
 ```
 
 Verify the running fl-client has the header wiring:
@@ -312,7 +312,7 @@ You should see calls at `get_dataframe`, `get_by_accession_number`, and `add_res
 
 ### 2.7 `make deploy-ui` fails with `InvalidAccessKeyId` despite a successful SSO login
 
-**Symptom**: `make -C deploy/providers/AWS deploy-ui PROD=stag` builds the bundle successfully, then fails on the first `aws s3` call:
+**Symptom**: `make -C deploy/providers/AWS deploy-ui HUB=stag` builds the bundle successfully, then fails on the first `aws s3` call:
 
 ```
 📦 Syncing static assets to s3://flipstag/ ...
@@ -370,9 +370,9 @@ runs — not on the EC2.
 ```bash
 # The seed play starts throwaway containers on the host's data directories, so the
 # stack must be down while it runs (deploy-trust already sequences it that way).
-DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2 KIT=<CODE> PROD=true   # what deploy-trust does before seeding
-make -C deploy/providers/AWS seed-trust-data KIT=<CODE> PROD=true               # OMOP rows + Orthanc studies + vocabulary
-DOCKER_CONTEXT=flip-trust make up-trust-ec2 KIT=<CODE> PROD=true
+DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2 KIT=<CODE> HUB=prod   # what deploy-trust does before seeding
+make -C deploy/providers/AWS seed-trust-data KIT=<CODE> HUB=prod               # OMOP rows + Orthanc studies + vocabulary
+DOCKER_CONTEXT=flip-trust make up-trust-ec2 KIT=<CODE> HUB=prod
 ```
 
 Verify a cohort accession is findable, then re-trigger the pull from the UI
@@ -400,7 +400,7 @@ paths. Audit the other bind mounts on the host for the same leak —
 
 **Symptom**: All authenticated API calls return `401 Unauthorized` or `403 Forbidden`. The UI shows "Something went wrong" but the login works.
 
-**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The production compose file (`deploy/compose.production.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
+**Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The prod compose file (`deploy/compose.prod.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` (inheriting the secure default). To temporarily disable for testing, set in `.env.stag`:
 
@@ -408,7 +408,7 @@ paths. Audit the other bind mounts on the host for the same leak —
 ENFORCE_MFA=false
 ```
 
-Then redeploy: `make deploy-centralhub PROD=stag`
+Then redeploy: `make deploy-centralhub HUB=stag`
 
 ---
 
@@ -424,7 +424,7 @@ Then redeploy: `make deploy-centralhub PROD=stag`
 NET_ENDPOINTS={"net-1":"http://fl-api-net-1.flip.local:8000"}
 ```
 
-Then run `make plan PROD=stag`, `make apply PROD=stag`, and `make deploy-centralhub PROD=stag`. The flip-api startup seed reconciles the `fl_nets` row to `NET_ENDPOINTS`; a manual database update is neither required nor durable.
+Then run `make plan HUB=stag`, `make apply HUB=stag`, and `make deploy-centralhub HUB=stag`. The flip-api startup seed reconciles the `fl_nets` row to `NET_ENDPOINTS`; a manual database update is neither required nor durable.
 
 ---
 
@@ -536,7 +536,7 @@ ssh flip-trust 'docker logs trust1-imaging-api-1 --since 10m 2>&1 | \
 
 If you see `Permission denied` on `/app/data/images/...`, you have the same bug.
 
-**Fix** (sticky): `site.yml` now pre-creates `/opt/flip/data/trust-1` and `/opt/flip/data/trust-2` owned by `ubuntu:ubuntu` (uid 1000 inside the containers) and removes the unused `/opt/flip/data/images` entry. Re-run `make full-deploy PROD=stag`.
+**Fix** (sticky): `site.yml` now pre-creates `/opt/flip/data/trust-1` and `/opt/flip/data/trust-2` owned by `ubuntu:ubuntu` (uid 1000 inside the containers) and removes the unused `/opt/flip/data/images` entry. Re-run `make full-deploy HUB=stag`.
 
 **Hot-fix** (existing host, no redeploy):
 
@@ -567,7 +567,7 @@ The general principle: anywhere a non-root container bind-mounts a host path, pr
 
 ### 3.8 UI login fails with "There was a problem logging you in" after a Terraform apply
 
-**Symptom**: The login page loads, credentials submit, but the snackbar shows the generic *"Error — There was a problem logging you in. Please check your details and try again."* All other infra checks pass (`make status PROD=stag` is green). The same credentials work in `aws cognito-idp admin-initiate-auth` from the CLI.
+**Symptom**: The login page loads, credentials submit, but the snackbar shows the generic *"Error — There was a problem logging you in. Please check your details and try again."* All other infra checks pass (`make status HUB=stag` is green). The same credentials work in `aws cognito-idp admin-initiate-auth` from the CLI.
 
 DevTools Network tab shows a POST to `cognito-idp.eu-west-2.amazonaws.com/` returning **400 Bad Request** with:
 
@@ -578,7 +578,7 @@ x-amzn-ErrorMessage: USER_PASSWORD_AUTH flow not enabled for this client
 
 **Root cause**: Commit `197bedaf` ("fix(security): drop USER_PASSWORD_AUTH, use SRP for browser sign-in") tightened the Cognito app client to remove `ALLOW_USER_PASSWORD_AUTH` *and* updated `flip-ui/src/store/auth.ts` to call `signIn({ options: { authFlowType: "USER_SRP_AUTH" } })`. The two changes are coupled — the client only accepts SRP, and only the new UI code requests SRP.
 
-`make full-deploy PROD=stag` applies the Terraform half (Cognito tightens immediately) but does **not** rebuild the UI bundle in S3 — `deploy-centralhub` redeploys ECS, not the static site. If the bundle in S3/CloudFront predates `197bedaf`, the browser keeps sending `AuthFlow=USER_PASSWORD_AUTH` and Cognito rejects every login.
+`make full-deploy HUB=stag` applies the Terraform half (Cognito tightens immediately) but does **not** rebuild the UI bundle in S3 — `deploy-centralhub` redeploys ECS, not the static site. If the bundle in S3/CloudFront predates `197bedaf`, the browser keeps sending `AuthFlow=USER_PASSWORD_AUTH` and Cognito rejects every login.
 
 The `Login.vue` submit handler catches the thrown error and surfaces the generic snackbar — the real error only appears in the Network tab.
 
@@ -595,14 +595,14 @@ The `Login.vue` submit handler catches the thrown error and surfaces the generic
 **Fix**: Rebuild and redeploy the UI bundle:
 
 ```bash
-make -C deploy/providers/AWS deploy-ui PROD=stag
+make -C deploy/providers/AWS deploy-ui HUB=stag
 ```
 
 Wait ~1–3 min for the CloudFront invalidation to clear, then hard-refresh the login page (Ctrl+Shift+R). The new bundle calls `InitiateAuth` with `AuthFlow=USER_SRP_AUTH` and login succeeds.
 
 **Prevention**:
 
-- After any `make apply` that touches `modules/cognito/`, also run `make deploy-ui PROD=stag`. The two artifacts are coupled.
+- After any `make apply` that touches `modules/cognito/`, also run `make deploy-ui HUB=stag`. The two artifacts are coupled.
 - `make full-deploy` does not redeploy the UI by design (UI is rebuilt from the working tree, not GHCR). If a deploy follows a UI-affecting commit, redeploy the UI explicitly.
 - The generic *"There was a problem logging you in"* snackbar (`Login.vue:161`) swallows the real error class — always check the DevTools Network tab before assuming the user typed the wrong password.
 
@@ -639,7 +639,7 @@ kit, not `.env.stag`).
 
 **Symptom**: All authenticated routes return 401/403 despite `ENFORCE_MFA=false` in `.env.stag`.
 
-**Root cause**: The production compose file (`deploy/compose.production.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
+**Root cause**: The prod compose file (`deploy/compose.prod.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
 
 **Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden. To disable MFA in staging, add `ENFORCE_MFA=false` to `.env.stag` and redeploy. Note: the default in compose is `true` (secure by default) — you must explicitly set `false` to disable.
 
@@ -663,10 +663,10 @@ Or wait for the lease to renew naturally. This only matters if the instance need
 
 ### 4.5 XNAT service account password not matching env file
 
-**Symptom**: `make status PROD=stag` reports:
+**Symptom**: `make status HUB=stag` reports:
 
 ```
-✗ FAIL - XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in .env.stag
+✗ FAIL - XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in the hub env file
 ```
 
 Canonical checks pass (Terraform, EC2, RDS, HTTPS, ECS), the XNAT web interface is serving (HTTP 302), and trust-api / imaging-api are healthy (HTTP 200). The Python health check running inside the `trust1-imaging-api-1` container cannot authenticate against XNAT's REST API.
@@ -694,7 +694,7 @@ Check the effective Make value:
 ```bash
 cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && \
   printf 'include .env.stag\nall:\n\t@echo "PWD=[$(XNAT_SERVICE_PASSWORD)]"' \
-  | make -f - PROD=stag
+  | make -f -
 ```
 If the output shows only the part before `#`, you have the Make comment bug.
 
@@ -723,11 +723,11 @@ print(r.status_code, r.text.strip()[:40])
    ssh flip-trust 'docker stack rm xnat1'
    sleep 15
    ssh flip-trust 'sudo bash -c "find /opt/flip/xnat/xnat-db-data -mindepth 1 -delete"'
-   make -C trust/xnat up-xnat KIT=<CODE> PROD=stag
+   make -C trust/xnat up-xnat KIT=<CODE> HUB=stag
    ```
 3. Verify:
    ```bash
-   make status PROD=stag | grep XNAT
+   make status HUB=stag | grep XNAT
    # Should show: ✓ PASS - XNAT API responding (HTTP 200)
    ```
 
@@ -744,7 +744,7 @@ print(r.status_code, r.text.strip()[:40])
 ### Quick health check
 
 ```bash
-make status PROD=stag
+make status HUB=stag
 ```
 
 ### Connect to RDS through the Central Hub bastion
@@ -753,7 +753,7 @@ The bastion has `psql` installed and its security group is allowed to reach RDS 
 
 ```bash
 cd deploy/providers/AWS
-make ssh-config PROD=stag
+make ssh-config HUB=stag
 terraform output -raw DbEndpoint
 ssh flip
 

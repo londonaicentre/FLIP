@@ -73,7 +73,7 @@ class EdgePort(unittest.TestCase):
                 assert int(field(block, "port", 6) or server_port) == client_port, where
 
     def test_flower_supernode_dials_the_edge_port(self):
-        compose = (REPO / "trust" / "deploy" / "compose_trust.production.flower.yml").read_text()
+        compose = (REPO / "trust" / "deploy" / "compose_trust.prod.flower.yml").read_text()
         assert "${NLB_SUBDOMAIN}:${FL_EDGE_PORT:-${FL_SERVER_PORT}}" in compose
 
 
