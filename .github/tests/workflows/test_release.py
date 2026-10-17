@@ -563,7 +563,7 @@ class ReleaseKeepsMinimalPermissions(unittest.TestCase):
 
     def test_the_job_grants_only_contents_write_and_actions_write(self) -> None:
         text = code_text(RELEASE_WORKFLOW)
-        job = text[text.index("jobs:") :]
+        job = text[text.index("\n    release:\n") :]
         block = re.search(r"^        permissions:[^\n]*\n(?P<body>(?:            [^\n]*\n)+)", job, re.MULTILINE)
         assert block, "the release job must declare its own permissions"
         granted = {

@@ -83,6 +83,52 @@ Each net trains one job at a time; the queue is first-come, first-served, and a 
 shown in the UI while it waits. The backend of each net (NVFLARE or Flower) is recorded on the hub when the
 nets are seeded and decides which template is bundled: a deployment chooses the backend, a model does not.
 
+A job's server-side process reports the model's final status to the hub itself. If that process dies first (out of
+memory, killed, or lost when its server restarts), the hub notices on its own: every ``SCHEDULER_FL_JOB_WATCHDOG_RATE``
+minutes it compares each running job with its net's job list, and a job the FL server has ended or no longer has, while
+its model is still running, is set to ``ERROR`` after ``FL_JOB_WATCHDOG_STRIKES`` checks in a row (default 3). The
+model's log says what the FL server reported, and the net takes the next queued job. A job still being prepared
+``FL_JOB_PREPARE_TIMEOUT_MINUTES`` (default 30) after pickup is treated the same way. An FL API the hub cannot reach
+fails nothing: the net shows offline on the Connection Status page instead.
+
+GPU requirements and NVFLARE's scheduler
+========================================
+
+On NVFLARE a job states what it needs at each Trust in its ``meta.json`` ``resource_spec``
+(``num_of_gpus``: the job's own declaration, a per-run override, or the hub's ``JOB_RESOURCE_SPEC_NUM_GPUS``
+default; see :ref:`fl-nvflare-meta-json`), and each Trust's FL client states what it has: its
+``GPUResourceManager`` is configured from the kit's ``NUM_AVAILABLE_GPUS``. Before the FL server starts a
+job it asks every Trust whether it can provide its share. FLIP never lowers the request to fit a Trust,
+because that would quietly train a GPU job on a CPU.
+
+If a Trust says no, NVFLARE's scheduler holds the job and tries again later, waiting longer each time
+(10 s, doubling to at most 10 minutes). After 10 tries, about 40 minutes, it gives up and marks the job
+``FINISHED:CAN_NOT_SCHEDULE``. The FL server's ``JobSchedulingReporter`` (a FLIP site component that the
+fl-server registers at start-up through ``local/flip__p_resources.json``, which NVFLARE loads only into
+the server's parent process) puts each refusal in the model's activity feed, against the Trust that could
+not provide the resources:
+
+- while NVFLARE keeps trying: *Waiting for resources · this trust cannot provide 1 GPU · try
+  2 of 10*;
+- on the last try: *Training could not start · … · NVFLARE gave up after 10 tries*. The model then turns
+  ``ERROR`` and the net is freed. Without this, a job that never starts has nothing inside it to tell the
+  hub, and the model would sit at ``INITIATED`` with the net ``BUSY``. That last update is the reporter's
+  only chance, so it retries it for about a minute until the hub accepts it; if the hub is unreachable for
+  longer, the job watchdog above fails the model once NVFLARE lists the job as failed.
+
+The reporter only hears about a job once the scheduler has asked the Trusts for their resources. NVFLARE
+stops before that, and fires no event, when a job has no deploy map (refused outright), when one of its
+Trusts is not connected (FLIP makes every Trust in a run mandatory), or when fewer Trusts are connected
+than its ``min_clients`` (both retried as above). The hub is told about none of these: the model stays at
+``INITIATED`` with the net ``BUSY`` until **Abort job** frees it. The job watchdog does not catch the two retried
+cases either, because NVFLARE still lists the job as pending.
+
+**Abort job** also takes a job that is still waiting out of the FL server's queue (NVFLARE marks it
+``FINISHED:ABORTED``), so it cannot start later, or report to the model once it has been queued again.
+
+To run that model, either the Trust adds the GPUs, or the model goes to Trusts that have them. A CPU-only
+Trust (``NUM_AVAILABLE_GPUS=0``) can only take part in jobs that ask for no GPUs.
+
 GPU on demand on Kubernetes (NVFLARE job pods)
 ==============================================
 
@@ -127,6 +173,12 @@ modern **NVFLARE Client API** — a plain training/evaluation script using ``nvf
 (these Client-API templates briefly lived under `*_client_api` names alongside the Executor-based
 ones, then took over the plain names when those were retired).
 The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
+On both backends an evaluation sends each trust's returned metrics to the hub from the FL server,
+so they appear on the model page as one point per trust, at round 0 on NVFLARE and round 1 on
+Flower. Whatever aggregate metrics the evaluation returns are forwarded, upper-cased, with undefined
+values such as NaN left out. NVFLARE evaluation code needs nothing extra and nested keys are joined
+with ``/``; a Flower client must name itself with ``client_name`` (or ``site``) in its reply config. An NVFLARE
+evaluator can keep results out of the plots and in the results file only: see the evaluation template's README.
 More job types will be added in the future, adjusting to the community's needs.
 
 **How to choose a job type?**
@@ -352,6 +404,8 @@ One key is written by the platform rather than read: ``FLIP_MODEL_ID``, the hub'
 which FLIP's components on the FL server report under. The FL API writes it into every app
 folder's ``config.json`` when training starts, replacing any value you set, as the Flower FL API
 writes ``flip-model-id`` into ``config.toml``.
+
+.. _fl-nvflare-meta-json:
 
 NVFLARE ``meta.json``
 =====================

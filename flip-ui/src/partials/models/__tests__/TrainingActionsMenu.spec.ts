@@ -106,15 +106,22 @@ describe("TrainingActionsMenu abort vs stop affordance", () => {
 
     it.each([
         ["STOPPED", ModelStatusEnum.STOPPED],
-        ["ERROR", ModelStatusEnum.ERROR]
-    ])("disables the button with Stop Training copy at %s", (_name, status) => {
+        ["ERROR", ModelStatusEnum.ERROR],
+        ["RESULTS_UPLOADED", ModelStatusEnum.RESULTS_UPLOADED],
+        ["RESULTS_UPLOAD_FAILED", ModelStatusEnum.RESULTS_UPLOAD_FAILED]
+    ])("hides the stop button at terminal status %s", (_name, status) => {
         const wrapper = mountMenu(status);
 
-        const btn = wrapper.find("[data-test=stop-training-btn]");
-        expect(btn.attributes("disabled")).toBeDefined();
-        expect(btn.attributes("title")).toBe("Stop Training");
-        expect(btn.attributes("aria-label")).toBe("Stop Training");
-        expect(btn.find(labelSelector).text()).toBe("Stop Training");
+        expect(wrapper.find("[data-test=stop-training-btn]").exists()).toBe(false);
+    });
+
+    it("hides the stop button once a polled status update reports training finished", async () => {
+        const wrapper = mountMenu(ModelStatusEnum.RUNNING);
+        expect(wrapper.find("[data-test=stop-training-btn]").exists()).toBe(true);
+
+        await wrapper.setProps({ status: ModelStatusEnum.RESULTS_UPLOADED });
+
+        expect(wrapper.find("[data-test=stop-training-btn]").exists()).toBe(false);
     });
 
     it("enables the button as Abort job while the model is queued (INITIATED)", () => {

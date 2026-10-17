@@ -152,8 +152,11 @@ services:
   # — a remote dev box is reached through an SSH tunnel, like the debug ports. The console
   # on 9001 (sign in with the two keys) browses objects. `make clean-object-store` empties
   # the directory; `make down` keeps it.
+  # Not 1.0.0: it answered HTTP 500 to most presigned-POST uploads, which is how every model
+  # file reaches the store (FLIP#1534); the large-upload step of
+  # flip-api/tests/local_storage_smoke.py fails on it. 1.0.1 reads a 1.0.0 data directory.
   object-store:
-    image: rustfs/rustfs:1.0.0
+    image: rustfs/rustfs:1.0.1
     user: "${UID}:${GID}"
     ports:
       - "127.0.0.1:${OBJECT_STORE_PORT:-9000}:9000"
@@ -364,7 +367,7 @@ services:
       - DOCKER_TAG=${DOCKER_TAG}
       - DOCKER_FL_TAG=${DOCKER_FL_TAG}
       - DOCKER_FL_CLIENT_NAME=${DOCKER_FL_CLIENT_NAME}
-      - NLB_SUBDOMAIN=${NLB_SUBDOMAIN}
+      - NLB_SUBDOMAIN=${NLB_SUBDOMAIN:-}
       - FL_SERVER_PORT=${FL_SERVER_PORT}
       - FL_EDGE_PORT=${FL_EDGE_PORT:-}
     security_opt:

@@ -42,7 +42,7 @@ def get_xnat_users(headers: dict[str, str]) -> list[User]:
     Raises:
         Exception: If XNAT returns a non-200 response.
     """
-    response = requests.get(xnat_url("xapi", "users", "profiles"), headers=headers)
+    response = requests.get(xnat_url("xapi", "users", "profiles"), headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     if response.status_code != 200:
         raise Exception(f"Error: Getting XNAT users failed: {response.status_code} - {response.text}")
 
@@ -240,7 +240,9 @@ def issue_setup_token(username: str, headers: dict[str, str]) -> str:
         ValueError: If the username is empty or a dot-segment.
         Exception: If XNAT returns a non-200 response when issuing the token.
     """
-    response = requests.get(xnat_url("data", "services", "tokens", "issue", "user", username), headers=headers)
+    response = requests.get(
+        xnat_url("data", "services", "tokens", "issue", "user", username), headers=headers, timeout=XNAT_REQUEST_TIMEOUT
+    )
     if response.status_code != 200:
         raise Exception(f"Error: XNAT setup-token issuance failed: {response.status_code} - {response.text}")
 
@@ -330,7 +332,9 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
     """
     logger.info(f"Creating user '{user.username}' on XNAT")
 
-    response = requests.post(xnat_url("xapi", "users"), headers=headers, json=user.model_dump())
+    response = requests.post(
+        xnat_url("xapi", "users"), headers=headers, json=user.model_dump(), timeout=XNAT_REQUEST_TIMEOUT
+    )
 
     if response.status_code == 201:
         logger.info(f"User '{user.username}' created successfully on XNAT")
@@ -366,6 +370,7 @@ def add_user_to_project(user: User, project_id: str, headers: dict[str, str]) ->
     response = requests.put(
         xnat_url("data", "projects", project_id, "users", "Members", user.username),
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 200:

@@ -437,14 +437,13 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
     });
 });
 
-describe("Cypress window hooks (VITE_E2E build flag)", () => {
-    // auth.ts installs these onto `window` at module import time when the
+describe("Cypress window hook (VITE_E2E build flag)", () => {
+    // auth.ts installs it onto `window` at module import time when the
     // VITE_E2E build flag is set. We resetModules + stubEnv so the
     // module-level installer runs under our control.
 
     type HookedWindow = {
         __cypressTriggerSessionExpiry?: () => void;
-        __cypressGetAuthUser?: () => Promise<{ token: string | null; user: unknown }>;
     };
 
     const hooked = (): HookedWindow => window as unknown as HookedWindow;
@@ -453,7 +452,6 @@ describe("Cypress window hooks (VITE_E2E build flag)", () => {
         vi.unstubAllEnvs();
         vi.useRealTimers();
         delete hooked().__cypressTriggerSessionExpiry;
-        delete hooked().__cypressGetAuthUser;
     });
 
     it("__cypressTriggerSessionExpiry runs the session-expiry handler", async () => {
@@ -480,50 +478,15 @@ describe("Cypress window hooks (VITE_E2E build flag)", () => {
         );
     });
 
-    it("__cypressGetAuthUser returns the provider's token and identity, or a null token when signed out", async () => {
-        vi.stubEnv("VITE_E2E", "true");
-        vi.resetModules();
-        resetMockAuthProvider(provider);
-        authProvider.current = provider;
-
-        await import("@/utils/auth");
-        const getAuthUser = hooked().__cypressGetAuthUser;
-
-        expect(typeof getAuthUser).toBe("function");
-
-        await expect(getAuthUser?.()).resolves.toEqual({
-            token: null,
-            user: null
-        });
-        expect(provider.getUser).not.toHaveBeenCalled();
-
-        provider.getAccessToken.mockResolvedValue("tok");
-        provider.getUser.mockResolvedValue({
-            sub: "s",
-            email: "u@e.com",
-            username: "u"
-        });
-        await expect(getAuthUser?.()).resolves.toEqual({
-            token: "tok",
-            user: {
-                sub: "s",
-                email: "u@e.com",
-                username: "u"
-            }
-        });
-    });
-
-    it("does NOT install the hooks when VITE_E2E is unset", async () => {
+    it("does NOT install the hook when VITE_E2E is unset", async () => {
         vi.stubEnv("VITE_E2E", "");
         vi.resetModules();
         // Make sure we're starting from a clean state.
         delete hooked().__cypressTriggerSessionExpiry;
-        delete hooked().__cypressGetAuthUser;
 
         await import("@/utils/auth");
 
         expect(hooked().__cypressTriggerSessionExpiry).toBeUndefined();
-        expect(hooked().__cypressGetAuthUser).toBeUndefined();
     });
 });
 

@@ -241,3 +241,6 @@ class FlipMetaKey(StrEnum):
     # EvaluationModelLocator so Client-API evaluators can attribute each validate task's weights —
     # the stock MODEL_OWNER header does not survive the Client-API FLModel conversion.
     EVAL_MODEL_NAME = "flip_eval_model_name"
+    # Results an evaluator returns for evaluation_results.json only, beside the FLModel.metrics the hub
+    # plots: EvaluationJsonGenerator merges them back into the reply's entry (FLIP#1526).
+    SUPPLEMENTARY_RESULTS = "flip_supplementary_results"

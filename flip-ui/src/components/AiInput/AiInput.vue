@@ -52,7 +52,7 @@
                     ]"
                     v-bind="inputProps"
                     @input="handleChangeEvent"
-                    @blur="handleBlur"
+                    @blur="handleBlur($event, true)"
                 >
                 <slot name="inputButton" />
             </div>
@@ -170,7 +170,8 @@ export default defineComponent({
     },
     methods: {
         handleChangeEvent(event: Event) {
-            this.handleChange(event);
+            // Validate on blur/submit; while typing, only re-validate to clear a shown error.
+            this.handleChange(event, !!this.errorMessage);
             this.$emit("change", event);
         }
     }

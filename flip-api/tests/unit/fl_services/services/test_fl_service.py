@@ -29,7 +29,7 @@ from flip_api.domain.interfaces.fl import (
     IServerStatus,
     IStartTrainingBody,
 )
-from flip_api.domain.schemas.status import ClientStatus, JobStatus
+from flip_api.domain.schemas.status import ClientStatus, FLJobStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT
@@ -307,6 +307,7 @@ def test_start_training_with_config(
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
     fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS  # the job is still being prepared
 
     fl_service.start_training(
         model_id=model_id,
@@ -375,6 +376,41 @@ def test_start_training_skips_submit_when_job_deleted_during_upload(
     mock_encrypt.return_value = "encrypted"
     fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
     fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.DELETED]
+
+    with pytest.raises(JobAbortedError):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_called_once()
+    mock_submit.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_skips_submit_when_the_watchdog_completed_the_job(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    # The prepare outlived FL_JOB_PREPARE_TIMEOUT_MINUTES: the job watchdog (#727) set the model to ERROR, which
+    # marked the job COMPLETED and freed the net for the next job. A job that is no longer IN_PROGRESS must not
+    # reach the fl-server, or the failed model would train alongside the next one.
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
+    fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.COMPLETED]
 
     with pytest.raises(JobAbortedError):
         fl_service.start_training(
@@ -1181,6 +1217,26 @@ def test_extract_current_job_data_not_found_returns_none(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_returns_a_job_still_waiting_to_start(mock_http_get):
+    # A job the backend has not started yet (NVFLARE waiting for a trust's resources) is aborted too. Left
+    # queued, it could still start later, or report to a model the user has since queued again (#1390).
+    mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
+
+    result = fl_service.extract_current_job_data("http://fl-api-endpoint", "job123")
+
+    assert result is not None
+    assert result.status == "PENDING"
+
+
+@pytest.mark.parametrize("status", ["FINISHED", "FAILED", "STOPPED"])
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_ignores_a_job_that_has_ended(mock_http_get, status):
+    mock_http_get.return_value = [{"job_id": "job123", "status": status}]
+
+    assert fl_service.extract_current_job_data("http://fl-api-endpoint", "job123") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_extract_current_job_data_multiple_found(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
@@ -1194,6 +1250,59 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
 
     with pytest.raises(ValueError, match="Multiple running jobs found"):
         extract_current_job_data(net_endpoint, fl_backend_job_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_parses_every_job(mock_http_get):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.return_value = [
+        {"job_id": "a", "status": "RUNNING"},
+        {"job_id": "b", "status": "FAILED"},
+    ]
+
+    jobs = list_backend_jobs("http://fl-api")
+
+    assert jobs is not None
+    assert [(j.job_id, j.status) for j in jobs] == [("a", FLJobStatus.RUNNING), ("b", FLJobStatus.FAILED)]
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.HTTPStatusError(
+            "500 Internal Server Error",
+            request=httpx.Request("GET", "http://fl-api/list_jobs"),
+            response=httpx.Response(500),
+        ),
+    ],
+)
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_returns_none_when_the_fl_api_cannot_answer(mock_http_get, failure):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.side_effect = failure
+
+    assert list_backend_jobs("http://fl-api") is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Internal Server Error",
+        {"detail": "not a list"},
+        [{"job_id": "a", "status": "EXPLODED"}],
+    ],
+)
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_returns_none_for_a_malformed_reply(mock_http_get, body):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.return_value = body
+
+    assert list_backend_jobs("http://fl-api") is None
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
@@ -1260,6 +1369,41 @@ def test_abort_model_training_idempotent_when_no_running_job(
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
     fl_service.abort_model_training(request, model_id, fake_session)
     mock_abort.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_aborts_a_job_still_waiting_to_start(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_http_get,
+    model_id,
+    fake_session,
+):
+    # NVFLARE holds a job no trust has the resources for; Abort job must take it out of NVFLARE's queue, or
+    # its reporter can still set the model to ERROR after the user queues the model again (#1390).
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "started"}
+    mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
+
+    request = MagicMock()
+    request.scope = {"request_id": "req-id"}
+    request.path_params = {"target": "server", "clients": None}
+
+    fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     mock_release.assert_called_once_with(model_id, fake_session)
 
 
@@ -2663,6 +2807,7 @@ def test_add_fl_job_without_an_override_leaves_the_column_null(model_id, fake_se
 def _start(model_id, fl_job_id, fake_session, job, upload_reply=None):
     """Run start_training against a stored job row; return what was uploaded and what was logged."""
     fake_session.get.return_value = job
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS  # the job is still being prepared
     with (
         patch("flip_api.fl_services.services.fl_service.submit_job"),
         patch("flip_api.fl_services.services.fl_service.upload_app", return_value=upload_reply) as upload,

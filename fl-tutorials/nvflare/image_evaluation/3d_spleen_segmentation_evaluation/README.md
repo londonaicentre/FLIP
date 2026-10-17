@@ -85,5 +85,7 @@ The evaluator returns **aggregate** (cohort-mean) metrics only, collected into `
 - `mean_surface_dice` — normalized Surface Dice at a 1-voxel tolerance (`SURFACE_DICE_TOLERANCE_VOXELS`)
 - `mean_iou` — mean intersection-over-union
 
+The FL server also sends them to the hub, where they show on the model page per trust (`MEAN_DICE`, …).
+
 Per-sample (row-level) scores are deliberately not exported: a per-patient list would leak the exact
 evaluation cohort size and be linkable to individual patients.

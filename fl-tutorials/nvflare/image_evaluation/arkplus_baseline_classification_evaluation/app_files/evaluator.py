@@ -18,7 +18,7 @@ canonical ``is_evaluate()`` loop — receive the global model, score it on the l
 **aggregate-only** per-lesion AUROC. There is no ``Executor``/``Shareable`` plumbing and no multi-model
 ``COLLECTION`` unwrapping; the weights arrive as ``input_model.params``.
 
-Only cohort-level per-lesion AUROC is returned (``{model_name: {auroc_<lesion>: ...}}``). Per-sample
+Only cohort-level per-lesion AUROC is returned (``{auroc_<lesion>: ...}``). Per-sample
 (row-level) predictions are deliberately never produced or exported: a per-patient list would leak the
 exact evaluation cohort size and be linkable to individual patients.
 
@@ -217,7 +217,7 @@ def main() -> None:
             "Check the host GPU/driver state if this is unexpected."
         )
 
-    model_name, model_cfg, lesion_items, lesion_dict = resolve_model_config(config)
+    _, model_cfg, lesion_items, lesion_dict = resolve_model_config(config)
     model = get_model().to(device)
 
     # flare.init() must precede any other flare.* call (e.g. get_site_name()), which is why data loading
@@ -250,9 +250,8 @@ def main() -> None:
         if flare.is_evaluate():
             load_global_weights(model, input_model)
             metrics = evaluate(model, loader, device, model_cfg, lesion_items, lesion_dict)
-            # Nest under the model name to preserve the legacy output contract:
-            # evaluation_results.json = {site: {model_name: {auroc_<lesion>: ...}}}.
-            flare.send(flare.FLModel(metrics={model_name: metrics}))
+            # Unwrapped: the server already keys results by site and model (EvaluationJsonGenerator).
+            flare.send(flare.FLModel(metrics=metrics))
         else:
             logger.warning("Received a non-evaluation task; ignoring.")
 

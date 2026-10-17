@@ -72,7 +72,8 @@ describe("create project", () => {
 
     it("displays validation messages when name and description are provided but are too long", () => {
         cy.getBySel("project-name")
-            .type("Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean m");
+            .type("Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean m")
+            .blur();
         cy.contains("Project name must not be longer than 75 characters.")
             .should("be.visible");
 

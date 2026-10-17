@@ -16,6 +16,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import { FileUploadStatus } from "@/interfaces/model/types";
 import Training from "@/partials/models/Training.vue";
 import { ModelStatus } from "@/services/model-service";
 
@@ -54,10 +55,8 @@ interface MountOpts {
     permissions?: string[];
     status?: ModelStatus;
     view?: "prepare" | "run";
-    allFilesUploaded?: boolean;
     requiredFiles?: string[];
-    uploadedFileNames?: string[];
-    jobType?: string;
+    uploadedFiles?: { name: string; status: FileUploadStatus }[];
     flBackendLabel?: string;
     jobTypesError?: boolean;
     jobTypesLoading?: boolean;
@@ -74,10 +73,8 @@ function mountTraining(options: MountOpts = {}) {
     const {
         permissions = ["CanCreateProjects"],
         status = "PENDING",
-        allFilesUploaded = false,
         requiredFiles = ["trainer.py", "config.json"],
-        uploadedFileNames = [],
-        jobType = "standard",
+        uploadedFiles = [],
         flBackendLabel,
         jobTypesError = false,
         jobTypesLoading = false,
@@ -119,7 +116,8 @@ function mountTraining(options: MountOpts = {}) {
                 AiButton: buttonStub,
                 TrainingActionsMenu: actionsMenuStub,
                 TrainingOptions: {
-                    props: ["disabled"],
+                    name: "TrainingOptions",
+                    props: ["disabled", "requiredFiles"],
                     template: "<div data-test=\"training-options\" :data-disabled=\"disabled\" />"
                 },
                 TrainingMetrics: { template: "<div />" },
@@ -135,10 +133,8 @@ function mountTraining(options: MountOpts = {}) {
         props: {
             canTrain: true,
             status,
-            allFilesUploaded,
             requiredFiles,
-            uploadedFileNames,
-            jobType,
+            uploadedFiles,
             flBackendLabel,
             jobTypesError,
             jobTypesLoading,
@@ -161,63 +157,40 @@ describe("Training viewer-aware rendering", () => {
     });
 });
 
-describe("Training missing-files alert slot", () => {
-    it("lists required files and the missing subset when files are missing", () => {
+describe("Training required files", () => {
+    // The required-files banners were folded into the "Required files" readiness row, which
+    // TrainingOptions renders from what Training hands it.
+    it("passes each required file's upload status to TrainingOptions, with no banner", () => {
         const wrapper = mountTraining({
-            allFilesUploaded: false,
             requiredFiles: ["trainer.py", "config.json"],
-            uploadedFileNames: ["trainer.py"],
-            jobType: "diffusion",
-            flBackendLabel: "Flower"
+            uploadedFiles: [{
+                name: "trainer.py",
+                status: FileUploadStatus.SCANNING
+            }]
         });
 
-        // Two AiAlerts render side-by-side: an info-variant listing the
-        // required files and a warning-variant listing the missing subset.
-        // Both stubs share the data-test, so concat their HTML and assert
-        // against the combined content.
-        const html = wrapper.findAll("[data-test=alert-stub]").map(a => a.html()).join("\n");
+        const options = wrapper.findComponent({ name: "TrainingOptions" });
 
-        expect(html).toContain("Flower");
-        expect(html).toContain("diffusion");
-        expect(html).toContain("trainer.py");
-        expect(html).toContain("config.json");
-        expect(html).toContain("Missing:");
-    });
-
-    it("falls back to the generic message when allFilesUploaded is false but no specific file is missing", () => {
-        const wrapper = mountTraining({
-            allFilesUploaded: false,
-            requiredFiles: [],
-            uploadedFileNames: []
-        });
-
-        const slot = wrapper.find("[data-test=alert-stub]");
-
-        expect(slot.exists()).toBe(true);
-        expect(slot.html()).toContain("All required model files must be uploaded");
-        expect(slot.html()).not.toContain("Missing:");
-    });
-
-    it("hides the alert when allFilesUploaded is true", () => {
-        const wrapper = mountTraining({ allFilesUploaded: true });
-
+        expect(options.props("requiredFiles")).toEqual([
+            {
+                name: "trainer.py",
+                status: FileUploadStatus.SCANNING
+            },
+            {
+                name: "config.json",
+                status: undefined
+            }
+        ]);
         expect(wrapper.find("[data-test=alert-stub]").exists()).toBe(false);
     });
 
-    it("escapes job type and file names so user-controlled values cannot inject HTML", () => {
-        const payload = "<img src=x onerror=alert(1)>";
-
+    it("passes no required files while the job types are unknown", () => {
         const wrapper = mountTraining({
-            allFilesUploaded: false,
-            requiredFiles: [payload],
-            uploadedFileNames: [],
-            jobType: payload
+            jobTypesError: true,
+            requiredFiles: ["trainer.py"]
         });
 
-        const slot = wrapper.find("[data-test=alert-stub]");
-
-        expect(slot.find("img").exists()).toBe(false);
-        expect(slot.html()).toContain("&lt;img");
+        expect(wrapper.findComponent({ name: "TrainingOptions" }).props("requiredFiles")).toEqual([]);
     });
 });
 
@@ -560,10 +533,8 @@ describe("Training reads the real vee-validate form", () => {
             props: {
                 canTrain: true,
                 status: "PENDING" as const,
-                allFilesUploaded: true,
                 requiredFiles: [],
-                uploadedFileNames: [],
-                jobType: "standard",
+                uploadedFiles: [],
                 view: "prepare" as const
             }
         });
@@ -653,10 +624,8 @@ describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
             props: {
                 canTrain: true,
                 status: "PENDING" as const,
-                allFilesUploaded: true,
                 requiredFiles: [],
-                uploadedFileNames: [],
-                jobType: "standard",
+                uploadedFiles: [],
                 view: "prepare" as const
             }
         });
@@ -767,10 +736,8 @@ describe("Training shows a dispatched run's GPU override in the real form", () =
             props: {
                 canTrain: true,
                 status: "RUNNING" as const,
-                allFilesUploaded: true,
                 requiredFiles: [],
-                uploadedFileNames: [],
-                jobType: "standard",
+                uploadedFiles: [],
                 view: "prepare" as const,
                 runTrusts: ["trust-a"],
                 runResources: { num_gpus: 1 }

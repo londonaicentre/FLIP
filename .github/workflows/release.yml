@@ -20,12 +20,43 @@ permissions:
   contents: read
 
 jobs:
+    # Tag the docs GIFs this release ships as v<X.Y.Z> on the aicentreflip/docs-gifs dataset
+    # (FLIP#1547) before `release` pushes the git tag, so ReadTheDocs' first build of the new
+    # version finds them. A job of its own because it alone needs HF_TOKEN; a failure here does
+    # not hold the release back (that build then shows the newest recording instead) — re-run it.
+    docs-gifs:
+        name: Tag the docs GIFs this release ships
+        if: github.repository == 'londonaicentre/FLIP'
+        runs-on: ubuntu-latest
+        environment: flip
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v5
+              with:
+                  fetch-depth: 0 # the script checks which recordings this commit contains
+
+            - name: Set up Python
+              uses: actions/setup-python@v6
+              with:
+                  python-version-file: ./docs/.python-version
+
+            - name: Install uv
+              run: pip install uv
+
+            - name: Tag the dataset
+              env:
+                  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+              run: uv run docs/scripts/freeze_docs_gifs.py --release-commit "$GITHUB_SHA"
+
     release:
         name: Tag and Create GitHub Release
+        needs: docs-gifs
         # Skip on forks: they cannot push tags or create releases in the upstream
         # repo, so this job would otherwise show a spurious CI failure on a fork's
         # main push. Upstream main release behaviour is unchanged.
-        if: github.repository == 'londonaicentre/FLIP'
+        if: ${{ !cancelled() && github.repository == 'londonaicentre/FLIP' }}
         runs-on: ubuntu-latest
         permissions: # override top-level read-only default to allow tag/release creation
             contents: write

@@ -50,7 +50,7 @@ from flip.flower.selection import BestModelSelector
 __all__ = ["MIN_CLIENTS_KEY", "FlipFedAvg", "min_clients_from_run_config"]
 
 # Run-config key carrying the participating-trust count, injected by fl-api-flower at submit
-# time (the Flower analogue of the NVFLARE adapter's ``config["min_clients"] = len(trusts)``).
+# time (the Flower analogue of the NVFLARE adapter setting each workflow's ``min_clients`` to ``len(trusts)``).
 # Declared under ``[tool.flwr.app.config]`` in each app's pyproject.toml, as the other
 # ``flip-*`` keys are — flwr rejects a ``--run-config`` override it has not been declared.
 MIN_CLIENTS_KEY = "flip-min-clients"

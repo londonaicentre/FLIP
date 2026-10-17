@@ -79,9 +79,18 @@ class TestTrainingLog:
             )
 
     def test_event_requires_global_round(self):
-        """Every event in the vocabulary is round-scoped."""
+        """Every round event is round-scoped."""
         with pytest.raises(ValidationError, match="global_round"):
             TrainingLog(event_type=FLLogEvent.ROUND_AGGREGATED)
+
+    def test_the_scheduling_event_is_accepted_without_a_round(self):
+        """NVFLARE has not started the job yet, so its scheduling verdict has no round (FLIP#1390)."""
+        payload = TrainingLog(
+            fl_client_name="Trust_3",
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES,
+            details={"attempt": 1, "max_attempts": 10, "final": False, "requested": {"num_of_gpus": 1}},
+        )
+        assert payload.global_round is None
 
     def test_global_round_is_one_based(self):
         """Emission normalises to 1-based on both backends; 0 is a bug upstream."""

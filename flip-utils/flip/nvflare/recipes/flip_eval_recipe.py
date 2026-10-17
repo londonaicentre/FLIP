@@ -139,7 +139,7 @@ class FlipEvalRecipe(FlipRecipe):
 
         # Server workflows: init → global-model validate → post-validation cleanup.
         # GlobalModelEval validates only the server-loaded model; client models are never requested.
-        job.to_server(InitEvaluation(min_clients=self.min_clients))
+        job.to_server(InitEvaluation())
         job.to_server(
             GlobalModelEval(
                 model_locator_id="model_locator",

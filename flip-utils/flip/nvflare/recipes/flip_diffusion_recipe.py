@@ -210,7 +210,7 @@ class FlipDiffusionRecipe(FlipRecipe):
         job.to_server(PersistToS3AndCleanup(persistor_id="persistor"), id="persist_and_cleanup")
 
         # Server workflows: init, then the two training phases in sequence.
-        job.to_server(InitTraining(min_clients=self.min_clients))
+        job.to_server(InitTraining())
         self._add_train_phase(job, TRAIN_AE_TASK, model_locator_id="model_locator_initial")
         self._add_train_phase(job, TRAIN_DM_TASK, model_locator_id="model_locator")
 

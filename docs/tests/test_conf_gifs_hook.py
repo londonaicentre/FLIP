@@ -8,7 +8,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""The ``builder-inited`` hook in ``docs/source/conf.py`` that fetches the pinned GIFs (FLIP#1236).
+"""The ``builder-inited`` hook in ``docs/source/conf.py`` that fetches the docs GIFs (FLIP#1236).
 
 ``sphinx-build`` runs without ``-W``, so a hook that is disconnected, or that lets a ``FetchError`` through as
 something other than ``SphinxError``, would still produce a green build — with 32 "image file not readable"
@@ -70,7 +70,7 @@ def test_a_fetch_error_fails_the_build_naming_the_remedies(hook, fetcher, monkey
         raise fetcher.FetchError("https://example/manifest.json: HTTP 404")
 
     monkeypatch.setattr(fetcher, "fetch", fail)
-    with pytest.raises(SphinxError, match=r"HTTP 404.*\.gifs_version.*FLIP_DOCS_SKIP_GIF_FETCH=1"):
+    with pytest.raises(SphinxError, match=r"HTTP 404.*Tried 20260907T122006Z-5945242.*FLIP_DOCS_SKIP_GIF_FETCH=1"):
         hook.run()
 
 
@@ -82,7 +82,7 @@ def test_the_opt_out_warns_and_fetches_nothing(hook, fetcher, monkeypatch, conf)
 
 
 def test_a_successful_fetch_logs_its_summary(hook, fetcher, monkeypatch):
-    report = fetcher.FetchReport(repo="r", revision="v", version="v", fetched=["flip/x.gif"], verified=[])
+    report = fetcher.FetchReport(repo="r", revision="v", commit="c" * 40, version="v", fetched=["flip/x.gif"])
     monkeypatch.setattr(fetcher, "fetch", lambda *a, **k: report)
     hook.run()
     assert hook.logger.warnings == []

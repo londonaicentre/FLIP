@@ -284,7 +284,7 @@ class FlipFedAvgRecipe(FlipRecipe):
             )
 
         # Server workflows: init → train → model evaluation → post-validation cleanup.
-        job.to_server(InitTraining(min_clients=self.min_clients))
+        job.to_server(InitTraining())
         job.to_server(
             ScatterAndGather(
                 min_clients=self.min_clients,

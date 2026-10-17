@@ -111,8 +111,8 @@ placeholders:
    * - Variable
      - What to set
    * - ``UI_PORT``
-     - A free port, e.g. ``44350``. The default ``443`` does **not** work:
-       the dev UI serves plain HTTP.
+     - The host port for the UI. The default ``443`` works; set another free
+       port (e.g. ``44350``) if 443 is taken or you run a second stack.
    * - ``POSTGRES_PASSWORD``
      - Any password for the local hub database.
    * - ``ADMIN_USER_PASSWORD``
@@ -121,18 +121,11 @@ placeholders:
    * - ``AES_KEY_BASE64``
      - A new 32-byte key:
        ``python3 -c "import base64, os; print(base64.b64encode(os.urandom(32)).decode())"``
-   * - ``AICENTRE_BUCKET_NAME``
-     - Leave the placeholder. Only staging/production kit uploads use it; the
-       local kits are provisioned in-tree (Step 5).
-   * - ``NLB_SUBDOMAIN``
-     - Leave the placeholder. A local stack never uses it, but the variable
-       must exist.
-   * - ``DEMO_*_PASSWORD``
-     - Only for ``make demo-video``; any value.
 
 Leave these alone: ``INTERNAL_SERVICE_KEY`` and ``INTERNAL_SERVICE_KEY_HASH``
 (``make up`` generates them), the Cognito and SES settings (staging and
-production only) and the object-store keys (defaults are in the Makefile).
+production only) and the object-store keys (defaults are in
+``deploy/compose.development.yml``).
 
 .. warning::
 
@@ -337,7 +330,8 @@ Day-to-day use
    * - ``make down``
      - Stop everything (data is kept)
    * - ``make restart-no-trust``
-     - Restart the hub API
+     - Restart the hub API. Runs in the foreground, and removes the running
+       FL API and FL server containers; ``make up-no-trust`` brings them back.
    * - ``make up BUILD=true``
      - Rebuild images after a dependency or Dockerfile change. Ordinary
        source edits are bind-mounted and reload live (see

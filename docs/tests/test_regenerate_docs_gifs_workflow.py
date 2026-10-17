@@ -11,9 +11,9 @@
 """Static guard over ``.github/workflows/regenerate_docs_gifs.yml`` (FLIP#1236).
 
 The workflow's header comments make security claims — the recording job sees no secret, the dataset write
-token reaches exactly one step, only ``develop`` publishes — that nothing at run time would notice drifting.
-This pins them, plus the two shapes a silent failure would hide behind: a tag minted after the recording it
-names, and a piped ``run:`` step without ``pipefail``.
+token reaches exactly one step, only ``develop`` publishes, and nothing is written back to git (FLIP#1547) —
+that nothing at run time would notice drifting. This pins them, plus the two shapes a silent failure would hide
+behind: a version minted after the recording it names, and a piped ``run:`` step without ``pipefail``.
 """
 
 from __future__ import annotations
@@ -47,9 +47,11 @@ def mentions_secrets(value: Any) -> bool:
     return "secrets." in yaml.safe_dump(value)
 
 
-def test_the_workflow_and_the_recording_job_are_read_only(workflow, jobs):
+def test_the_workflow_and_both_jobs_are_read_only(workflow, jobs):
+    """Nothing comes back to git: the recording is published to the dataset alone."""
     assert workflow["permissions"] == {"contents": "read"}
     assert jobs["record"]["permissions"] == {"contents": "read"}
+    assert jobs["publish"]["permissions"] == {"contents": "read"}
     assert not mentions_secrets(jobs["record"]), "the recording job must run without any secret"
 
 
@@ -75,17 +77,19 @@ def test_the_verification_fetch_is_anonymous(jobs):
     assert "HF_TOKEN" not in verify.get("env", {})
 
 
-def test_only_develop_publishes(jobs):
+def test_only_develop_publishes_and_only_to_main(jobs):
     assert "github.ref == 'refs/heads/develop'" in jobs["publish"].get("if", "")
+    publish = next(step for step in steps_of(jobs["publish"]) if step["name"] == "Publish to the dataset")
+    assert "--branch main" in publish["run"]
 
 
-def test_the_tag_is_minted_by_the_recording_job(jobs):
-    """``recorded_at`` in the manifest is the tag's timestamp, so the tag must be minted before Cypress runs."""
+def test_the_version_is_minted_by_the_recording_job(jobs):
+    """``recorded_at`` in the manifest is the version's timestamp, so it must be minted before Cypress runs."""
     record_steps = [step["name"] for step in steps_of(jobs["record"])]
-    assert record_steps.index("Mint the version tag") < record_steps.index("Record docs demo specs")
-    assert jobs["record"]["outputs"] == {"tag": "${{ steps.tag.outputs.tag }}"}
-    assert not any(step["name"] == "Mint the version tag" for step in steps_of(jobs["publish"]))
-    assert "needs.record.outputs.tag" in yaml.safe_dump(jobs["publish"])
+    assert record_steps.index("Mint the version") < record_steps.index("Record docs demo specs")
+    assert jobs["record"]["outputs"] == {"version": "${{ steps.version.outputs.version }}"}
+    assert not any(step["name"] == "Mint the version" for step in steps_of(jobs["publish"]))
+    assert "needs.record.outputs.version" in yaml.safe_dump(jobs["publish"])
 
 
 def test_every_piped_run_step_fails_on_a_broken_pipe(jobs):
@@ -96,19 +100,4 @@ def test_every_piped_run_step_fails_on_a_broken_pipe(jobs):
         for step in steps_of(job)
         if PIPE_RE.search(step.get("run", "")) and step.get("shell") != "bash"
     ]
-    assert offenders == []
-
-
-def test_every_gh_pr_list_has_an_explicit_limit(jobs):
-    """An unbounded listing silently leaves superseded pin PRs open after the first page."""
-    commands = []
-    offenders = []
-    for job in jobs.values():
-        for step in steps_of(job):
-            run = re.sub(r"\\\n\s*", " ", step.get("run", ""))
-            for command in re.findall(r"(?m)^\s*(gh pr list\b.*)$", run):
-                commands.append(command)
-                if not re.search(r"\s--limit\s+\d+(?:\s|$)", command):
-                    offenders.append(step["name"])
-    assert commands, "the workflow must include a gh pr list command to guard"
     assert offenders == []

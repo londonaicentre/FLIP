@@ -64,6 +64,7 @@ from data_utils import (
     get_mapping,
     get_xray_transforms,
 )
+from flip.constants import FlipMetaKey
 from metrics_utils import apply_label_mapping, benjamini_hochberg, compute_auroc, delong_roc_test
 from models import _build_arkplus_raw
 from monai.data import DataLoader, Dataset
@@ -168,10 +169,8 @@ def resolve_models_config(config: dict) -> tuple[list[dict], list[tuple[int, str
     return model_specs, lesion_items, lesion_dict
 
 
-# Meta key the server-side EvaluationModelLocator stamps on every evaluation broadcast
-# (flip.constants.FlipMetaKey.EVAL_MODEL_NAME). Kept as a literal so this app never imports flip
-# symbols that may not exist on older client images — the value is produced on the fl-server.
-EVAL_MODEL_NAME_META_KEY = "flip_eval_model_name"
+# Meta key the server-side EvaluationModelLocator stamps on every evaluation broadcast.
+EVAL_MODEL_NAME_META_KEY = FlipMetaKey.EVAL_MODEL_NAME.value
 
 
 def received_model_name(input_model: flare.FLModel, model_names: list[str]) -> str:
@@ -269,11 +268,13 @@ def compute_metrics(
     all_predictions: dict[str, np.ndarray],
     all_targets: dict[str, np.ndarray],
     lesion_items: list[tuple[int, str]],
-) -> dict:
+) -> tuple[dict, dict]:
     """Compute per-model per-lesion AUROC and (for >= 2 models) pairwise DeLong p-values.
 
-    Returns the aggregate-only metrics dict the server collects into ``evaluation_results.json``:
-    ``{model_name: {auroc_<lesion>: ..., delong_p_values: {...}, delong_q_values: {...}}}``. The
+    Returns aggregate-only ``(metrics, supplementary)``. ``metrics``, ``{model_name: {auroc_<lesion>: ...}}``,
+    is what the hub plots per trust. ``supplementary``, ``{model_name: {delong_p_values: {...},
+    delong_q_values: {...}}}`` (empty for one model), goes in the reply's
+    ``meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]``; the server merges it back under each model in the results file. The
     DeLong ``delong_p_values`` sub-dict matches the legacy executor's shape — diagonal (model vs.
     self) is hardcoded ``1.0``; off-diagonal is the two-sided DeLong test. ``delong_q_values`` mirrors
     the same shape with Benjamini-Hochberg FDR-adjusted q-values: each model *pair* is corrected as
@@ -295,7 +296,7 @@ def compute_metrics(
         metrics[model_name] = model_metrics
 
     if n_models < 2:
-        return metrics
+        return metrics, {}
 
     # Pairwise DeLong test between every model pair, per lesion, with a per-pair BH (Benjamini-
     # Hochberg) FDR correction across that pair's lesion tests. Each (i, j) pair is corrected as its
@@ -330,11 +331,8 @@ def compute_metrics(
                 delong_q_map[name_a][name][name_b] = q
                 delong_q_map[name_b][name][name_a] = q
 
-    for model_name in model_names:
-        metrics[model_name]["delong_p_values"] = delong_p_map[model_name]
-        metrics[model_name]["delong_q_values"] = delong_q_map[model_name]
-
-    return metrics
+    supplementary = {m: {"delong_p_values": delong_p_map[m], "delong_q_values": delong_q_map[m]} for m in model_names}
+    return metrics, supplementary
 
 
 def main() -> None:
@@ -409,12 +407,13 @@ def main() -> None:
             all_targets[name] = targets
             logger.info("Scored model %s (%d/%d models done).", name, len(all_predictions), len(model_names))
 
-        # Reply with every model scored so far. The server keeps one metrics dict per client (last
-        # reply wins) and a client executes its tasks sequentially, so the reply to the final validate
-        # task — every model's AUROC plus the pairwise DeLong map — is what lands in
-        # evaluation_results.json.
+        # Reply with every model scored so far. The server stores each reply under its validate task
+        # (SRV_<model>) and a client executes its tasks sequentially, so the entry for the site's final
+        # task holds every model's AUROC plus the pairwise DeLong map in evaluation_results.json. The
+        # DeLong maps ride in meta: they are for that file, not hub plots.
         scored_names = [n for n in model_names if n in all_predictions]
-        flare.send(flare.FLModel(metrics=compute_metrics(scored_names, all_predictions, all_targets, lesion_items)))
+        metrics, supplementary = compute_metrics(scored_names, all_predictions, all_targets, lesion_items)
+        flare.send(flare.FLModel(metrics=metrics, meta={FlipMetaKey.SUPPLEMENTARY_RESULTS.value: supplementary}))
 
 
 if __name__ == "__main__":

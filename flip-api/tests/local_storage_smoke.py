@@ -16,7 +16,8 @@ Run by .github/workflows/local_auth_smoke.yml after the login smoke, against a h
 with the RustFS ``object-store`` service and no AWS credentials at all. It does what the UI
 does — asks flip-api for a presigned POST policy and posts the file straight to the store,
 tells flip-api the file landed, waits for the malware scan to promote it (a conditional copy
-and delete against the store), fetches it back through a presigned GET and deletes it. Every
+and delete against the store), fetches it back through a presigned GET and deletes it, then
+posts a model-sized file several times (FLIP#1534: the store once failed large POSTs). Every
 step is the production code path; only the store differs. Standard library only, on
 purpose: the runner needs no virtualenv to run it.
 
@@ -40,6 +41,7 @@ already approved rather than creating another.
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -54,6 +56,14 @@ from local_auth_smoke import SmokeFailure, _expect, _request, _token_endpoint  #
 FILE_NAME = "trainer.py"
 FILE_BODY = b'print("hello from the dev object store")\n'
 SCAN_TIMEOUT_S = 180
+# Large uploads (FLIP#1534): RustFS 1.0.0 answered HTTP 500 to most presigned-POST uploads (any size
+# from 1 MiB up, content-dependent, worst above 16 MiB), so a 40-byte trainer.py passed while the
+# spleen evaluation's 19 299 235 B model.pt never did. The size is that file's; every try posts fresh
+# random bytes because the failure depended on the content, and 1.0.0 failed the 19 MiB probe on
+# most tries, so eight catch it.
+LARGE_FILE_NAME = "large-upload.safetensors"
+LARGE_FILE_BYTES = 19_299_235
+LARGE_UPLOAD_TRIES = 8
 
 
 def _json_request(method: str, url: str, *, bearer: dict[str, str], body: Any = None) -> tuple[int, Any]:
@@ -79,7 +89,14 @@ def _expect_created(status: int, what: str, body: Any) -> None:
         raise SmokeFailure(f"{what}: expected HTTP 200/201, got {status}: {body}")
 
 
-def _post_multipart(url: str, fields: dict[str, str], file_name: str, content: bytes, origin: str) -> int:
+def _post_multipart(
+    url: str,
+    fields: dict[str, str],
+    file_name: str,
+    content: bytes,
+    origin: str,
+    content_type: str = "text/x-python",
+) -> int:
     """POST a presigned policy's fields plus the file, the file last, as the browser's FormData does.
 
     Sent with the UI's ``Origin`` like a browser would, so the store's CORS answer is checked on the way.
@@ -90,7 +107,7 @@ def _post_multipart(url: str, fields: dict[str, str], file_name: str, content: b
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     parts.append(
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="{file_name}"\r\n'
-        f"Content-Type: text/x-python\r\n\r\n".encode()
+        f"Content-Type: {content_type}\r\n\r\n".encode()
         + content
         + b"\r\n"
     )
@@ -260,6 +277,35 @@ def run(args: argparse.Namespace) -> None:
     if status != 404:
         raise SmokeFailure(f"object still served after delete: HTTP {status}")
     print("  ✅ gone")
+
+    print(f"📦 {LARGE_UPLOAD_TRIES} presigned POSTs of {LARGE_FILE_BYTES} B, a real model file's size (FLIP#1534)")
+    # Upload only: the objects stay in the staging prefix, unscanned, like an upload the browser never
+    # reported back. CI tears the store down; on a long-lived dev hub they sit under the model's prefix.
+    statuses = []
+    for _ in range(LARGE_UPLOAD_TRIES):
+        status, policy = _json_request(
+            "POST",
+            f"{api}/files/preSignedUrl/model/{model_id}",
+            bearer=bearer,
+            body={"fileName": LARGE_FILE_NAME, "contentType": "application/octet-stream"},
+        )
+        _expect(status, 200, "POST /files/preSignedUrl (large file)", policy)
+        statuses.append(
+            _post_multipart(
+                policy["url"],
+                policy["fields"],
+                LARGE_FILE_NAME,
+                os.urandom(LARGE_FILE_BYTES),
+                args.ui_origin,
+                content_type="application/octet-stream",
+            )
+        )
+    if any(code != 204 for code in statuses):
+        raise SmokeFailure(
+            f"presigned POST of {LARGE_FILE_BYTES} B: expected HTTP 204 on every try, got {statuses} — "
+            "check the object-store image pin in deploy/compose.development.yml (FLIP#1534)"
+        )
+    print(f"  ✅ {statuses}")
 
     print("\n🎉 Local storage smoke passed: uploads, scanning and downloads need no AWS account.")
 

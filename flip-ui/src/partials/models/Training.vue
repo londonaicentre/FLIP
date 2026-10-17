@@ -24,8 +24,8 @@
     >
         <AiCard class="flex flex-col flex-1 min-h-0 overflow-hidden">
             <!-- Which files this model needs depends on the FL backend, so with the job types
-                 unknown there is nothing honest to list. Say so instead of falling through to the
-                 "upload the required files" copy, which would imply we know what they are. -->
+                 unknown there is nothing honest to list. Say so instead of a "Required files" row,
+                 which would imply we know what they are. -->
             <AiAlert
                 v-if="pending && jobTypesError"
                 variant="error"
@@ -41,48 +41,13 @@
                     Retrying&hellip;
                 </template>
             </AiAlert>
-            <template v-else-if="pending && !allFilesUploaded">
-                <AiAlert
-                    variant="info"
-                    :close="false"
-                    :rounded="false"
-                    :bordered="false"
-                >
-                    <template v-if="missingFiles.length">
-                        For <template v-if="flBackendLabel">
-                            <strong><code>{{ flBackendLabel }}</code></strong> and
-                        </template>job type <strong><code>{{ jobType }}</code></strong>, required files are:
-                        <template v-for="(f, i) in requiredFiles" :key="f">
-                            <code>{{ f }}</code><template v-if="i < requiredFiles.length - 1">
-                                ,
-                            </template>
-                        </template>.
-                    </template>
-                    <template v-else>
-                        All required model files must be uploaded before starting training.
-                    </template>
-                </AiAlert>
-                <AiAlert
-                    v-if="missingFiles.length"
-                    variant="warning"
-                    :close="false"
-                    :rounded="false"
-                    :bordered="false"
-                >
-                    Missing:
-                    <template v-for="(f, i) in missingFiles" :key="f">
-                        <code>{{ f }}</code><template v-if="i < missingFiles.length - 1">
-                            ,
-                        </template>
-                    </template>
-                </AiAlert>
-            </template>
 
             <div class="flex flex-col flex-1 pt-4 overflow-y-auto">
                 <TrainingOptions
                     :errors="errors"
                     :disabled="!pending"
                     :fl-backend-label="flBackendLabel"
+                    :required-files="jobTypesError ? [] : requiredFileStates"
                     :run-resources="pending ? null : runResources"
                 />
             </div>
@@ -136,8 +101,8 @@ import { array, lazy, number, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
+import { FileInfo, IRequiredFile } from "@/interfaces/model/types";
 import { getStatusEnumValue, IInitTraining, IJobResources, initialiseTraining,
-    JobType,
     MAX_GPUS_PER_SITE,
     ModelStatus,
     ModelStatusEnum } from "@/services/model-service";
@@ -151,10 +116,8 @@ import TrainingOptions from "./TrainingOptions.vue";
 interface ITrainingProps {
     canTrain: boolean;
     status: ModelStatus;
-    allFilesUploaded: boolean;
     requiredFiles: string[];
-    uploadedFileNames: string[];
-    jobType: JobType;
+    uploadedFiles: Pick<FileInfo, "name" | "status">[];
     flBackendLabel?: string;
     // True when the job-types map could not be loaded: `requiredFiles` is empty because it is
     // unknown, not because nothing is required.
@@ -181,12 +144,10 @@ const emits = defineEmits(["started", "retryJobTypes"]);
 
 const route = useRoute();
 
-/**
- * Computes the list of files that are still missing (required but not uploaded).
- */
-const missingFiles = computed(() => {
-    return props.requiredFiles.filter(f => !props.uploadedFileNames.includes(f));
-});
+const requiredFileStates = computed((): IRequiredFile[] => props.requiredFiles.map(name => ({
+    name,
+    status: props.uploadedFiles.find(f => f.name === name)?.status
+})));
 
 const schema = object().shape({
     enriched: string().required("Please confirm data enrichment."),

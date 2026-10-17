@@ -877,8 +877,23 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	## the family — that is the documented bootstrap-tag path; re-run deploy-centralhub
 	## after it. The UI is NOT rolled back — re-run `make deploy-ui` from the matching
 	## commit if the UI must move too.
+	## On NVFLARE it first empties the fl-server's local/ on EFS and re-syncs the kit
+	## (scripts/reset-fl-server-local.sh, the efs-provision-certs task, a minute or two):
+	## since FLIP#1390 the fl-server writes local/flip__p_resources.json, and an older
+	## fl-server image cannot load it and fails to start. If that step fails nothing is
+	## rolled back. SKIP_FL_LOCAL_RESET=1 skips it, for when the file is already gone or
+	## the revision rolled back to is FLIP#1390 or later (it rewrites the file at start).
 	@set -e; \
 	unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	fl_server="$(firstword $(filter fl-server-net-%,$(CENTRALHUB_ECS_SERVICES)))"; \
+	if [ "$(FL_BACKEND)" = "nvflare" ] && [ -n "$$fl_server" ] && [ "$(SKIP_FL_LOCAL_RESET)" != "1" ]; then \
+	  ./scripts/reset-fl-server-local.sh $(ECS_CLUSTER) "$$fl_server" || { \
+	    echo "   Nothing has been rolled back. An fl-server image older than FLIP#1390 fails to start"; \
+	    echo "   while local/flip__p_resources.json is on EFS. Fix the step above and re-run, or remove"; \
+	    echo "   the file yourself (fl-services/nvflare/fl-server/README.md) and re-run with"; \
+	    echo "   SKIP_FL_LOCAL_RESET=1."; \
+	    exit 1; }; \
+	fi; \
 	echo "⏪ Rolling back Central Hub ECS services in $(ECS_CLUSTER)..."; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
 	  current_td=$$($(_AWS_ENV) aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
