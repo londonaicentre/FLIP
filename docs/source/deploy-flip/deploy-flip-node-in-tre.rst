@@ -54,12 +54,32 @@ operator. The TRE operator is responsible for:
   FL data, OMOP DB volumes, and observability storage -- see the Ansible playbook at
   ``trust/deploy/ansible/onprem.yml``).
 
-**Container image ingestion**
+**Container images**
 
-FLIP container images are published to the GitHub Container Registry
-(``ghcr.io/londonaicentre/*``). Because TREs typically block direct pulls from public
-registries, images must be ingested through the TRE's normal file-ingress process. A
-common pattern:
+FLIP's own images are published to the GitHub Container Registry
+(``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
+from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
+``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.production.yml``
+and ``trust/xnat/docker-compose-stack.yml`` pin. A TRE gets them onto the FLIP host in one of
+two ways.
+
+*Allowlist the registries.* The TRE lets the FLIP host pull from them directly (CREATE does
+this for GHCR). Each registry serves its image layers from a second host, so allowing the
+registry name alone makes every pull fail:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Registry
+     - Hosts to allow (HTTPS, port 443)
+   * - GHCR
+     - ``ghcr.io`` and ``pkg-containers.githubusercontent.com``
+   * - Docker Hub
+     - ``registry-1.docker.io``, ``auth.docker.io`` and ``production.cloudfront.docker.com``
+
+*Mirror the images.* Where the TRE blocks public registries, ingest every image above through
+the TRE's file-ingress process. A common pattern:
 
 1. Outside the TRE, pull and save each image to a tarball on a workstation that has
    internet access:
@@ -76,13 +96,13 @@ common pattern:
 
       docker load -i trust-api-<tag>.tar
 
-.. note::
+A TRE-internal registry (e.g. Harbor, GitLab, or a registry mirror) pre-populated with the
+same images and reachable from the FLIP host works too. Coordinate with the TRE operator to
+pick the option that best fits local policy.
 
-   Other image distribution approaches may be acceptable depending on the TRE --
-   for example, a TRE-internal Docker registry (e.g. Harbor, GitLab, or a registry
-   mirror) that is pre-populated with the required images and reachable from the
-   FLIP host. Coordinate with the TRE operator to pick the option that best fits
-   local policy.
+The Compose stack's XNAT image carries its plugins, so the FLIP host downloads none at start.
+(The Kubernetes chart is different: it fetches them from ``xnat.org``, ``api.bitbucket.org``
+and GitHub at every start, see :doc:`deploy-flip-node-azure`.)
 
 **Network policy**
 
@@ -91,6 +111,11 @@ common pattern:
 - Allow outbound gRPC or HTTP to the FL Server endpoint — a **separate** host fronted by its
   own load balancer (the NLB), on its configurable port (e.g. ``fl.app.flip.aicentre.co.uk:8002``).
   Allowlisting the API host alone is not sufficient.
+- If the TRE's firewall filters by hostname only in HTTP rules (Azure Firewall Basic, for
+  example, has no DNS proxy for its network rules), allow the FL Server by its IP address:
+  the hub's FL endpoint has a fixed one.
+- Do not let a TLS-inspecting proxy re-sign traffic to the FL Server: the FL client checks
+  the server's certificate against its kit, and a re-signed connection fails.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**
