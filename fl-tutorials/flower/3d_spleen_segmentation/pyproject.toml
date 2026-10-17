@@ -39,7 +39,7 @@ license = "Apache-2.0"
 # does not exist. Pick up flip-utils changes on the compose stacks with
 # `make build-fl FL_BACKEND=flower`.
 dependencies = [
-    "flwr[simulation]>=1.38.0",
+    "flwr[simulation]>=1.40.0",
     "monai>=1.6.0",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",

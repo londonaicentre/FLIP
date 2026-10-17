@@ -16,7 +16,8 @@
 This folder contains the Flower FL service images and the per-network provisioning that
 secures them. A Flower network is a long-running **SuperLink** (server) that several
 long-running **SuperNode**s (clients) connect to, plus a thin `fl-api` that the Central
-Hub drives. `fl-base` holds the shared base image the others build on.
+Hub drives. `fl-base` holds the shared base image the others build on. Trusts reach the
+SuperLink only through the **fleet proxy** (`fleet-proxy/`, below).
 
 Unlike NVFLARE (which mints per-participant *startup kits*), Flower provisioning generates
 **TLS certificates** for secure SuperLink↔SuperNode↔CLI communication and **SuperNode
@@ -27,15 +28,15 @@ upstream how-tos for the underlying mechanics:
 
 ## Images: built in CI, or locally as `:dev`
 
-The Flower images — `flower-fl-base`, `flower-superlink`, `flower-supernode`, `flower-fl-api`
-— are built in CI by [`fl-docker-build-flower.yml`](../../.github/workflows/fl-docker-build-flower.yml)
+The Flower images — `flower-fl-base`, `flower-superlink`, `flower-supernode`, `flower-fl-api`,
+`flower-fleet-proxy` — are built in CI by [`fl-docker-build-flower.yml`](../../.github/workflows/fl-docker-build-flower.yml)
 whenever `fl-services/flower/**` or `flip-utils/**` change, and published to GHCR as `:<sha>`,
 `:stag` (on `develop`) and `:prod` (on `main`). Deployments pull them via `DOCKER_FL_TAG`.
 
 To iterate locally **before pushing**, build them tagged `:dev`:
 
 ```bash
-make -C fl-services/flower build                  # flwr-base first, then superlink/supernode/fl-api
+make -C fl-services/flower build                  # flwr-base first, then superlink/supernode/fl-api/fleet-proxy
 make -C fl-services/flower build LOCAL_DEV=true   # include dev-only deps
 make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub stack on local images
 ```
@@ -167,6 +168,35 @@ by [`register-supernode-keys.sh`](register-supernode-keys.sh) — it runs `flwr 
 for every `/keys/*.pub`, naming each node after its trust (`--name`, flwr ≥ 1.38, so the ServerApp
 sees the trust behind every node id through `Grid.get_nodes()`), skipping already-registered
 keys. This is the Flower analogue of claiming a participant slot.
+
+## The fleet proxy: what a trust can reach (FLIP#1517)
+
+Since flwr 1.40 the SuperLink serves **every** API from one HTTP app on one port (8000): health,
+the **Control API** (`/v1/control/*` — start, stop and list runs, register and unregister nodes),
+the **Fleet API** (`/v1/fleet/*` — what a SuperNode calls) and the **Runtime API**
+(`/v1/runtime/*` — the ServerApp's own routes for messaging SuperNodes). Open-source Flower
+authenticates none of Control, and Runtime only behind a flag that subprocess isolation (FLIP's
+mode) ignores; SuperNode auth signs Fleet requests alone. So a trust that could reach port 8000
+could submit its own ServerApp, stop another project's run or forge instructions to other trusts'
+SuperNodes — and there is no flag to serve Fleet on its own listener.
+
+Trusts therefore never reach port 8000. They reach `flower-fleet-proxy`, an nginx that listens on
+the trust-facing port 9092 with the SuperLink's own server certificate (so trust kits, SANs and
+`FL_SERVER_PORT` are unchanged), forwards only the 12 Fleet routes in
+[`fleet-proxy/fleet-routes.map`](fleet-proxy/fleet-routes.map) — POST only, matched on the raw
+request line — to the SuperLink over TLS, and answers everything else 404. A SuperLink it cannot
+reach answers 503, which the SuperNode retries.
+
+| Where | Shape |
+|---|---|
+| ECS task, prod compose harness | sidecar in the SuperLink's network namespace; upstream `127.0.0.1:8000` (the image defaults) |
+| hub dev compose | `fl-fleet-proxy-net-<N>`, the only hub service on `fl-net-<N>`, answering there to `fl-server-net-<N>`; the SuperLink stays on `default` |
+| `compose.secure.yml` | `fleet-proxy` on both networks, answering to `superlink` on `flwr-trust-net` where the SuperNodes are |
+| `compose.dev.yml` (insecure) | none: no trusts, so the SuperNodes dial `superlink:8000` |
+
+`fl-api-flower/tests/test_fleet_proxy_allowlist.py` pins the allowlist to the Fleet routes of the
+flwr that service locks, and to every path the SuperNode client sends, so a Flower bump that adds,
+renames or drops a Fleet route fails CI instead of breaking SuperNodes mid-round.
 
 ## Running a network standalone (no hub / trusts)
 

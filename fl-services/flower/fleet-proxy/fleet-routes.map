@@ -1,0 +1,35 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The only requests a trust's SuperNode may send to the SuperLink (FLIP#1517): the
+# Fleet API routes of flwr's superlink/routers/fleet/router.py, POST only. Keyed on
+# "$request_method $request_uri" — the raw request line, before nginx normalises it —
+# so a dot-segment or percent-encoded path cannot match an entry and still reach a
+# Control (/v1/control/*) or Runtime (/v1/runtime/*) route behind it. The SuperNode
+# sends no query string, so none is allowed. Everything else answers 404.
+#
+# Pinned to flwr's own routes by fl-api-flower/tests/test_fleet_proxy_allowlist.py:
+# a Flower bump that adds, renames or drops a Fleet route fails CI there.
+map "$request_method $request_uri" $fleet_route_allowed {
+    default 0;
+    "POST /v1/fleet/register-node" 1;
+    "POST /v1/fleet/activate-node" 1;
+    "POST /v1/fleet/deactivate-node" 1;
+    "POST /v1/fleet/unregister-node" 1;
+    "POST /v1/fleet/send-node-heartbeat" 1;
+    "POST /v1/fleet/pull-messages" 1;
+    "POST /v1/fleet/push-messages" 1;
+    "POST /v1/fleet/get-run" 1;
+    "POST /v1/fleet/get-fab" 1;
+    "POST /v1/fleet/push-object" 1;
+    "POST /v1/fleet/pull-object" 1;
+    "POST /v1/fleet/confirm-message-received" 1;
+}

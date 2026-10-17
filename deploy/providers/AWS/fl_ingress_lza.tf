@@ -223,7 +223,7 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_internal_nlb" {
   count       = var.lza_managed_network ? 1 : 0
   type        = "ingress"
   description = "gRPC from the internal FL NLB (edge-relayed FL clients + health checks)"
-  # Backend-dependent container port (Flower: SuperLink Fleet 9092) -- the
+  # Backend-dependent container port (Flower: the fleet proxy's 9092, FLIP#1517) -- the
   # NLB forwards its FL_SERVER_PORT listener here.
   from_port                = local.fl_server_container_port
   to_port                  = local.fl_server_container_port

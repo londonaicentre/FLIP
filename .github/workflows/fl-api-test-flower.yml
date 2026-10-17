@@ -20,12 +20,18 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - "fl-services/flower/fl-api-flower/fl_api/**"
+      # The whole service (its pyproject/uv.lock pin the flwr the tests import) and the
+      # fleet proxy, whose allowlist tests/test_fleet_proxy_allowlist.py pins (FLIP#1517).
+      - "fl-services/flower/fl-api-flower/**"
+      - "fl-services/flower/fleet-proxy/**"
       - ".github/workflows/fl-api-test-flower.yml"
   pull_request:
     branches: [main, develop]
     paths:
-      - "fl-services/flower/fl-api-flower/fl_api/**"
+      # The whole service (its pyproject/uv.lock pin the flwr the tests import) and the
+      # fleet proxy, whose allowlist tests/test_fleet_proxy_allowlist.py pins (FLIP#1517).
+      - "fl-services/flower/fl-api-flower/**"
+      - "fl-services/flower/fleet-proxy/**"
       - ".github/workflows/fl-api-test-flower.yml"
 jobs:
   flip-fl-api:

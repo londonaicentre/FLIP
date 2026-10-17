@@ -696,7 +696,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## check (LZA ECR pull-through cache, FLIP#749). The app container is selected BY NAME —
 	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.8
 	## and staying robust to sidecar/ordering changes; only its image tag is swapped before
-	## registering the new revision. Task-def tags are carried over only when non-empty
+	## registering the new revision — plus, on Flower's fl-server-net-1, the fleet-proxy sidecar
+	## (FLIP#1517), whose allowlist must track the SuperLink's flwr: it moves to the same TAG,
+	## built by the same workflow, so the fl-server's GHCR check covers it. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
 	## deploy a hotfix / feature-branch image (build it first via workflow_dispatch — see
 	## AGENTS.md); revert with `make rollback-centralhub`.
@@ -826,12 +828,14 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
 	  new_image=$$(base_ref "$$image" "$$service") || { warn_mixed; exit 1; }; \
 	  new_image="$${new_image%:*}:$$TAG"; \
-	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
+	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image'; \
+	  jq_prog="$$jq_prog elif .name == \"fleet-proxy\" then .image = ((.image | sub(\"@.*$$\"; \"\") | sub(\":[^:/]*$$\"; \"\")) + \":\" + \$$tag)"; \
+	  jq_prog="$$jq_prog else . end)"; \
 	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
 	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \
 	  jq_prog="$$jq_prog + (if ((.tags // []) | length) > 0 then {tags: .tags} else {} end)"; \
 	  tmp_td=$$(mktemp); \
-	  printf '%s' "$$td_json" | jq --arg name "$$service" --arg image "$$new_image" "$$jq_prog" > $$tmp_td; \
+	  printf '%s' "$$td_json" | jq --arg name "$$service" --arg image "$$new_image" --arg tag "$$TAG" "$$jq_prog" > $$tmp_td; \
 	  if ! new_td_arn=$$($(_AWS_ENV) aws ecs register-task-definition --cli-input-json file://$$tmp_td \
 	      --query 'taskDefinition.taskDefinitionArn' --output text); then \
 	    echo "❌ $$service: register-task-definition failed."; \

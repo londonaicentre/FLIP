@@ -13,8 +13,8 @@
 # ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
 # compose.production.yml) — not a deployment target. The canonical production equivalent is the Flower
 # branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
-# which mirrors this overlay: SuperLink 9092/8000/9097, TLS + SuperNode-auth command flags, and the
-# register-supernode-keys one-shot (ecs_flower.tf).
+# which mirrors this overlay: SuperLink 8000/9097 behind the fleet proxy on 9092 (FLIP#1517), TLS +
+# SuperNode-auth command flags, and the register-supernode-keys one-shot (ecs_flower.tf).
 
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
@@ -94,12 +94,15 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network.
+      # flwr>=1.40: every SuperLink API — Control, Fleet, the ServerApp's /v1/runtime/* — is
+      # HTTP on port 8000, loopback-only unless --host says otherwise; fl-api and the key
+      # registration reach it over the compose network, and nothing publishes it.
       - --host
       - 0.0.0.0
       - --health-server-address
       - 0.0.0.0:9097
+    # The trust-facing port is the fleet proxy's (below), which shares this namespace:
+    # a namespace's ports are published by its owner.
     ports:
       - "${FL_SERVER_PORT}:9092"
     security_opt:
@@ -110,6 +113,24 @@ services:
       - CHOWN
     restart: unless-stopped
     init: true
+
+  # The SuperLink's only trust-facing listener (FLIP#1517), exactly as on ECS: it shares
+  # fl-server-net-1's network namespace, serves 9092 with the SuperLink's own certificate and
+  # forwards only the Fleet API routes in fleet-proxy/fleet-routes.map to localhost:8000 (the
+  # image's defaults). Control and Runtime answer 404. The image runs as the SuperLink's own
+  # uid (49999, flwr/base's `app`), so it reads the same server key with no capabilities.
+  fl-fleet-proxy-net-1:
+    image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
+    network_mode: "service:fl-server-net-1"
+    volumes:
+      - /opt/flip/services/net-1/certificates:/certs:ro
+    depends_on:
+      - fl-server-net-1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:

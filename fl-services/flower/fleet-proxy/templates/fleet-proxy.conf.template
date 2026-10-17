@@ -1,0 +1,68 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The trust-facing listener of a Flower SuperLink (FLIP#1517). flwr>=1.40 serves every
+# SuperLink API (health, Control, Fleet, Runtime) from one HTTP app on one port, and
+# open-source Flower authenticates neither Control nor, in subprocess isolation, Runtime.
+# So trusts never reach that port: they reach this proxy, which forwards only the Fleet
+# routes in fleet-routes.map and answers everything else 404.
+#
+# The base image's entrypoint substitutes only the FLEET_PROXY_* variables the image
+# defines (NGINX_ENVSUBST_FILTER), so nginx's own $variables pass through untouched.
+resolver ${FLEET_PROXY_RESOLVER} valid=10s ipv6=off;
+
+server {
+    # The Flower server certificate, so trust kits, SANs and FL_SERVER_PORT are unchanged.
+    listen ${FLEET_PROXY_LISTEN_PORT} ssl;
+    ssl_certificate ${FLEET_PROXY_CERTS_DIR}/server.pem;
+    ssl_certificate_key ${FLEET_PROXY_CERTS_DIR}/server.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # The SuperNode chunks arrays at 5 MiB (FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE); a push-object
+    # body is one chunk plus protobuf framing, as is a pull-object reply. Stream both
+    # rather than spool them to disk.
+    client_max_body_size 64m;
+    proxy_request_buffering off;
+    proxy_buffering off;
+    client_body_timeout 300s;
+
+    if ($fleet_route_allowed = 0) {
+        return 404;
+    }
+
+    location / {
+        # A variable upstream is re-resolved (resolver above) when the SuperLink's address
+        # changes — a compose restart — and, with no URI part, is sent the client's
+        # request URI unchanged, which the map has already matched exactly.
+        set $fleet_upstream https://${FLEET_PROXY_UPSTREAM};
+        proxy_pass $fleet_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+
+        # Re-encrypt to the SuperLink with the same CA the SuperNodes trust, checked
+        # against a name the provisioned server certificate carries as a SAN.
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate ${FLEET_PROXY_CERTS_DIR}/ca.crt;
+        proxy_ssl_name ${FLEET_PROXY_UPSTREAM_TLS_NAME};
+        proxy_ssl_server_name on;
+        proxy_ssl_protocols TLSv1.2 TLSv1.3;
+
+        # The SuperNode retries 503/504 but crashes its heartbeat thread on any other
+        # error status, so an unreachable SuperLink (restarting) must read as unavailable.
+        error_page 502 =503 @superlink_unavailable;
+    }
+
+    location @superlink_unavailable {
+        return 503;
+    }
+}

@@ -16,6 +16,10 @@
 # fl-services/flower/provision/creds/net-1 exists first). Cert/key dirs default to net-1's
 # provisioned output; override FLOWER_TLS_CERTS_DIR / FLOWER_SUPERNODE_KEYS_DIR for
 # another net. The central-hub multi-net Flower topology is deploy/compose.development.flower.yml.
+#
+# Two networks, the hub's shape in miniature (FLIP#1517): the SuperLink, fl-api and the key
+# registration sit on flwr-dev-net, the SuperNodes on flwr-trust-net, and the only thing on
+# both is the fleet proxy, which answers to `superlink` there and forwards the Fleet API alone.
 services:
   # build the flower-fl-base image for a Flower app
   flwr-base:
@@ -85,19 +89,50 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise (see compose.dev.yml). The same app serves the ServerApp's /v1/runtime/*
-      # routes; no host port is published here.
+      # flwr>=1.40 serves every SuperLink API — Control, Fleet and the ServerApp's
+      # /v1/runtime/* — over HTTP on port 8000, loopback-only unless --host says otherwise
+      # (see compose.dev.yml). Only flwr-dev-net reaches it; no host port is published here.
       - --host
       - 0.0.0.0
       - --health-server-address
       - ${SUPERLINK_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9097}
     networks:
-      - flwr-dev-net
+      flwr-dev-net:
+        # The fleet proxy's upstream. Not `superlink`: on flwr-trust-net that name is the
+        # proxy's own, and the proxy sits on both networks.
+        aliases:
+          - superlink-internal
+
+  # The SuperNodes' only route to the SuperLink (FLIP#1517): forwards the Fleet API routes
+  # in fleet-proxy/fleet-routes.map to superlink-internal:8000 and answers everything
+  # else — Control, Runtime — 404. Serves the SuperLink's own certificate (SAN `superlink`).
+  fleet-proxy:
+    image: flower-fleet-proxy:dev
+    build:
+      context: ../../fl-services/flower/fleet-proxy
+      dockerfile: Dockerfile
+    # Reads the host-provisioned 0640 server key through the host group, like the FL containers.
+    group_add: *host-gid
+    environment:
+      - FLEET_PROXY_UPSTREAM=superlink-internal:8000
+      - FLEET_PROXY_UPSTREAM_TLS_NAME=superlink
+    volumes:
+      - ${FLOWER_TLS_CERTS_DIR:-./provision/creds/net-1/certificates}:/certs:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    depends_on:
+      - superlink
+    networks:
+      flwr-dev-net: {}
+      flwr-trust-net:
+        aliases:
+          - superlink
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys:
-    image: flwr/base:1.38.0-py3.12-ubuntu24.04
+    image: flwr/base:1.40.0-py3.12-ubuntu24.04
     environment:
       - FL_API_ADDRESS=${FL_API_ADDRESS:-http://fl-api:8000}
       - TRUST_NAMES=${TRUST_NAMES:-Trust_1,Trust_2}
@@ -165,8 +200,10 @@ services:
     depends_on:
       register-supernode-keys:
         condition: service_completed_successfully
+      fleet-proxy:
+        condition: service_started
     networks:
-      - flwr-dev-net
+      - flwr-trust-net
 
   supernode-2:
     image: flower-supernode:dev
@@ -218,9 +255,13 @@ services:
     depends_on:
       register-supernode-keys:
         condition: service_completed_successfully
+      fleet-proxy:
+        condition: service_started
     networks:
-      - flwr-dev-net
+      - flwr-trust-net
 
 networks:
   flwr-dev-net:
     name: flwr-dev-net
+  flwr-trust-net:
+    name: flwr-trust-net

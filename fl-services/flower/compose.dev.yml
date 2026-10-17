@@ -119,8 +119,10 @@ services:
       - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
     command:
       - --insecure
+      # flwr>=1.40 serves the Fleet API on the SuperLink's one HTTP listener (8000). This
+      # stack has no trusts, so no fleet proxy (FLIP#1517): the SuperNodes dial it directly.
       - --superlink
-      - superlink:9092
+      - superlink:8000
       - --health-server-address
       - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
       # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
@@ -160,8 +162,10 @@ services:
       - ${WORKING_DIR:-/tmp/flwr-dev-runs}:/app/runs
     command:
       - --insecure
+      # flwr>=1.40 serves the Fleet API on the SuperLink's one HTTP listener (8000). This
+      # stack has no trusts, so no fleet proxy (FLIP#1517): the SuperNodes dial it directly.
       - --superlink
-      - superlink:9092
+      - superlink:8000
       - --health-server-address
       - ${SUPERNODE_HEALTH_SERVER_BIND_ADDRESS:-0.0.0.0:9098}
       # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
