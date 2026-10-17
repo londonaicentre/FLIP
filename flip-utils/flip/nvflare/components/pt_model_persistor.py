@@ -60,8 +60,8 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
             model: As for the stock persistor — a model object, a component id, or the
                 ``{"path": ..., "args": ...}`` component config a recipe passes (NVFLARE's
                 ComponentBuilder instantiates it before this persistor is built at run time).
-            model_id: FLIP model ID (legacy path); when empty it is resolved lazily from the job's
-                meta.json custom_props via ``get_flip_model_id``.
+            model_id: FLIP model ID (legacy path); when empty it is resolved lazily from the app's
+                config.json via ``get_flip_model_id``.
             **kwargs: Passed through to ``PTFileModelPersistor``.
         """
         super().__init__(model=model, **kwargs)

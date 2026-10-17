@@ -286,7 +286,7 @@ concept is present, and that concept is committed before the bulk load, so a run
 between leaves a database that reports itself loaded and is skipped for good.
 `make -C trust/omop-db load-dicom-vocab FORCE_DICOM_VOCAB=1` reloads over it. The same
 variable reaches the Kubernetes hook (`trustData.seed.forceDicomVocab`) and the EC2 play
-(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> FORCE_DICOM_VOCAB=1`).
+(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> HUB=<hub> FORCE_DICOM_VOCAB=1`).
 
 ### Which partition a trust is seeded with
 
@@ -351,16 +351,15 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 
 The root `onboard-onprem-trust`, `up-onprem-trust` and `upgrade-onprem-trust`
 wrappers default to `HUB=prod`. Their readiness checklist checks the same file
-as deployment: `trust/.env.<KIT>.<env>`, or for one release a kit still under its
-pre-FLIP#1479 name (`.production`, `.lza-prod`, `.lza-stag` or a bare `trust/.env.<KIT>`),
-with a one-line hint naming the rename. Its heading and fix hints name that selected
-path. Pass `HUB=stag` to the checklist and deployment when joining the staging hub.
+as deployment: `trust/.env.<KIT>.<env>`, resolved by `deploy/env_mode.mk`'s `kit_file`.
+Its heading and fix hints name that selected path. Pass `HUB=stag` to the checklist and deployment when joining the staging hub.
 
 ### One-time setup
 
 1. The hub admin scaffolds and registers your kit
    (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
-   then `make register-trust KIT=<CODE> HUB=prod`). The result is a complete
+   then `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` and
+   `make sync-trust-kit KIT=<CODE> HUB=prod`). The result is a complete
    kit file at `trust/.env.<CODE>.prod` containing credentials, the AES
    key, the hub URL, image tags, and a host-local profile.
 2. The hub admin transmits the file to you out-of-band (SCP-via-SSM for an
@@ -379,7 +378,7 @@ path. Pass `HUB=stag` to the checklist and deployment when joining the staging h
 
    `HUB` names the hub you are joining, and with it the kit-file suffix the
    trust Makefiles read: `prod` → `.env.<CODE>.prod`, `stag` → `.env.<CODE>.stag`.
-   Both run the production compose and stack files; only `HUB` unset is the
+   Both run the prod compose and stack files; only `HUB` unset is the
    development stack.
 
    On-prem, `up-trust` runs `ensure-seeded` unconditionally, the same way it does in

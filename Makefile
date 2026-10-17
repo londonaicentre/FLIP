@@ -22,8 +22,10 @@
 # What HUB means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
 # deploy/env_mode.mk, shared with every other Makefile that reads HUB. The kit-file
 # targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
-# name the AWS Makefile and register-trusts.sh use, and find a kit under its
-# pre-FLIP#1479 name too (env_mode.mk's kit_file).
+# name the AWS Makefile and register-trusts.sh use; KIT= finds a kit under its
+# pre-FLIP#1479 name too (env_mode.mk's kit_file). The hub env-file check runs for every
+# goal but the on-prem trust verbs, which read only the trust's kit.
+READS_HUB_ENV_FILE := $(if $(MAKECMDGOALS),$(filter-out up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust,$(MAKECMDGOALS)),yes)
 include deploy/env_mode.mk
 MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
@@ -43,6 +45,12 @@ $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
+# Staging is the LZA staging account, whose env file names its VPC (the AWS Makefile requires
+# LZA_VPC_NAME too). One without it is the retired self-contained account's .env.stag, and its
+# values must not reach a kit (FLIP#1479).
+ifneq ($(and $(READS_HUB_ENV_FILE),$(filter stag,$(ENV))),)
+$(if $(strip $(LZA_VPC_NAME)),,$(error $(MAIN_ENV_FILE) sets no LZA_VPC_NAME: it is not the LZA staging hub's env file. A .env.stag left from the retired self-contained staging account must be deleted))
+endif
 endif
 
 include deploy/fl_backend.mk
@@ -295,11 +303,11 @@ down-onprem-trust:
 # On-prem onboarding splits like this:
 #   - Admin owns: opening the prod NLB to the operator's IP, UI-registering
 #     the trust on the prod hub (Add-Trust modal mints the 5 Kit credentials,
-#     admin pastes into trust/.env.<KIT>), running `make sync-trust-kit-N`
-#     to populate the Hub-shared block in trust/.env.<KIT>, running
+#     admin pastes into trust/.env.<KIT>.prod), running `make sync-trust-kit`
+#     to populate the Hub-shared block in it, running
 #     `make package-onprem-trust-kit` to tarball the populated env file
 #     plus the operator's slice of the FL participant kit S3 bucket.
-#   - Operator owns: extracting the tarball, copying the .env.<KIT> in,
+#   - Operator owns: extracting the tarball, copying the .env.<KIT>.prod in,
 #     setting FL_KIT_DIR + Host-local profile, running `make up-onprem-trust`.
 # The operator never touches the prod UI directly — the admin uses it on
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
@@ -401,9 +409,8 @@ checkov-lint:
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
-# Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
-# self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
-# from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
+# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
+# (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
@@ -610,7 +617,7 @@ _wait-for-hub:
 # kit. The hub keeps no trust list — the kit files ARE the list.
 register-trust: _check-compose-project-owner _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
-	@kit="trust/.env.$(KIT).$(ENV)"; ex="$$kit.example"; \
+	@kit='$(call kit_file,trust/,$(KIT))'; ex="trust/.env.$(KIT).$(ENV).example"; \
 	  if [ ! -f "$$kit" ]; then \
 	    [ -f "$$ex" ] || { echo "❌ Neither $$kit nor $$ex exists — run 'make new-trust TRUST_CODE=$(KIT) TRUST_NAME=...' first."; exit 1; }; \
 	    cp "$$ex" "$$kit"; chmod 600 "$$kit"; echo "📋 Seeded $$kit from $$(basename "$$ex")"; \
@@ -645,7 +652,7 @@ register-trusts:
 new-trust:
 	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<code> required (e.g. TRUST_CODE=KCL)"; exit 1; }
 	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
-	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || [ ! -f "$$old" ] || \
+	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || \
 	  { echo "❌ $$old already exists under an old kit name — rename it to trust/.env.$(TRUST_CODE).$(ENV) instead."; exit 1; }
 	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
 		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
@@ -664,14 +671,14 @@ new-trust:
 # lookup — just a file→file copy keyed on KIT.
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
-	@:$(call old_kit_hint,$(call kit_file,trust/,$(KIT)))
+	@:$(call kit_hint,$(call kit_file,trust/,$(KIT)))
 	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
-# Sync every locally-present kit for this env (old kit names included; the
-# .example templates never match).
+# Sync every locally-present kit for this env (current names only; the .example
+# templates never match).
 sync-trust-kits:
-	@[ -n "$(call kit_codes,trust/)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."
-	@for code in $(call kit_codes,trust/); do $(MAKE) sync-trust-kit KIT="$$code"; done
+	@$(call old_kits_hint,trust/)[ -n "$(call kit_codes,trust/)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."
+	@rc=0; for code in $(call kit_codes,trust/); do $(MAKE) sync-trust-kit KIT="$$code" || rc=1; done; exit $$rc
 
 # ---------------------------------------------------------------------------
 # Kubernetes Helm chart targets
@@ -695,7 +702,7 @@ generate-xnat-credentials:
 	elif [ -n "$(KIT)" ]; then \
 	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$(call kit_file,trust/,$(KIT)) $(if $(FORCE),FORCE=$(FORCE)); \
 	else \
-	  found=0; for kit in $(call kit_files,trust/); do \
+	  found=0; for kit in $(if $(ENV_FILE)$(KIT),,$(call old_kits_hint,trust/))$(sort $(wildcard trust/.env.*.$(ENV))); do \
 	    found=1; $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$$kit $(if $(FORCE),FORCE=$(FORCE)) || exit 1; \
 	  done; \
 	  [ "$$found" = 1 ] || echo "ℹ️  No trust/.env.<CODE>.$(ENV) kit files found — run 'make register-trusts' (or 'make register-trust KIT=<CODE>') first."; \

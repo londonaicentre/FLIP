@@ -43,7 +43,7 @@
   #
   # The hierarchical dest (net-1/services/<slot>) preserves the
   # S3 bundle's own layout — the compose mount in
-  # trust/deploy/compose_trust.production.nvflare.yml is
+  # trust/deploy/compose_trust.prod.nvflare.yml is
   # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
   # which resolves to /opt/flip/fl-kit/net-1/services/<slot>/...
   #
@@ -155,7 +155,7 @@
   #    slot's SuperNode private key and the SuperLink server key, so syncing it whole
   #    puts the whole federation's FL identity on every trust host. The SuperNode
   #    reads exactly ca.crt and its own supernode_credentials_<slot> (the `command:`
-  #    block in compose_trust.production.flower.yml), which is what the two --include
+  #    block in compose_trust.prod.flower.yml), which is what the two --include
   #    patterns below fetch — and nothing more.
   #
   #    This is intentionally NARROWER than package-onprem-trust-kit.sh, which syncs

@@ -67,7 +67,7 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   | Environment | Files |
   | --- | --- |
   | Development (default) | `docker-compose-stack.yml` + `docker-compose-stack.development.yml` |
-  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.production.yml` |
+  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.prod.yml` |
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
@@ -107,20 +107,22 @@ This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.m
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
 GitHub workflow). It is referenced by an immutable version tag from
-[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), the K8s init-job's inline
-copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all three together with the
-Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
-a stale 2021 build that silently dropped slices from valid series).
-[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the four stay in
+[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), which both deployment
+shapes register (the chart runs `configure-dcm2niix.sh` from the xnat-web image, FLIP#1451), and
+imaging-api's `Settings.DCM2NIIX_IMAGE` — bump both together with the Dockerfile's
+`DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was a stale 2021
+build that silently dropped slices from valid series).
+[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the three stay in
 sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
 is otherwise silent: the old immutable tag simply keeps being pulled.
 
 That check compares files in this repository and never calls a running XNAT, so it cannot see the
 *live* registration. An XNAT provisioned before a bump keeps its old command in the XNAT database and
 goes on converting with the superseded image while looking perfectly healthy — both staging trusts sat
-in that state. Confirm a deployment with `GET /xapi/commands` (the `name -> image` pairs it returns are
-what imaging-api reports when nothing matches) and re-register with `configure-dcm2niix.sh`, or the
-`xnat-init` job on Kubernetes, if the image named there is not the current pin.
+in that state. Confirm a deployment with `GET /xapi/commands` (the image imaging-api names when project creation
+refuses a stale registration is the one listed there) and re-run `configure-dcm2niix.sh`, or the
+`xnat-init` job on Kubernetes, if the image named there is not the current pin. Both update the
+existing command in place, so its ids, and every project's trigger, survive the move (FLIP#1451).
 
 #### Operator action: the GHCR package must be public
 
@@ -164,9 +166,14 @@ registration, dcm2niix command). The repo-root `make up` follows the same path a
 Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
 HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the
 bring-up — the log is written host-side), instead of silently skipping
-that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
+that step. The three configuration scripts share that request handling from one file,
+`xnat/config/xnat-lib.sh`, which also keeps credentials and payloads out of the log. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
-tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
+tolerated and converges it onto the kit: the existing service account is left as-is, the DICOM SCP receiver and the
+PACS registration are each updated in place if a kit-managed field drifted, and the PACS availability schedule is
+brought into line with the kit (see [PACS configuration](#pacs-configuration)).
+
+When `make` configures XNAT (the `xnat-configure` recipe), that wait also checks XNAT loaded every plugin its jars declare (`GET /xapi/plugins`; see `xnat/config/wait-for-xnat-plugins.sh`).
 
 In development (when `HUB` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
@@ -218,10 +225,10 @@ rather than silently falling back.
 | `PACS_QR_PORT` | `4242` | The PACS query/retrieve port XNAT dials. Must be reachable **from the XNAT container** — not a host-published port. |
 | `PACS_LABEL` | `Test PACS instance` | Display label for the registration in the DQR UI. |
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
-| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. |
-| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end. |
-| `PACS_THREADS` | `1` | Concurrent retrieval threads. |
-| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use. |
+| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
+| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. The start must come before the end, so the window cannot cross midnight (see below). |
+| `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
+| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
 | `DQR_RETRY_WAIT_SECONDS` | `300` | Wait between those retries. |
 
@@ -234,12 +241,44 @@ port). Both are host-published — the receiver so a real PACS can complete the 
 a retrieval, and dev keeps the same wiring — so they must differ; `xnat-reset` refuses to deploy if
 they collide or are non-numeric. The dev allocation is 8104/8105 (GSTT) and 8106/8107 (KCH).
 
+Re-running also converges the DICOM SCP receiver onto the kit instead of re-creating it (FLIP#1456).
+A receiver that already matches is not written at all, because XNAT's `PUT /xapi/dicomscp/{id}`
+restarts the port's listener even when nothing changed, dropping the C-STORE return leg of any
+retrieval in flight. A FLIP receiver whose AE title, port or flags drifted is updated in place with
+that PUT and keeps its id. A receiver is created only when FLIP has none: on first boot XNAT's stock
+`XNAT` receiver is deleted and FLIP's POSTed, as before. Any other receiver the script owns (a second
+FLIP one left by a rename, or the stock one) is deleted first, and after any write the script reads
+the receivers back and fails unless exactly one is left, at the kit's values. The PUT skips XNAT's
+own checks, so `XNAT_AETITLE` is validated against XNAT's AE-title rule (1 to 16 printable ASCII
+characters, no backslash, no leading or trailing space) before XNAT is contacted. A receiver an
+operator registered for another DICOM source is left alone, but one on `XNAT_PORT` makes the run
+refuse before anything is written.
+
 `configure-xnat.sh` updates an existing PACS registration in place when any of its kit-managed
-fields drift (host, query/retrieve port, label, extended-negotiation flag), and deletes every
-registration other than the configured one so exactly one survives — which is why imaging-api can
-read the PACS id back from XNAT at runtime rather than assuming `1`. The delete is conditional: if
+fields drift (host, query/retrieve port, label, extended-negotiation flag) or it has lost DQR's
+`defaultQueryRetrievePacs` or `queryable` flag — a PACS registered by hand starts without the
+default flag, which the admin UI's "Default Q/R AE" switch leaves at No — and deletes every
+registration other than the configured one so exactly one survives, flagged as DQR's default
+query/retrieve PACS — which is why imaging-api needs no PACS id: its queries name none, so DQR uses
+that default, and each import reads the default's id back from XNAT. The delete is conditional: if
 foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
 the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
+
+**The availability schedule is set from the kit.** Each configure run (`xnat-configure`,
+`upgrade-xnat`, or the chart's `xnat-init` hook on `helm upgrade`) converges DQR's schedule for the
+registered PACS onto the kit's one window per listed day. It updates drifted intervals in place,
+creates missing days, and removes the days no longer listed and any extra interval on a listed day.
+An unchanged schedule is not written. Removals run first, so a run that fails part-way leaves less
+retrieval scheduled than agreed, and the schedule is read back after any write. A change made in
+XNAT's DQR admin page is therefore reverted on the next run, and each overwrite is logged with what
+it replaced, so put a window agreed with the PACS manager in the kit.
+
+**A window cannot cross midnight (FLIP#1465).** DQR runs a window whose start is not before its end
+inverted, during the day (`19:00`–`07:00` retrieves from 07:00 to 19:00), and it only looks at the
+current weekday. So the configure step refuses `PACS_AVAILABILITY_START` ≥ `PACS_AVAILABILITY_END`,
+with an end of `24:00` meaning the end of the day. For out-of-hours retrieval use `19:00`–`24:00`,
+`00:00`–`07:00`, or whole days in `PACS_AVAILABILITY_DAYS`. Like every schedule value, this is checked
+before XNAT is contacted.
 
 ## Plugins
 
@@ -309,15 +348,16 @@ Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
 use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a service account).
 
-> **DQR 3.0.0 is a major version bump and imaging-api reads DQR's tables directly.**
-> `imaging_api/db/get_{queued,executed}_pacs_request_by_project.py` query DQR's Hibernate tables
-> (`xhbm_queued_pacs_request`, `xhbm_executed_pacs_request`) and `services/retrieval.py` compares
-> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change
-> table columns or status vocabulary, which would silently misreport in-flight and failed imports.
+> **DQR 3.0.0 is a major version bump, and imaging-api reads DQR's import queue and history.**
+> It reads them through DQR's REST API (`GET /xapi/dqr/import/queue` and `/import/history`, in
+> `imaging_api/services/import_requests.py`), not DQR's tables, and `services/retrieval.py` compares
+> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change the
+> status vocabulary or the fields imaging-api reads (`id`, `xnatProject`, `accessionNumber`,
+> `status` and the request times), which would silently misreport in-flight and failed imports.
 > **Verified compatible (2026-07-30):** the released 3.0.0 JAR keeps
 > `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary
-> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED), and the `xhbm_*_pacs_request` columns imaging-api reads
-> were confirmed unchanged on a live 3.0.0 instance during the dev-stack smoke test.
+> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED). On 2026-10-14 the REST reads returned the same rows as
+> the table reads they replaced, for every project on a live 3.0.0 instance (FLIP#1456).
 >
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
 > wedging investigated in FLIP#662. What holds that wedge at bay is the directArchive JMS
@@ -339,8 +379,10 @@ account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8
    SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
    plus `XNAT_VERSION` in `.env`.
 2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
-3. Update the plugin compatibility table above.
-4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
+3. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
+   `trust/deploy/helm/check_status.py`; its test fails until you do.
+4. Update the plugin compatibility table above.
+5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 
@@ -370,6 +412,26 @@ XNAT uses two mechanisms for dcm2niix conversion:
 - **Event Subscription** (Event Service): Per-project event subscriptions auto-trigger dcm2niix when DICOM scans are uploaded. These are created by the **Imaging API** during FLIP project creation, controlled by the `dicom_to_nifti` project setting.
 
 The setup script (`configure-dcm2niix.sh`) intentionally does **not** create a site-wide event subscription. This ensures dcm2niix only auto-triggers for projects that have opted in via the `dicom_to_nifti` flag.
+
+### Re-running the setup keeps every project's trigger (FLIP#1451)
+
+A project's trigger names the dcm2niix **wrapper** by id: its action key is
+`org.nrg.containers.services.CommandActionProvider:<wrapper id>`, which imaging-api takes from
+XNAT's own action listing (`GET /xapi/events/allactions`). So the id must survive a redeploy.
+
+`configure-dcm2niix.sh`, which the chart's xnat-init Job also runs (from the xnat-web image, with
+`XNAT_CS_BACKEND=kubernetes`), **updates** an existing dcm2niix command in place with
+`POST /xapi/commands/{id}`. That keeps the command id and the `dcm2niix-scan` wrapper's id (XNAT
+matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image included;
+on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is
+registered only when none exists, and the step refuses to choose between two.
+
+### Converting scans archived without NIfTI
+
+A trigger fires on new scans only. `make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."]
+[LAUNCH=1]` converts the archived scans that have DICOM and no NIfTI, by Container Service bulk launch
+(report only without `LAUNCH=1`; on-prem prefix `sudo -E`). What it selects, what it leaves alone and
+its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
 ## Resource limits
 

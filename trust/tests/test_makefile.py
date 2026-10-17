@@ -25,6 +25,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
 
@@ -240,6 +241,40 @@ class DevelopmentFlRegistry(unittest.TestCase):
 
     def test_an_explicit_empty_fl_registry_still_selects_local_images(self):
         assert self.fl_registry("DOCKER_FL_REGISTRY=") == "[]"
+
+
+class ReconvertNifti(unittest.TestCase):
+    """reconvert-nifti reports unless LAUNCH is set, and hands each option to the command (FLIP#1456 G3)."""
+
+    COMMAND = "python -m imaging_api.scripts.reconvert_nifti"
+
+    def test_by_default_it_only_reports(self):
+        out = dry_run("reconvert-nifti")
+        assert self.COMMAND in out, out
+        for flag in ("--launch", "--project", "--wait", "--max-attempts", "--relaunch-unfinished"):
+            assert flag not in out, f"{flag} without being asked:\n{out}"
+        assert_data_safe(out, "reconvert-nifti")
+
+    def test_each_option_reaches_the_command(self):
+        out = dry_run(
+            "reconvert-nifti", "PROJECT=P1 P2", "LAUNCH=1", "WAIT=5", "MAX_ATTEMPTS=2", "RELAUNCH_UNFINISHED=1"
+        )
+        expected = f"{self.COMMAND} --project P1 --project P2 --launch --wait 5 --max-attempts 2 --relaunch-unfinished"
+        assert expected in " ".join(out.replace("\\\n", " ").split()), out
+
+    def test_the_seeding_projects_list_does_not_narrow_it(self):
+        """PROJECTS is the datasets to seed (default cxr_project), not XNAT projects."""
+        out = dry_run("reconvert-nifti", "PROJECTS=cxr_project prostate_project")
+        assert "--project" not in out, out
+
+
+class DeployedPull(unittest.TestCase):
+    def test_a_deployed_trust_without_a_kit_registry_still_pulls_fresh(self):
+        """Kits carry no registry since FLIP#1480; the FL client's `--pull always` must not go with it."""
+        # A calling make (this suite's own runner) exports an empty DOCKER_FL_REGISTRY, which would decide it.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k != "MAKEFLAGS"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            assert "up -d --pull always" in dry_run("up-trust")
 
 
 if __name__ == "__main__":

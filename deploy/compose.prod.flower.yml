@@ -11,7 +11,7 @@
 #
 
 # ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
-# compose.production.yml) — not a deployment target. The canonical production equivalent is the Flower
+# compose.prod.yml) — not a deployment target. The canonical production equivalent is the Flower
 # branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
 # which mirrors this overlay: SuperLink 9092/8000/9097, TLS + SuperNode-auth command flags, and the
 # register-supernode-keys one-shot (ecs_flower.tf).
@@ -19,7 +19,7 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
-# No `container_name` here either — see the header of compose.production.yml. Container names come
+# No `container_name` here either — see the header of compose.prod.yml. Container names come
 # from the compose project (`deploy-fl-server-net-1-1`); the service KEYS are load-bearing and must
 # not be renamed: `fl-server-net-<N>` is the SAN in the SuperLink's provisioned TLS certificate
 # (`DNS:fl-server-net-1`), so a SuperNode's certificate check fails outright if that name stops

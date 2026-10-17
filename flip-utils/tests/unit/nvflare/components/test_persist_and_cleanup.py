@@ -418,3 +418,30 @@ class TestPersistToS3AndCleanup:
             component.upload_results_to_s3_bucket(fl_ctx)
 
         component.cleanup.assert_called_once()
+
+
+@patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+def test_the_model_id_is_read_before_app_server_is_removed(mock_constants, tmp_path):
+    """The FLIP-API writes the model id into app_server/custom/config.json (FLIP#70), and the upload removes
+    app_server before zipping: the id has to be resolved first. Found by an e2e run that trained to the end and
+    then failed the upload with "FLIP model_id is not available"."""
+    mock_constants.LOCAL_DEV = False
+    model_id = "4284e1f3-5a10-4c26-9628-2e22f6e7a420"
+    run_dir = tmp_path / "job-1"
+    (run_dir / "app_server" / "custom").mkdir(parents=True)
+    (run_dir / "app_server" / "custom" / "config.json").write_text(f'{{"FLIP_MODEL_ID": "{model_id}"}}')
+    flip = MagicMock()
+    component = PersistToS3AndCleanup(flip=flip)  # no model_id arg: a recipe-built job
+    fl_ctx = MagicMock()
+    fl_ctx.get_prop.return_value = None  # no JOB_META on the context, and no custom_props either
+    fl_ctx.get_peer_context.return_value = None
+    fl_ctx.get_job_id.return_value = "job-1"
+    workspace = fl_ctx.get_engine.return_value.get_workspace.return_value
+    workspace.get_run_dir.return_value = str(run_dir)
+    workspace.get_app_dir.return_value = str(run_dir / "app_server")
+    workspace.get_job_meta_path.return_value = str(run_dir / "meta.json")
+
+    component.upload_results_to_s3_bucket(fl_ctx)
+
+    flip.upload_results_to_s3.assert_called_once_with(str(run_dir), model_id)
+    assert not (run_dir / "app_server").exists()

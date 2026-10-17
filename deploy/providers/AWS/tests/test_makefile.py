@@ -169,8 +169,8 @@ COMPLETE_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
-    "LZA_MANAGED_NETWORK": "false",
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
     "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
@@ -215,8 +215,6 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
     [
         ({"FLARE_KIT_DATE": None}, "FLARE_KIT_DATE"),
         ({"AWS_PROFILE": "someone-else"}, "AWS_PROFILE must be set"),
-        ({"LZA_MANAGED_NETWORK": None}, "LZA_MANAGED_NETWORK must be true"),
-        ({"LZA_MANAGED_NETWORK": "yes"}, "LZA_MANAGED_NETWORK must be true"),
         ({"FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": None}, "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME"),
         ({"FLIP_FL_RESULTS_BUCKET_NAME": None}, "FLIP_FL_RESULTS_BUCKET_NAME"),
         ({"FLIP_APP_BUNDLES_BUCKET_NAME": "<your-bundles-bucket>"}, "FLIP_APP_BUNDLES_BUCKET_NAME"),
@@ -224,6 +222,9 @@ def test_a_complete_env_file_passes_every_guard(tmp_path: Path) -> None:
         ({"INTERNAL_SERVICE_KEY": None}, "INTERNAL_SERVICE_KEY must be set"),
         ({"INTERNAL_SERVICE_KEY_HASH": None}, "INTERNAL_SERVICE_KEY_HASH"),
         ({"INTERNAL_SERVICE_KEY_HEADER": None}, "INTERNAL_SERVICE_KEY_HEADER"),
+        # No default: true is wrong on a zone-less estate, false wrong on one with a zone.
+        ({"MANAGE_DNS": None}, "MANAGE_DNS must be true or false"),
+        ({"MANAGE_DNS": "yes"}, "MANAGE_DNS must be true or false"),
     ],
 )
 def test_each_env_guard_still_refuses_a_real_goal(change: dict[str, str | None], named: str, tmp_path: Path) -> None:
@@ -239,8 +240,8 @@ def test_an_unset_hub_refuses_a_real_goal(tmp_path: Path) -> None:
     assert "HUB=stag or HUB=prod is required" in result.stderr, result.stderr
 
 
-def test_the_lza_staging_vpc_guard_still_refuses_a_real_goal(tmp_path: Path) -> None:
-    env_file = _env_file(tmp_path, LZA_MANAGED_NETWORK="true", LZA_VPC_NAME=None)
+def test_the_staging_vpc_guard_still_refuses_a_real_goal(tmp_path: Path) -> None:
+    env_file = _env_file(tmp_path, LZA_VPC_NAME=None)
     result = _make_dry_run("plan", tmp_path=tmp_path, env_file=env_file)
     assert result.returncode != 0
     assert "LZA_VPC_NAME must be set" in result.stderr, result.stderr
@@ -272,6 +273,26 @@ def test_the_static_switch_cannot_be_set_from_outside(
     result = _make_dry_run(*args, tmp_path=tmp_path, extra_env=extra_env)
     assert result.returncode != 0
     assert "FLARE_KIT_DATE must be set" in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize(("deploy_trust_ec2", "returncode"), [("true", 1), ("false", 0)])
+def test_register_trusts_finding_no_kit_fails_unless_the_deploy_is_hub_only(
+    deploy_trust_ec2: str, returncode: int, tmp_path: Path
+) -> None:
+    """Inside full-deploy the next step deploys a trust, so registering nothing must not pass."""
+    flag = f"DEPLOY_TRUST_EC2={deploy_trust_ec2}"
+    result = _make_dry_run("register-trusts", flag, tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert f"{flag} " in result.stdout, result.stdout + result.stderr
+    env = {"PATH": os.environ["PATH"], "AWS_PROFILE": "probe", "AWS_REGION": "eu-west-2", "HUB": "stag"}
+    script = subprocess.run(
+        ["bash", "scripts/register-trusts.sh"],
+        cwd=AWS_PROVIDER_DIR,
+        env={**env, "KIT_FILES": "", "DEPLOY_TRUST_EC2": deploy_trust_ec2},
+        capture_output=True,
+        text=True,
+    )
+    assert script.returncode == returncode, script.stdout + script.stderr
+    assert "No trust/.env.<CODE>.stag kits found" in script.stdout + script.stderr
 
 
 def test_register_trusts_mints_the_xnat_credentials_into_the_kit(tmp_path: Path) -> None:

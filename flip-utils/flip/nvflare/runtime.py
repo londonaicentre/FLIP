@@ -9,20 +9,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Runtime resolution of FLIP-specific job parameters from NVFLARE's job metadata.
+"""Runtime resolution of FLIP-specific job parameters on the FL server.
 
-The FLIP-API hands job-scoped values (``model_id``, optionally ``participating_clients``)
-to NVFLARE via ``meta.json``'s ``custom_props`` dict. FLIP components fetch these at first
-use via :func:`get_flip_model_id` rather than requiring them as ``__init__`` arguments —
-this lets the Python ``FlipFedAvgRecipe`` build a real ``FedJob`` (no UUID known yet) that
-runs identically in SimEnv, PocEnv, ProdEnv, or under the FLIP-API.
+FLIP components fetch the hub's ``model_id`` at first use via :func:`get_flip_model_id` rather
+than requiring it as an ``__init__`` argument. This lets the Python ``FlipFedAvgRecipe`` build a
+real ``FedJob`` (no UUID known yet) that runs identically in SimEnv, PocEnv, ProdEnv, or under the
+FLIP-API.
 
 Resolution order, given a component that also accepts a legacy ``model_id`` constructor arg:
 
 1. If the constructor arg is a real UUID (e.g. the FLIP-API substituted ``{model_id}`` into
    the JSON config before NVFLARE loaded it), use it.
-2. Otherwise read ``fl_ctx.get_prop(FLContextKey.JOB_META)["custom_props"]["model_id"]``.
-3. Otherwise raise ``ValueError`` — neither path produced a UUID.
+2. Otherwise read ``FLIP_MODEL_ID`` from the app's ``custom/config.json``, where the FLIP-API
+   writes it, as the Flower FL API writes ``flip-model-id`` into the app's ``config.toml``
+   (FLIP#70). The job's ``meta.json`` is the researcher's own file.
+3. Otherwise read ``meta.json``'s ``custom_props["model_id"]``: what a SimEnv/PocEnv recipe run
+   writes, and where an FL API from before FLIP#70 put it.
+4. Otherwise raise ``ValueError``: no path produced a UUID.
 """
 
 from __future__ import annotations
@@ -38,6 +41,8 @@ from flip.utils.utils import Utils
 
 FLIP_CUSTOM_PROPS_KEY = "custom_props"
 FLIP_MODEL_ID_KEY = "model_id"
+# The app config.json key the FLIP-API writes the model id under (fl_api.utils.constants.FLIP_MODEL_ID).
+FLIP_MODEL_ID_CONFIG_KEY = "FLIP_MODEL_ID"
 FLIP_PARTICIPATING_CLIENTS_KEY = "participating_clients"
 
 
@@ -78,6 +83,25 @@ def _load_meta_from_workspace(fl_ctx: FLContext) -> dict[str, Any] | None:
         return None
 
 
+def get_app_config(fl_ctx: FLContext) -> dict[str, Any]:
+    """Return the app's ``custom/config.json`` from the run's workspace, or ``{}`` if it cannot be read."""
+    engine = fl_ctx.get_engine()
+    if engine is None:
+        return {}
+    try:
+        workspace = engine.get_workspace()
+        job_id = fl_ctx.get_job_id()
+        if not workspace or not job_id:
+            return {}
+        # As for meta.json above: whatever reaches open() must be a path, never an fd-like object.
+        config_path = os.path.join(os.fspath(workspace.get_app_dir(job_id)), "custom", "config.json")
+        with open(config_path) as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def get_flip_model_id(fl_ctx: FLContext, fallback: str | None = None) -> str:
     """Resolve the FLIP ``model_id`` for the current job.
 
@@ -90,11 +114,15 @@ def get_flip_model_id(fl_ctx: FLContext, fallback: str | None = None) -> str:
         A UUID string.
 
     Raises:
-        ValueError: If neither ``fallback`` nor ``meta.json``'s ``custom_props.model_id``
-            holds a valid UUID.
+        ValueError: If neither ``fallback``, the app's ``config.json`` ``FLIP_MODEL_ID`` nor
+            ``meta.json``'s ``custom_props.model_id`` holds a valid UUID.
     """
     if fallback and Utils.is_valid_uuid(fallback):
         return fallback
+
+    candidate = get_app_config(fl_ctx).get(FLIP_MODEL_ID_CONFIG_KEY)
+    if candidate and Utils.is_valid_uuid(candidate):
+        return str(candidate)
 
     props = get_job_custom_props(fl_ctx)
     candidate = props.get(FLIP_MODEL_ID_KEY)
@@ -102,6 +130,7 @@ def get_flip_model_id(fl_ctx: FLContext, fallback: str | None = None) -> str:
         return str(candidate)
 
     raise ValueError(
-        "FLIP model_id is not available: pass a valid UUID to the component's model_id arg, "
-        f"or set meta.json['{FLIP_CUSTOM_PROPS_KEY}']['{FLIP_MODEL_ID_KEY}'] before submitting the job."
+        "FLIP model_id is not available: pass a valid UUID to the component's model_id arg, set "
+        f"'{FLIP_MODEL_ID_CONFIG_KEY}' in the app's config.json (the FLIP-API does), or set "
+        f"meta.json['{FLIP_CUSTOM_PROPS_KEY}']['{FLIP_MODEL_ID_KEY}'] before submitting the job."
     )

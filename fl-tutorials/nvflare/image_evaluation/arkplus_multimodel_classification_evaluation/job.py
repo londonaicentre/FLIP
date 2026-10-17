@@ -82,6 +82,10 @@ def stage_app_files(job: FedJob) -> None:
     for src in sorted(_APP_FILES_DIR.iterdir()):
         if not src.is_file():
             continue
+        # meta.json is the job's declaration to FLIP (its GPUs, FLIP#70), placed at the job root by the hub;
+        # it is not app code, and the recipe writes the simulated job's own meta.json.
+        if src.name == "meta.json":
+            continue
         job.add_file_to_server(str(src))
         if src.suffix != ".pt":
             job.add_file_to_clients(str(src))

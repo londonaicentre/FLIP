@@ -81,13 +81,10 @@ schema is owned by Alembic migrations that run at every start-up (see `Start-up`
 Deployment
 **********
 
-The hub is provisioned on AWS with Terraform/OpenTofu from one root module, in one of two modes:
-self-contained in a single account, or on a `Landing Zone Accelerator
-<https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_ estate whose platform
-team owns the network and the edge. The services described on this page are the same in both; what
-differs is where they sit and how traffic reaches them. The architecture diagrams, the resource layout
-and the runbooks are on :ref:`deploy-central-hub`, one page per mode —
-:doc:`/deploy-flip/deploy-central-hub-aws` and :doc:`/deploy-flip/deploy-central-hub-aws-lza` — and the
+The hub is provisioned on AWS with Terraform/OpenTofu from one root module, onto a `Landing Zone
+Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_ estate
+whose platform team owns the network and the edge. The architecture diagrams, the resource layout and the
+runbook are on :ref:`deploy-central-hub` and :doc:`/deploy-flip/deploy-central-hub-aws-lza`, and the
 security controls on :ref:`security`.
 
 ********

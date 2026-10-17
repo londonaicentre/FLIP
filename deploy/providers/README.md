@@ -41,7 +41,7 @@ created or on infrastructure the site already has. Keep the two axes apart when 
 `trust/deploy/helm/Makefile` reads **the `development` kit when `HUB` is unset**.
 
 The **Central Hub** has exactly one supported production target, AWS ECS Fargate (hub-on-EC2 was deprecated in
-[#936](https://github.com/londonaicentre/FLIP/issues/936); `deploy/compose.production.yml` is a local
+[#936](https://github.com/londonaicentre/FLIP/issues/936); `deploy/compose.prod.yml` is a local
 prod-image harness, not a deploy target). One target needs no abstraction, so there is no hub-only provider,
 and the hub's Terraform is simply the `AWS/` root.
 
@@ -58,11 +58,9 @@ S3 — and its Makefile carries the targets that hand them over:
   This is the one known exception to the rule above: the play itself needs nothing from AWS, but its driver
   lives in this Makefile, which parses the hub env file at load and so cannot run on a host that holds only
   its kit file. Splitting the two halves is tracked under [#1213](https://github.com/londonaicentre/FLIP/issues/1213).
-- `full-deploy-with-k8s` calls the chart's `sync-kit` / `up` / `status` targets (`make -C trust/deploy/helm …`)
-- `allow-local-trust-nlb` / `add-k8s-trust` open the FL-server NLB to a trust's public IP
 
 So neither node shape is hub-independent: the trust is still registered on the hub
-(`make -C deploy/providers/AWS register-trusts KIT=<CODE>` — the AWS provider's
+(`make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>` — the AWS provider's
 ECS-aware target; the root `make register-trust` is the dev-only, local-container form) and
 still receives its kit file from the hub admin.
 

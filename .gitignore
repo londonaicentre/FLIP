@@ -339,7 +339,7 @@ flip-fl-api/transfer/*/*
 .env.development
 .env.stag
 .env.prod
-# Pre-FLIP#1479 names, kept ignored for a release so a stale local copy is never committed.
+# Pre-FLIP#1479 names, kept ignored so a stale local copy is never committed.
 .env.production
 .env.lza-prod
 .env.lza-stag
@@ -396,7 +396,6 @@ deploy/providers/AWS/REFACTORING.md
 
 # Email template preview files (generated locally for testing)
 deploy/providers/AWS/email_previews/
-deploy/providers/AWS/dev/.terraform.lock.hcl
 
 .claude/scheduled_tasks.lock
 pi-session-*.html

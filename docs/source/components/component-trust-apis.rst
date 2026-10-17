@@ -96,7 +96,9 @@ Every 30 seconds the collector probes the Trust's own services concurrently — 
 ping, and the OMOP database with a plain TCP connect (the ``trust-api`` carries no database driver) — and
 grades each ``healthy``, ``degraded`` (slow), ``down`` or ``unknown``. The snapshot rides on the next
 heartbeat and is what the hub's connection-status drawer shows. A probe cycle that fails or hangs discards
-the snapshot rather than resend a stale one, so the hub shows *no data* instead of a frozen green.
+the snapshot rather than resend a stale one, so the hub shows *no data* instead of a frozen green. The PACS
+ping opens an association to the hospital PACS, so it runs at most every five minutes and the cycles in
+between report its last result.
 
 ***********
 Imaging API
@@ -115,7 +117,9 @@ the Trust-internal service key.
      - Create, list, inspect and delete XNAT projects; the hub-driven create is
        ``POST /projects/create-project-from-central-hub-project``.
    * - ``/retrieval``
-     - Import status counts and study re-import for a project.
+     - Import status counts and study re-import for a project. The counts are read through XNAT's REST
+       API (DQR's import queue and history, and XNAT's direct-archive sessions); imaging-api holds no
+       credential for XNAT's database.
    * - ``/imaging``
      - Ping the PACS, query it by accession number, queue an import.
    * - ``/download``
@@ -144,7 +148,8 @@ The first download of an accession's resources for a net pulls the study out of 
 under that net's slice of the images directory; the ``imaging-api`` records completion with a sentinel file
 per (assessor type, resource type) and serves later requests — the same fetch loop in the next FL round, the
 next job on Flower — from disk. Training code should therefore call ``flip.get_by_accession_number`` every
-round without its own caching; ``force_refresh=true`` re-downloads after the content changed in XNAT, and
+round without its own caching; each hit checks the study's file counts and sizes in XNAT and downloads it again
+if they changed, and
 uploads through ``flip.add_resource`` invalidate the entry automatically. Each FL client mounts only its own
 net's slice, so a job cannot read another net's cached studies.
 

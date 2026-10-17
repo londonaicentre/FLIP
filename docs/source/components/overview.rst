@@ -37,7 +37,7 @@ on a dataset on which to train and test their model. Following this, the model i
 tested within the Secure Enclave at each selected Trust before the resultant model is centrally aggregated.
 
 The hub is the only internet-facing part of FLIP. Its services are described on :doc:`component-central-hub`;
-the AWS shape they take, in either of the two supported deployment modes, on :ref:`deploy-central-hub`.
+the AWS shape they take on :ref:`deploy-central-hub`.
 
 Secure Enclave
 ==============
@@ -114,8 +114,8 @@ inside the Trust. See :doc:`component-logging-stack`.
 Deployment targets
 ==================
 
-The Central Hub is provisioned on AWS with Terraform/OpenTofu, self-contained in one account or on a Landing
-Zone Accelerator estate — :ref:`deploy-central-hub`. A Trust node runs
+The Central Hub is provisioned on AWS with Terraform/OpenTofu, onto a Landing Zone Accelerator estate —
+:ref:`deploy-central-hub`. A Trust node runs
 as a Docker Compose stack on a host inside the Trust (:doc:`/deploy-flip/deploy-flip-node-on-prem`), inside a
 Trusted Research Environment (:doc:`/deploy-flip/deploy-flip-node-in-tre`), or on Kubernetes via the Helm chart
 at `trust/deploy/helm/ <https://github.com/londonaicentre/FLIP/blob/develop/trust/deploy/helm/README.md>`_.

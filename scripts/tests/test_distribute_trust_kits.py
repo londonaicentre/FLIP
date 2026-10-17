@@ -163,7 +163,7 @@ def test_target_mode_writes_single_kit() -> None:
     print("▶ --target mode: writes one kit on stdin to the given path")
     root = _temp_repo()
     try:
-        target = root / "trust" / ".env.DEMO.production"
+        target = root / "trust" / ".env.DEMO.prod"
         res = _run(root, json.dumps(_full_kit()), "--target", str(target))
         _assert(res.returncode == 0, "exit 0", res.stderr)
         _assert(target.exists(), "kit written to --target path")

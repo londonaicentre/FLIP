@@ -57,13 +57,13 @@ Cloud infrastructure
 The Central Hub runs on AWS, architected to align with AWS's own reference guidance
 for regulated workloads.
 
-**The estate is being consolidated onto the AWS Landing Zone Accelerator** — AWS's
+**The estate runs on the AWS Landing Zone Accelerator** — AWS's
 reference implementation for organisations with elevated compliance requirements, and
 the pattern AWS recommends for healthcare and public sector workloads. It provides
 account separation, centrally managed guardrails, consistent logging and encryption
 baselines, and a controlled path for images and dependencies entering the environment,
-applied uniformly across environments rather than configured per service. What that changes
-in the Central Hub's own layout is on :ref:`deploy-central-hub-aws-lza`.
+applied uniformly across environments rather than configured per service. The Central Hub's
+own layout is on :ref:`deploy-central-hub-aws-lza`.
 
 Within that estate:
 

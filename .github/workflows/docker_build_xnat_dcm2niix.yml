@@ -79,7 +79,7 @@ jobs:
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:sha-${GH_SHA:0:7}"
 
           # The tool-version tag is the one every deploy config references
-          # (dcm2niix_command.json, the K8s init-job copy, imaging-api's
+          # (dcm2niix_command.json, which both deployment shapes register, imaging-api's
           # Settings.DCM2NIIX_IMAGE). Read it from the Dockerfile so the pin has a
           # single source of truth; refuse to publish if it can't be parsed.
           DCM2NIIX_VERSION=$(sed -n 's/^ARG DCM2NIIX_VERSION=//p' Dockerfile)

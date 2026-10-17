@@ -231,4 +231,5 @@ excludes them rather than crashing the client the first time clipping engages.
 - `query.sql` resolves chest-X-ray accession IDs labeled with effusion / edema
   / normal lungs from the trust mock OMOP DB.
 - DICOM payloads come back via `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])`.
+- The app reads DICOM only, so create its project with **DICOM to NIfTI** off: conversion would produce NIfTI nothing reads.
 - Each `.dcm` becomes one training sample with the row's lesion labels.

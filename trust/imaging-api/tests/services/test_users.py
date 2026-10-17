@@ -25,6 +25,7 @@ from imaging_api.services.users import (
     create_user,
     create_user_from_central_hub_user,
     get_user_profile_by,
+    get_xnat_user_profile,
     get_xnat_users,
     issue_invite,
     issue_setup_token,
@@ -33,11 +34,19 @@ from imaging_api.services.users import (
 )
 from imaging_api.utils.encryption import XNAT_SETUP_PATH_CONTEXT
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT
 
 
 @pytest.fixture
 def headers():
     return {}
+
+
+# What XNAT 1.10.0 answers (404, text/plain) for GET /xapi/users/profile/{username} when no such user exists:
+# XapiRestControllerAdvice.handleNotFoundException's prefix plus NotFoundException("xdat:user", username).
+_XNAT_USER_NOT_FOUND_BODY = (
+    "Unable to find requested file or resource: No resource of type xdat:user with the ID or name {username} exists."
+)
 
 
 # Create a fixture to patch get_xnat_users
@@ -61,8 +70,12 @@ def mock_get_xnat_users():
         yield mock
 
 
-def test_get_user_profile_by_username(mock_get_xnat_users, headers):
+@patch("imaging_api.services.users.requests.get")
+def test_get_user_profile_by_username(mock_get, headers):
     username = "flipServiceAccount"
+    mock_get.return_value = MagicMock(
+        status_code=200, json=MagicMock(return_value={**_SAMPLE_USER_DICT, "username": username})
+    )
     user = get_user_profile_by("username", username, headers)
     assert user.username == username
 
@@ -80,8 +93,9 @@ def test_get_user_profile_by_invalid_key(mock_get_xnat_users, headers):
     assert str(e.value) == f"Invalid key: {invalid_key}, must be 'username' or 'email'"
 
 
-def test_get_user_profile_by_nonexistent_username(mock_get_xnat_users, headers):
-    mock_get_xnat_users.return_value = []  # Simulate user not found
+@patch("imaging_api.services.users.requests.get")
+def test_get_user_profile_by_nonexistent_username(mock_get, headers):
+    mock_get.return_value = MagicMock(status_code=404, text=_XNAT_USER_NOT_FOUND_BODY.format(username="nonexistent"))
     username = "nonexistent"
     with pytest.raises(NotFoundError) as e:
         get_user_profile_by("username", username, headers)
@@ -96,12 +110,18 @@ def test_get_user_profile_by_nonexistent_email(mock_get_xnat_users, headers):
     assert str(e.value) == "404: User not found by email"
 
 
-def test_user_exists(mock_get_xnat_users, headers):
+@patch("imaging_api.services.users.requests.get")
+def test_user_exists(mock_get, headers):
     username = "flipServiceAccount"
+    mock_get.return_value = MagicMock(
+        status_code=200, json=MagicMock(return_value={**_SAMPLE_USER_DICT, "username": username})
+    )
     assert user_exists(username, headers)
 
 
-def test_user_exists_false(mock_get_xnat_users, headers):
+@patch("imaging_api.services.users.requests.get")
+def test_user_exists_false(mock_get, headers):
+    mock_get.return_value = MagicMock(status_code=404, text=_XNAT_USER_NOT_FOUND_BODY.format(username="nonexistent"))
     assert not user_exists("nonexistent", headers)
 
 
@@ -164,10 +184,10 @@ def test_get_xnat_users_admin_missing_last_modified(mock_get, headers):
 
 @patch("imaging_api.services.users.requests.get")
 def test_get_xnat_users_failure(mock_get, headers):
+    # An error page is not JSON: the status is checked first, so the error names it.
     mock_get.return_value = MagicMock(status_code=500, text="Server Error")
-    # The function creates User objects before checking status code, but still
-    # raises on non-200
-    with pytest.raises(Exception, match="Getting XNAT users failed"):
+    mock_get.return_value.json.side_effect = ValueError("not JSON")
+    with pytest.raises(Exception, match="Getting XNAT users failed: 500 - Server Error"):
         get_xnat_users(headers)
 
 
@@ -179,6 +199,14 @@ def test_get_user_profile_by_fetch_error(mock_get_users, headers):
     mock_get_users.side_effect = Exception("connection timeout")
 
     with pytest.raises(Exception, match="XNAT error when fetching users"):
+        get_user_profile_by("email", "alice@test.com", headers)
+
+
+@patch("imaging_api.services.users.requests.get")
+def test_get_user_profile_by_username_fetch_error(mock_get, headers):
+    mock_get.side_effect = requests.ConnectionError("connection timeout")
+
+    with pytest.raises(requests.ConnectionError):
         get_user_profile_by("username", "alice", headers)
 
 
@@ -290,11 +318,13 @@ _SAMPLE_USER_DICT = {
 }
 
 
-@patch("imaging_api.services.users.get_user_profile_by")
+@patch("imaging_api.services.users.get_xnat_users")
+@patch("imaging_api.services.users.requests.get")
 @patch("imaging_api.services.users.requests.post")
-def test_create_user_success(mock_post, mock_get_profile, headers):
+def test_create_user_success(mock_post, mock_get, mock_list, headers):
+    """The created user is read back with one profile GET, not a listing."""
     mock_post.return_value = MagicMock(status_code=201)
-    mock_get_profile.return_value = User(**_SAMPLE_USER_DICT)
+    mock_get.return_value = MagicMock(status_code=200, json=MagicMock(return_value=_SAMPLE_USER_DICT))
 
     user_req = CreateUser(
         username="alice",
@@ -304,7 +334,10 @@ def test_create_user_success(mock_post, mock_get_profile, headers):
         email="alice@test.com",
     )
     profile = create_user(user_req, headers)
-    assert profile.username == "alice"
+
+    assert profile == User(**_SAMPLE_USER_DICT)
+    mock_get.assert_called_once_with(f"{_XNAT}/xapi/users/profile/alice", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+    mock_list.assert_not_called()
 
 
 @patch("imaging_api.services.users.requests.post")
@@ -521,4 +554,125 @@ def test_add_user_to_project_keeps_identifiers_in_one_segment(sent_xnat_requests
 
     parsed = urlsplit(sent_xnat_requests[0].url)
     assert parsed.path == f"/data/projects/{encoded}/users/Members/{encoded}"
+    assert parsed.query == parsed.fragment == ""
+
+
+# ---------------------------------------------------------------------------
+# Username lookups use XNAT's per-user route (#1458)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("lookup", "expected"),
+    [
+        (lambda headers: get_user_profile_by("username", "alice", headers), User.model_validate(_SAMPLE_USER_DICT)),
+        (lambda headers: get_xnat_user_profile("alice", headers), User.model_validate(_SAMPLE_USER_DICT)),
+        (lambda headers: user_exists("alice", headers), True),
+    ],
+    ids=["get_user_profile_by", "get_xnat_user_profile", "user_exists"],
+)
+def test_username_lookup_is_one_per_user_get_and_no_listing(lookup, expected, sent_xnat_requests):
+    with (
+        patch("imaging_api.services.users.get_xnat_users") as mock_list,
+        patch.object(requests.Response, "json", return_value=_SAMPLE_USER_DICT),
+    ):
+        result = lookup({"X-Request-ID": "trace-1"})
+
+    assert result == expected
+    mock_list.assert_not_called()
+    assert [(r.method, r.url) for r in sent_xnat_requests] == [("GET", f"{_XNAT}/xapi/users/profile/alice")]
+    assert sent_xnat_requests[0].headers["X-Request-ID"] == "trace-1"
+
+
+def test_email_lookup_is_still_one_listing(sent_xnat_requests):
+    """XNAT has no lookup by email, so this one stays a listing matched in Python."""
+    with patch.object(requests.Response, "json", return_value=[_SAMPLE_USER_DICT]):
+        user = get_user_profile_by("email", "alice@test.com", {})
+
+    assert user == User(**_SAMPLE_USER_DICT)
+    assert [(r.method, r.url) for r in sent_xnat_requests] == [("GET", f"{_XNAT}/xapi/users/profiles")]
+
+
+_LISTING_PATH = "/xapi/users/profiles"
+
+
+def _xnat_get(profile_status: int, listing: list[dict] | None = None, listing_status: int = 200):
+    """A ``requests.get`` stand-in: the profile route answers ``profile_status``, the listing ``listing``.
+
+    Returns the stand-in and the request paths it saw, in order.
+    """
+    paths: list[str] = []
+
+    def get(url, headers=None, timeout=None):
+        path = urlsplit(url).path
+        paths.append(path)
+        if path == _LISTING_PATH:
+            return MagicMock(status_code=listing_status, text="down", json=MagicMock(return_value=listing or []))
+        return MagicMock(status_code=profile_status, text="")
+
+    return get, paths
+
+
+def test_username_lookup_404_is_not_found_without_a_listing(headers):
+    get, paths = _xnat_get(404)
+    with patch("imaging_api.services.users.requests.get", side_effect=get):
+        with pytest.raises(NotFoundError, match="User not found by username"):
+            get_user_profile_by("username", "nobody", headers)
+        assert not user_exists("nobody", headers)
+
+    assert paths == ["/xapi/users/profile/nobody"] * 2
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 500])
+def test_username_lookup_falls_back_to_an_exact_listing_match(status_code, headers):
+    """XNAT refuses to look up some names an LDAP, OpenID or legacy account can carry (``1jane`` gets a 400)."""
+    listed = {**_SAMPLE_USER_DICT, "username": "1jane", "id": 9}
+    get, paths = _xnat_get(status_code, listing=[_SAMPLE_USER_DICT, listed])
+    with patch("imaging_api.services.users.requests.get", side_effect=get):
+        assert get_user_profile_by("username", "1jane", headers) == User.model_validate(listed)
+        with pytest.raises(NotFoundError, match="User not found by username"):
+            get_user_profile_by("username", "1JANE", headers)
+
+    assert paths == ["/xapi/users/profile/1jane", _LISTING_PATH, "/xapi/users/profile/1JANE", _LISTING_PATH]
+
+
+def test_username_lookup_raises_when_xnat_is_down(headers):
+    """An outage fails the listing too, so it surfaces as an error, never as "no such user"."""
+    get, _ = _xnat_get(503, listing_status=503)
+    with patch("imaging_api.services.users.requests.get", side_effect=get):
+        with pytest.raises(Exception, match="Getting XNAT users failed: 503") as e:
+            get_user_profile_by("username", "alice", headers)
+    assert not isinstance(e.value, NotFoundError)
+
+
+@pytest.mark.parametrize("body", [{}, ValueError("not JSON")], ids=["not-a-profile", "not-json"])
+@patch("imaging_api.services.users.requests.get")
+def test_username_lookup_raises_on_unexpected_200_body(mock_get, body, headers):
+    response = MagicMock(status_code=200)
+    if isinstance(body, Exception):
+        response.json.side_effect = body
+    else:
+        response.json.return_value = body
+    mock_get.return_value = response
+
+    with pytest.raises(Exception, match="is not a user profile") as e:
+        get_xnat_user_profile("alice", headers)
+    assert not isinstance(e.value, NotFoundError)
+
+
+@pytest.mark.parametrize("username", ["", ".", ".."])
+def test_username_lookup_of_empty_or_dot_username_is_not_found_without_http(username, sent_xnat_requests):
+    """No XNAT account can have such a name, so it is not found — as the listing scan answered — with no request."""
+    with pytest.raises(NotFoundError, match="User not found by username"):
+        get_user_profile_by("username", username, {})
+    assert not user_exists(username, {})
+    assert sent_xnat_requests == []
+
+
+def test_username_lookup_keeps_the_username_in_one_segment(sent_xnat_requests, xnat_path_segment):
+    raw, encoded = xnat_path_segment
+    with patch.object(requests.Response, "json", return_value={**_SAMPLE_USER_DICT, "username": raw}):
+        get_xnat_user_profile(raw, {})
+
+    assert len(sent_xnat_requests) == 1
+    parsed = urlsplit(sent_xnat_requests[0].url)
+    assert parsed.path == f"/xapi/users/profile/{encoded}"
     assert parsed.query == parsed.fragment == ""

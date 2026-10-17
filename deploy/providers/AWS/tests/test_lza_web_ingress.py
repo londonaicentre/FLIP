@@ -14,21 +14,19 @@
 
 """Static guards on the LZA web-ingress shape (FLIP#749).
 
-On an LZA estate the web leg is CloudFront (networking account) -> relay NLB ->
-firewall/TGW -> the workload account's INTERNAL FL NLB on :443 -> flip-api. The
-NLB's per-subnet IPs are assigned via subnet_mapping, so the networking side
-registers them once; the ALB (whose IPs rotate and needed a target-sync Lambda)
-is gated off on LZA. Nothing in the runtime suites can see this wiring, so the
-invariants are asserted over the ``.tf`` source:
+The web leg is CloudFront (networking account) -> relay NLB -> firewall/TGW -> the
+workload account's INTERNAL FL NLB on :443 -> flip-api. The NLB's per-subnet IPs are
+assigned via subnet_mapping, so the networking side registers them once; there is no
+ALB (its IPs rotate and needed a target-sync Lambda). Nothing in the runtime suites can
+see this wiring, so the invariants are asserted over the ``.tf`` source:
 
 * the internal NLB carries a ``web-listener`` on ``var.ALB_HTTPS_PORT`` forwarding
-  to the flip-api target group, which is TCP on LZA and health-checked on
-  ``/api/health`` in both modes;
-* the flip-api ECS service registers with that one target group (shared by the
-  ALB and the internal NLB — exactly one of the two exists per environment);
-* the ALB module and its listener rule are gated off on LZA;
+  to the flip-api target group, which is TCP and health-checked on ``/api/health``;
+* the flip-api ECS service registers with that target group;
+* no ALB module or listener rule comes back;
 * the SSM handoff no longer publishes an ALB DNS name (the networking relay must
-  not be able to fall back to resolving a rotating address).
+  not be able to fall back to resolving a rotating address);
+* every resource made unconditional by FLIP#1479 has a moved block from its old [0].
 """
 
 import re
@@ -53,10 +51,11 @@ def test_internal_nlb_has_web_listener_on_https_port():
     assert EXPECTED_ECS_TARGET_GROUP in listener
 
 
-def test_flip_api_target_group_is_tcp_on_lza_with_http_health_check():
+def test_flip_api_target_group_is_tcp_with_http_health_check():
     tg = strip_comments(hcl_block(MAIN_TF, 'resource "aws_lb_target_group" "ecs_flip_api"'))
-    assert not re.search(r"^\s*count\s*=", tg, re.M), "the flip-api TG serves both front doors — it must not be gated"
-    assert re.search(r'protocol\s*=\s*var\.lza_managed_network \? "TCP" : "HTTP"', tg)
+    assert not re.search(r"^\s*count\s*=", tg, re.M), "the flip-api TG must not be gated"
+    assert re.search(r'protocol\s*=\s*"TCP"', tg)
+    assert re.search(r'name\s*=\s*"ecs-flip-api-lza"', tg), "the name the live states hold (ForceNew)"
     assert re.search(r'target_type\s*=\s*"ip"', tg)
     health = hcl_block(tg, "health_check")
     assert re.search(r'protocol\s*=\s*"HTTP"', health)
@@ -64,17 +63,17 @@ def test_flip_api_target_group_is_tcp_on_lza_with_http_health_check():
     assert re.search(r'matcher\s*=\s*"200"', health)
 
 
-def test_ecs_flip_api_registers_with_nlb_target_group_on_lza():
+def test_ecs_flip_api_registers_with_nlb_target_group():
     service = strip_comments(hcl_block(ECS_SERVICES_TF, 'resource "aws_ecs_service" "flip_api"'))
     lb = hcl_block(service, "load_balancer")
     assert EXPECTED_ECS_TARGET_GROUP in lb
 
 
-def test_alb_and_its_routing_are_gated_off_on_lza():
-    alb = strip_comments(hcl_block(MAIN_TF, 'module "alb"'))
-    assert re.search(r"create\s*=\s*!var\.lza_managed_network", alb)
-    rule = strip_comments(hcl_block(MAIN_TF, 'resource "aws_lb_listener_rule" "api_routing"'))
-    assert re.search(r"count\s*=\s*var\.lza_managed_network \? 0 : 1", rule)
+def test_no_alb_or_public_nlb_comes_back():
+    stripped = strip_comments(ALL_TF)
+    for header in ('module "alb"', 'module "fl_server_nlb"', 'resource "aws_lb_listener_rule" "api_routing"'):
+        assert header not in stripped, header
+    assert "lza_managed_network" not in stripped
 
 
 def test_nlb_security_group_admits_web_port_from_networking_ingress():
@@ -87,7 +86,7 @@ def test_flip_api_task_admits_the_internal_nlb():
     rule = strip_comments(
         hcl_block(FL_INGRESS_LZA_TF, 'resource "aws_security_group_rule" "ecs_flip_api_ingress_internal_nlb"')
     )
-    assert "module.fl_internal_nlb_security_group[0].security_group.id" in rule
+    assert "module.fl_internal_nlb_security_group.security_group.id" in rule
     assert "aws_security_group.ecs_flip_api.id" in rule
     assert re.search(r"from_port\s*=\s*local\.api_container_port", rule)
 
@@ -99,10 +98,26 @@ def test_ssm_handoff_publishes_nlb_dns_not_alb_dns():
     assert 'resource "aws_security_group_rule" "alb_ingress_web_from_networking"' not in stripped
 
 
-def test_lza_only_resources_are_count_gated():
-    for header in (
-        'resource "aws_security_group_rule" "ecs_flip_api_ingress_internal_nlb"',
-        'resource "aws_ssm_parameter" "lza_web_nlb_dns_name"',
-    ):
-        block = strip_comments(hcl_block(FL_INGRESS_LZA_TF, header))
-        assert re.search(r"count\s*=\s*var\.lza_managed_network \? 1 : 0", block), header
+#: Addresses FLIP#1479 made unconditional: each was ``<address>[0]`` in both LZA states.
+UNGATED = (
+    "module.fl_internal_nlb_security_group",
+    "aws_ssm_parameter.lza_fl_nlb_private_ips",
+    "aws_ssm_parameter.lza_fl_port",
+    "aws_ssm_parameter.lza_web_nlb_dns_name",
+    "aws_ssm_parameter.lza_web_port",
+    "aws_security_group_rule.ecs_fl_server_ingress_internal_nlb",
+    "aws_security_group_rule.ecs_flip_api_ingress_internal_nlb",
+    "aws_route53_zone.fl_server_bare_name",
+    "aws_route53_record.fl_server_bare_name_apex",
+    "aws_iam_role_policy.ecs_task_execution_ecr_pull_through",
+)
+
+
+def test_each_ungated_address_moves_from_its_old_index():
+    """Without the moved block, dropping the count plans a destroy and recreate of a live LZA resource."""
+    stripped = strip_comments(ALL_TF)
+    for address in UNGATED:
+        assert re.search(
+            r"moved\s*\{\s*from\s*=\s*" + re.escape(address) + r"\[0\]\s*to\s*=\s*" + re.escape(address) + r"\s*\}",
+            stripped,
+        ), address

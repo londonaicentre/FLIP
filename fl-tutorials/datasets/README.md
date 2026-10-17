@@ -229,6 +229,11 @@ reloads spleen; then `make -C trust seed-omop KIT=GSTT PROJECTS=cxr_project` for
 seeds from the dataset at the pinned version (`make -C trust ensure-seeded`), and the projects it
 seeds by default are the ones that publish a DICOM set — spleen and brain_mri are not among them.
 
+**Moving a trust seeded before FLIP#1495.** The writer now stores slices in display order, so the
+regenerated spleen and brain_mri DICOMs changed while every UID stayed the same: a plain `seed-spleen` /
+`seed-brain-mri` gets Orthanc's `AlreadyStored` and keeps the rotated instances. Pass `CLEAR=1` once.
+Sessions already in XNAT keep the old layout until the study is pulled again.
+
 ### Brain MRI: the same chain, four MR series per study
 
 [`brain_mri/`](brain_mri/) is the MSD Task01_BrainTumour twin of the spleen chain — one MR study of

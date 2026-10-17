@@ -26,7 +26,7 @@ failure that actually happened rather than a hypothetical:
   uid is absent from the image's ``/etc/passwd``: ``pwd.getpwuid()`` raises, ``HOME``
   falls back to ``/``, and the symptom surfaces three layers away as torch's
   "Artifact of type=precompile already registered in mega-cache artifact factory".
-- Production composes must not override ``user:`` at all: prod runs as the image's
+- Prod composes must not override ``user:`` at all: prod runs as the image's
   baked user, and EFS access points remap ownership regardless.
 
 Deliberately stdlib-only and executable as a plain script — ``test_trust_kit_scripts.yml``
@@ -63,8 +63,8 @@ DEV_COMPOSE_FILES = (
 )
 
 PROD_COMPOSE_GLOBS = (
-    "deploy/compose.production*.yml",
-    "trust/deploy/compose_trust.production*.yml",
+    "deploy/compose.prod*.yml",
+    "trust/deploy/compose_trust.prod*.yml",
 )
 
 IDENTITY_ENV_KEYS = ("HOME", "USER", "LOGNAME")
@@ -214,7 +214,7 @@ def check_production_does_not_override_user(failures: list[str]) -> None:
             for svc in parse_services(path):
                 if svc.user is not None:
                     failures.append(
-                        f"{svc.where}: production compose sets `user: {svc.user}`. "
+                        f"{svc.where}: prod compose sets `user: {svc.user}`. "
                         f"Prod runs as the image's baked non-root user (GHSA-8465) and EFS "
                         f"access points remap ownership regardless; the uid override is a "
                         f"dev-only accommodation for host-owned bind mounts (FLIP#1171)."

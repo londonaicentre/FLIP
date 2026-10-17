@@ -13,6 +13,9 @@
 import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from fastapi.testclient import TestClient
+
+from imaging_api.main import app
 from imaging_api.routers.retrieval import base64_url_decode
 from imaging_api.routers.schemas import ImportStatus
 from imaging_api.utils.exceptions import NotFoundError
@@ -86,6 +89,28 @@ def test_get_import_status_count_project_error(client):
         side_effect=Exception("connection refused"),
     ):
         response = client.get(
+            "/retrieval/import_status_count/PROJ1",
+            params={"encoded_query": _encode_query("SELECT * FROM cohort")},
+        )
+
+    assert response.status_code == 500
+
+
+def test_get_import_status_count_dqr_unreadable_is_500_not_404():
+    """A DQR listing XNAT will not serve (here a 404: no DQR plugin) must not reach the hub as a 404.
+
+    The hub reads an imaging-api 404 as "the XNAT project is missing" (FLIP#1022), and the project
+    is there: only the import records could not be read.
+    """
+    not_found = MagicMock(status_code=404, text="<html>Not Found</html>")
+    with (
+        patch("imaging_api.routers.retrieval.get_project", return_value=MagicMock()),
+        patch("imaging_api.services.retrieval.get_accession_ids", new_callable=AsyncMock, return_value=["ACC001"]),
+        patch("imaging_api.services.retrieval.encrypt", return_value="encrypted_id"),
+        patch("imaging_api.services.retrieval.get_experiments", return_value=[]),
+        patch("imaging_api.services.import_requests.requests.request", return_value=not_found),
+    ):
+        response = TestClient(app, raise_server_exceptions=False).get(
             "/retrieval/import_status_count/PROJ1",
             params={"encoded_query": _encode_query("SELECT * FROM cohort")},
         )

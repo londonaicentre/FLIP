@@ -15,6 +15,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
+   - [2.3e Scans Archived Without NIfTI (Converting the Backlog)](#23e-scans-archived-without-nifti-converting-the-backlog)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
@@ -59,6 +60,7 @@ kubectl logs <pod-name> -n flip-trust -c <init-container-name>
 | Pod stuck in `Init:0/1` | Init container 0% complete. Check init container logs. | `kubectl logs <pod> -n flip-trust -c <init-container>` |
 | Pod stuck in `Init:1/2` | Second init container failed. | Check download-plugins or wait-for-xnat-db init logs |
 | `CrashLoopBackOff` | Container exits immediately. Check logs, check env vars. | `kubectl logs <pod> -n flip-trust` |
+| `xnat-web` `Running` but `0/1` ready for more than a few minutes | Readiness (anonymous buildInfo, see `templates/xnat-web.yaml`) fails: `000` means XNAT is still starting, `401`/`403` means this XNAT version closed the path. | `kubectl exec -n flip-trust deploy/trust-release-flip-trust-xnat-web -c tomcat -- curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/xapi/siteConfig/buildInfo` |
 | `Pending` (PVC) | PVC not bound (check storage class) | `kubectl get pvc -n flip-trust` |
 | `Pending` (resources) | Insufficient CPU/memory | `kubectl describe pod <pod> -n flip-trust` — check Events |
 
@@ -288,9 +290,10 @@ Job still exited 0 with dcm2niix silently unregistered — the same
 silent-failure class as FLIP#822 / FLIP#862.
 
 **Fix:** Both are now handled by `xnat-init-job.yaml`: `configure-xnat-web`
-grants the role, and `configure-dcm2niix` waits for it and then fails loudly
-rather than swallowing the error. To repair a cluster configured by an older
-chart:
+grants the role, and `configure-dcm2niix` (which runs `configure-dcm2niix.sh`
+from the xnat-web image since FLIP#1451) checks for it first and fails loudly,
+naming the role, rather than swallowing the error. To repair a cluster
+configured by an older chart:
 
 ```bash
 kubectl exec -n flip-trust "$XNAT_POD" -- \
@@ -329,10 +332,12 @@ docker exec <node> find /data/xnat/archive -type d | wc -l   # many
 docker exec <node> find /data/xnat/archive -type f | wc -l   # zero
 ```
 
-**Fix:** the chart sets this in the Kubernetes backend entry of the
-`xnat-cs-config` ConfigMap (`combined-pvc-name` + `combined-path-translation`),
-since the single `xnat-web` data PVC holds both `archive/` and `build/` at its
-root. If you configure a backend by hand, mirror it:
+**Fix:** the chart sets this in the Kubernetes backend entry that
+`configure-dcm2niix.sh` registers (`combined-pvc-name` +
+`combined-path-translation`): `trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json`,
+with `combined-pvc-name` set to the release's PVC from the Job's
+`XNAT_CS_PVC_NAME`, since the single `xnat-web` data PVC holds both `archive/`
+and `build/` at its root. If you configure a backend by hand, mirror it:
 
 ```json
 "combined-pvc-name": "<release>-flip-trust-xnat-web",
@@ -364,14 +369,17 @@ xnat:
 ### 2.3c dcm2niix Registered Against a Stale Image
 
 **Symptom:** studies pull and archive fine, conversion never runs, and
-imaging-api reports the mismatch by listing what *is* registered, e.g.
+creating a project fails with imaging-api naming both images, e.g.
 
 ```
-No commands found for container 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724'.
-The Container Service is installed and has 1 command(s) registered:
-'dcm2niix' -> 'xnat/dcm2niix:latest'. If one of those is the same tool on an older
-image, this XNAT's registration predates the current pin ...
+XNAT has 0 'dcm2niix-scan' wrappers on the pinned
+'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724' (registered images:
+xnat/dcm2niix:latest), not one, so project ... gets no DICOM->NIfTI trigger. ...
 ```
+
+imaging-api reads this from the `dcm2niix-scan` rows of
+`GET /xapi/commands/available/site?xsiType=xnat:imageScanData`, which carry the
+command id, the wrapper id and the image the command runs (FLIP#1456).
 
 The Container Service is healthy and the command is enabled; it is simply bound
 to the image this XNAT was provisioned with.
@@ -393,10 +401,73 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
   | jq -r '.[] | "\(.name) -> \(.image)"'
 ```
 
-**Fix:** re-register against the pinned image — re-run the `xnat-init` Job
+**Fix:** move the command to the pinned image — re-run the `xnat-init` Job
 (`helm upgrade` re-fires the post-install hook) on Kubernetes, or
-`configure-dcm2niix.sh` on Compose. Then confirm the listing above names the
-image the trust's imaging-api requests.
+`configure-dcm2niix.sh` on Compose. Both update the existing command in place
+with `POST /xapi/commands/{id}`, so its command and wrapper ids, and with them
+every project's trigger, survive (FLIP#1451). Then confirm the listing above
+names the image the trust's imaging-api requests.
+
+### 2.3e Scans Archived Without NIfTI (Converting the Backlog)
+
+**Symptom:** a project's archived sessions hold `DICOM` resources but some scans
+have no `NIFTI` resource, so FL training sees fewer samples than the cohort has.
+Its trigger is (now) active and valid, and new scans convert.
+
+**Root Cause:** a trigger fires once, when a scan is archived. Scans archived while
+it was missing or invalid, or whose conversion was lost (Container Service
+Jobs deleted to free a swamped node, FLIP#1448), are never converted afterwards.
+
+**Fix:** `reconvert_nifti`, in the imaging-api pod. It lists every archived scan
+that has DICOM and no NIfTI, which is exactly what the `dcm2niix-scan` wrapper
+accepts. With `--launch` it converts them through Container Service's bulk launch,
+the same route the XNAT UI's bulk launcher posts to:
+
+```bash
+# Report only: each FLIP project's scans without NIfTI, and what would be launched
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti
+# Convert one project's scans (hub project id or XNAT project ID) and follow them
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti --project <id> --launch
+```
+
+Run it on an idle trust (DQR import queue empty): it leaves alone any session
+archived in the last 10 minutes, whose trigger may still be starting its conversion.
+
+How it behaves:
+
+- **Which projects:** without `--project`, `--launch` converts only projects whose
+  trigger is active. An inactive trigger means the hub's *DICOM to NIfTI* setting is
+  off, and a project with no trigger has an unknown setting. Naming a project converts it whatever its trigger says.
+- **No double conversions:** it never launches on a scan whose container has not
+  finished. A container that will never finish (the finalize stall: `_Waiting` long
+  after its history shows `complete`; or a Job deleted from under it) holds its scan
+  back until you pass `--relaunch-unfinished`.
+- **Followed to the result:** for `--wait` minutes (default 30; `0` returns at
+  once) it follows the scans it launched, and reports each as converted (its `NIFTI`
+  resource appeared), converting, without a container yet, or ended without NIfTI.
+  The launch response cannot say: it holds one `bulk-launch-id`, and every target
+  reads "To be assigned".
+- **Retries are re-runs:** nothing is relaunched within a run. Run `--launch` again
+  to relaunch the scans that ended without NIfTI. A scan is left alone once
+  `--max-attempts` (default 3) of its containers have ended, earlier ones included.
+- **One failure does not stop the rest:** a project XNAT will not list is reported
+  `NOT READ` and the others go on. A failed check while following is retried at the
+  next one.
+- **Exit codes:** 0 when every launch was converted (or nothing was needed); 1 when
+  a project was not read, a launch failed, or a conversion ended without NIfTI; 2
+  for an unknown project id (nothing is launched); 3 when the wait ended first.
+- **Large backlogs:** conversions queue behind the cluster's capacity (and, with the
+  FLIP#1448 conversion cap, at most `xnat.containerService.maxConcurrentJobs` at
+  once), so a backlog of hundreds outlasts the wait and exits 3. Re-run the report
+  later: a new `--launch` leaves a scan alone while its container runs.
+
+On Compose the same command is `make -C trust reconvert-nifti KIT=<CODE>
+[PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<minutes>] [MAX_ATTEMPTS=<n>]
+[RELAUNCH_UNFINISHED=1]`. The XNAT UI can do the same launch by hand: select the
+scans in the project's *Run Containers* bulk launcher, or in the batch-launch
+plugin's Processing Dashboard, which hands its selection to the same launcher.
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 
@@ -674,8 +745,13 @@ kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
 # expect dicom-query-retrieve-3.0.0-xpl.jar and container-service-3.8.1-fat.jar,
 # and NO 2.3.2-xpl / 3.8.0-fat
 
+# What XNAT loaded (plugin ids, not jar names); the pod's own credential goes to curl on stdin
+kubectl exec -n flip-trust "$xnat_pod" -- sh -c 'printf "header = \"Authorization: Basic %s\"\n" \
+  "$(printf "%s:%s" "$XNAT_SERVICE_USER" "$XNAT_SERVICE_PASSWORD" | base64 | tr -d "\n")" \
+  | curl -s -K - http://localhost:8080/xapi/plugins' | jq -r 'to_entries[] | "\(.key) \(.value.version)"'
+
 # The same comparison, automated against the release's own values
-make -C trust/deploy/helm status        # FAILs naming both the expected and the found version
+make -C trust/deploy/helm status        # FAILs naming both versions, or a jar present on disk but not loaded
 
 # Exercise the path the roster is on, rather than just the socket
 make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then checks XNAT's prearchive
@@ -1551,25 +1627,5 @@ Helm 3 does a client-side three-way merge and never raises this; no version swit
 
 ## 10. Preflight Looks for the Wrong Kit File
 
-### Symptom
-
-`make -C trust/deploy/helm preflight KIT=<CODE>` fails check 4 with
-`Kit file not found: .../trust/.env.<CODE>.development` for a deployed site, or a target prints
-`… is an old kit name — rename it to …`.
-
-### Cause
-
-The kit file is named by `HUB` (`trust/.env.<CODE>.<hub>`); without `HUB` the chart reads the
-development kit. Before FLIP#1479 the deployed kits were named by `PROD` tokens instead.
-
-### Fix
-
-Pass the hub the site joins (`HUB=prod` or `HUB=stag`). The Makefile resolves the kit through
-`deploy/env_mode.mk` and hands the path to `preflight.sh` (`KIT_FILE`) and `sync_k8s_kit.py`
-(`--kit-file`). A kit under its old name is still found for one release; rename it as the hint says:
-
-| `HUB` | kit file | still found for one release |
-|---|---|---|
-| (unset) | `trust/.env.<CODE>.development` | bare `trust/.env.<CODE>` |
-| `stag` | `trust/.env.<CODE>.stag` | `.lza-stag`, bare `trust/.env.<CODE>` |
-| `prod` | `trust/.env.<CODE>.prod` | `.production`, `.lza-prod`, bare `trust/.env.<CODE>` |
+Pass the hub the site joins (`HUB=prod` or `HUB=stag`): the kit file is `trust/.env.<CODE>.<hub>`, and without
+`HUB` the chart reads the development kit; a kit under its pre-FLIP#1479 name gets a one-line rename hint.

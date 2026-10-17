@@ -28,9 +28,10 @@ ports, bind dirs) always survive a re-run.
 - **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=<stag|prod>`; leave
   `HUB` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
   (`trust/.env.example`), prepending the trust's identity (`TRUST_NAME` / `TRUST_CODE` /
-  `TRUST_REGION`). Refuses to overwrite an existing kit, or to scaffold one beside a kit
-  still under its pre-FLIP#1479 name. The result is ready for
-  `make register-trust KIT=<CODE>` to fill in credentials.
+  `TRUST_REGION`). Refuses to overwrite an existing kit (the root `new-trust` target also
+  refuses beside a kit still under its pre-FLIP#1479 name). The result is ready for
+  registration to fill in credentials (`make -C deploy/providers/AWS register-trusts KIT=<CODE>
+  HUB=<hub>` on a deployed hub, `make register-trust KIT=<CODE>` in development).
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
   preserving operator edits: credentials (`TRUST_API_KEY` / `TRUST_INTERNAL_SERVICE_KEY`) are

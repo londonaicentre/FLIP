@@ -12,10 +12,12 @@
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+import httpx
 from fastapi import Request
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
@@ -27,6 +29,7 @@ from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
     IClientStatus,
     IJobMetaData,
+    IJobResources,
     IServerStatus,
     IStartTrainingBody,
     JobRequiredFiles,
@@ -375,6 +378,33 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     return app_folders
 
 
+_URL = re.compile(r"https?://[^\s'\"]+")
+
+
+def _fl_api_refusal_reason(error: httpx.HTTPStatusError) -> str | None:
+    """The FL API's own reason for refusing a job, for the model log, or None if it gave none (FLIP#70).
+
+    The FL API answers a job it will not run, such as a meta.json key it does not accept or an invalid
+    config.json value, with a 4xx and a ``detail``. httpx's error names only the status and URL, so the
+    researcher saw "400 Bad Request" and not which file to fix. URLs are redacted: a bundle URL is presigned.
+
+    Args:
+        error (httpx.HTTPStatusError): the FL API's error response.
+
+    Returns:
+        str | None: the reason, or None for a server error or a reply without a readable ``detail``.
+    """
+    if not error.response.is_client_error:
+        return None
+    try:
+        detail = error.response.json().get("detail")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(detail, str) or not detail.strip():
+        return None
+    return _URL.sub("<url>", detail.strip())
+
+
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
     """
     Upload the application to the FL server.
@@ -389,6 +419,10 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
 
     Returns:
         Any: The response from the server after uploading the application.
+
+    Raises:
+        ValueError: if the FL API refused the job with a reason, carrying that reason for the model log.
+        httpx.HTTPStatusError: for any other error response.
     """
     url = f"{endpoint}/upload_app/{model_id}"
     # Stopgap timeout: staging a large evaluation checkpoint (S3 download -> shared volume on
@@ -398,7 +432,13 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
     # request open for a multi-hundred-MB (up to 5 GB) transfer is fragile by design. The proper
     # fix is to make upload_app async (flip-fl-api returns 202 + a staging-status endpoint that
     # run_jobs polls, then submit_job once staged) rather than bumping the timeout. Tracked separately.
-    response = http_post(url=url, data=training_details.model_dump(), timeout=900)
+    try:
+        response = http_post(url=url, data=training_details.model_dump(), timeout=900)
+    except httpx.HTTPStatusError as e:
+        reason = _fl_api_refusal_reason(e)
+        if reason is None:
+            raise
+        raise ValueError(f"The FL API refused the job: {reason}") from e
     logger.info(f"upload_app response: {response}")
     # TODO There should be some response validation here, and the return type should not be Any
     return response
@@ -490,13 +530,23 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        IServerStatus | None: The server status, or ``None`` when the FL API does not respond.
+        IServerStatus | None: The server status, or ``None`` when the FL API cannot be reached or
+            answers with an error status.
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
     # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
     # be slower than httpx's 5s default.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Server status response: {response}")
     if not response:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
@@ -513,14 +563,24 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses if available, otherwise None.
+        list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
+            reached or answers with an error status.
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
     # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
     # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
     # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. NVFLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Client status response: {response}")
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
@@ -657,6 +717,75 @@ def _raise_if_job_aborted(fl_job_id: UUID, session: Session) -> None:
         raise JobAbortedError(f"FL job {fl_job_id} was aborted before submission")
 
 
+def _job_gpu_override(fl_job_id: UUID, session: Session) -> IJobResources | None:
+    """The GPU override stored with the run at submission, if any (FLIP#70).
+
+    Args:
+        fl_job_id (UUID): The FL job.
+        session (Session): SQLModel session.
+
+    Returns:
+        IJobResources | None: the override, or None when the researcher set none.
+    """
+    job = session.get(FLJob, fl_job_id)
+    if job is None or job.num_gpus is None:
+        return None
+    return IJobResources(num_gpus=job.num_gpus)
+
+
+_RESOURCE_SOURCES = {
+    "submission": "set for this run",
+    "meta.json": "from the job's meta.json",
+    "default": "the platform default",
+}
+
+
+def _log_applied_gpu_request(
+    model_id: UUID, override: IJobResources | None, upload_reply: Any, session: Session
+) -> None:
+    """Tell the researcher which GPU request the FL API applied, from its upload reply (FLIP#70).
+
+    The NVFLARE fl-api reports the request it wrote into the job and where it came from; the Flower
+    fl-api reports it recorded but did not enforce it. An fl-api older than per-job requests reports
+    nothing, which only matters when an override was sent and silently dropped.
+
+    Args:
+        model_id (UUID): The model being trained.
+        override (IJobResources | None): what was sent as the run's override.
+        upload_reply (Any): the FL API's reply to upload_app.
+        session (Session): SQLModel session.
+    """
+    from flip_api.model_services.services.model_service import add_log
+
+    reported = upload_reply.get("resources") if isinstance(upload_reply, dict) else None
+    if reported is None:
+        if override is not None:
+            add_log(
+                model_id,
+                f"The FL API did not report applying the GPU request set for this run ({override.describe()}); "
+                "it may predate per-job GPU requests.",
+                session,
+                success=False,
+            )
+        return
+    try:
+        described = IJobResources.model_validate(reported).describe()
+    except ValueError:
+        logger.warning(f"Unreadable GPU request in the FL API's upload reply for model {model_id}: {reported}")
+        return
+    if upload_reply.get("resources_enforced") is False:
+        if reported.get("num_gpus"):
+            add_log(
+                model_id,
+                f"GPU request per trust: {described}, recorded but not enforced: Flower does not schedule jobs by GPU",
+                session,
+                success=False,
+            )
+        return
+    source = _RESOURCE_SOURCES.get(str(upload_reply.get("resources_source")))
+    add_log(model_id, f"GPU request per trust: {described}" + (f" ({source})" if source else ""), session)
+
+
 def start_training(
     model_id: UUID,
     fl_job_id: UUID,
@@ -691,13 +820,15 @@ def start_training(
         cohort_query=required_info.cohort_query,
         trusts=clients,
         bundle_urls=bundle_urls,
+        resources=_job_gpu_override(fl_job_id, session),
     )
 
     # Gate before the (up to 900s) app transfer, and again right before submission: submit_job
     # is the side effect that creates the backend run, so a job aborted mid-prepare (#787) must
     # never reach it.
     _raise_if_job_aborted(fl_job_id, session)
-    upload_app(model_id, training_details, endpoint)
+    upload_reply = upload_app(model_id, training_details, endpoint)
+    _log_applied_gpu_request(model_id, training_details.resources, upload_reply, session)
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
@@ -1358,7 +1489,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
 
 
-def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
+def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session, resources: IJobResources | None = None) -> None:
     """
     Insert a new FL job into the database with its trust participants.
 
@@ -1368,13 +1499,19 @@ def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
             `fl_job_trust` link table — the relationship gives `job.trusts` direct
             access to full Trust ORM rows without a manual id-to-name lookup.
         session (Session): The SQLModel session to use for the database operation.
+        resources (IJobResources | None): the researcher's GPU override for this run (FLIP#70), sent to
+            the FL API when the job is dispatched. None keeps the job's own request or the default.
 
     Raises:
         Exception: If there is an error during the database operation.
     """
     logger.debug(f"Adding FL job for model ID: {model_id}")
 
-    job = FLJob(model_id=model_id, trusts=trusts)
+    job = FLJob(
+        model_id=model_id,
+        trusts=trusts,
+        num_gpus=resources.num_gpus if resources else None,
+    )
 
     try:
         session.add(job)

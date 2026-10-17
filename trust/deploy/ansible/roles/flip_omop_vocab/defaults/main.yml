@@ -12,8 +12,10 @@
 ---
 omop_dir: /opt/flip/omop
 # The env's own bucket (passed by the Makefile as AICENTRE_BUCKET_NAME) —
-# the instance role has no cross-account read on other envs' buckets.
-omop_vocab_s3_bucket: "{{ vocab_s3_bucket | default('flipdev-aicentre', true) }}"
+# the instance role has no cross-account read on other envs' buckets. No
+# fallback: the old one named the retired dev account's bucket (FLIP#1371),
+# which no trust role could read; tasks/main.yml fails fast when it is unset.
+omop_vocab_s3_bucket: "{{ vocab_s3_bucket | default('', true) }}"
 vocab_core_bundle: vocab_aicentre_core_20240916
 # Supplied by `make seed-trust-data` as the env's own DOCKER_TAG. The fallback
 # only applies to a hand-run playbook: the container is a throwaway Postgres

@@ -78,7 +78,7 @@ def main() -> None:
         example = Path(args.example) if args.example else None
         # Dev kits (trust/.env.<CODE>.development) source the hub-shared block from
         # the hub's .env.development (the single source), so write it commented and
-        # inert here rather than a drifting live copy. Prod kits (.stag/.production)
+        # inert here rather than a drifting live copy. Deployed kits (.stag/.prod)
         # carry it live — the remote operator's only source.
         commented = target.name.endswith(".development")
         tkl.write_kit(target, kit, example=example, hub_shared_commented=commented)

@@ -63,7 +63,7 @@ services:
       # at request time with an opaque EndpointConnectionError, which is
       # exactly the kind of CORS-preflight-failure surprise this env var is
       # supposed to prevent.
-      # Also the reason the fl-api's BUNDLE_URL_ALLOWED_ORIGINS (compose.production.<backend>.yml)
+      # Also the reason the fl-api's BUNDLE_URL_ALLOWED_ORIGINS (compose.prod.<backend>.yml)
       # is exactly https://s3.<region>.amazonaws.com: this endpoint makes the presigned URLs path-style.
       - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # ProdSettings narrows AUTH_BACKEND to cognito (the dev Keycloak backend

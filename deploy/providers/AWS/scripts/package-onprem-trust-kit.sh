@@ -20,10 +20,10 @@
 #   1. Open the prod UI, click Add Trust, fill in the trust's name/code/region.
 #      Copy the 5 KEY=VALUE lines the modal surfaces ONCE (TRUST_API_KEY,
 #      TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER,
-#      EXPECTED_TRUST_ID) and paste them into trust/.env.<KIT>, replacing
+#      EXPECTED_TRUST_ID) and paste them into trust/.env.<KIT>.<env>, replacing
 #      the <run-make-register-trusts> placeholders.
 #   2. Run `make sync-trust-kit KIT=<CODE> HUB=prod` (from the repo root) to
-#      populate the Hub-shared block in trust/.env.<KIT>, replacing the
+#      populate the Hub-shared block in trust/.env.<KIT>.<env>, replacing the
 #      <run-make-sync-trust-kit> placeholders.
 #
 # This script's job (admin runs from deploy/providers/AWS with prod AWS creds):
@@ -36,7 +36,7 @@
 #   5. Sync only this operator's portion of the FL participant kit out of S3
 #      (net-1/services/<slot>/ for nvflare; net-1/certificates/ + one
 #      supernode_credentials_<N> for flower).
-#   6. Tarball trust/.env.<KIT> + fl-kit/ into
+#   6. Tarball trust/.env.<KIT>.<env> + fl-kit/ into
 #      deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 #
 # Operator post-steps (after receiving the tarball over encrypted channel):

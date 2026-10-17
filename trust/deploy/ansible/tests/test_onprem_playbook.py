@@ -226,7 +226,7 @@ def test_roles_walk_reaches_the_shared_roles(playbook: list[dict]) -> None:
     names = {task.get("name") for task in _iter_tasks(playbook)}
     assert NET_DIR_TASK in names, "the roles walk did not reach flip_trust_dirs — the tests are checking nothing"
     assert "Install Docker" in names, "the roles walk did not reach flip_docker"
-    # What on-prem gains from the shared roles: without these the production compose has no
+    # What on-prem gains from the shared roles: without these the prod compose has no
     # observability config and the operator no tree to extract the FL kit into.
     assert OBSERVABILITY_COPY_TASK in names, "on-prem no longer composes flip_observability_config"
     assert FL_KIT_PRECREATE_TASK in names, "on-prem no longer pre-creates the FL kit tree (flip_fl_kit)"

@@ -429,6 +429,7 @@ Two ways to obtain the bundle: FLIP developers with organisation AWS access run
 `OHDSI Athena <https://athena.ohdsi.org/>`_ under their own licences and unpack it into
 ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Do that first — ``load-omop-vocab`` depends on
 ``fetch-vocab-core``, which skips the download when the directory is already there but fails without
-AWS access when it is not. The DICOM vocabulary is
+AWS access when it is not. The AI Centre's copy behind ``fetch-vocab-core`` serves AI Centre nodes
+only; every other site downloads its own, as :ref:`onprem-core-vocabulary` describes. The DICOM vocabulary is
 separate — it is freely redistributable, ships inside the data volumes, and needs no seeding step.
 ``trust/omop-db/README.md`` carries the full vocabulary roster, versions and licensing.

@@ -14,7 +14,7 @@
 The kit-file token is HUB itself (``deploy/env_mode.mk``): ``stag`` / ``prod``, or
 ``development`` when HUB is unset, so the scripts hold no map of their own. The Makefile also
 hands them the kit file it resolved (``KIT_FILE=`` for preflight, ``--kit-file`` for sync-kit),
-which may still carry its pre-FLIP#1479 name (``.production``, ``.lza-prod``, ``.lza-stag``).
+which may carry an old name. Run directly, both refuse what ``env_mode.mk`` refuses.
 
 The preflight never reads ``ENV``: that is the POSIX shell's own startup-file variable, and an
 operator with ``ENV=~/.shrc`` exported would otherwise have it read as a kit token.
@@ -78,6 +78,18 @@ def test_preflight_reads_the_kit_file_the_makefile_resolved(tmp_path):
     assert "all set" in out, out
 
 
+#: What deploy/env_mode.mk refuses, which a script run directly must refuse too.
+REFUSED_SELECTORS = [({"PROD": "true", "HUB": "prod"}, "unset PROD"), ({"HUB": "production"}, "HUB must be unset")]
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
+@pytest.mark.parametrize(("env", "message"), REFUSED_SELECTORS)
+def test_preflight_refuses_what_env_mode_refuses(env, message):
+    result = _preflight(KIT="ABC", **env)
+    assert result.returncode != 0
+    assert message in result.stderr, result.stderr
+
+
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is not installed")
 def test_preflight_ignores_the_posix_shell_env_variable():
     """`ENV` names the shell's startup file, so it must not be read as a kit token."""
@@ -103,6 +115,11 @@ def test_sync_kit_takes_the_token_from_hub(hub, token):
     message = _sync_kit(HUB=hub)
     assert f"trust/.env.ABC.{token}" in message, message
     assert f"(env={token})" in message, message
+
+
+@pytest.mark.parametrize(("env", "message"), REFUSED_SELECTORS)
+def test_sync_kit_refuses_what_env_mode_refuses(env, message):
+    assert message in _sync_kit(**env)
 
 
 def test_sync_kit_reads_the_kit_file_it_is_given(tmp_path):

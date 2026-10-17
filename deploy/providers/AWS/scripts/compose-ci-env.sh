@@ -37,15 +37,13 @@
 # workflow log through this script.
 #
 # Usage:
-#     HUB=stag|prod LZA_MANAGED_NETWORK=true|false scripts/compose-ci-env.sh [output-file]
-#     HUB=stag|prod LZA_MANAGED_NETWORK=true|false scripts/compose-ci-env.sh --print-env
+#     HUB=stag|prod scripts/compose-ci-env.sh [output-file]
+#     HUB=stag|prod scripts/compose-ci-env.sh --print-env
 #
 # HUB is the deploy/env_mode.mk selector — the value the GitHub environment carries
-# as the TF_HUB variable. LZA_MANAGED_NETWORK is the estate's network mode, a GitHub
-# environment variable of the same name. Both are required: from them this script
-# derives which env file the Makefile will `include`, which AWS_PROFILE the
-# Makefile's account guard expects, and which keys are required. Neither defaults,
-# because each default would quietly plan some other estate.
+# as the TF_HUB variable. It is required: from it this script derives which env file
+# the Makefile will `include` and which AWS_PROFILE the Makefile's account guard
+# expects. It does not default, because a default would quietly plan another estate.
 #
 # EXPECTED_ENV_CLASS is the caller's own statement of which *class* this run should
 # be composing, and the workflows pass it from the ref (main -> prod, everything
@@ -89,8 +87,7 @@ fi
 
 # The mode table. ENV_FILE is the name `deploy/env_mode.mk` derives from the same
 # HUB (ENV_FILE_NAME); AWS_PROFILE_VALUE is what the Makefile's account guard
-# demands for it (PROD_AWS_PROFILE / STAG_AWS_PROFILE, lza- prefixed on an LZA
-# estate); GH_ENV is the GitHub environment holding this environment's values;
+# demands for it (PROD_AWS_PROFILE / STAG_AWS_PROFILE: lza-<hub>); GH_ENV is the GitHub environment holding this environment's values;
 # ENV_CLASS_VALUE is env_mode.mk's ENV_CLASS. tests/test_ci_env_target.py pins ENV,
 # ENV_FILE, ENV_CLASS and the profile against a real `make` probe, so this table
 # cannot drift from the Makefile silently.
@@ -113,16 +110,7 @@ case "${HUB_VALUE}" in
         ;;
 esac
 
-case "${LZA_MANAGED_NETWORK:-}" in
-    true) IS_LZA=1 ;;
-    false) IS_LZA="" ;;
-    *)
-        die "LZA_MANAGED_NETWORK must be true (LZA, platform-managed network) or false
-   (self-contained) — got '${LZA_MANAGED_NETWORK:-}'. Set it on the ${GH_ENV}
-   GitHub environment."
-        ;;
-esac
-AWS_PROFILE_VALUE="${IS_LZA:+lza-}${HUB_VALUE}"
+AWS_PROFILE_VALUE="lza-${HUB_VALUE}"
 
 # The class assertion described in the usage block. It runs before the print-only
 # path on purpose: a mismatched HUB should fail on the first invocation in a
@@ -170,9 +158,6 @@ OUT_FILE="${1:-${DEFAULT_OUT_FILE}}"
 # and fails when the two drift, so adding a TF_VAR export without adding the key
 # here (and to both GitHub environments) is caught in CI rather than at apply time.
 REQUIRED_KEYS=(
-    # The network mode (validated above); the Makefile reads it from the file.
-    LZA_MANAGED_NETWORK
-
     # Backend + provider wiring (Makefile `init`, TF_VAR_AWS_REGION)
     AWS_REGION
     FLIP_TFSTATE_BUCKET_NAME
@@ -217,21 +202,12 @@ REQUIRED_KEYS=(
     FL_BACKEND
     FL_KIT_SLOT_NAMES
 
-    # The three keys whose Makefile default is DESTRUCTIVE rather than inert.
-    #
-    #   DEPLOY_TRUST_EC2       ?= true  — absent means "create a t3.xlarge cloud
-    #                                     trust host", which staging does not run.
-    #   LOCAL_TRUST_PUBLIC_IPS ?= []    — absent means "no on-prem trust may reach
-    #   K8S_TRUST_PUBLIC_IPS   ?= []      the FL-server NLB", i.e. delete every
-    #                                     ingress rule those trusts connect through.
-    #
-    # None of the three is on check-fl-plan-impact.sh's watch list, so an
-    # unattended apply would make all of it silently. They are required here with
-    # an explicit literal — `false` / `[]` written down is a decision; an absent
-    # key is an accident that reads identically to Terraform.
+    # The key whose Makefile default is DESTRUCTIVE rather than inert:
+    # DEPLOY_TRUST_EC2 ?= true means "create a t3.xlarge cloud trust host", which
+    # neither estate runs. It is not on check-fl-plan-impact.sh's watch list, so an
+    # unattended apply would make it silently; required with an explicit literal —
+    # `false` written down is a decision, an absent key an accident.
     DEPLOY_TRUST_EC2
-    K8S_TRUST_PUBLIC_IPS
-    LOCAL_TRUST_PUBLIC_IPS
 )
 
 # Keys the Makefile exports only when set, or supplies a `?=` default for. Passed
@@ -239,7 +215,6 @@ REQUIRED_KEYS=(
 # variables.tf already has a defined fallback.
 OPTIONAL_KEYS=(
     FLIP_BUCKET_NAME
-    JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
     JOB_RESOURCE_SPEC_NUM_GPUS
 
     # Not stored in either GitHub environment and not normally in an env file:
@@ -252,13 +227,12 @@ OPTIONAL_KEYS=(
     # Empty is meaningful and NOT symmetric with the rest of this list: it is the
     # correct value on stag, which hosts no public Ark+ demo, and a destructive
     # one on prod, where `demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""`
-    # (cloudfront.tf) gates four live resources plus the /ark_demo/* behaviour on
-    # a self-contained estate — and, since FLIP#1199, the demo-assets BUCKET itself
-    # on an LZA one (module.flip_demo_assets_bucket). Emptying it there plans a destroy
-    # of a bucket carrying prevent_destroy, so the apply fails loudly instead.
-    # Optional here (not per-env, and this script has no prod/stag axis — only
-    # the LZA one) so stag composes, recovered from state by reconcile_ci_env.py
-    # so prod's GitHub environment cannot be seeded without it.
+    # (cloudfront.tf) gates the demo-assets BUCKET itself (module.flip_demo_assets_bucket,
+    # FLIP#1199). Emptying it there plans a destroy of a bucket carrying
+    # prevent_destroy, so the apply fails loudly instead.
+    # Optional here (this script has no prod/stag axis) so stag composes, recovered
+    # from state by reconcile_ci_env.py so prod's GitHub environment cannot be
+    # seeded without it.
     DEMO_ASSETS_BUCKET_NAME
 
     # ENFORCE_MFA is optional because *empty is the intended production value*,
@@ -267,58 +241,32 @@ OPTIONAL_KEYS=(
     # anchor. Requiring a non-empty value here would reject the correct prod
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
-
-    # Not an LZA key, and optional in both modes. It is for a self-contained
-    # account on the day the public web name moves to an LZA edge (FLIP#749
-    # changes 2b and 3). Absent is the everyday value: the Makefile defaults it to
-    # false, i.e. this account keeps serving the name. It is set to "true" on the
-    # GitHub environment for the cutover, which makes the drop an audited one-line
-    # change with the apply as its record rather than a laptop apply the next CI
-    # run reverts. It must be set while the environment still points at the
-    # self-contained account: once it is repointed at LZA there is no CI path to
-    # the account holding the alias. README, "Handing the public name over".
-    RELEASE_WEB_ALIAS
-
-    # The LZA keys (FLIP#749) are handled per mode below, not here: required on
-    # the platform-managed estate, optional (and expected absent) on the
-    # self-contained ones.
 )
 
 # ---------------------------------------------------------------------------
-# The LZA keys (FLIP#749) — required on the platform-managed estate, optional
-# (and expected absent) on the self-contained ones.
+# The LZA keys (FLIP#749): every estate is a platform-managed (LZA) one, and each
+# of these is load-bearing there:
 #
-# The same three workflows compose a self-contained env file or an LZA one.
-# Rather than a second script, LZA_MANAGED_NETWORK selects which of these are
-# load-bearing:
-#
-#   ACCESS_LOGS_BUCKET_NAME     — "" derives flip-access-logs-<flip_alb_subdomain>,
-#                                 a bucket the self-contained account owns
-#   EFS_PROVISION_IMAGE         — the one-shot EFS-provision utility image; on LZA
-#                                 it must come from the ecr-public/ pull-through
-#                                 cache, because the account has no internet egress
+#   ACCESS_LOGS_BUCKET_NAME     — "" would derive flip-access-logs-<flip_alb_subdomain>,
+#                                 a bucket only the retired self-contained mode owned
+#   EFS_PROVISION_IMAGE         — the one-shot EFS-provision utility image; it must
+#                                 come from the ecr-public/ pull-through cache,
+#                                 because the account has no internet egress
 #   LZA_VPC_NAME                — the accelerator-provisioned VPC's Name tag
 #   MANAGE_DNS                  — false while the account has no Route 53 zone
 #   NETWORKING_INGRESS_CIDRS    — the ingress-VPC CIDRs the estate's edge reaches
 #                                 the internal FL NLB from; empty deletes every
 #                                 rule they feed, so it is not defaultable
-#   LZA_ELB_ACCESS_LOGS_BUCKET  — the LogArchive account's central access-logs
-#                                 bucket (an accelerator guardrail)
 #
 # The two web-edge values are the exception in the other direction: the edge is
 # built *from* this stack's outputs, so on a first apply the domain and ARN are
 # legitimately empty (variables.tf documents the two-phase wiring). Optional, so
 # they compose as omitted rather than as an empty string.
-#
-# On a self-contained estate these are optional — absent is the right value in
-# every case — and are still carried through the workflows, so the drift guard
-# above keeps covering them.
 LZA_REQUIRED_KEYS=(
     ACCESS_LOGS_BUCKET_NAME
     EFS_PROVISION_IMAGE
     LZA_VPC_NAME
     MANAGE_DNS
-    LZA_ELB_ACCESS_LOGS_BUCKET
     NETWORKING_INGRESS_CIDRS
 )
 LZA_OPTIONAL_KEYS=(
@@ -326,12 +274,8 @@ LZA_OPTIONAL_KEYS=(
     LZA_WEB_EDGE_DISTRIBUTION_ARN
 )
 
-if [[ -n "${IS_LZA}" ]]; then
-    REQUIRED_KEYS+=("${LZA_REQUIRED_KEYS[@]}")
-    OPTIONAL_KEYS+=("${LZA_OPTIONAL_KEYS[@]}")
-else
-    OPTIONAL_KEYS+=("${LZA_REQUIRED_KEYS[@]}" "${LZA_OPTIONAL_KEYS[@]}")
-fi
+REQUIRED_KEYS+=("${LZA_REQUIRED_KEYS[@]}")
+OPTIONAL_KEYS+=("${LZA_OPTIONAL_KEYS[@]}")
 
 # The LZA inputs with no `export TF_VAR_…` line of their own in the Makefile: the
 # env file is included as make syntax, so writing them as `export TF_VAR_<name>=…`
@@ -341,7 +285,6 @@ fi
 # manifest cannot drift.
 LZA_RAW_TF_VARS=(
     "NETWORKING_INGRESS_CIDRS:networking_ingress_cidrs"
-    "LZA_ELB_ACCESS_LOGS_BUCKET:lza_elb_access_logs_bucket"
     "LZA_WEB_EDGE_DOMAIN:lza_web_edge_domain"
     "LZA_WEB_EDGE_DISTRIBUTION_ARN:lza_web_edge_distribution_arn"
 )
@@ -355,10 +298,6 @@ is_raw_tf_var() {
     done
     return 1
 }
-
-# Deliberately absent: PRESERVE_VPC. It is a make-level flag read only by
-# `make destroy` (scripts/destroy-selective.sh), never a Terraform input — and CI
-# has no destroy path, by design.
 
 # The kit date for the *selected* backend is required (the Makefile hard-errors
 # without it — "FLARE_KIT_DATE must be set … for FL_BACKEND=…"). The other

@@ -37,8 +37,16 @@ KIT="${KIT:-}"
 OVERRIDES_FILE="${OVERRIDES_FILE:-}"
 
 # The kit-file env token is HUB itself (deploy/env_mode.mk), development when unset. The
-# Makefile also hands in the kit it resolved (KIT_FILE), which may still carry its
-# pre-FLIP#1479 name.
+# Makefile also hands in the kit it resolved (KIT_FILE), which may carry an old name.
+# Run directly, nothing else has checked the selector, so refuse what env_mode.mk refuses.
+if [ -n "${PROD:-}" ]; then
+    printf "  ✖  PROD is replaced by HUB (FLIP#1479): unset PROD and pass HUB=prod or HUB=stag.\n" >&2
+    exit 1
+fi
+case "$HUB" in
+    "" | stag | prod) ;;
+    *) printf "  ✖  HUB must be unset, stag or prod — got '%s'.\n" "$HUB" >&2; exit 1 ;;
+esac
 ENV_SUFFIX="${HUB:-development}"
 
 # ── Colour support ─────────────────────────────────────────────────────────────
@@ -148,7 +156,8 @@ else
     # Job reads the operator AWS config through a host mount.
     # Every deployed environment (HUB set) reads its vocabulary bundle this way.
     if [ -n "$HUB" ]; then
-        AWS_PROFILE_CHECK="${AWS_PROFILE:-flipstag}"
+        # Unset, the profile the vocab-load Job uses by default (omopDb.vocabLoad.awsProfile).
+        AWS_PROFILE_CHECK="${AWS_PROFILE:-default}"
         if ! aws sts get-caller-identity --profile "$AWS_PROFILE_CHECK" >/dev/null 2>&1; then
             warn "AWS SSO session not active for profile '${AWS_PROFILE_CHECK}'"
             hint "Login before deploying: aws sso login --profile ${AWS_PROFILE_CHECK}"
@@ -264,7 +273,7 @@ else
     hint "Patch secrets after the first deploy: make patch-kit-secrets KIT=<KIT> HUB=${HUB:-(env)}"
     hint "Or generate it before deploying (never hand-write it — it is gitignored):"
     hint "  python3 ${CHART_DIR}/scripts/generate_values.py \\"
-    hint "    --env-file ${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX} --output-dir ${CHART_DIR}"
+    hint "    --env-file ${KIT_FILE:-${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX}} --output-dir ${CHART_DIR}"
     hint "Then hand-fill the slots no kit carries: orthanc-registered-users and the S3 keys"
 fi
 

@@ -93,16 +93,11 @@ module "flip_app_bundles_bucket" {
 }
 
 ############################
-# Ark+ demo assets bucket (LZA estates only)
+# Ark+ demo assets bucket
 ############################
 #
-# On a self-contained (legacy) account the demo-assets bucket predates this
-# stack and is adopted through `data.aws_s3_bucket.demo_assets` — see the long
-# header in cloudfront.tf. On an LZA estate there is nothing to adopt: the
-# account is new, so the bucket is created here, through the same module as
-# every other FLIP bucket, and `local.demo_assets_managed` (cloudfront.tf)
-# keeps the two shapes mutually exclusive. The legacy plan is unchanged: the
-# count is 0 whenever lza_managed_network is false.
+# Created here, through the same module as every other FLIP bucket, whenever
+# DEMO_ASSETS_BUCKET_NAME is set (`local.demo_assets_enabled`, cloudfront.tf).
 #
 # Two deliberate departures from the sibling buckets:
 #
@@ -123,7 +118,7 @@ module "flip_app_bundles_bucket" {
 # two-phase"); an empty string matches no distribution, so the grant is
 # fail-closed rather than open until the second apply fills it in.
 module "flip_demo_assets_bucket" {
-  count = local.demo_assets_managed ? 1 : 0
+  count = local.demo_assets_enabled ? 1 : 0
 
   source      = "./modules/flip_s3_bucket"
   bucket_name = var.DEMO_ASSETS_BUCKET_NAME
@@ -254,15 +249,15 @@ module "cognito" {
   # Hostname stamped into invite emails; derived from local.ui_origin
   # (cloudfront.tf) so a zone-less bring-up (FLIP#749) sends the reachable
   # CloudFront default domain rather than a dead subdomain. Identical to
-  # var.flip_alb_subdomain whenever DNS is managed (all legacy envs).
+  # var.flip_alb_subdomain whenever DNS is managed.
   sign_in_hostname = trimprefix(local.ui_origin, "https://")
   # Managed Login (v2) blocks PrivateLink access to cognito-idp, and the LZA
   # account's ONLY path to Cognito is the central interface endpoint -- flip-api
   # cannot boot against a v2 pool there (FLIP#749). Cosmetic either way: the
   # FLIP UI signs in via the SDK, not the hosted UI.
-  managed_login_version   = var.lza_managed_network ? 1 : 2
-  user_pool_tier          = var.lza_managed_network ? "LITE" : null
-  create_hosted_ui_domain = !var.lza_managed_network
+  managed_login_version   = 1
+  user_pool_tier          = "LITE"
+  create_hosted_ui_domain = false
   admin_email             = var.flip_cognito_admin_email
   researcher_email        = var.flip_cognito_researcher_email
   seed_user_password      = var.ADMIN_USER_PASSWORD
@@ -290,14 +285,13 @@ module "cognito" {
   # (Cognito callback_urls)".
   #
   # localhost is deliberately absent: this root stack is stag/prod only. Local
-  # development uses the separate ./dev root, whose var.cognito_callback_urls
-  # carries the localhost origins.
+  # development has no Cognito — it signs in through Keycloak, whose realm
+  # registers the localhost origins (deploy/keycloak/flip-realm.json).
   #
   # The one origin is local.ui_origin (cloudfront.tf) rather than a literal
   # "https://${var.flip_alb_subdomain}": the two are the same string wherever DNS
-  # is managed — every legacy environment — and on a zone-less LZA bring-up
-  # (FLIP#749) the local resolves to the reachable edge/CloudFront domain, which
-  # is the browser origin there. It is the same value fed to the S3 bucket CORS
+  # is managed, and while it is not (FLIP#749) the local resolves to the edge
+  # distribution's domain, which is the browser origin there. It is the same value fed to the S3 bucket CORS
   # rules above, so the two allowlists cannot drift apart.
   callback_urls = [local.ui_origin]
 
@@ -306,8 +300,7 @@ module "cognito" {
   # unset (provider default false), so the hosted UI is not enabled for this
   # client. Kept non-empty and localhost-free so the stag/prod client advertises
   # no redirect target that isn't a real FLIP origin. logout_urls is Optional in
-  # the provider schema and need not mirror callback_urls — the ./dev root
-  # already passes lists of differing length.
+  # the provider schema and need not mirror callback_urls.
   logout_urls = [local.ui_origin]
 }
 

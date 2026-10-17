@@ -42,7 +42,7 @@ For the platform architecture, workflows, deployment guides, and user documentat
 | I want to... | Guide |
 | --- | --- |
 | Run FLIP on my machine (Central Hub + two example Trusts) | [Run FLIP locally for development](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-local-dev.html) |
-| Deploy the Central Hub on AWS | [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) — self-contained ([on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html)) or on a Landing Zone Accelerator estate ([on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html)) |
+| Deploy the Central Hub on AWS | [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) — on a Landing Zone Accelerator estate ([on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html)) |
 | Add a Trust to a FLIP network | [On premises](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) · [In a TRE](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-in-tre.html) · [On Kubernetes](trust/deploy/helm/README.md) |
 | Build or run a federated-learning application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) · [FL tutorials](fl-tutorials/README.md) |
 | Contribute to FLIP | [CONTRIBUTING.md](CONTRIBUTING.md) |

@@ -239,16 +239,9 @@ jobs:
       # `vars` here would override the resolved values and reintroduce hazard A.
       - name: Compose the Terraform env file
         env:
-          # Which estate this run composes for: the TF_HUB variable on the
-          # environment (stag | prod). No fallback — an unset TF_HUB fails the
-          # compose step instead of composing some default estate. The script
-          # derives the env-file name, the AWS_PROFILE the Makefile's guard expects
-          # and which keys are required.
+          # The estate: TF_HUB (stag | prod) on the environment. No fallback, so an
+          # unset TF_HUB fails this step instead of composing some default estate.
           HUB: ${{ vars.TF_HUB }}
-          # The estate's network mode (true = LZA, platform-managed; false =
-          # self-contained), required as well. The script writes it into the env
-          # file, where the Makefile reads it.
-          LZA_MANAGED_NETWORK: ${{ vars.LZA_MANAGED_NETWORK }}
           # The class this run is allowed to compose, asserted by the script. The
           # ref says which class the *branch* deploys; TF_HUB says which estate to
           # deploy it into, and nothing else checks the two agree. They must:
@@ -280,13 +273,8 @@ jobs:
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
-          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
-          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
-          JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: ${{ vars.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB }}
-          # The LZA keys (FLIP#749). Required when LZA_MANAGED_NETWORK=true,
-          # expected absent on a self-contained estate — see compose-ci-env.sh,
-          # which is the one place that decides. The last four have no
+          # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into
           # the env file as raw exports. The two web-edge values are optional on
           # purpose: the edge is built from this stack's outputs, so they are
@@ -296,15 +284,8 @@ jobs:
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}
           NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
-          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
-          # NOT one of the LZA keys above: this one is for a self-contained
-          # account, set to "true" on aws-prod (or aws-stag) for the single apply
-          # that hands the public web name to another estate's edge. Unset is the
-          # everyday value — see compose-ci-env.sh and README, "Handing the public
-          # name over".
-          RELEASE_WEB_ALIAS: ${{ vars.RELEASE_WEB_ALIAS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
@@ -335,9 +316,8 @@ jobs:
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
         env:
-          # Same HUB as the compose step above, for the same reason: `make` is
-          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
-          # it has to be looking at the environment this run composed for.
+          # The compose step's HUB, so `make` reads the env file it wrote and maps
+          # it onto TF_VAR_* exactly as a laptop plan would.
           HUB: ${{ vars.TF_HUB }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 

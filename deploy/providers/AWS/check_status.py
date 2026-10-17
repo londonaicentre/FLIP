@@ -25,7 +25,7 @@ PREREQUISITES:
 WHAT IT CHECKS:
   ✓ AWS Resources (EC2 instances, RDS, S3, Secrets Manager)
   ✓ Network Connectivity (SSH via SSM, HTTP) for Central Hub bastion & Trust EC2
-  ✓ Application Endpoints (UI + flip-api via ALB/CloudFront)
+  ✓ Application Endpoints (UI + flip-api via the CloudFront edge)
   ✓ ECS services (flip-api, fl-api-net-N, fl-server-net-N) — desired vs running,
     deployment rollout state, ALB/NLB target group health
   ✓ Trust Endpoints (Trust API, Imaging API, Data Access API on Trust EC2 — /health)
@@ -1372,11 +1372,10 @@ def main(
     if not skip_endpoints:
         print_section("Application Endpoint Checks")
 
-        # Public endpoints via CloudFront / ALB. flip-api now runs on ECS
-        # Fargate behind the ALB, so the legacy EC2 ``http://localhost:8080``
-        # check has been retired — the ALB endpoint is the source of truth.
+        # Public endpoints through the networking account's CloudFront edge, which relays
+        # /api/* to flip-api on ECS Fargate through the internal NLB.
         check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI", 200)
-        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (CloudFront → ALB)", 200)
+        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (CloudFront edge)", 200)
         # FL API and FL server health: the per-net containers are ECS tasks
         # behind Cloud Map (fl-api-net-N.flip.local:8000) reachable only from
         # inside the VPC, so we cannot curl them from a developer workstation.
@@ -1576,7 +1575,7 @@ def main(
                 )
 
                 # Only the trust overlay is load-bearing here. A production trust
-                # attaches to `default` alone (trust/deploy/compose_trust.production.yml),
+                # attaches to `default` alone (trust/deploy/compose_trust.prod.yml),
                 # so deploy_fl-net-{1,2} — which exist only in the single-host dev
                 # topology — were never used on a trust EC2 and warned every run (FLIP#959).
                 expected_networks = [

@@ -44,8 +44,8 @@ studies) comes anonymously from the public Hugging Face dataset
 
 AWS is used for one optional step: the **OMOP core vocabulary** (Step 7). It is
 licensed (SNOMED CT, LOINC, ...), so it is never published, and
-``make -C trust/omop-db load-omop-vocab`` fetches the AI Centre's copy from a
-bucket in the FLIP development account.
+``make -C trust/omop-db load-omop-vocab`` fetches the AI Centre's copy from the
+``vocab/`` prefix of a FLIP deployment's S3 bucket.
 
 .. note::
 
@@ -69,8 +69,8 @@ Prerequisites
   Registry (``ghcr.io/londonaicentre``). Without it, use ``make up BUILD=true``
   to build every image locally.
 - Optional, AI Centre team only: the `AWS CLI v2 <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>`_
-  and an AWS IAM Identity Center (SSO) user in the FLIP development account,
-  for the OMOP vocabulary (see above).
+  and an AWS IAM Identity Center (SSO) user with read access to the bucket
+  holding the OMOP vocabulary (see above).
 - Free host ports for the hub (UI, ``8080`` API, ``5432`` database, ``8180``
   Keycloak, ``9000``/``9001`` object store) and for the two Trusts (their ports
   are listed in ``trust/.env.GSTT.development.example`` and
@@ -151,49 +151,37 @@ Step 3 — Set up AWS SSO (vocabulary only)
 Skip this step unless you are on the AI Centre team and want the vocabulary
 from its bucket (Step 7).
 
-1. Configure an SSO profile named ``dev`` for the FLIP development account:
+1. Configure an SSO profile for the AWS account whose bucket holds the
+   vocabulary. A maintainer tells you the SSO start URL, the account, the role
+   and the bucket name:
 
    .. code-block:: bash
 
       aws configure sso
 
-   Use the SSO start URL and region a maintainer gives you, pick the
-   development account and your role, and name the profile ``dev``. The result
-   in ``~/.aws/config`` is what ``aws configure sso`` writes — don't hand-write
-   it, the ``sso_session`` line needs a matching ``[sso-session FLIP]`` block
-   that the command also creates:
-
-   .. code-block:: ini
-
-      [sso-session FLIP]
-      sso_start_url = <start-url>
-      sso_region = eu-west-2
-      sso_registration_scopes = sso:account:access
-
-      [profile dev]
-      sso_session = FLIP
-      sso_account_id = <dev-account-id>
-      sso_role_name = <your-role>
-      region = eu-west-2
-      output = json
+   Name the profile whatever you like; ``aws configure sso`` writes both the
+   ``[profile …]`` block and the ``[sso-session …]`` block it points at, so
+   don't hand-write them.
 
 2. Sign in (repeat when the session expires, usually after a working day):
 
    .. code-block:: bash
 
-      aws sso login --profile dev
+      aws sso login --profile <your-profile>
 
-3. Export the profile in your shell, then check it:
+3. Export the profile and the bucket in your shell, then check access:
 
    .. code-block:: bash
 
-      export AWS_PROFILE=dev
+      export AWS_PROFILE=<your-profile>
+      export VOCAB_S3_BUCKET=<bucket-from-your-maintainer>
       make check-aws-access
 
-   Export it rather than setting ``AWS_PROFILE`` in ``.env.development``: the
-   root Makefile reads that file, so ``check-aws-access`` would pass, but
+   Export them rather than setting them in ``.env.development``: the root
+   Makefile reads that file, so ``check-aws-access`` would pass, but
    ``make -C trust/omop-db load-omop-vocab`` never reads it and the vocabulary
-   fetch would fail.
+   fetch would fail. There is no default bucket: the development AWS account
+   that used to hold a copy has been retired (FLIP#1371).
 
 The containers never see your AWS credentials; only the host-side download
 steps use them.
@@ -224,6 +212,18 @@ cache and stops at the first Trust's XNAT if it is missing:
 .. code-block:: bash
 
    make -C trust prepare-artifacts
+
+FLIP does not redistribute the XNAT WAR or its plugins.
+`trust/xnat/artifacts.manifest <https://github.com/londonaicentre/FLIP/blob/develop/trust/xnat/artifacts.manifest>`__
+lists each file with its upstream URL and SHA-256. If this host cannot reach
+those URLs (behind a hospital firewall, for example), download the ``plugin``
+files listed there on another machine, keeping their upstream file names, put
+them in one directory, and fill the cache from it. The same checksums are
+verified:
+
+.. code-block:: bash
+
+   make -C trust prepare-artifacts ARTIFACTS_DIR=/path/to/dir
 
 Once per Docker host, enable Swarm mode (if it is already active, Docker says
 so and you can move on):
@@ -282,7 +282,8 @@ Step 7 — Load the OMOP vocabulary
 
 The published OMOP data is vocabulary-free (the vocabulary is licensed). Load
 it once per Trust, then restart the data-access APIs so they drop cached
-results:
+results. The first load downloads the bundle from ``VOCAB_S3_BUCKET`` (Step 3)
+into ``trust/omop-db/data/``; later loads reuse that copy:
 
 .. code-block:: bash
 

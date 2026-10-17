@@ -43,11 +43,12 @@ def get_net_status(
         user_id (UUID): ID of the authenticated user.
 
     Returns:
-        INetStatus: Object containing the network name and status of connected clients.
+        INetStatus: Object containing the network name and status of connected clients. A net whose FL API gives
+        no client status (unreachable, an error response, or no clients connected) is returned with
+        ``online=False`` and no clients.
 
     Raises:
-        HTTPException: If the net is not found, if there is no response from the FL API, or if there is an error
-        retrieving the net status.
+        HTTPException: If the net is not found, or if there is an error retrieving the net status.
     """
 
     try:
@@ -65,7 +66,13 @@ def get_net_status(
         if not clients:
             error_message = f"No response from FL API for net {net_name}"
             logger.error(error_message)
-            raise HTTPException(status_code=502, detail=error_message)
+            return INetStatus(
+                name=net_name,
+                fl_backend=net_info.fl_backend,
+                online=False,
+                registered_clients=0,
+                clients=[],
+            )
 
         # Match by FL kit slot name — the FL net never sees Trust.name. See the equivalent
         # comment in get_status.py for the rationale (an admin-chosen display name is

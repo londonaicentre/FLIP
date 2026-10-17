@@ -177,7 +177,7 @@
     # the ssh docker context, so the kit never has to exist on the instance.
     flip_app_dirs:
       - /opt/flip/trust
-    # One images tree per FL kit slot: the production composes default
+    # One images tree per FL kit slot: the prod composes default
     # BASE_IMAGES_DOWNLOAD_DIR to /opt/flip/data/trust-<slot> and prod kits deliberately
     # leave that variable unset. Slots 1 and 2 unconditionally, so the pre-registration
     # ansible-init pass — which has no assigned slot to read yet — still lays down the
@@ -191,7 +191,7 @@
              if trust_num is defined and trust_num | string | length > 0
              else [])) | unique }}
     # The approved-cohort membership stores (FLIP#857), the same slot derivation as the images
-    # trees: the production composes default COHORT_SNAPSHOT_STORAGE_DIR to
+    # trees: the prod composes default COHORT_SNAPSHOT_STORAGE_DIR to
     # /opt/flip/cohort-snapshots/trust-<slot>. `make upgrade-trust-ec2` also prepares the
     # registered slot's, for a host provisioned before the store existed.
     flip_cohort_snapshot_dirs: >-

@@ -21,13 +21,15 @@ from fl_api.utils.constants import (
     CONFIG_FED_CLIENT,
     CONFIG_FED_SERVER,
     ENVIRONMENT,
+    FLIP_MODEL_ID,
     GLOBAL_ROUNDS,
     LOCAL_ROUNDS,
     META,
 )
 from fl_api.utils.io_utils import read_config, write_config
+from fl_api.utils.job_resources import JobMeta, nvflare_resource_spec
 from fl_api.utils.logger import logger
-from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, TrainingRound
+from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, JobResources, TrainingRound
 
 
 # TODO Validation of config.json could be used to avoid some of the logic implemented here.
@@ -138,6 +140,32 @@ def configure_config(
         write_config(updated_config, config_json)
         logger.info(f"Updated file {config_json} with default values.")
 
+    return config_json
+
+
+def configure_flip_model_id(job_dir: Path, model_id: str) -> Path:
+    """
+    Writes the hub's model id into the app's config.json as ``FLIP_MODEL_ID``.
+
+    FLIP's components on the FL server report to the hub per model and resolve the id from here
+    (``flip.nvflare.runtime.get_flip_model_id``), the way the Flower fl-api writes ``flip-model-id``
+    into the app's config.toml. It used to travel in meta.json ``custom_props``; meta.json is now the
+    job's own file (FLIP#70). A value the researcher's config.json already holds is replaced.
+
+    Args:
+        job_dir (Path): path to the app folder.
+        model_id (str): the hub's model id.
+
+    Returns:
+        Path: path to the config file that was updated.
+    """
+    config_json = job_dir / "custom" / CONFIG
+    config = read_config(config_json)
+    if config.get(FLIP_MODEL_ID) not in (None, model_id):
+        logger.warning(f"Replacing {FLIP_MODEL_ID}={config[FLIP_MODEL_ID]!r} in {config_json}: FLIP sets it")
+    config[FLIP_MODEL_ID] = model_id
+    write_config(config, config_json)
+    logger.info(f"Wrote {FLIP_MODEL_ID} into {config_json}")
     return config_json
 
 
@@ -511,60 +539,40 @@ def configure_server(
     return config_file
 
 
-def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
+def configure_meta(job_dir: Path, app_name: str, trusts: list[str], job_meta: JobMeta, resources: JobResources) -> Path:
     """
-    Creates a meta.json file, which is part of the NVFLARE application.
+    Writes the job's meta.json: what the job declared, with the parts that name the run's sites written from the run.
+
+    The researcher's meta.json (or the template's) has already been checked and reduced to what FLIP keeps
+    (``job_resources.parse_job_meta``). FLIP writes ``name``, ``deploy_map``, ``min_clients`` and
+    ``mandatory_clients``, and the ``resource_spec`` with the GPU count that won (FLIP#70).
 
     Args:
         job_dir (Path): job directory
-        app_name (str): name of this specific application, under which the config and custom folders will be saved.
+        app_name (str): the job's name in NVFLARE, the hub's model id.
         trusts (list[str]): list of trusts that are part of this training (site names)
+        job_meta (JobMeta): what the job's own meta.json declared: its portable resources and ``custom_props``.
+        resources (JobResources): the GPU count, already resolved from the submission override, the job's
+            meta.json and the fl-api default (``job_resources.resolve_job_resources``).
 
     Returns:
-        Path: path to the meta file that was created.
+        Path: path to the meta file that was written.
     """
-    # Resources required to perform this job at each site
-    # See https://nvflare.readthedocs.io/en/2.4/real_world_fl/job.html#job
-    # TODO Currently this is set from the global config, but we should allow per-job overrides in the future.
-    # See https://github.com/londonaicentre/FLIP/issues/70
-    num_gpus = get_settings().JOB_RESOURCE_SPEC_NUM_GPUS
-    mem_per_gpu_in_gib = get_settings().JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
-    print(f"Job configured to use {num_gpus=} with {mem_per_gpu_in_gib=}.")
+    # What the job needs at each site. NVFLARE's scheduler holds the job until every site's resource
+    # manager can provide it; the request is never lowered to fit a site.
+    # NVFLARE 2.9 resolves the portable block per site in nvflare/utils/job_launcher_utils.py.
+    resource_spec = nvflare_resource_spec(resources, job_meta.resources)
+    logger.info(f"Job resource_spec: {resource_spec or 'nothing requested'}")
 
-    # Resource spec should be omitted by default so that 0 gpu jobs get picked up.
-    # Resource spec is only needed in envs with configured gpus
-    # e.g.
-    # {
-    #     "resource_spec": {
-    #         "Trust_1": { "num_of_gpus": 1, "mem_per_gpu_in_GiB": 1 },
-    #         "Trust_2": { "num_of_gpus": 1, "mem_per_gpu_in_GiB": 1 }
-    #     }
-    # }
-    if num_gpus > 0:
-        # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
-        # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
-        # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
-        resource_spec = {trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts}
-    else:
-        resource_spec = {}
-
-    # Create the meta.json file.
-    #
-    # ``custom_props`` is NVFLARE's officially-sanctioned channel for job-scoped metadata
-    # (``JobMetaKey.CUSTOM_PROPS``; surfaced to components via ``FLContextKey.JOB_META``). We
-    # publish the FLIP ``model_id`` (== ``app_name``) here so recipe-built job types whose
-    # component configs carry no ``model_id`` (e.g. ``standard``, built before the UUID is
-    # known) can resolve it lazily at runtime via ``flip.nvflare.runtime.get_flip_model_id``.
-    # Legacy job types still receive ``model_id`` through their component args and ignore this
-    # key, so populating it unconditionally is safe and keeps both paths consistent.
-    meta_config = {
+    meta_config: dict = {
         "name": app_name,
         "resource_spec": resource_spec,
         "deploy_map": {"app": ["server"] + trusts},
         "min_clients": len(trusts),
         "mandatory_clients": trusts,
-        "custom_props": {"model_id": app_name},
     }
+    if job_meta.custom_props:
+        meta_config["custom_props"] = job_meta.custom_props
     logger.debug(f"Meta config to be written: {meta_config}")
 
     meta_path = job_dir / META

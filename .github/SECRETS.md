@@ -81,9 +81,7 @@ environment and readable only on the branches its deployment branch policy admit
 (`aws-prod` admits `main` alone; that restriction is security, not tidiness).
 
 Which account an environment drives is set by its **`TF_HUB`** variable (`stag` |
-`prod`, the `deploy/env_mode.mk` selector) and **`LZA_MANAGED_NETWORK`** (`true` for
-a platform-managed LZA network, `false` for a self-contained one), neither of which
-defaults — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
+`prod`, the `deploy/env_mode.mk` selector), which has no default — together with `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, the OIDC roles it
 assumes. Those roles are not created by FLIP's pipeline: they come from the
 `deploy/providers/AWS/modules/terraform_ci_bootstrap` module, which the platform
 repositories (`aicentre-iac`, `aicentre-lza-iac`) apply in each account — or, in an
@@ -98,7 +96,7 @@ unattended apply that plans production with staging's shape. The full key list, 
 seeding procedure and the per-account bootstrap order are documented with the stack
 that consumes them: `deploy/providers/AWS/README.md` → "Terraform CI: plan on PR,
 apply on merge" and "Repointing CI at the LZA accounts". Seeding is done by
-`deploy/providers/AWS/scripts/setup-github-environments.sh --hub <stag|prod> --lza-managed-network <true|false>` (repo
+`deploy/providers/AWS/scripts/setup-github-environments.sh --hub <stag|prod>` (repo
 admin, `--dry-run` first, from a machine holding the operator's `.env.<env>` file).
 
 ## Security Notes

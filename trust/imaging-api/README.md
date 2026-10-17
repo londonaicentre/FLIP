@@ -32,7 +32,7 @@ The imaging-api handles the imaging data lifecycle for federated learning studie
 2. **DICOM import** — queries the PACS with accession numbers and queues image retrieval into XNAT, all through XNAT's DQR REST API (XNAT talks to Orthanc over DIMSE; imaging-api itself never contacts Orthanc)
 3. **Data download** — packages and transfers XNAT datasets for FL training
 4. **Upload** — stores result files back into XNAT experiments
-5. **Retrieval status** — monitors import progress by querying the XNAT database
+5. **Retrieval status** — monitors import progress through XNAT's REST API (DQR's import queue and history, and XNAT's direct-archive sessions)
 
 ## Deployment
 
@@ -72,13 +72,37 @@ is its one exemption.
 
 Downloads are cached on the trust host. Extraction lands in
 `<BASE_IMAGES_DOWNLOAD_DIR>/<net_id>/<central_hub_project_id>/<accession_id>/` and a completeness sentinel
-(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction. When the
-sentinel is present the cached folder is returned without contacting XNAT, so FL training code that fetches the
-cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
+(`.flip_complete-<assessor_type>-<resource_type>`) is written there only after successful extraction, so FL training
+code that fetches the cohort every round stops re-downloading bytes already on disk. Sentinels match exactly per
 (assessor, resource); the per-project path segment keeps projects that share an accession from being served each
-other's copies. The cache is invalidated when an upload changes the accession's XNAT content (see Upload), by
-`force_refresh=true` (the sentinel is removed before the re-download starts and rewritten on success), and — on the
-NVFLARE backend — by `CleanupImages`, which empties the whole net directory at job start and end.
+other's copies.
+
+The sentinel records XNAT's experiment ID and the resource stats (scan, label, resource ID, file count, size) read
+just before the download. A hit makes one call, `GET /data/experiments/{id}/scans/ALL/resources?format=json`, and
+compares them:
+- **Unchanged:** the cached folder is returned.
+- **Changed, or the experiment gone:** that resource's cached files (`scans/*/resources/<R>/`, or all of `scans/` for
+  `ALL`) and the sentinels covering them are deleted, then it is downloaded again. Deleting rather than merging keeps
+  files XNAT has since deleted off disk; other resource types stay cached. This is how labels uploaded straight to
+  XNAT (`flip.xnat` enrichment, the UI) and a NIfTI conversion that finished after an `ALL` download are seen.
+- **XNAT cannot answer:** the cached copy is served with a warning. The request's session check passed moments
+  before, and a failure would make an FL client skip the accession for that round.
+- **Not seen:** a file replaced by one of the same name and size (file digests are empty on FLIP's XNAT, whose
+  `checksums` setting is off); `force_refresh=true` covers it. Assessor (`SEG`) downloads are not checked, as XNAT
+  has no `assessors/ALL/resources` listing.
+- **A sentinel from an older imaging-api** holds no record; its copy is downloaded again once XNAT answers the lookups.
+
+`force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
+imaging-api changes the accession (see Upload), and — on the NVFLARE backend — by `CleanupImages`, which empties the
+whole net directory at job start and end.
+
+The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
+which FLIP sets to the accession id at import, so a study extracts as
+`<accession_id>/scans/<scan id>-<description>/resources/<resource>/files/…`. FL apps read that layout (the prostate
+tutorial matches the `<scan id>-<description>` folder), and XNAT's other layouts break them: `improved` drops the
+session folder, `simplified` and `legacy` reshape the folders below it. A zip with no files, or with a member not
+lexically under `<accession_id>/`, is refused before anything is extracted (HTTP 500) and never marked complete. The
+check reads the member names, not the folder afterwards, because a re-download lands in an already-populated folder.
 
 ### Imaging
 
@@ -90,6 +114,16 @@ receiver port (`8104`/`8106`) and serves no HTTP.
 
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project
+
+There is no PACS id to configure. A query sends no `pacsId`, so DQR runs it against the PACS XNAT
+flags as its default query/retrieve PACS — the one registration `configure-xnat.sh` keeps, with that
+flag set. DQR's import does not default the same way, so each import reads that PACS's id from
+`GET /xapi/pacs?queryable=true` (one call per import, never cached) and fails, naming what XNAT
+reported, when no PACS or more than one is flagged. An import run checks that PACS once before its
+C-FINDs and, without it, logs that message and stops, rather than every query failing 404 and the
+run ending "No studies found to import". Re-running XNAT's configure step restores a missing flag; a
+PACS disabled in DQR's admin page has to be re-enabled there. `GET /imaging/ping_pacs` without an id
+pings the same PACS, resolved the same way on every call.
 
 Example DQR import request:
 
@@ -127,14 +161,44 @@ Create an XNAT project from a Central Hub project:
 }
 ```
 
+Creating the project also creates its DICOM->NIfTI trigger: an XNAT event subscription named
+`DICOM-NIfTI Conversion`, active when the project's `dicom_to_nifti` is set. It launches the site's one
+`dcm2niix-scan` wrapper on `DCM2NIIX_IMAGE` (from `GET /xapi/commands/available/site`), under the action
+key XNAT lists for that wrapper id (`GET /xapi/events/allactions`), and refuses with the registered
+images named when there is no such wrapper (FLIP#1451, FLIP#1456).
+
+#### Converting the backlog: `reconvert_nifti`
+
+`python -m imaging_api.scripts.reconvert_nifti` (`make -C trust reconvert-nifti KIT=<CODE>` on Compose)
+lists the archived scans that have DICOM and no NIfTI and, with `--launch`, converts them by one
+Container Service bulk launch per project. See
+[`../deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
+
 ### Retrieval
 
-Get import status or count for a project (queries the XNAT PostgreSQL database directly):
+Get import status or count for a project:
 
 ```
 project_id: 8ba38209-97f5-41b9-976e-dfe3c5c8dd94
 query: SELECT * FROM omop.image_occurrence
 ```
+
+Each cohort accession gets one status, the first that applies: `successful` when it is an experiment in
+the project; `failed` when DQR executed its request and the request `FAILED`, or its direct-archive
+session is in `ERROR`; `processing` for any other executed request or direct-archive session (DQR's
+`RECEIVED` means the study was transferred, not archived); `queued` while its request waits in DQR's
+queue; `queue_failed` when none of these exists.
+
+The DQR records come from XNAT's REST API, not its database (`services/import_requests.py`): DQR's
+`GET /xapi/dqr/import/queue` and `/import/history`, which take no project filter, so they are read with
+`all=true` and kept by `xnatProject`, and `POST /xapi/direct-archive` with a `project` filter. When every
+accession is already an experiment they are not read at all. A failed read is a 500, never the 404 the
+hub reads as "the XNAT project is missing" (FLIP#1022).
+
+The history only grows, so it is read newest first, 1,000 rows a page, and stops a day before the
+project's `insert_date`. The flip-ui polls a project's imaging status every 10 s while its page is open,
+and each poll of a project with unarchived accessions reads the history written since that project was
+created, about 0.6 MB per 1,000 rows.
 
 ### Upload
 
@@ -153,53 +217,34 @@ Upload files to an XNAT experiment:
 }
 ```
 
+`exist_ok` (default `false`): `true` replaces a file of the same name already in the resource, `false`
+leaves it in place and fails the request.
+
+A missing resource is created with the first file, and a missing `scan_id` with the type of the session's first
+scan; in a session with no scans, the upload fails.
+
 ### Users
 
 Create users, update user details, or add a user to an XNAT project.
 
 ## Configuration
 
-Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL`, `XNAT_DATABASE_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). The two XNAT URLs are deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). `XNAT_URL` is deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
 
 | Variable | Description |
 | --- | --- |
 | `XNAT_URL` | URL of the XNAT instance (default `http://xnat-web:8080` — a compose-topology constant, not a kit field) |
 | `XNAT_PORT` | **Required.** XNAT's DICOM SCP receiver port. Paired with `XNAT_AETITLE` as the C-MOVE destination handed to the PACS, so it must be the receiver port, not the web-UI `XNAT_WEB_PORT` |
 | `XNAT_AETITLE` | XNAT's own AE title (default `XNAT`). Must match `XNAT_AETITLE` in `configure-xnat.sh`: DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title **and** port |
-| `PACS_ID` | Fallback PACS id (default `1`). A trust XNAT retrieves from exactly one PACS and `configure-xnat.sh` enforces that, so the id is normally resolved from XNAT at runtime; this value is used only as a fallback, when XNAT cannot be reached or reports no registered PACS (both logged at error) |
 | `XNAT_SERVICE_USER` | XNAT service account username |
 | `XNAT_SERVICE_PASSWORD` | XNAT service account password |
-| `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database (non-secret topology constant; defaults in `config.py`, and the default carries **no** password) |
-| `XNAT_DATASOURCE_PASSWORD` | Minted per-trust XNAT DB password from the kit file (FLIP-PT-056). When set, it replaces the password embedded in `XNAT_DATABASE_URL`; empty or the kit-template placeholder leaves the URL untouched, so a pre-mint deployment fails on its first query instead of falling back to a weak credential |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api (default `http://data-access-api:8000`) |
-| `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` (and the K8s init job's inline copy) registers — pinned by version tag, never `latest` |
+| `DCM2NIIX_IMAGE` | Container Service image used for automatic DICOM→NIfTI conversion. The default is `ghcr.io/londonaicentre/xnat-dcm2niix:<version>` at the tag `ARG DCM2NIIX_VERSION` in `trust/xnat/dcm2niix/Dockerfile` names — the one source of truth, which `trust/xnat/dcm2niix/check_image_pin_sync.sh` (pre-commit + CI, FLIP#980) checks `imaging_api/config.py` against. The per-project event subscription looks the XNAT command up by this **exact** image string, so it must match what `trust/xnat/xnat/config/dcm2niix_command.json` registers — pinned by version tag, never `latest` |
 | `BASE_IMAGES_DOWNLOAD_DIR` | **Required.** Root of the downloaded-images tree as seen **inside the container** — the composes and the Helm chart inject the literal `/app/data/images`. The kit file's same-named `BASE_IMAGES_DOWNLOAD_DIR` is a different value: the *host* directory the composes bind-mount onto that path (the same host-vs-container dual meaning the trust-api README notes for the kit's `OMOP_DB_PORT`). imaging-api mounts the whole tree; each fl-client mounts only its own `net-N` slice |
 | `REIMPORT_STUDIES_ENABLED` | Whether the retry-failed-imports route is available (default `true`). When `false`, `PUT` to the reimport endpoint returns `418` with "Reimport studies feature is not enabled" |
 | `AES_KEY_BASE64` | AES-256 key shared with the hub, used to open the AES-256-GCM-enveloped project identifiers the FL client forwards (FLIP#1179). Must be byte-identical to the hub's and to trust-api's; a mismatch fails closed |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Validated as inbound auth on every router except `/health`, and forwarded outbound on calls to data-access-api `/cohort/accession-ids`. |
-
-### Troubleshooting: healthy service, but every XNAT-DB query returns 500
-
-Unlike xnat-web and xnat-db — whose entrypoints refuse to boot on a missing or weak credential —
-imaging-api starts normally when `XNAT_DATASOURCE_PASSWORD` is unset or still the kit-template
-placeholder. The engine is created lazily and `/health` reports `{"status": "ok"}` without touching
-the database, so a mis-minted kit looks healthy until the first XNAT-DB query. It then surfaces as a
-bare **500** with `asyncpg.exceptions.InvalidPasswordError` (or `no password supplied`) in the logs —
-typically on `GET /retrieval/import_status_count/{project_id}`, i.e. the project appears stuck at the
-imaging-import step.
-
-The tell is imaging-api's own start-up line, which logs the DSN with the password masked:
-
-```
-Database URL: postgresql+asyncpg://xnat@xnat-db:5432/xnat      # no password — kit not minted
-Database URL: postgresql+asyncpg://xnat:***@xnat-db:5432/xnat  # password spliced in
-```
-
-Remedy: mint the credential into the trust's kit file with `make generate-xnat-credentials`
-(`KIT=<CODE>` for one trust) and redeploy. If xnat-db's data volume was already initialised with a
-different password, Postgres will not pick the new one up — apply the `ALTER ROLE` that
-`make generate-xnat-credentials FORCE=1` prints. See [XNAT setup](../xnat/README.md).
 
 ## Authentication
 

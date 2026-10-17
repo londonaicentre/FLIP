@@ -46,8 +46,9 @@ that `scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kit
 `sync_trust_kit.py` both write through its `write_kit`. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
 `flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
-`FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_REGISTRY`,
-`DOCKER_FL_TAG`, `DOCKER_FL_REGISTRY`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`).
+`FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_FL_TAG`,
+`NLB_SUBDOMAIN`, `FL_SERVER_PORT`, `FL_EDGE_PORT`). No registry: a deployed trust pulls from `ghcr.io/londonaicentre/`
+whatever an older kit says, as an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
 `UPLOADED_FEDERATED_DATA_BUCKET` is hub-only (fl-server uploads aggregated
 results to S3); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
 `deploy/fl_backend.mk` (trust/Makefile includes it).
@@ -65,26 +66,28 @@ etc., then re-transmit the refreshed kit file to the remote operator
 encrypted channel for on-prem).
 
 For the on-prem flow, the admin scaffolds and fills the kit on their
-workstation in two commands (prod AWS creds required):
+workstation (prod AWS creds required):
 
 1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
    — scaffolds `trust/.env.<CODE>.prod` from the base template
    (`trust/.env.example`).
-2. `make register-trust KIT=<CODE> HUB=prod` — registers on the prod hub and
-   fills BOTH the Kit credentials AND the Hub-shared block in one step.
+2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` — registers
+   on the prod hub and fills the Kit credentials; then
+   `make sync-trust-kit KIT=<CODE> HUB=prod` fills the rest of the Hub-shared block.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
-tarballs the populated kit file as-is + the operator's slice of the FL
+Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`
+tarballs the populated kit file as-is, as `.env.<slot>.prod` (`<slot>` is its
+`FL_KIT_SLOT`, which the packager is keyed on), + the operator's slice of the FL
 participant kit S3 bucket into
 `deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 
-The operator extracts, copies `.env.<CODE>.prod` into their checkout,
+The operator extracts, copies `.env.<slot>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
+the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<slot>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
 the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
+exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<slot>` (both default to `HUB=prod`).
 Sudo because the provisioned login user is deliberately not in the docker group
 (root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
 GHCR login from `~/.docker/config.json`.
@@ -96,10 +99,10 @@ GHCR login from `~/.docker/config.json`.
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
 | `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
-| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/providers/AWS/site.yml` composes for the EC2 trust: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/providers/AWS/site.yml` composes for the EC2 trust: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> HUB=<hub>`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
 | `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
-| `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
+| `deploy/compose_trust.prod.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
 | `deploy/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
@@ -113,9 +116,7 @@ refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` 
 in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
 server-side-apply a subset of that Secret (it prunes the keys it does not list).
 The kit-file token is `HUB` itself (`prod` / `stag`, unset = `development`). The chart Makefile
-resolves the kit file through `deploy/env_mode.mk`'s `kit_file` — which still finds a pre-FLIP#1479
-name (`.production`, `.lza-prod`, `.lza-stag`, bare) for one release and prints the rename — and
-passes it to the preflight script (`KIT_FILE`) and `sync_k8s_kit.py` (`--kit-file`).
+resolves the kit file through `deploy/env_mode.mk`'s `kit_file` and passes it to the preflight script (`KIT_FILE`) and `sync_k8s_kit.py` (`--kit-file`).
 
 ## Commands (from `trust/`)
 
@@ -148,6 +149,7 @@ make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=… DELETE=�
 make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
 make check-governance KIT=GSTT   # Validate the trust's governance document — both halves, on the host's Python (no project sync), starts nothing
 make reload-governance KIT=GSTT  # Re-apply an edited governance document to a LIVE trust: recreates data-access-api (+ on NVFLARE fl-governance-init and the fl-clients), then checks the service logs the document's digest; touches no data
+make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch, in imaging-api's container; report only without LAUNCH (deploy/helm/TROUBLESHOOTING.md §2.3e)
 ```
 
 ## Environment
@@ -175,8 +177,12 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
   did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
-  port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
-  `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
+  port drift, keeps exactly one registration and flags it `defaultQueryRetrievePacs` (a re-run
+  restores that flag, and `queryable`, on a registration that lacks them). imaging-api has
+  no PACS id setting: its C-FINDs send no `pacsId`, so DQR queries that default PACS itself, and each
+  import — DQR's import does not default — reads the default PACS's id from
+  `GET /xapi/pacs?queryable=true`, failing (rather than guessing an id) when none or more than one is
+  flagged.
 - `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` — whether the PACS supports relational queries / extended
   negotiation (default `true`). A capability of the PACS rather than a preference: one that does not
   support it rejects the association outright. Validated as literally `true` or `false` before it
@@ -184,7 +190,10 @@ make reload-governance KIT=GSTT  # Re-apply an edited governance document to a L
 - `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are
-  agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
+  agreed with the trust's PACS manager. Defaults are all week, all day, one thread. The kit owns
+  the schedule: `configure-xnat.sh` converges DQR's onto it on every run, so a change made in XNAT's
+  UI is reverted (FLIP#1455), and a window that crosses midnight is refused (FLIP#1465). Detail in
+  [`trust/xnat/README.md`](xnat/README.md#pacs-configuration).
 
 ## Trust-internal Service Authentication
 

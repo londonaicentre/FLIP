@@ -14,15 +14,14 @@
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
-	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance
+	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance \
+	reconvert-nifti
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
-# runs the production compose) and the kit-file env token (ENV: .env.<CODE>.stag /
-# .prod, the files the AWS-side register-trusts writes). Both come from the shared
-# table in ../deploy/env_mode.mk, so this Makefile cannot be the copy that misses a
-# value and falls through to the DEVELOPMENT compose.
+# runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag / .prod,
+# the files the AWS-side register-trusts writes), both from ../deploy/env_mode.mk.
 include ../deploy/env_mode.mk
 
-# The trust stack runs against the per-trust kit file (trust/.env.<KIT>) as the
+# The trust stack runs against the per-trust kit file (trust/.env.<KIT>.<env>) as the
 # single source of truth — no hub `.env.*` include. A remote trust operator
 # only ever has their kit file, and we want a hub-admin dev box to fail loud
 # on a stale kit rather than silently fall back to hub env values. The kit
@@ -32,14 +31,15 @@ include ../deploy/env_mode.mk
 # etc.) — see HUB_SHARED_ENV_KEYS in flip-api/src/flip_api/scripts/register_trust.py.
 # Kit includes must come BEFORE fl_backend.mk so its $(FL_BACKEND)-derived
 # vars resolve against the kit's value, not fl_backend.mk's fallback default.
-# Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>. A kit still
-# under its pre-FLIP#1479 name (.production, .lza-prod, .lza-stag, or a bare
-# .env.<KIT>) is found too, with a one-line rename hint, so a live site's next
-# upgrade does not break (env_mode.mk's kit_file).
+# Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>, or an old name
+# resolved by env_mode.mk's kit_file (which prints the rename once, via kit_hint). A KIT_FILE
+# given outright is not looked up at all.
+ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,,$(KIT))
+endif
 -include $(KIT_FILE)
 KIT_FILE_LABEL = $(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),trust/$(KIT_FILE))
-$(if $(KIT),$(call old_kit_hint,$(KIT_FILE_LABEL)))
+$(if $(KIT),$(call kit_hint,$(KIT_FILE_LABEL)))
 
 # Dev only: the kit's Hub-shared block is commented out (inert) — those values
 # are inherited from the hub's .env.development (the single source) to avoid a
@@ -58,7 +58,7 @@ ifeq ($(ENV),development)
 # guard then rejects ''), so it is exported after that include instead, once the default has applied.
 export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
        FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
-       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT
+       DOCKER_FL_TAG NLB_SUBDOMAIN FL_SERVER_PORT FL_EDGE_PORT
 # UID/GID/UNAME come from the same hub .env and must be exported too:
 # the dev compose runs imaging-api, data-access-api and trust-api as `user: "${UID}:${GID}"`
 # so they can write host-owned bind mounts (notably BASE_IMAGES_DOWNLOAD_DIR, which this
@@ -67,6 +67,10 @@ export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER \
 # (no CAP_DAC_OVERRIDE) that root cannot write a host-user-owned dir. The visible symptom is
 # every FL image download failing 500 and training dying with num_samples=0.
 export UID GID UNAME
+else
+# A deployed trust pulls from GHCR (the prod compose files hardcode it) and its kit carries no
+# registry (FLIP#1480). Set so DOCKER_FL_REGISTRY's default, and UP_PULL_FLAGS' --pull always, still hold.
+DOCKER_REGISTRY := ghcr.io/londonaicentre/
 endif
 
 include ../deploy/fl_backend.mk
@@ -94,7 +98,7 @@ ORTHANC_CMD=make -C ./orthanc
 
 # Images bind-source base for this kit: the kit's BASE_IMAGES_DOWNLOAD_DIR, or this
 # environment's compose default — the prod composes fall back to
-# /opt/flip/data/trust-<slot> (see compose_trust.production.yml), dev to ./data/<KIT>.
+# /opt/flip/data/trust-<slot> (see compose_trust.prod.yml), dev to ./data/<KIT>.
 # Must mirror the compose fallbacks exactly: pre-creating any other path leaves the real
 # mount source for Docker to root-create.
 IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
@@ -115,7 +119,7 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/dat
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
 #   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
-#   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no
+#   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
 #     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
 #     which the documented on-prem/EC2 bring-up already has (sudo).
 #   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
@@ -153,11 +157,11 @@ endef
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
 # --env-file <kit> hands compose the kit file so ${POLL_INTERVAL_SECONDS},
-# ${PACS_ID}, ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds +
+# ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds +
 # tunables that aren't in TRUST_VARS) resolve at YAML-substitution time.
-# Without it compose silently uses empty strings → trust-api/imaging-api
-# boot fails with pydantic int-parse errors on POLL_INTERVAL_SECONDS /
-# PACS_ID. Build/test targets that don't set KIT leave the flag empty
+# Without it compose silently uses empty strings → trust-api boot fails
+# with pydantic int-parse errors on POLL_INTERVAL_SECONDS. Build/test
+# targets that don't set KIT leave the flag empty
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
@@ -185,11 +189,11 @@ UP_PULL_FLAGS=
 endif
 
 # ── Per-trust deployment ──────────────────────────────────────────────────
-# A trust stack is selected by KIT — the kit-file name under trust/.env.<KIT>
-# (the FL kit slot name, e.g. Trust_1). trust/.env.<KIT> carries that trust's
-# host-local profile (ports, bind dirs), trust-local credentials, hub-shared
-# block, and kit credentials. `make register-trusts` writes the hub-managed
-# blocks, trust/.env.<KIT>.example is the template the operator copies first.
+# A trust stack is selected by KIT — the trust CODE in its kit file,
+# trust/.env.<KIT>.<env>, which carries that trust's host-local profile (ports,
+# bind dirs), trust-local credentials, hub-shared block, and kit credentials.
+# `make register-trusts` writes the hub-managed blocks; trust/.env.example is the
+# template the operator copies first.
 # KIT has no default so non-KIT targets (build, test) don't spuriously
 # -include a kit file — pass KIT=<name> explicitly. The kit file itself is
 # `-include`d at the top of this Makefile so FL_BACKEND (hub-shared) lands
@@ -216,12 +220,12 @@ TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
 TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # The approved-cohort membership store (FLIP#857): ONE resolved host path, handed to compose in
 # TRUST_VARS so the directory $(ensure_snapshot_dir) prepares is the one compose mounts. The
-# production default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
+# deployed default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
 # remote DOCKER_CONTEXT (EC2), and per slot like the images dir, so trusts sharing a host never
 # share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
 # production image and as the host user under the dev compose, so that is who must own it.
-COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter production,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
-COHORT_SNAPSHOT_OWNER := $(if $(filter production,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
+COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
+COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-1_override.yml,)
@@ -376,8 +380,9 @@ require-xnat-aetitle:
 #
 # The owning kit is read off compose's own environment_file label, compared by file
 # name so re-running for the SAME kit (the normal restart/update path) still works,
-# including from another checkout. That label is populated whenever compose was given
-# --env-file, which DOCKER_COMPOSE_CMD always passes (see __ENV_FILE_FLAG above);
+# including from another checkout and across the FLIP#1479 kit rename: any name KIT=
+# answers to (env_mode.mk's kit_names) is this trust. That label is populated whenever
+# compose was given --env-file, which DOCKER_COMPOSE_CMD always passes (see __ENV_FILE_FLAG above);
 # verified live on Docker Compose v5.1.3, where the hub's own --env-file-less project
 # carries it empty and every trust project carries the kit path.
 #
@@ -406,14 +411,18 @@ define check_slot_not_taken
 		echo "   set FL_KIT_SLOT_NUMBER=<free> in $$kit_label to move this trust to a free slot."; \
 		exit 1; \
 	fi; \
-	if [ -n "$$occupied" ] && [ "$$(basename "$$occupied")" != "$$(basename "$$kit_file")" ]; then \
+	owner=$$(basename "$$occupied"); same=; \
+	for name in "$$(basename "$$kit_file")" $(call kit_names,$(KIT)); do [ "$$owner" = "$$name" ] && same=1; done; \
+	if [ -n "$$occupied" ] && [ -z "$$same" ]; then \
 		echo "❌ FL kit slot $(TRUST_NUM) is already in use on this host."; \
-		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$(basename "$$occupied"),"; \
+		echo "   Compose project '$(TRUST_PROJECT)' is held by trust $$owner,"; \
 		echo "   but you asked to operate on $$kit_file. Acting on this project would hand those"; \
 		echo "   containers to the wrong kit — recreating or tearing down another trust's stack."; \
 		echo ""; \
-		echo "   Slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts at 1"; \
-		echo "   and collides with the default stack. Pick a free slot:"; \
+		echo "   If $$owner is this trust's own kit under another name, do not move slots: that"; \
+		echo "   starts a second stack for the same trust. Re-run with KIT_FILE=<that kit> instead."; \
+		echo "   Otherwise: slots are assigned per-hub, so a second stack (FLIP_INSTANCE) restarts"; \
+		echo "   at 1 and collides with the default stack. Pick a free slot:"; \
 		echo "       docker ps -a --format '{{.Label \"com.docker.compose.project\"}}' | sort -u"; \
 		echo "   then set FL_KIT_SLOT_NUMBER=<free> in $$kit_label and re-run."; \
 		exit 1; \
@@ -437,7 +446,7 @@ prepare-artifacts:
 	$(MAKE) -C xnat xnat-plugins-download
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
-# trust/.env.<KIT> for that trust's ports / dirs / credentials. The
+# trust/.env.<KIT>.<env> for that trust's ports / dirs / credentials. The
 # The trust's data comes from the seed pipeline (FLIP#1101/#1187): the containers start
 # on empty, pre-created volumes, and `ensure-seeded` then loads the listed PROJECTS from
 # the canonical dataset at the pinned data version — once, the volumes persisting on the
@@ -616,6 +625,17 @@ reload-governance: check-governance
 	      *) echo "❌ data-access-api reports a different document than $$doc (sha256 $$want…)."; exit 1;; esac; \
 	  fi
 
+# Convert the archived scans that have DICOM but no NIfTI (a trigger fires on new scans only), through
+# Container Service's bulk launch. Report only without LAUNCH=1. PROJECT, not PROJECTS (the datasets to
+# seed). See trust/deploy/helm/TROUBLESHOOTING.md §2.3e.
+reconvert-nifti:
+	$(require_kit_file)
+	@c=$(call trust_container,imaging-api); \
+	if [ -z "$$c" ]; then echo "❌ imaging-api for $(KIT) (compose project $(TRUST_PROJECT)) is not running."; exit 1; fi; \
+	docker exec "$$c" python -m imaging_api.scripts.reconvert_nifti \
+	  $(foreach id,$(PROJECT),--project $(id)) $(if $(LAUNCH),--launch) $(if $(WAIT),--wait $(WAIT)) \
+	  $(if $(MAX_ATTEMPTS),--max-attempts $(MAX_ATTEMPTS)) $(if $(RELAUNCH_UNFINISHED),--relaunch-unfinished)
+
 down-trust:
 	$(require_kit)
 	$(check_slot_not_taken)
@@ -713,19 +733,13 @@ down-trust-ec2:
 # (trust/.env.<CODE>.$(ENV), written by `make register-trusts`) ARE the list —
 # each is a separate sub-make so its `-include` loads only that trust's kit.
 up: create-networks
-	@found=0; for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; found=1; \
+	@$(call old_kits_hint,)[ -n "$(call kit_codes,)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	@for kit in $(call kit_codes,); do \
 	  $(MAKE) up-trust KIT=$$kit || { echo "❌ Failed to start trust $$kit"; exit 1; }; \
-	done; \
-	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	done
 
 down:
-	@for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) down-trust KIT=$$kit; \
-	done
+	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) down-trust KIT=$$kit || rc=1; done; exit $$rc
 
 # Start / stop only the FL client containers, leaving the rest of each trust stack up.
 # Each dev trust project (trust1, trust2) runs a client per FL net, hence both
@@ -735,11 +749,7 @@ down:
 # and Trust_2 stays on the network ports from its kit file.
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
-	@for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) up-fl-clients-kit KIT=$$kit; \
-	done
+	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) up-fl-clients-kit KIT=$$kit || rc=1; done; exit $$rc
 
 up-fl-clients-kit:
 	$(require_kit_file)
@@ -750,11 +760,7 @@ up-fl-clients-kit:
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
-	@for f in .env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) down-fl-clients-kit KIT=$$kit; \
-	done
+	@$(call old_kits_hint,)rc=0; for kit in $(call kit_codes,); do $(MAKE) down-fl-clients-kit KIT=$$kit || rc=1; done; exit $$rc
 
 down-fl-clients-kit:
 	$(require_kit)

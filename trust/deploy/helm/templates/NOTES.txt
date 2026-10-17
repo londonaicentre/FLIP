@@ -34,7 +34,7 @@ Check the stack is up:
         (your OWN environment's AICENTRE_BUCKET_NAME — trust roles have no
         cross-account read) and re-running `helm upgrade`. From the repo root:
             make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>
-            make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>
+            make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
         or
       * running trust/omop-db/files/load_core_vocab.sh against the database
         with your own OHDSI Athena / NHS TRUD export.

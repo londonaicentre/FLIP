@@ -89,7 +89,7 @@ governance:
 # existing values file pinning the old ones keeps installing and silently stops taking effect —
 # see README "Upgrading: trustData.version replaces the two per-store pins".
 trustData:
-  version: "20260917"
+  version: "20261014"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
@@ -327,11 +327,8 @@ imagingApi:
     # XNAT_PORT and XNAT_AETITLE are deliberately absent here. They describe XNAT's DICOM SCP
     # receiver, so they come from xnat.web.dicomPort / xnat.web.dicomAet — the same values the init
     # job registers the receiver with. Restating them here made two sources for one number, which is
-    # the defect FLIP#993 set out to remove.
-    PACS_ID: "1"
-    # Topology only — no password here (FLIP-PT-056): imaging-api splices in the
-    # xnat-datasource-password secret at startup (see templates/imaging-api.yaml).
-    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
+    # the defect FLIP#993 set out to remove. There is no PACS id either: imaging-api's queries let
+    # DQR use its default query/retrieve PACS, and each import reads that PACS's id from XNAT.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
 
@@ -791,6 +788,7 @@ xnat:
       limits:
         memory: "4Gi"
         cpu: "2"
+    # Timing only. The probe paths, and why, are in templates/xnat-web.yaml.
     probes:
       liveness:
         initialDelaySeconds: 120
@@ -821,6 +819,8 @@ xnat:
       # key with the jars on the pod by exactly that shape; a key spelled otherwise still
       # deploys fine, but a version skew under it reports as a missing download rather
       # than a stale jar, sending the operator to init-container logs that are clean.
+      # A new plugin also needs its XNAT plugin id in check_status.py's XNAT_PLUGIN_IDS
+      # (README "Verify the DICOM ingest path"); its test fails until it has one.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
@@ -979,6 +979,8 @@ pacs:
   supportsExtendedNegotiations: true
   # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
+  # Every helm upgrade sets XNAT's schedule from these, reverting edits made in XNAT's UI. The window
+  # must not cross midnight (FLIP#1465): for out-of-hours use 19:00-24:00, 00:00-07:00 or whole days.
   availability:
     days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
     start: "00:00"

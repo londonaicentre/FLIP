@@ -44,7 +44,7 @@ class InitEvaluation(Controller):
 
         Args:
             model_id (str, optional): ID of the model that the evaluation is being performed under. When omitted
-                the ID is resolved lazily from the job's meta.json custom_props at first use.
+                the ID is resolved lazily from the app's config.json at first use (``get_flip_model_id``).
             min_clients (int, optional): Minimum number of clients that must respond to the cleanup task.
                 Defaults to 1; on the platform fl-api sets it to the participating-trust count for every job
                 (``config["min_clients"] = len(trusts)`` in ``prepare_config.py``), so it is never a

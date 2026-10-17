@@ -256,7 +256,7 @@ The logging infrastructure is defined in the trust-level Docker Compose files:
 
 - ``trust/deploy/compose_trust.development.yml`` -- development overrides with
   configurable ports
-- ``trust/deploy/compose_trust.production.yml`` -- production settings with persistent
+- ``trust/deploy/compose_trust.prod.yml`` -- production settings with persistent
   volumes and automatic restart
 
 Three services are added:

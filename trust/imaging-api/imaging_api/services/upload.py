@@ -10,8 +10,10 @@
 # limitations under the License.
 #
 
+import json
 import os
 from pathlib import Path
+from typing import Any
 
 import requests
 from fastapi import APIRouter
@@ -25,7 +27,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import AlreadyExistsError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
 
@@ -64,6 +66,7 @@ async def upload_data_to_xnat(
     Raises:
         FileNotFoundError: If any of the files to be uploaded are not found.
         ValueError: If the net ID or any file path attempts path traversal outside the upload directory.
+        Exception: If the scan does not exist and the session holds no scan to take its type from.
     """
     # Get base directory from configuration
     upload_directory = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id, "upload")
@@ -100,29 +103,20 @@ async def upload_data_to_xnat(
     # Parse subject ID from experiment response
     subject_id = get_subject_id_from_experiment_response(experiment_response)
 
-    # Create scan in XNAT
-    # Note this function will not complain if the scan already exists.
-    create_xnat_scan(
-        project_id=project_id,
-        subject_id=subject_id,
-        experiment_id_or_label=accession_id,
-        scan_id=scan_id,
-        headers=headers,
-    )
-
-    # Create resource in XNAT
-    try:
-        create_xnat_resource(
+    # The file PUT creates a missing resource but not a missing scan, so create only a missing scan, typed like
+    # the session's first scan: XNAT refuses a scan PUT that would change an existing scan's type.
+    scan_xsi_types = get_scan_xsi_types_from_experiment_response(experiment_response)
+    if scan_id not in scan_xsi_types:
+        if not scan_xsi_types:
+            raise Exception(f"Cannot create scan {scan_id}: session {accession_id} holds no scan to take its type from")
+        create_xnat_scan(
             project_id=project_id,
             subject_id=subject_id,
             experiment_id_or_label=accession_id,
             scan_id=scan_id,
-            resource_id=resource_id,
+            xsi_type=next(iter(scan_xsi_types.values())),
             headers=headers,
         )
-    except AlreadyExistsError:
-        # This is the only exception we want to ignore
-        logger.info(f"Resource '{resource_id}' already exists for this scan. Skipping creation.")
 
     # Upload files to XNAT
     uploaded_files: list[str] = []
@@ -162,25 +156,18 @@ def create_xnat_scan(
     subject_id: str,
     experiment_id_or_label: str,
     scan_id: str,
+    xsi_type: str,
     headers: dict[str, str],
 ) -> None:
     """
-    Creates a scan in XNAT if it does not exist.
-
-    Normally when we upload a file to XNAT, the scan will already exist.
-    TODO reassess if this function is necessary -- could require the scan to exist
-
-    In order to create a scan, you must specify the xsiType of the scan.
-    See https://wiki.xnat.org/xnat-api/image-session-scans-api#ImageSessionScansAPI-AddScanToAnImageSession
-    TODO Note this is hardcoded to MR scans below (xsiType=xnat:mrScanData), but it is not really used for anything.
-
-    Note this function will not complain if the scan already exists.
+    Creates a scan of the given xsi:type in XNAT.
 
     Args:
         project_id (str): The ID of the XNAT project.
         subject_id (str): The ID of the subject in XNAT.
         experiment_id_or_label (str): The ID or label of the experiment in XNAT.
-        scan_id (str): The ID of the scan in XNAT.
+        scan_id (str): The ID of the new scan.
+        xsi_type (str): The new scan's xsi:type, e.g. ``xnat:crScanData``.
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
@@ -200,78 +187,57 @@ def create_xnat_scan(
         experiment_id_or_label,
         "scans",
         scan_id,
-        query={"xsiType": "xnat:mrScanData"},
+        query={"xsiType": xsi_type},
     )
 
-    response = requests.put(scan_url, headers=headers)
+    response = requests.put(scan_url, headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
 
     if response.status_code != 200:
         raise Exception(f"Error creating scan: {response.text}")
 
 
-def create_xnat_resource(
-    project_id: str,
-    subject_id: str,
-    experiment_id_or_label: str,
-    scan_id: str,
-    resource_id: str,
-    headers: dict[str, str],
-) -> None:
+def get_scan_xsi_types_from_experiment_response(experiment_response: dict[str, Any]) -> dict[str, str]:
     """
-    Creates a resource folder under a scan in XNAT if it does not exist.
-    A resource can have any name, but it is typically "DICOM" or "NIFTI".
+    Extracts each scan's xsi:type, by scan ID, from the XNAT experiment response JSON.
 
     Args:
-        project_id (str): The ID of the XNAT project.
-        subject_id (str): The ID of the subject in XNAT.
-        experiment_id_or_label (str): The ID or label of the experiment in XNAT.
-        scan_id (str): The ID of the scan in XNAT.
-        resource_id (str): The ID of the resource in XNAT.
-        headers (dict[str, str]): XNAT authentication headers.
+        experiment_response (dict[str, Any]): XNAT experiment response JSON.
 
     Returns:
-        None
+        dict[str, str]: Scan ID to xsi:type, e.g. ``{"1": "xnat:crScanData"}``, in the session's order.
 
     Raises:
-        ValueError: If an identifier is empty or a dot-segment.
-        AlreadyExistsError: If the resource already exists in XNAT.
-        Exception: If there is an error during the creation of the resource.
+        Exception: If there is an error during the parsing of the experiment response JSON.
     """
-    resource_url = xnat_url(
-        "data",
-        "projects",
-        project_id,
-        "subjects",
-        subject_id,
-        "experiments",
-        experiment_id_or_label,
-        "scans",
-        scan_id,
-        "resources",
-        resource_id,
-    )
-
-    response = requests.put(resource_url, headers=headers)
-
-    if response.status_code == 409:
-        raise AlreadyExistsError(f"Resource already exists: {resource_id}")
-    elif response.status_code != 200:
-        raise Exception(f"Error creating resource: {response.text}")
+    try:
+        return {
+            str(scan["data_fields"]["ID"]): str(scan["meta"]["xsi:type"])
+            for child in experiment_response["items"][0].get("children", [])
+            if child["field"] == "scans/scan"
+            for scan in child["items"]
+        }
+    except Exception as e:
+        raise Exception(f"Failed to parse XNAT experiment data JSON: {str(e)}")
 
 
-def check_file_exists_in_xnat(check_url: str, headers: dict[str, str]) -> bool:
+def xnat_kept_existing_file(response: requests.Response) -> bool:
     """
-    Checks if a file already exists in XNAT.
+    Whether XNAT kept an existing file instead of writing the upload.
+
+    Without ``overwrite=true``, XNAT keeps an existing file and still answers 200, naming it under ``duplicates``
+    in a JSON body that it serves as ``text/html``.
 
     Args:
-        check_url (str): The URL to check for the file.
-        headers (dict[str, str]): XNAT authentication headers.
+        response (requests.Response): XNAT's response to a file PUT.
 
     Returns:
-        bool: True if the file exists, False otherwise.
+        bool: True if the body lists a duplicate, False for a clean write (an empty or non-JSON body).
     """
-    response = requests.get(check_url, headers=headers)
-    return response.status_code == 200
+    try:
+        body = json.loads(response.content)
+    except ValueError:
+        return False
+    return isinstance(body, dict) and bool(body.get("duplicates"))
 
 
 def upload_file_to_xnat(
@@ -302,8 +268,7 @@ def upload_file_to_xnat(
 
     Raises:
         ValueError: If an identifier or filename is empty or a dot-segment.
-        AlreadyExistsError: If exist_ok is False and a file with the same name already exists in the specified XNAT
-        resource.
+        AlreadyExistsError: If XNAT kept a file with the same name in the specified resource instead of writing.
         Exception: If there is an error during the upload process.
     """
     file_name = Path(file_path).name
@@ -322,22 +287,18 @@ def upload_file_to_xnat(
         resource_id,
         "files",
         file_name,
-        query={"inbody": "true"},
+        query={"inbody": "true", "overwrite": "true"} if exist_ok else {"inbody": "true"},
     )
 
-    # Check if the file already exists if exist_ok is False
-    # If exist_ok is True, we will overwrite the file if it exists
-    if not exist_ok:
-        if check_file_exists_in_xnat(url, headers):
-            raise AlreadyExistsError(f"File already exists on XNAT: {url}")
-
-    # Upload the file
+    # Upload the file. The PUT is its own existence check: see xnat_kept_existing_file.
     with open(file_path, "rb") as file:
         response = requests.put(url, headers=headers, data=file)
 
     # XNAT may answer a file PUT with 200 or 201, so accept any 2xx
     if not response.ok:
         raise Exception(f"Error uploading file {file_path}: {response.status_code} {response.text}")
+    if xnat_kept_existing_file(response):
+        raise AlreadyExistsError(f"File already exists on XNAT: {url}")
 
     logger.info(f"Successfully uploaded file: {file_path}")
     return url

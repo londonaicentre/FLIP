@@ -20,14 +20,9 @@
 # are piped to `gh` on stdin, never passed as an argument, so they appear neither
 # in this script's output nor in the process table.
 #
-# --hub (stag | prod) and --lza-managed-network (true | false) are the values the
-# workflows read as the TF_HUB and LZA_MANAGED_NETWORK variables, and this script
-# writes both. Together they select the GitHub environment (aws-stag / aws-prod),
-# the local AWS profile those roles are reached through, the permissions boundary,
-# and which keys the manifest requires. The environment *names* do not change with
-# the network mode: a repointed estate reuses aws-stag / aws-prod, which is what
-# keeps one CI pipeline covering both the self-contained and the platform-managed
-# accounts (README, "Repointing CI at the LZA accounts").
+# --hub (stag | prod) is the value the workflows read as the TF_HUB variable, and
+# this script writes it. It selects the GitHub environment (aws-stag / aws-prod) and
+# the local AWS profile the estate's roles are reached through (lza-<hub>).
 #
 # The secret-vs-variable split is not hard-coded here. It is read out of
 # .github/workflows/terraform_plan.yml, because that workflow is what actually
@@ -47,12 +42,12 @@
 # Idempotent: re-running updates values in place.
 #
 # Usage:
-#     scripts/setup-github-environments.sh --hub stag --lza-managed-network true --env-file ../../../.env.stag --dry-run
-#     scripts/setup-github-environments.sh --hub prod --lza-managed-network true --env-file ../../../.env.prod
+#     scripts/setup-github-environments.sh --hub stag --env-file ../../../.env.stag --dry-run
+#     scripts/setup-github-environments.sh --hub prod --env-file ../../../.env.prod
 #
 # Overrides: AWS_PROFILE_FOR_ENV (the profile for this estate), TF_PLAN_ROLE_NAME /
-# TF_APPLY_ROLE_NAME / TF_BOUNDARY_NAME (default: the AICentre-FLIPTerraform* names
-# the bootstrap module creates, and on LZA the platform's
+# TF_APPLY_ROLE_NAME (default: the AICentre-FLIPTerraform* names the bootstrap
+# module creates) / TF_BOUNDARY_NAME (default: the platform's
 # AICentre-WorkloadRoleBoundary).
 
 set -euo pipefail
@@ -64,19 +59,17 @@ die() {
 
 REPO="${REPO:-londonaicentre/FLIP}"
 HUB=""
-LZA_MANAGED_NETWORK=""
 ENV_FILE=""
 DRY_RUN=0
-USAGE="usage: $0 --hub stag|prod --lza-managed-network true|false --env-file <path> [--dry-run]"
+USAGE="usage: $0 --hub stag|prod --env-file <path> [--dry-run]"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --hub) HUB="$2"; shift 2 ;;
-        --lza-managed-network) LZA_MANAGED_NETWORK="$2"; shift 2 ;;
         --env-file) ENV_FILE="$2"; shift 2 ;;
         --repo) REPO="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
-        --mode | --env) die "$1 is gone (FLIP#1479): pass --hub stag|prod and --lza-managed-network true|false" ;;
+        --mode | --env) die "$1 is gone (FLIP#1479): pass --hub stag|prod" ;;
         *) die "unknown argument: $1" ;;
     esac
 done
@@ -86,12 +79,7 @@ case "${HUB}" in
     *) die "--hub must be stag or prod (got '${HUB}')
    ${USAGE}" ;;
 esac
-case "${LZA_MANAGED_NETWORK}" in
-    true) IS_LZA=1; MODE="LZA ${HUB}" ;;
-    false) IS_LZA=0; MODE="self-contained ${HUB}" ;;
-    *) die "--lza-managed-network must be true or false (got '${LZA_MANAGED_NETWORK}')
-   ${USAGE}" ;;
-esac
+MODE="LZA ${HUB}"
 [[ -n "${ENV_FILE}" && -f "${ENV_FILE}" ]] || die "--env-file must point at an existing file (got '${ENV_FILE}')"
 command -v gh >/dev/null || die "gh CLI is required"
 command -v aws >/dev/null || die "aws CLI is required"
@@ -104,11 +92,9 @@ PLAN_WORKFLOW="${REPO_ROOT}/.github/workflows/terraform_plan.yml"
 
 GH_ENV="aws-${ENV}"
 # The profile the CI roles of this estate are reached through. Matches the
-# Makefile's PROD_AWS_PROFILE / STAG_AWS_PROFILE defaults (<hub>, or lza-<hub> on
-# an LZA estate); override with AWS_PROFILE_FOR_ENV if your local profile names
-# differ.
-PROFILE_DEFAULT="${HUB}"
-if ((IS_LZA)); then PROFILE_DEFAULT="lza-${HUB}"; fi
+# Makefile's PROD_AWS_PROFILE / STAG_AWS_PROFILE defaults (lza-<hub>); override with
+# AWS_PROFILE_FOR_ENV if your local profile names differ.
+PROFILE_DEFAULT="lza-${HUB}"
 case "${HUB}" in
     stag) PROFILE_DEFAULT="${STAG_AWS_PROFILE:-${PROFILE_DEFAULT}}" ;;
     prod) PROFILE_DEFAULT="${PROD_AWS_PROFILE:-${PROFILE_DEFAULT}}" ;;
@@ -182,13 +168,6 @@ for pair in "${RAW_TF_VARS[@]}"; do
     fi
 done
 
-# The operator's env file states the network mode too (the Makefile requires it).
-# One for the other mode describes a different estate.
-FILE_LZA="$(value_of LZA_MANAGED_NETWORK)"
-[[ -z "${FILE_LZA}" || "${FILE_LZA}" == "${LZA_MANAGED_NETWORK}" ]] ||
-    die "${ENV_FILE} sets LZA_MANAGED_NETWORK=${FILE_LZA}, but --lza-managed-network is ${LZA_MANAGED_NETWORK}.
-   The env file and the flag must describe the same estate."
-
 # ---------------------------------------------------------------------------
 # 0. The AWS side, verified before anything is written to GitHub
 # ---------------------------------------------------------------------------
@@ -200,14 +179,9 @@ FILE_LZA="$(value_of LZA_MANAGED_NETWORK)"
 
 TF_PLAN_ROLE_NAME="${TF_PLAN_ROLE_NAME:-AICentre-FLIPTerraformPlanRole}"
 TF_APPLY_ROLE_NAME="${TF_APPLY_ROLE_NAME:-AICentre-FLIPTerraformApplyRole}"
-# The boundary the FLIP root's roles carry on this estate — the Makefile's
-# TF_VAR_iam_permissions_boundary_name default: the platform's on LZA
-# (londonaicentre/lza#51), the bootstrap module's own everywhere else.
-if [[ "${IS_LZA}" == 1 ]]; then
-    TF_BOUNDARY_NAME="${TF_BOUNDARY_NAME:-AICentre-WorkloadRoleBoundary}"
-else
-    TF_BOUNDARY_NAME="${TF_BOUNDARY_NAME:-AICentre-FLIPTerraformBoundary}"
-fi
+# The boundary the FLIP root's roles carry — the Makefile's
+# TF_VAR_iam_permissions_boundary_name default, the platform's (londonaicentre/lza#51).
+TF_BOUNDARY_NAME="${TF_BOUNDARY_NAME:-AICentre-WorkloadRoleBoundary}"
 case "${ENV}" in
     stag) APPLY_BRANCH=develop ;;
     prod) APPLY_BRANCH=main ;;
@@ -372,14 +346,12 @@ fi
 # 2. The estate, then the role ARNs verified above
 # ---------------------------------------------------------------------------
 
-# Which estate the workflows run against — the values terraform_plan.yml /
-# terraform_apply.yml / terraform_drift.yml read as `vars.TF_HUB` and
-# `vars.LZA_MANAGED_NETWORK` and pass to compose-ci-env.sh. Set here rather than by
-# hand so the environments this script populates and the flags it was invoked with
-# cannot disagree.
+# Which estate the workflows run against — the value terraform_plan.yml /
+# terraform_apply.yml / terraform_drift.yml read as `vars.TF_HUB` and pass to
+# compose-ci-env.sh. Set here rather than by hand so the environment this script
+# populates and the flag it was invoked with cannot disagree.
 set_gh variable TF_HUB "${HUB}"
-set_gh variable LZA_MANAGED_NETWORK "${LZA_MANAGED_NETWORK}"
-echo "   set TF_HUB=${HUB}, LZA_MANAGED_NETWORK=${LZA_MANAGED_NETWORK}"
+echo "   set TF_HUB=${HUB}"
 
 set_gh variable TF_PLAN_ROLE_ARN "${PLAN_ARN}"
 set_gh variable TF_APPLY_ROLE_ARN "${APPLY_ARN}"
@@ -422,14 +394,9 @@ set_one() {
         }
         # DEMO_ASSETS_BUCKET_NAME is OPTIONAL in the manifest because empty is
         # correct on stag, which hosts no public Ark+ demo. On prod empty is not
-        # a value but a gap, in either network mode — which is why this stays
-        # keyed on ENV alone:
-        #   * self-contained prod: cloudfront.tf gates the demo's bucket policy,
-        #     public-access block, OAC and /ark_demo/* behaviour on it being
-        #     non-empty, so seeding prod without it destroys all four.
-        #   * LZA prod (FLIP#1199): it gates module.flip_demo_assets_bucket, the
-        #     Terraform-managed bucket itself. prevent_destroy makes that a hard
-        #     apply failure rather than a silent loss — still a broken apply.
+        # a value but a gap (FLIP#1199): it gates module.flip_demo_assets_bucket,
+        # the Terraform-managed bucket itself. prevent_destroy makes that a hard
+        # apply failure rather than a silent loss — still a broken apply.
         # Same asymmetry as keys_expected_empty() in reconcile_ci_env.py.
         if [[ "${key}" == "DEMO_ASSETS_BUCKET_NAME" && "${ENV}" == "prod" ]]; then
             MISSING+=("${key}")
@@ -449,22 +416,18 @@ set_one() {
 # Which keys are load-bearing comes from compose-ci-env.sh, the thing that
 # actually rejects a missing one — so this warns about what will break the run,
 # not about every key the local file happens not to carry. That script holds two
-# lists, not one: the keys every estate needs, and the LZA keys that only an LZA
-# estate requires (a self-contained one legitimately leaves them out). Both are
-# read here, the second only on LZA.
+# lists, both required: the general keys and the LZA ones.
 read_lines REQUIRED_KEYS < <(
     sed -n '/^REQUIRED_KEYS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
         grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*$' | sed -E 's/^[[:space:]]+//'
 )
 ((${#REQUIRED_KEYS[@]} > 0)) || die "could not read REQUIRED_KEYS from compose-ci-env.sh"
-if ((IS_LZA)); then
-    read_lines LZA_KEYS < <(
-        sed -n '/^LZA_REQUIRED_KEYS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
-            grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*$' | sed -E 's/^[[:space:]]+//'
-    )
-    ((${#LZA_KEYS[@]} > 0)) || die "could not read LZA_REQUIRED_KEYS from compose-ci-env.sh"
-    REQUIRED_KEYS+=("${LZA_KEYS[@]}")
-fi
+read_lines LZA_KEYS < <(
+    sed -n '/^LZA_REQUIRED_KEYS=(/,/^)/p' "${HERE}/compose-ci-env.sh" |
+        grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*$' | sed -E 's/^[[:space:]]+//'
+)
+((${#LZA_KEYS[@]} > 0)) || die "could not read LZA_REQUIRED_KEYS from compose-ci-env.sh"
+REQUIRED_KEYS+=("${LZA_KEYS[@]}")
 
 SET=()
 MISSING=()
@@ -472,8 +435,8 @@ OPTIONAL_ABSENT=()
 UNSET_HERE=()
 for key in "${SECRET_KEYS[@]}"; do set_one secret "${key}"; done
 for key in ${VARIABLE_KEYS[@]+"${VARIABLE_KEYS[@]}"}; do
-    # Written in step 2 from the flags, never from the env file.
-    [[ "${key}" == "TF_HUB" || "${key}" == "LZA_MANAGED_NETWORK" ]] && continue
+    # Written in step 2 from the flag, never from the env file.
+    [[ "${key}" == "TF_HUB" ]] && continue
     set_one variable "${key}"
 done
 

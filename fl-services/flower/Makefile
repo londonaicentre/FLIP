@@ -21,11 +21,12 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # Load the env file selected by HUB (dev by default), exactly as
 # fl-services/nvflare/Makefile does — with HUB=stag|prod this brings in the upload
 # vars (AICENTRE_BUCKET_NAME, FLOWER_KIT_DATE) used by upload-creds-to-s3.
+READS_HUB_ENV_FILE := yes
 include $(REPO_ROOT)/deploy/env_mode.mk
 MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
 endif
 include $(REPO_ROOT)/deploy/fl_backend.mk
 

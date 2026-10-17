@@ -12,27 +12,22 @@
 # Single source of truth for what the HUB selector means (FLIP#1479). Sibling of
 # instance.mk and fl_backend.mk, included by every Makefile that reads HUB —
 # root, deploy/providers/AWS, trust, trust/xnat, trust/deploy/helm,
-# fl-services/{nvflare,flower} — at the very top, BEFORE their env-file include:
-# this file needs only HUB, and the env file's name is one of the things it derives.
+# fl-services/{nvflare,flower}, flip-ui — at the very top, BEFORE their env-file
+# include: this file needs only HUB, and the env file's name is one of the things
+# it derives.
 #
 #   HUB        ENV          .env file          compose      ENV_CLASS
 #   (unset)    development  .env.development   development  stag
-#   stag       stag         .env.stag          production   stag
-#   prod       prod         .env.prod          production   prod
+#   stag       stag         .env.stag          prod         stag
+#   prod       prod         .env.prod          prod         prod
 #
 # ENV is the token in every per-environment file name: the hub env file
-# .env.$(ENV) and the trust kit files trust/.env.<CODE>.$(ENV). Whether the estate
-# runs on a self-contained or a platform-managed (LZA) network is not encoded here:
-# it is a property of the estate, set by LZA_MANAGED_NETWORK in its env file.
+# .env.$(ENV) and the trust kit files trust/.env.<CODE>.$(ENV).
 
 # PROD was the selector until FLIP#1479. Refused rather than ignored, so an old
-# command line cannot silently run against development.
-_HUB_FOR_PROD_true := use HUB=prod
-_HUB_FOR_PROD_lza := use HUB=prod
-_HUB_FOR_PROD_lza-stag := use HUB=stag
-_HUB_FOR_PROD_stag := PROD=stag selected the retired self-contained staging estate and is no longer supported (FLIP\#1377)
+# command line, or a PROD still exported in the shell, cannot run against development.
 ifneq ($(strip $(PROD)),)
-$(error PROD is replaced by HUB=stag|prod (FLIP#1479): $(or $(_HUB_FOR_PROD_$(strip $(PROD))),unset PROD and pass HUB) — got PROD='$(PROD)')
+$(error PROD is replaced by HUB (FLIP#1479): unset PROD and pass HUB=prod (was true/lza) or HUB=stag (was lza-stag); PROD=stag's self-contained staging account is retired — got PROD='$(PROD)')
 endif
 
 ifeq ($(HUB),prod)
@@ -48,8 +43,8 @@ endif
 # Repo-root-relative name of the hub env file; each Makefile prefixes its own
 # path to the repo root.
 ENV_FILE_NAME := .env.$(ENV)
-# Compose-file suffix: every deployed environment runs the production compose.
-__DCKR_SUFFIX := $(if $(filter development,$(ENV)),development,production)
+# Compose-file suffix: every deployed environment runs the prod compose.
+__DCKR_SUFFIX := $(if $(filter development,$(ENV)),development,prod)
 # Non-empty iff a hub is selected — usable in `ifneq` and in recipe-level
 # `[ -n "$(IS_DEPLOYED)" ]` tests alike.
 IS_DEPLOYED := $(strip $(HUB))
@@ -57,17 +52,41 @@ IS_DEPLOYED := $(strip $(HUB))
 # kit CA workspace key on. Development counts as stag.
 ENV_CLASS := $(if $(filter prod,$(ENV)),prod,stag)
 
-# Kit files. A trust's kit is trust/.env.<CODE>.$(ENV). The names used before
-# FLIP#1479 — .production / .lza-prod for prod, .lza-stag for stag, and a bare
-# .env.<CODE> — are still found for one release so a live site's next upgrade
-# does not break; the Makefiles that find one print old_kit_hint.
+# Pre-FLIP#1479 names. An old hub env-file name stops make; an old kit name is still found
+# for one release, through KIT= only, so a live site's next upgrade does not break.
+OLD_ENV_NAMES := $(if $(filter prod,$(ENV)),lza-prod production,$(if $(filter stag,$(ENV)),lza-stag))
 OLD_KIT_ENVS := $(if $(filter prod,$(ENV)),production lza-prod,$(if $(filter stag,$(ENV)),lza-stag))
-# $(call kit_file,<trust dir with trailing / or empty>,<CODE>): the first of those
-# names that exists, else the current one.
-kit_file = $(or $(firstword $(foreach f,$(1).env.$(2).$(ENV) $(foreach e,$(OLD_KIT_ENVS),$(1).env.$(2).$(e)) $(1).env.$(2),$(wildcard $(f)))),$(1).env.$(2).$(ENV))
-# $(call kit_codes,<trust dir>): the CODE of every kit present for this hub, old names included.
-kit_codes = $(sort $(foreach e,$(ENV) $(OLD_KIT_ENVS),$(patsubst $(1).env.%.$(e),%,$(wildcard $(1).env.*.$(e)))))
-# $(call kit_files,<trust dir>): every such kit file, as kit_file resolves it.
-kit_files = $(foreach c,$(call kit_codes,$(1)),$(call kit_file,$(1),$(c)))
-# $(call old_kit_hint,<kit file>): one line asking to rename a kit found under an old name.
-old_kit_hint = $(if $(filter-out %.$(ENV),$(1)),$(info ⚠️  $(1) is an old kit name — rename it to $(or $(firstword $(foreach e,$(OLD_KIT_ENVS),$(patsubst %.$(e),%.$(ENV),$(filter %.$(e),$(1))))),$(1).$(ENV))))
+
+# A hub env file under an old name, beside .env.$(ENV) or instead of it, stops make: two
+# candidates is how a stale AES key nearly reached a site's kit. Checked only for the
+# Makefiles that read the hub env file (they set READS_HUB_ENV_FILE before including this
+# one; the trust-side ones never read it), and not when the command line names the file
+# (MAIN_ENV_FILE=…).
+_REPO_ROOT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))../
+ifneq ($(and $(READS_HUB_ENV_FILE),$(IS_DEPLOYED),$(filter-out command line,$(origin MAIN_ENV_FILE))),)
+_HUB_ENV_FILES := $(patsubst $(_REPO_ROOT_DIR)%,%,$(wildcard $(addprefix $(_REPO_ROOT_DIR).env.,$(ENV) $(OLD_ENV_NAMES))))
+ifneq ($(word 2,$(_HUB_ENV_FILES)),)
+$(error $(_HUB_ENV_FILES) are all hub env files for HUB=$(HUB) (FLIP#1479): keep the one holding the live values as $(ENV_FILE_NAME) and delete the others)
+else ifneq ($(filter-out $(ENV_FILE_NAME),$(_HUB_ENV_FILES)),)
+$(error $(_HUB_ENV_FILES) is the hub env file's pre-FLIP#1479 name: rename it to $(ENV_FILE_NAME))
+endif
+endif
+
+# Kit files. A trust's kit is trust/.env.<CODE>.$(ENV). $(call kit_names,<CODE>) adds the
+# old names KIT=<CODE> still answers to: .production / .lza-prod / a bare .env.<CODE> for
+# prod, .lza-stag for stag.
+kit_names = .env.$(1).$(ENV) $(foreach e,$(OLD_KIT_ENVS),.env.$(1).$(e)) $(if $(filter prod,$(ENV)),.env.$(1))
+# $(call kit_file,<trust dir with trailing / or empty>,<CODE>): the one of those names
+# that exists, else the current one. Two that exist stop make: only one holds the live kit.
+kit_file = $(call _one_kit,$(wildcard $(addprefix $(1),$(call kit_names,$(2)))),$(1).env.$(2).$(ENV))
+_one_kit = $(if $(word 2,$(1)),$(error $(1) are all kits for one trust (HUB=$(HUB)): keep the live one as $(2) and delete the others),$(or $(1),$(2)))
+# $(call kit_codes,<trust dir>): the CODE of every kit under its current name — what a
+# sweep (a target run without KIT=) loops over.
+kit_codes = $(sort $(patsubst $(1).env.%.$(ENV),%,$(wildcard $(1).env.*.$(ENV))))
+# $(call old_kits_hint,<trust dir>): the one line a sweep prints for the kits it skips
+# because they still carry an old name.
+old_kits_hint = $(call _skipped_kits,$(notdir $(wildcard $(foreach e,$(OLD_KIT_ENVS),$(1).env.*.$(e)))))
+_skipped_kits = $(if $(1),$(info ⚠️  Skipped, still under an old kit name — rename (mv) to include them: $(foreach f,$(1),trust/$(f) → $(basename $(f)).$(ENV))))
+# $(call kit_hint,<repo-relative kit file>): when KIT= found its kit under an old name, the
+# rename, once per command (sub-makes inherit _KIT_HINTED) and never for a KIT_FILE named outright.
+kit_hint = $(if $(filter %.$(ENV) $(_KIT_HINTED),$(1))$(filter command line environment,$(origin KIT_FILE)),,$(info ⚠️  $(1) is an old kit name — rename (mv) it to $(if $(filter $(addprefix %.,$(OLD_KIT_ENVS)),$(1)),$(basename $(1)),$(1)).$(ENV))$(eval export _KIT_HINTED := $(1)))

@@ -55,11 +55,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Both Terraform roots share the modules under deploy/providers/AWS/modules;
-        # validating each root exercises the module code from the caller's side.
+        # Validating each root exercises the shared modules under
+        # deploy/providers/AWS/modules from the caller's side.
         root:
           - ./deploy/providers/AWS
-          - ./deploy/providers/AWS/dev
           # The adopters' wrapper around modules/terraform_ci_bootstrap, the
           # Terraform-CI bootstrap the platform repositories pin by commit.
           # Never applied by CI, but validating it exercises the module — so a

@@ -90,10 +90,12 @@ REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
 include $(REPO_ROOT)/deploy/env_mode.mk
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
-# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or its
-# pre-FLIP#1479 name — env_mode.mk's kit_file), handed to every script that reads it.
+# The trust kit this chart deployment is synced from (trust/.env.<CODE>.<env>, or an old
+# name resolved by env_mode.mk's kit_file), handed to every script that reads it.
+ifeq ($(origin KIT_FILE),undefined)
 KIT_FILE := $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
-$(if $(KIT),$(call old_kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
+endif
+$(if $(KIT),$(call kit_hint,$(patsubst $(REPO_ROOT)/%,%,$(KIT_FILE))))
 
 # One budget governs every wait this Makefile performs on the XNAT init job, because
 # there is only one job and two ways of waiting for it: `deploy` waits on it as a
@@ -363,6 +365,10 @@ clean: ## Clean up rendered output
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
 # `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env from $(HUB).
 xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
+	@# An earlier Job (a manual run, or a hook that failed) would make the apply "unchanged" and the
+	@# wait return at once, without running the configuration again.
+	@$(KUBECTL) delete job -n $(NAMESPACE) --selector app.kubernetes.io/component=xnat-init \
+		--ignore-not-found --cascade=foreground --timeout=$(HELM_TIMEOUT)
 	@echo "▶  Rendering XNAT init job from chart templates..."
 	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \

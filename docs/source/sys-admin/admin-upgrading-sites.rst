@@ -51,9 +51,17 @@ follow.
 
 2. **Replace the Hub-shared block if you were sent a refreshed kit.** Copy only the block
    between ``# ── Hub-shared (managed …)`` and ``# ── Kit credentials (managed)`` from the new
-   ``.env.<CODE>.prod`` into yours. Your Host-local profile (ports, data directories,
+   ``.env.<slot>.prod`` into yours. Your Host-local profile (ports, data directories,
    ``FL_KIT_DIR``) and Trust-local credentials stay as they are — do not copy the whole file
    over yours.
+
+   .. important::
+
+      **Put any agreed PACS retrieval window in the kit first.** The upgrade sets XNAT's PACS
+      availability schedule from the kit (``PACS_AVAILABILITY_*``, ``PACS_THREADS``,
+      ``PACS_UTILIZATION_PERCENT``), reverting a window changed in XNAT's DQR admin page, which
+      earlier docs said to use. A kit window that crosses midnight (``19:00``–``07:00``) is
+      refused (FLIP#1465): use ``19:00``–``24:00``, ``00:00``–``07:00`` or whole days.
 
 3. **Move your FLIP checkout to the release.** The images are only half of a release: the
    compose files, the Makefiles, the XNAT stack files and the upgrade command itself all come
@@ -66,7 +74,7 @@ follow.
       git fetch --tags origin
       git checkout vX.Y.Z          # the release named in the Site upgrade section
 
-   Your kit (``trust/.env.<CODE>.prod``), the FL kit and the data directories are
+   Your kit (``trust/.env.<slot>.prod``), the FL kit and the data directories are
    untracked, so checking out a tag never touches them. The upgrade verb refuses a release
    target from a checkout that is not at that tag (exit code 6, naming the fix) — the one
    reason to override it, ``ALLOW_CHECKOUT_DRIFT=1``, is testing a branch that is not a
@@ -74,9 +82,15 @@ follow.
 
    .. note::
 
-      Before FLIP#1479 a kit was named ``.env.<CODE>.production``, ``.env.<CODE>.lza-prod`` or
-      a bare ``.env.<CODE>``. Such a kit keeps working for one release — the verbs find it and
-      print the exact rename — but rename it to ``trust/.env.<CODE>.prod`` before the next one.
+      Before FLIP#1479 a kit was named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or
+      a bare ``.env.<slot>``, and the verbs took ``PROD=`` where they now take ``HUB=``. Run
+      ``unset PROD`` first if your shell still exports it: ``sudo -E`` passes it through, and any
+      ``PROD`` now stops make. An old-named kit keeps working for one release — the verbs find it
+      and print the exact rename — but rename it to ``trust/.env.<slot>.prod`` before the next
+      one, and only once you will not roll back past this release: earlier releases know only
+      the old names. Move it (``mv``), never copy it: two names for one kit stop make. The
+      running stack needs nothing: the verbs recognise it as this trust under either name, so
+      never move the trust to another slot because of the rename.
 
    .. note::
 
@@ -139,8 +153,9 @@ follow.
      — only a complete dump is kept, and without one (a failed dump, or no running ``xnat-db``
      to take it from) the upgrade stops before XNAT is touched — then the Swarm stack
      redeployed onto the new image (XNAT migrates its own schema on boot), then the configure
-     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, Container Service
-     backend, dcm2niix command — against the live instance.
+     pass re-applied — DICOM receiver, DQR lockdown, PACS registration, PACS availability
+     schedule (from the kit, see step 2), Container Service backend, dcm2niix command — against
+     the live instance.
 
    It never runs ``ensure-seeded`` or ``xnat-reset``. Those belong to
    ``make up-onprem-trust`` / ``make -C trust up-trust``, the **first-install** verbs, which
@@ -194,6 +209,12 @@ The kit's ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` opt-outs reach the ch
 for that one image. That is the only way to move a Kubernetes site to a ``sha-`` tag one of
 them was never built at — a StatefulSet rolled onto a tag that does not exist stays down — and
 a release tag never needs one.
+
+Since FLIP#1451 the chart's ``xnat-init`` Job runs ``configure-dcm2niix.sh`` from the xnat-web
+image, so ``xnat.image.pin`` (the kit's ``XNAT_TAG``) also picks the configure script. An xnat-web
+image built before FLIP#1451 (v0.12.0, for one) carries a Docker-only script: the Job refuses it,
+naming the image, rather than letting ``helm upgrade`` fail on its own. Hold XNAT back only on an
+xnat-web image from the release that ships the chart, or later.
 
 Cloud (EC2) trust
 =================
@@ -264,8 +285,9 @@ sequence, all on the admin workstation:
        --env prod --compare ../../../.env.prod
    # 2. Refresh every local kit's Hub-shared block from the reconciled env file.
    make sync-trust-kits HUB=prod
-   # 3. Package each site's kit and send it over the encrypted channel used at onboarding.
-   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
+   # 3. Package each site's kit and send it over the encrypted channel used at onboarding
+   #    (keyed on the kit's FL_KIT_SLOT, so the kit is passed by path).
+   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
 
 Then note *Refreshed kit needed: yes* in the release's Site upgrade section, and which keys
 changed, so operators know to replace the block before upgrading.
