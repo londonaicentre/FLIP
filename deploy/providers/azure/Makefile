@@ -28,10 +28,10 @@ SSH_PUBLIC_KEY_FILE ?= $(HOME)/.ssh/id_ed25519.pub
 FLIP_REF ?= $(shell git rev-parse HEAD)
 UNIT ?= flip-provision
 LINES ?= 80
-# The public IP kits are uploaded from: the kit drop's firewall admits only it and the node
-# subnet. Looked up lazily, once per make run, so every use in a run sees the same answer. Only an
-# IPv4 address (every octet 0-255) is kept, because the answer reaches a shell; a failed lookup is
-# empty, and curl's own error is left on the terminal.
+# Your public IP: the kit drop's firewall admits only it and the node subnet, and the AKS API
+# server only it. Looked up lazily, once per make run, so every use in a run sees the same answer.
+# Only an IPv4 address (every octet 0-255) is kept, because the answer reaches a shell; a failed
+# lookup is empty, and curl's own error is left on the terminal.
 OCTET_PATTERN := (25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])
 IPV4_PATTERN := $(OCTET_PATTERN)(\.$(OCTET_PATTERN)){3}
 OPERATOR_IP ?= $(eval OPERATOR_IP := $$(shell curl -fsS --max-time 10 https://api.ipify.org | grep -Ex '$(IPV4_PATTERN)' | head -n1))$(OPERATOR_IP)
@@ -43,6 +43,8 @@ GUID_PATTERN := [0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}
 BOOT = $(TF) -chdir=bootstrap output -raw
 NODE_RG = $(NAME_PREFIX)-node-rg
 NODE_VM = $(NAME_PREFIX)-node
+AKS_RG = $(NAME_PREFIX)-aks-rg
+AKS_NAME = $(NAME_PREFIX)-aks
 
 # Destroy only deletes, so the kit drop's firewall is never applied: a documentation address
 # (TEST-NET-1) satisfies the variable's check without looking the operator's IP up, so a blocked
@@ -74,7 +76,33 @@ LINES_PATTERN := [0-9]{1,5}
 # $(call check_arg,<variable name>,<value>,<pattern>)
 check_arg = v=$(call sq,$(2)); [[ "$$v" =~ ^$(3)$$ ]] || { echo "❌ $(1)='$$v' is not valid: it must match $(3)."; exit 1; }
 
-.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join logs report stop start test lint
+# The AKS API server admits one IP, and an operator's public IP moves (home, office, VPN). This
+# resets it without a plan. aks-plan passes OPERATOR_IP to Terraform the same way, so its next plan
+# shows no allowlist change as long as your IP has not moved again.
+# The nodes' egress (the NAT gateway's IP, or NODE_EGRESS_IPS on a site subnet) stays admitted:
+# without it the nodes lose their API server. Read from the aks state, and checked before use.
+define admit_operator
+	( nodes="$$($(TF) -chdir=aks output -raw api_server_node_ranges)"; \
+	  [[ "$$nodes" =~ ^$(IPV4_PATTERN)/32(,$(IPV4_PATTERN)/32)*$$ ]] || { \
+		echo "❌ Cannot read the nodes' egress ranges from the aks state ('$$nodes'): not changing the API server's allowlist, which would lock the nodes out."; exit 1; }; \
+	  az aks update --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --api-server-authorized-ip-ranges "$(OPERATOR_IP)/32,$$nodes" )
+endef
+
+# NODE_EGRESS_IPS (comma-separated) goes into a Terraform list, so it is checked first.
+comma := ,
+NODE_EGRESS_VAR = $(if $(NODE_EGRESS_IPS),-var 'node_egress_ips=["$(subst $(comma),"$(comma)",$(NODE_EGRESS_IPS))"]')
+define require_node_egress_ips
+	@$(if $(NODE_EGRESS_IPS),$(call check_arg,NODE_EGRESS_IPS,$(NODE_EGRESS_IPS),$(IPV4_PATTERN)(,$(IPV4_PATTERN))*),true)
+endef
+
+# The value is single-quoted for the local shell while it is checked, as check_arg does.
+define require_operator_ip
+	@v=$(call sq,$(OPERATOR_IP)); [[ "$$v" =~ ^$(IPV4_PATTERN)$$ ]] || { \
+		echo "❌ OPERATOR_IP='$$v' is not one IPv4 address: the api.ipify.org lookup failed (curl's error, if any, is above) or answered something else."; \
+		echo "   Pass yours: make $@ OPERATOR_IP=<your public IPv4>"; exit 1; }
+endef
+
+.PHONY: help bootstrap init plan apply destroy destroy-bootstrap status reprovision selftest kit-upload selftest-kit join aks-init aks-plan aks-apply aks-destroy aks-credentials aks-stop aks-start aks-allow-ip logs report stop start test lint
 
 help: ## Show this help message
 	@echo "FLIP Azure trust node commands:"
@@ -194,8 +222,71 @@ start: ## Start a deallocated VM
 	$(require_subscription)
 	az vm start --subscription "$(SUB_ID)" -g $(NODE_RG) -n $(NODE_VM)
 
+# ── AKS: the same trust on a one-node managed cluster (the flip-trust chart) ─────────────────
+# The trial quota fits one 4-vCPU node: never run the cluster and the VM together. SUBNET_ID
+# works as for the VM: the site's subnet and egress, or empty for a network with its own NAT. On a
+# site subnet, NODE_EGRESS_IPS names the site's egress IPs, which the API server must admit.
+
+aks-init: ## Point the aks root at the bootstrap's state storage
+	$(require_subscription)
+	$(TF) -chdir=aks init -input=false -reconfigure \
+		-backend-config="subscription_id=$(SUB_ID)" \
+		-backend-config="resource_group_name=$$($(BOOT) resource_group_name)" \
+		-backend-config="storage_account_name=$$($(BOOT) state_storage_account_name)" \
+		-backend-config="container_name=$$($(BOOT) state_container_name)" \
+		-backend-config="key=aks.tfstate" \
+		-backend-config="use_azuread_auth=true"
+
+aks-plan: ## Plan the AKS cluster (its API server admits your IP and the nodes' egress)
+	$(require_node_egress_ips)
+	$(require_subscription)
+	$(TF) -chdir=aks plan -out=aks.tfplan \
+		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
+		-var "existing_subnet_id=$(SUBNET_ID)" $(NODE_EGRESS_VAR) -var "operator_ip=$(OPERATOR_IP)"
+
+aks-apply: ## Show the saved AKS plan and the subscription, then apply it only after a typed yes
+	$(require_subscription)
+	@if [ "$$(az group exists --subscription "$(SUB_ID)" -n $(NODE_RG))" = "true" ]; then \
+		echo "❌ $(NODE_RG) exists: the VM holds the trial's vCPUs. make destroy first."; exit 1; fi
+	$(TF) -chdir=aks show aks.tfplan
+	@echo ""
+	@echo "Target subscription: $$(az account show --subscription "$(SUB_ID)" --query '[name, id]' -o tsv | paste -sd ' ' -)"
+	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
+	$(TF) -chdir=aks apply aks.tfplan
+	@ip="$$($(TF) -chdir=aks output -raw outbound_ip)"; echo "Outbound IP: $${ip:-none, outbound follows the site subnet (SUBNET_ID)}"
+
+aks-destroy: ## Destroy the AKS cluster and its network, keep bootstrap (asks first)
+	$(require_node_egress_ips)
+	$(require_subscription)
+	$(TF) -chdir=aks destroy \
+		-var "subscription_id=$(SUB_ID)" -var "location=$(LOCATION)" -var "name_prefix=$(NAME_PREFIX)" \
+		-var "existing_subnet_id=$(SUBNET_ID)" $(NODE_EGRESS_VAR) -var "operator_ip=$(DESTROY_OPERATOR_IP)"
+
+aks-credentials: ## Fetch kubectl credentials (Entra sign-in through kubelogin)
+	$(require_subscription)
+	@command -v kubelogin >/dev/null || { echo "❌ kubelogin is required (brew install Azure/kubelogin/kubelogin)"; exit 1; }
+	az aks get-credentials --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME) --overwrite-existing
+	kubelogin convert-kubeconfig -l azurecli
+
+aks-stop: ## Stop the cluster (its node stops billing; disks and any NAT gateway stay)
+	$(require_subscription)
+	az aks stop --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
+
+aks-start: ## Start a stopped cluster, then admit your current IP (and the nodes' egress) to its API server
+	$(require_operator_ip)
+	$(require_subscription)
+	az aks start --subscription "$(SUB_ID)" -g $(AKS_RG) -n $(AKS_NAME)
+	$(admit_operator) || { \
+		echo "❌ The cluster is running (and billing), but its API server still admits only its previous IP."; \
+		echo "   Retry: make aks-allow-ip AZ_SUBSCRIPTION=... Or stop it: make aks-stop AZ_SUBSCRIPTION=..."; exit 1; }
+
+aks-allow-ip: ## Admit your current IP (and keep the nodes' egress) on the API server, without a plan (free)
+	$(require_operator_ip)
+	$(require_subscription)
+	$(admit_operator)
+
 test: ## Credential-free checks: terraform test in every root and module, plus pytest
-	@for d in bootstrap modules/network modules/kit_drop vm; do \
+	@for d in bootstrap modules/network modules/kit_drop vm aks; do \
 		echo "── $$d"; ( cd $$d && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
 	done
 	uv run --no-project --with pytest pytest tests/ -q

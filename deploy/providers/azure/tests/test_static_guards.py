@@ -27,7 +27,7 @@ from tf_blocks import hcl_block
 MAKEFILE = AZURE_DIR / "Makefile"
 TESTS_DIR = AZURE_DIR / "tests"
 GUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
-ROOTS = ["bootstrap", "vm"]
+ROOTS = ["bootstrap", "vm", "aks"]
 TARGETS = [
     "bootstrap",
     "init",
@@ -41,6 +41,14 @@ TARGETS = [
     "kit-upload",
     "selftest-kit",
     "join",
+    "aks-init",
+    "aks-plan",
+    "aks-apply",
+    "aks-destroy",
+    "aks-credentials",
+    "aks-stop",
+    "aks-start",
+    "aks-allow-ip",
     "logs",
     "report",
     "stop",
@@ -94,7 +102,9 @@ def test_no_real_guids_in_tracked_files():
 
 
 def test_every_az_call_names_the_subscription():
-    lines = [line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show|storage)\b", line)]
+    lines = [
+        line for line in MAKEFILE.read_text().splitlines() if re.search(r"\baz (vm|account show|storage|aks)\b", line)
+    ]
     assert lines, "the Makefile drives az; the guard must see its calls"
     for line in lines:
         assert "--subscription" in line, f"az call without --subscription: {line.strip()}"
@@ -217,6 +227,27 @@ def test_selftest_kit_packs_here_and_uploads_under_the_name_the_node_fetches():
 
 def test_packed_kits_are_never_committed():
     assert "build/" in (AZURE_DIR / ".gitignore").read_text().splitlines()
+
+
+def _target(name: str) -> str:
+    return MAKEFILE.read_text().split(f"\n{name}:", 1)[1].split("\n\n", 1)[0]
+
+
+def test_aks_apply_asks_first_and_refuses_while_the_vm_exists():
+    body = _target("aks-apply")
+    assert "show aks.tfplan" in body
+    assert 'read -r -p "Apply this plan?' in body
+    assert "az group exists" in body, "the VM holds the trial's vCPUs"
+    assert "$(NODE_RG)" in body, "the VM holds the trial's vCPUs"
+
+
+def test_aks_plan_admits_only_the_operator():
+    # aks-destroy passes a fixed placeholder instead: test_makefile_aks_allowlist.py
+    assert "operator_ip=$(OPERATOR_IP)" in _target("aks-plan")
+
+
+def test_make_test_covers_the_aks_root():
+    assert " aks;" in _target("test") or " aks " in _target("test")
 
 
 def test_outbound_ip_reports_parse_in_bash():

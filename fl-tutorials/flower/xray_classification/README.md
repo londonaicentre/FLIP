@@ -35,6 +35,7 @@ and matches the chest-X-ray data seeded into the trust mock OMOP DB
 ```
 xray_classification/
 ├── query.sql                  # Cohort SQL — verbatim from the NVFLARE tutorial
+├── query_no_vocab.sql         # Same cohort for a test trust without the OMOP vocabulary (`make e2e_smoke NO_VOCAB=1`)
 ├── pyproject.toml             # Dependency manifest; not consumed by FLIP (base bundle wins)
 ├── README.md
 └── app/

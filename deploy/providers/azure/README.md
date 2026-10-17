@@ -16,8 +16,9 @@
 A FLIP trust node on an Azure VM, built entirely from code (FLIP#1390). The VM sets itself up
 at first boot and is operated only through Azure Run Command: no inbound ports, no SSH from
 outside. The node receives its kit the way a real trust does: the operator packs it and drops it in
-a private container the node reads with its own identity. This is the VM half of the Azure work;
-the AKS half comes later.
+a private container the node reads with its own identity. The same bootstrap layer and network
+module also carry a one-node AKS cluster for the `flip-trust` Helm chart: see
+[On AKS instead of a VM](#on-aks-instead-of-a-vm).
 
 ## What this builds
 
@@ -25,6 +26,7 @@ the AKS half comes later.
 |---|---|---|---|
 | Bootstrap | `bootstrap/` | Resource group, Terraform state storage (Entra ID access only), a budget alert | Created once, kept across node rebuilds |
 | Node | `vm/` (+ `modules/network/`) | VNet, subnet and NSGs, a NAT gateway with its own outbound IP (none of these on a site subnet), all inbound denied at the VM's NIC, no public IP on the VM, an Ubuntu 24.04 VM (Trusted Launch), a data disk for `/opt/flip`, a daily auto-shutdown | Created and destroyed per session |
+| AKS (instead of the node) | `aks/` (+ `modules/network/`) | A one-node AKS cluster (`Standard_D4s_v5`, Free control-plane tier): Entra sign-in only, Azure RBAC, Cilium enforcing the chart's NetworkPolicies, outbound through the same network as the VM (the site's routes, or its own NAT gateway), no outbound IP of its own. Its API server admits only your IP | Created and destroyed per session, never alongside the node |
 | Kit drop | `modules/kit_drop/` (on by default in `vm/`) | A storage account with shared keys off and a private `kits` container. Its firewall admits only the node's subnet and your IP; a lifecycle rule deletes every blob a day after upload, and Azure runs it daily, so within about 48 hours. The node can read the container, you can write to it | With the node |
 
 At first boot cloud-init installs `flip-node` (`vm/templates/flip-node.sh`). It mounts the data
@@ -45,6 +47,8 @@ The node never provisions an FL kit, so it carries no provisioning tooling.
 - `yq` and `uv` on your machine, for `make selftest-kit` (it provisions the FL dev kit here).
 - `plan` looks up your public IP (api.ipify.org) for the kit drop's firewall; override it with
   `OPERATOR_IP=<ip>`. If your IP changes, `kit-upload` is refused until you plan and apply again.
+  The AKS API server admits only your IP too (`aks-plan` looks it up the same way); see
+  [On AKS instead of a VM](#on-aks-instead-of-a-vm). `destroy` and `aks-destroy` need no lookup.
 
 **Cost.** Nothing here skips Terraform's confirmation: every `bootstrap`, `apply` and `destroy`
 shows the plan and asks. On a Free Trial with the spending limit on, running out of credit
@@ -73,6 +77,40 @@ make destroy   AZ_SUBSCRIPTION="$SUB"
 
 Repeat `selftest-kit` / `selftest` / `logs` / `report` with `FL_BACKEND=flower`. `make help`
 lists every target.
+
+## On AKS instead of a VM
+
+The `aks/` root builds a one-node cluster for the `flip-trust` Helm chart on the same bootstrap
+layer. It shares the trial's 4 vCPUs with the VM, so `aks-apply` refuses while the node's
+resource group exists: `make destroy` first. `SUBNET_ID` works as for the VM (see
+[Network and outbound traffic](#network-and-outbound-traffic)); a site subnet also needs a route
+table sending outbound traffic to the site's firewall, which AKS checks before it creates the
+cluster, and `NODE_EGRESS_IPS=<ip>[,<ip>]` naming that firewall's public IPs on `aks-plan` and
+`aks-destroy`. The API server admits your IP and the nodes' egress (the NAT gateway's IP, or
+those addresses): AKS adds only a load balancer's outbound IP by itself, and a node that cannot
+reach its API server never joins.
+
+```bash
+make aks-init        AZ_SUBSCRIPTION="$SUB"   # after bootstrap
+make aks-plan        AZ_SUBSCRIPTION="$SUB"
+make aks-apply       AZ_SUBSCRIPTION="$SUB"   # shows the plan, asks
+make aks-credentials AZ_SUBSCRIPTION="$SUB"   # kubectl through Entra (kubelogin)
+make aks-stop        AZ_SUBSCRIPTION="$SUB"   # the node stops billing; disks and any NAT gateway stay
+make aks-start       AZ_SUBSCRIPTION="$SUB"   # starts it, then admits your current IP
+make aks-allow-ip    AZ_SUBSCRIPTION="$SUB"   # your IP changed: admit the new one (no plan, free)
+make aks-destroy     AZ_SUBSCRIPTION="$SUB"
+```
+
+The API server admits one IP, and Azure refuses to change it while the cluster is stopped, which
+is why `aks-start` does it after starting. If that step fails the cluster is still running, and
+billing: retry with `aks-allow-ip`, or `aks-stop`.
+
+Azure never upgrades the cluster on its own (no upgrade channel, and the node OS patches itself in
+place). An upgrade is yours to run with `az aks upgrade`, and on one node it surges a second
+`node_size` node first: 8 vCPUs at the default size, so raise the quota before it.
+
+Deploying the chart onto the cluster:
+[`trust/deploy/helm`](../../../trust/deploy/helm/README.md).
 
 ## Joining a hub
 

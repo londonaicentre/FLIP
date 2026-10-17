@@ -37,10 +37,11 @@ printf 'git %s\\n' "$*" >> "$AZ_LOG"
 echo origin/stub
 """
 
-# Terraform never runs for real here: it logs its arguments and answers any `output` with a stub.
+# Terraform never runs for real here: it logs its arguments and answers any `output` with
+# $TF_OUTPUT (default "stub").
 STUB_TERRAFORM = """#!/bin/bash
 printf 'terraform %s\\n' "$*" >> "$AZ_LOG"
-echo stub
+echo "${TF_OUTPUT-stub}"
 """
 
 # api.ipify.org: answers the Nth lookup with the Nth line of $IPIFY_ANSWERS, then repeats the last.
@@ -62,6 +63,7 @@ def run_make(
     ipify: list[str] | None = None,
     az_fail: str | None = None,
     account_id: str | None = None,
+    tf_output: str | None = None,
     makefiles: tuple[Path, ...] = (),
     **variables: str,
 ) -> tuple[subprocess.CompletedProcess, list[str]]:
@@ -90,6 +92,8 @@ def run_make(
         env["AZ_FAIL"] = az_fail
     if account_id is not None:
         env["AZ_ACCOUNT_ID"] = account_id
+    if tf_output is not None:
+        env["TF_OUTPUT"] = tf_output
     files = [arg for f in ("Makefile", *map(str, makefiles)) for arg in ("-f", f)] if makefiles else []
     args = [f"{k}={v}" for k, v in {"AZ_SUBSCRIPTION": "trial", **variables}.items()]
     result = subprocess.run(

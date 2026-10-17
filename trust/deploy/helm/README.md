@@ -188,6 +188,42 @@ The failure mode if you miss one is loud rather than silent: an unknown value is
 Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
 reached the node leaves the pod `Pending` on the `hostPath type check failed` event above.
 
+
+#### On a managed cluster (AKS): the kit from a Secret
+
+A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret
+instead and deploy with `flClient.kit.source=secret` (FLIP#1390):
+
+```bash
+make -C trust/deploy/helm kit-secret KIT_SRC=<the slot's kit directory> KUBE_CONTEXT=<kube context>
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> \
+  PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube context>
+```
+
+`values-aks.yaml` carries what belongs to a managed cluster rather than to the trust (the kit from the Secret,
+Postgres data below the fresh disk's `lost+found`, the S3 vocabulary load off); `PLATFORM_VALUES` layers it after
+the per-trust override. Better, put `K8S_PLATFORM_VALUES=values-aks.yaml` in the kit file: every `deploy`,
+`deploy-trust-k8s` and `upgrade-trust-k8s` with that `KIT` then applies it. A run without it would move PGDATA back
+to the volume root (both databases crash-loop) and look for the kit on the node (the FL client stays Pending).
+The overlays live beside the chart in this repository, not in the packaged chart (`.helmignore` keeps them out),
+so a deploy from a chart tarball passes a checkout's copy by path.
+`kit-secret` makes one key per mounted file (`startup__client.key`, `keys__supernode_credentials_3`,
+...) in `<release>-flip-trust-fl-kit` (set `flClient.kit.secretName` only for a Secret you build yourself with `scripts/kit_secret.py --name`; `make kit-secret` always writes the default name) and refuses a kit
+missing its backend's files, a nested directory, or more than a Secret's 1 MiB — and a Flower kit
+holding anything beyond `certificates/ca.crt` and one `keys/supernode_credentials_<slot>`, so a whole
+provisioning tree (`ca.key`, `server.key`, every slot's key) never lands in one trust's Secret. At pod start the
+`stage-fl-kit` init container copies the files into the pod's own kit volume, because a Secret
+volume is read-only and NVFLARE writes into `local/`, `startup/` and `transfer/`; it hands them to
+uid 1000 (NVFLARE) or makes the Flower key readable by gid 49999. That volume lives as long as the
+pod, so anything NVFLARE leaves in `transfer/` goes with it.
+
+`values-aks.yaml` keeps the chart's S3 vocabulary hook out whatever bucket the kit names, and with it the
+metadata endpoint, which on Azure hands out managed-identity tokens (`NO_VOCAB_LOAD=1` does the same for sync-kit on
+any other cluster without a route to AWS). The trust then runs without the OMOP vocabulary until one is loaded
+another way. Cohort queries that name concepts through `omop.concept` then return
+nothing; the x-ray tutorial ships `query_no_vocab.sql` for exactly this, and `make e2e_smoke NO_VOCAB=1`
+smokes such a trust with it.
+
 ### 5. Install / upgrade the chart
 
 ```bash
@@ -333,6 +369,32 @@ log, not its receipt log, and this deployment never writes it at all; its growth
 context and is never a success route. The importer-crash signatures still fail the run, read
 from `dicom.log` and the container log alike. See
 [TROUBLESHOOTING §2.7](TROUBLESHOOTING.md#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog).
+
+### 6b. Run the trust self-test
+
+`make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>` runs the acceptance checklist every
+trust shape shares (the VM node self-test's, FLIP#1406) against the deployed release:
+
+| Check | Passes when |
+|---|---|
+| release ready | every Deployment, StatefulSet and DaemonSet of the release has finished rolling out (all replicas updated and ready, no old pod left) |
+| fl kit delivered | the FL client sees its kit (`/app/startup/fed_client.json`; Flower: `/certs/ca.crt` and `/keys`) |
+| trust-api / imaging-api / data-access-api health | each answers its own `/health` with `"status":"ok"` |
+| omop seeded | `omop.person` has rows |
+| orthanc seeded | Orthanc holds instances |
+| orthanc requires auth | Orthanc answers 401 without credentials |
+| xnat c-store | `smoke-cstore` exits 0; its inconclusive exit 2 fails the check |
+| dcm2niix conversion | the smallest Orthanc series, imported into a throwaway `FLIPSELFTEST` project, is converted by a dcm2niix Job: its container ends `Complete` and the scan holds a `.nii`/`.nii.gz` file within 10 minutes (`--conversion-timeout`) |
+| fl client running | the FL client is running, with no restart, at two samples 45 s apart |
+
+It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod
+the release already has, so it adds no RBAC or NetworkPolicy exception. The conversion check
+starts one dcm2niix Job, as a cohort pull would, and deletes its `FLIPSELFTEST` project when it
+ends, pass or fail. A C-STORE alone shows XNAT received a study, not that this cluster can
+convert it. If other conversions are queued, its Job waits for a slot under the cap
+([Container Service jobs](#container-service-jobs-dcm2niix)), so run it on an idle trust. It writes
+`selftest-k8s-<backend>-<stamp>.json` and `.md` (and `latest-k8s-<backend>.md`) under
+`SELFTEST_OUT` (default `build/selftest/` in the checkout) and exits non-zero on any failure.
 
 ### 7. (FL training only) Open the FL-server NLB
 
@@ -596,7 +658,7 @@ Two ways to load it:
 
 | You have… | Do this |
 | --- | --- |
-| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out (a still-`<placeholder>` value is treated as unset), and trust roles have no cross-account read. A bucket the cluster cannot read costs more than the vocabulary: the load is a `post-install,post-upgrade` hook, so its failure **fails and rolls back the whole release**. |
+| Org S3 access | `make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>` writes `omopDb.vocabLoad.s3Bucket` from the kit's `AICENTRE_BUCKET_NAME`, then `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE>`. **Check the kit carries your own environment's bucket** — it is not a hub-managed key, so a kit scaffolded from `trust/.env.example` ships it commented out (a still-`<placeholder>` value is treated as unset), and trust roles have no cross-account read. `sync-kit` skips the load, with a warning, when an older kit still carries the dev bucket (`flipdev-aicentre`) outside development (#881), and `NO_VOCAB_LOAD=1` keeps it out entirely on a cluster with no route to AWS (AKS, FLIP#1390). A bucket the cluster cannot read costs more than the vocabulary: the load is a `post-install,post-upgrade` hook, so its failure **fails and rolls back the whole release**. |
 | Your own licences | Build an equivalent bundle from [OHDSI Athena](https://athena.ohdsi.org/) / [NHS TRUD](https://isd.digital.nhs.uk/) (see `trust/omop-db/README.md`), put it in a bucket you control, and set `omopDb.vocabLoad.s3Bucket` / `bundleName`. Or run `trust/omop-db/files/load_core_vocab.sh` against the database directly. |
 
 Run both targets with `-C trust/deploy/helm` (or from that directory):
@@ -752,6 +814,46 @@ images ship PyTorch built for CUDA 13. The operator installs the driver itself, 
 `driver.version` to a 580+ release (or, with `driver.enabled=false`, pre-install one on the
 node).
 
+### Container Service jobs (dcm2niix)
+
+```yaml
+xnat:
+  containerService:
+    maxConcurrentJobs: 4   # null removes the cap
+```
+
+XNAT's Container Service converts DICOM to NIfTI by starting one Kubernetes Job per archived
+scan, so a cohort pull of a few hundred studies starts a few hundred Jobs within minutes. The
+plugin has no concurrency setting of its own on this backend, so the chart bounds them
+(FLIP#1448):
+
+- **Each dcm2niix pod is BestEffort.** The `xnat-init` Job registers dcm2niix without the
+  command file's `reserve-memory` and `limit-cpu`. On this backend the Container Service turns
+  `limit-cpu` into a CPU limit with no request (container-service 3.8.1 has no `reserve-cpu`), so
+  Kubernetes set the request to the limit: every pod reserved a whole CPU and 1000 MiB. On a
+  4-vCPU AKS node about 300 of them filled the node's requests, and nothing else could schedule
+  (FLIP#1448). A BestEffort pod reserves nothing, so it never stops another pod from scheduling,
+  and it runs at the lowest CPU weight on the node, so it yields to the trust's services. The
+  Compose deployment registers the same file unchanged, where those keys are Docker limits.
+- **At most `maxConcurrentJobs` of them run at once.** A ResourceQuota
+  (`<release>-flip-trust-xnat-container-jobs`) admits that many BestEffort pods in the
+  namespace. A Job over the cap gets no pod yet: its events say `FailedCreate ... exceeded quota`,
+  which is expected, and the Job controller retries it at most a minute apart until a slot frees.
+  A creation the quota refuses is not a pod failure, so it never counts against the Job's
+  `backoffLimit`: a conversion over the cap waits, it is not dropped.
+  The backlog drains with no Pending pods.
+
+Watch a pull convert with `kubectl describe resourcequota -n <ns>` (pods used against the cap)
+and `kubectl get jobs -n <ns>`. One conversion takes seconds plus a pod start, so the default of 4
+converts a 300-study cohort in tens of minutes on one node. Raise the cap on a larger node pool to
+convert faster.
+
+The quota counts *every* BestEffort pod in the namespace. No pod of this chart is one
+(`tests/templates/test_container_jobs_quota.py` renders them all), but a pod someone starts here
+with no resources at all (a bare `kubectl run`) takes a slot too. Jobs the Container Service
+created before this change keep their old 1-CPU request and are outside the quota: see
+[TROUBLESHOOTING §2.3d](TROUBLESHOOTING.md#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot).
+
 ### Autoscaling
 
 ```yaml
@@ -778,7 +880,7 @@ model:
 
 - Deny all ingress from outside the namespace
 - Allow all intra-namespace communication
-- Allow egress to DNS (port 53), HTTPS (port 443), AWS IMDS (169.254.169.254)
+- Allow egress to DNS (port 53), HTTPS (port 443), and AWS IMDS (169.254.169.254) only when the omop-db vocab-load Job reads S3 through a node role
 - Allow custom egress CIDRs via `networkPolicies.allowedEgressCIDRs`
 
 ```yaml
@@ -1141,6 +1243,7 @@ The chart is validated in CI via:
 | ------- | ------- | ----- |
 | **PVC binding** | `kubectl describe pod <name> -n <ns>` — look for `FailedBinding` events | Ensure a default StorageClass exists or set `persistence.storageClassName` per service. For ReadWriteMany volumes (shared-images), verify the cluster has a RWX-capable provisioner (e.g., EFS, Longhorn, NFS). |
 | **Resource limits** | Pod requests may exceed node capacity | Check node resources: `kubectl describe nodes`. Reduce `resources.requests` or add worker nodes. |
+| **dcm2niix backlog** | Hundreds of Pending pods that are not the release's own (`<release>-flip-trust-*`) | Container Service Jobs from before the conversion cap: [TROUBLESHOOTING §2.3d](TROUBLESHOOTING.md#23d-dcm2niix-jobs-swamp-the-node-or-wait-for-a-slot). |
 | **GPU unschedulable** | `kubectl describe pod <fl-client>` shows `nvidia.com/gpu` in `Status` | Verify NVIDIA GPU Operator is installed. Check node labels: `kubectl get nodes -o json \| jq '.items[].metadata.labels' \| grep nvidia` |
 | **Image pull** | Pod event shows `ErrImagePull` or `ImagePullBackOff` | Verify GHCR credentials. Check `imagePullSecrets` config. For private repos ensure `image.tag` exists. |
 
@@ -1274,6 +1377,8 @@ Include:
    (`xnat.web.persistence.accessMode: ReadWriteMany`, e.g. NFS/EFS). See
    [TROUBLESHOOTING.md §2.3b](TROUBLESHOOTING.md) for the failure modes,
    including the trailing slash that `combined-path-translation` must keep.
+   How many of those Jobs run at once is capped: see
+   [Container Service jobs](#container-service-jobs-dcm2niix).
 
 3. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with
