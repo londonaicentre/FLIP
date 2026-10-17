@@ -51,13 +51,18 @@ graphviz — with a warning, and missing-image warnings on the Central Hub page.
 keep their old URLs through `sphinx-reredirects` (`redirects` in `conf.py`).
 
 The user-guide GIFs are **not tracked in git** (FLIP#1236). A second `builder-inited` hook in `conf.py` fetches
-the version pinned in `docs/.gifs_version` from the public HF dataset `aicentreflip/docs-gifs`
-(`scripts/fetch_docs_gifs.py`: anonymous `resolve/<tag>/…` URLs, sha256 + size verified against the published
-`manifest.json`, zero requests on a repeat build at a tag) into `source/assets/generated/gifs/<cat>/<name>.gif`,
-which is where the rst figures point and where `flip-ui/scripts/videos-to-gifs.sh` writes a local recording.
-A fetch failure is a `SphinxError` naming the URL; `FLIP_DOCS_SKIP_GIF_FETCH=1` builds text-only (and is how a
-local recording is previewed — without it the pin wins per file). `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION`
-override the dataset / the pin. New versions are published by `.github/workflows/regenerate_docs_gifs.yml`
-(`scripts/publish_docs_gifs.py`, one commit + one immutable tag `YYYYMMDDTHHMMSSZ-<sha7>`, then a one-line pin
-PR reviewed through its RTD preview); the card is `scripts/docs_gifs_card.md`. Adding a GIF is a spec + an rst
-figure in one PR, then the bot's pin PR — `tests/test_docs_gifs_wiring.py` keeps figures and specs in step.
+them from the public HF dataset `aicentreflip/docs-gifs` (`scripts/fetch_docs_gifs.py`) into
+`source/assets/generated/gifs/<cat>/<name>.gif`, which is where the rst figures point and where
+`flip-ui/scripts/videos-to-gifs.sh` writes a local recording. There is no pin (FLIP#1547): the build picks the
+revision from ReadTheDocs' build variables — a release tag `vX.Y.Z` (and git `main` / RTD `stable`, via the
+`pyproject.toml` version) gets the dataset tag of that name, a PR preview #N gets dataset branch `pr-N` if
+someone published a hand recording there, everything else gets dataset `main` (the newest recording) — and falls
+back to `main` when the first choice is missing. It resolves that ref to a commit and reads every file at it,
+verifying sha256 + size against `manifest.json`. A fetch failure is a `SphinxError` naming the URL;
+`FLIP_DOCS_SKIP_GIF_FETCH=1` builds text-only (and is how a local recording is previewed — without it the
+published bytes win per file). `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION` override the dataset / the
+revision. Recordings are published by `.github/workflows/regenerate_docs_gifs.yml` on every UI push to `develop`
+(`scripts/publish_docs_gifs.py --branch main`, one commit, nothing back to git); `release.yml`'s `docs-gifs`
+job tags the recording a release ships (`scripts/freeze_docs_gifs.py`) before it pushes the git tag. The card
+is `scripts/docs_gifs_card.md`. Adding a GIF is a spec + an rst figure in one PR; it renders once that PR
+reaches `develop` and is recorded — `tests/test_docs_gifs_wiring.py` keeps figures and specs in step.

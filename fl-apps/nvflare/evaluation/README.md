@@ -44,6 +44,16 @@ regenerate via `recipe.py` after any recipe change and commit the result.
 4. `EvaluationJsonGenerator` collects the metrics into `evaluation_results.json` and every failed
    `validate` task into `evaluation_failures.json`, and `PersistToS3AndCleanup` zips + uploads the
    run directory to S3.
+5. At the end of the run `ServerEventHandler` sends each site's metrics to the Central Hub, so they
+   show on the model page against that site (one point at round 0). Nested keys join with `/` and
+   are upper-cased; when a site evaluated more than one model, each label starts with the model's
+   name. Only finite numbers are sent: a NaN metric is left out, and lists are never sent.
+
+**The rule:** `FLModel.metrics` are sent to the hub and plotted per site; put anything else you want
+in `evaluation_results.json` under `meta[FlipMetaKey.SUPPLEMENTARY_RESULTS.value]` (from
+`flip.constants`). `EvaluationJsonGenerator` merges it into that reply's entry, key by key, so the
+file holds both side by side. The Ark+ multimodel evaluation sends its per-model AUROCs as `metrics`
+and its DeLong p/q tables this way.
 
 There is **no `validator.py`** and no client model submission — the evaluator only scores the
 server-provided model.

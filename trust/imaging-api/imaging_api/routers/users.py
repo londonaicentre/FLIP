@@ -26,7 +26,7 @@ from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
 from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 router = APIRouter(prefix="/users", tags=["Users"], dependencies=[Depends(authenticate_internal_service)])
 
@@ -95,6 +95,7 @@ def update_user_profile(update_profile_request: UpdateUser, headers: XNATAuthHea
         xnat_url("xapi", "users", username),
         headers=headers,
         json=update_profile_request.model_dump(mode="json"),
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 404:

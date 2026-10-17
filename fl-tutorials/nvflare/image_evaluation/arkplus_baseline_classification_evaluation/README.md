@@ -168,12 +168,14 @@ Useful targets: `make prepare-checkpoint` (convert the raw checkpoint only), `ma
 ## Output metrics
 
 The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collected by the server into
-`evaluation_results.json` keyed by site then model:
+`evaluation_results.json` keyed by site, then the server's validate task (`SRV_<model>`). The FL server also
+sends them to the hub, where they show on the model page per trust as `AUROC_<LESION>`; a NaN AUROC (one class
+only) is left out:
 
 ```json
 {
     "site-1": {
-        "arkplus_pretrained": {
+        "SRV_arkplus_pretrained": {
             "auroc_Effusion": 0.998,
             "auroc_Consolidation": 0.989,
             "auroc_Infiltration": 0.863,

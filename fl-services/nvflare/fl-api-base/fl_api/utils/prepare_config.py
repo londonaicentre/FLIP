@@ -450,7 +450,6 @@ def configure_server(
         {
             "model_id": "...",
             "global_rounds": 10,
-            "min_clients": 2,
             "workflows": [
                 {
                     "id": "scatter_and_gather",
@@ -483,7 +482,6 @@ def configure_server(
     # Add server configuration variables that are needed to run the job
     config["model_id"] = app_name
     config["global_rounds"] = global_rounds
-    config["min_clients"] = len(trusts)
 
     for workflow in config["workflows"]:
         if "args" in workflow and "participating_clients" in workflow["args"]:
@@ -491,8 +489,8 @@ def configure_server(
         if "args" in workflow and "ignore_result_error" in workflow["args"]:
             workflow["args"]["ignore_result_error"] = ignore_result_error
         # Recipe-generated templates (standard) carry LITERAL num_rounds/min_clients
-        # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}" /
-        # "{min_clients}" placeholders, so the top-level keys set above never reach the workflow.
+        # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}"
+        # placeholder, so the top-level key set above never reaches the workflow.
         # Override them directly or every deployed client_api job silently runs the template
         # defaults: 3 rounds no matter what GLOBAL_ROUNDS asks for, and min_clients=1 — which lets
         # ScatterAndGather close every round on the first (fastest) trust's update, silently
@@ -504,11 +502,7 @@ def configure_server(
             and not isinstance(workflow["args"]["num_rounds"], str)
         ):
             workflow["args"]["num_rounds"] = global_rounds
-        if (
-            "args" in workflow
-            and "min_clients" in workflow["args"]
-            and not isinstance(workflow["args"]["min_clients"], str)
-        ):
+        if "args" in workflow and "min_clients" in workflow["args"]:
             workflow["args"]["min_clients"] = len(trusts)
 
     for component in config["components"]:

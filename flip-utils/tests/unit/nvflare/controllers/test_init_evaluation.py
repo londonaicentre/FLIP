@@ -26,7 +26,6 @@ class TestInitEvaluation:
         controller = InitEvaluation(model_id=model_id)
         assert controller._model_id_fallback == model_id
         assert controller._model_id is None
-        assert controller._min_clients == 1
 
     def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
         """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
@@ -36,19 +35,6 @@ class TestInitEvaluation:
         fl_ctx.get_prop.return_value = None
         result = controller._resolve_model_id(fl_ctx)
         assert result == model_id
-
-    def test_init_with_min_clients(self):
-        """Test initialization with custom min_clients"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitEvaluation(model_id=model_id, min_clients=3)
-        assert controller._min_clients == 3
-
-    def test_init_with_invalid_min_clients_raises_error(self):
-        """Test initialization with invalid min_clients raises ValueError"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        mock_flip = MagicMock()
-        with pytest.raises(ValueError, match="Invalid number of minimum clients"):
-            InitEvaluation(model_id=model_id, min_clients=0, flip=mock_flip)
 
     def test_init_with_negative_cleanup_timeout_raises_error(self):
         """Test initialization with negative cleanup_timeout raises ValueError"""
@@ -100,7 +86,7 @@ class TestInitEvaluation:
     def test_control_flow_success(self, mock_isfile, mock_open, mock_json_load, mock_task):
         """Test successful control_flow"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitEvaluation(model_id=model_id, min_clients=1)
+        controller = InitEvaluation(model_id=model_id)
         controller.log_info = MagicMock()
         controller.fire_event = MagicMock()
         controller.broadcast_and_wait = MagicMock()
@@ -119,6 +105,8 @@ class TestInitEvaluation:
 
         controller.fire_event.assert_called_with(FlipEvents.TASK_INITIATED, fl_ctx)
         controller.broadcast_and_wait.assert_called_once()
+        # The cleanup must reach every client, not just the first to reply.
+        assert controller.broadcast_and_wait.call_args.kwargs["min_responses"] == 0
 
     @patch("flip.nvflare.controllers.init_evaluation.Task")
     @patch("flip.nvflare.controllers.init_evaluation.json.load")
@@ -127,7 +115,7 @@ class TestInitEvaluation:
     def test_control_flow_with_abort_signal(self, mock_isfile, mock_open, mock_json_load, mock_task):
         """Test control_flow with abort signal"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = InitEvaluation(model_id=model_id, min_clients=1)
+        controller = InitEvaluation(model_id=model_id)
         controller.log_info = MagicMock()
         controller.fire_event = MagicMock()
         controller.broadcast_and_wait = MagicMock()

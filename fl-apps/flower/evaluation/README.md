@@ -51,7 +51,9 @@ run** and reports aggregate + per-client metrics natively through `FedAvg`.
 `client_name`, then delegates to `FlipFedAvg` for the actual weighted aggregation and Central Hub
 forwarding (status, per-client metrics/exceptions, round events). There is no metric declaration or
 validation anywhere in this template — whatever `client_app.py` returns in its `MetricRecord` is
-what gets aggregated and reported.
+what gets aggregated and reported. Each client's metrics show on the model page against its trust,
+upper-cased, as one point at round 1; the client must name itself with `client_name` (or `site`) in
+the reply's `config` record, or its metrics are dropped.
 
 ## What does the user upload?
 

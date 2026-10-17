@@ -228,12 +228,12 @@ fl-server-to-hub authentication.
 
 #### Updating an existing checkout
 
-Three changes affect checkouts created before them. None is picked up automatically, because
+These changes affect checkouts created before them. None is picked up automatically, because
 `.env.development` and the trust kit files are gitignored and never rewritten for you.
 
 | What changed | What to do |
 | --- | --- |
-| `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
+| `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 | `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on NVFLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
@@ -246,7 +246,7 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
-| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave the placeholder for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
+| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave it commented out for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
 | XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` before the first `make up`, and again after a pull that changes `trust/xnat/artifacts.manifest`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
@@ -740,7 +740,7 @@ Two trees sit outside any service and have their own home. `fl-tutorials/tests/`
 
 `flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
-CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `flip-api/tests/local_auth_smoke.py` (sign in as the seeded admin) and `flip-api/tests/local_storage_smoke.py` (a model file through the store: presigned upload, scan promotion, presigned download, delete — FLIP#1291).
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `flip-api/tests/local_auth_smoke.py` (sign in as the seeded admin) and `flip-api/tests/local_storage_smoke.py` (a model file through the store: presigned upload, scan promotion, presigned download, delete — FLIP#1291 — then eight presigned POSTs of a 19 MB model-sized file, FLIP#1534).
 
 ##### flip-api: database migrations (Alembic)
 
@@ -997,9 +997,9 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
   `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
   copies the AWS README embeds.
 - It needs **network access to huggingface.co** (and `*.hf.co`). The user-guide GIFs are not tracked in git
-  (FLIP#1236): `conf.py` fetches the version pinned in `docs/.gifs_version` from the public dataset
-  `aicentreflip/docs-gifs` into the gitignored `docs/source/assets/generated/gifs/`, verifying every file
-  against the published manifest, and fails loudly if it cannot. A repeat build makes no network request.
+  (FLIP#1236): `conf.py` fetches them from the public dataset `aicentreflip/docs-gifs` into the gitignored
+  `docs/source/assets/generated/gifs/`, verifying every file against the published manifest, and fails loudly
+  if it cannot. A repeat build downloads only what changed.
   `FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs` builds text-only offline (the user-guide pages then warn
   about their missing images). See "Documentation GIFs" below.
 
@@ -1014,22 +1014,24 @@ run was 95% of a clone). Instead:
 - `.github/workflows/regenerate_docs_gifs.yml` runs on every push to `develop` that touches `flip-ui/src/**`,
   the Cypress docs harness (`flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`,
   `scripts/videos-to-gifs.sh`) or the workflow itself, or by hand via *Run workflow*: its `record` job mints
-  the version tag, records the demo specs under `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and
-  converts each video to `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its
-  `publish` job — **`develop` only**; a dispatch from a branch records without publishing — publishes that
-  directory to the public Hugging Face dataset
-  [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one commit and one
-  tag** `YYYYMMDDTHHMMSSZ-<sha7>` (`docs/scripts/publish_docs_gifs.py`), verifies the tag resolves
-  anonymously, and opens a PR whose only diff is the pin, `docs/.gifs_version`. A later run opens a fresh PR
-  and closes the superseded one.
-- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches the pinned tag at build time
-  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`) — see "Building the documentation".
-- **Review the pin PR in its ReadTheDocs preview** (the `docs/readthedocs.org:londonaicentreflip` check):
-  RTD builds the PR with the new pin, so the pages show the recordings in context. Re-recording is nondeterministic (frame
-  timing plus the animated demo cursor), so every GIF is new bytes even where the UI didn't change — merge if
-  the genuinely-changed clips look right, otherwise close.
-- **Dataset tags are never moved or deleted**, so `stable` and every historical docs version keep resolving the
-  tag they were built with. A re-recording is always a new tag.
+  the version `YYYYMMDDTHHMMSSZ-<sha7>`, records the demo specs under
+  `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and converts each video to
+  `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its `publish` job — **`develop`
+  only**; a dispatch from a branch records without publishing — publishes that directory to the public Hugging
+  Face dataset [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one
+  commit on its `main`** (`docs/scripts/publish_docs_gifs.py`) and checks it resolves anonymously. Nothing
+  comes back to git and nothing needs approving (FLIP#1547).
+- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches at build time
+  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`, see "Building the documentation"):
+  `latest`, PR previews and local builds get the newest recording; a release version gets the set it shipped.
+- **Each release freezes its GIFs**: `release.yml`'s `docs-gifs` job tags the newest recording the release
+  contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
+  that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
+- **GIFs CI cannot record** (one that needs a live trust, say) are recorded by hand and published to the
+  dataset branch of the PR that documents them, which that PR's ReadTheDocs preview then shows:
+  `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"` (needs
+  `hf auth login` with write access to the dataset), then rebuild the preview. Only CI writes the dataset's
+  `main`; delete `pr-<N>` once the PR closes.
 
 ### Adding a new GIF
 
@@ -1041,8 +1043,8 @@ Authoring is two-step, because a PR cannot ship the GIF itself:
    figure `.. figure:: ../assets/generated/gifs/<category>/<name>.gif` in the rst. `make -C docs test` checks
    the two agree. Until the GIF is published, the docs build warns "image file not readable" for that one
    figure — expected, and deliberately not fatal.
-2. Once the PR merges to `develop`, the workflow records and publishes everything and opens the pin PR;
-   merging that makes the new figure render.
+2. Once the PR merges to `develop`, the workflow records and publishes everything, and the next `latest`
+   build renders the new figure.
 
 ### Previewing locally
 

@@ -30,45 +30,31 @@ class InitTraining(Controller):
     def __init__(
         self,
         model_id: str = "",
-        min_clients: int = 1,
         flip: FLIPBase = FLIP(),
         cleanup_timeout: int = 600,
     ) -> None:
         """The controller that is executed pre-training and is a part of the FLIP training model
 
         The InitTraining workflow sends a request to the Central Hub, stating that training has initiated
-        and executes the client cleanup task.
+        and executes the client cleanup task on every participating client.
 
         Args:
             model_id (str, optional): ID of the model that the training is being performed under. When omitted
                 the ID is resolved lazily from the app's config.json at first use (``get_flip_model_id``).
-            min_clients (int, optional): Minimum number of clients that must respond to the cleanup task.
-                Defaults to 1; on the platform fl-api sets it to the participating-trust count for every job
-                (``config["min_clients"] = len(trusts)`` in ``prepare_config.py``), so it is never a
-                deployment-wide setting.
             flip (FLIPBase, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
             cleanup_timeout (int, optional): Timeout for image cleanup, defaults to 600 seconds (10 minutes)
 
         Raises:
-           ValueError:
-            - when the minimum number of clients specified is less than 1
-            - when cleanup_timeout is less the 0
+           ValueError: when cleanup_timeout is less than 0
         """
 
         super().__init__()
-
-        if min_clients < 1:
-            raise ValueError(
-                f"Invalid number of minimum clients specified. {min_clients} is less than 1, "
-                "which is the minimum number for a successful aggregation"
-            )
 
         if cleanup_timeout < 0:
             raise ValueError("cleanup_timeout must be greater than or equal to 0.")
 
         self._model_id_fallback = model_id
         self._model_id: str | None = None
-        self._min_clients = min_clients
         self.flip = flip
         self._cleanup_timeout = cleanup_timeout
 
@@ -98,9 +84,11 @@ class InitTraining(Controller):
                 result_received_cb=self._process_cleanup_result,
             )
 
+            # min_responses=0 waits for every client: one that has not fetched the task by the first reply
+            # would otherwise never receive it and start training on the previous job's images.
             self.broadcast_and_wait(
                 task=cleanup_task,
-                min_responses=self._min_clients,
+                min_responses=0,
                 wait_time_after_min_received=0,
                 fl_ctx=fl_ctx,
                 abort_signal=abort_signal,

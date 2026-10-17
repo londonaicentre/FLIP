@@ -211,15 +211,15 @@ Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStac
 
 ### Keycloak-touching tests
 
-`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve. Separately, `.github/workflows/local_auth_smoke.yml` boots flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `tests/local_auth_smoke.py` (sign in as the seeded admin) and `tests/local_storage_smoke.py` (a model file through the store, FLIP#1291) — the CI proof that the hub starts, authenticates and stores files without AWS.
+`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve. Separately, `.github/workflows/local_auth_smoke.yml` boots flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `tests/local_auth_smoke.py` (sign in as the seeded admin) and `tests/local_storage_smoke.py` (a model file through the store, FLIP#1291, plus repeated model-sized presigned POSTs, FLIP#1534) — the CI proof that the hub starts, authenticates and stores files without AWS.
 
 ### Demo tooling (live stack)
 
 Three developer utilities drive the **running dev stack** end to end (none run in CI):
 
 - `tests/demo_video.py` (`make demo-video` from the repo root, `make demo_video` here) — records the scripted
-  end-to-end demo video: runs the six Cypress segments in `flip-ui/test/cypress/demo/` one Dockerised run at a
-  time, performs the slow waits (cohort responses, imaging import, FL training) off-camera by reusing
+  end-to-end demo video: plays the six segments in `tests/demo_segments.py` in one Playwright browser,
+  performs the slow waits (cohort responses, imaging import, FL training) off-camera by reusing
   `tests/e2e_smoke.py`'s wait functions, then assembles one mp4. Resumable via `--project-id` /
   `--from-segment`; `--video-scale` controls capture resolution (default 3 → 3840x2400).
 - `tests/seed_demo_projects.py` (`make seed_demo_projects`) — seeds a curated catalogue of radiology projects in

@@ -49,7 +49,7 @@ from imaging_api.services.projects import (
     get_experiments,
 )
 from imaging_api.utils.auth import get_xnat_auth_headers
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
 # FLIP's XNAT projects carry their hub project id, a UUID, as secondary_ID (to_create_project).
 HUB_PROJECT_ID = re.compile(r"^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
@@ -86,7 +86,7 @@ def triggers_by_project(headers: dict[str, str]) -> dict[str, list[dict[str, Any
     Raises:
         Exception: If XNAT does not answer the listing with 200, or answers null (the Event Service is off).
     """
-    response = requests.get(xnat_url("xapi", "events", "subscriptions"), headers=headers)
+    response = requests.get(xnat_url("xapi", "events", "subscriptions"), headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     if response.status_code != 200:
         raise Exception(
             f"Error: listing XNAT event subscriptions failed: {response.status_code} - {_bounded_body(response.text)}"
@@ -160,7 +160,11 @@ def session_scans(experiment_id: str, headers: dict[str, str]) -> dict[str, set[
     Raises:
         Exception: If XNAT does not answer with 200.
     """
-    response = requests.get(xnat_url("data", "experiments", experiment_id, query={"format": "json"}), headers=headers)
+    response = requests.get(
+        xnat_url("data", "experiments", experiment_id, query={"format": "json"}),
+        headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
+    )
     if response.status_code != 200:
         raise Exception(
             f"reading XNAT session {experiment_id!r} failed: {response.status_code} - {_bounded_body(response.text)}"
@@ -219,7 +223,9 @@ def containers_by_scan(project_id: str, headers: dict[str, str]) -> dict[str, li
     Raises:
         Exception: If XNAT does not answer with 200.
     """
-    response = requests.get(xnat_url("xapi", "projects", project_id, "containers"), headers=headers)
+    response = requests.get(
+        xnat_url("xapi", "projects", project_id, "containers"), headers=headers, timeout=XNAT_REQUEST_TIMEOUT
+    )
     if response.status_code != 200:
         raise Exception(
             f"listing the containers of XNAT project '{project_id}' failed: {response.status_code} - "
@@ -264,6 +270,7 @@ def bulk_launch(
         ),
         headers=headers,
         json={DCM2NIIX_ROOT_ELEMENT: json.dumps([scan.uri for scan in scans])},
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code != 200:
         raise Exception(

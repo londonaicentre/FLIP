@@ -27,6 +27,12 @@ export enum FileUploadStatus {
     INFECTED = "INFECTED",
 }
 
+// A file this model's backend + job type requires; no status means it has not been uploaded.
+export interface IRequiredFile {
+    name: string;
+    status?: FileUploadStatus;
+}
+
 // One Bandit finding for a .py upload (#877). Advisory only — never changes
 // FileUploadStatus, so a file with findings can still be COMPLETED.
 export interface BanditFinding {

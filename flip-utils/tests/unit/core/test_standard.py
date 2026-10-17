@@ -140,8 +140,8 @@ class TestFLIPStandardDevUpdateStatus:
 
     def test_update_status_runs_without_error_in_dev_mode(self, flip_dev):
         """update_status should run without error in dev mode (no-op)."""
-        # Should not raise any exception - it's a no-op in dev mode
-        flip_dev.update_status(model_id="model-123", new_model_status=ModelStatus.RUNNING)
+        # Should not raise any exception - it's a no-op in dev mode, and reports it as accepted
+        assert flip_dev.update_status(model_id="model-123", new_model_status=ModelStatus.RUNNING) is True
 
 
 class TestFLIPStandardDevSendHandledException:
@@ -575,6 +575,36 @@ class TestFLIPStandardProdUpdateStatus:
         """update_status should reject invalid model IDs."""
         with pytest.raises(ValueError, match="Invalid model ID"):
             flip_prod.update_status("model-123", ModelStatus.RUNNING)
+
+    @pytest.mark.parametrize(
+        ("put", "accepted"),
+        [
+            ({"return_value": Mock(status_code=200, text="OK")}, True),
+            (
+                {
+                    "return_value": Mock(
+                        status_code=500,
+                        text="boom",
+                        raise_for_status=Mock(side_effect=HTTPError(response=Mock(status_code=500))),
+                    )
+                },
+                False,
+            ),
+            ({"side_effect": ConnectionError("hub unreachable")}, False),
+        ],
+        ids=["accepted", "http-error", "unreachable"],
+    )
+    def test_update_status_says_whether_the_hub_accepted_it(self, flip_prod, put, accepted):
+        """A failed update is logged, not raised, so a caller that cannot lose it needs the answer to retry on."""
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.put", **put),
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"  # pragma: allowlist secret
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"  # pragma: allowlist secret
+
+            assert flip_prod.update_status("550e8400-e29b-41d4-a716-446655440000", ModelStatus.ERROR) is accepted
 
 
 class TestFLIPStandardProdSendHandledException:

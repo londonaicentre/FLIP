@@ -79,6 +79,9 @@ The ``flip`` package is organized into logical modules:
    - ``metrics.py`` — Metrics collection and reporting
    - ``site_policy.py`` — Renders the trust's site privacy policy at fl-client start
      (``python -m flip.nvflare.site_policy``)
+   - ``server_site_config.py`` — Registers FLIP's server site components at fl-server start
+     (``python -m flip.nvflare.server_site_config``), among them ``JobSchedulingReporter``, which
+     relays NVFLARE's scheduling verdict to the hub
 
 ``flip.flower``
    Flower-specific helpers:
