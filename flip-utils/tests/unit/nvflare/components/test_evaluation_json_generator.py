@@ -23,7 +23,7 @@ from nvflare.apis.shareable import make_reply
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 
-from flip.constants import PTConstants
+from flip.constants import FlipMetaKey, PTConstants
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator as FlipValidationJsonGenerator
 
@@ -56,9 +56,10 @@ class TestEvaluationJsonGenerator:
         self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
     @staticmethod
-    def _metrics(**metrics):
-        """Build the shareable a client returns on a successful validate task."""
-        return DXO(data_kind=DataKind.METRICS, data=dict(metrics)).to_shareable()
+    def _metrics(metrics=None, supplementary=None, /, **kwargs):
+        """Build the shareable a client returns on a successful validate task, as ``FLModelUtils.to_shareable`` does."""
+        meta = {} if supplementary is None else {FlipMetaKey.SUPPLEMENTARY_RESULTS: supplementary}
+        return DXO(data_kind=DataKind.METRICS, data={**(metrics or {}), **kwargs}, meta=meta).to_shareable()
 
     def test_init_default_values(self):
         """Test initialization with default values"""
@@ -366,3 +367,96 @@ class TestEvaluationJsonGenerator:
         self._receive("Trust_1", self._metrics(**{"model_a": {"dice": 0.7}}), model_owner=None)
 
         assert self.generator._eval_results == {"Trust_1": {"model_a": {"dice": 0.7}}}
+
+    # --- FLIP#1526: the same results, flattened for the Central Hub ---
+
+    def test_hub_metrics_for_one_model_are_the_bare_metric_names(self):
+        self._receive("Trust_1", self._metrics(mean_dice=0.9, mean_iou=0.8), model_owner="SRV_model")
+        self._receive("Trust_2", self._metrics(mean_dice=0.7), model_owner="SRV_model")
+
+        assert self.generator.hub_metrics() == {
+            "Trust_1": {"MEAN_DICE": 0.9, "MEAN_IOU": 0.8},
+            "Trust_2": {"MEAN_DICE": 0.7},
+        }
+
+    def test_hub_metrics_prefix_the_model_name_when_a_client_evaluated_several(self):
+        self._receive("Trust_1", self._metrics(dice=0.9), model_owner="SRV_model_a")
+        self._receive("Trust_1", self._metrics(dice=0.8), model_owner="SRV_model_b")
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"MODEL_A/DICE": 0.9, "MODEL_B/DICE": 0.8}}
+
+    def test_hub_metrics_label_a_model_the_same_at_every_client_when_one_task_failed(self):
+        self._receive("Trust_1", self._metrics(dice=0.9), model_owner="SRV_model_a")
+        self._receive("Trust_1", self._metrics(dice=0.8), model_owner="SRV_model_b")
+        self._receive("Trust_2", self._metrics(dice=0.7), model_owner="SRV_model_a")
+        self._receive("Trust_2", make_reply(ReturnCode.TASK_ABORTED), model_owner="SRV_model_b")
+
+        assert self.generator.hub_metrics()["Trust_2"] == {"MODEL_A/DICE": 0.7}
+
+    def test_hub_metrics_prefix_a_metric_that_shares_its_models_name(self):
+        self._receive("Trust_1", self._metrics(dice=0.9), model_owner="SRV_dice")
+        self._receive("Trust_1", self._metrics(dice=0.8), model_owner="SRV_b")
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"DICE/DICE": 0.9, "B/DICE": 0.8}}
+
+    def test_hub_metrics_take_a_reply_already_keyed_by_its_model_as_it_is(self):
+        """Ark+ multimodel: ``{model_name: {auroc_<lesion>: ...}}`` under owner ``SRV_<model_name>``."""
+        self._receive("Trust_1", self._metrics(arkplus={"auroc_Effusion": 0.81}), model_owner="SRV_arkplus")
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"ARKPLUS/AUROC_EFFUSION": 0.81}}
+
+    def test_supplementary_results_reach_the_results_file_but_not_the_hub(self):
+        """``meta[SUPPLEMENTARY_RESULTS]`` merges back into the reply's entry; only ``metrics`` are plotted."""
+        reply = {"m_a": {"auroc_Effusion": 0.8}}
+        extra = {"m_a": {"delong_p_values": {"Effusion": {"m_b": 0.04}}}}
+        self._receive("Trust_1", self._metrics(reply, extra), model_owner="SRV_m_a")
+
+        assert self.generator._eval_results == {
+            "Trust_1": {"SRV_m_a": {"m_a": {"auroc_Effusion": 0.8, "delong_p_values": {"Effusion": {"m_b": 0.04}}}}}
+        }
+        assert self.generator.hub_metrics() == {"Trust_1": {"M_A/AUROC_EFFUSION": 0.8}}
+
+    def test_cumulative_multimodel_replies_keep_the_documented_results_and_plot_each_auroc_once(self):
+        """Ark+ multimodel: each reply repeats every model scored so far; the last one carries the DeLong map."""
+        p_a, p_b = {"Effusion": {"m_a": 1.0, "m_b": 0.04}}, {"Effusion": {"m_a": 0.04, "m_b": 1.0}}
+        last = {"m_a": {"auroc_Effusion": 0.8}, "m_b": {"auroc_Effusion": 0.7}}
+        extra = {"m_a": {"delong_p_values": p_a}, "m_b": {"delong_p_values": p_b}}
+        self._receive("Trust_1", self._metrics({"m_a": {"auroc_Effusion": 0.8}}), model_owner="SRV_m_a")
+        self._receive("Trust_1", self._metrics(last, extra), model_owner="SRV_m_b")
+
+        assert self.generator._eval_results["Trust_1"]["SRV_m_b"] == {
+            "m_a": {"auroc_Effusion": 0.8, "delong_p_values": p_a},
+            "m_b": {"auroc_Effusion": 0.7, "delong_p_values": p_b},
+        }
+        assert self.generator.hub_metrics() == {"Trust_1": {"M_A/AUROC_EFFUSION": 0.8, "M_B/AUROC_EFFUSION": 0.7}}
+
+    def test_hub_metrics_omit_undefined_and_non_scalar_values(self):
+        """NaN is undefined, not 0; a list could hold per-sample values; neither is sent."""
+        self._receive(
+            "Trust_1",
+            self._metrics(
+                auroc=float("nan"), big=float("inf"), flag=True, per_sample=[0.1, 0.2], note="x", n=np.float32(0.5)
+            ),
+            model_owner="SRV_model",
+        )
+
+        self.generator.logger = Mock()
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"N": 0.5}}
+        self.generator.logger.warning.assert_called_once_with(
+            "Not sent to the hub for Trust_1 (not a finite number): ['AUROC', 'BIG', 'FLAG', 'NOTE', 'PER_SAMPLE']"
+        )
+
+    def test_hub_metrics_leave_out_failed_tasks_and_clear_on_start_run(self):
+        self._receive("Trust_1", make_reply(ReturnCode.TASK_ABORTED), model_owner="SRV_model")
+        assert self.generator.hub_metrics() == {}
+
+        self._receive("Trust_2", self._metrics(dice=0.9), model_owner="SRV_model")
+        self.generator.handle_evaluation_events(EventType.START_RUN, self.fl_ctx)
+
+        assert self.generator.hub_metrics() == {}
+
+    def test_hub_metrics_without_a_model_owner_flatten_the_reply(self):
+        self._receive("Trust_1", self._metrics(**{"model_a": {"dice": 0.7}}), model_owner=None)
+
+        assert self.generator.hub_metrics() == {"Trust_1": {"MODEL_A/DICE": 0.7}}

@@ -85,7 +85,7 @@ class ServerEventHandler(FLComponent):
     def _relay_round_event(self, fl_ctx: FLContext, event: FLLogEvent) -> None:
         """Relay a stock round boundary to the hub as a typed fact.
 
-        Facts only — display text is composed hub-side. NVFLARE's
+        Facts only — display text is composed hub-side. FLARE's
         ``CURRENT_ROUND`` prop is 0-based; the wire contract is 1-based.
         ``ROUND_AGGREGATED`` counts come from the sticky props seeded here at
         round start ("0 of m") and overwritten by the FLIP ScatterAndGather
@@ -155,6 +155,30 @@ class ServerEventHandler(FLComponent):
         """
         generator = self.validation_json_generator
         return isinstance(generator, EvaluationJsonGenerator) and generator.all_tasks_failed()
+
+    def _forward_evaluation_metrics(self, fl_ctx: FLContext, generator: EvaluationJsonGenerator) -> None:
+        """Send each client's final evaluation metrics to the Central Hub (FLIP#1526).
+
+        Evaluators return their aggregate metrics in the validate reply instead of streaming them, so
+        the server forwards them here, the way Flower's ``FlipFedAvg`` forwards each reply's metrics.
+        They are a single point, recorded at round 0. A failure is logged and never stops END_RUN.
+        """
+        try:
+            model_id = self._resolve_model_id(fl_ctx)
+            hub_metrics = generator.hub_metrics()
+        except Exception:
+            self.log_exception(fl_ctx, "Could not collect evaluation metrics for the hub", fire_event=False)
+            return
+
+        for client_name, labels in hub_metrics.items():
+            for label, value in labels.items():
+                try:
+                    # send_metrics validates its payload before its own try block, so guard here.
+                    self.flip.send_metrics(
+                        client_name=client_name, model_id=model_id, label=label, value=value, global_round=0
+                    )
+                except Exception:
+                    self.log_exception(fl_ctx, f"Failed to forward evaluation metric {label}", fire_event=False)
 
     def _terminal_status(self, default: ModelStatus) -> ModelStatus:
         """Resolve the run's terminal status, most salient cause first.
@@ -249,6 +273,10 @@ class ServerEventHandler(FLComponent):
                 final_status = self._terminal_status(ModelStatus.RESULTS_UPLOAD_FAILED)
             except Exception:
                 final_status = ModelStatus.ERROR
+
+            # After the upload, so a slow hub delays only the plots, and before the terminal status.
+            if isinstance(validation_json_generator, EvaluationJsonGenerator):
+                self._forward_evaluation_metrics(fl_ctx, validation_json_generator)
 
             self.final_status = final_status
             self._update_status(fl_ctx, final_status)

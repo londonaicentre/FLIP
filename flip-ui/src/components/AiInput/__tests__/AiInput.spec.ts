@@ -15,8 +15,12 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { expect, it, vi } from "vitest";
+import { Form } from "vee-validate";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { defineComponent, h } from "vue";
+import { object } from "yup";
 
+import { emailValidation } from "@/utils/forms/validation";
 import * as helpers from "@/utils/helpers";
 
 import AiInput from "../AiInput.vue";
@@ -75,5 +79,49 @@ describe("Ai Input", () => {
         });
 
         expect(comp.find("input").attributes("autocomplete")).toBe("current-password");
+    });
+
+    describe("validation triggers", () => {
+        const schema = object({ email: emailValidation });
+        const emailInput = () => h(AiInput, { name: "email" });
+        const EmailForm = defineComponent(() => () => h(Form, { validationSchema: schema }, emailInput));
+
+        // vee-validate debounces form-schema validation, so let its timer run.
+        const settle = () => vi.advanceTimersByTimeAsync(50);
+
+        beforeEach(() => {
+            vi.useFakeTimers();
+        });
+
+        afterEach(() => {
+            vi.useRealTimers();
+        });
+
+        it("shows no error while typing, then validates on blur", async () => {
+            const comp = mount(EmailForm);
+            const input = comp.find("input");
+
+            await input.setValue("alex@");
+            await settle();
+            expect(comp.find(".error_message").exists()).toBe(false);
+
+            await input.trigger("blur");
+            await settle();
+            expect(comp.find(".error_message").text()).toBe("Please enter a valid email address");
+        });
+
+        it("clears a shown error as soon as the value becomes valid", async () => {
+            const comp = mount(EmailForm);
+            const input = comp.find("input");
+
+            await input.setValue("alex@");
+            await input.trigger("blur");
+            await settle();
+            expect(comp.find(".error_message").exists()).toBe(true);
+
+            await input.setValue("alex@example.com");
+            await settle();
+            expect(comp.find(".error_message").exists()).toBe(false);
+        });
     });
 });

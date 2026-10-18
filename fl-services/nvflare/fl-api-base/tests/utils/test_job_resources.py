@@ -12,7 +12,7 @@
 
 """What a job needs at each site, from its own meta.json (FLIP#70).
 
-The job states its need; the site's GPUResourceManager states what it has; NVFLARE's scheduler
+The job states its need; the site's GPUResourceManager states what it has; FLARE's scheduler
 decides. Nothing here ever lowers a request to fit a site.
 """
 
@@ -258,7 +258,7 @@ def test_zero_gpus_leaves_the_count_out_but_keeps_the_jobs_cpus():
     assert nvflare_resource_spec(JobResources(num_gpus=0), declared) == {"@default": {"num_of_cpus": 4}}
 
 
-# ── NVFLARE agrees ──────────────────────────────────────────────────────────────────
+# ── FLARE agrees ──────────────────────────────────────────────────────────────────
 
 
 def _meta(resources: JobResources, declared: PortableResources | None = None) -> dict:
@@ -309,7 +309,7 @@ def test_a_sites_gpu_manager_admits_exactly_what_it_can_provide(site_gpus, site_
 
 
 def test_a_container_launcher_turns_the_default_block_into_each_sites_request():
-    """What NVFLARE's Docker and Kubernetes launchers read for a site, e.g. a GPU job pod (FLIP#1428)."""
+    """What FLARE's Docker and Kubernetes launchers read for a site, e.g. a GPU job pod (FLIP#1428)."""
     meta = _meta(JobResources(num_gpus=1), PortableResources(num_of_cpus=8, memory="32Gi"))
 
     assert get_portable_resource_spec(meta, "Trust_1") == {"num_of_gpus": 1, "num_of_cpus": 8, "memory": "32Gi"}

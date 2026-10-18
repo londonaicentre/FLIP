@@ -15,7 +15,7 @@ APP_DIR := $(CURDIR)
 # flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai. The
 # checkpoint-preprocessing target instead uses the tutorial-local `uv run` (this dir's pyproject.toml:
-# torch + timm, no NVFLARE), matching the legacy tutorial.
+# torch + timm, no FLARE), matching the legacy tutorial.
 REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
 FLIP_UTILS := $(REPO_ROOT)/flip-utils
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
@@ -136,7 +136,7 @@ dataset-figure:
 	@uv run --extra docs python "$(APP_DIR)/docs/make_dataset_figure.py" --data-root "$(DATA_ROOT)"
 
 # --- Export job config (no GPU needed) ---
-# Builds a complete NVFLARE job under ./fl_job/flip_fedavg/ including meta.json, app/config/, and
+# Builds a complete FLARE job under ./fl_job/flip_fedavg/ including meta.json, app/config/, and
 # app/custom/ (bundled flip/ package + staged app_files/; the checkpoint is staged to the server only).
 export: prepare-checkpoint
 	$(UV_RUN) python job.py \
@@ -146,7 +146,7 @@ export: prepare-checkpoint
 		--num_rounds $(NUM_ROUNDS)
 
 # --- SimEnv local simulation (requires GPU + data + checkpoint) ---
-# Runs the job under the NVFLARE simulator. site-1/site-2 train on distinct data: the trainer reads
+# Runs the job under the FLARE simulator. site-1/site-2 train on distinct data: the trainer reads
 # SITE{1,2}_* by flare.get_site_name() (see app_files/data_utils.py). DEV_*/SITE{1,2}_* are already
 # resolved to absolute paths above so the simulator's client workers (which run from the workspace dir,
 # not here) find the LOCAL_DEV dataset. FLIP-specific values come from FLIP_PROJECT_ID / FLIP_QUERY.

@@ -9,10 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recipe describing a FLIP FedAvg job that drives client trainers via the NVFLARE Client API.
+"""Recipe describing a FLIP FedAvg job that drives client trainers via the FLARE Client API.
 
 The recipe is a thin :class:`Recipe` subclass that builds a :class:`FedJob` with the
-FLIP-specific server/client components. The same recipe object runs across all NVFLARE
+FLIP-specific server/client components. The same recipe object runs across all FLARE
 execution environments:
 
 .. code-block:: python
@@ -37,7 +37,7 @@ Production hand-off to the FLIP-API works through the same recipe via :meth:`exp
     recipe = FlipFedAvgRecipe(num_rounds=10, min_clients=3, train_script="trainer.py")
     recipe.export("/tmp/xray_job")
     # FLIP-API picks up the job folder, writes meta.json['custom_props']['model_id']
-    # with the real UUID, and submits to the NVFlare cluster.
+    # with the real UUID, and submits to the FLARE cluster.
 
 The FLIP components no longer take ``model_id`` at construction — they resolve it lazily
 from ``meta.json['custom_props']['model_id']`` via :func:`flip.nvflare.runtime.get_flip_model_id`
@@ -92,10 +92,10 @@ _DEV_MODEL_ID = "00000000-0000-0000-0000-000000000001"
 class PercentilePrivacy:
     """Percentile-based DP noise filter configuration.
 
-    Stock NVFLARE semantics (Shokri & Shmatikov "largest percentile to share"): components of the
+    Stock FLARE semantics (Shokri & Shmatikov "largest percentile to share"): components of the
     per-step weight diff with magnitude BELOW the ``percentile``-th percentile are zeroed (only the
     top ``100 - percentile`` % are shared), and the survivors are truncated to ``±gamma`` (absolute).
-    Defaults match stock NVFLARE (share top 90%, clip at 0.01). Do NOT raise ``percentile`` towards
+    Defaults match stock FLARE (share top 90%, clip at 0.01). Do NOT raise ``percentile`` towards
     95+ — that discards ~all of the update and stalls FedAvg convergence; with a frozen-backbone
     head-only update it silently resets the global head every round.
     """
@@ -106,7 +106,7 @@ class PercentilePrivacy:
 
 
 class FlipFedAvgRecipe(FlipRecipe):
-    """FLIP FedAvg recipe wired for the NVFLARE Client API.
+    """FLIP FedAvg recipe wired for the FLARE Client API.
 
     Head-only (frozen-backbone) aggregation is canonically driven in production by the fl-server's
     deploy-time injection from ``config.json``'s ``AGGREGATE_ONLY_REGEX`` (FLIP#730/#733), so the
@@ -120,21 +120,21 @@ class FlipFedAvgRecipe(FlipRecipe):
         train_script: Trainer script path. ``"trainer.py"`` is taken to mean
             ``"custom/trainer.py"`` inside the job; pass an explicit ``custom/`` prefix
             to override that convention.
-        train_args: Argument string for the trainer. NVFlare's TaskScriptRunner whitespace-splits
+        train_args: Argument string for the trainer. FLARE's TaskScriptRunner whitespace-splits
             this — any FLIP-API placeholder used here must substitute into a single token.
             The SQL query is plumbed via the client config's top-level ``query`` key instead.
         model_id: Real UUID for SimEnv/PocEnv runs. Written into ``meta.json['custom_props']``
             so FLIP components can resolve it lazily at first task. Production runs override
             this via the FLIP-API which writes the real model id into the same key.
         percentile_privacy: Configuration for the percentile-based DP noise filter.
-        heart_beat_timeout, validation_timeout, wait_time_after_min_received: NVFlare timing knobs.
+        heart_beat_timeout, validation_timeout, wait_time_after_min_received: FLARE timing knobs.
         project_id, query: Top-level keys on the client config (consumed by the FLIP-API
             placeholder substitution and read by the trainer at runtime).
         local_rounds: Top-level local_rounds key on the client config.
-        train_task_name, submit_model_task_name, evaluate_task_name: NVFlare task names. Client-model
+        train_task_name, submit_model_task_name, evaluate_task_name: FLARE task names. Client-model
             submission is disabled by default so post-training evaluation covers only the aggregated
             global model. Pass ``"submit_model"`` to opt into the full all-to-all matrix.
-        params_exchange_format, params_transfer_type: NVFlare param-exchange knobs.
+        params_exchange_format, params_transfer_type: FLARE param-exchange knobs.
         aggregate_only_regex: when set, wire the frozen-backbone head-only filters — KeepOnlyVars
             (client result filter, ordered BEFORE PercentilePrivacy), ReconstructFullModel (client data
             filter) and TrimBroadcastVars (server data filter) — so only params matching the regex are
@@ -235,7 +235,7 @@ class FlipFedAvgRecipe(FlipRecipe):
         return FullModelShareableGenerator()
 
     def _build_fed_job(self) -> FedJob:
-        """Construct the FedJob NVFLARE's Recipe uses for ``execute(env)``.
+        """Construct the FedJob FLARE's Recipe uses for ``execute(env)``.
 
         ``meta_props`` carries the FLIP runtime config (currently just ``model_id``) into the
         exported ``meta.json`` so the lazily-resolving components can find it.
@@ -256,7 +256,7 @@ class FlipFedAvgRecipe(FlipRecipe):
             id="persistor",
         )
         shareable_generator_id = job.to_server(self._make_shareable_generator(), id="shareable_generator")
-        # Stock NVFLARE semantics: the aggregator averages the clients' WEIGHT_DIFF updates directly
+        # Stock FLARE semantics: the aggregator averages the clients' WEIGHT_DIFF updates directly
         # (its stock default expected kind) and the shareable generator applies the average to the
         # global model — FedAvg adds it (FullModelShareableGenerator), FedOpt feeds it through the
         # server optimizer. Partial (frozen-backbone head-only) diffs are natively safe: keys absent
@@ -284,7 +284,7 @@ class FlipFedAvgRecipe(FlipRecipe):
             )
 
         # Server workflows: init → train → model evaluation → post-validation cleanup.
-        job.to_server(InitTraining(min_clients=self.min_clients))
+        job.to_server(InitTraining())
         job.to_server(
             ScatterAndGather(
                 min_clients=self.min_clients,
@@ -390,10 +390,10 @@ class FlipFedAvgRecipe(FlipRecipe):
         return job
 
     def export(self, job_dir: str | Path, **_kwargs: Any) -> None:
-        """Export the job using NVFLARE's standard FedJob layout.
+        """Export the job using FLARE's standard FedJob layout.
 
         Produces ``<job_dir>/<job_name>/{meta.json, app/config/, app/custom/}`` —
-        the same structure NVFLARE's admin client uploads to the cluster. The FLIP-API
+        the same structure FLARE's admin client uploads to the cluster. The FLIP-API
         consumes this directory, optionally rewrites ``meta.json['custom_props']`` with
         the real model_id at submit time, and forwards the job to the fl-server stack.
         """
@@ -404,7 +404,7 @@ class FlipFedAvgRecipe(FlipRecipe):
         """Emit ``project_id`` / ``query`` / ``local_rounds`` as top-level keys on the exported
         ``config_fed_client.json``.
 
-        These are not NVFLARE components, so they don't fall out of ``export_job`` — but the
+        These are not FLARE components, so they don't fall out of ``export_job`` — but the
         client contract expects them at the config top level: the trainer's
         ``--project_id {project_id}`` arg resolves the ``{project_id}`` reference against the
         top-level ``project_id`` key, and ``trainer.load_query()`` reads the top-level ``query``.

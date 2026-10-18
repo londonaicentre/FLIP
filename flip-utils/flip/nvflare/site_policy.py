@@ -10,11 +10,11 @@
 # limitations under the License.
 #
 
-"""Render the NVFLARE site privacy policy (``local/privacy.json``) from the trust's governance config.
+"""Render the FLARE site privacy policy (``local/privacy.json``) from the trust's governance config.
 
 Run by the fl-client at container start (``python -m flip.nvflare.site_policy /app/local/privacy.json``)
 so each trust can enforce its own update-privacy filter through its kit env file, independently of
-whatever ``task_result_filters`` the submitted job carries: NVFLARE applies site scope filters *before*
+whatever ``task_result_filters`` the submitted job carries: FLARE applies site scope filters *before*
 job filters and never lets a job opt out (``nvflare/apis/utils/task_utils.py::apply_filters``).
 
 Two sources, and a trust uses one of them (FLIP#1259):
@@ -30,17 +30,17 @@ Both set is an error. Letting either win let the document weaken the kit's filte
 of documentation said the document could only tighten it; two descriptions of one filter are refused,
 not ranked.
 
-The section is nested under the backend because ``percentile``/``gamma`` are NVFLARE's
+The section is nested under the backend because ``percentile``/``gamma`` are FLARE's
 ``PercentilePrivacy`` parameters; Flower's knobs (#852) will differ. ``[fl_privacy.flower]`` is
 refused until something on Flower enforces it, and ``--check --fl-backend flower`` fails a
 configuration that would be silently ignored there.
 
 The rendered document defines exactly one scope, set as ``default_scope`` — FLIP jobs never carry a
 ``scope`` meta key, so every job lands in it, and any other scope name is rejected at deploy time.
-The stock NVFLARE filter class is used deliberately: unlike FLIP's app-level subclass it has no
+The stock FLARE filter class is used deliberately: unlike FLIP's app-level subclass it has no
 ``off`` switch, so an app config cannot disable the site filter.
 
-Stdlib-only on purpose — it must run before NVFLARE starts and never fail on framework imports, and
+Stdlib-only on purpose — it must run before FLARE starts and never fail on framework imports, and
 ``check-governance`` runs it on the trust host with a bare interpreter. That constraint is why the
 governance document is TOML (stdlib ``tomllib``) rather than YAML.
 Validation is strict because stock ``PercentilePrivacy`` fails *open* (silently forwards the update
@@ -99,8 +99,8 @@ class SitePolicy:
     """A validated site privacy policy selection.
 
     Attributes:
-        percentile: Percentage threshold passed to NVFLARE's stock filter.
-        gamma: Maximum absolute update value passed to NVFLARE's stock filter.
+        percentile: Percentage threshold passed to FLARE's stock filter.
+        gamma: Maximum absolute update value passed to FLARE's stock filter.
     """
 
     percentile: float
@@ -396,7 +396,7 @@ def check_backend(env: Mapping[str, str], backend: str) -> None:
     """Refuses a site privacy configuration the trust's FL backend would not enforce.
 
     Raises:
-        SitePolicyError: If ``backend`` is not NVFLARE and either source configures a filter.
+        SitePolicyError: If ``backend`` is not FLARE and either source configures a filter.
     """
     if backend == _ENFORCING_BACKEND:
         return
@@ -409,7 +409,7 @@ def check_backend(env: Mapping[str, str], backend: str) -> None:
 
 
 def build_policy_json(policy: SitePolicy) -> dict:
-    """Builds the NVFLARE ``privacy.json`` document for a validated policy.
+    """Builds the FLARE ``privacy.json`` document for a validated policy.
 
     Exactly one scope, set as ``default_scope`` so scope-less FLIP jobs always land in it. The filter
     entry omits ``direction`` (client-side result filters default to ``out``) and the scope omits

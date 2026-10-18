@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args,
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args,
     so the SQL query (which can contain spaces) is plumbed via the top-level
     ``query`` key in ``config/config_fed_client.json`` rather than as a CLI flag.
     In dev/simulator mode this is ignored by ``flip.get_dataframe``.

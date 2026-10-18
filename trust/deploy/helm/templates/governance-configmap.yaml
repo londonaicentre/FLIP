@@ -23,7 +23,7 @@ data:
   # The trust's governance document (FLIP#1259) — the document itself, as the operator
   # supplied it. data-access-api reads it from a read-only mount at /app/governance.toml,
   # the filename the Compose stack mounts, so one document means the same thing on both
-  # deployment shapes. On NVFLARE the fl-client's governance-extract init container reads
+  # deployment shapes. On FLARE the fl-client's governance-extract init container reads
   # it too; the client container itself only ever sees its [fl_privacy] section.
   governance.toml: |
 {{ .Values.governance.document | indent 4 }}

@@ -37,7 +37,7 @@ by `PROD` (`true`/`stag` → `production`).
 | File | Role | When applied |
 | ---- | ---- | ------------ |
 | `compose_trust.<env>.yml` | **Base stack** — `trust-api`, `imaging-api`, `data-access-api`, `orthanc`, `omop-db`, plus the Loki/Alloy/Grafana observability trio | Always (`COMMON_COMPOSE_FILE`) |
-| `compose_trust.<env>.nvflare.yml` | FL client overlay for the NVFLARE backend | Always, backend-selected (`FL_BACKEND_COMPOSE_FILE`) |
+| `compose_trust.<env>.nvflare.yml` | FL client overlay for the FLARE backend | Always, backend-selected (`FL_BACKEND_COMPOSE_FILE`) |
 | `compose_trust.<env>.flower.yml` | FL client overlay for the Flower backend | Always, backend-selected |
 | `compose_trust.<env>.gpu.yml` | NVIDIA device reservation for the fl-client | Only when the kit sets `NUM_AVAILABLE_GPUS > 0` (`GPU_OVERRIDE`). `up-trust-ec2` applies it only when `TRUST_EC2_NUM_GPUS > 0` (a GPU EC2 host; see `deploy/providers/AWS/README.md` "GPU Trust EC2") — never from the kit's `NUM_AVAILABLE_GPUS` |
 | `compose_trust-1_override.yml` | Publishes the trust APIs on host ports | Dev only, and only for the trust holding FL slot `Trust_1` (`TRUST_OVERRIDE`) — the override binds one fixed port set, so exactly one trust can claim it |

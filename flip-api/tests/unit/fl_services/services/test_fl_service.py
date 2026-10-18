@@ -29,7 +29,7 @@ from flip_api.domain.interfaces.fl import (
     IServerStatus,
     IStartTrainingBody,
 )
-from flip_api.domain.schemas.status import ClientStatus, JobStatus
+from flip_api.domain.schemas.status import ClientStatus, FLJobStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT
@@ -277,7 +277,7 @@ def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_nvflare_still_raises(mock_get_status):
-    """NVFLARE backend: empty client statuses still raises ValueError."""
+    """FLARE backend: empty client statuses still raises ValueError."""
     mock_get_status.return_value = []
 
     with pytest.raises(ValueError, match="Unable to fetch client statuses"):
@@ -307,6 +307,7 @@ def test_start_training_with_config(
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
     fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS  # the job is still being prepared
 
     fl_service.start_training(
         model_id=model_id,
@@ -390,6 +391,41 @@ def test_start_training_skips_submit_when_job_deleted_during_upload(
     mock_submit.assert_not_called()
 
 
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
+def test_start_training_skips_submit_when_the_watchdog_completed_the_job(
+    mock_get_required,
+    mock_encrypt,
+    mock_upload,
+    mock_submit,
+    model_id,
+    fl_job_id,
+    fake_session,
+):
+    # The prepare outlived FL_JOB_PREPARE_TIMEOUT_MINUTES: the job watchdog (#727) set the model to ERROR, which
+    # marked the job COMPLETED and freed the net for the next job. A job that is no longer IN_PROGRESS must not
+    # reach the fl-server, or the failed model would train alongside the next one.
+    mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
+    mock_encrypt.return_value = "encrypted"
+    fake_session.get.return_value = FLJob(id=fl_job_id, model_id=model_id)  # no GPU override stored
+    fake_session.exec.return_value.one_or_none.side_effect = [JobStatus.IN_PROGRESS, JobStatus.COMPLETED]
+
+    with pytest.raises(JobAbortedError):
+        fl_service.start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=["client1"],
+            endpoint="endpoint",
+            bundle_urls=["url"],
+            session=fake_session,
+        )
+
+    mock_upload.assert_called_once()
+    mock_submit.assert_not_called()
+
+
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
@@ -448,7 +484,7 @@ def test_bundle_nvflare_application_multi_site_template(
 ):
     """A per-site ``app_site-N/`` folder beside ``app/`` is bundled and populated like ``app/``.
 
-    The allowlist walk keeps NVFLARE's multi-site layout (FLIP#1008 review): both folders are
+    The allowlist walk keeps FLARE's multi-site layout (FLIP#1008 review): both folders are
     mirrored from the local tree, and the researcher's files land in each folder's ``custom/``.
     """
     base_dir = mocked_settings.FL_APP_BASE_DIR
@@ -499,7 +535,7 @@ def test_bundle_nvflare_application_diverts_eval_checkpoint(
     mock_s3, mock_required, mock_verify, mock_is_valid, job_type, model_id, mocked_settings
 ):
     """Evaluation checkpoints (plain and pre-rename-alias job types) are copied once to a
-    server-only ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so NVFLARE's
+    server-only ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so FLARE's
     deploy_map never ships them to clients."""
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -1181,6 +1217,26 @@ def test_extract_current_job_data_not_found_returns_none(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_returns_a_job_still_waiting_to_start(mock_http_get):
+    # A job the backend has not started yet (FLARE waiting for a trust's resources) is aborted too. Left
+    # queued, it could still start later, or report to a model the user has since queued again (#1390).
+    mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
+
+    result = fl_service.extract_current_job_data("http://fl-api-endpoint", "job123")
+
+    assert result is not None
+    assert result.status == "PENDING"
+
+
+@pytest.mark.parametrize("status", ["FINISHED", "FAILED", "STOPPED"])
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_ignores_a_job_that_has_ended(mock_http_get, status):
+    mock_http_get.return_value = [{"job_id": "job123", "status": status}]
+
+    assert fl_service.extract_current_job_data("http://fl-api-endpoint", "job123") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_extract_current_job_data_multiple_found(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
@@ -1194,6 +1250,59 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
 
     with pytest.raises(ValueError, match="Multiple running jobs found"):
         extract_current_job_data(net_endpoint, fl_backend_job_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_parses_every_job(mock_http_get):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.return_value = [
+        {"job_id": "a", "status": "RUNNING"},
+        {"job_id": "b", "status": "FAILED"},
+    ]
+
+    jobs = list_backend_jobs("http://fl-api")
+
+    assert jobs is not None
+    assert [(j.job_id, j.status) for j in jobs] == [("a", FLJobStatus.RUNNING), ("b", FLJobStatus.FAILED)]
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        httpx.ConnectError("connection refused"),
+        httpx.HTTPStatusError(
+            "500 Internal Server Error",
+            request=httpx.Request("GET", "http://fl-api/list_jobs"),
+            response=httpx.Response(500),
+        ),
+    ],
+)
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_returns_none_when_the_fl_api_cannot_answer(mock_http_get, failure):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.side_effect = failure
+
+    assert list_backend_jobs("http://fl-api") is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Internal Server Error",
+        {"detail": "not a list"},
+        [{"job_id": "a", "status": "EXPLODED"}],
+    ],
+)
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_list_backend_jobs_returns_none_for_a_malformed_reply(mock_http_get, body):
+    from flip_api.fl_services.services.fl_service import list_backend_jobs
+
+    mock_http_get.return_value = body
+
+    assert list_backend_jobs("http://fl-api") is None
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
@@ -1219,11 +1328,7 @@ def test_abort_model_training_success(
     mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     # The dequeue DELETEs the job, so update_fl_scheduler can no longer free the net —
     # the abort path must release it itself once the abort has been delivered.
@@ -1253,13 +1358,40 @@ def test_abort_model_training_idempotent_when_no_running_job(
     mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = None
 
-    request = MagicMock()
-    request.scope = {"request_id": "req-id"}
-    request.path_params = {"target": "server", "clients": None}
-
     # No running job -> idempotent no-op: must not raise and must not call abort_job.
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
     mock_abort.assert_not_called()
+    mock_release.assert_called_once_with(model_id, fake_session)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model")
+def test_abort_model_training_aborts_a_job_still_waiting_to_start(
+    mock_release,
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_http_get,
+    model_id,
+    fake_session,
+):
+    # FLARE holds a job no trust has the resources for; Abort job must take it out of FLARE's queue, or
+    # its reporter can still set the model to ERROR after the user queues the model again (#1390).
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "started"}
+    mock_http_get.return_value = [{"job_id": "job123", "status": "PENDING"}]
+
+    fl_service.abort_model_training(model_id, fake_session)
+
+    mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
     mock_release.assert_called_once_with(model_id, fake_session)
 
 
@@ -1356,7 +1488,7 @@ def _fl_api_unreachable() -> httpx.HTTPError:
 
 
 def _fl_api_answers_500() -> httpx.HTTPError:
-    # NVFLARE's FL API answers 500 from its catch-all handler when the fl-server behind it is down.
+    # FLARE's FL API answers 500 from its catch-all handler when the fl-server behind it is down.
     request = httpx.Request("GET", "http://fl-api/check_server_status")
     return httpx.HTTPStatusError("500 Internal Server Error", request=request, response=httpx.Response(500))
 
@@ -1478,7 +1610,7 @@ def test_bundle_nvflare_application_missing_root_file(mock_s3, mock_is_valid, mo
     """A template with ``app/`` files but no ``meta.json`` is rejected at bundle time.
 
     Without this guard the bundle uploads cleanly and only fails at the FL server, far from the
-    cause — NVFLARE has no job definition to deploy.
+    cause — FLARE has no job definition to deploy.
     """
     base_dir = mocked_settings.FL_APP_BASE_DIR
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -1604,7 +1736,7 @@ def test_bundle_nvflare_application_clears_existing_dest(
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_missing_config_json_is_rejected(mock_s3, mock_required, mocked_settings, model_id):
-    """config.json is a required NVFLARE file, so a submission without one never reaches a Trust.
+    """config.json is a required FLARE file, so a submission without one never reaches a Trust.
 
     The bundler refuses at the guard — before clearing the destination bucket — instead of logging
     a doomed ``job_type=standard`` guess that the required-files check would reject moments later.
@@ -1915,10 +2047,7 @@ def test_abort_model_training_pre_submit_frees_net(
     # fl-server, so fl_backend_job_id is still NULL and the backend-job-id lookup raises.
     mock_get_fl_backend_job_id_by_model_id.side_effect = ValueError("No FL backend job ID found")
 
-    request = MagicMock()
-    request.path_params = {}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     # The job is dequeued and the BUSY net released immediately — not left for the watchdog.
     mock_remove.assert_called_once_with(model_id, fake_session)
@@ -1952,10 +2081,7 @@ def test_abort_model_training_pre_pickup_net_not_found_frees_net(
     mock_get_fl_backend_job_id_by_model_id.return_value = "job-1"
     mock_get_net.side_effect = NotFoundError(f"Net not found for model ID: {model_id}")
 
-    request = MagicMock()
-    request.path_params = {}
-
-    fl_service.abort_model_training(request, model_id, fake_session)
+    fl_service.abort_model_training(model_id, fake_session)
 
     mock_remove.assert_called_once_with(model_id, fake_session)
     mock_release.assert_called_once_with(model_id, fake_session)
@@ -1987,11 +2113,8 @@ def test_abort_model_training_db_error_propagates(
     # the job is still queued).
     mock_remove.side_effect = DatabaseError("Error removing job from queue")
 
-    request = MagicMock()
-    request.path_params = {}
-
     with pytest.raises(DatabaseError, match="Error removing job from queue"):
-        fl_service.abort_model_training(request, model_id, fake_session)
+        fl_service.abort_model_training(model_id, fake_session)
 
     mock_release.assert_not_called()
     mock_fetch_server_status.assert_not_called()
@@ -2020,47 +2143,14 @@ def test_abort_model_training_raises_when_server_not_running(
     mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
     mock_fetch_server_status.return_value = None  # FL server is down
 
-    request = MagicMock()
-    request.path_params = {"target": "server", "clients": None}
-
     with pytest.raises(ValueError, match="FL Server not running"):
-        fl_service.abort_model_training(request, model_id, fake_session)
+        fl_service.abort_model_training(model_id, fake_session)
 
     # The abort must short-circuit before consulting the job list or issuing an abort.
     mock_extract_current_job_data.assert_not_called()
     mock_abort.assert_not_called()
     # The abort was never delivered, so the net must NOT be released — the job may still be live.
     mock_release.assert_not_called()
-
-
-@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
-@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
-@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
-@patch("flip_api.fl_services.services.fl_service.abort_job")
-@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
-@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
-def test_abort_model_training_raises_on_invalid_target(
-    mock_remove,
-    mock_get_net,
-    mock_abort,
-    mock_fetch_server_status,
-    mock_get_fl_backend_job_id_by_model_id,
-    mock_extract_current_job_data,
-    model_id,
-    fake_session,
-):
-    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
-    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
-    mock_fetch_server_status.return_value = {"status": "started"}
-    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
-
-    request = MagicMock()
-    request.path_params = {"target": "bogus-target", "clients": None}
-
-    with pytest.raises(ValueError, match="Invalid target: bogus-target"):
-        fl_service.abort_model_training(request, model_id, fake_session)
-
-    mock_abort.assert_not_called()
 
 
 # --- local base-file helper + local-directory bundling edge cases (FLIP#724) ----------------------
@@ -2367,7 +2457,7 @@ def test_every_backend_has_bundling_rules(fl_backend):
 
 
 def test_list_local_base_files_root_file_is_per_backend(tmp_path):
-    # Each backend keeps exactly one root file: NVFLARE's job definition, Flower's FAB definition.
+    # Each backend keeps exactly one root file: FLARE's job definition, Flower's FAB definition.
     # The other backend's is not deployable here and must not ride along.
     base = tmp_path / "base"
     (base / "app").mkdir(parents=True)
@@ -2380,9 +2470,9 @@ def test_list_local_base_files_root_file_is_per_backend(tmp_path):
 
 
 def _multi_site_template(tmp_path: Path) -> Path:
-    """An NVFLARE-style template with per-site app variants beside ``app/``.
+    """A FLARE-style template with per-site app variants beside ``app/``.
 
-    ``meta.json``'s ``deploy_map`` names each folder and NVFLARE deploys it to the sites listed —
+    ``meta.json``'s ``deploy_map`` names each folder and FLARE deploys it to the sites listed —
     the layout ``bundle_nvflare_application`` scans for and fl-api-base's job assembly documents.
     """
     base = tmp_path / "base"
@@ -2398,7 +2488,7 @@ def _multi_site_template(tmp_path: Path) -> Path:
 
 
 def test_list_local_base_files_keeps_nvflare_per_site_app_folders(tmp_path):
-    # NVFLARE's multi-site layout is a documented capability (app_site-N folders named in
+    # FLARE's multi-site layout is a documented capability (app_site-N folders named in
     # meta.json's deploy_map), so the allowlist must keep app_* beside app/ — the positional rule
     # is "an app folder", not "a directory literally named app".
     base = _multi_site_template(tmp_path)
@@ -2663,6 +2753,7 @@ def test_add_fl_job_without_an_override_leaves_the_column_null(model_id, fake_se
 def _start(model_id, fl_job_id, fake_session, job, upload_reply=None):
     """Run start_training against a stored job row; return what was uploaded and what was logged."""
     fake_session.get.return_value = job
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS  # the job is still being prepared
     with (
         patch("flip_api.fl_services.services.fl_service.submit_job"),
         patch("flip_api.fl_services.services.fl_service.upload_app", return_value=upload_reply) as upload,
@@ -2697,6 +2788,14 @@ def test_start_training_logs_the_request_the_fl_api_applied_and_where_it_came_fr
     _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
     assert ("GPU request per trust: 1 GPU (from the job's meta.json)", True) in logged
+
+
+def test_start_training_logs_the_platform_default_gpu_request(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": {"num_gpus": 0}, "resources_source": "default"}
+
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
+
+    assert ("GPU request per trust: no GPU (the platform default)", True) in logged
 
 
 def test_start_training_logs_a_cpu_only_override(model_id, fl_job_id, fake_session):
@@ -2739,9 +2838,8 @@ def test_start_training_warns_when_the_fl_api_ignored_an_override(model_id, fl_j
     assert any("did not report applying the GPU request" in text and not ok for text, ok in logged)
 
 
-def test_start_training_logs_nothing_about_gpus_for_an_older_fl_api_when_none_was_asked(
-    model_id, fl_job_id, fake_session
-):
-    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), {"message": "ok"})
+def test_start_training_logs_nothing_about_gpus_when_flower_got_no_override(model_id, fl_job_id, fake_session):
+    reply = {"message": "ok", "resources": None, "resources_enforced": False}
+    _, logged = _start(model_id, fl_job_id, fake_session, FLJob(id=fl_job_id, model_id=model_id), reply)
 
     assert logged == []

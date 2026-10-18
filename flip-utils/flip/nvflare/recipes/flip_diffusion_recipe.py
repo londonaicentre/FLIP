@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recipe describing a FLIP latent-diffusion job that drives clients via the NVFLARE Client API.
+"""Recipe describing a FLIP latent-diffusion job that drives clients via the FLARE Client API.
 
 This is the Client-API counterpart of the legacy ``diffusion_model`` job type. The job is
 **multi-phase**: an autoencoder (+ GAN discriminator) FedAvg phase followed by a diffusion-model
@@ -33,7 +33,7 @@ The ``StagePercentilePrivacy`` DP filter stays wired on both train tasks' result
 client config; the script activates its per-stage filtering by stamping ``FlipMetaKey.STAGE`` on the
 outgoing ``FLModel`` meta.
 
-The recipe runs identically across SimEnv/PocEnv/ProdEnv and exports the standard NVFLARE FedJob
+The recipe runs identically across SimEnv/PocEnv/ProdEnv and exports the standard FLARE FedJob
 layout for the FLIP-API, exactly like :class:`FlipFedAvgRecipe`. ``model_id`` is resolved lazily by
 the FLIP components from ``meta.json['custom_props']['model_id']`` (written here for SimEnv/PocEnv;
 overwritten by the FLIP-API in production). The per-phase round counts are likewise soft: the
@@ -84,7 +84,7 @@ VALIDATE_DM_TASK = "validate_dm"
 
 
 class FlipDiffusionRecipe(FlipRecipe):
-    """FLIP latent-diffusion recipe wired for the NVFLARE Client API.
+    """FLIP latent-diffusion recipe wired for the FLARE Client API.
 
     Args:
         num_rounds_ae: Federated rounds for the autoencoder phase (SimEnv/PocEnv default — in a
@@ -95,7 +95,7 @@ class FlipDiffusionRecipe(FlipRecipe):
         train_script: Client script path serving all four ML tasks. ``"trainer.py"`` is taken to
             mean ``"custom/trainer.py"`` inside the job; pass an explicit ``custom/`` prefix to
             override that convention.
-        train_args: Argument string for the script. NVFlare's TaskScriptRunner whitespace-splits
+        train_args: Argument string for the script. FLARE's TaskScriptRunner whitespace-splits
             this — any FLIP-API placeholder used here must substitute into a single token. The SQL
             query is plumbed via the client config's top-level ``query`` key instead.
         model_id: Real UUID for SimEnv/PocEnv runs. Written into ``meta.json['custom_props']`` so
@@ -103,10 +103,10 @@ class FlipDiffusionRecipe(FlipRecipe):
             this via the FLIP-API which writes the real model id into the same key.
         percentile_privacy: Configuration for the stage-aware percentile DP filter applied to both
             train tasks' results (:class:`~flip.nvflare.components.StagePercentilePrivacy`).
-        heart_beat_timeout, validation_timeout, wait_time_after_min_received: NVFlare timing knobs.
+        heart_beat_timeout, validation_timeout, wait_time_after_min_received: FLARE timing knobs.
         project_id, query: Top-level keys on the client config (consumed by the FLIP-API
             placeholder substitution and read by the script at runtime).
-        params_exchange_format, params_transfer_type: NVFlare param-exchange knobs for the
+        params_exchange_format, params_transfer_type: FLARE param-exchange knobs for the
             Client API.
     """
 
@@ -181,7 +181,7 @@ class FlipDiffusionRecipe(FlipRecipe):
         job.to_server(BroadcastTask(task_name=FlipTasks.POST_VALIDATION.value))
 
     def _build_fed_job(self) -> FedJob:
-        """Construct the FedJob NVFLARE's Recipe uses for ``execute(env)``.
+        """Construct the FedJob FLARE's Recipe uses for ``execute(env)``.
 
         ``meta_props`` carries the FLIP runtime config (currently just ``model_id``) into the
         exported ``meta.json`` so the lazily-resolving components can find it.
@@ -210,7 +210,7 @@ class FlipDiffusionRecipe(FlipRecipe):
         job.to_server(PersistToS3AndCleanup(persistor_id="persistor"), id="persist_and_cleanup")
 
         # Server workflows: init, then the two training phases in sequence.
-        job.to_server(InitTraining(min_clients=self.min_clients))
+        job.to_server(InitTraining())
         self._add_train_phase(job, TRAIN_AE_TASK, model_locator_id="model_locator_initial")
         self._add_train_phase(job, TRAIN_DM_TASK, model_locator_id="model_locator")
 
@@ -257,10 +257,10 @@ class FlipDiffusionRecipe(FlipRecipe):
         return job
 
     def export(self, job_dir: str | Path, **_kwargs: Any) -> None:
-        """Export the job using NVFLARE's standard FedJob layout.
+        """Export the job using FLARE's standard FedJob layout.
 
         Produces ``<job_dir>/<job_name>/{meta.json, app/config/, app/custom/}`` — the same structure
-        NVFLARE's admin client uploads to the cluster. The FLIP-API consumes this directory,
+        FLARE's admin client uploads to the cluster. The FLIP-API consumes this directory,
         optionally rewrites ``meta.json['custom_props']`` with the real model_id at submit time, and
         forwards the job to the fl-server stack.
         """
@@ -270,7 +270,7 @@ class FlipDiffusionRecipe(FlipRecipe):
     def _write_client_config_params(self, job_dir: Path) -> None:
         """Emit ``project_id`` / ``query`` as top-level keys on the exported ``config_fed_client.json``.
 
-        These are not NVFLARE components, so they don't fall out of ``export_job`` — but the client
+        These are not FLARE components, so they don't fall out of ``export_job`` — but the client
         contract expects them at the config top level: the script's ``--project_id {project_id}``
         arg resolves the ``{project_id}`` reference against the top-level ``project_id`` key, and
         ``trainer.load_query()`` reads the top-level ``query``. We write the recipe's (placeholder)

@@ -35,11 +35,11 @@ make -C fl-tutorials list-tutorials
 make -C fl-tutorials list-tutorials FL_BACKEND=flower
 ```
 
-For the NVFLARE X-ray example:
+For the FLARE X-ray example:
 
 ```bash
 make -C fl-tutorials download-xray-data
-make -C fl-tutorials run-tutorial TUTORIAL=xray_classification                    # NVFLARE simulator
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification                    # FLARE simulator
 make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower  # Flower simulator
 ```
 

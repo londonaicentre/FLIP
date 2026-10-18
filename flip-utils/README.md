@@ -21,7 +21,7 @@ This directory is a sub-tree of the [FLIP](https://github.com/londonaicentre/FLI
 pip-installable `flip` Python package (published as `flip-utils` on PyPI) that ships inside every FL server / client
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
-- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, Flower helpers and utilities (this directory)
+- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, FLARE components, Flower helpers and utilities (this directory)
 - **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,evaluation,diffusion_model,fed_opt}`, `flower/{standard,evaluation}`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
@@ -80,13 +80,15 @@ flip/
 ├── exceptions.py # Package-level exception types
 ├── xnat/         # XNAT protocol client and enrichment helpers (also exposed as the `flip-xnat` CLI)
 ├── export/       # Model-export bundling (`python -m flip.export`; see map-apps/README.md)
-├── nvflare/           # NVFLARE-specific logic and components
+├── nvflare/           # FLARE-specific logic and components
 │   ├── controllers/   # FLIP workflows (ScatterAndGather, BroadcastTask, …)
 │   ├── components/    # Event handlers, persistors, privacy filters, locators, …
-│   ├── recipes/       # High-level NVFLARE job recipes
-│   ├── runtime.py     # Runtime helpers for NVFLARE apps
+│   ├── recipes/       # High-level FLARE job recipes
+│   ├── runtime.py     # Runtime helpers for FLARE apps
 │   ├── site_policy.py # Client-side entrypoint (`python -m flip.nvflare.site_policy`):
 │   │                  # renders `local/privacy.json` from FL_SITE_PRIVACY_* env vars at container start
+│   ├── server_site_config.py # Server-side entrypoint (`python -m flip.nvflare.server_site_config`):
+│   │                  # registers FLIP's server site components in `local/flip__p_resources.json`
 │   └── metrics.py     # Metrics collection and reporting
 └── flower/       # Flower helpers (mix of server-side and client-side modules)
     ├── identity.py   # Client-side: partition-id + SUPERNODE_NAME site-identity fallback
@@ -106,7 +108,7 @@ per-client metrics and crashed-reply exceptions — extracted from Flower reply 
 `INTERNAL_SERVICE_KEY` credential. Two modules are legitimately client-side and imported by fl-client Flower apps
 (not every app — some pull only one, and the `fl-apps/flower/` templates pull neither):
 `flip.flower.identity` (partition-id / `SUPERNODE_NAME` site-identity resolver) and `flip.flower.privacy`
-(`flip_local_dp_mod`, the local-DP mod attached to each client). For the NVFLARE equivalents of the hub-side
+(`flip_local_dp_mod`, the local-DP mod attached to each client). For the FLARE equivalents of the hub-side
 helpers, see `flip.nvflare.metrics`.
 
 `FlipFedAvg` also owns opt-in **best-global-model selection**: constructed with `best_model_metric` (and
@@ -114,12 +116,12 @@ helpers, see `flip.nvflare.metrics`.
 aggregated evaluation metrics (`flip.flower.selection.BestModelSelector`) and retains the best-scoring arrays.
 The `fl-apps/flower/standard` template maps the `best-model-metric` / `best-model-metric-minimize` run-config
 keys onto it and saves `best_FL_global_model.pt` alongside `FL_global_model.pt` when a selection actually
-happened — unset, evaluation stays final-round-only and no best artefact is produced. NVFLARE reaches the same
+happened — unset, evaluation stays final-round-only and no best artefact is produced. FLARE reaches the same
 contract with the stock `IntimeModelSelector` (see `FlipFedAvgRecipe`).
 
 **The two backends aggregate the selection metric differently, deliberately.** On Flower the value the
 selector sees is whatever stock `FedAvg` produced — a **weighted average keyed on `num-examples`**, so a
-trust with more test samples pulls the score further. NVFLARE's `IntimeModelSelector` defaults to
+trust with more test samples pulls the score further. FLARE's `IntimeModelSelector` defaults to
 `weigh_by_local_iter=False` with no `aggregation_weights`, i.e. a plain **unweighted mean** across clients.
 Neither lets a single site dictate selection, but the same metric can pick a different round on each backend
 when trust cohort sizes are uneven; expect that rather than treating it as a bug.
@@ -143,7 +145,7 @@ directly.
 ### Best-Model Selection (optional)
 
 By default only the final aggregated model is saved. Setting `BEST_MODEL_METRIC` (and, for
-loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires NVFLARE's stock
+loss-like metrics, `BEST_MODEL_METRIC_MINIMIZE: true`) wires FLARE's stock
 `IntimeModelSelector` into the job so the best global model is saved too:
 
 - Each round, clients evaluate the **received global model** on their local validation split
@@ -182,16 +184,16 @@ Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` 
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
 
-The NVFLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `diffusion_model`,
+The FLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `diffusion_model`,
 `fed_opt`) are all Client-API apps with recipe-generated configs. The corresponding configs live
 in `fl-apps/nvflare/<template>/app/config/`.
 
 ### Development Mode
 
-DEV mode lets you run an FL application locally on the NVFLARE simulator before
+DEV mode lets you run an FL application locally on the FLARE simulator before
 deploying. The runnable tutorials live in [`../fl-tutorials/`](../fl-tutorials/); each
 carries a `.env.app` (`JOB_TYPE`, `DEV_IMAGES_DIR`, `DEV_DATAFRAME`) and a `job.py` that
-drives a FLIP recipe on the NVFLARE simulator (SimEnv) from the flip-utils venv.
+drives a FLIP recipe on the FLARE simulator (SimEnv) from the flip-utils venv.
 
 1. Get the tutorial's dataset. Datasets are managed under `fl-tutorials/datasets/` with
    dedicated Make targets forwarded from `fl-tutorials/`. Only the tutorial-facing ones:
@@ -262,7 +264,7 @@ such apps can no longer run.
 
 ## FL Services API
 
-The [`../fl-services/nvflare/`](../fl-services/nvflare/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](../fl-services/nvflare/README.md) and the [FL API README](../fl-services/nvflare/fl-api-base/README.md) for full details on provisioning and the API endpoints.
+The [`../fl-services/nvflare/`](../fl-services/nvflare/README.md) directory contains Docker-based FLARE services. See the [FL services README](../fl-services/nvflare/README.md) and the [FL API README](../fl-services/nvflare/fl-api-base/README.md) for full details on provisioning and the API endpoints.
 
 ### Prerequisites
 
@@ -315,7 +317,7 @@ make down NET_NUMBER=1    # Stop the network — must match the NET_NUMBER used 
 
 ### Running the tutorials
 
-Each NVFLARE tutorial runs on the local simulator via the [`fl-tutorials/`](../fl-tutorials/)
+Each FLARE tutorial runs on the local simulator via the [`fl-tutorials/`](../fl-tutorials/)
 Makefile. Download the tutorial's dataset first (see its README), then:
 
 ```bash

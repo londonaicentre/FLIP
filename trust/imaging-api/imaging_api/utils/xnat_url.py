@@ -21,6 +21,11 @@ XNAT_URL = get_settings().XNAT_URL
 # rather than fail.
 XNAT_REQUEST_TIMEOUT = 30
 
+# Bulk transfers (a study download, a file upload): connect as fast as a metadata call, but allow
+# XNAT up to five minutes per read, since it may take that long to start a large zip or to answer once
+# a big upload has landed.
+XNAT_TRANSFER_TIMEOUT = (XNAT_REQUEST_TIMEOUT, 300)
+
 
 def quote_path_segment(value: str) -> str:
     """Quote one XNAT identifier, rejecting segments that cannot identify a resource.

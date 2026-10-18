@@ -53,7 +53,7 @@ pip install -e .
 ## Running this tutorial
 
 > **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
-> runs it on the flwr simulator (first below), as NVFLARE's tutorials do — what the release check
+> runs it on the flwr simulator (first below), as FLARE's tutorials do — what the release check
 > runs. To run it on the Flower containers by hand, use `fl-services/flower` (second below). The
 > deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
 > by `make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower` against the dev stack

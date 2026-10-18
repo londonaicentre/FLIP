@@ -265,6 +265,6 @@ Troubleshooting
    * - Upload exits non-zero with *Nothing was resolved*
      - No scan anywhere matched. Check the project id, check you pointed at the right Trust, and check conversion has finished. Pass ``--allow-no-op`` if an empty run is genuinely expected.
    * - Only some cases uploaded, and the command warned about a truncated dataset
-     - The local label set does not cover the whole mapping. For the spleen tutorial, re-download with ``NUM_CASES=41``; the Flower snapshot ships a fixed 6-case subset, so point ``--labels-dir`` at the NVFLARE download instead.
+     - The local label set does not cover the whole mapping. For the spleen tutorial, re-download with ``NUM_CASES=41``; the Flower snapshot ships a fixed 6-case subset, so point ``--labels-dir`` at the FLARE download instead.
    * - Training still fails after a clean-looking upload at one Trust
      - The other Trusts were never enriched. Repeat ``--credentials-file`` (or ``XNAT_URLS``) so one run covers every Trust in the project.

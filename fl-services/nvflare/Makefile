@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# NVFLARE FL service + network-provisioning targets — build, provision (startup
+# FLARE FL service + network-provisioning targets — build, provision (startup
 # kits), standalone run, and the S3 kit upload (FL services only, no central hub /
-# trusts). Everything NVFLARE lives in this tree: the project YAMLs
+# trusts). Everything FLARE lives in this tree: the project YAMLs
 # (net-*_project_*.yml), the provisioning scripts/, and the gitignored
 # workspace-{dev,stag,prod}/ output all sit beside this Makefile. The root Makefile
 # forwards build-fl here by FL_BACKEND; every other target is invoked directly
@@ -51,7 +51,7 @@ PROD_NUM_CLIENTS   ?= 500
 
 .PHONY: build provision provision-2-nets provision-add-client provision-add-client-stag provision-add-client-prod provision-stag provision-prod upload-kits-to-s3 up down submit
 
-# Build the NVFLARE :dev images. fl-base must build first, in its own invocation:
+# Build the FLARE :dev images. fl-base must build first, in its own invocation:
 # a plain `FROM flare-fl-base` in the derived Dockerfiles is invisible to Compose's
 # build graph, so a single `compose build` would build them against a stale base.
 build:
@@ -62,7 +62,7 @@ build:
 
 # Dev: provision net-<NET_NUMBER> startup kits into DEV_WORKSPACE_DIR (gitignored),
 # where the dev compose mounts expect them.
-# NVFLARE writes every private key 0600. The FL server and clients run as the host uid in
+# FLARE writes every private key 0600. The FL server and clients run as the host uid in
 # dev and read theirs as owner, but the FL API runs as the image's user, so its admin key
 # is opened to the provisioning user's group and the container joins that group (group_add
 # in deploy/compose.development.nvflare.yml) — the 640 + group_add Flower's dev SuperNodes
@@ -135,11 +135,11 @@ up:
 down:
 	$(DEV_COMPOSE) down --remove-orphans
 
-# NVFLARE standalone job submission is intentionally NOT wired: it goes through the
+# FLARE standalone job submission is intentionally NOT wired: it goes through the
 # FLARE admin API (provisioned admin kit), not a simple HTTP POST like Flower's
-# submit. Use the simulator harness for standalone NVFLARE jobs rather than faking
+# submit. Use the simulator harness for standalone FLARE jobs rather than faking
 # a success here.
 submit:
-	@echo "⚠️  NVFLARE standalone 'submit' is not wired (admin-API based, unlike Flower's HTTP submit)."
-	@echo "    Run NVFLARE jobs standalone via the simulator: make -C fl-tutorials run-tutorial TUTORIAL=<name>"
+	@echo "⚠️  FLARE standalone 'submit' is not wired (admin-API based, unlike Flower's HTTP submit)."
+	@echo "    Run FLARE jobs standalone via the simulator: make -C fl-tutorials run-tutorial TUTORIAL=<name>"
 	@exit 1

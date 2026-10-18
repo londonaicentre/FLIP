@@ -10,14 +10,14 @@
 # limitations under the License.
 #
 
-"""Guard against ``fl_api.utils.schemas.TargetType`` drifting from NVFLARE's own.
+"""Guard against ``fl_api.utils.schemas.TargetType`` drifting from FLARE's own.
 
-NVFLARE 2.8.0 removed the ``(str, Enum)`` ``TargetType`` that the fl-api routers
+FLARE 2.8.0 removed the ``(str, Enum)`` ``TargetType`` that the fl-api routers
 used to import from ``nvflare.fuel.hci.client.fl_admin_api``; its successor,
 ``nvflare.fuel.flare_api.api_spec.TargetType``, is a plain class FastAPI rejects
 as a path-param annotation. We therefore re-declare ``TargetType`` locally as a
 ``StrEnum`` (see ``fl_api/utils/schemas.py``). Because that copy is hand-maintained,
-this test fails loudly if a future NVFLARE bump adds, removes, or renames a member,
+this test fails loudly if a future FLARE bump adds, removes, or renames a member,
 prompting us to re-sync the local enum.
 """
 
@@ -31,7 +31,7 @@ from fl_api.utils.schemas import TargetType
 def _values(target_type_cls: type) -> set[str]:
     """Return the set of string target values a TargetType class exposes.
 
-    Handles both our local ``StrEnum`` (iterate members) and NVFLARE's plain class
+    Handles both our local ``StrEnum`` (iterate members) and FLARE's plain class
     (collect upper-case string class attributes), so the two can be compared
     regardless of how each declares its members.
 
@@ -51,5 +51,5 @@ def test_target_type_matches_nvflare_target_type() -> None:
     assert _values(TargetType) == _values(NVFlareTargetType), (
         "fl_api.utils.schemas.TargetType is out of sync with "
         "nvflare.fuel.flare_api.api_spec.TargetType — re-sync the local StrEnum "
-        "after this NVFLARE upgrade."
+        "after this FLARE upgrade."
     )

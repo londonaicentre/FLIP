@@ -19,14 +19,14 @@ separate so the evaluator stays a pure function of validated data.
 
 The document is TOML, parsed with stdlib ``tomllib``. TOML rather than YAML because
 the fl-client's policy renderer (``flip.nvflare.site_policy``) must read the same
-file and is stdlib-only on purpose — it runs before NVFLARE starts and must never
+file and is stdlib-only on purpose — it runs before FLARE starts and must never
 fail on a framework import. A PyYAML dependency there would break that guarantee.
 
 Two sections exist, one per enforcement plane, because the planes ship as separate
 images and neither can import the other's code:
 
 * ``[disclosure]`` / ``[[access.rule]]`` — this service (cohort routes).
-* ``[fl_privacy.nvflare]`` — the NVFLARE fl-client, via ``flip.nvflare.site_policy``.
+* ``[fl_privacy.nvflare]`` — the FLARE fl-client, via ``flip.nvflare.site_policy``.
 
 Each plane validates its own section strictly and must tolerate the other's section
 being present. ``KNOWN_SECTIONS`` below is the shared contract; the matching list in

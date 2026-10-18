@@ -1131,7 +1131,7 @@ fails on the client side due to the server certificate.
 
 **Root Cause:** The server certificate was re-generated with X509v3 Key Usage
 extensions (`keyEncipherment, dataEncipherment`) and Extended Key Usage
-(`TLS Web Server Authentication`). The original NVFLARE certificates have
+(`TLS Web Server Authentication`). The original FLARE certificates have
 *no* Key Usage or Extended Key Usage extensions. OpenSSL's gRPC implementation
 rejects certificates with these restrictions during mTLS negotiation.
 
@@ -1202,9 +1202,9 @@ a cert that matches the hostname the client uses to connect.
 `verified server identity`. The client may show `Not Connected` after the
 handshake.
 
-**Root Cause:** The `signature.json` file in the NVFLARE participant kit
+**Root Cause:** The `signature.json` file in the FLARE participant kit
 contains signatures for all startup files (e.g., `server.crt`, `start.sh`).
-These are verified during the mTLS handshake. NVFLARE signs them using **PSS
+These are verified during the mTLS handshake. FLARE signs them using **PSS
 padding** with SHA-256 (`padding.PSS(mgf=MGF1(SHA256()), salt_length=MAX)`).
 If the signatures were re-generated using **PKCS1v15 padding** (the default),
 the verification fails silently and the connection drops.
@@ -1273,7 +1273,7 @@ chmod +x "$efs_mount_point"/startup/*.sh
 container exits with code 0 almost immediately. The container logs show the
 server starting, then silence.
 
-**Root Cause:** The NVFLARE container's `start.sh` script backgrounds
+**Root Cause:** The FLARE container's `start.sh` script backgrounds
 `sub_start.sh &` and then runs `wait`. When `start.sh` is *executed* (via
 `./start.sh`) instead of *sourced* (via `. ./start.sh` or `source start.sh`),
 the background job (`sub_start.sh`) becomes orphaned in a subshell. The
@@ -1353,7 +1353,7 @@ aws ecs update-service --cluster flip-cluster --service fl-server-net-1 \
 **Symptom:** Pod in `ErrImagePull` / `ImagePullBackOff` status. Fl-server ECS
 task fails with `CannotPullContainerError`.
 
-**Root Cause:** The NVFLARE container images are hosted in a private ECR
+**Root Cause:** The FLARE container images are hosted in a private ECR
 repository (the `<ecr-account-id>` account in `eu-west-2`). The K8s cluster or ECS
 task execution role lacks permissions to pull from this repository.
 
@@ -1390,7 +1390,7 @@ flClient:
 
 ### 7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)
 
-**Symptom:** fl-client pod crash-loops with no NVFlare registration output.
+**Symptom:** fl-client pod crash-loops with no FLARE registration output.
 The pod logs end at `STARTING CLIENT...` with no further output. After
 ~60 seconds the faulthandler shows the main thread stuck at
 `while not sp_established: sleep(1.0)` and the overseer thread is blocked.
@@ -1410,7 +1410,7 @@ Versions tested:
 | 1.78.0 wheel | Segfault (core dump) on import |
 | 1.80.0 wheel | Segfault (core dump) on import |
 
-**Fix:** Force NVFlare to use the **asyncio-based gRPC driver**
+**Fix:** Force FLARE to use the **asyncio-based gRPC driver**
 (`aio_grpc_driver`) instead of the default synchronous one. The aio driver
 uses `grpc.aio.secure_channel` / `grpc.aio.insecure_channel`, which rely on
 Python's asyncio event loop for async connect — this works on kernel 7.0.
@@ -1434,7 +1434,7 @@ kit (e.g., `/opt/flip/k8s-fl-client-kits/Trust_K8s/startup/`):
 | File | Purpose |
 |------|---------|
 | `run_client.py` | Wrapper that modifies `fed_client.json` scheme to `agrpc`, then `exec`s `client_train.py`. Preserves the backup for restore on exit. |
-| `patch.py` | Patches `grpc.ssl_channel_credentials` to inject correct client certs and bypasses NVFlare's `_check_secure_content` signature validation (needed because `fed_client.json` was manually edited). |
+| `patch.py` | Patches `grpc.ssl_channel_credentials` to inject correct client certs and bypasses FLARE's `_check_secure_content` signature validation (needed because `fed_client.json` was manually edited). |
 | `sitecustomize.py` | Auto-loaded at Python startup. Applies the same patches for worker subprocesses. Also sets `GRPC_POLL_STRATEGY=epoll1`. |
 
 **Successful registration log:**
@@ -1462,13 +1462,13 @@ kit (e.g., `/opt/flip/k8s-fl-client-kits/Trust_K8s/startup/`):
 The trust's governance document is carried by the chart as `governance.document` (written by
 sync-kit from the kit's `ACCESS_POLICY_FILE`), rendered into the `<release>-flip-trust-governance`
 ConfigMap and mounted **read-only** at `/app/governance.toml` in the `data-access-api` pod, with
-`ACCESS_POLICY_FILE` pointing at it. The NVFLARE fl-client reads only its `[fl_privacy]` section,
+`ACCESS_POLICY_FILE` pointing at it. The FLARE fl-client reads only its `[fl_privacy]` section,
 which its `governance-extract` init container writes to `/app/governance/governance.fl_privacy.toml`;
 the Flower client gets nothing. An empty value means no document at all: nothing is mounted and the
 platform defaults apply.
 
 **Symptom A — a service will not start after a policy edit.** `data-access-api` crash-loops, or the
-NVFLARE fl-client pod sits in `Init:Error` / `Init:CrashLoopBackOff` on its `governance-extract` init
+FLARE fl-client pod sits in `Init:Error` / `Init:CrashLoopBackOff` on its `governance-extract` init
 container. Both fail closed on an invalid document, so the reason is in the container log rather than
 in any Helm output:
 
@@ -1515,7 +1515,7 @@ kubectl exec -n flip-trust deploy/<release>-flip-trust-data-access-api -- cat /a
   configmap`) restarts nothing; redeploy with `deploy-trust-k8s KIT=`, which regenerates the override
   and rolls the pods.
 - **The fl-client ignores `[fl_privacy.nvflare]`** → check the backend: on Flower nothing reads the
-  section and the chart does not wire it (sync-kit refuses such a document). On NVFLARE the client
+  section and the chart does not wire it (sync-kit refuses such a document). On FLARE the client
   reads the extract, not the document: `kubectl exec ... fl-client-<netId> -- cat
   /app/governance/governance.fl_privacy.toml`.
 

@@ -32,7 +32,7 @@ from imaging_api.services.projects import (
 )
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
-from imaging_api.utils.xnat_url import xnat_url
+from imaging_api.utils.xnat_url import XNAT_TRANSFER_TIMEOUT, xnat_url
 
 # Get download directory
 BASE_IMAGES_DOWNLOAD_DIR = get_settings().BASE_IMAGES_DOWNLOAD_DIR
@@ -124,7 +124,7 @@ async def download_and_unzip_images(
     )
     cached = not force_refresh and os.path.isfile(sentinel_path(accession_dir_abs, assessor_type, resource_type))
     record = read_sentinel(accession_dir_abs, assessor_type, resource_type) if cached else None
-    stale = "force_refresh" if force_refresh else "its sentinel predates the XNAT record" if cached else None
+    stale = "force_refresh" if force_refresh else "its sentinel holds no readable record" if cached else None
     if record is not None:
         if record.resource_stats is None:  # an assessor download: XNAT has no assessor resource listing
             logger.info(f"Cache hit for {context}: reusing {accession_dir_abs} (not checked against XNAT)")
@@ -158,10 +158,6 @@ async def download_and_unzip_images(
     except NotFoundError:
         if stale:  # the study is gone from XNAT, so its cached copy goes too
             _clear(accession_dir_abs, assessor_type, resource_type, context, f"{stale}; gone from XNAT")
-        raise
-    except Exception as e:
-        if cached and record is None:  # an older sentinel: nothing to check it by, so keep serving it
-            return _serve_unchecked(accession_dir_abs, context, e)
         raise
     if stale:
         _clear(accession_dir_abs, assessor_type, resource_type, context, stale)
@@ -389,7 +385,7 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]) -> s
             downloaded file (missing/unwritable destination directory, disk full, etc.).
         Exception: If there is an upstream/transport error during the download request.
     """
-    response = requests.get(url, headers=headers, stream=True)
+    response = requests.get(url, headers=headers, stream=True, timeout=XNAT_TRANSFER_TIMEOUT)
 
     if response.status_code == 404:
         raise NotFoundError(f"No data found at: {url}")

@@ -135,8 +135,8 @@ create_demo_users:
 	$(docker_command) exec -e DEMO_RESEARCHER_PASSWORD -e DEMO_ADMIN_PASSWORD \
 		-e DEMO_RESEARCHER_EMAIL -e DEMO_ADMIN_EMAIL $(service_name) \
 		python -m flip_api.scripts.create_demo_users
-# Record the end-to-end demo video against the running dev stack (Dockerised
-# Cypress segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
+# Record the end-to-end demo video against the running dev stack (Playwright
+# segments + off-camera waits + ffmpeg assembly). Args via DEMO_ARGS,
 # e.g. DEMO_ARGS="--skip-xnat" or DEMO_ARGS="--project-id <uuid> --from-segment 4".
 demo_video:
 	@echo "🎬 Recording the end-to-end demo video..."
@@ -148,7 +148,7 @@ demo_video:
 #
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
 # `make e2e_smoke` invocation works against either stack. Both tutorials are
-# now in-tree under fl-tutorials/<backend>/ (NVFLARE at fl-tutorials/nvflare/,
+# now in-tree under fl-tutorials/<backend>/ (FLARE at fl-tutorials/nvflare/,
 # Flower at fl-tutorials/flower/). Both reuse the same query.sql
 # against the trust mock OMOP data. Default backend matches
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
@@ -255,7 +255,7 @@ e2e_smoke_prostate: ENRICHMENT_ARGS := $(PROSTATE_ENRICHMENT_ARGS)
 e2e_smoke_prostate: _require_flower_backend e2e_smoke
 
 # The prostate app exists for Flower only: fail before the ~6 min image pull rather than after it,
-# when an NVFLARE hub would reject the Flower bundle.
+# when a FLARE hub would reject the Flower bundle.
 _require_flower_backend:
 	@[ "$(FL_BACKEND)" = flower ] || { echo "❌ e2e_smoke_prostate uploads a Flower app — run it with FL_BACKEND=flower (got '$(FL_BACKEND)')"; exit 1; }
 

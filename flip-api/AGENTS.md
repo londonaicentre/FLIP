@@ -78,7 +78,7 @@ make backfill_cohort_snapshots # queue PERSIST_COHORT for approved projects with
 Prerequisites:
 - Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
 - No smoked trust has a Trust Admin (FLIP#1258): the smoke approves as the hub admin, and a trust with a Trust Admin refuses the hub, so the whole approve call answers 403.
-- The tutorial files are in-tree at `fl-tutorials/<backend>/` (NVFLARE and Flower both migrated from the legacy fl-base repos).
+- The tutorial files are in-tree at `fl-tutorials/<backend>/` (FLARE and Flower both migrated from the legacy fl-base repos).
 
 Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at the in-tree `fl-tutorials/flower/xray_classification/`. Common overrides:
 
@@ -166,9 +166,9 @@ cd flip-api && uv run python -m tests.e2e_smoke \
 `$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
 `$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
 there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
-tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
+tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the FLARE paths shown in the
 direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
-the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
+the FLARE paths for the FLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
 shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 **Prostate.** `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` does the same for the PI-CAI
@@ -266,25 +266,49 @@ task's post-processing (retried by the stale-task recovery job).
 
 `make demo-video` records the full end-to-end walkthrough (researcher creates project + cohort → admin checks
 Connection Status, stages + approves → XNAT/OHIF DICOM view at a trust → model + app upload → training → results
-download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. Six Cypress segments
-(`flip-ui/test/cypress/demo/`, config `flip-ui/cypress.demo.config.ts` — a live-wired fork of the docs-GIF harness
-with a `demoCaption` subtitle verb) run in Docker (`cypress/included`, `--network host`); the slow platform waits
-(cohort responses, ~6 min imaging import, FL training) happen **off-camera** between segments via
-`flip-api/tests/demo_video.py`, which reuses `tests/e2e_smoke.py`'s wait functions and finally calls
-`flip-ui/scripts/assemble-demo-video.sh` (same crop constants as `videos-to-gifs.sh`). Prerequisites: stack up,
-and ideally the demo users (created in the dev Keycloak realm) — `make demo-users` (reads `DEMO_RESEARCHER_PASSWORD` /
-`DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants their roles; without them
-the recorder falls back to the well-known admin for both parts. Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR
-risk-prediction tutorial: the project is created with imaging off and the XNAT segment is skipped), `--app spleen` (record the 3D
-spleen segmentation tutorial instead of chest X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera
-label upload, same contract as `e2e_smoke`), `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG
-ROI collections via `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF —
-dcmqi in Docker for the conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit`
-caps how many sessions per trust are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate
-on later segments without re-running the pull), `--trusts GSTT`, `--fl-backend flower`, `--video-scale 1` (fast
-drafts; the default 3 renders the browser at 3× device pixels so the 1280x800 viewport is captured at 3840x2400 —
-4K-class). Segment mp4s + the final video land under `flip-ui/test/cypress/demo/` (gitignored). The final mp4 is
-named for the recorded app (`flip-demo-xray.mp4` / `flip-demo-spleen.mp4`).
+download) against the **live dev stack** and assembles one mp4. Local dev tool, not run in CI. One Python process,
+`tests/demo_video.py`, plays the six segments (`tests/demo_segments.py`) in a Playwright Chromium on the host and does
+the slow platform waits (cohort responses, ~6 min imaging import, FL training) **off-camera** between them, reusing
+`tests/e2e_smoke.py`'s wait functions. Prerequisites: stack up, Playwright's browser (`uv run playwright install
+chromium`), ffmpeg on PATH, and ideally the demo users (created in the dev Keycloak realm) — `make demo-users` (reads
+`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants
+their roles; without them the recorder falls back to the well-known admin for both parts, and says so on camera.
+
+How a segment is recorded (`tests/demo_recorder.py`): each is a fresh browser context, signed in and loaded off camera,
+then recorded through Chromium's screencast from `rec.start()`; every frame is written with its timestamp and encoded to
+h264 by ffmpeg (Playwright's built-in recorder is VP8 at a low bitrate, soft on movement at 4K). A still page emits no
+frames, so each frame is held until the next and a still page keeps its real length. The browser runs with
+`--force-device-scale-factor` — a context's `device_scale_factor` alone yields CSS-pixel frames, upscaled. Captions are
+screencast overlays (they survive navigations), the pointer a page-injected arrow driven by the real mouse events.
+`flip-ui/scripts/assemble-demo-video.sh` then concatenates the segments, with a blur between 04 and 05.
+
+Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR risk-prediction tutorial: the project is created with imaging
+off and the XNAT segment is skipped), `--app spleen` (record the 3D spleen segmentation tutorial instead of chest
+X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera label upload, same contract as `e2e_smoke`),
+`--publish-segmentations` (republish those NIfTI labels as DICOM-SEG ROI collections via
+`flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF — dcmqi in Docker for the
+conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit` caps how many sessions per trust
+are converted), `--skip-xnat`, `--project-id <uuid> --from-segment <n>` (iterate on later segments without re-running
+the pull; `--model-id` for 5–6), `--keep-workspace` (a fresh run otherwise first deletes every project the demo
+researcher owns outside the demo catalogue, then seeds that catalogue (`make seed-demo-projects`) as the researcher, so
+each take opens on the same workspace of its own projects; never for the fallback admin. A catalogue seeded earlier
+under another owner is only reported: `make seed-demo-projects EXTRA_ARGS=--cleanup` once to re-seed it), `--keep-project <uuid>` (repeatable: reset as usual but spare that project, e.g. the spleen project MONAI Label points at), `--trusts GSTT`, `--fl-backend flower`, `--ui-url`, `--video-scale 1` (fast drafts;
+the default 3 records the 1280x800 viewport at 3840x2400). Segment mp4s, `state.json` and the final cut land under
+`flip-api/demo-video/` (gitignored); the final mp4 is named for the recorded app (`flip-demo-xray.mp4` /
+`flip-demo-spleen.mp4`), and a failed segment leaves a `*.failure.png` of the page beside its mp4. The spleen take:
+
+```bash
+make -C flip-api demo_video DEMO_ARGS="--app spleen --publish-segmentations \
+  --data-enrichment-cwd ../fl-tutorials/datasets/spleen \
+  --data-enrichment-cmd 'uv run --no-project --with ../../../flip-utils python upload_spleen_labels_to_xnat.py --flip-project-id \"\$\$FLIP_PROJECT_ID\" --labels-dir ../../data/spleen/images'"
+```
+
+XNAT is reached from Python by IPv4 literal (`--xnat-url`, default `http://127.0.0.1:8105`): Docker Swarm ingress
+accepts `::1` connections and never answers them. Before segment 3 the recorder waits for the XNAT project's container
+jobs (the dcm2niix burst right after the import, during which a page takes ~40 s to open) to drain, giving up with a
+warning after 90 s without progress (a finalize stall) or 15 min, then deletes the XNAT user's sessions last, which
+otherwise surface on camera as a sessions-per-IP banner or a greyed "Session Expired" page. Segment 6 switches the
+metrics to the grid so the finished curves are on camera before the download.
 
 ## Hub Environment Variables
 

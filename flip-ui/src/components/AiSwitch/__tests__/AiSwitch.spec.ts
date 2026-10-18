@@ -178,8 +178,8 @@ describe("AiSwitch", () => {
                 name: "flag",
                 value: "true",
                 label: {
-                    enabled: "Trust Included",
-                    disabled: "Trust Excluded"
+                    enabled: "On",
+                    disabled: "Off"
                 }
             },
             global: {
@@ -193,6 +193,25 @@ describe("AiSwitch", () => {
         const switchLabel = comp.get("label");
         expect(switchLabel.classes()).toContain("hidden");
         expect(switchLabel.classes()).toContain("sm:inline");
+    });
+
+    it("takes an aria-label to name a switch that has no visible label", () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "trust_ids",
+                value: "id-kch",
+                ariaLabel: "King's College Hospital (KCH)"
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        expect(comp.get("button[role=\"switch\"]").attributes("aria-label")).toBe("King's College Hospital (KCH)");
+        expect(comp.find("label").exists()).toBe(false);
     });
 
     it("stays on screen when disabled, greyed out, so its position still reads", async () => {

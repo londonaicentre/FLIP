@@ -8,8 +8,8 @@ measures wall-clock platform behaviour, not model performance.
 
 | Tool | Source | Needs |
 |------|--------|-------|
-| `extract_platform_round_timings.sh` | Central Hub CloudWatch logs (`/ecs/flip-api`, `/ecs/fl-api-net-*`, `/ecs/fl-server-net-*`) for one model, NVFLARE or Flower | read-only AWS credentials |
-| `extract_simulator_round_timings.sh` | A local NVFLARE simulator workspace (FLIP `ScatterAndGather` controller events in the server log) | nothing beyond the workspace |
+| `extract_platform_round_timings.sh` | Central Hub CloudWatch logs (`/ecs/flip-api`, `/ecs/fl-api-net-*`, `/ecs/fl-server-net-*`) for one model, FLARE or Flower | read-only AWS credentials |
+| `extract_simulator_round_timings.sh` | A local FLARE simulator workspace (FLIP `ScatterAndGather` controller events in the server log) | nothing beyond the workspace |
 | `plot_round_timings.py` | A `rounds.tsv` from either extractor | `uv run` (matplotlib) |
 
 The arkplus fine-tuning tutorial wraps the simulator side as

@@ -50,6 +50,7 @@ def scheduler_id():
 
 
 def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS  # the job is still being prepared
     with (
         patch(
             "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
@@ -82,6 +83,7 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
 
 
 def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS  # the job is still being prepared
     with (
         patch(
             "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",

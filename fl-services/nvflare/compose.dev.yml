@@ -123,7 +123,7 @@ services:
       # - NUM_AVAILABLE_GPUS=1
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
-      # Site-enforced NVFLARE privacy policy (FLIP#851) — rendered into
+      # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
       # /app/local/privacy.json by the entrypoint. Unset/empty = no site policy.
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
@@ -159,7 +159,7 @@ services:
       # - NUM_AVAILABLE_GPUS=1
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
-      # Site-enforced NVFLARE privacy policy (FLIP#851) — rendered into
+      # Site-enforced FLARE privacy policy (FLIP#851) — rendered into
       # /app/local/privacy.json by the entrypoint. Unset/empty = no site policy.
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}

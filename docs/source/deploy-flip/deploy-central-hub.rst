@@ -277,7 +277,7 @@ Central Hub database in routine operation.
 FL image compatibility on upgrade
 **********************************
 
-The FL base images for the hub and trust-side (``flare-fl-base`` for NVFLARE, ``flower-fl-base`` for
+The FL base images for the hub and trust-side (``flare-fl-base`` for FLARE, ``flower-fl-base`` for
 Flower) share a wire contract for training metrics and logs. The metrics and logs endpoints now
 **require** an ``fl_client_name`` field, so the hub and the FL images must be upgraded together:
 

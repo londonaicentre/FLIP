@@ -20,7 +20,7 @@ NAMESPACE ?= flip-trust
 # stays Pending on a `hostPath type check failed` event naming the mounted path.
 KIT_DEST ?= /opt/flip/fl-kit
 # KIT_UID follows the backend's image user: Flower's upstream base runs as 49999,
-# the NVFLARE image as 1000. Which backend is read from the kit ITSELF — an NVFLARE
+# the FLARE image as 1000. Which backend is read from the kit ITSELF — a FLARE
 # startup kit carries startup/ (with local/ and transfer/), a Flower kit carries
 # certificates/ and keys/ — never from an FL_BACKEND that nothing here derives:
 # defaulting to one backend when the variable is unset would chown a Flower kit to
@@ -35,7 +35,7 @@ KIT_BACKEND := $(or $(FL_BACKEND),$(KIT_SHAPE_NVFLARE),$(KIT_SHAPE_FLOWER))
 # The subdirectories the chart mounts out of the kit by subPath (templates/fl-client.yaml).
 # They must exist under KIT_DEST before the pod starts: a subPath that is missing from the
 # hostPath is created by kubelet as root:root 0700, and the non-root fl-client then cannot
-# write it — while the pod still reports Running, so nothing surfaces until NVFLARE writes the
+# write it — while the pod still reports Running, so nothing surfaces until FLARE writes the
 # trained model into transfer/ at the END of a run, or site policy writes privacy.json into
 # local/ at container start. `aws s3 sync` and `docker cp` both mirror objects rather than
 # empty prefixes, so transfer/ in particular never survives a sync-assembled kit. This is the
@@ -64,9 +64,9 @@ ifeq ($(filter nvflare flower,$(FL_BACKEND)),)
 $(error ❌  FL_BACKEND=$(FL_BACKEND) is not a backend — nvflare or flower)
 endif
 else ifeq ($(KIT_BACKEND),)
-$(error ❌  cannot tell which backend the kit at $(KIT_SRC) is for: an NVFLARE kit carries startup/, a Flower kit certificates/ and keys/, and this has neither. Point KIT_SRC at the slot's kit directory, or pass FL_BACKEND=nvflare|flower to override)
+$(error ❌  cannot tell which backend the kit at $(KIT_SRC) is for: a FLARE kit carries startup/, a Flower kit certificates/ and keys/, and this has neither. Point KIT_SRC at the slot's kit directory, or pass FL_BACKEND=nvflare|flower to override)
 else ifneq ($(and $(KIT_SHAPE_NVFLARE),$(KIT_SHAPE_FLOWER)),)
-$(error ❌  the kit at $(KIT_SRC) has both an NVFLARE shape (startup/) and a Flower shape (certificates/ or keys/) — stage one slot's kit only, or pass FL_BACKEND=nvflare|flower to say which it is)
+$(error ❌  the kit at $(KIT_SRC) has both a FLARE shape (startup/) and a Flower shape (certificates/ or keys/) — stage one slot's kit only, or pass FL_BACKEND=nvflare|flower to say which it is)
 endif
 endif
 KIT_UID ?= $(if $(filter flower,$(KIT_BACKEND)),49999,1000)
@@ -179,7 +179,7 @@ stage-kit: ## Place this trust's FL participant kit onto the node (run BEFORE de
 	## KIT_DEST defaults to /opt/flip/fl-kit, which is what `make sync-kit` renders as
 	## flClient.kitHostPath (from the kit's FL_KIT_DIR) — pass it only alongside a
 	## matching --set flClient.kitHostPath at deploy time.
-	## KIT_SRC contents are the slot's own kit: for NVFLARE local/ startup/ transfer/,
+	## KIT_SRC contents are the slot's own kit: for FLARE local/ startup/ transfer/,
 	## for Flower certificates/ and keys/ holding THIS slot's credential only. That
 	## shape is also how the owning uid is chosen (KIT_UID above) — no FL_BACKEND
 	## needed; a kit with neither or both shapes is refused before anything is copied.

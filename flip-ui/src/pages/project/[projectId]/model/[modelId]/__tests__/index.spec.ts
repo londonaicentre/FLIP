@@ -474,7 +474,7 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
         await wrapper.vm.$nextTick();
 
         const training = wrapper.find("[data-test='training']");
-        expect(training.attributes("data-fl-backend-label")).toBe("NVFlare");
+        expect(training.attributes("data-fl-backend-label")).toBe("FLARE");
     });
 
     it("flBackendLabel is undefined when no FL net advertises a backend", async () => {

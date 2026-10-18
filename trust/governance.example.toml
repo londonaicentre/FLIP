@@ -6,7 +6,7 @@
 #   make -C trust check-governance KIT=<CODE>    # validates both halves of this document
 #   make -C trust reload-governance KIT=<CODE>   # recreates only the services that read it
 #
-# reload-governance touches no data: it recreates data-access-api and, on NVFLARE, the
+# reload-governance touches no data: it recreates data-access-api and, on FLARE, the
 # fl-clients, then checks data-access-api reports this document's digest. Do NOT apply a
 # policy edit with `up-trust` or `restart-trust` instead — both are first-install verbs, and
 # applying either to a live trust can destroy its data: up-trust's XNAT step runs xnat-reset
@@ -76,8 +76,8 @@ effect = "permit"
 min_cohort_size = 50
 
 
-# ── FL privacy (NVFLARE only) ─────────────────────────────────────────────────
-# The site update-privacy filter, read by the NVFLARE fl-client (flip.nvflare.site_policy).
+# ── FL privacy (FLARE only) ─────────────────────────────────────────────────
+# The site update-privacy filter, read by the FLARE fl-client (flip.nvflare.site_policy).
 # It is the same filter as the kit's FL_SITE_PRIVACY_* variables: set it here or there,
 # never both — both set stops the fl-client, since a document able to override the kit
 # could also weaken it.

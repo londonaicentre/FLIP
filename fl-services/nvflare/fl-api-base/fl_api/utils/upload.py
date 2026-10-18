@@ -54,7 +54,7 @@ def _server_checkpoint_root() -> Path:
 def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
     """Download a de-bundled evaluation checkpoint to the shared server-checkpoint volume.
 
-    Written to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<file_name>`` — outside the NVFLARE job dir —
+    Written to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<file_name>`` — outside the FLARE job dir —
     so it is never part of the submitted job and never deployed to clients. The fl-server mounts
     the same volume and loads the checkpoint from disk. Mirrors the Flower backend's /app/src mount.
 
@@ -173,7 +173,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             │                               # If you upload multiple app folders, you must include this at root.
             │
             ├─ app/                         # default application folder (always created)
-            │  ├─ config/                   # NVFLARE config folder (expected by configure_* funcs)
+            │  ├─ config/                   # FLARE config folder (expected by configure_* funcs)
             │  │  ├─ config_fed_server.json # expected/validated by configure_server()
             │  │  ├─ config_fed_client.json # expected/validated by configure_client()
             │  │  ├─ config.json            # updated by configure_config() (rounds overrides)
@@ -240,7 +240,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         s3_file_dir, file_name = str(Path(path).parent), Path(path).name
 
         # Server-only evaluation checkpoints are staged on the shared volume for the fl-server
-        # to load from disk; they are NOT part of the NVFLARE job (never deployed to clients).
+        # to load from disk; they are NOT part of the FLARE job (never deployed to clients).
         if f"/{SERVER_CHECKPOINTS_PREFIX}" in s3_file_dir:
             _stage_server_checkpoint(url, model_id, file_name)
             continue

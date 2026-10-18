@@ -14,7 +14,6 @@
 import { StoreGeneric } from "pinia";
 import { NavigationGuardNext, RouteLocationNormalized } from "vue-router";
 
-import { getAuthProvider } from "@/auth";
 import { SignInStep } from "@/auth/provider";
 import router from "@/router";
 import { useAuthStore } from "@/store/auth";
@@ -269,7 +268,7 @@ export const handleSessionExpired = (): void => {
     }, 100);
 };
 
-// Cypress test hooks.
+// Cypress test hook.
 //
 // `__cypressTriggerSessionExpiry` lets specs trigger the same session-expiry
 // codepath production hits when the provider's refresh fails. Doing it as a
@@ -277,30 +276,13 @@ export const handleSessionExpired = (): void => {
 // surface narrow — specs only see the user-visible behaviour, not the
 // provider's internal event names.
 //
-// `__cypressGetAuthUser` hands the demo recorder (test/cypress/demo) the
-// live session in provider-neutral form after a REAL sign-in, so it can
-// satisfy the `cypress.auth.user` contract without knowing where a given
-// backend caches its tokens.
-//
-// Build-time gate so neither hook ever ships in production. A runtime
+// Build-time gate so the hook never ships in production. A runtime
 // `window.Cypress` check would let any browser extension or injected
-// script enable them and force-sign-out a real user or read their token.
+// script enable it and force-sign-out a real user.
 if (typeof window !== "undefined" && isCypressMode()) {
     (window as unknown as {
         __cypressTriggerSessionExpiry?: () => void;
-        __cypressGetAuthUser?: () => Promise<{ token: string | null; user: unknown }>;
     }).__cypressTriggerSessionExpiry = () => {
         handleSessionExpired();
-    };
-    (window as unknown as {
-        __cypressGetAuthUser?: () => Promise<{ token: string | null; user: unknown }>;
-    }).__cypressGetAuthUser = async () => {
-        const provider = getAuthProvider();
-        const token = await provider.getAccessToken();
-
-        return {
-            token,
-            user: token === null ? null : await provider.getUser()
-        };
     };
 }

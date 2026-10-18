@@ -18,15 +18,15 @@ flip-api endpoints the UI does, so it covers the API + trust + FL integration
 paths without the fragility of UI selectors.
 
 Backend-agnostic: the script uploads whatever files are in `--model-files-dir`,
-and the FL framework (Flower vs NVFLARE) is decided server-side by `FL_BACKEND`
+and the FL framework (Flower vs FLARE) is decided server-side by `FL_BACKEND`
 in flip-api's bundling code. `make e2e_smoke` picks the chest-xray tutorial
 that matches FL_BACKEND — both tutorials are now in-tree under
-fl-tutorials/<backend>/ (Flower at fl-tutorials/flower/, NVFLARE at
+fl-tutorials/<backend>/ (Flower at fl-tutorials/flower/, FLARE at
 fl-tutorials/nvflare/). Both reuse the same `query.sql` against the trust mock
 OMOP data. Override either path with `--model-files-dir` and `--query-file`.
 
 Usage (preferred):
-    make e2e_smoke                    # NVFLARE tutorial (default backend)
+    make e2e_smoke                    # FLARE tutorial (default backend)
     make e2e_smoke FL_BACKEND=flower  # Flower tutorial
 
 Direct invocation:
@@ -341,13 +341,6 @@ def create_project_with_query(
     ).model_dump()
     project_id = _ensure_ok(_post(client, "/projects", project_payload, headers), "create project").json()["id"]
     _log(f"  ✅ project_id={project_id}")
-    # A hub predating FLIP#1071 ignores the unknown field and creates an imaging project; fail here
-    # rather than 20 minutes later on an image-pull wait that cannot succeed.
-    if not has_imaging and project_has_imaging(client, headers, project_id):
-        raise SmokeFailure(
-            f"Hub ignored has_imaging=false for project {project_id} (it predates FLIP#1071): the project "
-            "was created WITH imaging — aborting rather than waiting for a pull that cannot succeed."
-        )
 
     _log("📝 Adding cohort query")
     add_resp = _ensure_ok(
@@ -533,7 +526,7 @@ def project_has_imaging(client: requests.Session, headers: dict[str, str], proje
     """Read the project's creation-time ``has_imaging`` flag off the hub (FLIP#1071).
 
     Read back rather than taken from the CLI so ``--project-id`` reuse honours whatever the project
-    was created with. A hub predating the flag omits the key, which means "imaging" (the old behaviour).
+    was created with.
 
     Args:
         client (requests.Session): HTTP session for hub calls.
@@ -542,9 +535,14 @@ def project_has_imaging(client: requests.Session, headers: dict[str, str], proje
 
     Returns:
         bool: True when the project has an imaging stage.
+
+    Raises:
+        SmokeFailure: If the hub's reply carries no ``has_imaging`` field.
     """
-    resp = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project")
-    return bool(resp.json().get("has_imaging", True))
+    project = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project").json()
+    if "has_imaging" not in project:
+        raise SmokeFailure(f"Project {project_id} has no has_imaging field in the hub's reply")
+    return bool(project["has_imaging"])
 
 
 def wait_for_image_pull(
@@ -806,7 +804,7 @@ def wait_for_model_advanced(client: requests.Session, headers: dict[str, str], m
     raise SmokeFailure(
         f"Model did not advance past INITIATED within {timeout_s}s (last status: {last_status or 'unknown'}). "
         "Check that fl-server + fl-clients are running and that the FL scheduler picked up the job. "
-        "If the job WAS submitted and the server-side job process hung at start-up (on NVFLARE the client log "
+        "If the job WAS submitted and the server-side job process hung at start-up (on FLARE the client log "
         "says 'cannot sync with server Runner'; on Flower the run never issues a round), the usual cause is an "
         "app that downloads weights at run time (pretrained=True, torch.hub, from_pretrained) — which an FL app "
         "must not do, and on a platform-managed estate cannot (FLIP#1206); the net stays BUSY until "
@@ -957,7 +955,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Directory whose files are uploaded to the model. Flower: "
         "../fl-tutorials/flower/xray_classification/app. "
-        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
+        "FLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
         "Required unless --stop-after-enrichment.",
     )
     parser.add_argument(
@@ -1163,7 +1161,6 @@ def main(argv: list[str] | None = None) -> int:
                 has_imaging=not args.no_imaging,
                 description=project_description,
             )
-            # What we asked for, which create_project_with_query has just proved the hub honoured.
             has_imaging = not args.no_imaging
             trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This

@@ -19,7 +19,7 @@ FLIP-API.
 Resolution order, given a component that also accepts a legacy ``model_id`` constructor arg:
 
 1. If the constructor arg is a real UUID (e.g. the FLIP-API substituted ``{model_id}`` into
-   the JSON config before NVFLARE loaded it), use it.
+   the JSON config before FLARE loaded it), use it.
 2. Otherwise read ``FLIP_MODEL_ID`` from the app's ``custom/config.json``, where the FLIP-API
    writes it, as the Flower FL API writes ``flip-model-id`` into the app's ``config.toml``
    (FLIP#70). The job's ``meta.json`` is the researcher's own file.
@@ -49,7 +49,7 @@ FLIP_PARTICIPATING_CLIENTS_KEY = "participating_clients"
 def get_job_custom_props(fl_ctx: FLContext) -> dict[str, Any]:
     """Return the ``custom_props`` dict from the job's ``meta.json``, or ``{}`` if absent.
 
-    NVFLARE sets ``FLContextKey.JOB_META`` with ``sticky=False``, so it's only on the
+    FLARE sets ``FLContextKey.JOB_META`` with ``sticky=False``, so it's only on the
     fl_ctx during the component-build phase — gone by the time controllers fire events.
     Fall back to reading ``meta.json`` straight from the workspace's run dir.
     """
@@ -106,7 +106,7 @@ def get_flip_model_id(fl_ctx: FLContext, fallback: str | None = None) -> str:
     """Resolve the FLIP ``model_id`` for the current job.
 
     Args:
-        fl_ctx: The NVFLARE FLContext.
+        fl_ctx: The FLARE FLContext.
         fallback: Value passed to the component's ``__init__`` (legacy path). If this is a
             valid UUID it is returned as-is; otherwise it's ignored.
 

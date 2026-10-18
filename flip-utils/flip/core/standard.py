@@ -287,13 +287,16 @@ class FLIPStandardProd(FLIPBase):
         )
 
     @override
-    def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
+    def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
         """
         Updates the model status on the Central Hub.
 
         Args:
             model_id (str): Unique model identifier.
             new_model_status (ModelStatus): New model status value.
+
+        Returns:
+            bool: True if the hub accepted the update, False if it failed (the failure is logged, not raised).
         """
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
@@ -314,6 +317,7 @@ class FLIPStandardProd(FLIPBase):
             response.raise_for_status()
 
             self.logger.info(f"Successfully updated model status to [{new_model_status}]")
+            return True
         except HTTPError as http_err:
             self.logger.error(
                 f"An http error occurred when updating the model status, see exception below | status code "
@@ -323,6 +327,7 @@ class FLIPStandardProd(FLIPBase):
         except Exception as e:
             self.logger.error("Something went wrong when updating the model status, see exception below")
             self.logger.exception(e)
+        return False
 
     @override
     def send_metrics(
@@ -450,7 +455,7 @@ class FLIPStandardProd(FLIPBase):
         self,
         model_id: str,
         event_type: FLLogEvent,
-        global_round: int,
+        global_round: int | None,
         client_name: str | None = None,
         details: dict[str, Any] | None = None,
         success: bool = True,
@@ -466,7 +471,8 @@ class FLIPStandardProd(FLIPBase):
         Args:
             model_id (str): The ID of the model the event belongs to.
             event_type (FLLogEvent): Which round event this is.
-            global_round (int): The 1-based federated round.
+            global_round (int | None): The 1-based federated round; None only for a
+                round-less event (``flip.schemas.ROUND_LESS_EVENTS``).
             client_name (str | None): FL client identity for trust-attributed
                 events; None for hub-attributed ones.
             details (dict[str, Any] | None): Event-specific facts.
@@ -661,9 +667,10 @@ class FLIPStandardDev(FLIPBase):
         )
 
     @override
-    def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
-        """Log only in dev mode - no actual status update."""
+    def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
+        """Log only in dev mode - no actual status update, so there is nothing to fail."""
         self.logger.info("[DEV] Status → %s", new_model_status)
+        return True
 
     @override
     def send_metrics(
@@ -697,13 +704,13 @@ class FLIPStandardDev(FLIPBase):
         self,
         model_id: str,
         event_type: FLLogEvent,
-        global_round: int,
+        global_round: int | None,
         client_name: str | None = None,
         details: dict[str, Any] | None = None,
         success: bool = True,
     ) -> None:
         """Log only in dev mode - no actual event sending."""
-        self.logger.info("[DEV] Event → %s (round %d) from %s", event_type, global_round, client_name or "hub")
+        self.logger.info("[DEV] Event → %s (round %s) from %s", event_type, global_round, client_name or "hub")
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:

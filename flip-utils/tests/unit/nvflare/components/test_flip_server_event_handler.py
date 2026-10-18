@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
@@ -518,6 +518,7 @@ class TestServerEventHandler:
 
         json_generator = Mock(spec=EvaluationJsonGenerator)
         json_generator.all_tasks_failed.return_value = all_tasks_failed
+        json_generator.hub_metrics.return_value = {}
         persist_cleanup = Mock(spec=PersistToS3AndCleanup)
         persist_cleanup.execute.return_value = None
         engine.get_component.side_effect = lambda comp_id: (
@@ -593,6 +594,7 @@ class TestServerEventHandler:
 
         json_generator = Mock(spec=EvaluationJsonGenerator)
         json_generator.all_tasks_failed.return_value = False
+        json_generator.hub_metrics.return_value = {}
         persist_cleanup = Mock(spec=PersistToS3AndCleanup)
         persist_cleanup.execute.side_effect = ResultsUploadError("boom")
         engine.get_component.side_effect = lambda comp_id: (
@@ -602,6 +604,99 @@ class TestServerEventHandler:
         handler.handle_event(EventType.END_RUN, fl_ctx)
 
         assert handler.final_status == ModelStatus.RESULTS_UPLOAD_FAILED
+
+
+class TestEvaluationMetricsForwarding:
+    """FLIP#1526: an evaluation's returned metrics reach the hub from the server, at END_RUN."""
+
+    MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+    def _end_run(self, json_generator, flip):
+        handler = ServerEventHandler(model_id=self.MODEL_ID, flip=flip)
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+        return handler
+
+    @staticmethod
+    def _evaluation_generator(hub_metrics):
+        generator = Mock(spec=EvaluationJsonGenerator)
+        generator.all_tasks_failed.return_value = False
+        generator.hub_metrics.return_value = hub_metrics
+        return generator
+
+    def test_each_clients_metrics_are_sent_at_round_zero(self):
+        flip = MagicMock()
+        generator = self._evaluation_generator({"Trust_1": {"MEAN_DICE": 0.9}, "Trust_2": {"MEAN_DICE": 0.8}})
+
+        self._end_run(generator, flip)
+
+        assert flip.send_metrics.call_args_list == [
+            call(client_name="Trust_1", model_id=self.MODEL_ID, label="MEAN_DICE", value=0.9, global_round=0),
+            call(client_name="Trust_2", model_id=self.MODEL_ID, label="MEAN_DICE", value=0.8, global_round=0),
+        ]
+
+    def test_metrics_are_sent_before_the_terminal_status(self):
+        flip = MagicMock()
+        generator = self._evaluation_generator({"Trust_1": {"MEAN_DICE": 0.9}})
+
+        self._end_run(generator, flip)
+
+        names = [c[0] for c in flip.method_calls]
+        assert names.index("send_metrics") < names.index("update_status")
+
+    def test_results_are_uploaded_before_metrics_are_sent(self):
+        """A slow hub must not hold up the results upload."""
+        order = []
+        flip = MagicMock()
+        flip.send_metrics.side_effect = lambda **_: order.append("send_metrics")
+        generator = self._evaluation_generator({"Trust_1": {"MEAN_DICE": 0.9}})
+        handler = ServerEventHandler(model_id=self.MODEL_ID, flip=flip)
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.side_effect = lambda _: order.append("upload")
+        fl_ctx.get_engine.return_value.get_component.side_effect = lambda comp_id: (
+            generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
+        assert order == ["upload", "send_metrics"]
+
+    def test_a_failing_metric_does_not_stop_the_others_or_end_run(self):
+        flip = MagicMock()
+        flip.send_metrics.side_effect = [ValueError("schema"), None]
+        generator = self._evaluation_generator({"Trust_1": {"A": 1.0, "B": 2.0}})
+
+        handler = self._end_run(generator, flip)
+
+        assert flip.send_metrics.call_count == 2
+        assert handler.final_status == ModelStatus.RESULTS_UPLOADED
+
+    def test_unreadable_metrics_do_not_stop_end_run(self):
+        flip = MagicMock()
+        generator = self._evaluation_generator({})
+        generator.hub_metrics.side_effect = TypeError("bad reply")
+
+        handler = self._end_run(generator, flip)
+
+        flip.send_metrics.assert_not_called()
+        assert handler.final_status == ModelStatus.RESULTS_UPLOADED
+
+    def test_training_jobs_forward_nothing(self):
+        """The training validate phase streams its metrics from the clients; nothing extra here."""
+        flip = MagicMock()
+
+        self._end_run(Mock(spec=ValidationJsonGenerator), flip)
+
+        flip.send_metrics.assert_not_called()
 
 
 class TestRoundEventRelay:
@@ -629,7 +724,7 @@ class TestRoundEventRelay:
     def test_round_started_relays_one_based_round_and_total(self):
         from nvflare.app_common.app_constant import AppConstants
 
-        # NVFLARE's _current_round is 0-based: prop 2 means round 3 of 5.
+        # FLARE's _current_round is 0-based: prop 2 means round 3 of 5.
         handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5})
 
         handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)

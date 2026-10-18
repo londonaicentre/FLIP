@@ -157,12 +157,6 @@ class TestCommonSettings:
             settings = _Common()
             assert settings.LOCAL_DEV is True
 
-    def test_common_ignores_legacy_min_clients_env(self):
-        """A stale MIN_CLIENTS in the environment is ignored: the per-job quorum comes from fl-api (FLIP#1230)."""
-        with patch.dict(os.environ, {"LOCAL_DEV": "true", "MIN_CLIENTS": ""}, clear=True):
-            settings = _Common()
-            assert not hasattr(settings, "MIN_CLIENTS")
-
 
 class TestFlipConstantsProxy:
     """Test the lazily-forwarding FlipConstants proxy."""

@@ -59,7 +59,7 @@ HEREDOC_END = "EOSQL"
 # Where the omop-db image ships the one definition of the data_analyst_reader grants
 # (trust/omop-db/files/create_readonly_users.sql). The Compose trust runs it from
 # /docker-entrypoint-initdb.d at first initdb; the chart's postStart hook runs this
-# copy on every start, because a PVC restored by the seed-data initContainer skips
+# copy on every start, because a PVC that already holds a database skips
 # initdb.d altogether. Both halves of that contract are asserted below: the hook
 # reads the path, and the Dockerfile puts the file there. What the file grants is
 # asserted beside the file, in trust/omop-db/tests/unit — this workflow is
@@ -99,8 +99,7 @@ def _init_container_script() -> str:
 def _omop_db_post_start_script() -> str:
     """Return the omop-db StatefulSet's ``postStart`` hook body with comment lines dropped.
 
-    Bounded by the ``volumeMounts:`` that follows the lifecycle block, so the
-    seed-data initContainer's own script further up is never in the slice.
+    Bounded by the ``volumeMounts:`` that follows the lifecycle block.
 
     Returns:
         str: The postStart hook script, comments removed.

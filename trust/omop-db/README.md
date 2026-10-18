@@ -17,11 +17,11 @@ Postgres database containing OMOP-ified data. This directory is both the
 **build source** for the `ghcr.io/londonaicentre/omop-db` image (OMOP CDM 5.4
 schema with the MI-CDM imaging extension — `image_occurrence`,
 `image_feature` — plus read-only role setup; imported from the retired private
-`flip-omop-db` repo, FLIP#834) and the **consumer harness** that downloads
-ready-populated data volumes for the dev trust stacks.
+`flip-omop-db` repo, FLIP#834) and the **seeding tools** that load each trust's
+slice of the published tables into a running database (`make seed-omop`).
 
 **Every published artifact is licence-clean (FLIP#842/#843)**: the image and
-the pgdata tarballs are *vocab-free* — the licensed core vocabulary is
+the published tables are *vocab-free* — the licensed core vocabulary is
 streamed into each running database as a one-time seeding step
 (`files/load_core_vocab.sh`), from a source each environment is licensed to
 use.
@@ -46,7 +46,7 @@ make -C trust up-trust KIT=GSTT    # GSTT only
 make -C trust up-trust KIT=KCH     # KCH only
 ```
 
-The downloaded volumes are **vocab-free** (~11 MB each): after the stack is
+The seeded databases carry **no licensed vocabulary**: after the stack is
 up, load the core vocabulary into each trust database once (idempotent — safe
 to re-run; needs the bundle, see "The core vocabulary bundle" below, and
 `psql` on the host). Unlike the stack commands above, these run from this
@@ -238,9 +238,7 @@ standing up N trusts is a deterministic split (`src/omop_db_tools/dataset.py`):
   explicit, inspectable, versioned with the dataset, and the per-project DICOM
   sets are keyed on it too (`trust/orthanc/seed_orthanc.py`), so a trust's OMOP
   rows and the studies in its PACS agree by construction. Any trust count the
-  column carries. `legacy` is still accepted as an alias — the mode's old name,
-  from when it existed only to reproduce the two-trust cut frozen in the
-  published Orthanc tarballs.
+  column carries.
 - `modulo`: partition by `person_id % NUM_TRUSTS` — for a dataset that carries
   no partition column, and only then: it ignores whatever the generator decided.
 

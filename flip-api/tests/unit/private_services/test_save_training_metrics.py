@@ -226,7 +226,7 @@ class TestSaveTrainingMetricsEndpoint:
 
     @patch("flip_api.private_services.save_training_metrics.resolve_trust_from_fl_client_name")
     def test_save_metrics_unresolvable_fl_client(self, mock_resolve, sample_metrics_payload_dict):
-        # The FL client name maps to no trust (e.g. an unassigned NVFLARE kit slot).
+        # The FL client name maps to no trust (e.g. an unassigned FLARE kit slot).
         mock_resolve.return_value = None
 
         response = client.post(self.url, json=sample_metrics_payload_dict, headers=self.headers)

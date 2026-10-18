@@ -14,7 +14,7 @@
 # Ark+ Fine-tuning — Chest X-ray Classification
 
 FLIP tutorial for **federated fine-tuning** of an Ark+ Swin foundation model on chest X-ray
-classification, using the NVFLARE **Client API** (`nvflare.client`). It replaces the earlier
+classification, using the FLARE **Client API** (`nvflare.client`). It replaces the earlier
 Executor-based implementation that used to live here: the finetuning semantics are unchanged (frozen
 backbone, fresh 5-class head, local teacher/student EMA), only the FL plumbing was ported from the
 legacy Executor API to the Client API. The job is defined entirely in Python via
@@ -25,7 +25,7 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 
 `config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
 as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
-NVFLARE's `ClientAPIExecutor` (`in_process` mode). There is **no `validator.py`** — the held-out validation folds
+FLARE's `ClientAPIExecutor` (`in_process` mode). There is **no `validator.py`** — the held-out validation folds
 into the trainer's `flare.is_evaluate()` branch (server-driven cross-site evaluation).
 
 ## Target labels
@@ -48,7 +48,7 @@ row are treated as negative. Labels come from the per-site dataframe (see Datase
 
 ## Model & Ark+ integration
 
-NVFLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
+FLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
 `get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
 sized from the `ARKPLUS` block, loads the backbone-only checkpoint that `make prepare-checkpoint` derives
 from the raw Ark6 file (`preprocess_checkpoints.py` strips `omni_heads.*` unconditionally, so the heads
@@ -62,7 +62,7 @@ under `ark_model.omni_heads`, so only the classifier head trains.
 When `USE_TEACHER_STUDENT=true`, each client holds a trainable **student** (initialised from the
 global weights) and a frozen EMA **teacher**. The per-step loss combines a BCE label loss with an MSE
 feature-consistency loss between student and teacher embeddings, weighted by `CONSISTENCY_WEIGHT`.
-Only the student weights are returned to NVFLARE; the teacher is never aggregated.
+Only the student weights are returned to FLARE; the teacher is never aggregated.
 
 ## Finetuning mechanisms
 
@@ -156,12 +156,12 @@ already exists). Fetch the raw checkpoint with `make download-raw-checkpoint`, o
 ## How to run
 
 ```bash
-# Local NVFLARE simulator (GPU + DECAF data + checkpoint). Prepares the checkpoint, then runs job.py.
+# Local FLARE simulator (GPU + DECAF data + checkpoint). Prepares the checkpoint, then runs job.py.
 make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
 #   ...or, from this directory:
 make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
 
-# Export the full NVFLARE job under ./fl_job/flip_fedavg/ (no GPU needed)
+# Export the full FLARE job under ./fl_job/flip_fedavg/ (no GPU needed)
 make export
 ```
 
@@ -202,7 +202,7 @@ uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
 > reads `GLOBAL_ROUNDS` from `config.json` at submit time and overrides whatever `job.py` baked into
 > the exported config — deployed round counts come from `config.json`, never from these flags.
-> (The standalone NVFLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
+> (The standalone FLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
 > locally via the simulator, or exercise the platform path through the FLIP UI / `make e2e_smoke`.)
 
 ## Round metrics & platform comparison
@@ -270,6 +270,6 @@ There is **no `validator.py`** — validation runs in the trainer's `flare.is_ev
 
 ## Dependency note
 
-The Ark+ model imports `timm`. If the FLIP/NVFLARE runtime does not include `timm`, model construction
+The Ark+ model imports `timm`. If the FLIP/FLARE runtime does not include `timm`, model construction
 fails — add it to the runtime dependencies, or set `ARKPLUS.REQUIRE_ARKPLUS_IMPORT=false` in
 `config.json` only for a non-Ark fallback smoke test.

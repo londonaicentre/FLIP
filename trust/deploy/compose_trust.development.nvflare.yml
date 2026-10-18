@@ -92,7 +92,7 @@ services:
     #
     # uid = the host user, so the provisioned kit and this net's images slice are
     # readable and writable without any chown; gid = the image's, so /app stays
-    # writable for NVFLARE's job workspace (fl-base makes it group-writable). On
+    # writable for FLARE's job workspace (fl-base makes it group-writable). On
     # EC2/on-prem the host user is uid 1000 and this resolves to the baked identity.
     user: "${UID:-1000}:1000"
     volumes:
@@ -102,7 +102,7 @@ services:
       # The :? guard keeps an unset var loud — a bare ${VAR}/net-1 would silently
       # mount a root-created /net-1 from the host's filesystem root.
       - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-1:/app/data/images/net-1
-      # Provisioned NVFLARE secrets (certificates, fed_client.json) — mounted from the
+      # Provisioned FLARE secrets (certificates, fed_client.json) — mounted from the
       # FL kit slot assigned by the hub, NOT the trust's friendly name. The slot dir's
       # fed_client.json baked-in CN is the identity the FL server sees on registration.
       - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
@@ -141,7 +141,7 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
-      # Site-enforced NVFLARE privacy policy (FLIP#851) — set in the trust's kit file
+      # Site-enforced FLARE privacy policy (FLIP#851) — set in the trust's kit file
       # (Host-local profile) and rendered into /app/local/privacy.json by the fl-client
       # entrypoint at container start. Unset/empty = no site policy (previous behavior).
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
@@ -172,7 +172,7 @@ services:
     volumes:
       # This net's slice of the images download directory (see fl-client-net-1 above)
       - ${BASE_IMAGES_DOWNLOAD_DIR:?set in the trust kit file}/net-2:/app/data/images/net-2
-      # Provisioned NVFLARE secrets (certificates, fed_client.json)
+      # Provisioned FLARE secrets (certificates, fed_client.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
@@ -209,7 +209,7 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
-      # Site-enforced NVFLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
+      # Site-enforced FLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}

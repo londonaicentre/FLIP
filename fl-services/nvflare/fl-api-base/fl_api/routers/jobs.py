@@ -92,7 +92,7 @@ def list_jobs(
         name_prefix=name_prefix,
         reverse=reverse,
     )
-    # NVFLARE's list_jobs always includes job_id + status on every entry (verified against
+    # FLARE's list_jobs always includes job_id + status on every entry (verified against
     # nvflare 2.7.1 job_cmds.py, both the summary and detailed paths) — bracket access is intentional.
     return [JobMetadata(job_id=str(job["job_id"]), status=normalize_status(job["status"])) for job in raw_jobs]
 
@@ -192,7 +192,7 @@ def delete_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dic
 def abort_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> JobMetadata:
     """Aborts job with provided job_id.
 
-    NVFLARE's ``abort_job`` is natively idempotent for already-terminal jobs ("if the job
+    FLARE's ``abort_job`` is natively idempotent for already-terminal jobs ("if the job
     is already done, no effect"); a genuinely nonexistent ``job_id`` raises ``JobNotFound``,
     handled as a 404 by the app-level exception handler.
 

@@ -49,7 +49,7 @@ $(DATASET_TARGETS):
 # ---------------------------------------------------------------------------
 # Lint / autoformat the tutorial sources. Runs ruff over the whole tree; ruff
 # auto-excludes the per-tutorial .venv/ trees and resolves config per-file
-# (NVFLARE tutorials inherit the repo-root rule set, Flower tutorials use their
+# (FLARE tutorials inherit the repo-root rule set, Flower tutorials use their
 # own pyproject [tool.ruff]). Uses uvx so no synced venv is required.
 #
 # NOTE: `format` reformats every tutorial, including the Flower server_app.py /

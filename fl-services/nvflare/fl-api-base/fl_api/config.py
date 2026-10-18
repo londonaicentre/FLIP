@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # The GPUs, per site, for a job that declares none (FLIP#70). A job declares its own in its meta.json
     # resource_spec, and a researcher can override that when submitting training; see
-    # fl_api/utils/job_resources.py. NVFLARE's scheduler holds a job until every site can provide the
+    # fl_api/utils/job_resources.py. FLARE's scheduler holds a job until every site can provide the
     # request, so a non-zero default here keeps every job off a CPU-only site, which is what stalled the
     # Azure trust under stag's default of 1 (FLIP#1390).
     JOB_RESOURCE_SPEC_NUM_GPUS: int = Field(default=0, ge=0)

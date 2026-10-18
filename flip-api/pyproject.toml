@@ -75,6 +75,7 @@ dev = [
     "libcst>=1.7.0",
     "testcontainers[postgres]>=4.9",
     "moto[cognitoidp,s3,ses]>=5.0",
+    "playwright>=1.63.0",
 ]
 
 [tool.coverage.report]

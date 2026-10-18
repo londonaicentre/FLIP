@@ -16,10 +16,10 @@
         <!-- Below lg the labels hide (icon + tooltip only) so the buttons stop
              squashing the truncating model title in the page header. -->
         <button
+            v-if="canStopTraining"
             type="button"
             data-test="stop-training-btn"
-            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-red-600 text-white hover:bg-red-700 disabled:hover:bg-red-600"
-            :disabled="!canStopTraining"
+            class="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-semibold transition-colors bg-red-600 text-white hover:bg-red-700"
             :title="stopActionLabel"
             :aria-label="stopActionLabel"
             @click="dialogStopTraining = true"
@@ -79,6 +79,7 @@ const canDownloadResults = computed(() => props.status === ModelStatusEnum.RESUL
 // gate). "Pre-running", not "pre-training": the ML term "pretraining" means something else.
 const isPreRunning = computed(() => props.status === ModelStatusEnum.INITIATED);
 
+// Only while queued or training; every terminal status hides the action.
 const canStopTraining = computed(() =>
     props.status >= ModelStatusEnum.INITIATED && props.status < ModelStatusEnum.RESULTS_UPLOADED
 );

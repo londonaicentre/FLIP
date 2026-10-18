@@ -774,9 +774,9 @@ class TestHitCheckedAgainstXnat:
         with pytest.raises(Exception, match="connection refused"):
             _fetch(headers)
 
-    def test_an_older_sentinel_is_replaced_once_xnat_answers(self, headers, tmp_path, xnat, resource_stats):
+    def test_an_unreadable_sentinel_is_replaced_once_xnat_answers(self, headers, tmp_path, xnat, resource_stats):
         acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
-        Path(acc, ".flip_complete-scan-NIFTI").write_text("")  # what imaging-api wrote before the record
+        Path(acc, ".flip_complete-scan-NIFTI").write_text("")  # holds no record
 
         _fetch(headers)
 
@@ -784,17 +784,16 @@ class TestHitCheckedAgainstXnat:
         assert not _file(acc, "NIFTI").exists()
         assert read_sentinel(acc, "scan", "NIFTI") == CachedDownload("XNAT_E00001", STATS)
 
-    def test_an_older_sentinel_is_served_when_xnat_cannot_answer(self, headers, tmp_path, xnat, caplog):
+    def test_an_unreadable_sentinel_is_never_served_unchecked(self, headers, tmp_path, xnat):
+        """Without a record there is nothing to check the copy against, so it is a miss, not a hit."""
         acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123")
         Path(acc, ".flip_complete-scan-NIFTI").write_text("")
         xnat.get_experiment.side_effect = Exception("connection refused")
 
-        with caplog.at_level(logging.WARNING, logger="imaging_api.utils.logger"):
-            assert _fetch(headers) == acc
+        with pytest.raises(Exception, match="connection refused"):
+            _fetch(headers)
 
         xnat.download.assert_not_called()
-        assert _file(acc, "NIFTI").is_file()
-        assert "could not check XNAT" in caplog.text
 
     def test_a_malformed_record_is_refreshed_not_a_500(self, headers, tmp_path, xnat, resource_stats):
         acc = _seed_cached_download(str(tmp_path), "net1", "hub-proj-1", "ACC123", stats=[["1"]])

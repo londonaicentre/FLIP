@@ -16,7 +16,7 @@ document the operator configured. The Compose stack mounts it; until this wiring
 Helm chart did not, so a trust's [disclosure]/[access]/[fl_privacy.nvflare] rules were enforced on
 one deployment shape and dropped on the other, with no error anywhere. The chart renders the
 document into a ConfigMap. data-access-api mounts it read-only and points ``ACCESS_POLICY_FILE`` at
-it. The NVFLARE fl-client never mounts it in its own container — researcher code runs there — but
+it. The FLARE fl-client never mounts it in its own container — researcher code runs there — but
 in a governance-extract init container that writes the client's section alone to an emptyDir the
 client reads. The mounts carry subPath, which makes the ConfigMap's key and each subPath one
 contract across three files.
@@ -46,7 +46,7 @@ FL_CLIENT_TEMPLATE = TEMPLATES_DIR / "fl-client.yaml"
 #: The opt-in guard the ConfigMap and the data-access-api template carry. Spelled once, so a
 #: reworded guard fails loudly rather than letting every fragment below read as unguarded.
 GOVERNANCE_GUARD = "{{- if .Values.governance.document }}"
-#: The fl-client's guard: a document AND the NVFLARE backend. Nothing on Flower reads a site
+#: The fl-client's guard: a document AND the FLARE backend. Nothing on Flower reads a site
 #: privacy section, so the Flower pod gets none of the wiring.
 FL_CLIENT_GUARD = "{{- if $governed }}"
 FL_CLIENT_GUARD_DEFINITION = '{{- $governed := and .Values.governance.document (eq .Values.flBackend "nvflare") }}'
@@ -221,7 +221,7 @@ def test_the_configmap_is_rendered_only_with_a_document() -> None:
 
 
 def test_both_pod_templates_carry_their_wiring_under_the_guard() -> None:
-    """data-access-api mounts the document; the NVFLARE fl-client extracts its section.
+    """data-access-api mounts the document; the FLARE fl-client extracts its section.
 
     Every fragment has to sit INSIDE its template's guard. Present-but-unconditional is the
     defect this suite exists for: on a release with no document configured it would mount a

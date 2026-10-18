@@ -114,8 +114,11 @@ them only when diagnosing or deliberately changing that behaviour.
 | `MAX_TASK_RESULT_LENGTH` | `10_000_000` (characters) | Max size of a task result payload |
 | `PROJECT_REIMPORT_RATE` | `60` (minutes) | How often to reimport studies for a given project |
 | `MAX_REIMPORT_COUNT` | `5` | Max reimport attempts before a project's imaging import stops retrying |
-| `SCHEDULE_RUN_JOBS_EXECUTION` | `true` | Whether the scheduler registers the FL job-pickup pass (`run_jobs_scheduled_task`). Only that one job is gated: the fl-api keep-alive, imaging reimport, stale-task recovery and malware-scan reconcile jobs are registered regardless |
+| `SCHEDULE_RUN_JOBS_EXECUTION` | `true` | Whether the scheduler registers the FL job-pickup pass (`run_jobs_scheduled_task`) and the FL job watchdog (`watch_fl_jobs_scheduled_task`). Only those two jobs are gated: the fl-api keep-alive, imaging reimport, stale-task recovery and malware-scan reconcile jobs are registered regardless |
 | `SCHEDULER_RUN_JOBS_RATE` | `1` (minute) | How often the scheduler's FL job-pickup pass runs |
+| `SCHEDULER_FL_JOB_WATCHDOG_RATE` | `1` (minute) | How often the scheduler checks each running FL job against its net's FL API |
+| `FL_JOB_WATCHDOG_STRIKES` | `3` | Consecutive checks a job must look ended or lost on its backend before its model is set to `ERROR` and the net freed |
+| `FL_JOB_PREPARE_TIMEOUT_MINUTES` | `30` | How long a picked-up job may go without reaching the FL server before its model is set to `ERROR` |
 | `SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE` | `2` (minutes) | How often the scheduler pings fl-api to keep its session alive |
 | `SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE` | `30` (minutes) | How often the scheduler checks for projects with unimported studies |
 | `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE` | `1` (minute) | How often the scheduler re-checks uploads left `SCANNING` by a restart mid-scan |
@@ -208,15 +211,15 @@ Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStac
 
 ### Keycloak-touching tests
 
-`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve. Separately, `.github/workflows/local_auth_smoke.yml` boots flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `tests/local_auth_smoke.py` (sign in as the seeded admin) and `tests/local_storage_smoke.py` (a model file through the store, FLIP#1291) — the CI proof that the hub starts, authenticates and stores files without AWS.
+`tests/integration/test_keycloak_round_trips.py` is the twin of `test_cognito_round_trips.py` for the Keycloak provider (`src/flip_api/auth/identity/keycloak.py`): it boots the pinned Keycloak image (kept in step with `deploy/compose.development.yml`) under Testcontainers with the committed dev realm `deploy/keycloak/flip-realm.json` imported at boot, so `register_user` really creates a user, `delete_user` really removes one, and a token minted by Keycloak's password grant really passes `verify_token`. The same import proves the realm file's `${...}` placeholders resolve. Separately, `.github/workflows/local_auth_smoke.yml` boots flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `tests/local_auth_smoke.py` (sign in as the seeded admin) and `tests/local_storage_smoke.py` (a model file through the store, FLIP#1291, plus repeated model-sized presigned POSTs, FLIP#1534) — the CI proof that the hub starts, authenticates and stores files without AWS.
 
 ### Demo tooling (live stack)
 
 Three developer utilities drive the **running dev stack** end to end (none run in CI):
 
 - `tests/demo_video.py` (`make demo-video` from the repo root, `make demo_video` here) — records the scripted
-  end-to-end demo video: runs the six Cypress segments in `flip-ui/test/cypress/demo/` one Dockerised run at a
-  time, performs the slow waits (cohort responses, imaging import, FL training) off-camera by reusing
+  end-to-end demo video: plays the six segments in `tests/demo_segments.py` in one Playwright browser,
+  performs the slow waits (cohort responses, imaging import, FL training) off-camera by reusing
   `tests/e2e_smoke.py`'s wait functions, then assembles one mp4. Resumable via `--project-id` /
   `--from-segment`; `--video-scale` controls capture resolution (default 3 → 3840x2400).
 - `tests/seed_demo_projects.py` (`make seed_demo_projects`) — seeds a curated catalogue of radiology projects in

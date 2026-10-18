@@ -331,7 +331,7 @@ def resolve_trust_from_fl_client_name(fl_client_name: str, session: Session) -> 
     independent of the operator-chosen trust display name (closes the #538 drift
     from Flower's previous free-form name lookup):
 
-    - NVFLARE: the slot is the certificate CN baked in at provisioning time
+    - FLARE: the slot is the certificate CN baked in at provisioning time
       (e.g. ``Trust_2``).
     - Flower: the slot is the ``SUPERNODE_NAME`` env var, set to ``FL_KIT_SLOT``
       in the trust compose so the FL identity is the slot, not the trust name.

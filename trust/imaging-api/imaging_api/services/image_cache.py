@@ -131,7 +131,7 @@ def read_sentinel(accession_dir_abs: str, assessor_type: str, resource_type: str
         resource_type (str): The resource type of the download.
 
     Returns:
-        CachedDownload | None: The record; None for a missing, empty (older imaging-api) or unreadable sentinel.
+        CachedDownload | None: The record; None for a missing or unreadable (empty included) sentinel.
     """
     try:
         payload = json.loads(Path(sentinel_path(accession_dir_abs, assessor_type, resource_type)).read_text())

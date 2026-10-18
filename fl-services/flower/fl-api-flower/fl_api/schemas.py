@@ -51,12 +51,12 @@ class NodeRegistrationRequest(BaseModel):
     node_id: str
 
 
-# Sanity cap on a job's GPU count — the same contract as the NVFLARE fl-api's (FLIP#70).
+# Sanity cap on a job's GPU count — the same contract as the FLARE fl-api's (FLIP#70).
 MAX_GPUS_PER_SITE = 8
 
 
 class JobResources(BaseModel):
-    """The GPUs a job needs at each participating site — the hub contract shared with the NVFLARE fl-api (FLIP#70).
+    """The GPUs a job needs at each participating site — the hub contract shared with the FLARE fl-api (FLIP#70).
 
     Flower's deployment runtime (SuperLink and SuperNodes) places no job by GPU — ``num-gpus`` is a
     simulation-backend option only — so this adapter records the request and reports it as not enforced
