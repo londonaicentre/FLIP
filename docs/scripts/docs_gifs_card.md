@@ -37,20 +37,22 @@ One copy of every file, at an unversioned path:
 | --- | --- |
 | `admin/<name>.gif` | one per `flip-ui/test/cypress/docs/admin/<name>.spec.ts` |
 | `flip/<name>.gif` | one per `flip-ui/test/cypress/docs/flip/<name>.spec.ts` |
-| `manifest.json` | the provenance of this version and the sha256 + size of every GIF |
+| `manifest.json` | the provenance of this recording and the sha256 + size of every GIF |
 | `README.md` | this card (`docs/scripts/docs_gifs_card.md` in the FLIP repository) |
 
 ## Versions
 
-A version is a git **tag** on this dataset, named `YYYYMMDDTHHMMSSZ-<sha7>`: the UTC instant the recording
-started and the first seven characters of the FLIP `develop` commit the GIFs were recorded from. Every publish
-is one commit on `main` (the GIF of every demo spec, deletions for GIFs whose spec is gone, the manifest and
-this card) followed by one tag on that commit. The FLIP docs pin a tag in `docs/.gifs_version` and fetch it at
-build time, so:
+Every commit on `main` is one recording of FLIP `develop`, published by its CI workflow: the GIF of every demo
+spec, deletions for GIFs whose spec is gone, the manifest and this card. A recording's version is
+`YYYYMMDDTHHMMSSZ-<sha7>`: the UTC instant it started and the first seven characters of the commit it was
+recorded from. `main` moves with every recording, and the FLIP `latest` docs follow it. Two other kinds of ref
+point at recordings ([FLIP#1547](https://github.com/londonaicentre/FLIP/issues/1547)):
 
-- **Tags are never moved** — the publisher refuses a tag that already exists rather than re-pointing it.
-- **Tags are never deleted** — historical documentation builds keep resolving their pin.
-- `main` is a moving ref: consumers pin a tag, never `main`.
+- **`vX.Y.Z` tags**: the recording FLIP release `vX.Y.Z` ships, tagged by its release workflow. Release tags
+  are **never moved** and **never deleted**, so that release's documentation keeps resolving them. The same
+  holds for the `YYYYMMDDTHHMMSSZ-<sha7>` tags pinned by releases v0.8.0 to v0.12.0, from before release tags.
+- **`pr-<N>` branches**: a recording made by hand for FLIP pull request #N, for GIFs CI cannot record (one
+  that needs a live trust, say); that PR's documentation preview shows it. Delete the branch once the PR closes.
 
 ## Manifest
 
@@ -69,17 +71,19 @@ build time, so:
 }
 ```
 
-`version` is the tag; `recorded_at` is the tag's timestamp; `workflow_run` is `null` for a hand publish. A
-consumer verifies both `sha256` and `bytes` of every file before using it, and treats the manifest as the
-complete list of files at that version.
+`version` names the recording and `recorded_at` is its timestamp; `workflow_run` is `null` for a hand publish.
+A consumer verifies both `sha256` and `bytes` of every file before using it, and treats the manifest as the
+complete list of files in that recording.
 
 ## Consuming
 
-Everything is public and read anonymously:
+Everything is public and read anonymously. Resolve the ref (a tag, a branch, or `main`) to a commit first, then
+read everything at that commit, so a recording published meanwhile cannot mix two sets:
 
 ```text
-https://huggingface.co/datasets/aicentreflip/docs-gifs/resolve/<tag>/manifest.json
-https://huggingface.co/datasets/aicentreflip/docs-gifs/resolve/<tag>/<category>/<name>.gif
+https://huggingface.co/api/datasets/aicentreflip/docs-gifs/revision/<ref>       -> {"sha": "<commit>", ...}
+https://huggingface.co/datasets/aicentreflip/docs-gifs/resolve/<commit>/manifest.json
+https://huggingface.co/datasets/aicentreflip/docs-gifs/resolve/<commit>/<category>/<name>.gif
 ```
 
 The FLIP docs build does exactly this (`docs/scripts/fetch_docs_gifs.py`, run from `docs/source/conf.py`).

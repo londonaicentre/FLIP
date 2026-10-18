@@ -15,8 +15,9 @@
 # through the local Keycloak and reach the hub as the seeded admin
 # (flip-api/tests/local_auth_smoke.py), then round-trip a model file through the
 # object store — presigned upload, malware-scan promotion, presigned download, delete
-# (flip-api/tests/local_storage_smoke.py, FLIP#1291). The bundle → fl-api → training →
-# results leg needs FL images and trusts, so it stays a dev-box `make e2e_smoke`.
+# (flip-api/tests/local_storage_smoke.py, FLIP#1291), then post a model-sized file
+# several times (FLIP#1534, the RustFS 1.0.0 presigned-POST 500s). The bundle → fl-api →
+# training → results leg needs FL images and trusts, so it stays a dev-box `make e2e_smoke`.
 name: Local hub smoke (Keycloak + object store, no AWS)
 
 on:

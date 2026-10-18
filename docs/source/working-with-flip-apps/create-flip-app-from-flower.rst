@@ -58,7 +58,7 @@ If you are starting from scratch, ``fl-apps/flower/standard/`` provides the plat
 
 .. note::
 
-   ``config.json`` carries only ``job_type`` for a Flower app (``{"job_type": "standard"}``). The hub reads that key and nothing else from it, to pick which base template to bundle. Run configuration goes in ``config.toml``, not here — unlike NVFLARE, where ``config.json`` carries the training settings. An NVFLARE job's ``meta.json`` ``resource_spec`` has no Flower counterpart: Flower's deployment runtime does not schedule jobs by GPU, so a GPU request set when initiating training is recorded in the model's activity feed but not enforced, and a SuperNode runs the job with whatever GPUs its host gives it.
+   ``config.json`` carries only ``job_type`` for a Flower app (``{"job_type": "standard"}``). The hub reads that key and nothing else from it, to pick which base template to bundle. Run configuration goes in ``config.toml``, not here — unlike FLARE, where ``config.json`` carries the training settings. A FLARE job's ``meta.json`` ``resource_spec`` has no Flower counterpart: Flower's deployment runtime does not schedule jobs by GPU, so a GPU request set when initiating training is recorded in the model's activity feed but not enforced, and a SuperNode runs the job with whatever GPUs its host gives it.
 
 .. note::
 
@@ -198,7 +198,7 @@ For a platform run, though, the strategy is the template's ``FedAvgWithClientMet
 
 .. warning::
 
-   Set the strategy's node thresholds from ``flip-min-clients``. Flower defaults ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` to **2**, so a strategy left on those defaults never starts a round on a single-trust project: ``sample_nodes`` waits for a second node in an **unbounded** ``sleep(1)`` loop, so the job hangs for good rather than timing out (``start()``'s ``timeout`` bounds only ``send_and_receive``, which is never reached). The only trace is flwr's per-second ``Waiting for nodes to connect`` INFO line in the ServerApp log, which the platform does not surface — from the UI it is indistinguishable from slow training. FLIP's FL API injects ``flip-min-clients`` with the participating-trust count, the same value the NVFLARE adapter puts in ``min_clients``.
+   Set the strategy's node thresholds from ``flip-min-clients``. Flower defaults ``min_train_nodes``, ``min_evaluate_nodes`` and ``min_available_nodes`` to **2**, so a strategy left on those defaults never starts a round on a single-trust project: ``sample_nodes`` waits for a second node in an **unbounded** ``sleep(1)`` loop, so the job hangs for good rather than timing out (``start()``'s ``timeout`` bounds only ``send_and_receive``, which is never reached). The only trace is flwr's per-second ``Waiting for nodes to connect`` INFO line in the ServerApp log, which the platform does not surface — from the UI it is indistinguishable from slow training. FLIP's FL API injects ``flip-min-clients`` with the participating-trust count, the same value the FLARE adapter puts in ``min_clients``.
 
    FLIP's strategies take it as one argument, read via the helper so your app carries no parsing:
 
@@ -309,7 +309,7 @@ Once you have the cohort DataFrame, iterate its ``accession_id`` column and call
 ClientApp: privatising the update before it leaves
 ***************************************************
 
-FLIP's NVFLARE templates apply a privacy filter to every training result inside the platform-owned client config, so the app author does nothing. On Flower the ``ClientApp`` is the uploaded file, so the template cannot wire the filter — the uploaded ``client_app.py`` is expected to register FLIP's differential-privacy mod on its training handler:
+FLIP's FLARE templates apply a privacy filter to every training result inside the platform-owned client config, so the app author does nothing. On Flower the ``ClientApp`` is the uploaded file, so the template cannot wire the filter — the uploaded ``client_app.py`` is expected to register FLIP's differential-privacy mod on its training handler:
 
 .. code-block:: python
 
@@ -386,7 +386,7 @@ Per-round, per-client metrics reach the FLIP UI through the reply ``Message``: p
 
 .. note::
 
-   **Arbitrary x-axis.** The key grammar is ``<label>[@<x_label>][.x_<V>]``: ``@<x_label>`` names the x-axis (e.g. ``epoch``) and ``.x_<V>`` is the coordinate on it (any float, e.g. ``"loss@wall_clock_s.x_12.5"``). A key with neither suffix is plotted at its FL global round on an axis titled "Global Rounds". The older ``.round_<N>`` suffix still parses but is deprecated. A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI. This is the same grammar the NVFLARE ``SummaryWriter`` tags use, minus the ``.x_<V>`` part, which there is carried by ``global_step``.
+   **Arbitrary x-axis.** The key grammar is ``<label>[@<x_label>][.x_<V>]``: ``@<x_label>`` names the x-axis (e.g. ``epoch``) and ``.x_<V>`` is the coordinate on it (any float, e.g. ``"loss@wall_clock_s.x_12.5"``). A key with neither suffix is plotted at its FL global round on an axis titled "Global Rounds". A plot is identified by the ``(label, x_label)`` pair, so the same metric logged under two different x-labels is shown as two separate plots in the UI. This is the same grammar the FLARE ``SummaryWriter`` tags use, minus the ``.x_<V>`` part, which there is carried by ``global_step``.
 
 .. _flower-config-toml:
 
@@ -420,8 +420,8 @@ Your own ``pyproject.toml`` drives local runs. Beyond a normal Flower project it
    clientapp = "app.client_app:app"
 
    [tool.flwr.app.config]
-   num-server-rounds = 3   # equivalent to NVFLARE's GLOBAL_ROUNDS
-   local-epochs = 1        # equivalent to NVFLARE's LOCAL_ROUNDS
+   num-server-rounds = 3   # equivalent to FLARE's GLOBAL_ROUNDS
+   local-epochs = 1        # equivalent to FLARE's LOCAL_ROUNDS
    learning-rate = 1e-4
    batch-size = 2
    # Client-side DP knobs read by flip_local_dp_mod
@@ -473,7 +473,7 @@ Because the template's ``pyproject.toml`` governs a platform run, the way to set
 Best-model selection (optional)
 ===============================
 
-Set ``best-model-metric`` in ``config.toml`` to the name of an aggregated **evaluation** metric the clients report (``test_dice`` in the spleen tutorial) and the template saves ``best_FL_global_model.pt`` alongside the final model whenever that metric improves, recording ``best_model`` / ``best_round`` / ``best_metric`` in ``cross_val_results.json``. Set ``best-model-metric-minimize = true`` for loss-like metrics. Two consequences: the evaluate phase runs **every** round instead of only the last (one test-split inference pass per client per round), and the key must be one the clients actually emit — name a key nobody reports and the run completes with no best model, logging a warning per round rather than failing. Selection needs at least two rounds. This is the Flower analogue of NVFLARE's ``BEST_MODEL_METRIC`` in ``config.json``.
+Set ``best-model-metric`` in ``config.toml`` to the name of an aggregated **evaluation** metric the clients report (``test_dice`` in the spleen tutorial) and the template saves ``best_FL_global_model.pt`` alongside the final model whenever that metric improves, recording ``best_model`` / ``best_round`` / ``best_metric`` in ``cross_val_results.json``. Set ``best-model-metric-minimize = true`` for loss-like metrics. Two consequences: the evaluate phase runs **every** round instead of only the last (one test-split inference pass per client per round), and the key must be one the clients actually emit — name a key nobody reports and the run completes with no best model, logging a warning per round rather than failing. Selection needs at least two rounds. This is the Flower analogue of FLARE's ``BEST_MODEL_METRIC`` in ``config.json``.
 
 ************************************
 Submitting the app to FLIP
@@ -494,7 +494,7 @@ Local testing before upload
 
 Two local paths run an app — the flwr simulator and the Flower containers by hand — and the app code is identical on both because site identity comes from the Flower ``Context`` rather than the environment (see the ``client_identity`` note above). ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, named by ``DEV_DATAFRAME`` and ``DEV_IMAGES_DIR``; both paths point them at the tutorial's dataset under ``fl-tutorials/data/``.
 
-**Fast inner loop: the flwr simulator.** ``make run-tutorial`` (or its alias ``make sim-tutorial``, the same as on NVFLARE) runs ``flwr run`` against a local SuperLink flwr starts itself — no SuperLink container, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
+**Fast inner loop: the flwr simulator.** ``make run-tutorial`` (or its alias ``make sim-tutorial``, the same as on FLARE) runs ``flwr run`` against a local SuperLink flwr starts itself — no SuperLink container, no SuperNodes, no FL API, no Docker — so a code change is one re-run away:
 
 .. code-block:: bash
 
@@ -503,7 +503,7 @@ Two local paths run an app — the flwr simulator and the Flower containers by h
 
 The wrapper (``fl-tutorials/flower/sim-tutorial.sh``) sets the dev-data variables per tutorial, derives the simulator's site count from ``flip-min-clients`` and passes it as ``num-partitions``, and supplies the one run-config value the platform's submit step would otherwise inject — ``flip-job-dir``, pointed at the downloaded checkpoint — so the ``evaluation`` tutorial runs unchanged too. Its exit status is the run's terminal status as the SuperLink reports it (``flwr run`` alone returns 0 whatever became of the run), and it refuses to start against a local SuperLink another checkout left listening on the Control API port, which would otherwise execute the app in that checkout's environment (naming the pid and command line where ``ss`` can see them). Under the simulator every ``ClientApp`` sees the same shared cohort, so the tutorials call ``partition_cohort`` (also in ``flip.flower.identity``) to take their own disjoint slice; on the platform that is a no-op, because each trust's data-access-api already serves only its own rows.
 
-**Full-fidelity checks: the e2e smoke, or the Flower containers by hand.** What the simulator cannot exercise — the FL images, the FL API submit path and SuperNode registration — is covered by the end-to-end smoke test against the running dev stack, as for NVFLARE: ``make e2e_smoke FL_BACKEND=flower`` (the X-ray app), ``make -C flip-api e2e_smoke_spleen FL_BACKEND=flower``, ``e2e_smoke_spleen_evaluation`` and ``e2e_smoke_prostate`` likewise, and ``make e2e_smoke_ehr FL_BACKEND=flower`` (see ``flip-api/AGENTS.md``). To run the Flower containers on their own by hand (SuperLink, two SuperNodes and an FL API, with the dev data bind-mounted; a tutorial submit there uses the tutorial's ``pyproject.toml`` values, not ``app/config.toml``):
+**Full-fidelity checks: the e2e smoke, or the Flower containers by hand.** What the simulator cannot exercise — the FL images, the FL API submit path and SuperNode registration — is covered by the end-to-end smoke test against the running dev stack, as for FLARE: ``make e2e_smoke FL_BACKEND=flower`` (the X-ray app), ``make -C flip-api e2e_smoke_spleen FL_BACKEND=flower``, ``e2e_smoke_spleen_evaluation`` and ``e2e_smoke_prostate`` likewise, and ``make e2e_smoke_ehr FL_BACKEND=flower`` (see ``flip-api/AGENTS.md``). To run the Flower containers on their own by hand (SuperLink, two SuperNodes and an FL API, with the dev data bind-mounted; a tutorial submit there uses the tutorial's ``pyproject.toml`` values, not ``app/config.toml``):
 
 .. code-block:: bash
 

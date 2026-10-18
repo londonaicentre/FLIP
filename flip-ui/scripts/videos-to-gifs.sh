@@ -18,7 +18,7 @@
 #   test/cypress/docs/flip/create-model.spec.ts  -> docs/source/assets/generated/gifs/flip/create-model.gif
 # The GIFs are not tracked in git (FLIP#1236): generated/ is gitignored, the CI
 # workflow publishes this directory to the aicentreflip/docs-gifs dataset, and the
-# docs build fetches the pinned version into the same directory — so a local
+# docs build fetches the published set into the same directory — so a local
 # recording is previewed with FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs.
 
 set -euo pipefail

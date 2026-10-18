@@ -4,12 +4,12 @@ Federated training of a small **multi-layer perceptron (MLP)** that predicts **t
 (T2DM) onset** from OMOP tabular features — patient demographics plus pre-diagnosis condition and
 visit history — on the **Flower** backend (`ClientApp` / `ServerApp`).
 
-This is the Flower twin of the NVFLARE
+This is the Flower twin of the FLARE
 [`ehr_risk_prediction`](../../nvflare/tabular_classification/ehr_risk_prediction) tutorial, and
 FLIP's first **tabular / EHR-only** example. The whole cohort arrives through `flip.get_dataframe`
 (arbitrary SQL over each trust's OMOP CDM database); **no imaging is fetched** — no Orthanc, no XNAT,
 no PACS pull, no data-enrichment step — and **CPU is enough** to train it. The data model, features,
-label, preprocessing and network are identical to the NVFLARE tutorial; see
+label, preprocessing and network are identical to the FLARE tutorial; see
 [its README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md) for the full
 treatment of those. This page focuses on the **Flower-specific mechanics** and how to run it.
 
@@ -23,12 +23,12 @@ app/
   server_app.py          # ServerApp: FedAvg loop + best-model save + results upload (from the standard template)
   strategy.py            # FedAvgWithClientMetrics (from the standard template)
   task.py                # single-epoch train/validate helpers
-  feature_engineering.py # shared byte-identical with the NVFLARE copy
-  models.py              # shared byte-identical with the NVFLARE copy — the MLP factory
+  feature_engineering.py # shared byte-identical with the FLARE copy
+  models.py              # shared byte-identical with the FLARE copy — the MLP factory
   config.json            # per-tutorial hyperparameters read at runtime
   config.toml            # Flower run-config overrides applied by fl-api on a platform submit
 pyproject.toml           # flwr app definition + run-config defaults (incl. DP knobs)
-query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
+query.sql                # the OMOP cohort query (identical to the FLARE copy)
 ```
 
 `server_app.py` and `strategy.py` are copied byte-for-byte from the
@@ -61,7 +61,7 @@ and condition counts), labelled with the first T2DM diagnosis (SNOMED `44054006`
 (median imputation + z-scoring) is fitted on each site's **local training split only**, so no fitted
 state crosses a trust boundary. Full details, including the feature table and the honest caveats of
 this teaching cohort, are in the
-[NVFLARE README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md#features-and-label).
+[FLARE README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md#features-and-label).
 
 ## Metrics and best-model selection
 
@@ -103,7 +103,7 @@ Override per run without editing the app: `flwr run . --run-config "dp-enabled=f
 
 ## Data
 
-Same Synthea-in-OMOP source as the NVFLARE tutorial (AWS Open Data Registry, anonymous HTTPS, ~5 MB,
+Same Synthea-in-OMOP source as the FLARE tutorial (AWS Open Data Registry, anonymous HTTPS, ~5 MB,
 fetched at run time, never committed).
 
 - **Local run** derives the CSV both SuperNodes mount:

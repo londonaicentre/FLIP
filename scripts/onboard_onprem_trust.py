@@ -586,12 +586,12 @@ def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str, ki
             return Check(
                 "fl-client GPU capacity",
                 Status.PASS,
-                "NUM_AVAILABLE_GPUS unset in kit (CPU-only; only the NVFLARE client reads it)",
+                "NUM_AVAILABLE_GPUS unset in kit (CPU-only; only the FLARE client reads it)",
             )
         # `make up-trust` applies the GPU passthrough overlay only when the kit sets
         # NUM_AVAILABLE_GPUS > 0 (trust/Makefile GPU_OVERRIDE), so an unset value gets no
         # device — yet fl-client's entrypoint.sh resolves that same unset value to 1
-        # (`${NUM_AVAILABLE_GPUS:-1}`) and NVFLARE then demands a GPU it was never given.
+        # (`${NUM_AVAILABLE_GPUS:-1}`) and FLARE then demands a GPU it was never given.
         # That crash-loops whatever the host carries, so there is no host count worth probing.
         return Check(
             "fl-client GPU capacity",

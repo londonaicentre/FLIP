@@ -119,7 +119,7 @@ defines the cohort.
 Local testing (simulator)
 *************************
 
-Before deploying to FLIP, test the app locally with NVFLARE's simulator. This runs both clients
+Before deploying to FLIP, test the app locally with FLARE's simulator. This runs both clients
 on one GPU, so it's useful for smoke-testing code changes and hyperparameter sweeps.
 
 .. code-block:: bash
@@ -307,7 +307,7 @@ The Ark+ app is a worked example of the general FLIP workflow. To run your own m
    ``omni_heads``). This is the single most impactful optimisation for large models.
 
 #. **Test locally with the simulator first.** Run ``make -C fl-tutorials run-tutorial`` or use
-   NVFLARE's ``SimulatorRunner`` directly from your own script — catch configuration and
+   FLARE's ``SimulatorRunner`` directly from your own script — catch configuration and
    shape-mismatch issues before they cost a platform round-trip.
 
 #. **Upload, train, iterate.** The FLIP UI's model lifecycle is designed for multiple attempts:

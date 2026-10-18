@@ -221,7 +221,7 @@ make -C ../../.. generate-xnat-credentials KIT=<CODE> PROD=<env>
 
 Registration is backend-agnostic — the kit inherits `FL_BACKEND` (e.g. `flower`) from
 the hub's env, and the claimed FL kit slot maps onto the matching SuperNode key
-(Flower) or participant kit (NVFLARE) provisioned for that slot name.
+(Flower) or participant kit (FLARE) provisioned for that slot name.
 
 #### Troubleshooting
 
@@ -667,7 +667,7 @@ seconds, no rebuild — then **deregisters the revision it rolled away from** (i
 for forensics). The deregistration is what makes the rollback durable: `ecs_services.tf` tracks the
 *latest ACTIVE* revision, so leaving the bad revision ACTIVE would have the next `terraform apply`
 silently re-adopt it. It does not touch the UI bundle; re-run `make deploy-ui` from the matching
-commit if the UI must move too. On an NVFLARE hub it first empties the fl-server's `local/` on EFS and
+commit if the UI must move too. On a FLARE hub it first empties the fl-server's `local/` on EFS and
 re-syncs the kit (the `efs-provision-certs` task, a minute or two): an fl-server image older than FLIP#1390
 fails to start while the `local/flip__p_resources.json` a newer one wrote is there. If that step fails,
 nothing is rolled back; `SKIP_FL_LOCAL_RESET=1` skips it. After a *partial* deploy (some services repointed before a
@@ -753,7 +753,7 @@ because the allowlist the API is *serving* only changes at the restart in step 3
 
 When trust registration fails with `NoFreeKitSlotError` ("No FL kit slots available…"),
 the deployment has run out of *claimable* FL kit slots. One command mints, uploads,
-and activates `N` more (NVFLARE only):
+and activates `N` more (FLARE only):
 
 ```bash
 make add-fl-kits N=2 PROD=stag|true   # YES=1 to skip both confirmation prompts (kit plan + Terraform plan)
@@ -1168,7 +1168,7 @@ registers, so it cannot train until its kit is reissued.
 Staging's FL server still listens on `:8002`, so `FL_SERVER_PORT` stays 8002 in `.env.lza-stag` and the port trusts
 dial is set separately (FLIP#1365):
 
-- **NVFLARE:** `connect_to.port: 8003` in `fl-services/nvflare/provision/net-1_project_stag.yml`, minted into each
+- **FLARE:** `connect_to.port: 8003` in `fl-services/nvflare/provision/net-1_project_stag.yml`, minted into each
   kit's `fed_client.json`.
 - **Everything else on the trust side:** `FL_EDGE_PORT=8003` in `.env.lza-stag`, which `sync-trust-kit` copies
   into each kit (and refuses to default on `lza-stag`). It drives the Flower `--superlink`, the Kubernetes egress rule and the
@@ -2301,7 +2301,7 @@ commit a re-render whose only change is the graphviz that made it.
   - Automatic Docker network creation for inter-service communication
   - No inbound ports open — access via SSM (`ssh flip-trust`) and SSM port forwarding for XNAT/Orthanc debugging (`make forward-trust`)
 - **ALB (Application Load Balancer)**: HTTPS-only entrypoint for API traffic. **Internal** (`internal = true`), lives in the **private subnets** — it has no public IP and no internet-facing path. CloudFront reaches it via an `aws_cloudfront_vpc_origin` (AWS-managed ENI in this VPC). The ALB security group accepts HTTPS:443 only from the AWS-managed `CloudFront-VPCOrigins-Service-SG` (Option 2 in the AWS VPC origins docs — the documented most-restrictive pattern; a `vpc_cidr` rule would not work because AWS evaluates VPC-origin SG checks against the service-managed SG, not the ENI source IP). The `https-listener` returns 404 by default and routes `/api/*` to the `ecs-flip-api` target group (`target_type=ip`, port 8000). The legacy `http-redirect` listener on port 80 exists as a belt-and-braces fallback only — its SG has no port-80 ingress, so it is unreachable externally.
-- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus every IP in `local_trust_public_ips` (an HCL list, set via `LOCAL_TRUST_PUBLIC_IPS` in the env file — so each on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is. **Why an NLB and not the ALB?** NVFLARE FL traffic is end-to-end mutual-TLS over gRPC, and an ALB (Layer 7) terminates TLS, which breaks NVFLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
+- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus every IP in `local_trust_public_ips` (an HCL list, set via `LOCAL_TRUST_PUBLIC_IPS` in the env file — so each on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is. **Why an NLB and not the ALB?** FLARE FL traffic is end-to-end mutual-TLS over gRPC, and an ALB (Layer 7) terminates TLS, which breaks FLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **CloudFront + WAFv2**: Edge distribution that serves the `flip-ui` static site from S3 and forwards `/api/*` to the internal ALB via an `aws_cloudfront_vpc_origin` (HTTPS-only). A WAFv2 WebACL is attached to the distribution for L7 protection; WAF logs are shipped to CloudWatch Logs.
 - **ACM**: Two certificates — one in `eu-west-2` for the ALB, one in `us-east-1` for the CloudFront viewer.
 - **Route53**: `A` alias records for the canonical subdomain (→ CloudFront) and for the FL-server NLB.

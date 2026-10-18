@@ -78,7 +78,7 @@ def test_render_override_is_stable_across_runs():
 
 def test_render_override_uses_kit_fl_server_port():
     """The port is sourced from the kit (FL_SERVER_PORT), not hardcoded — e.g.
-    Flower's 9092 rather than NVFLARE's 8002."""
+    Flower's 9092 rather than FLARE's 8002."""
     kit = {**_FL_KIT, "FL_BACKEND": "flower", "FL_SERVER_PORT": "9092"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     assert "- port: 9092" in out

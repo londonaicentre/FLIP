@@ -14,7 +14,7 @@ Glossary
 
     **FL kit slot**
       The name an FL client is known by inside a federation (``Trust_1``, ``Trust_2``, …), taken from
-      the certificate in its provisioned participant kit (NVFLARE) or the SuperNode key pair labelled
+      the certificate in its provisioned participant kit (FLARE) or the SuperNode key pair labelled
       for that slot (Flower). Slots are a fixed pool provisioned once per
       :term:`FL net`; a Trust claims one when it registers with the Central Hub, and that name — not
       the Trust's hub-side name — is what appears in FL logs and in an app's ``AGGREGATION_WEIGHTS``

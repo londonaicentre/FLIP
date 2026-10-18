@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE Client API script for the FLIP latent diffusion tutorial.
+"""FLARE Client API script for the FLIP latent diffusion tutorial.
 
 One script serves all four ML task names of the two-phase latent-diffusion job — the two training
 phases (``train_ae``: autoencoder + GAN discriminator; ``train_dm``: diffusion model over the frozen
@@ -23,7 +23,7 @@ stock ``WEIGHT_DIFF`` aggregator untouched, which averages them directly) stampe
 phase actually trains. Validation tasks send back aggregate metrics only.
 
 Ported from the legacy Executor-based ``FLIP_TRAINER`` / ``FLIP_VALIDATOR`` pair — the training and
-validation maths are unchanged; only the NVFLARE plumbing moved to the Client API.
+validation maths are unchanged; only the FLARE plumbing moved to the Client API.
 """
 
 import argparse
@@ -159,7 +159,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
     (which can contain spaces) is plumbed via the top-level ``query`` key in
     ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator mode this is
     ignored by ``flip.get_dataframe``.

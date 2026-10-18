@@ -152,7 +152,7 @@ app = FastAPI(
     swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect" if _docs_enabled else None,
 )
 
-# Rate limiter — keyed by trust_name path parameter (falls back to client IP)
+# Rate limiter — keyed by a hash of the trust API key (falls back to client IP)
 app.state.limiter = limiter
 
 

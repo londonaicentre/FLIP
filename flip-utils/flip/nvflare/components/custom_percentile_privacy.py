@@ -17,7 +17,7 @@ from nvflare.app_common.filters.percentile_privacy import PercentilePrivacy as N
 
 
 class PercentilePrivacy(NVFlarePercentilePrivacy):
-    """Stock NVFLARE ``PercentilePrivacy`` differential-privacy filter plus an ``off`` toggle.
+    """Stock FLARE ``PercentilePrivacy`` differential-privacy filter plus an ``off`` toggle.
 
     Subclasses ``nvflare.app_common.filters.percentile_privacy.PercentilePrivacy`` so the
     percentile/gamma filtering maths (Shokri and Shmatikov, "Privacy-preserving deep learning",
@@ -40,9 +40,9 @@ class PercentilePrivacy(NVFlarePercentilePrivacy):
             percentile (int): Only abs weight-diff greater than this percentile is shared — i.e.
                 this fraction (%) of the update's smallest-magnitude components is ZEROED and only
                 the top ``100 - percentile`` % survive. Allowed range 0..100. Defaults to 10
-                (stock NVFLARE: share the top 90%).
+                (stock FLARE: share the top 90%).
             gamma (float): Absolute truncation bound applied to the surviving per-step weight-diff
-                values (clipped to ``±gamma``). Defaults to 0.01 (stock NVFLARE).
+                values (clipped to ``±gamma``). Defaults to 0.01 (stock FLARE).
             data_kinds (list[str] | None): Kinds of DXO to filter. Defaults (via stock) to
                 ``[WEIGHT_DIFF, WEIGHTS]`` when None.
             off (bool): If True the filter is a no-op — ``process_dxo`` returns the DXO unchanged.

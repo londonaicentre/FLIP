@@ -594,7 +594,7 @@ jobs:
       # and nothing the chart runs may write to it or hold AWS credentials.
       #
       # The regression this guards (FLIP#999): when the volume was gated on the active
-      # backend's own kitFromS3 flag, the gate read only the NVFLARE one, which defaulted
+      # backend's own kitFromS3 flag, the gate read only the FLARE one, which defaulted
       # to true, so a Flower trust staging its kit on the node rendered an emptyDir and
       # started with empty /certs and /keys — no error at deploy time, just a SuperNode
       # that never registers and logs a repeating "Connection attempt failed",

@@ -148,7 +148,7 @@ demo_video:
 #
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
 # `make e2e_smoke` invocation works against either stack. Both tutorials are
-# now in-tree under fl-tutorials/<backend>/ (NVFLARE at fl-tutorials/nvflare/,
+# now in-tree under fl-tutorials/<backend>/ (FLARE at fl-tutorials/nvflare/,
 # Flower at fl-tutorials/flower/). Both reuse the same query.sql
 # against the trust mock OMOP data. Default backend matches
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
@@ -255,7 +255,7 @@ e2e_smoke_prostate: ENRICHMENT_ARGS := $(PROSTATE_ENRICHMENT_ARGS)
 e2e_smoke_prostate: _require_flower_backend e2e_smoke
 
 # The prostate app exists for Flower only: fail before the ~6 min image pull rather than after it,
-# when an NVFLARE hub would reject the Flower bundle.
+# when a FLARE hub would reject the Flower bundle.
 _require_flower_backend:
 	@[ "$(FL_BACKEND)" = flower ] || { echo "❌ e2e_smoke_prostate uploads a Flower app — run it with FL_BACKEND=flower (got '$(FL_BACKEND)')"; exit 1; }
 

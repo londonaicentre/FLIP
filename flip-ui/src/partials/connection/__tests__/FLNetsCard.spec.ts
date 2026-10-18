@@ -86,7 +86,7 @@ describe("FLNetsCard", () => {
         expect(wrapper.exists()).toBe(true);
     });
 
-    it("renders nvflare backend as 'NVFlare' next to the NET title", () => {
+    it("renders nvflare backend as 'FLARE' next to the NET title", () => {
         mockSwrvData.value = [
             {
                 name: "net-1",
@@ -98,7 +98,7 @@ describe("FLNetsCard", () => {
         const titles = wrapper.findAll("h3");
         const net1Title = titles.find(h => h.text().includes("net-1"));
         expect(net1Title).toBeDefined();
-        expect(net1Title!.text()).toContain("(NVFlare)");
+        expect(net1Title!.text()).toContain("(FLARE)");
     });
 
     it("renders flower backend as 'Flower' next to the NET title", () => {

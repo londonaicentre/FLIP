@@ -61,8 +61,8 @@ def upsert_flwr_run_config(
     # defaults them to 2, so without this a single-trust run never starts a round: sample_nodes
     # polls in an UNBOUNDED sleep(1) loop, so the job hangs for good rather than timing out, and
     # the only trace is flwr's per-second "Waiting for nodes to connect" INFO line in the
-    # ServerApp log, which the platform does not surface. The NVFLARE adapter has always done
-    # the equivalent (config["min_clients"] = len(trusts) in configure_server).
+    # ServerApp log, which the platform does not surface. The FLARE adapter has always done
+    # the equivalent (each workflow's min_clients = len(trusts) in configure_server).
     doc["flip-min-clients"] = len(trusts)
 
     config_path.write_text(dumps(doc))

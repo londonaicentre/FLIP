@@ -78,8 +78,8 @@
                         </AiButton>
                         <!-- Public Ark+ demo: the viewer identity has no permissions, but the
                              real page shows the actions menu to the model owner — surface it so
-                             the recorded run's results stay downloadable (Stop Training renders
-                             disabled at RESULTS_UPLOADED). Vite inlines IS_DEMO; normal builds
+                             the recorded run's results stay downloadable (Stop Training is hidden
+                             at RESULTS_UPLOADED). Vite inlines IS_DEMO; normal builds
                              keep the viewer gate unchanged.
                              This menu is safe to expose in the demo only because every item in
                              it today is also status-gated, not just permission-gated — the
@@ -114,7 +114,7 @@
 
                     <div class="flex flex-col flex-1 min-h-0 gap-4 lg:flex-row lg:gap-4">
                         <aside
-                            class="flex flex-col flex-1 lg:flex-none lg:w-80 2xl:min-w-[30rem] shrink-0
+                            class="flex flex-col flex-1 lg:flex-none lg:w-[26rem] 2xl:min-w-[30rem] shrink-0
                                    min-h-[20rem] lg:min-h-0"
                         >
                             <ModelUpload
@@ -124,6 +124,7 @@
                                 :model-id="modelData.modelId"
                                 :required-files="requiredFiles"
                                 :job-type="currentJobType"
+                                :fl-backend-label="flBackendLabel"
                                 :job-types-error="jobTypesError"
                                 @uploaded="update"
                                 @deleted-file="onFileDeleted"
@@ -138,10 +139,8 @@
                                 :run-resources="modelData?.resources ?? null"
                                 :can-train="readyToTrain"
                                 :status="modelData?.status"
-                                :all-files-uploaded="allFilesUploaded"
                                 :required-files="requiredFiles"
-                                :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                                :job-type="currentJobType"
+                                :uploaded-files="modelData?.files ?? []"
                                 :fl-backend-label="flBackendLabel"
                                 :job-types-error="jobTypesError"
                                 :job-types-loading="jobTypesLoading"
@@ -158,10 +157,8 @@
                     view="run"
                     :can-train="readyToTrain"
                     :status="modelData?.status"
-                    :all-files-uploaded="allFilesUploaded"
                     :required-files="requiredFiles"
-                    :uploaded-file-names="modelData?.files?.map(f => f.name) ?? []"
-                    :job-type="currentJobType"
+                    :uploaded-files="modelData?.files ?? []"
                     :fl-backend-label="flBackendLabel"
                 />
             </div>
@@ -311,7 +308,7 @@ const { data: flStatus } = useSWRV(
 );
 
 const formatBackend = (backend: "nvflare" | "flower") =>
-    backend === "nvflare" ? "NVFlare" : "Flower";
+    backend === "nvflare" ? "FLARE" : "Flower";
 
 const flBackendLabel = computed(() => {
     const backend = Array.isArray(flStatus.value)

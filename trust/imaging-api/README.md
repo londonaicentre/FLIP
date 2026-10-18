@@ -90,10 +90,11 @@ compares them:
 - **Not seen:** a file replaced by one of the same name and size (file digests are empty on FLIP's XNAT, whose
   `checksums` setting is off); `force_refresh=true` covers it. Assessor (`SEG`) downloads are not checked, as XNAT
   has no `assessors/ALL/resources` listing.
-- **A sentinel from an older imaging-api** holds no record; its copy is downloaded again once XNAT answers the lookups.
+- **A sentinel with no readable record** (empty or corrupt) is a miss: its copy is deleted and downloaded again once
+  XNAT answers the lookups, and never served unchecked.
 
 `force_refresh=true` takes the same delete-then-download step. The cache is also invalidated when an upload through
-imaging-api changes the accession (see Upload), and — on the NVFLARE backend — by `CleanupImages`, which empties the
+imaging-api changes the accession (see Upload), and — on the FLARE backend — by `CleanupImages`, which empties the
 whole net directory at job start and end.
 
 The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
@@ -252,7 +253,7 @@ imaging-api exposes privileged XNAT operations via a service account. To prevent
 
 Direct callers in this repo: trust-api. The fl-client container calls imaging-api indirectly via
 the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip)
-(consumed by both NVFLARE and Flower fl-client / fl-server images) —
+(consumed by both FLARE and Flower fl-client / fl-server images) —
 `flip.get_by_accession_number(...)` and friends read `TRUST_INTERNAL_SERVICE_KEY` from
 `os.environ` and add the header to every HTTP request. User training code (`client_app.py`,
 `server_app.py`, tutorials) doesn't see the header.

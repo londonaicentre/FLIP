@@ -23,7 +23,7 @@ class StagePercentilePrivacy(PercentilePrivacy):
     """Percentile-privacy filter that groups parameters by training stage before filtering.
 
     Subclasses FLIP's :class:`PercentilePrivacy` to inherit its constructor (``percentile`` /
-    ``gamma`` / ``data_kinds`` / ``off``) and — transitively — stock NVFLARE's differential-privacy
+    ``gamma`` / ``data_kinds`` / ``off``) and — transitively — stock FLARE's differential-privacy
     maths. It overrides ``process_dxo`` to compute the percentile cutoff *per stage* (from
     ``FlipMetaKey.STAGE``) rather than across all parameters at once, so each stage of a staged
     model (e.g. autoencoder then diffusion model) is filtered independently.

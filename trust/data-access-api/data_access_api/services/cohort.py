@@ -73,10 +73,10 @@ _VOCABULARY_PROBE = text("SELECT 1 FROM omop.concept_ancestor LIMIT 1")
 def _warn_if_vocabulary_missing() -> None:
     """Log an ERROR when a zero-row cohort is explained by an unloaded OMOP vocabulary.
 
-    The published OMOP pgdata tarballs are vocabulary-free; loading it is a separate,
-    credentialed, ~25-minute step. Until it runs, ``concept_ancestor`` is empty and every
-    cohort query matches nothing while the imaging tables look perfectly healthy — so the
-    failure reads as a bad query or a broken import rather than a missing seed step.
+    The trust-data seed loads only the free DICOM vocabulary; the licensed core vocabulary (which
+    fills ``concept_ancestor``) is a separate, credentialed, ~25-minute step. Until it runs, every
+    cohort query matches nothing while the imaging tables look perfectly healthy — so the failure
+    reads as a bad query or a broken import rather than a missing core-vocabulary load.
 
     Deliberately best-effort and side-effect-free: this runs on a path that has already
     decided its response, so a failure here must never turn a valid privacy-suppressed answer
@@ -96,7 +96,7 @@ def _warn_if_vocabulary_missing() -> None:
         "Cohort query returned 0 records AND the OMOP vocabulary is not loaded "
         "(omop.concept_ancestor is empty). Cohort queries resolve concept sets through the "
         "vocabulary, so every query on this trust will match nothing until it is loaded. "
-        "The published OMOP tarballs ship without it — run: "
+        "The licensed core vocabulary is loaded separately from the trust-data seed — run: "
         "make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=<this trust's port>. "
         "Restart this service afterwards: query results are cached, so the 0-row answer would "
         "otherwise be replayed."

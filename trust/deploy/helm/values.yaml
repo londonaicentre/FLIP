@@ -47,7 +47,7 @@ flBackend: "nvflare"
 # ---------------------------------------------------------------------------
 # This trust's own governance document, carried here as the TOML *document itself* (not a
 # path — a path on the deploy host means nothing inside a pod). data-access-api reads its
-# [disclosure] and [access] sections; on NVFLARE the fl-client's governance-extract init
+# [disclosure] and [access] sections; on FLARE the fl-client's governance-extract init
 # container hands the client its [fl_privacy.nvflare] section and nothing else (researcher
 # code runs in the client). Flower reads no site privacy section, so there the document
 # reaches data-access-api only, and a document carrying one is refused by sync-kit.
@@ -70,7 +70,7 @@ flBackend: "nvflare"
 # is NOT kept: the next deploy-trust-k8s / upgrade-trust-k8s passes the -f files without
 # --reuse-values and the policy silently disappears.
 #
-# Rolling: data-access-api rolls on any edit (checksum of the whole document). The NVFLARE
+# Rolling: data-access-api rolls on any edit (checksum of the whole document). The FLARE
 # fl-client rolls only when its [fl_privacy.nvflare] section changes — flPrivacyChecksum —
 # and rolling it interrupts any job it is running, so apply such edits between runs.
 governance:
@@ -84,10 +84,10 @@ governance:
 # trust/.data_version) and every artefact — the canonical OMOP tables omop-csv/<project>/
 # and the DICOM sets dicom/<project>.tar.gz — is fetched at that tag from an unversioned path.
 #
-# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
-# OMOP_DATA_VERSION became TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
-# existing values file pinning the old ones keeps installing and silently stops taking effect —
-# see README "Upgrading: trustData.version replaces the two per-store pins".
+# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion.
+# Helm ignores unknown keys, so an existing values file pinning the old ones keeps installing
+# and silently stops taking effect — see README "Upgrading: trustData.version replaces the two
+# per-store pins".
 trustData:
   version: "20261014"
   hfRepo: "aicentreflip/trust-data"
@@ -449,7 +449,7 @@ flClient:
                   - imaging-api
           topologyKey: kubernetes.io/hostname
   # Absolute path ON THE NODE holding this trust's already-provisioned FL participant
-  # kit — the contents of the slot's kit directory (for NVFLARE: local/, startup/,
+  # kit — the contents of the slot's kit directory (for FLARE: local/, startup/,
   # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
   #
   # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
@@ -587,7 +587,7 @@ omopDb:
       timeoutSeconds: 15
       failureThreshold: 10
   # Streams the licensed core vocabulary into the running database after
-  # install/upgrade (the published image and pgdata tarballs are vocab-free —
+  # install/upgrade (the published image and the seeded data carry no licensed vocabulary —
   # FLIP#842/843).
   #
   # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d

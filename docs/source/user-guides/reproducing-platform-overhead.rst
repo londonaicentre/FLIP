@@ -44,7 +44,7 @@ The experiment compares two runs of the **identical** federated-learning applica
 Where          FLIP production, cross-continental (UK + Thailand)  Single machine, NVIDIA RTX 5090, both clients on one GPU
 Rounds         50 global rounds × 5 local epochs                   50 global rounds × 5 local epochs
 Round payload  Head-only after round 0 (~27 KB)                    Head-only after round 0 (~27 KB)
-Source         CloudWatch logs from the production ECS fl-server   NVFLARE SimEnv server log
+Source         CloudWatch logs from the production ECS fl-server   FLARE SimEnv server log
 =============  ==================================================  ========================================================
 
 Three host-independent metrics isolate the platform's contribution from site compute and WAN
@@ -263,7 +263,7 @@ Adapting for your own model
 The same extraction-and-compare workflow works for any FLIP run — not just the Ark+ experiment:
 
 #. **Run your model on FLIP** as usual through the UI
-#. **Run the same model in the local simulator** — use the tutorial harness or NVFLARE's
+#. **Run the same model in the local simulator** — use the tutorial harness or FLARE's
    ``SimulatorRunner`` directly, matching the deployed ``config.json`` round count
 #. **Extract platform metrics** with ``extract_platform_round_timings.sh <your-model-id>``
 #. **Compare** with ``make round-metrics COMPARE=/path/to/platform/rounds.tsv``

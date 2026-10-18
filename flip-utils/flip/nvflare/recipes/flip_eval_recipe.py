@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Recipe describing a FLIP evaluation job that drives the evaluator via the NVFLARE Client API.
+"""Recipe describing a FLIP evaluation job that drives the evaluator via the FLARE Client API.
 
 This replaced the retired legacy ``evaluation`` job type. Where the legacy app paired the
 ``RUN_EVALUATOR`` executor with a bespoke ``ModelEval`` + ``EvaluationPTModelLocator`` server flow
@@ -18,7 +18,7 @@ classes deleted with the Executor syntax), this recipe broadcasts each uploaded 
 single-model ``validate`` task and reuses the same cross-site validation path the
 :class:`~flip.nvflare.recipes.FlipFedAvgRecipe` already drives for its ``validate`` phase:
 
-* server: NVFLARE's stock ``GlobalModelEval`` (which never requests client models)
+* server: FLARE's stock ``GlobalModelEval`` (which never requests client models)
   loads each checkpoint named in ``config.json['models']`` via
   :class:`~flip.nvflare.components.EvaluationModelLocator` and broadcasts it to every client as its
   own single-model ``FLModel`` — one ``validate`` task per (model, client);
@@ -30,7 +30,7 @@ single-model ``validate`` task and reuses the same cross-site validation path th
   back an aggregate-only metrics ``FLModel``. No ``Executor``/``Shareable`` plumbing, no ``COLLECTION``
   unwrap.
 
-The recipe runs identically across SimEnv/PocEnv/ProdEnv and exports the standard NVFLARE FedJob layout
+The recipe runs identically across SimEnv/PocEnv/ProdEnv and exports the standard FLARE FedJob layout
 for the FLIP-API, exactly like :class:`FlipFedAvgRecipe`. ``model_id`` is resolved lazily by the FLIP
 components from ``meta.json['custom_props']['model_id']`` (written here for SimEnv/PocEnv; overwritten by
 the FLIP-API in production).
@@ -68,24 +68,24 @@ _DEV_MODEL_ID = "00000000-0000-0000-0000-000000000001"
 
 
 class FlipEvalRecipe(FlipRecipe):
-    """FLIP evaluation recipe wired for the NVFLARE Client API.
+    """FLIP evaluation recipe wired for the FLARE Client API.
 
     Args:
         min_clients: Minimum number of clients required for the evaluation.
         eval_script: Evaluator script path. ``"evaluator.py"`` is taken to mean ``"custom/evaluator.py"``
             inside the job; pass an explicit ``custom/`` prefix to override that convention.
-        eval_args: Argument string for the evaluator. NVFlare's TaskScriptRunner whitespace-splits this —
+        eval_args: Argument string for the evaluator. FLARE's TaskScriptRunner whitespace-splits this —
             any FLIP-API placeholder used here must substitute into a single token. The SQL query is
             plumbed via the client config's top-level ``query`` key instead.
         model_id: Real UUID for SimEnv/PocEnv runs. Written into ``meta.json['custom_props']`` so FLIP
             components can resolve it lazily at first event/task. Production runs override this via the
             FLIP-API which writes the real model id into the same key.
-        validation_timeout: NVFlare timeout (seconds) for the ``validate`` task.
+        validation_timeout: FLARE timeout (seconds) for the ``validate`` task.
         project_id, query: Top-level keys on the client config (consumed by the FLIP-API placeholder
             substitution and read by the evaluator at runtime).
-        evaluate_task_name: NVFlare task name for the cross-site validation task (must match
+        evaluate_task_name: FLARE task name for the cross-site validation task (must match
             stock ``GlobalModelEval``'s ``validation_task_name``, default ``"validate"``).
-        params_exchange_format, params_transfer_type: NVFlare param-exchange knobs for the Client API.
+        params_exchange_format, params_transfer_type: FLARE param-exchange knobs for the Client API.
     """
 
     def __init__(
@@ -116,7 +116,7 @@ class FlipEvalRecipe(FlipRecipe):
         super().__init__(self._build_fed_job())
 
     def _build_fed_job(self) -> FedJob:
-        """Construct the FedJob NVFLARE's Recipe uses for ``execute(env)``.
+        """Construct the FedJob FLARE's Recipe uses for ``execute(env)``.
 
         ``meta_props`` carries the FLIP runtime config (currently just ``model_id``) into the exported
         ``meta.json`` so the lazily-resolving components can find it.
@@ -139,7 +139,7 @@ class FlipEvalRecipe(FlipRecipe):
 
         # Server workflows: init → global-model validate → post-validation cleanup.
         # GlobalModelEval validates only the server-loaded model; client models are never requested.
-        job.to_server(InitEvaluation(min_clients=self.min_clients))
+        job.to_server(InitEvaluation())
         job.to_server(
             GlobalModelEval(
                 model_locator_id="model_locator",
@@ -176,10 +176,10 @@ class FlipEvalRecipe(FlipRecipe):
         return job
 
     def export(self, job_dir: str | Path, **_kwargs: Any) -> None:
-        """Export the job using NVFLARE's standard FedJob layout.
+        """Export the job using FLARE's standard FedJob layout.
 
         Produces ``<job_dir>/<job_name>/{meta.json, app/config/, app/custom/}`` — the same structure
-        NVFLARE's admin client uploads to the cluster. The FLIP-API consumes this directory, optionally
+        FLARE's admin client uploads to the cluster. The FLIP-API consumes this directory, optionally
         rewrites ``meta.json['custom_props']`` with the real model_id at submit time, and forwards the
         job to the fl-server stack.
         """
@@ -189,7 +189,7 @@ class FlipEvalRecipe(FlipRecipe):
     def _write_client_config_params(self, job_dir: Path) -> None:
         """Emit ``project_id`` / ``query`` as top-level keys on the exported ``config_fed_client.json``.
 
-        These are not NVFLARE components, so they don't fall out of ``export_job`` — but the client
+        These are not FLARE components, so they don't fall out of ``export_job`` — but the client
         contract expects them at the config top level: the evaluator's ``--project_id {project_id}`` arg
         resolves the ``{project_id}`` reference against the top-level ``project_id`` key, and
         ``evaluator.load_query()`` reads the top-level ``query``. We write the recipe's (placeholder)

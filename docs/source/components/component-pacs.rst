@@ -78,9 +78,10 @@ performs the retrieval, driven over REST by the imaging API:
 3. XNAT issues a **C-MOVE** to the PACS, naming itself as the move destination.
 4. The PACS **C-STOREs** the study back to XNAT's DICOM SCP receiver, where the site-wide
    anonymisation script runs on receipt, before the session is archived — see
-   :ref:`DICOM Anonymization <dicom-anonymization>`. That script is a denylist, and its limits
-   (vendor private tags, unshifted dates, burned-in annotation) are stated there; read them before
-   connecting a real PACS, since until now the script has only seen synthetic data.
+   :ref:`DICOM Anonymization <dicom-anonymization>`. That script is built from the DICOM PS3.15
+   Basic Profile but is not a conformant profile, and its limits (nested UIDs, burned-in
+   annotation, faces) are stated there; read them before connecting a real PACS, since the script
+   has only been exercised against synthetic data.
 
 Only accession numbers belonging to an approved project cohort are ever requested. There is no
 standing forward rule and no bulk transfer.

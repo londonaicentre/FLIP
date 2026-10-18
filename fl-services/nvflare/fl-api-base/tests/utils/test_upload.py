@@ -191,7 +191,7 @@ def test_upload_multiple_apps_missing_meta_json(
 @patch("fl_api.utils.upload.configure_flip_model_id", MagicMock())
 def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_path, monkeypatch):
     """A bundle file under ``/server_checkpoints/`` is staged on the shared checkpoint volume
-    (``SERVER_CHECKPOINT_ROOT/<model_id>/<file>``), NOT placed in the NVFLARE job dir — so it is
+    (``SERVER_CHECKPOINT_ROOT/<model_id>/<file>``), NOT placed in the FLARE job dir — so it is
     never part of the submitted job and never deployed to clients."""
     ckpt_root = tmp_path / "server-checkpoints"
     job_root = tmp_path / "jobs"
@@ -216,7 +216,7 @@ def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_
     assert "Application uploaded successfully" in response["message"]
     # Checkpoint staged on the shared volume, keyed by model_id.
     assert (ckpt_root / TEST_MODEL_ID / "weights.pt").is_file()
-    # And NOT anywhere under the NVFLARE job dir (so it is never shipped to clients).
+    # And NOT anywhere under the FLARE job dir (so it is never shipped to clients).
     assert not list((job_root / TEST_MODEL_ID).rglob("weights.pt"))
 
 

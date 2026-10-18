@@ -115,11 +115,11 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust
 # runs as it on every path, so it always owns net-N.
 #
 # The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
-# (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
+# (flip.add_resource stages under net-N/upload/, FLARE CleanupImages deletes net-N's
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
-#   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
+#   * FLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no
 #     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
@@ -494,7 +494,7 @@ up-trust: require-xnat-aetitle create-networks
 # `onboard-onprem-trust` runs the renderer.
 GOVERNANCE_PYTHON = uv run --no-config --no-project --python '>=3.11' python
 SITE_PRIVACY_KIT_ENV = $(foreach v,$(sort $(filter FL_SITE_PRIVACY_%,$(.VARIABLES))),$(v)="$($(v))")
-# NVFLARE's fl-clients read their section through the one-shot fl-governance-init service
+# FLARE's fl-clients read their section through the one-shot fl-governance-init service
 # (compose_trust.*.nvflare.yml). Flower has no such service and nothing that reads the file.
 GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
 
@@ -553,7 +553,7 @@ endef
 # a dev compose's pull_policy: always from swapping the image under the edit, and the net
 # dirs of a live trust already exist (as in _upgrade-trust-apply).
 #
-# Only the services that read the document are recreated: data-access-api, plus on NVFLARE
+# Only the services that read the document are recreated: data-access-api, plus on FLARE
 # fl-governance-init and the fl-clients it extracts for. On Flower nothing else reads it, so
 # its clients — and their running jobs — are left alone. Each reads it at container start.
 #
@@ -565,7 +565,7 @@ endef
 # refuse never reaches them. Then it waits for data-access-api's `[governance]` startup line
 # and compares its digest with the document's: an image that predates governance support
 # prints no such line, and a mismatch means the service is not reading this file — either is
-# a failure, not a ✅. On NVFLARE this interrupts any job the fl-clients are running: apply
+# a failure, not a ✅. On FLARE this interrupts any job the fl-clients are running: apply
 # between runs.
 reload-governance: check-governance
 	$(require_kit_file)

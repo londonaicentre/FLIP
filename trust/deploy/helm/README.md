@@ -153,10 +153,10 @@ clients have none by design — and the kit reaches the operator out-of-band (se
 the workload starts, which is also what a real trust does, so what is deployed
 here is what is deployed in production.
 
-`KIT_SRC` is the slot's own kit directory: for NVFLARE `local/`, `startup/`,
+`KIT_SRC` is the slot's own kit directory: for FLARE `local/`, `startup/`,
 `transfer/`; for Flower `certificates/` and `keys/` holding **only this slot's**
 credential. That shape is also how the target picks the uid the staged kit is
-chowned to — 1000 for an NVFLARE kit, 49999 (the SuperNode's `app` user) for a
+chowned to — 1000 for a FLARE kit, 49999 (the SuperNode's `app` user) for a
 Flower one — so the command above is complete for either backend with no
 `FL_BACKEND` to remember. A directory with neither shape, or both, is refused
 before anything is copied; `FL_BACKEND=nvflare|flower` overrides the detection.
@@ -418,12 +418,9 @@ upgrading**:
 | ------ | ----- |
 | `omopDb.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` |
 | `orthanc.initJob.dataVersion: "<v>"` | `trustData.version: "<v>"` (same value — one pin covers both) |
-| `OMOP_DATA_VERSION=<v>` (env, via `generate_values.py`) | `TRUST_DATA_VERSION=<v>` |
 
 Pinning a version that predates the single-copy dataset layout is not supported: from `20260729`
-onwards every artefact is fetched at an unversioned path resolved at the tag. `archiveName` is
-unaffected — it names an **S3** object, and S3 has no revisions, so a version still lives in that
-filename.
+onwards every artefact is fetched at an unversioned path resolved at the tag.
 
 The templates read the pin through Helm's `required`, so an empty `trustData.version` fails at
 template time instead of 404-ing inside the seed hook.
@@ -472,7 +469,7 @@ individual settings above. Three sections, each read by the service that enforce
 | ------- | ------- | ------ |
 | `[disclosure]` | data-access-api | `min_cohort_size` — may RAISE the kit's `COHORT_QUERY_THRESHOLD`, never lower it |
 | `[access]` | data-access-api | permit/deny rules over project + operation (`cohort.statistics`, `cohort.dataframe`, `cohort.accession_ids`), decided the same way whatever their order |
-| `[fl_privacy.nvflare]` | fl-client (NVFLARE only) | the site update-privacy filter — an alternative to `FL_SITE_PRIVACY_*`, never both |
+| `[fl_privacy.nvflare]` | fl-client (FLARE only) | the site update-privacy filter — an alternative to `FL_SITE_PRIVACY_*`, never both |
 
 The document is **optional and additive**. Left empty — the default — the platform defaults apply
 exactly as before: no ConfigMap, no volume, no mount, no env var, and a default install's pod specs
@@ -483,7 +480,7 @@ explains how rules are decided.
 **How it reaches the pods.** The value is the document *itself*, not a path — a path on the deploy
 host means nothing inside a pod. The chart renders it into a ConfigMap
 (`<release>-flip-trust-governance`). `data-access-api` mounts it **read-only** at `/app/governance.toml`,
-with `ACCESS_POLICY_FILE` pointing there. The NVFLARE fl-client never mounts it — researcher code runs
+with `ACCESS_POLICY_FILE` pointing there. The FLARE fl-client never mounts it — researcher code runs
 in that container — but its `governance-extract` init container, in the same image, writes the
 `[fl_privacy]` table alone to an emptyDir the client reads read-only; an invalid document fails the
 init container and the client does not start. The Flower client gets none of it. The file is
@@ -727,10 +724,10 @@ loading the vocabulary by hand.
 
 ### FL Backend Configuration
 
-Switch between NVFLARE and Flower:
+Switch between FLARE and Flower:
 
 ```bash
-# NVFLARE (default)
+# FLARE (default)
 helm install trust-release ./ --set flBackend=nvflare
 
 # Flower
@@ -959,13 +956,12 @@ second layer over that grant, not the only one.
 
 The two paths differ only in *when* the file runs. Compose runs it once, from
 `/docker-entrypoint-initdb.d` at first initdb. The chart runs it from a
-`postStart` hook on the omop-db container on **every** pod start, because the
-PVC is normally restored by the `seed-data` initContainer from a pgdata
-snapshot, which already carries `PG_VERSION` — so the entrypoint skips
-`initdb.d` and the roles are whatever the snapshot held. The file is
+`postStart` hook on the omop-db container on **every** pod start, because a
+PVC that already holds a database carries `PG_VERSION` — so the entrypoint
+skips `initdb.d` and the roles are whatever that database holds. The file is
 idempotent and converges an existing role on the same membership and limits.
 The hook then adds only what the file cannot know: it re-applies the password
-from the Secret unconditionally (a snapshot carries the hash it was initialised
+from the Secret unconditionally (the database carries the hash it was initialised
 with, and a rotated secret would otherwise never reach the live role), and sets
 the database `search_path` so unqualified table references resolve to `omop`.
 Rotation is therefore the same as for the `xnat` role above — update the secret,
@@ -1157,11 +1153,11 @@ The chart is validated in CI via:
 
 1. **Kit not on the node**: The pod stays `Pending` with a `hostPath type check failed` event naming `flClient.kitHostPath`. Stage the kit first — `make stage-kit KIT_SRC=<local kit dir> KUBE_CONTEXT=<context>` — then re-deploy. The chart holds no AWS credentials and cannot fetch it.
    A kit that IS on the node but was staged with the wrong owner (a Flower SuperNode logging `Permission denied` on `/certs` or `/keys`) means `stage-kit` chowned it for the other backend — it reads the backend off the kit's shape, so re-stage from the slot's own kit directory (or pass `FL_BACKEND=flower` explicitly).
-2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (NVFLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
+2. **Kit path mismatch**: Verify `flClient.kitHostPath` points at the directory ON THE NODE holding this trust's provisioned kit, and that it contains the slot's contents (FLARE: `local/`, `startup/`, `transfer/`; Flower: `certificates/` and `keys/` with this slot's credential). The chart never fetches the kit — it is delivered out-of-band and placed on the node before the workload starts. A missing path fails scheduling with the path named.
 3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
 4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
 5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
-6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (NVFLARE 1000, Flower 49999).
+6. **Staged kit unreadable**: Verify the node directory at `flClient.kitHostPath` is readable by the client's runtime uid (FLARE 1000, Flower 49999).
 
 ### Network policy blocking intra-service traffic
 

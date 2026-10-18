@@ -57,8 +57,8 @@ jobs:
               # (torch + nvflare + flwr), the same dependency set the heavy job sees.
               run: uv run mypy . --ignore-missing-imports
 
-            - name: Run tests with coverage (skip heavy NVFLARE tests)
-              # NVFLARE tests import torch transitively; skip them in default job to keep CI fast.
+            - name: Run tests with coverage (skip heavy FLARE tests)
+              # FLARE tests import torch transitively; skip them in default job to keep CI fast.
               run: |
                 uv run pytest --cov=flip --cov-report=xml -k "not nvflare"
 

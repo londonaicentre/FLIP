@@ -29,7 +29,7 @@ FL_ADMIN_DIR = str(Path(__file__).parents[2] / "admin")
 @patch("nvflare.fuel.flare_api.flare_api.Session.__init__")
 def session(mock_session_init):
     """
-    Create a FLIP_Session without invoking real NVFlare Session initialization.
+    Create a FLIP_Session without invoking real FLARE Session initialization.
     """
     mock_session_init.return_value = None
     return FLIP_Session(username="u", startup_path="p", secure_mode=False, debug=False)
@@ -172,18 +172,18 @@ def test_check_client_status_asserts_when_multiple_job_statuses_returned(session
 # --------------------------------------------------------------------------------------
 # Liskov guards (FLIP#1032)
 #
-# FLIP_Session is substituted for nvflare's Session, so NVFLARE's own code calls these
+# FLIP_Session is substituted for nvflare's Session, so FLARE's own code calls these
 # methods. Two things must therefore hold, and neither is enforced by the language:
 #   1. no override may narrow its base signature -- a parameter the base accepts and we do
 #      not is a TypeError at whichever upstream call site passes it;
-#   2. the models returned by the type-changing overrides must keep the attributes NVFLARE
+#   2. the models returned by the type-changing overrides must keep the attributes FLARE
 #      reads off them.
 # Both failed silently in the past, so they are pinned here rather than trusted.
 # --------------------------------------------------------------------------------------
 
 
 def _overridden_methods() -> list[str]:
-    """Every FLIP_Session member that shadows one on the NVFLARE base.
+    """Every FLIP_Session member that shadows one on the FLARE base.
 
     `__init__` is deliberately in scope -- the removed override narrowed it too -- while other
     dunders are not, since Python's own protocol methods are not part of this contract.
@@ -218,7 +218,7 @@ def _assert_substitutable(base_sig: inspect.Signature, override_sig: inspect.Sig
     re-mutating `FLIP_Session` by hand is not a check CI can repeat.
 
     Args:
-        base_sig (inspect.Signature): Signature of the NVFLARE method being overridden.
+        base_sig (inspect.Signature): Signature of the FLARE method being overridden.
         override_sig (inspect.Signature): Signature of the `FLIP_Session` override.
         label (str): How to name the override in assertion messages.
     """
@@ -245,7 +245,7 @@ def _assert_substitutable(base_sig: inspect.Signature, override_sig: inspect.Sig
             reachable = accepts_var_kw and param.default is not inspect.Parameter.empty
             assert reachable, (
                 f"{label} does not accept base parameter '{name}' ({override_sig}); "
-                f"narrowing a base signature breaks NVFLARE's own callers."
+                f"narrowing a base signature breaks FLARE's own callers."
             )
         elif param.default is not inspect.Parameter.empty:
             # A silently different default is the quieter half of the same bug: the removed
@@ -261,7 +261,7 @@ def _assert_substitutable(base_sig: inspect.Signature, override_sig: inspect.Sig
             continue
 
         # ...and reachable BY POSITION, in the base's own slot. Keeping the name while demoting the
-        # parameter to keyword-only reads as harmless and is not: NVFLARE passes `command`
+        # parameter to keyword-only reads as harmless and is not: FLARE passes `command`
         # positionally from all eight of its `_do_command` call sites.
         stays_positional = override_param is None or override_param.kind is not inspect.Parameter.KEYWORD_ONLY
         assert stays_positional, (
@@ -285,7 +285,7 @@ def _assert_substitutable(base_sig: inspect.Signature, override_sig: inspect.Sig
 def test_override_does_not_narrow_the_base_signature(method_name):
     """Every parameter the base accepts must be accepted by our override.
 
-    `_do_command` used to take only `cmd`, so NVFLARE's `_collect_info` calls
+    `_do_command` used to take only `cmd`, so FLARE's `_collect_info` calls
     (`enforce_meta=False`) -- show_errors, show_stats, reset_errors -- raised TypeError.
     """
     _assert_substitutable(
@@ -297,13 +297,13 @@ def test_override_does_not_narrow_the_base_signature(method_name):
 
 # --------------------------------------------------------------------------------------
 # Guard the guard: `_assert_substitutable` against signatures known to be substitutable or
-# not. `_base_shape` mirrors NVFLARE's `_do_command(self, command, enforce_meta=True,
+# not. `_base_shape` mirrors FLARE's `_do_command(self, command, enforce_meta=True,
 # props=None)`, the signature whose narrowing caused FLIP#1032.
 # --------------------------------------------------------------------------------------
 
 
 def _base_shape(self, command, enforce_meta=True, props=None):
-    """Stand-in for the NVFLARE base signature the cases below are checked against."""
+    """Stand-in for the FLARE base signature the cases below are checked against."""
 
 
 @pytest.mark.parametrize(
@@ -381,10 +381,10 @@ def test_do_command_forwards_keyword_arguments_through_a_reconnect(session):
 def test_system_info_model_keeps_the_attributes_nvflare_reads():
     """Pin the duck-typed contract get_system_info's type swap rests on.
 
-    NVFLARE's `_client_last_connect_times`, `_wait_for_clients_shutdown`,
+    FLARE's `_client_last_connect_times`, `_wait_for_clients_shutdown`,
     `_wait_for_clients_restart`, `restart` and `get_connected_client_list` all call
     `get_system_info()` and read these attributes off the result. Renaming any of them on
-    FLIP's models breaks NVFLARE's restart and shutdown waits with an AttributeError deep
+    FLIP's models breaks FLARE's restart and shutdown waits with an AttributeError deep
     inside upstream code.
     """
     info = SystemInfoModel(
@@ -400,12 +400,12 @@ def test_system_info_model_keeps_the_attributes_nvflare_reads():
 
 
 def test_system_info_models_accept_the_missing_times_nvflare_reports():
-    """The widened fields take None and print "unknown" for it, as NVFLARE's own types do.
+    """The widened fields take None and print "unknown" for it, as FLARE's own types do.
 
     A stopped or restarting server reports no start time (the admin meta is read with a bare
     ``get``), and a registered client that has never connected has no last connect time
     (``_wait_for_clients_restart`` skips it with ``if previous_time is None``). Requiring floats
-    here raised ``ValidationError`` on both, inside NVFLARE's own restart and shutdown waits.
+    here raised ``ValidationError`` on both, inside FLARE's own restart and shutdown waits.
     """
     server = ServerInfoModel(status="stopped")
     client = ClientInfoModel(name="c1", status="registered")
@@ -428,10 +428,10 @@ def test_system_info_models_print_a_real_time_when_they_have_one():
 def test_get_system_info_survives_the_missing_times_nvflare_reports(session):
     """The type swap must return a usable object exactly where the base does.
 
-    Only the base call is faked, with NVFLARE's own ``SystemInfo`` shape carrying the two fields
+    Only the base call is faked, with FLARE's own ``SystemInfo`` shape carrying the two fields
     unset -- what a restarting server and a never-connected client produce. Before the fields were
     widened this raised ``ValidationError`` from every path that reaches ``get_system_info``: the
-    four FL API routes, and NVFLARE's ``restart`` and client-shutdown waits.
+    four FL API routes, and FLARE's ``restart`` and client-shutdown waits.
     """
     upstream = SystemInfo(
         server_info=ServerInfo(status="starting", start_time=None),
@@ -451,7 +451,7 @@ def test_reconnect_preserves_the_session_study(session):
     """Re-initialising without the study would silently change which jobs commands can see.
 
     Asserted by keyword, matching how `_reconnect` calls the base: a positional assertion would
-    keep passing if NVFLARE reordered or inserted a parameter, which is the mis-binding the
+    keep passing if FLARE reordered or inserted a parameter, which is the mis-binding the
     keyword call exists to prevent.
     """
     # The fixture's base __init__ is mocked, so none of these are set for real.
@@ -512,9 +512,9 @@ def test_construction_signature_matches_the_base():
     ],
 )
 def test_collect_info_commands_reach_the_transport(session, call_session, expected_command):
-    """The end-to-end regression for FLIP#1032, through NVFLARE's own code.
+    """The end-to-end regression for FLIP#1032, through FLARE's own code.
 
-    NVFLARE 2.8.0 calls `_do_command(..., enforce_meta=False)` from eight sites; four of them are
+    FLARE 2.8.0 calls `_do_command(..., enforce_meta=False)` from eight sites; four of them are
     reachable from this service's routes -- show_errors / show_stats / reset_errors via
     `_collect_info`, and get_working_directory via `_shell_command_on_target`. Every one used to
     raise `TypeError: FLIP_Session._do_command() got an unexpected keyword argument

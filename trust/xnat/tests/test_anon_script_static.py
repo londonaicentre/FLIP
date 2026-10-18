@@ -19,12 +19,17 @@ where a rule is accidentally deleted or commented out.
 
 from __future__ import annotations
 
+import csv
+from pathlib import Path
+
 import pytest
+from pydicom.datadict import dictionary_VM
 
 from anon_engine import (
     AssignLiteralRule,
     AssignVariableRule,
     HashUidRule,
+    RemoveAllPrivateRule,
     RemoveRule,
     Rule,
 )
@@ -32,7 +37,7 @@ from anon_engine import (
 # Tags FLIP must explicitly handle on EVERY incoming study before it is stored.
 # Each entry: tag -> ("description", expected disposition).
 # Disposition values:
-#   "removed"      -> a `- (gggg,eeee)` rule must exist
+#   "removed"      -> a `- */(gggg,eeee)` rule must exist
 #   "replaced"     -> the tag must be assigned (literal or XNAT variable)
 #   "hashed"       -> a hashUID rule with this tag as both lhs and source
 PHI_TAGS_REQUIRED: dict[int, tuple[str, str]] = {
@@ -70,6 +75,7 @@ PHI_TAGS_REQUIRED: dict[int, tuple[str, str]] = {
     0x00402016: ("Placer Order Number", "removed"),
     0x00402017: ("Filler Order Number", "removed"),
     0x0040A123: ("Person Name (SR)", "removed"),
+    0x00081030: ("Study Description", "removed"),  # imaging-api's session label is the accession number
     # UIDs (must be hashed, not removed - downstream tooling needs them)
     0x00080018: ("SOP Instance UID", "hashed"),
     0x0020000D: ("Study Instance UID", "hashed"),
@@ -89,7 +95,7 @@ def _final_disposition(rules: list[Rule], tag: int) -> str | None:
     """
     last: Rule | None = None
     for rule in rules:
-        if isinstance(rule, RemoveRule) and rule.tag == tag:
+        if isinstance(rule, RemoveRule) and rule.matches(tag) and rule.scope != "nested":
             last = rule
         elif isinstance(rule, (AssignLiteralRule, AssignVariableRule, HashUidRule)) and rule.tag == tag:
             last = rule
@@ -136,8 +142,86 @@ def test_deidentification_method_documented(anon_rules: list[Rule]) -> None:
     )
 
 
+def test_every_removal_reaches_nested_sequences(anon_rules: list[Rule]) -> None:
+    """A bare ``- (gggg,eeee)`` matches the top level only, leaving every nested copy (FLIP#1513)."""
+    top_only = [r.line_no for r in anon_rules if isinstance(r, RemoveRule) and r.scope == "top"]
+    assert not top_only, f"removal rules on lines {top_only} miss nested copies; write `- */(gggg,eeee)`"
+
+
+def test_nested_copies_of_replaced_identifiers_are_removed(anon_rules: list[Rule]) -> None:
+    """Patient Name and ID are replaced at the top level, so their nested copies need a rule of their own."""
+    nested = {r.tag for r in anon_rules if isinstance(r, RemoveRule) and r.scope == "nested"}
+    assert {0x00100010, 0x00100020} <= nested
+
+
+PS315_TABLE = Path(__file__).parent / "ps315_table_e1_1.csv"
+# Table E.1-1 rows the script cannot or need not act on
+TABLE_EXEMPT = {
+    "(0000,1001)": "Requested SOP Instance UID is a DIMSE command field, never part of a stored object",
+    "(0002,0003)": "Media Storage SOP Instance UID: DicomEdit rewrites it to follow the hashed SOP Instance UID",
+}
+# Labels written at the top level, so only their nested copies are removed
+TABLE_REPLACED = {"(0010,0010)", "(0010,0020)"}
+
+
+def _table_rows() -> list[dict[str, str]]:
+    with PS315_TABLE.open() as table:
+        return list(csv.DictReader(line for line in table if not line.startswith("#")))
+
+
+def _sample_tags(tag: str) -> list[int]:
+    """Concrete tags for a table row; a repeating group like ``(60xx,4000)`` gives two of them."""
+    digits = tag.strip("()").replace(",", "")
+    return [int(digits.replace("x", fill), 16) for fill in ("0", "2")] if "x" in digits else [int(digits, 16)]
+
+
+def _removed_at(rules: list[Rule], tag: int, scope: str) -> bool:
+    return any(isinstance(r, RemoveRule) and r.scope == scope and r.matches(tag) for r in rules)
+
+
+def _single_valued(tag: int) -> bool:
+    try:
+        return dictionary_VM(tag) == "1"
+    except KeyError:  # newer than this pydicom; every such UID row is VM 1 in the 2026d table
+        return True
+
+
+def test_every_table_e1_1_attribute_is_handled(anon_rules: list[Rule]) -> None:
+    """Each attribute the PS3.15 Basic Profile acts on is removed at any depth, hashed, or replaced.
+
+    UIDs (action U) are hashed at the top level and removed where nested; multi-valued ones, which
+    ``hashUID`` does not take, are removed. Every other action (X, Z, D and their choices) is applied as
+    removal, the strictest of them. Refresh the table with ``extract_ps315_table.py``.
+    """
+    unhandled: list[str] = []
+    for row in _table_rows():
+        tag_text, action = row["tag"], row["action"]
+        if tag_text.startswith("(gggg") or tag_text in TABLE_EXEMPT:
+            continue  # private attributes: test_private_tags_are_removed
+        for tag in _sample_tags(tag_text):
+            final = _final_disposition(anon_rules, tag)
+            if tag_text in TABLE_REPLACED:
+                ok = final == "replaced" and _removed_at(anon_rules, tag, "nested")
+            elif action == "U" and _single_valued(tag):
+                ok = final == "hashed" and _removed_at(anon_rules, tag, "nested")
+            else:
+                ok = final == "removed" and _removed_at(anon_rules, tag, "any")
+            if not ok:
+                unhandled.append(f"{tag_text} {row['name']} ({action}): {final}")
+    assert not unhandled, f"{len(unhandled)} Table E.1-1 attributes not handled:\n" + "\n".join(unhandled)
+
+
+def test_ps315_table_is_complete() -> None:
+    """Guards the vendored table itself against truncation."""
+    assert len(_table_rows()) >= 657
+
+
+def test_private_tags_are_removed(anon_rules: list[Rule]) -> None:
+    assert any(isinstance(r, RemoveAllPrivateRule) for r in anon_rules), "removeAllPrivateTags is missing"
+
+
 def test_no_orphan_rules(anon_rules: list[Rule]) -> None:
-    """Every rule we parsed should be one of the four supported kinds.
+    """Every rule we parsed should be a supported kind.
 
     parse_script raises on unsupported syntax, so this is mostly a smoke test
     that the file actually contains rules and we did not silently parse zero.

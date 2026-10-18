@@ -12,11 +12,11 @@
 # limitations under the License.
 #
 
-# Empty the NVFLARE fl-server's local/ on EFS and re-sync its kit, so an older fl-server image can start
+# Empty the FLARE fl-server's local/ on EFS and re-sync its kit, so an older fl-server image can start
 # (FLIP#1390). `make rollback-centralhub` runs it before it repoints any service.
 #
 # Since FLIP#1390 the fl-server writes local/flip__p_resources.json at every start. local/ is an EFS volume,
-# so the file outlives the container, and NVFLARE in an fl-server image older than FLIP#1390 fails while
+# so the file outlives the container, and FLARE in an fl-server image older than FLIP#1390 fails while
 # loading its configuration: it cannot import the JobSchedulingReporter the file names. This runs the
 # one-shot efs-provision-certs task, the one Terraform runs whenever the kit changes, which empties local/
 # and re-syncs the kit from S3. The running fl-server has already loaded its configuration and is not

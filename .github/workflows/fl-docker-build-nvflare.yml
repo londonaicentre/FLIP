@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: Build and Push NVFLARE FL Docker Images
+name: Build and Push FLARE FL Docker Images
 
 on:
   push:

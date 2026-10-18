@@ -35,7 +35,7 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 ## Running this tutorial
 
 > **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower`
-> (alias `sim-tutorial`) runs the flwr simulator with no containers at all, as NVFLARE's tutorials
+> (alias `sim-tutorial`) runs the flwr simulator with no containers at all, as FLARE's tutorials
 > do — what the release check runs. `fl-services/flower` runs the Flower containers by hand. The
 > deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised by
 > `make -C flip-api e2e_smoke_spleen FL_BACKEND=flower` against the dev stack (FLIP#1435). The app
@@ -173,8 +173,8 @@ sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
 ```
 
 It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so it covers training
-rounds only — `@app.evaluate` is untouched. That mirrors the scope of the NVFLARE apps'
-`PercentilePrivacy` result filter, though the mechanism is stronger: NVFLARE sparsifies by
+rounds only — `@app.evaluate` is untouched. That mirrors the scope of the FLARE apps'
+`PercentilePrivacy` result filter, though the mechanism is stronger: FLARE sparsifies by
 percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
 `compute_clip_model_update` / `add_gaussian_noise_inplace`.
 
@@ -244,7 +244,7 @@ Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enrich
 either backend. The upload script is a single copy in
 [`fl-tutorials/datasets/spleen/`](../../datasets/spleen), pointed at the one spleen tree both backends
 read — see the
-[NVFLARE spleen tutorial's README](../../nvflare/image_segmentation/3d_spleen_segmentation/README.md) for
+[FLARE spleen tutorial's README](../../nvflare/image_segmentation/3d_spleen_segmentation/README.md) for
 the full walkthrough and options.
 
 ## Data Location
@@ -254,5 +254,5 @@ By default, the app reads from the shared gitignored `fl-tutorials/data/` root:
 - `data/spleen/dataframe.csv`
 - `data/spleen/images`
 
-Both are the MSD build the NVFLARE tutorials read, so the two backends train on the same cases
+Both are the MSD build the FLARE tutorials read, so the two backends train on the same cases
 (`NUM_CASES`, default 10 — see `fl-tutorials/datasets/README.md`).

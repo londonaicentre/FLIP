@@ -78,7 +78,7 @@ make backfill_cohort_snapshots # queue PERSIST_COHORT for approved projects with
 Prerequisites:
 - Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
 - No smoked trust has a Trust Admin (FLIP#1258): the smoke approves as the hub admin, and a trust with a Trust Admin refuses the hub, so the whole approve call answers 403.
-- The tutorial files are in-tree at `fl-tutorials/<backend>/` (NVFLARE and Flower both migrated from the legacy fl-base repos).
+- The tutorial files are in-tree at `fl-tutorials/<backend>/` (FLARE and Flower both migrated from the legacy fl-base repos).
 
 Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at the in-tree `fl-tutorials/flower/xray_classification/`. Common overrides:
 
@@ -166,9 +166,9 @@ cd flip-api && uv run python -m tests.e2e_smoke \
 `$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
 `$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
 there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
-tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the NVFLARE paths shown in the
+tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the FLARE paths shown in the
 direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
-the NVFLARE paths for the NVFLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
+the FLARE paths for the FLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
 shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 **Prostate.** `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` does the same for the PI-CAI

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 """The e2e smoke names its project and model for the tutorial it actually runs, not a hardcoded 'Xrays',
-and reads ``has_imaging`` back off the hub rather than trusting its own flag."""
+and, on ``--project-id`` reuse, reads ``has_imaging`` back off the hub."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -126,7 +126,6 @@ def _response(status_code: int, body: dict) -> MagicMock:
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
-        ({}, True),  # a hub predating the flag omits it: imaging, the old behaviour
         ({"has_imaging": True}, True),
         ({"has_imaging": False}, False),
     ],
@@ -142,26 +141,19 @@ def test_project_has_imaging_fails_loudly_on_an_error_response():
             project_has_imaging(MagicMock(), {}, "proj-1")
 
 
-def test_create_project_fails_fast_when_the_hub_ignores_no_imaging():
-    """A hub predating FLIP#1071 drops the unknown field: abort now, not on a 20-minute pull wait."""
-    posts = [_response(201, {"id": "proj-1"}), _response(200, {"query_id": "q-1"})]
-    with (
-        patch("tests.e2e_smoke._post", side_effect=posts) as mock_post,
-        patch("tests.e2e_smoke._get", return_value=_response(200, {"id": "proj-1"})),  # no has_imaging key
-    ):
-        with pytest.raises(SmokeFailure, match="ignored has_imaging=false"):
-            create_project_with_query(MagicMock(), {}, "EHR E2E smoke", "SELECT 1", has_imaging=False, description="d")
+def test_project_has_imaging_fails_loudly_without_the_field():
+    with patch("tests.e2e_smoke._get", return_value=_response(200, {"id": "proj-1"})):
+        with pytest.raises(SmokeFailure, match="proj-1"):
+            project_has_imaging(MagicMock(), {}, "proj-1")
 
+
+def test_create_project_posts_no_imaging():
+    # create project → save cohort query → submit it to the trusts
+    posts = [_response(201, {"id": "proj-1"}), _response(200, {"query_id": "q-1"}), _response(202, {})]
+    with patch("tests.e2e_smoke._post", side_effect=posts) as mock_post:
+        result = create_project_with_query(MagicMock(), {}, "n", "SELECT 1", has_imaging=False, description="d")
+
+    assert result == ("proj-1", "q-1")
     posted = mock_post.call_args_list[0].args[2]
     assert posted["has_imaging"] is False
     assert posted["description"] == "d"
-
-
-def test_create_project_accepts_a_hub_that_honours_no_imaging():
-    # create project → save cohort query → submit it to the trusts
-    posts = [_response(201, {"id": "proj-1"}), _response(200, {"query_id": "q-1"}), _response(202, {})]
-    with (
-        patch("tests.e2e_smoke._post", side_effect=posts),
-        patch("tests.e2e_smoke._get", return_value=_response(200, {"id": "proj-1", "has_imaging": False})),
-    ):
-        assert create_project_with_query(MagicMock(), {}, "n", "SELECT 1", has_imaging=False) == ("proj-1", "q-1")

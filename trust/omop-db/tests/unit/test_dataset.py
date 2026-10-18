@@ -71,14 +71,6 @@ class TestCanonicalTablesOrder:
 
 
 class TestSplitForTrust:
-    def test_legacy_is_an_alias_for_source_trust(self):
-        df = _canonical_frame()
-
-        for index in (1, 2):
-            via_alias = split_for_trust(df, num_trusts=2, trust_index=index, mode="legacy")
-            via_name = split_for_trust(df, num_trusts=2, trust_index=index, mode="source_trust")
-            pd.testing.assert_frame_equal(via_alias, via_name)
-
     def test_default_mode_is_source_trust(self):
         df = _canonical_frame()
 
@@ -87,17 +79,17 @@ class TestSplitForTrust:
             split_for_trust(df, num_trusts=2, trust_index=1, mode="source_trust"),
         )
 
-    def test_legacy_reproduces_source_membership(self):
+    def test_source_trust_reproduces_source_membership(self):
         df = _canonical_frame()
-        trust_1 = split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")
-        trust_2 = split_for_trust(df, num_trusts=2, trust_index=2, mode="legacy")
+        trust_1 = split_for_trust(df, num_trusts=2, trust_index=1, mode="source_trust")
+        trust_2 = split_for_trust(df, num_trusts=2, trust_index=2, mode="source_trust")
 
         assert sorted(trust_1["person_id"]) == [1, 2, 3]
         assert sorted(trust_2["person_id"]) == [4, 5, 6]
 
     def test_provenance_column_dropped(self):
         df = _canonical_frame()
-        for mode in ["legacy", "modulo"]:
+        for mode in ["source_trust", "modulo"]:
             part = split_for_trust(df, num_trusts=2, trust_index=1, mode=mode)
             assert SOURCE_TRUST_COLUMN not in part.columns
 
@@ -124,14 +116,14 @@ class TestSplitForTrust:
                 SOURCE_TRUST_COLUMN: [1, 1, 1, 2, 2, 2] * 2,
             }
         )
-        for mode in ["legacy", "modulo"]:
+        for mode in ["source_trust", "modulo"]:
             person_part = split_for_trust(persons, num_trusts=2, trust_index=1, mode=mode)
             dependent_part = split_for_trust(dependents, num_trusts=2, trust_index=1, mode=mode)
             assert set(dependent_part["person_id"]) == set(person_part["person_id"])
 
     def test_empty_frame_passes_through(self):
         df = pd.DataFrame(columns=["person_id", SOURCE_TRUST_COLUMN])
-        part = split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")
+        part = split_for_trust(df, num_trusts=2, trust_index=1, mode="source_trust")
         assert part.empty
         assert SOURCE_TRUST_COLUMN not in part.columns
 
@@ -147,20 +139,20 @@ class TestSplitForTrust:
         with pytest.raises(ValueError, match="Unknown partition mode"):
             split_for_trust(_canonical_frame(), 2, 1, mode="random")
 
-    def test_legacy_without_provenance_column_rejected(self):
+    def test_source_trust_without_provenance_column_rejected(self):
         df = _canonical_frame().drop(columns=[SOURCE_TRUST_COLUMN])
         with pytest.raises(ValueError, match=SOURCE_TRUST_COLUMN):
-            split_for_trust(df, 2, 1, mode="legacy")
+            split_for_trust(df, 2, 1, mode="source_trust")
 
-    def test_legacy_with_mismatched_trust_count_rejected(self):
+    def test_source_trust_with_mismatched_trust_count_rejected(self):
         with pytest.raises(ValueError, match="use mode='modulo'"):
-            split_for_trust(_canonical_frame(), num_trusts=3, trust_index=1, mode="legacy")
+            split_for_trust(_canonical_frame(), num_trusts=3, trust_index=1, mode="source_trust")
 
-    def test_legacy_with_gapped_source_values_rejected(self):
+    def test_source_trust_with_gapped_source_values_rejected(self):
         df = _canonical_frame()
         df[SOURCE_TRUST_COLUMN] = [1, 1, 1, 3, 3, 3]
         with pytest.raises(ValueError, match="contiguous"):
-            split_for_trust(df, num_trusts=2, trust_index=1, mode="legacy")
+            split_for_trust(df, num_trusts=2, trust_index=1, mode="source_trust")
 
     def test_surplus_sources_wait_for_a_future_trust(self, capsys):
         """One center per trust: a third center is written as source 3 and loaded by nobody on a two-trust stack."""
@@ -183,7 +175,7 @@ class TestSplitForTrust:
     def test_nan_person_id_rejected(self):
         df = _canonical_frame()
         df.loc[0, "person_id"] = None
-        for mode in ["legacy", "modulo"]:
+        for mode in ["source_trust", "modulo"]:
             with pytest.raises(ValueError, match="missing values"):
                 split_for_trust(df, 2, 1, mode=mode)
 
@@ -223,7 +215,7 @@ class TestBuildCanonical:
             trust_dirs.append(trust_dir)
         return trust_dirs
 
-    def test_build_adds_provenance_and_roundtrips_via_legacy_split(self, tmp_path):
+    def test_build_adds_provenance_and_roundtrips_via_source_trust_split(self, tmp_path):
         trust_dirs = self._write_trust_dirs(tmp_path)
         dest = tmp_path / "canonical"
 
@@ -233,7 +225,7 @@ class TestBuildCanonical:
         assert sorted(merged[SOURCE_TRUST_COLUMN].unique()) == [1, 2]
         assert len(merged) == 4
 
-        trust_1 = split_for_trust(merged, num_trusts=2, trust_index=1, mode="legacy")
+        trust_1 = split_for_trust(merged, num_trusts=2, trust_index=1, mode="source_trust")
         original_trust_1 = pd.read_csv(trust_dirs[0] / "cxr_project" / "person.csv")
         pd.testing.assert_frame_equal(trust_1, original_trust_1)
 

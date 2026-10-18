@@ -206,7 +206,7 @@ const sortedClients = (clients: IFLStatusClients[]): IFLStatusClients[] =>
     [...(clients ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 
 const formatBackend = (backend: "nvflare" | "flower") =>
-    backend === "nvflare" ? "NVFlare" : "Flower";
+    backend === "nvflare" ? "FLARE" : "Flower";
 
 const setAndShowDetails = async (netName: string) => {
     showDetails.value = true;

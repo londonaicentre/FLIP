@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# NVFLARE tutorial runner. Each tutorial under <category>/<name>/ carries a Makefile
+# FLARE tutorial runner. Each tutorial under <category>/<name>/ carries a Makefile
 # + .env.app whose `make run` delegates to `make sim` — the tutorial's job.py driving a
-# FLIP recipe on the NVFLARE simulator (SimEnv), run in the flip-utils venv with the
+# FLIP recipe on the FLARE simulator (SimEnv), run in the flip-utils venv with the
 # `full` ML extra. Requires a GPU, and the tutorial's dataset downloaded first (see each
 # tutorial's README); `make export` inside a tutorial needs neither.
 #
@@ -29,7 +29,7 @@ TUTORIAL_DIRS := $(sort $(patsubst %/,%,$(dir $(wildcard */*/.env.app))))
 .PHONY: list-tutorials run-tutorial sim-tutorial run-all-tutorials
 
 list-tutorials:
-	@echo "Available NVFLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
+	@echo "Available FLARE tutorials (pass the name to 'make run-tutorial TUTORIAL=…'):"
 	@for d in $(TUTORIAL_DIRS); do echo "  - $$(basename $$d)  ($$d)"; done
 
 run-tutorial:
@@ -39,16 +39,16 @@ run-tutorial:
 		for d in $(TUTORIAL_DIRS); do echo "  - $$(basename $$d)"; done; \
 		exit 1; \
 	fi; \
-	echo "🚀 Running NVFLARE tutorial '$(TUTORIAL)' ($$dir)"; \
+	echo "🚀 Running FLARE tutorial '$(TUTORIAL)' ($$dir)"; \
 	$(MAKE) -C "$$dir" run
 
-# NVFLARE tutorials only ever run on the simulator (each tutorial's `run` target is an alias
+# FLARE tutorials only ever run on the simulator (each tutorial's `run` target is an alias
 # for `sim`), so this is run-tutorial under the name the Flower harness uses for its simulator
 # path. Having both on both backends means `sim-tutorial` always means "no containers".
 sim-tutorial: run-tutorial
 
 run-all-tutorials:
 	@for d in $(TUTORIAL_DIRS); do \
-		echo "🚀 Running NVFLARE tutorial $$(basename $$d)"; \
+		echo "🚀 Running FLARE tutorial $$(basename $$d)"; \
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done

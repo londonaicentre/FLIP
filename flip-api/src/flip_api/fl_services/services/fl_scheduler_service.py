@@ -694,7 +694,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
             logger.error(error_msg)
             raise Exception(error_msg)
 
-        # Resolve FL kit slot names at the FL boundary. The FL protocol (NVFlare/Flower)
+        # Resolve FL kit slot names at the FL boundary. The FL protocol (FLARE/Flower)
         # identifies participants by the CN baked into the kit's cert at provisioning
         # time — that's the slot name, NOT the trust's friendly hub-side name. Using
         # Trust.name here would make validate_client_availability fail with

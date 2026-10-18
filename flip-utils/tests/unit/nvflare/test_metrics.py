@@ -260,7 +260,7 @@ class TestHandleMetricsEvent:
         flip.logger.warning.assert_called_once()
 
     def test_handle_metrics_event_survives_send_metrics_failure(self):
-        """One bad metric must not propagate out of NVFLARE's event dispatch (matches the Flower loop)."""
+        """One bad metric must not propagate out of FLARE's event dispatch (matches the Flower loop)."""
         dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5})
         event_data = dxo.to_shareable()
         event_data.set_header(FedEventHeader.ORIGIN, "site-1")

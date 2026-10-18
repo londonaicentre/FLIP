@@ -20,12 +20,12 @@ by default, with "Lungs in normal arrangement" as a negative override) using
 a MONAI DenseNet121 trained with multi-label BCE — from scratch, `pretrained=False`.
 An FL app must never download at run time (FLIP#1206: on a platform-managed estate the FL
 server has no internet route, nor does a trust host behind an NHS firewall, and a run-time
-fetch bypasses the scanned upload path). The NVFLARE tutorial's README records the
+fetch bypasses the scanned upload path). The FLARE tutorial's README records the
 measurement behind dropping the ImageNet initialisation rather than shipping it. Apps
-that do need pretrained weights ship them as an uploaded file; the NVFLARE
+that do need pretrained weights ship them as an uploaded file; the FLARE
 latent-diffusion tutorial shows the pattern (`make weights`).
 
-The cohort query (`query.sql`) is copied verbatim from the NVFLARE tutorial
+The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial
 and matches the chest-X-ray data seeded into the trust mock OMOP DB
 (concept ids 4215818 / 4196943 / 40481136). This is the tutorial that
 `make e2e_smoke` from FLIP picks when `FL_BACKEND=flower`.
@@ -34,7 +34,7 @@ and matches the chest-X-ray data seeded into the trust mock OMOP DB
 
 ```
 xray_classification/
-├── query.sql                  # Cohort SQL — verbatim from the NVFLARE tutorial
+├── query.sql                  # Cohort SQL — verbatim from the FLARE tutorial
 ├── pyproject.toml             # Dependency manifest; not consumed by FLIP (base bundle wins)
 ├── README.md
 └── app/
@@ -60,7 +60,7 @@ the upload flow is unaffected.
 ## Running this tutorial
 
 > **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower`
-> runs it on the flwr simulator (first below), as NVFLARE's tutorials do — what the release check
+> runs it on the flwr simulator (first below), as FLARE's tutorials do — what the release check
 > runs. To run it on the Flower containers by hand, use `fl-services/flower` (second below). The
 > deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
 > by `make e2e_smoke FL_BACKEND=flower` against the dev stack (FLIP#1435). Use the make target
@@ -135,7 +135,7 @@ them directly when `LOCAL_DEV=true`.
 
 ## Hyperparameters
 
-`app/config.json` mirrors the NVFLARE chest-X-ray config:
+`app/config.json` mirrors the FLARE chest-X-ray config:
 
 | Key                  | Default | Meaning |
 |----------------------|---------|---------|
@@ -160,7 +160,7 @@ best-model-metric-minimize = false
 ```
 
 `test_f1-score` is the **macro F1 across lesions** that `app/client_app.py` reports from its evaluate pass
-(`macro_mean` in `app/task.py`), matching the macro `VAL-F1-SCORE` the NVFLARE chest-X-ray tutorial selects
+(`macro_mean` in `app/task.py`), matching the macro `VAL-F1-SCORE` the FLARE chest-X-ray tutorial selects
 on. The server weight-averages it across trusts by `num-examples` and keeps the round that scores highest.
 
 What changes when it is set:
@@ -178,7 +178,7 @@ Two things worth knowing before you change the metric:
   best model at all, logging a warning per round rather than failing — check the ServerApp log if the
   artefact is missing.
 - **On Flower the metric is measured on the test split**, because that is what the evaluate phase uses here.
-  NVFLARE instead scores a pre-training pass over the *validation* split. Selecting on the test split is
+  FLARE instead scores a pre-training pass over the *validation* split. Selecting on the test split is
   convenient for a tutorial but is a mild form of selection-on-test; point `best-model-metric` at a
   validation metric if you need the split kept clean.
 
@@ -194,8 +194,8 @@ sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
 ```
 
 It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so it covers training
-rounds only — `@app.evaluate` is untouched. That mirrors the scope of the NVFLARE apps'
-`PercentilePrivacy` result filter, though the mechanism is stronger: NVFLARE sparsifies by
+rounds only — `@app.evaluate` is untouched. That mirrors the scope of the FLARE apps'
+`PercentilePrivacy` result filter, though the mechanism is stronger: FLARE sparsifies by
 percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
 `compute_clip_model_update` / `add_gaussian_noise_inplace`.
 

@@ -40,8 +40,8 @@ INPUT_DIR = Path("data/Task09_Spleen/imagesTr")
 OUTPUT_DIR = Path("dicom_output")
 PROJECT = "spleen_project"
 # StudyDescription is what omop_convert_spleen.py looks up (lower-cased) in MAPPING_PROCEDURE_TYPE, and
-# SeriesDescription doubles as ProtocolName, which dcm2niix puts in the NIfTI filename after a pull
-# (input_CT_Spleen_<datetime>_<series>.nii.gz — the name the spleen apps' label upload derives from).
+# SeriesDescription doubles as ProtocolName. XNAT's anonymisation script removes both, so after a pull
+# dcm2niix names the series input_000000_<series>.nii.gz, which the label upload renames to label_…
 STUDY_DESCRIPTION = "Spleen CT"
 SERIES_DESCRIPTION = "CT Spleen"
 MODALITY = "CT"

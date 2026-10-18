@@ -417,7 +417,7 @@ see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-
 
    - **It does not work where the app runs.** The FL server on a platform-managed estate and a
      Trust's training host behind an NHS firewall have no internet route. The download hangs and
-     the training run dies — on NVFLARE the Trust reports ``cannot sync with server Runner``; on
+     the training run dies — on FLARE the Trust reports ``cannot sync with server Runner``; on
      Flower the run never issues a round.
    - **It bypasses the checks.** The files you upload are scanned once and then shipped exactly as
      uploaded, so what a Trust can inspect before training is what runs. A URL fetched later can
@@ -505,13 +505,13 @@ own code reads.
 Where that configuration lives, and which settings are available, depends on the FL backend:
 
 - **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
-  for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
+  for every FLARE job type. As well as declaring ``job_type``, it may set platform-recognised
   keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
 - **Flower apps** also carry a ``config.json``, but it is read only for ``job_type`` — the run
   configuration comes from the platform's app template, which your app can override with a
-  ``config.toml`` file. Flower apps do not use the NVFLARE keys.
+  ``config.toml`` file. Flower apps do not use the FLARE keys.
 
-For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
+For FLARE apps, any key the platform does not recognise is passed through untouched, for your own
 code to read at runtime — which is how the tutorials carry app-specific settings such as learning
 rate or validation split. Flower works the other way round: ``config.toml`` may only override keys
 the app template already declares, and a key it does not declare fails the run at submission rather
@@ -588,7 +588,8 @@ Stop Training
 
 .. note::
 
-   If the training has already completed the 'Stop Training' option will be greyed out (see :ref:`view-results`).
+   The 'Stop Training' button only shows while the model is queued or training; once training has ended it is
+   hidden (see :ref:`view-results`).
 
 1. Click the 'Actions' drop-down menu
 2. Click the 'Stop Training' button

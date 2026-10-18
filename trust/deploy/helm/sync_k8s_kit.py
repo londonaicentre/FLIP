@@ -169,8 +169,8 @@ def _validate_governance(kit: dict[str, str], document: Path | None) -> str | No
         document: The governance document, or ``None`` when the kit names none.
 
     Returns:
-        str | None: sha256 of the fl-client's extracted section on NVFLARE (what rolls the
-        fl-client), or ``None`` when there is no document or the backend is not NVFLARE.
+        str | None: sha256 of the fl-client's extracted section on FLARE (what rolls the
+        fl-client), or ``None`` when there is no document or the backend is not FLARE.
 
     Raises:
         GovernanceDocumentError: On an invalid document, an invalid FL_SITE_PRIVACY_* value, a
@@ -861,7 +861,7 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # The trust's governance document (FLIP#1259). The kit names a *path* — the same
     # ACCESS_POLICY_FILE the Compose stack mounts — but a path on the deploy host means
     # nothing inside a pod, so what travels is the document itself, which the chart renders
-    # into a read-only ConfigMap that data-access-api mounts and the NVFLARE fl-client's
+    # into a read-only ConfigMap that data-access-api mounts and the FLARE fl-client's
     # governance-extract init container reads (the client itself sees its section only). A
     # relative path resolves against the trust tree, as Compose's --project-directory trust
     # resolves its own mount. Unreadable is a hard error rather than an omission: the release

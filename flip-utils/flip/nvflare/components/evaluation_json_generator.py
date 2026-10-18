@@ -11,7 +11,10 @@
 #
 
 import json
+import math
+import numbers
 import os.path
+from collections.abc import Mapping
 from typing import Any
 
 from nvflare.apis.dxo import DataKind, from_shareable
@@ -23,7 +26,7 @@ from nvflare.app_common.app_event_type import AppEventType
 from nvflare.app_common.utils.file_utils import resolve_path_under_root
 from nvflare.app_common.widgets.validation_json_generator import to_serializable
 
-from flip.constants import PTConstants
+from flip.constants import FlipMetaKey, PTConstants
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 
 
@@ -50,6 +53,10 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
     recorded in ``_eval_failures`` and written to ``PTConstants.EvalFailuresFilename``, and
     :meth:`all_tasks_failed` lets ServerEventHandler fail the run rather than report success on an
     empty results file (FLIP#754).
+
+    **Hub metrics.** :meth:`hub_metrics` flattens each reply's ``metrics`` into per-client metric labels,
+    which ServerEventHandler forwards to the Central Hub at END_RUN (FLIP#1526). Results the evaluator
+    puts in the reply's ``meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]`` are merged into the results file only.
     """
 
     def __init__(
@@ -71,6 +78,8 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         self._eval_results: dict = {}
         self._eval_failures: list[dict] = []
         self._failures_file_name = failures_file_name
+        # Each client's replies keyed by model owner (None without one), for hub_metrics.
+        self._replies: dict[str, dict[str | None, Any]] = {}
 
     def all_tasks_failed(self) -> bool:
         """Whether every validate task this run produced a failure and none produced metrics.
@@ -92,12 +101,50 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             fire_event=False,
         )
 
-    def _record_result(self, model_owner: str | None, data_client: str, metrics: Any) -> None:
-        """Store one client's metrics, nesting under the model name when the controller supplies one."""
+    def _record_result(self, model_owner: str | None, data_client: str, metrics: Any, supplementary: Any) -> None:
+        """Store one client's reply, nesting under the model name when the controller supplies one.
+
+        The results file gets ``metrics`` with ``supplementary`` merged in; the hub gets ``metrics`` only.
+        """
+        results = _merge(metrics, supplementary)
         if model_owner:
-            self._eval_results.setdefault(data_client, {})[model_owner] = metrics
+            self._eval_results.setdefault(data_client, {})[model_owner] = results
         else:
-            self._eval_results[data_client] = metrics
+            self._eval_results[data_client] = results
+        self._replies.setdefault(data_client, {})[model_owner] = metrics
+
+    def hub_metrics(self) -> dict[str, dict[str, float]]:
+        """Flatten each client's evaluation metrics (not its supplementary results) into the hub's labels.
+
+        Nested keys join with ``/``; the label is upper-cased, as on Flower. When the run evaluated more
+        than one model, each label is prefixed with the model name (the ``config.json`` key, without the
+        ``SRV_`` prefix ``GlobalModelEval`` adds), the same at every client even where a task failed. A
+        reply that already keys its metrics by that model name, as the Ark+ multimodel evaluator does, is
+        taken as it is. Where labels repeat, the later model's value wins, so cumulative replies are sent once.
+
+        Only finite numbers are kept: an undefined metric (NaN) is omitted rather than sent as 0, and
+        lists, which is where per-sample values would live, are never sent.
+
+        Returns:
+            dict[str, dict[str, float]]: ``{client: {label: value}}``.
+        """
+        owners = {owner for replies in self._replies.values() for owner in replies}
+        owners |= {failure["model"] for failure in self._eval_failures}
+        multi_model = len(owners - {None}) > 1
+        hub: dict[str, dict[str, float]] = {}
+        for client, replies in self._replies.items():
+            labels: dict[str, float] = {}
+            dropped: set[str] = set()
+            for owner, reply in replies.items():
+                name = owner.removeprefix("SRV_") if owner else None
+                self_keyed = isinstance(reply, Mapping) and isinstance(reply.get(name), Mapping)
+                prefix = (name,) if name and multi_model and not self_keyed else ()
+                _flatten_metrics(reply, prefix, labels, dropped)
+            if dropped:
+                self.logger.warning(f"Not sent to the hub for {client} (not a finite number): {sorted(dropped)}")
+            if labels:
+                hub[client] = labels
+        return hub
 
     def _handle_validation_result(self, fl_ctx: FLContext) -> None:
         """Sort one received validate result into either the metrics store or the failure list."""
@@ -134,7 +181,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._record_failure(fl_ctx, model_owner, data_client, ReturnCode.EXECUTION_RESULT_ERROR)
             return
 
-        self._record_result(model_owner, data_client, dxo.data)
+        self._record_result(model_owner, data_client, dxo.data, dxo.get_meta_prop(FlipMetaKey.SUPPLEMENTARY_RESULTS))
 
     def _write_json(self, fl_ctx: FLContext, run_dir: str, file_name: str, payload: Any, description: str) -> None:
         """Write one json artefact into the run's evaluation results directory."""
@@ -151,6 +198,7 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
         if event_type == EventType.START_RUN:
             self._eval_results.clear()
             self._eval_failures.clear()
+            self._replies.clear()
         elif event_type == AppEventType.VALIDATION_RESULT_RECEIVED:
             self._handle_validation_result(fl_ctx)
         elif event_type == EventType.END_RUN:
@@ -158,3 +206,27 @@ class EvaluationJsonGenerator(ValidationJsonGenerator):
             self._write_json(fl_ctx, run_dir, self._json_file_name, self._eval_results, "evaluation results path")
             # Always written, even when empty, so its absence never has to be interpreted.
             self._write_json(fl_ctx, run_dir, self._failures_file_name, self._eval_failures, "evaluation failures path")
+
+
+def _flatten_metrics(value: Any, path: tuple[str, ...], out: dict[str, float], dropped: set[str]) -> None:
+    """Collect every finite numeric leaf of ``value`` into ``out`` under its ``/``-joined, upper-cased path.
+
+    The label of any other leaf goes into ``dropped``.
+    """
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            _flatten_metrics(child, (*path, str(key)), out, dropped)
+    elif not path:
+        return
+    elif isinstance(value, numbers.Real) and not isinstance(value, bool) and math.isfinite(value):
+        out["/".join(path).upper()] = float(value)
+    else:
+        dropped.add("/".join(path).upper())
+
+
+def _merge(metrics: Any, supplementary: Any) -> Any:
+    """Merge ``supplementary`` into ``metrics`` key by key, keeping ``metrics``'s order; ``metrics`` wins a clash."""
+    if not (isinstance(metrics, Mapping) and isinstance(supplementary, Mapping)):
+        return metrics
+    merged = {key: _merge(value, supplementary.get(key)) for key, value in metrics.items()}
+    return {**merged, **{key: value for key, value in supplementary.items() if key not in merged}}

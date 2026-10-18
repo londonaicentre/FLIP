@@ -133,7 +133,7 @@ build:
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
 
-# Build the NVFLARE FL service images locally, tagged :dev, for iterating on fl-services/
+# Build the FLARE FL service images locally, tagged :dev, for iterating on fl-services/
 # or the flip-utils `flip` package before pushing. The deploy compose pulls FL images from
 # GHCR (DOCKER_FL_TAG), so they are NOT built by `make build`; this uses the build defs in
 # fl-services/<backend>/compose.dev.yml. fl-base must build first, in its own invocation: a plain
@@ -171,7 +171,7 @@ up: _check-compose-project-owner generate-internal-service-key create-networks _
 # Net IDs come from NET_ENDPOINTS (the per-env single source of truth — prod
 # has only net-1; dev has net-1 + net-2). A new net is just an NET_ENDPOINTS
 # entry plus a compose service block; this target picks it up automatically.
-# Both backends use jobs/<net>: Flower stores uploaded app bundles there; NVFLARE
+# Both backends use jobs/<net>: Flower stores uploaded app bundles there; FLARE
 # stages de-bundled evaluation checkpoints there for the fl-server to load from disk.
 _ensure-fl-jobs-dir:
 	@if [ "$(FL_BACKEND)" = "flower" ] || [ "$(FL_BACKEND)" = "nvflare" ]; then \
@@ -189,10 +189,10 @@ _ensure-fl-jobs-dir:
 		done; \
 	fi
 
-# Fail fast (NVFLARE) when the per-net startup kits are missing — delegated to
+# Fail fast (FLARE) when the per-net startup kits are missing — delegated to
 # scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
 # come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
-# for non-NVFLARE backends. In development it also checks that the NVFLARE FL API can read its
+# for non-FLARE backends. In development it also checks that the FLARE FL API can read its
 # admin key through the host group (FL_API_KEY_GID, FLIP#1384).
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
