@@ -20,11 +20,11 @@ from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 
 
 class TestPercentilePrivacy:
-    """FLIP's PercentilePrivacy is a thin subclass of stock NVFLARE's PercentilePrivacy.
+    """FLIP's PercentilePrivacy is a thin subclass of stock FLARE's PercentilePrivacy.
 
     Its only FLIP-specific behaviour is the ``off`` toggle; when the filter is on it must
     delegate to stock unchanged. These tests pin that contract (and that it stays a subclass
-    so it tracks upstream), not stock's percentile/gamma maths, which NVFLARE owns and tests.
+    so it tracks upstream), not stock's percentile/gamma maths, which FLARE owns and tests.
     """
 
     def setup_method(self):
@@ -81,7 +81,7 @@ class TestPercentilePrivacy:
 
         Covers multiple layers, a scalar param, and total_steps scaling in one shot — this
         replaces the fork's re-implemented percentile/gamma unit tests, which duplicated
-        NVFLARE's own coverage.
+        FLARE's own coverage.
         """
         data = {
             "layer1": np.array([-0.5, -0.2, 0.1, 0.3, 0.8]),

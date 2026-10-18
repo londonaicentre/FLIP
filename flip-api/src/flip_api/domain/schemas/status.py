@@ -81,14 +81,6 @@ class NetStatus(Enum):
     BUSY = "BUSY"
 
 
-class FLTargets(StrEnum):
-    """Targets for FL backend."""
-
-    SERVER = "server"
-    CLIENT = "client"
-    ALL = "all"
-
-
 class FileUploadStatus(Enum):
     """Status of the file upload."""
 
@@ -128,6 +120,21 @@ class ProjectStatus(StrEnum):
     UNSTAGED = "UNSTAGED"
     STAGED = "STAGED"
     APPROVED = "APPROVED"
+
+
+class TrustApprovalStatus(StrEnum):
+    """Decision on a staged project at one trust. Every trust starts PENDING when the project is staged."""
+
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    DECLINED = "DECLINED"
+
+
+class DecisionMaker(StrEnum):
+    """Who recorded a trust's decision on a project: the hub admin, or the trust's own Trust Admin (FLIP#1258)."""
+
+    HUB = "HUB"
+    SITE = "SITE"
 
 
 class ProjectType(StrEnum):
@@ -196,6 +203,24 @@ class TaskType(StrEnum):
     GET_IMAGING_STATUS = "get_imaging_status"
     REIMPORT_STUDIES = "reimport_studies"
     UPDATE_USER_PROFILE = "update_user_profile"
+    # Approval-time cohort freeze (FLIP#857): the trust records the approved cohort's
+    # membership once; the row-level routes then serve only those members. Queued BEFORE
+    # the CREATE_IMAGING task so the frozen accession set exists by the time imaging
+    # retrieval asks for it.
+    PERSIST_COHORT = "persist_cohort"
+
+
+class CohortSnapshotState(StrEnum):
+    """Where a trust's approval-time cohort freeze (FLIP#857) stands, from its latest PERSIST_COHORT task.
+
+    Derived per request; not persisted. The hub's view: FROZEN confirms the trust reported a frozen
+    membership. A trust never frozen is PENDING or FAILED and refuses the project's row-level routes; a
+    frozen trust being re-checked is PENDING while it keeps serving, and stays FROZEN if the re-check fails.
+    """
+
+    FROZEN = "frozen"
+    PENDING = "pending"
+    FAILED = "failed"
 
 
 class XNATImageStatus(StrEnum):

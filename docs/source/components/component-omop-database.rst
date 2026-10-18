@@ -169,8 +169,8 @@ The link from ``image_feature`` to its value is a soft one
 Concept ids are meaningless until they are joined
    Every ``*_concept_id`` resolves through ``omop.concept``, and the licensed core vocabulary that
    populates it arrives by a separate seeding step, not with the data. Before that step a Trust
-   database still has a non-empty ``omop.concept`` — the DICOM vocabulary ships inside the data
-   volume — so counting its rows tells you nothing; a join on a SNOMED CT or LOINC id simply matches
+   database still has a non-empty ``omop.concept`` — the seed loads the DICOM vocabulary — so
+   counting its rows tells you nothing; a join on a SNOMED CT or LOINC id simply matches
    nothing. See :ref:`omop-dev-instance`.
 
 .. _omop-accession-id:
@@ -327,7 +327,7 @@ Access API's SQL validation defence-in-depth.
 
 The paths differ only in when the file runs. Compose runs it once, at first initialisation. The
 Kubernetes Trust chart runs the copy the ``omop-db`` image ships (``/flip/omop/``) from a
-``postStart`` hook on every pod start, because a volume restored from a pgdata snapshot skips
+``postStart`` hook on every pod start, because a volume that already holds a database skips
 initialisation altogether; the file is idempotent and converges an existing role on the same
 grants. Before `FLIP#904 <https://github.com/londonaicentre/FLIP/issues/904>`_ the chart carried
 an inline copy that granted ``pg_read_all_data`` — ``SELECT`` on every table in every schema — with
@@ -338,8 +338,9 @@ schema pin inside ``validate_query`` is kept as a barrier in its own right eithe
 
 Row-level results are additionally gated on the Trust's ``COHORT_QUERY_THRESHOLD`` (default 10): a
 cohort smaller than the threshold is refused with a fixed message, identical to the one a cohort of
-zero produces, so the refusal itself discloses nothing. The threshold is evaluated against the live
-cohort on every call rather than frozen at approval. :doc:`/security` covers the full set of controls
+zero produces, so the refusal itself discloses nothing. The threshold is evaluated on every call
+against the approved membership as it stands in OMOP now: the cohort's patients are frozen at approval
+and can shrink, never grow, while their records are read live. :doc:`/security` covers the full set of controls
 around the clinical data boundary.
 
 .. _omop-dev-instance:
@@ -402,9 +403,10 @@ Trust on Kubernetes publishes no host port: port-forward ``svc/omop-db`` and pas
 Seeding the vocabulary
 ======================
 
-The published image and the data volumes are deliberately **vocabulary-free**. SNOMED CT, LOINC,
-Read v2 and dm+d are licensed material, so they are kept out of every published artifact and each
-environment loads the bundle it is licensed to use into its own running database, once:
+The published image and the published trust data are deliberately free of the licensed vocabulary.
+SNOMED CT, LOINC, Read v2 and dm+d are licensed material, so they are kept out of every published
+artifact and each environment loads the bundle it is licensed to use into its own running database,
+once:
 
 .. code-block:: bash
 
@@ -416,8 +418,8 @@ environment loads the bundle it is licensed to use into its own running database
    Until this has run, **a cohort query that resolves core-vocabulary concepts returns nothing** —
    the chest X-ray query above among them, because the SNOMED CT ids it joins on are not there. The
    stack starts cleanly and the result looks like an empty cohort. Don't diagnose it by counting
-   ``omop.concept``: the DICOM vocabulary ships in the data volume, so that table has rows either
-   way. ``omop.concept_ancestor`` is the empty one, and it is what the Data Access API probes — a
+   ``omop.concept``: the seed loads the DICOM vocabulary, so that table has rows either way.
+   ``omop.concept_ancestor`` is the empty one, and it is what the Data Access API probes — a
    genuinely empty cohort makes it log an error naming this exact cause and the command to fix it.
 
    The spleen query is the exception: it filters on a concept id but never joins ``omop.concept``,
@@ -428,6 +430,8 @@ Two ways to obtain the bundle: FLIP developers with organisation AWS access run
 `OHDSI Athena <https://athena.ohdsi.org/>`_ under their own licences and unpack it into
 ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Do that first — ``load-omop-vocab`` depends on
 ``fetch-vocab-core``, which skips the download when the directory is already there but fails without
-AWS access when it is not. The DICOM vocabulary is
-separate — it is freely redistributable, ships inside the data volumes, and needs no seeding step.
+AWS access when it is not. The AI Centre's copy behind ``fetch-vocab-core`` serves AI Centre nodes
+only; every other site downloads its own, as :ref:`onprem-core-vocabulary` describes. The DICOM vocabulary is
+separate — it is freely redistributable and the trust-data seed loads it (``load-dicom-vocab``), so it
+needs no step of its own.
 ``trust/omop-db/README.md`` carries the full vocabulary roster, versions and licensing.

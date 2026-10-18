@@ -127,3 +127,53 @@ class TestRenderLog:
         """A row with an unusable stored position must not invent one."""
         row = _row(event_type=FLLogEvent.QUEUE_POSITION.value, details=details)
         assert render_log(row) == "Model Queued"
+
+    # ── FLARE's scheduling verdict (FLIP#1390) ─────────────────────────────────────
+
+    def test_waiting_for_resources_says_what_the_trust_was_asked_for_and_which_try(self):
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={
+                "attempt": 2,
+                "max_attempts": 10,
+                "final": False,
+                "requested": {"num_of_gpus": 1, "mem_per_gpu_in_GiB": 16},
+            },
+        )
+        assert render_log(row) == "Waiting for resources · this trust cannot provide 1 GPU with 16 GiB · try 2 of 10"
+
+    def test_the_last_try_says_training_could_not_start(self):
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={"attempt": 10, "max_attempts": 10, "final": True, "requested": {"num_of_gpus": 2}},
+        )
+        assert (
+            render_log(row)
+            == "Training could not start · this trust cannot provide 2 GPUs · FLARE gave up after 10 tries"
+        )
+
+    @pytest.mark.parametrize("requested", [{}, {"num_of_gpus": 0}, {"num_of_gpus": 0, "num_of_cpus": 4}])
+    def test_a_trust_that_never_answered_is_said_to_have_not_answered(self, requested):
+        """A held trust with no GPU ask to refuse (none, or a job declaring 0 GPUs) did not confirm."""
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={"attempt": 1, "max_attempts": 10, "final": False, "requested": requested},
+        )
+        assert render_log(row) == "Waiting for resources · this trust did not confirm its resources · try 1 of 10"
+
+    def test_a_row_naming_no_trust_says_only_how_far_the_scheduler_got(self):
+        """The reporter's row against the model when no site was checked carries no ``requested``."""
+        row = _row(
+            event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
+            details={"attempt": 10, "max_attempts": 10, "final": True},
+        )
+        assert render_log(row) == "Training could not start · FLARE gave up after 10 tries"
+
+    @pytest.mark.parametrize(
+        "details",
+        [None, {}, {"attempt": "2", "max_attempts": 10}, {"requested": "lots"}, {"requested": {"num_of_gpus": "1"}}],
+    )
+    def test_waiting_for_resources_with_unusable_details_degrades_to_a_bare_line(self, details):
+        """Stored details are untyped JSONB: a row must never raise or invent a count it does not hold."""
+        row = _row(event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value, details=details)
+        assert render_log(row).startswith("Waiting for resources")

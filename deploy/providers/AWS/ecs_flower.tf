@@ -17,7 +17,7 @@
 # analogue of compose.production.flower.yml's register-supernode-keys-net-1
 # service. The script (/scripts/register-supernode-keys.sh, baked into the
 # SuperLink image) reads the per-slot keys from EFS, registers each with the
-# SuperLink over the Exec API, and maps the resulting node_ids on the fl-api.
+# SuperLink over the Control API, and maps the resulting node_ids on the fl-api.
 # TRUST_NAMES carries FL_KIT_SLOT_NAMES: the identity being labelled is the
 # per-slot SuperNode key, so trusts admin-created later (bound to a slot via
 # FLKitSlot.assigned_to_trust_id) still get their node_id mapped.
@@ -39,7 +39,7 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
       entryPoint = ["/bin/bash", "/scripts/register-supernode-keys.sh"]
 
       environment = [
-        { name = "SUPERLINK_ADDRESS", value = "${local.service_discovery_names.fl_server}:${local.flower_superlink_exec_port}" },
+        { name = "SUPERLINK_ADDRESS", value = "${local.service_discovery_names.fl_server}:${local.flower_superlink_control_port}" },
         { name = "FL_API_ADDRESS", value = "http://${local.service_discovery_names.fl_api}:${local.api_container_port}" },
         { name = "TRUST_NAMES", value = var.FL_KIT_SLOT_NAMES },
       ]
@@ -95,7 +95,7 @@ resource "aws_ecs_task_definition" "flower_register_supernode_keys" {
 # Runs the one-shot after both FL services exist, waiting for them to be
 # stable first (compose expresses this as depends_on fl-server started +
 # fl-api healthy). Runs with the fl-api SG so the Flower control-plane SG
-# rules in ecs_sg.tf cover its SuperLink Exec (9093) call, and the fl-api's
+# rules in ecs_sg.tf cover its SuperLink Control API (8000) call, and the fl-api's
 # VPC HTTP rule covers FL_API_ADDRESS. Re-run on key rotation by bumping
 # FLOWER_KIT_DATE (retriggers via the provisioning task's arn) or tainting.
 resource "null_resource" "flower_register_supernode_keys" {
@@ -132,13 +132,21 @@ resource "null_resource" "flower_register_supernode_keys" {
         --tasks "$TASK_ARN" \
         --region ${var.AWS_REGION}
 
+      # The task's own container, by the name its task definition gives it: describe-tasks also
+      # lists the GuardDuty Runtime Monitoring sidecar, often first, so containers[0] can be the
+      # agent's exit code rather than the task's (FLIP#1447).
+      CONTAINER='${jsondecode(aws_ecs_task_definition.flower_register_supernode_keys[0].container_definitions)[0].name}'
       EXIT_CODE=$(aws ecs describe-tasks \
         --cluster ${aws_ecs_cluster.flip.name} \
         --tasks "$TASK_ARN" \
         --region ${var.AWS_REGION} \
-        --query 'tasks[0].containers[0].exitCode' \
-        --output text)
+        --query "tasks[0].containers[?name=='$CONTAINER'].exitCode | [0]" \
+        --output text) || { echo "Could not read the register-supernode-keys task's exit code."; exit 1; }
 
+      if [ -z "$EXIT_CODE" ] || [ "$EXIT_CODE" = "None" ]; then
+        echo "register-supernode-keys task $TASK_ARN reported no exit code for its $CONTAINER container: it never ran, or the task definition names another container."
+        exit 1
+      fi
       if [ "$EXIT_CODE" != "0" ]; then
         echo "register-supernode-keys task failed with exit code $EXIT_CODE"
         exit 1

@@ -135,6 +135,41 @@ def test_delete_one_trust_happy_path_cascades_dependents_and_frees_slot():
     session.commit.assert_called_once()
 
 
+def test_delete_one_trust_clears_trust_scoped_role_grants():
+    """A trust carrying a Trust Admin grant must hard-delete cleanly.
+
+    ``user_role.trust_id`` (FLIP#1260) references ``trust.id`` and declares no
+    ``ON DELETE CASCADE``, so a grant row left behind makes the Trust delete fail
+    with an ``IntegrityError``. Clearing it here — rather than by a cascade —
+    matches every other trust-referencing table in this script.
+
+    The scoping matters as much as the deletion: a TRUST_ADMIN row for *another*
+    trust, and every global grant (``trust_id IS NULL``), must survive.
+    """
+    from sqlalchemy.dialects import postgresql
+
+    from flip_api.db.models.user_models import UserRole
+
+    trust = _make_trust("GSTT")
+    session = _make_session(trust=trust, slot=None)
+
+    result = delete_one_trust("GSTT", session)
+
+    assert UserRole in dict(_DEPENDENT_TABLES)
+    assert "user_role" in result["dependent_rows_deleted"]
+
+    statements = [call.args[0] for call in session.execute.call_args_list]
+    grant_delete = next(s for s in statements if "user_role" in str(s.compile(dialect=postgresql.dialect())))
+
+    compiled = grant_delete.compile(dialect=postgresql.dialect())
+    assert "DELETE FROM user_role" in str(compiled)
+    assert "user_role.trust_id" in str(compiled)
+    assert trust.id in compiled.params.values(), (
+        "the user_role delete must be scoped to the trust being removed — an "
+        "unscoped delete would take every trust's grants with it"
+    )
+
+
 def test_delete_one_trust_proceeds_when_no_slot_is_assigned():
     """A trust without an FL kit slot assignment still gets cleanly removed —
     `freed_fl_kit_slot` is None in the returned payload.
@@ -170,9 +205,7 @@ def test_delete_one_trust_writes_audit_row_with_null_user():
 
     delete_one_trust("GSTT", session)
 
-    audit_calls = [
-        call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
-    ]
+    audit_calls = [call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)]
     assert len(audit_calls) == 1
     audit_row = audit_calls[0].args[0]
     assert audit_row.action == TrustAuditAction.DELETED
@@ -193,9 +226,7 @@ def _patch_session(monkeypatch):
     session_ctx = MagicMock()
     session_ctx.__enter__.return_value = session_mock
     session_ctx.__exit__.return_value = False
-    monkeypatch.setattr(
-        "flip_api.scripts.delete_trust.Session", lambda _engine: session_ctx
-    )
+    monkeypatch.setattr("flip_api.scripts.delete_trust.Session", lambda _engine: session_ctx)
     return session_mock
 
 
@@ -220,9 +251,7 @@ def test_main_prints_not_found_status_json(monkeypatch, capsys):
     from flip_api.scripts import delete_trust as cli
 
     _patch_session(monkeypatch)
-    monkeypatch.setattr(
-        cli, "delete_one_trust", lambda name, session: {"status": "not_found", "name": name}
-    )
+    monkeypatch.setattr(cli, "delete_one_trust", lambda name, session: {"status": "not_found", "name": name})
     monkeypatch.setattr("sys.argv", ["delete_trust", "--name", "Ghost"])
 
     cli.main()

@@ -144,20 +144,32 @@ class _Host:
 class TestConfigureFindsItsOwnStack:
     def test_execs_into_the_unprefixed_stack_only(self, tmp_path: Path) -> None:
         host = _Host(tmp_path, TWO_STACKS)
-        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}"))
+        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
         assert result.returncode == 0, f"xnat-configure failed:\n{result.stdout}{result.stderr}"
         execs = host.execs()
         assert len(execs) == 2, f"expected configure-xnat.sh then configure-dcm2niix.sh, got {execs}"
         for argv in execs:
-            # `docker exec <container> bash -c …` — one container, then the program.
+            # `docker exec [-e K=V] <container> bash -c …` — one container, then the program.
+            while argv[0] == "-e":
+                argv = argv[2:]
             assert argv[0] == WANTED_ID, f"exec'd into {argv[0]!r}, not {STACK}_xnat-web ({WANTED_ID})"
             assert argv[1] == "bash", f"a second container id reached docker exec: {argv[:3]}"
+
+    def test_configure_xnat_runs_with_the_plugin_roster_check(self, tmp_path: Path) -> None:
+        """configure-xnat.sh runs inside xnat-web, where the jars are the ones XNAT loaded."""
+        host = _Host(tmp_path, TWO_STACKS)
+        host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
+
+        configure_xnat, configure_dcm2niix = host.execs()
+        assert configure_xnat[:3] == ["-e", "XNAT_PLUGIN_READINESS_ROSTER=1", WANTED_ID], configure_xnat
+        assert "configure-xnat.sh" in configure_xnat[-1]
+        assert "XNAT_PLUGIN_READINESS_ROSTER=1" not in configure_dcm2niix, "only configure-xnat.sh runs the wait"
 
     def test_refuses_an_ambiguous_match(self, tmp_path: Path) -> None:
         """Two containers of the wanted service is not a lookup to resolve — it is an error to name."""
         host = _Host(tmp_path, ROLLING_UPDATE)
-        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}"))
+        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
         assert result.returncode != 0, "xnat-configure went ahead with two candidate containers"
         assert host.execs() == [], f"docker exec ran despite the ambiguity: {host.execs()}"
@@ -179,6 +191,26 @@ class TestShellFindsItsOwnStack:
         assert argv[1] == "bash", f"a second container id reached docker exec: {argv[:3]}"
 
 
+class TestBackupFindsItsOwnStack:
+    def test_dumps_the_unprefixed_stacks_db_only(self, tmp_path: Path) -> None:
+        """xnat-backup's db lookup goes through the same label macro as xnat-web's (the decoy is first)."""
+        wanted_db, decoy_db = "dddddddddddd", "eeeeeeeeeeee"
+        host = _Host(
+            tmp_path,
+            [
+                (decoy_db, f"{PREFIXED}_xnat-db.1.decoydecoydecoydecoy", PREFIXED, f"{PREFIXED}_xnat-db"),
+                *TWO_STACKS,
+                (wanted_db, f"{STACK}_xnat-db.1.wantedwantedwanted", STACK, f"{STACK}_xnat-db"),
+            ],
+        )
+        # Past the dump, `docker run` is not modelled and the recipe fails; only the exec target matters here.
+        host.run(_recipe("xnat-backup", "FL_KIT_SLOT_NUMBER=1"))
+
+        execs = host.execs()
+        assert execs, "xnat-backup never reached docker exec"
+        assert execs[0][0] == wanted_db, f"dumped {execs[0][0]!r}, not {STACK}_xnat-db ({wanted_db})"
+
+
 class TestNoSubstringLookupsRemain:
     def test_makefile_has_no_name_filter(self) -> None:
         """Every container lookup must match exactly (the swarm labels), never by name substring."""
@@ -192,7 +224,7 @@ class TestNoSubstringLookupsRemain:
         )
 
 
-@pytest.mark.parametrize("target", ["xnat-configure", "xnat-shell"])
+@pytest.mark.parametrize("target", ["xnat-configure", "xnat-shell", "xnat-backup"])
 def test_recipes_still_extract(target: str) -> None:
     """Guard the guard: the recipes the classes above run must still contain a container lookup."""
     variables = [f"XNAT_PROJECT={STACK}"] if target == "xnat-configure" else ["FL_KIT_SLOT_NUMBER=1"]

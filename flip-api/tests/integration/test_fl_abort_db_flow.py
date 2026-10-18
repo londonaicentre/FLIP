@@ -20,7 +20,6 @@ after ``remove_job_from_queue``).
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -77,7 +76,7 @@ def test_abort_pre_running_job_deletes_job_and_frees_net(session, scheduled_pre_
     """
     ctx = scheduled_pre_running_job
 
-    abort_model_training(MagicMock(path_params={}), ctx["model"].id, session)
+    abort_model_training(ctx["model"].id, session)
 
     session.expire_all()
     job = session.get(FLJob, ctx["job"].id)
@@ -153,7 +152,7 @@ def test_abort_re_queued_model_with_job_history_frees_net(session, scheduled_pre
     session.add(earlier_attempt)
     session.commit()
 
-    abort_model_training(MagicMock(path_params={}), ctx["model"].id, session)
+    abort_model_training(ctx["model"].id, session)
 
     session.expire_all()
     job = session.get(FLJob, ctx["job"].id)
@@ -193,7 +192,7 @@ def test_abort_stopped_model_ignores_late_results_upload(session, scheduled_pre_
     from flip_api.model_services.services.model_service import update_model_status
 
     ctx = scheduled_pre_running_job
-    abort_model_training(MagicMock(path_params={}), ctx["model"].id, session)
+    abort_model_training(ctx["model"].id, session)
     update_model_status(ctx["model"].id, ModelStatus.STOPPED, session)
 
     result = update_model_status(ctx["model"].id, ModelStatus.RESULTS_UPLOADED, session)

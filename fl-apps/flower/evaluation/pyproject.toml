@@ -28,41 +28,44 @@ license = "Apache-2.0"
 # Dependencies for your Flower App
 dependencies = [
     "flip-utils>=0.1.8",
-    "flwr[simulation]>=1.36.0",
+    "flwr[simulation]>=1.38.0",
     "monai>=1.6.0",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
     "pydicom>=3.0.1",
-    "torch>=2.10.0,<2.12",
+    "torch>=2.13.0,<2.14",
 ]
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
-# On-platform, Flower's runtime dependency installer runs `uv sync` against this
-# file on every app launch (ServerApp on the SuperLink, ClientApp on each
-# SuperNode) and prepends the resulting per-run env to sys.path. The [tool.uv]
-# tables below steer that resolution (FLIP#767):
+# On-platform, nothing installs these at run time (FLIP#1418): the ServerApp and
+# the ClientApps run in the FL image's environment, which carries every package
+# the template app code imports. Nothing checks it against the list above, whose
+# floors and extras (pandas>=3.0.0, flwr[simulation]) no longer apply on-platform.
+# A new dependency ships by adding it to flip-utils' `full` extra (what fl-base
+# installs) and rebuilding the FL images, not by adding it here. The [tool.uv]
+# tables below steer any `uv sync` that does run against this file inside an
+# FL image (Flower's per-run install, were it ever re-enabled; FLIP#767):
 #   * flip-utils installs from the source baked into the FL images at
 #     /opt/flip-utils — never from PyPI — so FL runs always execute the in-repo
 #     flip-utils. To test unpublished flip-utils changes, rebuild the FL images
 #     (`make build-fl FL_BACKEND=flower`).
-#   * torch/torchvision come from PyTorch's cu128 index: PyPI's default cu130
-#     wheels need NVIDIA driver >=580 (dev hosts run 575.x). This mirrors the
-#     pin in flip-utils' own pyproject, which does NOT apply here — uv honors
-#     only the root project's [tool.uv] tables.
+#   * torch/torchvision come from PyTorch's cu130 index and need NVIDIA driver >=580.
+#     This mirrors the pin in flip-utils' own pyproject, which does NOT apply
+#     here — uv honors only the root project's [tool.uv] tables.
 # /opt/flip-utils exists only inside the FL containers; for local simulation
 # work, start from fl-tutorials/flower/ instead of this template.
 [[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
 explicit = true
 
 [tool.uv.sources]
 flip-utils = { path = "/opt/flip-utils" }
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
+torch = { index = "pytorch-cu130" }
+torchvision = { index = "pytorch-cu130" }
 
 [tool.flwr.app]
 publisher = "flwrlabs"

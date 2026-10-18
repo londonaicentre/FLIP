@@ -6,7 +6,7 @@ Common user functions
 
 Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with the ``researcher`` role. Users with the ``viewer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to viewers.
 
-Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally solely responsible for approving and un-staging a project. The Admin Area assigns each user a single role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
+Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally responsible for un-staging projects and for approving them at every Trust that has no Trust Admin. Users with the ``trust admin`` role approve or decline projects for their own Trust (see :ref:`trust-admin-guide`). The Admin Area assigns each user a single role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
 
 FLIP uses the concept of a *project*, in which multiple AI models can be managed. Projects can have multiple users associated with them, allowing individuals to view and contribute to the project. The typical project flow involves the creation of a project, running a cohort query, staging the project for approval, uploading the model plus any associated files and initiating the training. Once training is complete, the results of training can be downloaded.
 
@@ -45,7 +45,7 @@ Initial Login
 
    MFA enrolment is **mandatory** and cannot be deferred: until it is complete, every page of the application redirects you to the enrolment page — only the sign-in and password pages, the access-request form and the privacy policy and terms of service remain reachable. Keep the authenticator entry — you need a fresh code from it at every subsequent sign-in. If you lose the device, an administrator can reset your MFA so you can enrol again (see :ref:`admin-project-and-user-management`). Local development deployments run with ``ENFORCE_MFA=false``, which skips enrolment and the code prompt; staging and production enforce them by default (``ENFORCE_MFA`` defaults to ``true`` there and is only ever set to ``false`` deliberately, for testing).
 
-.. figure:: ../assets/flip/flip-first-login.gif
+.. figure:: ../assets/generated/gifs/flip/flip-first-login.gif
    :width: 600
    :align: center
 
@@ -55,7 +55,7 @@ Initial Login
 
 On subsequent visits, sign in with your email address and password, then enter the current 6-digit code from your authenticator app, to reach the Projects page.
 
-.. figure:: ../assets/flip/flip-login.gif
+.. figure:: ../assets/generated/gifs/flip/flip-login.gif
    :width: 600
    :align: center
 
@@ -73,7 +73,7 @@ Forgot Password
 4. After you have received the confirmation code be sent by email, enter the confirmation code and a new password
 5. Click the 'Change Password' button
 
-.. figure:: ../assets/flip/forgot-password.gif
+.. figure:: ../assets/generated/gifs/flip/forgot-password.gif
    :width: 600
    :align: center
 
@@ -99,7 +99,7 @@ While signed in, you can change your password at any time from the account menu.
 4. Enter the confirmation code and a new password
 5. Click the 'Change Password' button
 
-.. figure:: ../assets/flip/change-password-user.gif
+.. figure:: ../assets/generated/gifs/flip/change-password-user.gif
    :width: 600
    :align: center
 
@@ -116,7 +116,7 @@ FLIP supports light and dark display modes. Your choice is remembered across ses
 1. Open the account menu in the top right-hand corner
 2. Click 'Dark Mode' to toggle between the light and dark themes
 
-.. figure:: ../assets/flip/dark-mode.gif
+.. figure:: ../assets/generated/gifs/flip/dark-mode.gif
    :width: 600
    :align: center
 
@@ -139,7 +139,7 @@ Create Project
 4. If necessary, enter the email addresses of other FLIP users and click the 'Add' button to enable them to view, edit, and/or contribute to the project
 5. Click the 'Create Project' button
 
-.. figure:: ../assets/flip/create-project.gif
+.. figure:: ../assets/generated/gifs/flip/create-project.gif
    :width: 600
    :align: center
 
@@ -152,7 +152,7 @@ Edit Project
 2. Update the project details, such as project name, description and added users
 3. Click the 'Update Project' button
 
-.. figure:: ../assets/flip/edit-project.gif
+.. figure:: ../assets/generated/gifs/flip/edit-project.gif
    :width: 600
    :align: center
 
@@ -186,7 +186,7 @@ Delete Project
 3. Enter the project name
 4. Click the 'Continue' button
 
-.. figure:: ../assets/flip/delete-project.gif
+.. figure:: ../assets/generated/gifs/flip/delete-project.gif
    :width: 600
    :align: center
 
@@ -199,7 +199,7 @@ All projects which you are able to access are visible on the project list, inclu
 
 Users can apply filters to view only projects based on, for example, the current user, keywords found in the project and/or project description. Every project also carries a type chip — **Imaging + OMOP**, or **OMOP only** for a project created with 'Includes imaging data' turned off — and the toolbar's **Type** control narrows the list to either kind.
 
-.. figure:: ../assets/flip/filter-project.gif
+.. figure:: ../assets/generated/gifs/flip/filter-project.gif
    :width: 600
    :align: center
 
@@ -239,7 +239,7 @@ Create Cohort Query
 3. Click on the 'Run & Save Query' button
 4. View results returned in graphical format
 
-.. figure:: ../assets/flip/cohort-query.gif
+.. figure:: ../assets/generated/gifs/flip/cohort-query.gif
    :width: 600
    :align: center
 
@@ -270,7 +270,7 @@ Staging allows you to select which Trusts will be requested for approval and inc
 
    Once staged, the project details and cohort query are locked from further editing. If a project's details and/or cohort query needs to be amended after staging, you will need to liaise with your local FLIP administrator *un-stage* the project and re-enable editing.
 
-.. figure:: ../assets/flip/stage-project.gif
+.. figure:: ../assets/generated/gifs/flip/stage-project.gif
    :width: 600
    :align: center
 
@@ -279,11 +279,13 @@ Staging allows you to select which Trusts will be requested for approval and inc
 Project Approval
 ================
 
-Once staged for approval, it is the responsibility of the FLIP Central Hub Admin to complete the approval process **offline** and update the FLIP platform with the outcome.
+Once staged for approval, each Trust's decision is made **offline** and recorded in FLIP: by the FLIP Central Hub Admin, or — for a Trust that has one — by that Trust's own Trust Admin (see :ref:`trust-admin-guide`). Trusts decide in their own time, and the project is approved as soon as one approves it.
+
+The 'Trust Approval' section of the project page shows each Trust as *Pending*, *Approved* or *Declined*, with who made the decision and when.
 
 .. note::
 
-   Following approval, any Trusts which have declined to participate in the project will be unavailable and excluded from model training.
+   Trusts which have declined to participate in the project are excluded from the imaging import and from model training. If every Trust declines, the project stays staged: liaise with your FLIP administrator to un-stage it, amend it, and stage it again.
 
 Imaging Project Status
 ======================
@@ -292,7 +294,7 @@ Following project approval, a corresponding XNAT project will be generated at ea
 
 To view the progress of the imaging data import at each participating Trust, users can refer to the Imaging Project Status section on the project page.
 
-.. figure:: ../assets/flip/imaging-status.gif
+.. figure:: ../assets/generated/gifs/flip/imaging-status.gif
    :width: 600
    :align: center
 
@@ -305,7 +307,7 @@ To view the progress of the imaging data import at each participating Trust, use
 The counts shown for each Trust are the latest it has reported. If a Trust stops responding — or its XNAT no longer holds the imaging project — its card keeps the last known counts on display, marked **Last known** together with the time they were last confirmed, and shows what went wrong in the card footer: *Trust XNAT not reachable* when the Trust's XNAT did not respond at all, or *Trust XNAT reachable, but project not found* when XNAT answered but the imaging project no longer exists there (for example after the Trust's deployment was reset). The card returns to normal automatically once the Trust reports successfully again.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
-.. figure:: ../assets/flip/study-reimport-max.gif
+.. figure:: ../assets/generated/gifs/flip/study-reimport-max.gif
    :width: 600
    :align: center
 
@@ -326,7 +328,7 @@ Create Model
 3. Enter a name and brief description
 4. Click the 'Create Model' button
 
-.. figure:: ../assets/flip/create-model.gif
+.. figure:: ../assets/generated/gifs/flip/create-model.gif
    :width: 600
    :align: center
 
@@ -343,7 +345,7 @@ Edit Model
 2. Click the 'Edit Model' button
 3. Update the model details, such as model name and description
 
-.. figure:: ../assets/flip/edit-model.gif
+.. figure:: ../assets/generated/gifs/flip/edit-model.gif
    :width: 600
    :align: center
 
@@ -364,7 +366,7 @@ Delete Model
 4. Enter the model name
 5. Click the 'Continue' button
 
-.. figure:: ../assets/flip/delete-model.gif
+.. figure:: ../assets/generated/gifs/flip/delete-model.gif
    :width: 600
    :align: center
 
@@ -415,7 +417,7 @@ see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-
 
    - **It does not work where the app runs.** The FL server on a platform-managed estate and a
      Trust's training host behind an NHS firewall have no internet route. The download hangs and
-     the training run dies — on NVFLARE the Trust reports ``cannot sync with server Runner``; on
+     the training run dies — on FLARE the Trust reports ``cannot sync with server Runner``; on
      Flower the run never issues a round.
    - **It bypasses the checks.** The files you upload are scanned once and then shipped exactly as
      uploaded, so what a Trust can inspect before training is what runs. A URL fetched later can
@@ -485,7 +487,7 @@ the status updates when you return.
 
 If model files need to be managed further after uploading, the uploader function allows files to be downloaded, removed and re-uploaded.
 
-.. figure:: ../assets/flip/upload-file.gif
+.. figure:: ../assets/generated/gifs/flip/upload-file.gif
    :width: 600
    :align: center
 
@@ -503,13 +505,13 @@ own code reads.
 Where that configuration lives, and which settings are available, depends on the FL backend:
 
 - **NVIDIA FLARE apps** are configured through ``config.json``, which is one of the required files
-  for every NVFLARE job type. As well as declaring ``job_type``, it may set platform-recognised
+  for every FLARE job type. As well as declaring ``job_type``, it may set platform-recognised
   keys such as ``GLOBAL_ROUNDS`` and ``LOCAL_ROUNDS``.
 - **Flower apps** also carry a ``config.json``, but it is read only for ``job_type`` — the run
   configuration comes from the platform's app template, which your app can override with a
-  ``config.toml`` file. Flower apps do not use the NVFLARE keys.
+  ``config.toml`` file. Flower apps do not use the FLARE keys.
 
-For NVFLARE apps, any key the platform does not recognise is passed through untouched, for your own
+For FLARE apps, any key the platform does not recognise is passed through untouched, for your own
 code to read at runtime — which is how the tutorials carry app-specific settings such as learning
 rate or validation split. Flower works the other way round: ``config.toml`` may only override keys
 the app template already declares, and a key it does not declare fails the run at submission rather
@@ -526,7 +528,7 @@ View Files
 2. Navigate to the Model Files section on the left-hand side of the model page
 3. Click the download icon to view the contents of a file that has been uploaded
 
-.. figure:: ../assets/flip/manage-files.gif
+.. figure:: ../assets/generated/gifs/flip/manage-files.gif
    :width: 600
    :align: center
 
@@ -565,12 +567,17 @@ When model files have been uploaded, you will then need to confirm that the data
 
 1. Navigate to project page
 2. On the right-hand side, toggle the button to confirm the dataset has been enriched
-3. Click the 'Initiate Training' button to start the training cycle
-4. Once the training cycle has been initiated, the progress bar at the top of the page will update as the various stages of the training cycle complete i.e., a green tick will appear
+3. Optionally, switch on **GPUs per trust** to set how many GPUs this run needs at every selected
+   trust. Left off, the run uses the GPUs your job's ``meta.json`` declares, or the platform default
+   when it declares none. A trust that cannot provide the request holds the run until it can, and the
+   reason appears in the activity feed; the request is never lowered to fit. On a Flower deployment the
+   request is recorded but not enforced.
+4. Click the 'Initiate Training' button to start the training cycle
+5. Once the training cycle has been initiated, the progress bar at the top of the page will update as the various stages of the training cycle complete i.e., a green tick will appear
 
 On the right-hand side of the page a window will also pop up to provided detailed status updates i.e., with date and time stamps, against each activity. The status messages show the scheduling activities, including queuing, *net* assignment, training in progress and training complete.
 
-.. figure:: ../assets/flip/initiate-training.gif
+.. figure:: ../assets/generated/gifs/flip/initiate-training.gif
    :width: 600
    :align: center
 
@@ -581,7 +588,8 @@ Stop Training
 
 .. note::
 
-   If the training has already completed the 'Stop Training' option will be greyed out (see :ref:`view-results`).
+   The 'Stop Training' button only shows while the model is queued or training; once training has ended it is
+   hidden (see :ref:`view-results`).
 
 1. Click the 'Actions' drop-down menu
 2. Click the 'Stop Training' button
@@ -592,7 +600,7 @@ reads **'Abort job'** instead: clicking it removes the job from the queue, marks
 immediately releases the training *net* so the next queued job can start. A stopped model expects no results —
 'Download Results' stays disabled — but it can be initiated for training again.
 
-.. figure:: ../assets/flip/stop-training.gif
+.. figure:: ../assets/generated/gifs/flip/stop-training.gif
    :width: 600
    :align: center
 
@@ -611,7 +619,7 @@ View Results
 2. Click the 'Download Results' button
 3. Open the .zip file downloaded to your local machine to view the results
 
-.. figure:: ../assets/flip/download-results.gif
+.. figure:: ../assets/generated/gifs/flip/download-results.gif
    :width: 600
    :align: center
 
@@ -624,7 +632,7 @@ During the training cycle, any metrics specified by the model developer e.g., lo
 
 Hovering over the graphs at various points will display the values.
 
-.. figure:: ../assets/flip/metrics.gif
+.. figure:: ../assets/generated/gifs/flip/metrics.gif
    :width: 600
    :align: center
 
@@ -638,7 +646,7 @@ Connection Status
 
 The Connection Status page shows the live state of the federation. Each participating Trust reports the health of its core platform services (trust-api, data-access-api, imaging-api, XNAT, OMOP and the PACS/DICOM link), and its state is derived from those reports: Offline when the Trust has stopped sending heartbeats, Degraded when any other service is down or degraded, otherwise Online. The list can also be viewed as a radial topology.
 
-The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state.
+The Services column shows one status dot per container. Clicking a Trust row opens a detail drawer listing each container's status, running version and probe response time — so you can see *why* a Trust is degraded without access to the Trust's own network. The page and the drawer are available to every signed-in user, not only administrators: if a project stalls, you can check whether the Trust holding your data is reporting a failing service before raising it with the platform team. A Trust that has not reported container health (or whose report has gone stale) shows grey "No data" markers and falls back to heartbeat-only state. The PACS/DICOM link is checked every five minutes, so a PACS outage can take that long to show.
 
 .. figure:: ../assets/flip/connection-status-drawer.png
    :width: 600
@@ -648,7 +656,7 @@ The Services column shows one status dot per container. Clicking a Trust row ope
 
 The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
 
-.. figure:: ../assets/flip/fl-status.gif
+.. figure:: ../assets/generated/gifs/flip/fl-status.gif
    :width: 600
    :align: center
 

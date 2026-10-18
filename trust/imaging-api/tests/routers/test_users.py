@@ -11,7 +11,11 @@
 #
 
 from unittest.mock import MagicMock, patch
+from urllib.parse import urlsplit
 
+import requests
+
+from imaging_api.config import get_settings
 from imaging_api.routers.schemas import User
 from imaging_api.utils.exceptions import NotFoundError
 
@@ -194,3 +198,31 @@ def test_add_user_to_project_generic_error(client):
         response = client.put("/users/add-to-project/johndoe/PROJ1")
 
     assert response.status_code == 500
+
+
+def test_update_user_put_url_is_unchanged_for_an_ordinary_username(client):
+    """The profile PUT goes through xnat_url (#1386); an ordinary username yields the old URL."""
+    with (
+        patch("imaging_api.routers.users.get_user_profile_by", return_value=_SAMPLE_USER),
+        patch("imaging_api.routers.users.requests.put") as mock_put,
+    ):
+        mock_put.return_value = MagicMock(status_code=200, json=MagicMock(return_value=_SAMPLE_USER_DICT))
+        client.put("/users", json={"email": "john.doe@hospital.nhs.uk", "enabled": False})
+
+    expected = f"{get_settings().XNAT_URL}/xapi/users/johndoe"
+    sent = mock_put.call_args.args[0]
+    assert requests.Request("PUT", sent).prepare().url == requests.Request("PUT", expected).prepare().url
+
+
+def test_update_user_put_keeps_the_username_in_one_segment(client):
+    hostile = _SAMPLE_USER.model_copy(update={"username": "../admin?x=1"})
+    with (
+        patch("imaging_api.routers.users.get_user_profile_by", return_value=hostile),
+        patch("imaging_api.routers.users.requests.put") as mock_put,
+    ):
+        mock_put.return_value = MagicMock(status_code=200, json=MagicMock(return_value=_SAMPLE_USER_DICT))
+        client.put("/users", json={"email": "john.doe@hospital.nhs.uk", "enabled": False})
+
+    parsed = urlsplit(requests.Request("PUT", mock_put.call_args.args[0]).prepare().url)
+    assert parsed.path == "/xapi/users/..%2Fadmin%3Fx%3D1"
+    assert parsed.query == ""

@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+import hashlib
+import json
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -17,6 +19,8 @@ import pytest
 from fastapi import HTTPException
 
 from trust_api.services.task_handlers import (
+    AES_KEY_BASE64,
+    COHORT_ADMIN_KEY_HEADER,
     TASK_HANDLERS,
     TRUST_INTERNAL_SERVICE_KEY,
     TRUST_INTERNAL_SERVICE_KEY_HEADER,
@@ -24,6 +28,7 @@ from trust_api.services.task_handlers import (
     handle_create_imaging,
     handle_delete_imaging,
     handle_get_imaging_status,
+    handle_persist_cohort,
     handle_reimport_studies,
     handle_update_user_profile,
 )
@@ -34,6 +39,16 @@ def _assert_trust_internal_auth_header(call_args) -> None:
     trust-internal service key header."""
     headers = call_args.kwargs.get("headers") or {}
     assert headers.get(TRUST_INTERNAL_SERVICE_KEY_HEADER) == TRUST_INTERNAL_SERVICE_KEY
+
+
+def _assert_cohort_admin_header(call_args) -> None:
+    """A cohort-DEFINING write (snapshot create/delete) must additionally carry the
+    cohort-admin proof: the SHA-256 of AES_KEY_BASE64, never the key itself (FLIP#857)."""
+    headers = call_args.kwargs.get("headers") or {}
+    expected = hashlib.sha256(AES_KEY_BASE64.encode()).hexdigest()
+    assert headers.get(COHORT_ADMIN_KEY_HEADER) == expected
+    # Defence in depth: the raw key must never travel as a header value.
+    assert AES_KEY_BASE64 not in headers.values()
 
 
 @pytest.fixture
@@ -54,6 +69,7 @@ def test_task_handlers_registry():
         "get_imaging_status",
         "reimport_studies",
         "update_user_profile",
+        "persist_cohort",
     }
     assert set(TASK_HANDLERS.keys()) == expected_types
 
@@ -216,10 +232,12 @@ async def test_handle_get_imaging_status_success(mock_make_request):
     """Should call imaging-api status endpoint."""
     mock_make_request.return_value = {"import_status": {"total": 10, "imported": 8}}
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is True
     call_args = mock_make_request.call_args
@@ -236,10 +254,12 @@ async def test_handle_reimport_studies_success(mock_make_request):
     """Should call imaging-api reimport endpoint."""
     mock_make_request.return_value = {"status": "reimporting"}
 
-    result = await handle_reimport_studies({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_reimport_studies(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is True
     call_args = mock_make_request.call_args
@@ -256,10 +276,12 @@ async def test_handle_update_user_profile_success(mock_make_request):
     """Should call imaging-api users endpoint."""
     mock_make_request.return_value = {"status": "updated"}
 
-    result = await handle_update_user_profile({
-        "email": "user@test.com",
-        "enabled": True,
-    })
+    result = await handle_update_user_profile(
+        {
+            "email": "user@test.com",
+            "enabled": True,
+        }
+    )
 
     assert result["success"] is True
     call_args = mock_make_request.call_args
@@ -296,10 +318,12 @@ async def test_handle_get_imaging_status_error(mock_make_request):
     """Should return failure on error."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
@@ -312,10 +336,12 @@ async def test_handle_get_imaging_status_reports_upstream_status_code(mock_make_
     to sniff it out of the error string."""
     mock_make_request.side_effect = HTTPException(status_code=404, detail="Project not found")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert result["status_code"] == 404
@@ -326,10 +352,12 @@ async def test_handle_get_imaging_status_reports_transport_status_code(mock_make
     """make_request maps transport failures to 502; that is an unreachable XNAT, not a missing project."""
     mock_make_request.side_effect = HTTPException(status_code=502, detail="Failed to connect")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert result["status_code"] == 502
@@ -340,10 +368,12 @@ async def test_handle_get_imaging_status_omits_status_code_for_non_http_errors(m
     """A non-HTTP failure has no meaningful status code — omit the key rather than invent one."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_get_imaging_status({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_get_imaging_status(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert "status_code" not in result
@@ -354,10 +384,12 @@ async def test_handle_reimport_studies_error(mock_make_request):
     """Should return failure on error."""
     mock_make_request.side_effect = Exception("Service unavailable")
 
-    result = await handle_reimport_studies({
-        "imaging_project_id": "img-123",
-        "encoded_query": "base64query",
-    })
+    result = await handle_reimport_studies(
+        {
+            "imaging_project_id": "img-123",
+            "encoded_query": "base64query",
+        }
+    )
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
@@ -372,3 +404,86 @@ async def test_handle_update_user_profile_error(mock_make_request):
 
     assert result["success"] is False
     assert "Service unavailable" in result["error"]
+
+
+# ---- Persist cohort handler (FLIP#857) ----
+
+
+@pytest.mark.asyncio
+async def test_handle_persist_cohort_freezes_via_data_access_and_returns_facts(mock_make_request):
+    """Forwards the snapshot request to data-access-api and returns its response as the result."""
+    snapshot_facts = {
+        "row_count": 24,
+        "columns": ["modality", "accession_id"],
+        "has_accessions": True,
+        "snapshot_at": "2026-08-26T00:00:00+00:00",
+        "query_hash": "abc123",
+    }
+    mock_make_request.return_value = snapshot_facts
+
+    payload = {
+        "project_id": str(uuid4()),
+        "trust_id": str(uuid4()),
+        "encrypted_project_id": "enc123",
+        "query": "SELECT * FROM omop.image_occurrence",
+        "query_id": str(uuid4()),
+    }
+    result = await handle_persist_cohort(payload)
+
+    assert result["success"] is True
+    assert json.loads(result["result"]) == snapshot_facts
+
+    call = mock_make_request.call_args_list[0]
+    assert call.kwargs["method"] == "POST"
+    assert call.kwargs["url"].endswith("/cohort/snapshot")
+    # Only the encrypted id + query go to data-access-api (its DataframeQuery schema).
+    assert call.kwargs["json_body"] == {"encrypted_project_id": "enc123", "query": payload["query"]}
+    _assert_trust_internal_auth_header(call)
+    # Snapshot creation is a cohort-DEFINING write: it must also carry the cohort-admin proof
+    # (FLIP#857), which fl-client cannot produce.
+    _assert_cohort_admin_header(call)
+
+
+@pytest.mark.asyncio
+async def test_handle_persist_cohort_invalid_payload():
+    """A malformed task payload fails validation before any request is made."""
+    result = await handle_persist_cohort({"query": "SELECT 1"})
+
+    assert result["success"] is False
+    assert "validation error" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_persist_cohort_reports_data_access_failure(mock_make_request):
+    """A refused snapshot (e.g. below-threshold 403) marks the task FAILED at the hub."""
+    mock_make_request.side_effect = Exception("403: Cohort is too small for row-level data to be released.")
+
+    payload = {
+        "project_id": str(uuid4()),
+        "trust_id": str(uuid4()),
+        "encrypted_project_id": "enc123",
+        "query": "SELECT * FROM omop.image_occurrence",
+    }
+    result = await handle_persist_cohort(payload)
+
+    assert result["success"] is False
+    assert "too small" in result["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 403, 413, 503])
+@patch("trust_api.services.task_handlers.make_request")
+async def test_handle_persist_cohort_relays_the_refusal_status_code(mock_make_request, status_code):
+    """The hub maps the status code to a category (refused / rejected / ...) instead of a generic failure."""
+    mock_make_request.side_effect = HTTPException(status_code=status_code, detail="refused")
+
+    payload = {
+        "project_id": str(uuid4()),
+        "trust_id": str(uuid4()),
+        "encrypted_project_id": "enc123",
+        "query": "SELECT * FROM omop.image_occurrence",
+    }
+    result = await handle_persist_cohort(payload)
+
+    assert result["success"] is False
+    assert result["status_code"] == status_code

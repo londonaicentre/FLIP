@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 """The e2e smoke names its project and model for the tutorial it actually runs, not a hardcoded 'Xrays',
-and reads ``has_imaging`` back off the hub rather than trusting its own flag."""
+and, on ``--project-id`` reuse, reads ``has_imaging`` back off the hub."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -70,6 +70,37 @@ def test_task_states_the_clinical_task_not_the_harness():
     assert unknown == "Training the My custom app application across the participating trusts' data."
 
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+@pytest.mark.parametrize(
+    ("path", "nifti"),
+    [
+        ("../fl-tutorials/nvflare/image_classification/xray_classification/app_files", False),
+        ("../fl-tutorials/flower/3d_spleen_segmentation/app", True),
+        ("../fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/app_files", False),
+        # An unknown app keeps the hub's default, conversion on.
+        ("/srv/my_custom-app/app", True),
+    ],
+)
+def test_the_dicom_to_nifti_default_follows_the_tutorial(path, nifti):
+    assert describe_tutorial(Path(path)).nifti is nifti
+
+
+@pytest.mark.skipif(not (REPO_ROOT / "fl-tutorials").is_dir(), reason="fl-tutorials/ is not mounted in the container")
+@pytest.mark.parametrize("tutorial", sorted(TUTORIALS))
+def test_a_tutorial_converts_to_nifti_only_if_its_app_reads_nifti(tutorial):
+    """Read from the apps themselves, so a tutorial that starts or stops reading NIfTI fails here."""
+    apps = [
+        app
+        for app in (REPO_ROOT / "fl-tutorials").rglob(f"{tutorial}/app*")
+        if app.is_dir() and app.name in ("app", "app_files") and "tests" not in app.parts
+    ]
+    assert apps, f"no app directory for {tutorial}"
+    reads_nifti = any("ResourceType.NIFTI" in f.read_text() for app in apps for f in app.rglob("*.py"))
+    assert TUTORIALS[tutorial].nifti is reads_nifti
+
+
 def test_every_tutorial_task_fits_the_project_description_field():
     """A task string is posted straight through ``ProjectDetails.description``.
 
@@ -95,7 +126,6 @@ def _response(status_code: int, body: dict) -> MagicMock:
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
-        ({}, True),  # a hub predating the flag omits it: imaging, the old behaviour
         ({"has_imaging": True}, True),
         ({"has_imaging": False}, False),
     ],
@@ -111,26 +141,19 @@ def test_project_has_imaging_fails_loudly_on_an_error_response():
             project_has_imaging(MagicMock(), {}, "proj-1")
 
 
-def test_create_project_fails_fast_when_the_hub_ignores_no_imaging():
-    """A hub predating FLIP#1071 drops the unknown field: abort now, not on a 20-minute pull wait."""
-    posts = [_response(201, {"id": "proj-1"}), _response(200, {"query_id": "q-1"})]
-    with (
-        patch("tests.e2e_smoke._post", side_effect=posts) as mock_post,
-        patch("tests.e2e_smoke._get", return_value=_response(200, {"id": "proj-1"})),  # no has_imaging key
-    ):
-        with pytest.raises(SmokeFailure, match="ignored has_imaging=false"):
-            create_project_with_query(MagicMock(), {}, "EHR E2E smoke", "SELECT 1", has_imaging=False, description="d")
+def test_project_has_imaging_fails_loudly_without_the_field():
+    with patch("tests.e2e_smoke._get", return_value=_response(200, {"id": "proj-1"})):
+        with pytest.raises(SmokeFailure, match="proj-1"):
+            project_has_imaging(MagicMock(), {}, "proj-1")
 
+
+def test_create_project_posts_no_imaging():
+    # create project → save cohort query → submit it to the trusts
+    posts = [_response(201, {"id": "proj-1"}), _response(200, {"query_id": "q-1"}), _response(202, {})]
+    with patch("tests.e2e_smoke._post", side_effect=posts) as mock_post:
+        result = create_project_with_query(MagicMock(), {}, "n", "SELECT 1", has_imaging=False, description="d")
+
+    assert result == ("proj-1", "q-1")
     posted = mock_post.call_args_list[0].args[2]
     assert posted["has_imaging"] is False
     assert posted["description"] == "d"
-
-
-def test_create_project_accepts_a_hub_that_honours_no_imaging():
-    # create project → save cohort query → submit it to the trusts
-    posts = [_response(201, {"id": "proj-1"}), _response(200, {"query_id": "q-1"}), _response(202, {})]
-    with (
-        patch("tests.e2e_smoke._post", side_effect=posts),
-        patch("tests.e2e_smoke._get", return_value=_response(200, {"id": "proj-1", "has_imaging": False})),
-    ):
-        assert create_project_with_query(MagicMock(), {}, "n", "SELECT 1", has_imaging=False) == ("proj-1", "q-1")

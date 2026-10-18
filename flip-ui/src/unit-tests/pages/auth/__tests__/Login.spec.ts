@@ -11,16 +11,18 @@
  * limitations under the License.
  */
 
-import { createTestingPinia } from "@pinia/testing";
+import { createTestingPinia, TestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { makeMockAuthProvider, NO_CAPABILITIES } from "@/auth/__tests__/mock-provider";
+import { AccountActionRequiredError, SignInStep } from "@/auth/provider";
 import Login from "@/pages/auth/Login.vue";
 import { useAuthStore } from "@/store/auth";
 
 // Router is imported at module-scope by the page, so it has to be mocked
 // before any Login import resolves. The spies here let us assert which
-// page the login flow routes to given the signInStep returned by Cognito.
+// page the login flow routes to given the signInStep returned by the store.
 const mockGotoLogin = vi.fn();
 const mockViewProjects = vi.fn();
 const mockNewPassword = vi.fn();
@@ -42,45 +44,53 @@ vi.mock("@/router", () => ({
 
 const mockSnackbarShow = vi.fn();
 const mockSnackbarError = vi.fn();
+const mockSnackbarWarning = vi.fn();
 
 vi.mock("@/utils/snackbar", () => ({
     Snackbar: {
         show: (...args: unknown[]) => mockSnackbarShow(...args),
-        error: (...args: unknown[]) => mockSnackbarError(...args)
+        error: (...args: unknown[]) => mockSnackbarError(...args),
+        warning: (...args: unknown[]) => mockSnackbarWarning(...args)
     }
 }));
 
-// `fetchAuthSession` is called from onBeforeMount to decide whether to
-// short-circuit straight to /projects. Default is "no session" — each
-// suite re-arms it if we want to exercise the short-circuit path.
-const mockFetchAuthSession = vi.fn();
-vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: (...args: unknown[]) => mockFetchAuthSession(...args) }));
+// The page reaches the provider only through the store (actions are
+// stubbed by the testing pinia) and the `capabilities` getter, which reads
+// the mocked provider below.
+const authProvider = vi.hoisted(() => ({ current: null as unknown }));
+vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
+
+const win = window as unknown as Record<string, unknown>;
 
 interface AuthStoreState {
     signInStep: string | null;
     user: unknown;
     mfaEnabled: boolean | null;
     mfaRequired: boolean | null;
-    needsMfaEnrolment: boolean;
 }
 
-function mountLogin(authState: Partial<AuthStoreState> = {}): VueWrapper {
+// The pinia is created before the mount so a test can arm store actions
+// (`hasSession`) and getters (`capabilities`) that run during setup /
+// onBeforeMount.
+function makePinia(authState: Partial<AuthStoreState> = {}): TestingPinia {
+    return createTestingPinia({
+        createSpy: vi.fn,
+        initialState: {
+            auth: {
+                signInStep: null,
+                user: null,
+                mfaEnabled: null,
+                mfaRequired: null,
+                ...authState
+            }
+        }
+    });
+}
+
+function mountLogin(pinia: TestingPinia = makePinia()): VueWrapper {
     return mount(Login, {
         global: {
-            plugins: [
-                createTestingPinia({
-                    createSpy: vi.fn,
-                    initialState: {
-                        auth: {
-                            signInStep: null,
-                            user: null,
-                            mfaEnabled: null,
-                            mfaRequired: null,
-                            ...authState
-                        }
-                    }
-                })
-            ],
+            plugins: [pinia],
             stubs: {
                 // emit the submit event with realistic creds; the page
                 // doesn't care about schema validation when the Form is
@@ -101,7 +111,10 @@ function mountLogin(authState: Partial<AuthStoreState> = {}): VueWrapper {
                     props: ["primary", "clear", "block", "loading", "inputProps"],
                     emits: ["click"]
                 },
-                "router-link": true
+                "router-link": {
+                    template: "<a :data-test=\"$attrs['data-test']\" :href=\"to\"><slot /></a>",
+                    props: ["to"]
+                }
             }
         }
     });
@@ -117,9 +130,14 @@ describe("Login page", () => {
         mockAccessRequest.mockReset();
         mockSnackbarShow.mockReset();
         mockSnackbarError.mockReset();
-        mockFetchAuthSession.mockReset();
-        // Default: no tokens — stay on login.
-        mockFetchAuthSession.mockResolvedValue({ tokens: undefined });
+        mockSnackbarWarning.mockReset();
+        authProvider.current = makeMockAuthProvider();
+    });
+
+    afterEach(() => {
+        delete win.KEYCLOAK_URL;
+        delete win.KEYCLOAK_REALM;
+        delete win.KEYCLOAK_CLIENT_ID;
     });
 
     test("mounts successfully and renders the Log In button", async () => {
@@ -143,39 +161,38 @@ describe("Login page", () => {
     });
 
     describe("onBeforeMount short-circuit", () => {
-        test("redirects to /projects when the user already has an access token", async () => {
-            mockFetchAuthSession.mockResolvedValueOnce({
-                tokens: {
-                    accessToken: {
-                        payload: {},
-                        toString: () => "tok"
-                    }
-                }
-            });
+        test("redirects to /projects when the store reports a live session", async () => {
+            const pinia = makePinia();
+            const authStore = useAuthStore(pinia);
+            (authStore.hasSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
-            mountLogin();
+            mountLogin(pinia);
             await flushPromises();
 
             expect(mockViewProjects).toHaveBeenCalledTimes(1);
         });
 
-        test("stays on /auth/login when the session has no access token (mid-challenge)", async () => {
-            // Regression guard: fetchAuthSession can resolve with a stale
-            // challenge payload that has no tokens. The page must NOT
-            // short-circuit in that case, otherwise "Back to log in" from
-            // any mid-challenge page would bounce back to the challenge.
-            mockFetchAuthSession.mockResolvedValueOnce({ tokens: undefined });
+        test("stays on /auth/login when there is no session (mid-challenge or signed out)", async () => {
+            // Regression guard: a stale challenge-only session used to count
+            // as "signed in" and short-circuit, so "Back to log in" from any
+            // mid-challenge page bounced back to the challenge. `hasSession`
+            // is the provider's answer to exactly that question.
+            const pinia = makePinia();
+            const authStore = useAuthStore(pinia);
+            (authStore.hasSession as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(false);
 
-            mountLogin();
+            mountLogin(pinia);
             await flushPromises();
 
             expect(mockViewProjects).not.toHaveBeenCalled();
         });
 
-        test("swallows fetchAuthSession errors and stays on the login page", async () => {
-            mockFetchAuthSession.mockRejectedValueOnce(new Error("No current user"));
+        test("swallows a hasSession failure and stays on the login page", async () => {
+            const pinia = makePinia();
+            const authStore = useAuthStore(pinia);
+            (authStore.hasSession as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("No current user"));
 
-            mountLogin();
+            mountLogin(pinia);
             await flushPromises();
 
             expect(mockViewProjects).not.toHaveBeenCalled();
@@ -189,7 +206,7 @@ describe("Login page", () => {
             const authStore = useAuthStore();
             (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
                 async () => {
-                    authStore.signInStep = "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED";
+                    authStore.signInStep = SignInStep.NEW_PASSWORD_REQUIRED;
                 }
             );
 
@@ -206,13 +223,13 @@ describe("Login page", () => {
             expect(mockViewProjects).not.toHaveBeenCalled();
         });
 
-        test("CONTINUE_SIGN_IN_WITH_TOTP_SETUP routes to /auth/mfa-setup", async () => {
+        test("TOTP_SETUP routes to /auth/mfa-setup", async () => {
             const wrapper = mountLogin();
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
                 async () => {
-                    authStore.signInStep = "CONTINUE_SIGN_IN_WITH_TOTP_SETUP";
+                    authStore.signInStep = SignInStep.TOTP_SETUP;
                 }
             );
 
@@ -223,13 +240,13 @@ describe("Login page", () => {
             expect(mockViewProjects).not.toHaveBeenCalled();
         });
 
-        test("CONFIRM_SIGN_IN_WITH_TOTP_CODE routes to /auth/mfa-verify", async () => {
+        test("TOTP_CODE routes to /auth/mfa-verify", async () => {
             const wrapper = mountLogin();
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
                 async () => {
-                    authStore.signInStep = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
+                    authStore.signInStep = SignInStep.TOTP_CODE;
                 }
             );
 
@@ -243,19 +260,18 @@ describe("Login page", () => {
         test("default step + needsMfaEnrolment=true routes to /auth/mfa-setup", async () => {
             // The needsMfaEnrolment getter comes from the real pinia
             // definition; we tweak the store state so it evaluates true.
-            // needsMfaEnrolment now requires mfaRequired=true as well, so
-            // set that explicitly — the default mfaRequired=null would
-            // prevent the enrolment redirect from firing even with
-            // mfaEnabled=false.
-            const wrapper = mountLogin({
+            // needsMfaEnrolment requires mfaRequired=true as well, so set
+            // that explicitly — the default mfaRequired=null would prevent
+            // the enrolment redirect from firing even with mfaEnabled=false.
+            const wrapper = mountLogin(makePinia({
                 mfaEnabled: false,
                 mfaRequired: true
-            });
+            }));
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
                 async () => {
-                    authStore.signInStep = "DONE";
+                    authStore.signInStep = SignInStep.DONE;
                     authStore.mfaEnabled = false;
                     authStore.mfaRequired = true;
                 }
@@ -268,13 +284,39 @@ describe("Login page", () => {
             expect(mockViewProjects).not.toHaveBeenCalled();
         });
 
+        test("default step + needsMfaEnrolment=true still routes to /projects when the backend cannot enrol in-app", async () => {
+            authProvider.current = makeMockAuthProvider({
+                backend: "keycloak",
+                capabilities: NO_CAPABILITIES
+            });
+            win.KEYCLOAK_URL = "http://kc.test";
+            win.KEYCLOAK_REALM = "flip";
+            win.KEYCLOAK_CLIENT_ID = "flip-ui";
+            const wrapper = mountLogin();
+            await flushPromises();
+            const authStore = useAuthStore();
+            (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
+                async () => {
+                    authStore.signInStep = SignInStep.DONE;
+                    authStore.mfaEnabled = false;
+                    authStore.mfaRequired = true;
+                }
+            );
+
+            await wrapper.find("form").trigger("submit");
+            await flushPromises();
+
+            expect(mockMfaSetup).not.toHaveBeenCalled();
+            expect(mockViewProjects).toHaveBeenCalledTimes(1);
+        });
+
         test("default step + MFA enabled routes to /projects", async () => {
             const wrapper = mountLogin();
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
                 async () => {
-                    authStore.signInStep = "DONE";
+                    authStore.signInStep = SignInStep.DONE;
                     authStore.mfaEnabled = true;
                     authStore.mfaRequired = true;
                     authStore.user = {
@@ -305,7 +347,7 @@ describe("Login page", () => {
             const authStore = useAuthStore();
             (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
                 async () => {
-                    authStore.signInStep = "DONE";
+                    authStore.signInStep = SignInStep.DONE;
                     authStore.mfaEnabled = false;
                     authStore.mfaRequired = false;
                     authStore.user = {
@@ -348,6 +390,67 @@ describe("Login page", () => {
             expect(mockMfaSetup).not.toHaveBeenCalled();
             expect(mockMfaVerify).not.toHaveBeenCalled();
             expect(mockNewPassword).not.toHaveBeenCalled();
+        });
+
+        test("AccountActionRequiredError shows a long-lived warning with a link to the provider's console", async () => {
+            // Keycloak: the account has a required action pending (forced
+            // password update, ...). The generic "check your details"
+            // message would send the user retrying a correct password.
+            const wrapper = mountLogin();
+            await flushPromises();
+            const authStore = useAuthStore();
+            (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+                new AccountActionRequiredError("http://kc.test/realms/flip/account")
+            );
+            const windowOpen = vi.spyOn(window, "open").mockImplementation(() => null);
+
+            await wrapper.find("form").trigger("submit");
+            await flushPromises();
+
+            expect(mockSnackbarShow).not.toHaveBeenCalled();
+            expect(mockSnackbarWarning).toHaveBeenCalledTimes(1);
+            const [payload, timeout] = mockSnackbarWarning.mock.calls[0] as [
+                { text: string; actionText?: string; action?: () => void },
+                number
+            ];
+            expect(payload.text).toContain("Finish setting up your account in Keycloak, then sign in again");
+            expect(payload.actionText).toBe("Open Keycloak");
+            expect(timeout).toBeGreaterThanOrEqual(60_000);
+
+            payload.action?.();
+            expect(windowOpen).toHaveBeenCalledWith("http://kc.test/realms/flip/account", "_blank", expect.stringContaining("noopener"));
+            expect(mockViewProjects).not.toHaveBeenCalled();
+            windowOpen.mockRestore();
+        });
+    });
+
+    describe("forgot-password link", () => {
+        test("is the in-app reset page when the backend supports it", async () => {
+            const wrapper = mountLogin();
+            await flushPromises();
+
+            const link = wrapper.find("[data-test='forgot-password-link']");
+            expect(link.attributes("href")).toBe("/auth/change-password");
+            expect(link.attributes("target")).toBeUndefined();
+        });
+
+        test("opens the provider's own reset page in a new tab when the backend has no in-app flow", async () => {
+            authProvider.current = makeMockAuthProvider({
+                backend: "keycloak",
+                capabilities: NO_CAPABILITIES
+            });
+            win.KEYCLOAK_URL = "http://kc.test";
+            win.KEYCLOAK_REALM = "flip";
+            win.KEYCLOAK_CLIENT_ID = "flip-ui";
+            const wrapper = mountLogin();
+            await flushPromises();
+
+            const link = wrapper.find("[data-test='forgot-password-link']");
+            expect(link.attributes("href")).toBe(
+                "http://kc.test/realms/flip/login-actions/reset-credentials?client_id=flip-ui"
+            );
+            expect(link.attributes("target")).toBe("_blank");
+            expect(link.attributes("rel")).toContain("noopener");
         });
     });
 

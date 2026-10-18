@@ -15,9 +15,12 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [2.3a dcm2niix Never Registered (admin missing ContainerManager)](#23a-dcm2niix-never-registered-admin-missing-containermanager)
    - [2.3b dcm2niix Runs but Produces No NIfTI (Container Service PVC mounts)](#23b-dcm2niix-runs-but-produces-no-nifti-container-service-pvc-mounts)
    - [2.3c dcm2niix Registered Against a Stale Image](#23c-dcm2niix-registered-against-a-stale-image)
+   - [2.3e Scans Archived Without NIfTI (Converting the Backlog)](#23e-scans-archived-without-nifti-converting-the-backlog)
    - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
    - [2.5 C-MOVE Testing from the DCMTK Pod](#25-c-move-testing-from-the-dcmtk-pod)
    - [2.6 Checking DICOM Connectivity](#26-checking-dicom-connectivity)
+   - [2.6a Exposing the DICOM Receiver to an External PACS (dicomService)](#26a-exposing-the-dicom-receiver-to-an-external-pacs-dicomservice)
+   - [2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)](#27-c-echo-passes-c-store-aborts-abstractmethoderror-in-dicomlog)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
@@ -33,6 +36,9 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [7.8 EFS Sync Permission Issues (Root vs UID 1001)](#78-efs-sync-permission-issues-root-vs-uid-1001)
    - [7.9 Container Image Pull from Private ECR](#79-container-image-pull-from-private-ecr)
    - [7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)](#710-grpc-async-connect-fails-on-kernel-7-ubuntu-2604)
+8. [Trust Governance Policy (FLIP#1259)](#8-trust-governance-policy-flip1259)
+9. [Deploy Refused: Secret Field Conflict (Helm 4 SSA)](#9-deploy-refused-secret-field-conflict-helm-4-ssa)
+10. [Preflight Looks for the Wrong Kit File (PROD tokens)](#10-preflight-looks-for-the-wrong-kit-file-prod-tokens)
 
 ---
 
@@ -54,6 +60,7 @@ kubectl logs <pod-name> -n flip-trust -c <init-container-name>
 | Pod stuck in `Init:0/1` | Init container 0% complete. Check init container logs. | `kubectl logs <pod> -n flip-trust -c <init-container>` |
 | Pod stuck in `Init:1/2` | Second init container failed. | Check download-plugins or wait-for-xnat-db init logs |
 | `CrashLoopBackOff` | Container exits immediately. Check logs, check env vars. | `kubectl logs <pod> -n flip-trust` |
+| `xnat-web` `Running` but `0/1` ready for more than a few minutes | Readiness (anonymous buildInfo, see `templates/xnat-web.yaml`) fails: `000` means XNAT is still starting, `401`/`403` means this XNAT version closed the path. | `kubectl exec -n flip-trust deploy/trust-release-flip-trust-xnat-web -c tomcat -- curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/xapi/siteConfig/buildInfo` |
 | `Pending` (PVC) | PVC not bound (check storage class) | `kubectl get pvc -n flip-trust` |
 | `Pending` (resources) | Insufficient CPU/memory | `kubectl describe pod <pod> -n flip-trust` — check Events |
 
@@ -283,9 +290,10 @@ Job still exited 0 with dcm2niix silently unregistered — the same
 silent-failure class as FLIP#822 / FLIP#862.
 
 **Fix:** Both are now handled by `xnat-init-job.yaml`: `configure-xnat-web`
-grants the role, and `configure-dcm2niix` waits for it and then fails loudly
-rather than swallowing the error. To repair a cluster configured by an older
-chart:
+grants the role, and `configure-dcm2niix` (which runs `configure-dcm2niix.sh`
+from the xnat-web image since FLIP#1451) checks for it first and fails loudly,
+naming the role, rather than swallowing the error. To repair a cluster
+configured by an older chart:
 
 ```bash
 kubectl exec -n flip-trust "$XNAT_POD" -- \
@@ -324,10 +332,12 @@ docker exec <node> find /data/xnat/archive -type d | wc -l   # many
 docker exec <node> find /data/xnat/archive -type f | wc -l   # zero
 ```
 
-**Fix:** the chart sets this in the Kubernetes backend entry of the
-`xnat-cs-config` ConfigMap (`combined-pvc-name` + `combined-path-translation`),
-since the single `xnat-web` data PVC holds both `archive/` and `build/` at its
-root. If you configure a backend by hand, mirror it:
+**Fix:** the chart sets this in the Kubernetes backend entry that
+`configure-dcm2niix.sh` registers (`combined-pvc-name` +
+`combined-path-translation`): `trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json`,
+with `combined-pvc-name` set to the release's PVC from the Job's
+`XNAT_CS_PVC_NAME`, since the single `xnat-web` data PVC holds both `archive/`
+and `build/` at its root. If you configure a backend by hand, mirror it:
 
 ```json
 "combined-pvc-name": "<release>-flip-trust-xnat-web",
@@ -359,14 +369,17 @@ xnat:
 ### 2.3c dcm2niix Registered Against a Stale Image
 
 **Symptom:** studies pull and archive fine, conversion never runs, and
-imaging-api reports the mismatch by listing what *is* registered, e.g.
+creating a project fails with imaging-api naming both images, e.g.
 
 ```
-No commands found for container 'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724'.
-The Container Service is installed and has 1 command(s) registered:
-'dcm2niix' -> 'xnat/dcm2niix:latest'. If one of those is the same tool on an older
-image, this XNAT's registration predates the current pin ...
+XNAT has 0 'dcm2niix-scan' wrappers on the pinned
+'ghcr.io/londonaicentre/xnat-dcm2niix:v1.0.20260724' (registered images:
+xnat/dcm2niix:latest), not one, so project ... gets no DICOM->NIfTI trigger. ...
 ```
+
+imaging-api reads this from the `dcm2niix-scan` rows of
+`GET /xapi/commands/available/site?xsiType=xnat:imageScanData`, which carry the
+command id, the wrapper id and the image the command runs (FLIP#1456).
 
 The Container Service is healthy and the command is enabled; it is simply bound
 to the image this XNAT was provisioned with.
@@ -388,10 +401,73 @@ kubectl exec -n flip-trust "$XNAT_POD" -- \
   | jq -r '.[] | "\(.name) -> \(.image)"'
 ```
 
-**Fix:** re-register against the pinned image — re-run the `xnat-init` Job
+**Fix:** move the command to the pinned image — re-run the `xnat-init` Job
 (`helm upgrade` re-fires the post-install hook) on Kubernetes, or
-`configure-dcm2niix.sh` on Compose. Then confirm the listing above names the
-image the trust's imaging-api requests.
+`configure-dcm2niix.sh` on Compose. Both update the existing command in place
+with `POST /xapi/commands/{id}`, so its command and wrapper ids, and with them
+every project's trigger, survive (FLIP#1451). Then confirm the listing above
+names the image the trust's imaging-api requests.
+
+### 2.3e Scans Archived Without NIfTI (Converting the Backlog)
+
+**Symptom:** a project's archived sessions hold `DICOM` resources but some scans
+have no `NIFTI` resource, so FL training sees fewer samples than the cohort has.
+Its trigger is (now) active and valid, and new scans convert.
+
+**Root Cause:** a trigger fires once, when a scan is archived. Scans archived while
+it was missing or invalid, or whose conversion was lost (Container Service
+Jobs deleted to free a swamped node, FLIP#1448), are never converted afterwards.
+
+**Fix:** `reconvert_nifti`, in the imaging-api pod. It lists every archived scan
+that has DICOM and no NIfTI, which is exactly what the `dcm2niix-scan` wrapper
+accepts. With `--launch` it converts them through Container Service's bulk launch,
+the same route the XNAT UI's bulk launcher posts to:
+
+```bash
+# Report only: each FLIP project's scans without NIfTI, and what would be launched
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti
+# Convert one project's scans (hub project id or XNAT project ID) and follow them
+kubectl exec -n flip-trust deploy/trust-release-flip-trust-imaging-api -- \
+  python -m imaging_api.scripts.reconvert_nifti --project <id> --launch
+```
+
+Run it on an idle trust (DQR import queue empty): it leaves alone any session
+archived in the last 10 minutes, whose trigger may still be starting its conversion.
+
+How it behaves:
+
+- **Which projects:** without `--project`, `--launch` converts only projects whose
+  trigger is active. An inactive trigger means the hub's *DICOM to NIfTI* setting is
+  off, and a project with no trigger has an unknown setting. Naming a project converts it whatever its trigger says.
+- **No double conversions:** it never launches on a scan whose container has not
+  finished. A container that will never finish (the finalize stall: `_Waiting` long
+  after its history shows `complete`; or a Job deleted from under it) holds its scan
+  back until you pass `--relaunch-unfinished`.
+- **Followed to the result:** for `--wait` minutes (default 30; `0` returns at
+  once) it follows the scans it launched, and reports each as converted (its `NIFTI`
+  resource appeared), converting, without a container yet, or ended without NIfTI.
+  The launch response cannot say: it holds one `bulk-launch-id`, and every target
+  reads "To be assigned".
+- **Retries are re-runs:** nothing is relaunched within a run. Run `--launch` again
+  to relaunch the scans that ended without NIfTI. A scan is left alone once
+  `--max-attempts` (default 3) of its containers have ended, earlier ones included.
+- **One failure does not stop the rest:** a project XNAT will not list is reported
+  `NOT READ` and the others go on. A failed check while following is retried at the
+  next one.
+- **Exit codes:** 0 when every launch was converted (or nothing was needed); 1 when
+  a project was not read, a launch failed, or a conversion ended without NIfTI; 2
+  for an unknown project id (nothing is launched); 3 when the wait ended first.
+- **Large backlogs:** conversions queue behind the cluster's capacity (and, with the
+  FLIP#1448 conversion cap, at most `xnat.containerService.maxConcurrentJobs` at
+  once), so a backlog of hundreds outlasts the wait and exits 3. Re-run the report
+  later: a new `--launch` leaves a scan alone while its container runs.
+
+On Compose the same command is `make -C trust reconvert-nifti KIT=<CODE>
+[PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<minutes>] [MAX_ATTEMPTS=<n>]
+[RELAUNCH_UNFINISHED=1]`. The XNAT UI can do the same launch by hand: select the
+scans in the project's *Run Containers* bulk launcher, or in the batch-launch
+plugin's Processing Dashboard, which hands its selection to the same launcher.
 
 ### 2.4 Forcing a Re-pull (status stuck on "Processing")
 
@@ -447,12 +523,14 @@ dcmtk_pod=$(kubectl get pods -n flip-trust -l run=dcmtk -o jsonpath='{.items[0].
 # C-ECHO to Orthanc
 kubectl exec -n flip-trust "$dcmtk_pod" -- echoscu orthanc 4242
 
-# C-ECHO to XNAT (DICOM SCP on port 8104)
-kubectl exec -n flip-trust "$dcmtk_pod" -- echoscu xnat-web 8104
+# C-ECHO to XNAT (DICOM SCP on port 8104 — the xnat-web-dicom Service, not xnat-web,
+# which carries the web console only)
+kubectl exec -n flip-trust "$dcmtk_pod" -- echoscu xnat-web-dicom 8104
 ```
 
 Both should respond successfully. If C-ECHO to XNAT fails, the SCP receiver
-is not running correctly.
+is not running correctly. Aiming it at `xnat-web` instead fails on a perfectly
+healthy trust: that Service carries `tomcat` only.
 
 #### Manual C-FIND (find studies on Orthanc)
 
@@ -498,7 +576,7 @@ through the Helm values named in each cell.
 
 | Service | AE title | Host | Port | Purpose |
 |---------|----------|------|------|---------|
-| XNAT SCP receiver | `XNAT` (`xnat.web.dicomAet`) | xnat-web (`pacs.host` dials it back) | 8104 (`xnat.web.dicomPort`) | Receives the C-STORE the PACS opens after a C-MOVE |
+| XNAT SCP receiver | `XNAT` (`xnat.web.dicomAet`) | xnat-web-dicom (`pacs.host` dials it back) | 8104 (`xnat.web.dicomPort`) | Receives the C-STORE the PACS opens after a C-MOVE |
 | PACS | `ORTHANC` (`pacs.aeTitle`) | orthanc (`pacs.host`) | 4242 (`pacs.qrPort`) | Serves C-FIND and C-MOVE |
 | DQR calling AE | same as the SCP receiver | — | — | The AE XNAT presents when it queries the PACS |
 
@@ -524,6 +602,238 @@ rest are fixed by `configure-xnat.sh`):
 If missing or wrong, recreate it via the REST API (see §2.2 — prefer the API
 over direct DB inserts: XNAT binds the SCP listener and caches receiver config
 at the service layer, so DB-only changes need a restart to take effect).
+
+### 2.6a Exposing the DICOM Receiver to an External PACS (`dicomService`)
+
+A real PACS is outside the cluster, so the DICOM SCP needs its own externally-reachable Service —
+`xnat-web-dicom`, controlled by `xnat.web.dicomService.type`, entirely separate from the web
+console's `xnat-web` Service (`xnat.web.service.type`, which stays `ClusterIP` — with a real
+`pacs.host` the chart refuses to render anything else, see below). This split exists so
+exposing DICOM externally never also exposes the web console: an earlier trust install worked
+around the lack of it with a hand-created `kubectl apply`'d Service outside Helm, which then had
+no record anywhere in the chart and could have been silently deleted by an unrelated cleanup.
+
+**Choosing `dicomService.type`:**
+
+| Type | When | Requires |
+|---|---|---|
+| `ClusterIP` (default) | Mocked Orthanc PACS only, reachable over the cluster network | Nothing — `validatePacsReachable` fails the render if a real `pacs.host` is combined with this |
+| `NodePort` | A real PACS, and 8104 (or your chosen port) falls inside the API server's `--service-node-port-range` (default 30000-32767) | `xnat.web.dicomNodePort` set (equal to `xnat.web.dicomPort` so one number is true end to end); the PACS dials the node's address on that port |
+| `LoadBalancer` | A real PACS, and you cannot change the API server's NodePort range (e.g. no access to restart it) — this was exactly the case that produced the ad hoc Service above | A cluster LoadBalancer implementation (e.g. k3s's built-in ServiceLB) |
+
+Both external types render `externalTrafficPolicy: Local` automatically — do not be tempted to
+drop this to get past a `pending` LoadBalancer or an unreachable NodePort during setup. Under the
+default `Cluster` policy, kube-proxy SNATs the PACS's connection to the node's own address before
+it reaches the pod, which breaks the ingress NetworkPolicy CIDR match below and reproduces exactly
+the "queries succeed, retrievals silently time out" bug this chart's checks exist to catch
+(FLIP#993).
+
+Two limits on `Local` are worth knowing before relying on it:
+
+- **It preserves the source address only on a pass-through load balancer** (MetalLB in L2 mode, an
+  AWS NLB). A proxying load balancer terminates the connection and SNATs regardless, so the PACS's
+  real address never reaches the pod and an ingress rule scoped to the PACS CIDR will never match.
+  Scope the rule to the proxy's own address in that case, and confirm what your LB does before
+  assuming the CIDR is what is wrong.
+- **It is only safe while `xnat-web` is a single pod**, which it is here — `replicas: 1` on a
+  ReadWriteOnce PVC, as on `gstt-dgx`. `Local` means only nodes running the pod answer; on a
+  multi-replica Deployment it would blackhole traffic arriving at any other node.
+
+**Upgrading an install that set `xnat.web.service.type` to reach DICOM.** Before the split, that
+single field carried both ports, so exposing DICOM meant setting it to `NodePort`. Carrying that
+value across the upgrade no longer exposes DICOM — it exposes the **Tomcat web console** on a node
+address, since the DICOM port has moved to `xnat-web-dicom`. With a real `pacs.host` the chart now
+refuses to render that combination and says so; move the value to `xnat.web.dicomService.type` and
+return `xnat.web.service.type` to `ClusterIP`. Reach the console with `kubectl port-forward`.
+
+**Retiring an interim hand-made Service.** A trust that worked around the missing split by
+`kubectl apply`-ing its own Service and NetworkPolicy (the `flip-trust` install did: `svc/xnat-web-dicom-external`
+and `np/…-allow-ingress-cidrs`) must **delete those objects by hand after this chart version takes
+over**. They were created outside Helm, so no release owns them and `helm upgrade` will neither
+adopt nor remove them; left in place they shadow the chart's own objects with a second,
+unmanaged ingress path that no longer matches the chart's NetworkPolicy:
+
+```bash
+kubectl delete svc xnat-web-dicom-external -n flip-trust --ignore-not-found
+kubectl delete networkpolicy <release>-allow-ingress-cidrs -n flip-trust --ignore-not-found
+```
+
+Verify the chart's own objects are the only ones left before cutting the PACS over:
+
+```bash
+kubectl get svc,networkpolicy -n flip-trust -o name | grep -iE 'dicom|ingress'
+```
+
+**Never scope the ingress NetworkPolicy to `0.0.0.0/0`.** `networkPolicies.allowedIngressCIDRsWithPorts`
+must name the PACS's own address, not the whole internet. `validatePacsReachable` fails the render
+when it sees that literal (whitespace aside), which is a tripwire rather than a CIDR validator —
+Helm cannot evaluate a CIDR, so `0.0.0.0/1`, `::/0` and any other prefix that still reaches the
+PACS render clean, and the rule in this paragraph is what rules those out. If you do not yet know
+the PACS's real source IP, leave DICOM on `ClusterIP` (which correctly fails the render with a clear
+message) rather than opening the port wide as a stopgap; a real PACS destination should not be told
+to send DICOM to a port before its NetworkPolicy is scoped to it specifically.
+
+---
+
+### 2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)
+
+**Symptom.** `echoscu` succeeds against the XNAT receiver, the release is `deployed`, the
+`xnat-web` pod is `Ready` and its web UI answers — but every real transfer ends with
+*Peer aborted Association*, and nothing lands in the prearchive.
+
+C-ECHO completes inside the DICOM association layer and never reaches XNAT's importer, so it
+cannot see this class of fault. The first object of a C-STORE does reach it, and if a plugin
+was compiled against a different XNAT core than the one running, the JVM throws
+`AbstractMethodError` from `GradualDicomImporter.customProcessing` and drops the association:
+
+```bash
+xnat_pod=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=xnat-web \
+  -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n flip-trust "$xnat_pod" -- \
+  grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
+```
+
+**Cause.** The running pod's plugin jars are older than the chart's roster. XNAT 1.10.0 needs
+DQR 3.0.0 and Container Service 3.8.x; the 1.9.x DQR (`dicom-query-retrieve-2.3.2-xpl.jar`)
+implements the `ArchiveProcessor.process(...)` signature of the older core.
+
+The pod is where the drift lives, not the values file. `templates/xnat-web.yaml` mounts an
+**emptyDir** at `/data/xnat/home/plugins` and the `download-plugins` init container refills it
+from `xnat.web.plugins.urls` on **every pod creation** — there is no PVC holding stale jars. So
+any pod created from an up-to-date pod spec has the right roster, and a pod with the wrong one
+proves its **spec** is old: no `helm upgrade` has rolled `xnat-web` since the roster changed.
+
+In FLIP#1228 that is precisely what happened: `values.yaml` had carried the corrected roster
+since August, and the pod created on 26 Aug still ran `dicom-query-retrieve-2.3.2-xpl.jar` and
+`container-service-3.8.0-fat.jar`.
+
+**Which of the three reasons a spec goes un-rolled is yours is worth establishing before you
+act — they have different fixes.** Note that a failed post-upgrade hook is *not* on the list:
+`xnat-init` is `post-install,post-upgrade` and `deploy` passes neither `--atomic` nor `--wait`,
+so Helm has already applied the Deployment by the time the hook runs and a hook timeout cannot
+by itself keep an old pod spec live.
+
+1. **The upgrade never carried the new URLs** — an older checkout, or an overrides file pinning
+   old versions. The release's own history settles it:
+
+   ```bash
+   helm get values trust-release -n flip-trust --revision <N> --all | grep -A5 urls
+   ```
+
+2. **The rollout stalled.** `xnat-web` is a singleton on a ReadWriteOnce volume; under the
+   default RollingUpdate the new pod is surged *alongside* the old one, is refused the volume on
+   another node and shares one data directory and database on the same, so it never goes Ready
+   and the old pod serves on. The chart now declares `strategy: Recreate` to prevent this, but a
+   release last upgraded before that lands still shows it:
+
+   ```bash
+   kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web
+   # two ReplicaSets with a stuck surge pod = this case
+   ```
+
+3. **The upgrade never completed.** Five consecutive upgrades failed with
+   `resource Job/flip-trust/trust-release-flip-trust-xnat-init not ready`, the `xnat-init` hook
+   running longer (~22 min observed) than the then-hardcoded `--timeout 20m`. That leaves the
+   release `failed` and the operator reading a hook problem rather than an un-deployed chart —
+   and, when case 2 is also in play, it is the stalled rollout the job is really waiting behind.
+
+**Detection.**
+
+```bash
+# The one-liner: what the pod actually carries
+kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins
+# expect dicom-query-retrieve-3.0.0-xpl.jar and container-service-3.8.1-fat.jar,
+# and NO 2.3.2-xpl / 3.8.0-fat
+
+# What XNAT loaded (plugin ids, not jar names); the pod's own credential goes to curl on stdin
+kubectl exec -n flip-trust "$xnat_pod" -- sh -c 'printf "header = \"Authorization: Basic %s\"\n" \
+  "$(printf "%s:%s" "$XNAT_SERVICE_USER" "$XNAT_SERVICE_PASSWORD" | base64 | tr -d "\n")" \
+  | curl -s -K - http://localhost:8080/xapi/plugins' | jq -r 'to_entries[] | "\(.key) \(.value.version)"'
+
+# The same comparison, automated against the release's own values
+make -C trust/deploy/helm status        # FAILs naming both versions, or a jar present on disk but not loaded
+
+# Exercise the path the roster is on, rather than just the socket
+make -C trust/deploy/helm smoke-cstore  # real C-STORE via the PACS, then checks XNAT's prearchive
+```
+
+**Fix.** Get one `helm upgrade` to complete, from a checkout that carries both the roster and
+`strategy: Recreate`, with a timeout above the init job's real duration:
+
+```bash
+kubectl get job -n flip-trust -w    # time one run before choosing a value
+make -C trust/deploy/helm deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m
+```
+
+The first upgrade onto `Recreate` changes the strategy and replaces the pod in one go. If a
+surge pod from case 2 is still wedged, `kubectl -n flip-trust delete pod <surge pod>` clears it
+so the replacement can take the volume.
+
+`HELM_TIMEOUT` (default `30m`) governs both the Helm hook wait in `deploy` and the `kubectl wait`
+in `xnat-init`. If the hook is genuinely wedged rather than merely slow, deploy with
+`--set xnat.initJob.enabled=false` and then run `make -C trust/deploy/helm xnat-init` on its own,
+where its logs are readable directly.
+
+Then confirm the pod rolled and re-test:
+
+```bash
+kubectl exec -n flip-trust "$xnat_pod" -- ls -la /data/xnat/home/plugins   # mtime = today
+kubectl exec -n flip-trust "$xnat_pod" -- curl -sf -u <admin> localhost:8080/xapi/dqr/settings
+make -C trust/deploy/helm smoke-cstore
+```
+
+**What `smoke-cstore` judges.** Success is Orthanc reporting `0` failed instances **and**
+receiver-side evidence that the object landed, polled for up to `PREARCHIVE_TIMEOUT` seconds,
+strongest first:
+
+1. a new DICOM object in XNAT's prearchive (`/data/xnat/prearchive`) carrying the
+   `SOPInstanceUID`, else the `StudyInstanceUID`, that was sent — matched against the
+   *receiver's own* clock;
+2. a new line in `/data/xnat/home/logs/received.log` since the line-count mark taken before the
+   store — that is, *a new receipt during the window, preferring lines from `SENDER_AE`
+   (default `ORTHANC`) when they are distinguishable*. It does not identify the object: a DQR /
+   C-MOVE retrieval reaches XNAT from the same Orthanc under the same calling AE, so **a
+   concurrent import from the same PACS cannot be told apart**. Matching the stored object
+   properly — by a value `anon_script.das` leaves intact, or by the hashed SOP UID in the stored
+   file name — is a follow-up. The importer-crash signatures below are unaffected: they fail the
+   run whichever import hits them;
+3. a new prearchive object by arrival time alone — a genuine last resort, reported as such,
+   since a concurrent DQR/C-MOVE import looks identical.
+
+**Exit codes: 0 pass, 1 failure, 2 inconclusive.** (3) on its own is only honest evidence where
+`received.log` does not exist on the receiver; there it stays a pass (exit 0) with its warning.
+Where `received.log` *does* exist and gained no line for this store, the receiver's own success
+logger stayed silent through a transfer it records every receipt of — so arrival time alone is
+neither a pass nor a demonstrated failure, and the run exits **2**. The script probes that
+existence explicitly when it takes the pre-store mark: `wc -l` reports `0` for a missing file and
+an empty one alike, which cannot tell the two apart. `make -C trust/deploy/helm smoke-cstore`
+maps 2 to a loud warning and still exits 0, so an inconclusive run does not break a deploy — but
+anything reading `$?` from the script directly sees a status that is not "passed".
+
+(2) is the normal path on a FLIP trust. `configure-xnat.sh` sets `anonymizationEnabled: true` on
+the SCP receiver and `anon_script.das` rewrites `(0020,000D)`, `(0020,000E)` and `(0008,0018)`
+through `hashUID`, so the object XNAT stores does **not** carry the UIDs Orthanc holds and (1)
+cannot match. `received.log` is written after that rewrite.
+
+It used to require `dicom.log` to gain lines instead. That is the wrong file twice over: XNAT
+records successful receipts in `received.log` and keeps `dicom.log` for *errors*, and this
+deployment never writes `dicom.log` at all (0 bytes while every store imports correctly), so a
+healthy path failed with "dicom.log gained no lines". Its growth is now reported as context and
+can never pass a run on its own. The importer signatures (`AbstractMethodError`,
+`NoSuchMethodError`, `unable to read DICOM object null`) still fail the run outright, read from
+both `dicom.log` and the `xnat-web` container log — whose window starts at the store (`kubectl
+logs --since-time`), not at the moment the log is read, so a crash in the first seconds after
+the association is not missed on a run that polls to the deadline.
+
+Knobs: `INSTANCE_ID=<orthanc id>` (send a known instance), `PREARCHIVE_DIR`,
+`PREARCHIVE_TIMEOUT` (default 90s), `PREARCHIVE_INTERVAL`, `SETTLE_SECONDS`, `DICOM_LOG`,
+`RECEIVED_LOG`, `SENDER_AE`, `KUBE_CONTEXT`. The verdict itself is `scripts/cstore_verdict.py`,
+unit-tested in `tests/test_cstore_verdict.py` with no cluster — including the evidence builder,
+so the shell script holds no parsing of its own.
+
+A failing run that names *no received.log line and no new prearchive object* means the
+association went somewhere that is not this XNAT — check the SCP receiver Orthanc dialled
+(§2.1) before suspecting the plugins.
 
 ---
 
@@ -577,6 +887,28 @@ kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
 # data-access-api pools connections — restart to pick up the new search_path:
 kubectl rollout restart deployment/trust-release-flip-trust-data-access-api -n flip-trust
 ```
+
+### Trust-seed Job Fails with `No module named 'psycopg'`
+
+**Symptom:** The `trust-seed` hook Job fails in its OMOP half, failing the release
+install or upgrade; the Job log ends in
+`ModuleNotFoundError: No module named 'psycopg'`.
+
+**Root Cause:** The hook installs the loaders (`trust/omop-db`'s `omop_db_tools`) from
+`trustData.seed.sourceRef` at run time, resolving their dependencies without a lock.
+SQLAlchemy 2.1 picks psycopg (v3) for a bare `postgresql://` URL, while the loaders ship
+psycopg2. A ref whose loaders name `postgresql+psycopg2` (FLIP#1309, merged to `develop`
+in `e51d5bd28`) is immune; an older one fails.
+
+**Fix:** Point the hook at a ref that carries the fix, until it reaches the release your
+images come from:
+
+```bash
+helm upgrade trust-release ./trust/deploy/helm -n flip-trust --reuse-values \
+  --set trustData.seed.sourceRef=develop   # or a sha at/after e51d5bd28
+```
+
+Set `sourceRef` back to the release ref once that release contains the fix.
 
 ### Rebuilding OMOP Data
 
@@ -660,7 +992,7 @@ make -C trust/deploy/helm up OVERRIDES_FILE=k8s-trust-Trust_MyNew.yaml
 
 `sync-kit` patches the per-trust keys into the Kubernetes Secret and writes the
 secret-free `k8s-trust-Trust_MyNew.yaml` override (hub URL, FL backend, AWS
-region, fl-client bucket, slot-aware kit path). See the chart README Quickstart.
+region, OMOP vocabulary bucket, slot-aware kit path). See the chart README Quickstart.
 
 ### Heartbeat Failure
 
@@ -723,6 +1055,9 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | Script | Purpose |
 |--------|---------|
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
+| `smoke-cstore.sh` | Drive a real C-STORE through the PACS and verify XNAT received it (§2.7) |
+| `cstore_verdict.py` | The smoke's verdict logic, unit-tested without a cluster (§2.7) |
+| `check_status.py` | Full deployment smoke, including the plugin-roster comparison (§2.7) |
 
 ### Available Tools on DCMTK Pod
 
@@ -796,7 +1131,7 @@ fails on the client side due to the server certificate.
 
 **Root Cause:** The server certificate was re-generated with X509v3 Key Usage
 extensions (`keyEncipherment, dataEncipherment`) and Extended Key Usage
-(`TLS Web Server Authentication`). The original NVFLARE certificates have
+(`TLS Web Server Authentication`). The original FLARE certificates have
 *no* Key Usage or Extended Key Usage extensions. OpenSSL's gRPC implementation
 rejects certificates with these restrictions during mTLS negotiation.
 
@@ -867,9 +1202,9 @@ a cert that matches the hostname the client uses to connect.
 `verified server identity`. The client may show `Not Connected` after the
 handshake.
 
-**Root Cause:** The `signature.json` file in the NVFLARE participant kit
+**Root Cause:** The `signature.json` file in the FLARE participant kit
 contains signatures for all startup files (e.g., `server.crt`, `start.sh`).
-These are verified during the mTLS handshake. NVFLARE signs them using **PSS
+These are verified during the mTLS handshake. FLARE signs them using **PSS
 padding** with SHA-256 (`padding.PSS(mgf=MGF1(SHA256()), salt_length=MAX)`).
 If the signatures were re-generated using **PKCS1v15 padding** (the default),
 the verification fails silently and the connection drops.
@@ -938,7 +1273,7 @@ chmod +x "$efs_mount_point"/startup/*.sh
 container exits with code 0 almost immediately. The container logs show the
 server starting, then silence.
 
-**Root Cause:** The NVFLARE container's `start.sh` script backgrounds
+**Root Cause:** The FLARE container's `start.sh` script backgrounds
 `sub_start.sh &` and then runs `wait`. When `start.sh` is *executed* (via
 `./start.sh`) instead of *sourced* (via `. ./start.sh` or `source start.sh`),
 the background job (`sub_start.sh`) becomes orphaned in a subshell. The
@@ -1018,8 +1353,8 @@ aws ecs update-service --cluster flip-cluster --service fl-server-net-1 \
 **Symptom:** Pod in `ErrImagePull` / `ImagePullBackOff` status. Fl-server ECS
 task fails with `CannotPullContainerError`.
 
-**Root Cause:** The NVFLARE container images are hosted in a private ECR
-repository (account `080369786334` in `eu-west-2`). The K8s cluster or ECS
+**Root Cause:** The FLARE container images are hosted in a private ECR
+repository (the `<ecr-account-id>` account in `eu-west-2`). The K8s cluster or ECS
 task execution role lacks permissions to pull from this repository.
 
 **Fix (K8s):** Create an `imagePullSecret` with ECR credentials:
@@ -1027,7 +1362,7 @@ task execution role lacks permissions to pull from this repository.
 # Generate ECR auth token
 ecr_password=$(aws ecr get-login-password --profile flipstag --region eu-west-2)
 kubectl create secret docker-registry ecr-cred \
-  --docker-server=080369786334.dkr.ecr.eu-west-2.amazonaws.com \
+  --docker-server=<ecr-account-id>.dkr.ecr.eu-west-2.amazonaws.com \
   --docker-username=AWS \
   --docker-password="$ecr_password" \
   -n flip-trust
@@ -1049,13 +1384,13 @@ flClient:
     "ecr:BatchGetImage",
     "ecr:BatchCheckLayerAvailability"
   ],
-  "Resource": "arn:aws:ecr:eu-west-2:080369786334:repository/*"
+  "Resource": "arn:aws:ecr:eu-west-2:<ecr-account-id>:repository/*"
 }
 ```
 
 ### 7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)
 
-**Symptom:** fl-client pod crash-loops with no NVFlare registration output.
+**Symptom:** fl-client pod crash-loops with no FLARE registration output.
 The pod logs end at `STARTING CLIENT...` with no further output. After
 ~60 seconds the faulthandler shows the main thread stuck at
 `while not sp_established: sleep(1.0)` and the overseer thread is blocked.
@@ -1075,7 +1410,7 @@ Versions tested:
 | 1.78.0 wheel | Segfault (core dump) on import |
 | 1.80.0 wheel | Segfault (core dump) on import |
 
-**Fix:** Force NVFlare to use the **asyncio-based gRPC driver**
+**Fix:** Force FLARE to use the **asyncio-based gRPC driver**
 (`aio_grpc_driver`) instead of the default synchronous one. The aio driver
 uses `grpc.aio.secure_channel` / `grpc.aio.insecure_channel`, which rely on
 Python's asyncio event loop for async connect — this works on kernel 7.0.
@@ -1099,7 +1434,7 @@ kit (e.g., `/opt/flip/k8s-fl-client-kits/Trust_K8s/startup/`):
 | File | Purpose |
 |------|---------|
 | `run_client.py` | Wrapper that modifies `fed_client.json` scheme to `agrpc`, then `exec`s `client_train.py`. Preserves the backup for restore on exit. |
-| `patch.py` | Patches `grpc.ssl_channel_credentials` to inject correct client certs and bypasses NVFlare's `_check_secure_content` signature validation (needed because `fed_client.json` was manually edited). |
+| `patch.py` | Patches `grpc.ssl_channel_credentials` to inject correct client certs and bypasses FLARE's `_check_secure_content` signature validation (needed because `fed_client.json` was manually edited). |
 | `sitecustomize.py` | Auto-loaded at Python startup. Applies the same patches for worker subprocesses. Also sets `GRPC_POLL_STRATEGY=epoll1`. |
 
 **Successful registration log:**
@@ -1122,6 +1457,73 @@ kit (e.g., `/opt/flip/k8s-fl-client-kits/Trust_K8s/startup/`):
 
 ---
 
+## 8. Trust Governance Policy (FLIP#1259)
+
+The trust's governance document is carried by the chart as `governance.document` (written by
+sync-kit from the kit's `ACCESS_POLICY_FILE`), rendered into the `<release>-flip-trust-governance`
+ConfigMap and mounted **read-only** at `/app/governance.toml` in the `data-access-api` pod, with
+`ACCESS_POLICY_FILE` pointing at it. The FLARE fl-client reads only its `[fl_privacy]` section,
+which its `governance-extract` init container writes to `/app/governance/governance.fl_privacy.toml`;
+the Flower client gets nothing. An empty value means no document at all: nothing is mounted and the
+platform defaults apply.
+
+**Symptom A — a service will not start after a policy edit.** `data-access-api` crash-loops, or the
+FLARE fl-client pod sits in `Init:Error` / `Init:CrashLoopBackOff` on its `governance-extract` init
+container. Both fail closed on an invalid document, so the reason is in the container log rather than
+in any Helm output:
+
+```bash
+kubectl logs -n flip-trust deploy/<release>-flip-trust-data-access-api --tail=20
+kubectl logs -n flip-trust deploy/<release>-flip-trust-fl-client-<netId> -c governance-extract --tail=20
+kubectl logs -n flip-trust deploy/<release>-flip-trust-fl-client-<netId> --tail=20
+# the fl-client half prints: [site-privacy] FATAL: <what is wrong, and where>
+```
+
+The usual causes are a key or section the format does not define, a misspelt action, a project id
+that is not a UUID, a rule without an `effect`, a `min_cohort_size` below the kit's floor,
+`gamma <= 0` / `percentile` outside `[0, 100]`, or the site privacy filter set both in
+`[fl_privacy.nvflare]` and in `FL_SITE_PRIVACY_*`. These are deliberately not ignored — a
+silently-dropped access rule is worse than no rule, because the operator believes it is in force.
+Validate before the next deploy (sync-kit also refuses such a document):
+
+```bash
+make -C trust check-governance KIT=<CODE>   # both halves, through the services' own loaders
+```
+
+**Symptom B — the document is right but the pods behave as if it were not there.** Look at what the
+pods actually hold before anything else:
+
+```bash
+kubectl get configmap <release>-flip-trust-governance -n flip-trust \
+  -o jsonpath='{.data.governance\.toml}' | head -5
+kubectl logs -n flip-trust deploy/<release>-flip-trust-data-access-api | grep '\[governance\]'
+kubectl exec -n flip-trust deploy/<release>-flip-trust-data-access-api -- cat /app/governance.toml | head -5
+```
+
+- **The `[governance]` line says `no policy configured`** → `governance.document` was empty in the
+  values Helm actually used. A document set with `--set-file` is dropped by the next
+  `deploy-trust-k8s` / `upgrade-trust-k8s`, which pass the `-f` files without `--reuse-values`: set
+  `ACCESS_POLICY_FILE` in the kit and redeploy through those targets, which regenerate the override
+  from it. `helm get values <release> -n flip-trust` shows what the release holds.
+- **There is no `[governance]` line at all** → the image predates governance support (FLIP#1259) and
+  ignores the document. Move the trust to a release that has it.
+- **The line's `sha256=` is not the ConfigMap's** → the pod runs an older document. Compare with the
+  bytes the pod mounts, not the file on the deploy host: embedding the document in the override can
+  change its trailing blank lines and final newline, so the host file's `sha256sum` need not match.
+  `kubectl get configmap <release>-flip-trust-governance -n flip-trust -o jsonpath='{.data.governance\.toml}'
+  | sha256sum` is the digest the pod should log. Editing the ConfigMap by hand (`kubectl edit
+  configmap`) restarts nothing; redeploy with `deploy-trust-k8s KIT=`, which regenerates the override
+  and rolls the pods.
+- **The fl-client ignores `[fl_privacy.nvflare]`** → check the backend: on Flower nothing reads the
+  section and the chart does not wire it (sync-kit refuses such a document). On FLARE the client
+  reads the extract, not the document: `kubectl exec ... fl-client-<netId> -- cat
+  /app/governance/governance.fl_privacy.toml`.
+
+`kubectl exec ... -- cat /app/governance.toml` is the check that settles a dispute: it is the file
+the services actually parse, so it is the policy actually enforced.
+
+---
+
 ## Quick Diagnostic Checklist
 
 When something is broken, run these in order:
@@ -1137,7 +1539,7 @@ kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
 # 3. DICOM connectivity
 DCMTK_POD=$(kubectl get pods -n flip-trust -l run=dcmtk -o jsonpath='{.items[0].metadata.name}')
 kubectl exec -n flip-trust "$DCMTK_POD" -- echoscu orthanc 4242
-kubectl exec -n flip-trust "$DCMTK_POD" -- echoscu xnat-web 8104
+kubectl exec -n flip-trust "$DCMTK_POD" -- echoscu xnat-web-dicom 8104
 
 # 4. XNAT queue
 kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- \
@@ -1165,3 +1567,88 @@ kubectl logs -n flip-trust "$FL_POD" --tail=15 | grep -E "Connected|challenge|No
 kubectl get networkpolicy -n flip-trust trust-release-flip-trust-egress -o yaml | grep -q 8002 && \
   echo "Port 8002 allowed" || echo "MISSING: Port 8002 in egress policy"
 ```
+
+---
+
+## 9. Deploy Refused: Secret Field Conflict (Helm 4 SSA)
+
+### Symptom
+
+```
+Error: UPGRADE FAILED: conflict occurred while applying object
+flip-trust/trust-release-flip-trust-secrets /v1, Kind=Secret:
+Apply failed with 3 conflicts: conflict with "kubectl-patch" using v1:
+  .data.aes-key-base64
+  .data.trust-api-key
+  .data.trust-internal-service-key
+```
+
+The release stays on its previous (working) revision — nothing was changed in the cluster.
+
+### Cause
+
+Helm 4 applies the release **server-side**, and `make patch-kit-secrets` writes those three
+keys with `kubectl patch`, i.e. under field manager `kubectl-patch`. The conflict fires only
+when the live value and the value the chart renders from `values-secrets.yaml` **disagree**,
+so it is the API server reporting credential drift rather than overwriting live keys.
+
+### Fix
+
+Re-run the kit patch once; it now realigns the `values-secrets.yaml` slots with exactly what
+it patched, so helm's next apply is a no-op on those fields:
+
+```bash
+make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>
+make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+```
+
+Inspect who owns what:
+
+```bash
+kubectl get secret trust-release-flip-trust-secrets -n flip-trust \
+  -o jsonpath='{range .metadata.managedFields[*]}{.manager}/{.operation}: {.fieldsV1}{"\n"}{end}'
+```
+
+### Do not
+
+- **`helm upgrade --force-conflicts` / `--take-ownership`** — overwrites the live keys with
+  whatever `values-secrets.yaml` holds; an empty slot is omitted by `templates/secrets.yaml`
+  altogether, so a redeploy can silently revert the trust's API key and the trust then polls
+  the hub with a dead credential.
+- **`kubectl patch --field-manager=helm`** — a patch is an *Update* operation, a different
+  `managedFields` entry from helm's *Apply*; the conflict is merely re-reported as
+  `conflict with "helm"`.
+- **`kubectl apply --server-side` of just these keys** — a partial apply prunes every other
+  key that manager owns, emptying the XNAT / OMOP / Orthanc slots out of the same Secret.
+
+Helm 3 does a client-side three-way merge and never raises this; no version switch is needed.
+
+---
+
+## 10. Preflight Looks for the Wrong Kit File (PROD tokens)
+
+### Symptom
+
+`make -C trust/deploy/helm preflight KIT=<CODE> PROD=lza-stag` fails check 4 with
+`Kit file not found: .../trust/.env.<CODE>.development`, while the Makefile's own targets
+resolve the same kit correctly.
+
+### Cause
+
+`scripts/preflight.sh` carried its own `PROD` → suffix mapping, written before the LZA env
+tokens existed, so `lza` / `lza-stag` fell through to `development`.
+
+### Fix
+
+Fixed in-tree: `deploy/env_mode.mk` is now the only `PROD` → suffix map. The Makefile derives
+the token from it and injects it (`KIT_ENV=` into `preflight.sh`, `--env` into `sync_k8s_kit.py`);
+neither script keeps a copy, and running one bare with `PROD` set but no token is refused with
+a message naming the Makefile target, instead of defaulting to `development`. Expected mapping:
+
+| `PROD` | kit file |
+|---|---|
+| (unset) | `trust/.env.<CODE>.development` |
+| `stag` | `trust/.env.<CODE>.stag` |
+| `true` | `trust/.env.<CODE>.production` |
+| `lza` | `trust/.env.<CODE>.lza-prod` |
+| `lza-stag` | `trust/.env.<CODE>.lza-stag` |

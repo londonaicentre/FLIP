@@ -18,6 +18,7 @@ import { approveProject,
     createProject,
     deleteProject,
     editProject,
+    getCohortSnapshots,
     getImagingProjectsStatus,
     getProject,
     getProjects,
@@ -143,15 +144,22 @@ describe("project-service", () => {
             expect(_http.post).toHaveBeenCalledWith("/project/p-1/unstage");
         });
 
-        it("approveProject POSTs the trusts list", async () => {
-            vi.mocked(_http.post).mockResolvedValue({ data: undefined } as never);
+        it("approveProject POSTs the approved trusts as `trusts` beside the declined ones", async () => {
+            vi.mocked(_http.post).mockResolvedValue({ data: { projectStatus: "STAGED" } } as never);
 
-            await approveProject("/project/p-1/approve", ["t-1"]);
+            const result = await approveProject("/project/p-1/approve", {
+                approved: ["t-1"],
+                declined: ["t-2"]
+            });
 
             expect(_http.post).toHaveBeenCalledWith(
                 "/project/p-1/approve",
-                { trusts: ["t-1"] }
+                {
+                    trusts: ["t-1"],
+                    declined: ["t-2"]
+                }
             );
+            expect(result).toEqual({ projectStatus: "STAGED" });
         });
     });
 
@@ -187,6 +195,30 @@ describe("project-service", () => {
 
             expect(_http.get).toHaveBeenCalledWith("/project/p-1/imaging-status");
             expect(result).toEqual(statuses);
+        });
+    });
+
+    describe("getCohortSnapshots", () => {
+        it("returns the per-trust cohort snapshot list", async () => {
+            const snapshots = [
+                {
+                    trustId: "t-1",
+                    trustName: "Trust_1",
+                    status: "frozen",
+                    error: null,
+                    rowCount: 300,
+                    approvedRecordCount: 300,
+                    hasAccessions: true,
+                    snapshotAt: "2026-09-30T00:00:00+00:00",
+                    queryId: "q-1"
+                }
+            ];
+            vi.mocked(_http.get).mockResolvedValue({ data: snapshots } as never);
+
+            const result = await getCohortSnapshots("/projects/p-1/cohort-snapshots");
+
+            expect(_http.get).toHaveBeenCalledWith("/projects/p-1/cohort-snapshots");
+            expect(result).toEqual(snapshots);
         });
     });
 });

@@ -54,7 +54,7 @@ platform pull can be proven before a data version is tagged. After publishing,
 DICOM half always comes from the local tree. `DRY_RUN=1` counts the DICOM half and loads nothing.
 
 Driving the platform end to end (cohort query → Orthanc → XNAT → dcm2niix), with `query.sql` here
-as the cohort and any NVFLARE app as the model files:
+as the cohort and any FLARE app as the model files:
 
 ```bash
 make e2e_smoke MODEL_FILES_DIR=../fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/app_files \

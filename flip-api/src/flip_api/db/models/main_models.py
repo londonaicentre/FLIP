@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column
+from sqlalchemy import Column, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
@@ -22,12 +22,14 @@ from sqlmodel import Field, Relationship, SQLModel
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction, TrustAuditAction
 from flip_api.domain.schemas.file import FileUploadStatus
 from flip_api.domain.schemas.status import (
+    DecisionMaker,
     JobStatus,
     ModelStatus,
     NetStatus,
     ProjectStatus,
     TaskStatus,
     TaskType,
+    TrustApprovalStatus,
     TrustIntersectStatus,
     XNATImageStatus,
 )
@@ -46,7 +48,7 @@ class FLNets(SQLModel, table=True):
     # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
     # from creation. Mapped like the other enum columns (status, task_type, ...): SQLModel infers a
     # SQLAlchemy Enum column from FLBackend, so the DB persists the member name and reads return a
-    # real FLBackend member. FLBackend is the one column whose member name (NVFLARE) differs from its
+    # real FLBackend member. FLBackend is the one column whose member name (FLARE) differs from its
     # lowercase value (nvflare), so the DB stores the uppercase name while env/JSON/S3 use the value.
     fl_backend: FLBackend = Field(nullable=False)
 
@@ -56,9 +58,9 @@ class FLNets(SQLModel, table=True):
 class FLScheduler(SQLModel, table=True):
     __tablename__ = "fl_scheduler"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    net_id: UUID = Field(foreign_key="fl_nets.id", alias="netid")
+    net_id: UUID = Field(foreign_key="fl_nets.id")
     status: NetStatus = Field(default=NetStatus.AVAILABLE)
-    job_id: UUID | None = Field(default=None, foreign_key="fl_job.id", alias="jobid")
+    job_id: UUID | None = Field(default=None, foreign_key="fl_job.id")
 
     job: Optional["FLJob"] = Relationship(back_populates="scheduler")
     net: Optional["FLNets"] = Relationship(back_populates="schedulers")
@@ -81,10 +83,13 @@ class FLJob(SQLModel, table=True):
     started: datetime | None = Field(default=None)
     completed: datetime | None = Field(default=None)
     # FL-backend-assigned job identifier, treated as an opaque string the hub never parses (it only persists
-    # and equality-matches it). Format varies by backend: a UUID-like string for NVFLARE, a stringified
+    # and equality-matches it). Format varies by backend: a UUID-like string for FLARE, a stringified
     # integer run-id for Flower. NULL until the job is submitted to the backend (see fl_service.submit_job).
     # Distinct from `id` above, which is the hub's own UUID primary key for the job record.
     fl_backend_job_id: str | None = None
+    # The researcher's GPU override for this run, per trust (FLIP#70). NULL = no override: the job's
+    # meta.json resource_spec, or the fl-api default, applies.
+    num_gpus: int | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
     trusts: list["Trust"] = Relationship(link_model=FLJobTrust)
@@ -94,7 +99,7 @@ class FLMetrics(SQLModel, table=True):
     __tablename__ = "fl_metrics"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     # The trust this metric is attributed to (its id). fl_client_name is the raw
-    # FL client identity as reported by the FL server (FL kit slot for NVFLARE,
+    # FL client identity as reported by the FL server (FL kit slot for FLARE,
     # SUPERNODE_NAME for Flower), kept for traceability.
     trust: UUID = Field(foreign_key="trust.id")
     fl_client_name: str = Field()
@@ -180,8 +185,14 @@ class ProjectTrustIntersect(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
-    approved: bool = Field()
-    approved_at: datetime | None = Field(default=None)
+    status: TrustApprovalStatus = Field(default=TrustApprovalStatus.PENDING)
+    # Who made the current decision, and when. Both NULL while PENDING. `decided_by` is also NULL on
+    # approvals made before decisions were attributed (FLIP#1318): the approver was never recorded.
+    decided_by: UUID | None = Field(default=None)
+    decided_at: datetime | None = Field(default=None)
+    # HUB when the hub admin decided (the trust had no Trust Admin), SITE when the trust's own Trust Admin did
+    # (FLIP#1258). NULL while PENDING.
+    decided_as: DecisionMaker | None = Field(default=None)
 
 
 class Projects(SQLModel, table=True):
@@ -205,6 +216,9 @@ class ProjectsAudit(SQLModel, table=True):
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     action: ProjectAuditAction = Field()
     user_id: UUID = Field()
+    # The trust a per-trust decision (APPROVE_TRUST / DECLINE_TRUST) was made for; NULL on
+    # project-wide actions. No foreign key, so the record outlives a deleted trust.
+    trust_id: UUID | None = Field(default=None)
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
@@ -325,6 +339,9 @@ class TrustsAudit(SQLModel, table=True):
     trust_name: str = Field()
     action: TrustAuditAction = Field()
     modified_by_user_id: UUID | None = Field(default=None)
+    # The user an ADMIN_ADDED / ADMIN_REMOVED row is about (the new or former Trust Admin); NULL on registry
+    # events. modified_by_user_id stays the admin who made the change.
+    subject_user_id: UUID | None = Field(default=None)
     audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
@@ -391,9 +408,7 @@ class UploadedFiles(SQLModel, table=True):
     # row that predates this column). Never gates promotion: unlike the
     # picklescan verdict above, this never turns into an INFECTED/ERROR
     # status. Purely a signal for whoever next opens the model's file list.
-    bandit_findings: list[dict] | None = Field(
-        default=None, sa_column=Column("bandit_findings", JSONB, nullable=True)
-    )
+    bandit_findings: list[dict] | None = Field(default=None, sa_column=Column("bandit_findings", JSONB, nullable=True))
 
 
 class XNATProjectStatus(SQLModel, table=True):
@@ -406,3 +421,38 @@ class XNATProjectStatus(SQLModel, table=True):
     query_at_creation: UUID | None = Field(default=None)
     last_reimport: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
     reimport_count: int = Field(default=0)
+
+
+# One audit row per (project, trust); the snapshot upsert conflicts on it.
+COHORT_SNAPSHOT_STATUS_UNIQUE = "uq_cohort_snapshot_status_project_trust"
+
+
+class CohortSnapshotStatus(SQLModel, table=True):
+    """The hub's per-trust record of the cohort membership frozen at approval (FLIP#857).
+
+    Aggregates only — the hub never sees a row of the cohort. Written by the PERSIST_COHORT
+    task's post-processing from the trust's snapshot response; one row per (project, trust),
+    enforced by a unique constraint and updated in place when the snapshot is re-queued. The row holds the
+    approval-time facts: the frozen membership bounds who the project trains on at that trust
+    (it can shrink as patients opt out, never grow), but their records are read live, so
+    ``row_count`` is not the live count and can be exceeded. ``approved_record_count`` is the
+    count the project was staged/approved on (from the aggregated cohort statistics); a
+    mismatch with ``row_count`` means the live cohort drifted between submission and approval,
+    and is logged as a warning when the row is written — surfaced, never silently adopted.
+    """
+
+    __tablename__ = "cohort_snapshot_status"  # type: ignore
+    __table_args__ = (UniqueConstraint("project_id", "trust_id", name=COHORT_SNAPSHOT_STATUS_UNIQUE),)
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    project_id: UUID = Field(foreign_key="projects.id")
+    trust_id: UUID = Field(foreign_key="trust.id")
+    # Which Queries row was frozen — the missing link #857 calls out.
+    query_id: UUID | None = Field(default=None)
+    row_count: int = Field()
+    approved_record_count: int | None = Field(default=None)
+    # False = the frozen cohort holds no accession id (no accession_id column, or NULL on every row):
+    # there is no imaging to pull.
+    has_accessions: bool = Field(default=False)
+    query_hash: str | None = Field(default=None)
+    snapshot_at: datetime = Field()
+    created_at: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]

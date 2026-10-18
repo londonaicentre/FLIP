@@ -14,6 +14,8 @@ import uuid
 
 import pytest
 
+from flip_api.domain.schemas.status import TrustApprovalStatus
+
 
 @pytest.fixture
 def project_id():
@@ -70,7 +72,7 @@ def project_with_approved_trusts(
         project_trust_intersect = project_trust_intersect_factory.build()
         project_trust_intersect.project_id = project.id
         project_trust_intersect.trust_id = trust.id
-        project_trust_intersect.approved = True
+        project_trust_intersect.status = TrustApprovalStatus.APPROVED
         mock_db_session.add(trust)
         mock_db_session.commit()
         mock_db_session.add(project)

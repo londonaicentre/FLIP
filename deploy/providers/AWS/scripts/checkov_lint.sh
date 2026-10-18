@@ -50,6 +50,16 @@
 
 set -euo pipefail
 
+# Lint the source as CI does, with no variable values supplied: checkov resolves variables from
+# TF_VAR_*, which the AWS Makefile exports (literals, values derived from PROD and FL_BACKEND,
+# and the deploy env file's keys, which are empty strings without one).
+for var in "${!TF_VAR_@}"; do
+    unset "${var}" 2> /dev/null || {
+        echo "ERROR: cannot clear ${var} from the environment; unset it and re-run." >&2
+        exit 1
+    }
+done
+
 # Keep in sync with the `pip install checkov==...` pin in
 # .github/workflows/validate_terraform.yml (the version assertion below turns
 # a mismatch into a loud failure rather than silent drift).

@@ -15,10 +15,10 @@
 
 ## Overview
 
-This is the NVFLARE **Client API** latent-diffusion job type (`JOB_TYPE=diffusion_model`).
+This is the FLARE **Client API** latent-diffusion job type (`JOB_TYPE=diffusion_model`).
 It runs a **two-stage** federated training — an autoencoder (+ GAN discriminator)
 FedAvg stage followed by a diffusion-model FedAvg stage over the frozen autoencoder's latent space,
-each stage with its own cross-site validation — driving the clients through the NVFLARE Client
+each stage with its own cross-site validation — driving the clients through the FLARE Client
 API (`ClientAPIExecutor`, in-process mode). It replaced the retired Executor-based `diffusion_model`
 template, which drove the clients through the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pairs.
 
@@ -47,7 +47,7 @@ Unlike the single-phase Client API templates, **one client script serves four ta
 `flare.is_evaluate()` predicates cannot distinguish the two train stages, so the user's `trainer.py`
 dispatches on `nvflare.client.api.get_task_name()`. `validator.py` is still required — it holds the
 validation passes (and shared latent-geometry helpers) that `trainer.py` imports; it is a plain
-module, not an NVFLARE component.
+module, not a FLARE component.
 
 Training results return as a full-model weight **diff** (`params_type="DIFF"`; the aggregator
 averages the clients' `WEIGHT_DIFF` updates directly — the stock default — and the shareable

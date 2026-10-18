@@ -91,9 +91,7 @@ def test_upstream_error_does_not_leak_the_elasticsearch_url(
 @patch(f"{MODULE}.get_secret", return_value=SECRET_ES_URL)
 @patch(f"{MODULE}.get_model_status")
 @patch(f"{MODULE}.can_access_model", return_value=True)
-def test_upstream_404_still_reports_logs_not_found(
-    mock_can_access, mock_get_model_status, mock_get_secret, mock_post
-):
+def test_upstream_404_still_reports_logs_not_found(mock_can_access, mock_get_model_status, mock_get_secret, mock_post):
     """The 404 branch was already sanitised — keep it distinguishable from the 500 branch."""
     mock_get_model_status.return_value = MagicMock(deleted=False)
     mock_post.return_value.raise_for_status.side_effect = _elastic_status_error(404)
@@ -109,3 +107,132 @@ def test_access_denied_for_unrelated_model(mock_can_access):
     response = client.get(f"/api/model/{test_model_id}/training/log")
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+def _hit(status_value, message, *, ts="2026-09-28T10:00:00Z", trust=None, **overrides):
+    source = {"@timestamp": ts, "status": status_value, "message": message, "model": str(test_model_id)}
+    if trust is not None:
+        source["trust"] = trust
+    source.update(overrides)
+    return {"_source": source}
+
+
+def _elastic_returns(mock_post, hits):
+    mock_post.return_value.json.return_value = {"hits": {"hits": hits}}
+
+
+@patch(f"{MODULE}.httpx.post")
+@patch(f"{MODULE}.get_secret", return_value=SECRET_ES_URL)
+@patch(f"{MODULE}.get_model_status", return_value=MagicMock(deleted=False))
+@patch(f"{MODULE}.can_access_model", return_value=True)
+def test_newest_status_is_returned_and_every_usable_log_is_persisted(
+    mock_can_access, mock_get_model_status, mock_get_secret, mock_post, override_dependencies
+):
+    """Elasticsearch sorts newest first, so the first usable hit names the status."""
+    _elastic_returns(
+        mock_post,
+        [
+            _hit("MODEL_TRAINING_COMPLETED", "training finished", ts="2026-09-28T11:00:00Z"),
+            _hit("MODEL_TRAINING_STARTED", "client started", ts="2026-09-28T10:00:00Z", trust="Trust_1"),
+        ],
+    )
+
+    response = client.get(f"/api/model/{test_model_id}/training/log")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"modelStatus": "MODEL_TRAINING_COMPLETED"}
+    override_dependencies.execute.assert_called_once()
+    statement, params = override_dependencies.execute.call_args.args
+    assert "INSERT INTO fl_logs" in str(statement)
+    assert "ON CONFLICT DO NOTHING" in str(statement)
+    assert params == {
+        "model0": str(test_model_id),
+        "date0": "2026-09-28T11:00:00Z",
+        "success0": True,
+        "trust0": "",
+        "log0": "training finished",
+        "model1": str(test_model_id),
+        "date1": "2026-09-28T10:00:00Z",
+        "success1": True,
+        "trust1": "Trust_1",
+        "log1": "client started",
+    }
+
+
+@pytest.mark.parametrize(
+    ("message", "success"),
+    [("returned status: dead", False), ("trust exception: imaging-api unreachable", True)],
+    ids=["dead-client", "trust-exception"],
+)
+@patch(f"{MODULE}.httpx.post")
+@patch(f"{MODULE}.get_secret", return_value=SECRET_ES_URL)
+@patch(f"{MODULE}.get_model_status", return_value=MagicMock(deleted=False))
+@patch(f"{MODULE}.can_access_model", return_value=True)
+def test_a_failed_client_marks_the_model_errored(
+    mock_can_access, mock_get_model_status, mock_get_secret, mock_post, message, success, override_dependencies
+):
+    _elastic_returns(mock_post, [_hit("MODEL_TRAINING_STARTED", message, trust="Trust_1")])
+
+    response = client.get(f"/api/model/{test_model_id}/training/log")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"modelStatus": "ERROR"}
+    assert override_dependencies.execute.call_args.args[1]["success0"] is success
+
+
+@patch(f"{MODULE}.httpx.post")
+@patch(f"{MODULE}.get_secret", return_value=SECRET_ES_URL)
+@patch(f"{MODULE}.get_model_status", return_value=MagicMock(deleted=False))
+@patch(f"{MODULE}.can_access_model", return_value=True)
+def test_logs_without_a_timestamp_status_or_model_are_skipped(
+    mock_can_access, mock_get_model_status, mock_get_secret, mock_post, override_dependencies
+):
+    _elastic_returns(
+        mock_post,
+        [
+            _hit("MODEL_TRAINING_STARTED", "no timestamp", ts=None),
+            _hit(None, "no status"),
+            _hit("MODEL_TRAINING_STARTED", "no model", model=None),
+        ],
+    )
+
+    response = client.get(f"/api/model/{test_model_id}/training/log")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == "No status found in logs."
+    override_dependencies.execute.assert_not_called()
+
+
+@patch(f"{MODULE}.httpx.post")
+@patch(f"{MODULE}.get_secret", return_value=SECRET_ES_URL)
+@patch(f"{MODULE}.get_model_status", return_value=MagicMock(deleted=False))
+@patch(f"{MODULE}.can_access_model", return_value=True)
+def test_no_hits_is_not_found(mock_can_access, mock_get_model_status, mock_get_secret, mock_post):
+    _elastic_returns(mock_post, [])
+
+    response = client.get(f"/api/model/{test_model_id}/training/log")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == "No logs found."
+
+
+@pytest.mark.parametrize("model_status", [None, MagicMock(deleted=True)], ids=["missing", "deleted"])
+@patch(f"{MODULE}.get_model_status")
+@patch(f"{MODULE}.can_access_model", return_value=True)
+def test_unknown_or_deleted_model_is_not_found(mock_can_access, mock_get_model_status, model_status):
+    mock_get_model_status.return_value = model_status
+
+    response = client.get(f"/api/model/{test_model_id}/training/log")
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == f"Model ID: {test_model_id} does not exist."
+
+
+@patch(f"{MODULE}.get_secret", return_value=None)
+@patch(f"{MODULE}.get_model_status", return_value=MagicMock(deleted=False))
+@patch(f"{MODULE}.can_access_model", return_value=True)
+def test_missing_elasticsearch_url_is_a_server_error(mock_can_access, mock_get_model_status, mock_get_secret):
+    response = client.get(f"/api/model/{test_model_id}/training/log")
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert response.json()["detail"] == "Elasticsearch URL not found."

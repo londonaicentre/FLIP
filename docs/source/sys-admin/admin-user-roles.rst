@@ -6,7 +6,7 @@ User Roles
 
 .. note::
 
-   The Admin Area assigns **one role per user** — ``admin``, ``researcher`` or ``viewer`` — and re-assigning a role replaces the one held rather than adding to it. The ``admin`` role already includes every ``researcher`` capability, so administrators do not need additional role grants to perform researcher actions. Where a user does hold more than one role, their effective permissions are the union of the permissions each role grants.
+   The Admin Area assigns **one role per user** — ``admin``, ``researcher``, ``viewer`` or ``trust admin`` — and re-assigning a role replaces the one held rather than adding to it. The ``admin`` role already includes every ``researcher`` capability, so administrators do not need additional role grants to perform researcher actions. Where a user does hold more than one role, their effective permissions are the union of the permissions each role grants.
 
 .. list-table::
    :widths: 5 90
@@ -15,7 +15,7 @@ User Roles
    * - Role
      - Description
    * - ``admin``
-     - Grants all platform permissions including; project approval, unstaging projects, deleting any project, managing deployments (deployment mode), managing the site banner, user management, accessing the admin panel, and all ``researcher`` capabilities.
+     - Grants all platform permissions including; project approval at every trust that has no Trust Admin, unstaging projects, deleting any project, managing deployments (deployment mode), managing the site banner, user management, accessing the admin panel, and all ``researcher`` capabilities.
    * - ``researcher``
      - Allows a user to create and manage FLIP projects.
 
@@ -23,6 +23,12 @@ User Roles
        - **On projects they have been added to as a member (via a** ``ProjectUserAccess`` **record) but do not own:** Researchers may contribute their own models — creating models, uploading files for those models, and initiating training — but they cannot edit, stage, or delete the project itself, nor modify models created by other Researchers.
    * - ``viewer``
      - Provides read-only access to assigned projects. Viewers can view project details, cohort query results, model metrics and training results, and download model results. Viewers cannot create or edit projects, run or save cohort queries, create or edit models, upload model files, or initiate training.
+   * - ``trust admin``
+     - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the role is assigned (see :ref:`assigning-a-trust-admin`).
+
+       - **Who decides a trust:** while a trust has at least one Trust Admin, only its Trust Admins approve or decline projects staged at it — an ``admin`` no longer can. A trust with no Trust Admin is decided by an ``admin``, as before.
+       - **Seeing what they decide:** a Trust Admin can view any project staged at their trust — its details, cohort query and results, the list of its models and imaging status — even one they are not a member of. They cannot edit, stage or delete it or add models to it; the models' own pages (metrics, logs, results) stay with the project's members; and they see nothing of projects staged only at other trusts.
+       - Decisions are made from the **My Trust** page (see :ref:`trust-admin-guide`).
 
 ***********
 Permissions
@@ -31,53 +37,72 @@ Permissions
 The following table summarises the permissions assigned to each role:
 
 .. list-table::
-   :widths: 40 10 10 10
+   :widths: 40 10 10 10 10
    :header-rows: 1
 
    * - Permission
      - Admin
      - Researcher
      - Viewer
+     - Trust Admin
    * - Access admin panel
      - Yes
      - No
      - No
-   * - Approve projects
+     - No
+   * - Approve or decline projects
+     - At trusts with no Trust Admin
+     - No
+     - No
+     - At their own trust
+   * - View projects staged at their trust (read-only)
      - Yes
      - No
      - No
+     - Yes
    * - Unstage projects
      - Yes
+     - No
      - No
      - No
    * - Delete any project
      - Yes
      - No
      - No
+     - No
    * - Manage deployments (deployment mode)
      - Yes
+     - No
      - No
      - No
    * - Manage site banner
      - Yes
      - No
      - No
+     - No
    * - Manage users
      - Yes
+     - No
      - No
      - No
    * - Create projects; manage projects they own (edit, stage, delete, train); contribute models and train on projects they are a member of
      - Yes
      - Yes
      - No
+     - Yes
    * - Manage all projects (bypasses the per-project ownership/membership check)
      - Yes
+     - No
      - No
      - No
 
 .. note::
 
    Viewers have no explicit permissions. Their read-only access to projects is granted through project user access records (i.e., being added to a project by its owner or an admin).
+
+.. note::
+
+   A Trust Admin is stored as two grants: the platform-wide ``researcher`` role, and the Trust Admin role held **at one trust**. The trust grant confers nothing anywhere else, so a Trust Admin of one trust has no say over another trust's projects. Each change to who is a trust's Trust Admin is written to that trust's audit log.
 
 .. note::
 

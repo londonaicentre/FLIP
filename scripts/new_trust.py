@@ -30,7 +30,6 @@ import argparse
 import sys
 from pathlib import Path
 
-
 # Kit-file env suffix → the PROD flag that selects it (root Makefile ENV / deploy
 # Makefile KIT_ENV_SUFFIX). Suffixes that spell their own flag are absent.
 _PROD_FLAG_FOR_ENV = {"production": "true", "lza-prod": "lza"}

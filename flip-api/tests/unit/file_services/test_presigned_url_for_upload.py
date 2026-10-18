@@ -99,9 +99,7 @@ def test_endpoint_returns_403_when_user_cannot_modify_model(
     mock_s3_client.get_put_presigned_post.assert_not_called()
 
 
-def test_endpoint_returns_404_when_model_missing(
-    override_auth_dependencies, mocked_settings, mock_s3_client
-):
+def test_endpoint_returns_404_when_model_missing(override_auth_dependencies, mocked_settings, mock_s3_client):
     mock_session = override_auth_dependencies
     mock_session.exec.return_value.first.return_value = None  # model not found
 
@@ -182,9 +180,7 @@ def test_endpoint_omits_content_type_when_client_does_not_supply_one(
     )
 
 
-def test_endpoint_returns_500_when_s3_client_raises(
-    override_auth_dependencies, mocked_settings, mock_s3_client
-):
+def test_endpoint_returns_500_when_s3_client_raises(override_auth_dependencies, mocked_settings, mock_s3_client):
     mock_session = override_auth_dependencies
     _existing_model(mock_session)
     mock_s3_client.get_put_presigned_post.side_effect = Exception("boom")
@@ -201,9 +197,7 @@ def test_endpoint_returns_500_when_s3_client_raises(
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
 
-def test_endpoint_returns_422_for_non_uuid_model_id(
-    override_auth_dependencies, mocked_settings, mock_s3_client
-):
+def test_endpoint_returns_422_for_non_uuid_model_id(override_auth_dependencies, mocked_settings, mock_s3_client):
     response = client.post(
         "/api/files/preSignedUrl/model/not-a-uuid",
         json={"fileName": "weights.pt"},
@@ -213,9 +207,7 @@ def test_endpoint_returns_422_for_non_uuid_model_id(
     mock_s3_client.get_put_presigned_post.assert_not_called()
 
 
-def test_endpoint_rejects_path_traversal_filename(
-    override_auth_dependencies, mocked_settings, mock_s3_client
-):
+def test_endpoint_rejects_path_traversal_filename(override_auth_dependencies, mocked_settings, mock_s3_client):
     """The ``fileName`` validator must short-circuit before any S3 call."""
     response = client.post(
         f"/api/files/preSignedUrl/model/{_MODEL_ID}",
@@ -254,9 +246,7 @@ def test_endpoint_success_path_does_not_log_signed_url(
     _assert_logs_have_no_presigned_url(caplog.records)
 
 
-def test_endpoint_redacts_url_when_s3_raises(
-    caplog, override_auth_dependencies, mocked_settings, mock_s3_client
-):
+def test_endpoint_redacts_url_when_s3_raises(caplog, override_auth_dependencies, mocked_settings, mock_s3_client):
     """If ``S3Client.get_put_presigned_post`` raises with a URL embedded in the
     exception message, the route's error handler must not leak it to the log.
 
@@ -282,9 +272,7 @@ def test_endpoint_redacts_url_when_s3_raises(
     _assert_logs_have_no_presigned_url(caplog.records)
 
 
-def test_endpoint_redacts_url_when_unhandled_error(
-    caplog, override_auth_dependencies, mocked_settings, mock_s3_client
-):
+def test_endpoint_redacts_url_when_unhandled_error(caplog, override_auth_dependencies, mocked_settings, mock_s3_client):
     """The outer ``except Exception`` must not leak a URL via ``logger.error``.
 
     Force the access check to raise with a URL in the message — without the

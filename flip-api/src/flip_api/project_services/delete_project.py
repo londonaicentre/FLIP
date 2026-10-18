@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_modify_project
@@ -33,7 +33,6 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
     response_model=None,
 )
 def delete_project_endpoint(
-    request: Request,
     project_id: UUID = Path(..., description="The ID of the project to delete."),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
@@ -42,7 +41,6 @@ def delete_project_endpoint(
     Deletes a project with the provided ID.
 
     Args:
-        request (Request): FastAPI request object.
         project_id (UUID): The ID of the project to delete.
         user_id (UUID): The ID of the user making the request.
         db (Session): The database session.
@@ -82,7 +80,7 @@ def delete_project_endpoint(
     logger.debug(f"Project models to be deleted: {project_models}")
 
     for model in project_models.data:
-        abort_model_training(request=request, model_id=model.id, session=db)
+        abort_model_training(model_id=model.id, session=db)
 
     # Call delete project service
     delete_project(project_id, user_id, db)

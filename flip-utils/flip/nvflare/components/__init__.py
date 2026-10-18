@@ -19,7 +19,7 @@ Exports:
     - ClientEventHandler: Client-side event handler
     - ServerEventHandler: Server-side event handler
     - PTModelLocator: PyTorch model locator
-    - InitialPTModelLocator: PyTorch model locator for initial models with safehouse fallback
+    - InitialPTModelLocator: PyTorch model locator for initial models
     - EvaluationModelLocator: Single-model checkpoint locator for Client-API evaluation (standard interface)
     - InitialCheckpointPTModelPersistor: Seeds the initial global model from a server-side backbone checkpoint
     - KeepOnlyVars: Include-only DXO filter (keep matching weights) — head-only per-round updates

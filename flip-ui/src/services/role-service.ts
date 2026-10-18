@@ -22,6 +22,9 @@ export interface IRole {
     roledescription: string,
 }
 
+/** The trust-scoped role (FLIP#1258): Researcher access plus one trust's project decisions. */
+export const TRUST_ADMIN_ROLE_NAME = "Trust Admin";
+
 export interface IRoleResponse {
     roles: IRole[]
 }

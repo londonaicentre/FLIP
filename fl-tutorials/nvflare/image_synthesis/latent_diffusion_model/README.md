@@ -2,13 +2,13 @@
 
 This tutorial trains a two-stage latent diffusion model (a variational autoencoder with a GAN
 discriminator, then a diffusion model over the frozen autoencoder's latent space) using the
-**NVFLARE Client API** (`nvflare.client`). The job is defined entirely in Python via
+**FLARE Client API** (`nvflare.client`). The job is defined entirely in Python via
 `FlipDiffusionRecipe` — no hand-written JSON configs required. The code is entirely based on
 `MONAI` functions.
 
 It replaced the retired Executor-API tutorial of the same name (removed along with the other
-legacy-syntax NVFLARE tutorials). The training and validation maths are identical to that legacy
-flow; what changed is the NVFLARE plumbing — noted here for anyone migrating an old app:
+legacy-syntax FLARE tutorials). The training and validation maths are identical to that legacy
+flow; what changed is the FLARE plumbing — noted here for anyone migrating an old app:
 
 - **One client script serves four task names.** The job's two training phases (`train_ae`,
   `train_dm`) and two cross-site validation passes (`validate_ae`, `validate_dm`) all run through a
@@ -41,7 +41,7 @@ epochs per round).
 
 Unlike most tutorials, this one needs `torchvision` at runtime: the perceptual loss uses `lpips`,
 which calls `torchvision.ops` operators (e.g. `nms`). Those must be built against the **same
-torch** as the `flare-fl-base` image (pinned `torch>=2.11`, cu128, in
+torch** as the `flare-fl-base` image (pinned `torch>=2.13`, cu130, in
 [`flip-utils/pyproject.toml`](../../../../flip-utils/pyproject.toml)). A base image whose
 `torchvision` predates that pin fails at runtime with
 `RuntimeError: operator torchvision::nms does not exist`. (The `app_files/requirements.txt` lists
@@ -83,7 +83,7 @@ runtime via `load_query()`.
 
 ### Export (primary — no GPU needed)
 
-Produces a complete NVFLARE job directory under `./fl_job/flip_diffusion/` including:
+Produces a complete FLARE job directory under `./fl_job/flip_diffusion/` including:
 - `meta.json` with `custom_props.model_id` (dev UUID for local use)
 - `app/config/config_fed_server.json` and `config_fed_client.json`
 - `app/custom/` with the bundled `flip/` package and all user app files staged alongside it

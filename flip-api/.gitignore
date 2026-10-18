@@ -59,3 +59,6 @@ cypress/build/*
 builds/
 
 coverage
+
+# Demo-video recorder output (tests/demo_video.py: segment mp4s, state.json, the final cut)
+demo-video/

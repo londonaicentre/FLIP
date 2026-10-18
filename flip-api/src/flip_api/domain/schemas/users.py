@@ -15,10 +15,23 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
+class ITrustAdminOf(BaseModel):
+    """The trust a Trust Admin administers (FLIP#1258)."""
+
+    id: UUID
+    code: str | None = None
+    name: str
+
+
 class UserPermissionsResponse(BaseModel):
     """Response model for user permissions."""
 
     permissions: list[str] = Field(..., description="List of permissions assigned to the user.")
+    trust_admin_of: ITrustAdminOf | None = Field(
+        default=None, alias="trustAdminOf", description="The trust the user administers, if they are a Trust Admin."
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class Disabled(BaseModel):
@@ -96,3 +109,5 @@ class IUser(CognitoUser):
     """Model for user data."""
 
     roles: list[IRole]
+    # A Trust Admin is listed with that one role, and the trust they administer (FLIP#1258).
+    trust_admin_of: ITrustAdminOf | None = Field(default=None, alias="trustAdminOf")

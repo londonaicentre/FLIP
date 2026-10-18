@@ -22,6 +22,17 @@ describe("RoleBadge", () => {
         expect(wrapper.text()).toContain("Researcher");
     });
 
+    it("appends the suffix after a separator when one is given", () => {
+        const wrapper = mount(RoleBadge, {
+            props: {
+                roleName: "Trust Admin",
+                suffix: "DTA"
+            }
+        });
+
+        expect(wrapper.text()).toContain("Trust Admin · DTA");
+    });
+
     it("colour-codes the badge by role", () => {
         const admin = mount(RoleBadge, { props: { roleName: "Admin" } });
         const viewer = mount(RoleBadge, { props: { roleName: "Viewer" } });

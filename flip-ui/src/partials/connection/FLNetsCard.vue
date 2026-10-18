@@ -117,7 +117,18 @@
                                         </span>
                                     </span>
                                 </li>
-                                <li v-if="!net.clients" class="h-full">
+                                <li v-if="net.online === false" class="h-full" data-test="net-offline">
+                                    <div
+                                        class="flex flex-col items-center justify-center h-full px-4 py-4 text-center"
+                                    >
+                                        <icon-ph-plugs-duotone
+                                            class="w-16 h-16 text-red-900/70 dark:text-red-400"
+                                        />
+                                        {{ net.name }} is offline: the hub got no status from its FL server, or no
+                                        clients are connected.
+                                    </div>
+                                </li>
+                                <li v-else-if="!net.clients?.length" class="h-full">
                                     <div
                                         class="flex flex-col items-center justify-center h-full px-4 py-4"
                                     >
@@ -195,7 +206,7 @@ const sortedClients = (clients: IFLStatusClients[]): IFLStatusClients[] =>
     [...(clients ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 
 const formatBackend = (backend: "nvflare" | "flower") =>
-    backend === "nvflare" ? "NVFlare" : "Flower";
+    backend === "nvflare" ? "FLARE" : "Flower";
 
 const setAndShowDetails = async (netName: string) => {
     showDetails.value = true;
@@ -210,6 +221,9 @@ const setAndShowDetails = async (netName: string) => {
 
 };
 
-const healthyPlatform = computed(() => flStatus?.value?.every(a => a.clients.every(b => b.online)));
+// A net the hub reports offline arrives with clients=[], so checking clients alone is vacuously
+// true for it; the net's own flag has to count too.
+const healthyPlatform = computed(() =>
+    flStatus?.value?.every(net => net.online !== false && net.clients.every(client => client.online)));
 
 </script>

@@ -31,6 +31,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Args:
         app (FastAPI): The FastAPI application instance being started.
+
+    Yields:
+        None: Control to the running application until shutdown.
     """
     reset_dead_background_tasks()
     background_tasks = [

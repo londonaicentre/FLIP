@@ -8,7 +8,7 @@ This page provides a quick-reference guide to both interactions with the XNAT UI
 
 `XNAT <https://www.xnat.org/>`_ is an open-source imaging informatics software platform dedicated to imaging-based research. XNAT's core functions manage importing, archiving, processing and securely distributing imaging and related study data. Detailed documentation on how to use XNAT is `provided on their wiki <https://wiki.xnat.org/documentation/how-to-use-xnat>`_.
 
-Upon FLIP project approval, XNAT project creation tasks are queued for each trust. Trusts poll for these tasks and create the XNAT projects locally. Relevant imaging data is then retrieved from the trust's PACS (see :doc:`PACS <component-pacs>`). Model developers are granted access to the XNAT project at each trust in order to perform any data preparation and enrichment activities which may be necessary for the running & training of AI models.
+Upon FLIP project approval, XNAT project creation tasks are queued for each trust that has approved the project; a trust that approves later gets its task when it approves. Trusts poll for these tasks and create the XNAT projects locally. Relevant imaging data is then retrieved from the trust's PACS (see :doc:`PACS <component-pacs>`). Model developers are granted access to the XNAT project at each trust in order to perform any data preparation and enrichment activities which may be necessary for the running & training of AI models.
 
 *******
 XNAT UI
@@ -189,27 +189,48 @@ The default script performs only basic label mapping:
 FLIP Anonymization Script
 =========================
 
-FLIP replaces the default script with a site-wide anonymization script (``anon_script.das``) that removes considerably more PHI than the XNAT default, including:
+FLIP replaces the default script with a site-wide anonymization script (``anon_script.das``) built from DICOM PS3.15 Table E.1-1, the list of attributes the Basic Application Level Confidentiality Profile acts on (2026d edition). It takes none of the profile's options, so it:
 
-- **Patient identifiers**: birth date, address, telephone numbers, other patient IDs
-- **Institutional identifiers**: institution name, address, department
-- **Physician/operator identifiers**: referring, performing, and requesting physicians
-- **Other identifying tags**: accession number, medical record locator, ethnic group, occupation
-- **UID pseudonymization**: study and series instance UIDs are hashed for repeatable pseudonymization
-- **De-identification recording**: sets ``Patient Identity Removed`` and ``De-identification Method`` tags
+- **Removes every attribute in the table**, wherever it occurs, including inside sequences. That covers names, IDs and addresses, the accession number, dates and times, the patient's age, sex, size and weight, free-text descriptions and comments, device and institution identifiers, overlays and curves, and whole sequences such as Original Attributes Sequence and Request Attributes Sequence. Where the table says to empty an attribute or give it a dummy value, the script removes it.
+- **Removes every vendor private tag**, at any depth.
+- **Replaces Patient Name and Patient ID** with the XNAT subject label, a random UUID for each import, and removes their nested copies.
+- **Hashes every single-valued UID** at the top level, repeatably, so the objects of one study still reference each other. Copies inside sequences are removed instead, because DicomEdit cannot assign to an attribute there; so are the three multi-valued UID attributes, which ``hashUID`` does not take.
+- **Records de-identification**: sets ``Patient Identity Removed`` to ``YES``, and a ``De-identification Method`` that states where the script falls short of PS3.15.
 
-The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``.
+Dates, times and patient characteristics are not needed in the images: OMOP holds them. FL code joins an image to its OMOP row through the accession number it asked imaging-api for, never through the DICOM headers.
+
+The script is configured automatically during XNAT initialization via ``configure-xnat.sh``. It is applied to all incoming DICOM data when the SCP receiver has ``anonymizationEnabled`` set to ``true``. A copy of the table lives in ``trust/xnat/tests/ps315_table_e1_1.csv``, and a test fails when the script does not handle a row of it.
+
+XNAT names each archived file from the header as it arrived, before the script runs, and its default name starts with the original Study Instance UID. Those names reach the FL client, which unpacks its downloads as they are. ``configure-xnat.sh`` therefore sets the site's ``dicomFileNameTemplate`` to the series number, the instance number and a hash of the SOP Class and Instance UIDs, so ``<original Study Instance UID>-602172-1-1a8m7ai.dcm`` is archived as ``602172-1-1a8m7ai.dcm``. Files archived before the setting keep their old names.
 
 Limits of the profile
 ^^^^^^^^^^^^^^^^^^^^^
 
-The script is a denylist: 28 removal rules naming specific tags. It removes what it enumerates, and anything unenumerated survives. Three boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
+The script is not a conformant PS3.15 profile. Five boundaries are worth stating explicitly, because a trust connecting a real PACS (see :doc:`component-pacs`) sends this script real patient data rather than the synthetic studies it has been exercised against:
 
-- **Vendor private tags are not removed.** Real PACS populate these heavily and they routinely carry identifiers. No rule in the script reaches them.
-- **Dates are not shifted or removed.** Only patient birth date and time are dropped; study, series and acquisition dates pass through unchanged.
+- **It removes where the profile empties.** Some attributes the table empties, such as Study Date and Patient's Sex, are ones a DICOM object must carry. Without them a strict validator reports the object as non-conformant; XNAT, viewers and dcm2niix accept it.
+- **Nested UIDs are removed, not replaced.** A reference held inside a sequence, such as a segmentation's link to the image it was drawn on, no longer resolves. ``hashUID`` is also unkeyed, so anyone holding an original UID can recompute its hash, and the hash in each archived file's name.
+- **The accession number is still the XNAT session label**, and the name of the folder FL code receives each study in. The headers no longer carry it. Replacing it with a per-project pseudonym is tracked in `FLIP#1541 <https://github.com/londonaicentre/FLIP/issues/1541>`__.
 - **Burned-in annotation is untouched.** Identifiers rendered into pixel data are beyond the reach of any header rule.
+- **Faces are untouched.** A recognisable face can be rendered from the pixel data of a head CT or MRI. See :ref:`dicom-defacing` below.
 
-The script nevertheless sets ``Patient Identity Removed`` to ``YES`` on every object it processes. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Declaring a DICOM PS3.15 confidentiality profile, with coded ``De-identification Method Code Sequence`` values, is tracked as separate work.
+The script sets ``Patient Identity Removed`` to ``YES`` on every object it processes, and ``De-identification Method`` lists where it falls short. That assertion is only as strong as the rules above, so a trust connecting a real PACS should review the profile against its own information-governance requirements rather than read the tag as an assurance. Closing the remaining gaps to the PS3.15 Basic Profile is tracked in `FLIP#1513 <https://github.com/londonaicentre/FLIP/issues/1513>`__.
+
+What the images lose:
+
+- **Vendor fields dcm2niix reads** for Siemens mosaic images (fMRI, diffusion), for diffusion directions, and for Philips' precise intensity scaling, which are private tags. CT, X-ray and structural MR convert without them.
+- **The descriptive parts of NIfTI file names.** With no Protocol Name and no acquisition time, a CT series that converted as ``input_CT_Spleen_20140510112057_1.nii.gz`` now converts as ``input_000000_1.nii.gz``. The ``input_`` prefix, the series number, the voxels and the geometry are unchanged, so select scans by series number, not by name.
+
+.. _dicom-defacing:
+
+De-facing (future work)
+^^^^^^^^^^^^^^^^^^^^^^^
+
+FLIP does not de-face images today. A possible future addition (`FLIP#1514 <https://github.com/londonaicentre/FLIP/issues/1514>`__) is an XNAT Container Service command that removes the face from head CT. An XNAT admin would enable it only for the projects that need it, then run it over a project from XNAT's **Run Containers** launcher. Candidate tools:
+
+- **TotalSegmentator's** ``face`` **task** (`TotalSegmentator <https://github.com/wasserth/TotalSegmentator>`__) is built for anonymisation. It is a licensed task: free for non-commercial use, with a commercial licence available from its author.
+- **CTA-DEFACE** (`CTA-DEFACE <https://github.com/neuroAI-HD/CTA-DEFACE>`__) is a deep-learning de-facing model for CT. Its repository publishes no licence.
+- **An openly licensed fallback.** TotalSegmentator's open model finds the brain and skull, then a `quickshear <https://github.com/nipy/quickshear>`__-style plane cut blanks everything in front of and below the brain. It removes more than the face, but carries no licence fees.
 
 Anonymize API Endpoints
 =======================
@@ -239,7 +260,7 @@ DICOM to NIfTI Conversion
 
 XNAT can automatically convert DICOM images to NIfTI format using the ``dcm2niix`` tool via the Container Service plugin. The converter runs from FLIP's version-pinned image ``ghcr.io/londonaicentre/xnat-dcm2niix`` (built from ``trust/xnat/dcm2niix/``; never a mutable ``latest`` tag — the previously used Docker Hub ``xnat/dcm2niix:latest`` resolved to a stale 2021 build that silently dropped slices from valid series). On the Docker/swarm backend the setup script also registers ``ghcr.io`` as a credential-less Container Service *image host*: without an image-host entry matching the image's registry hostname, container-service 3.8.1's swarm launch path fails with a ``NullPointerException`` before any container exists, even for a public image (the Kubernetes backend pulls via kubelet and does not need the entry). FLIP controls this conversion on a per-project basis through two XNAT mechanisms:
 
-The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — the same listing imaging-api returns when no command matches the image it requests — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) re-registers against the current pin.
+The pinned image is recorded in XNAT's own database when the command is registered, not read from the repository at run time, so an XNAT provisioned before a pin bump keeps converting with the superseded image and reports itself healthy. The pin-sync check compares repository files only and cannot detect this. ``GET /xapi/commands`` lists the ``name -> image`` pairs a deployment actually holds — imaging-api refuses to create a project's trigger on a ``dcm2niix-scan`` wrapper that runs another image and names both images — and re-running ``configure-dcm2niix.sh`` (or the ``xnat-init`` job on Kubernetes) moves the command to the current pin. Both update the existing command in place (``POST /xapi/commands/{id}``), which keeps its command and wrapper ids: every project's trigger names the wrapper by id, so a delete and re-register would silently stop every existing project converting (FLIP#1451).
 
 Commands vs Event Subscriptions
 ================================
@@ -257,6 +278,8 @@ When a FLIP project is created, the ``dicom_to_nifti`` setting controls the even
 - **Disabled** (``dicom_to_nifti=False``): An inactive event subscription is created. No automatic conversion occurs, but ``dcm2niix`` can still be triggered manually from the XNAT UI if needed.
 
 The event subscription can be activated or deactivated later via the XNAT Event Service API.
+
+The subscription's action key names the dcm2niix *wrapper* by id, as XNAT lists it at ``GET /xapi/events/allactions``. Redeploying keeps that id, because the command is updated in place. A subscription fires on new scans only; scans archived while it was missing or invalid are converted with ``reconvert-nifti`` (``trust/deploy/helm/TROUBLESHOOTING.md`` §2.3e).
 
 A project created with 'Includes imaging data' turned off (``has_imaging=False``) never reaches XNAT at all: the Central Hub skips the imaging stage at approval, so no XNAT project, event subscription or PACS pull is created at any trust.
 
@@ -287,6 +310,12 @@ The following XNAT Event Service API endpoints are used by FLIP for managing per
     * - POST
       - ``/xapi/projects/{project}/events/subscription/{id}/deactivate``
       - Deactivates an active subscription
+    * - GET
+      - ``/xapi/events/allactions``
+      - Lists the action key of every command wrapper (imaging-api reads dcm2niix's from it)
+    * - PUT
+      - ``/xapi/events/subscription/{id}``
+      - Re-points a subscription at the current dcm2niix wrapper (the configure step, admin only)
 
 *****************
 FLIP XNAT methods

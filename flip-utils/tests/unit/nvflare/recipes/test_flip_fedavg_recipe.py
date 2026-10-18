@@ -81,7 +81,7 @@ class TestFlipFedAvgRecipe:
         assert cfg.off is False
 
     def test_default_train_args_have_no_whitespace_values(self):
-        """NVFlare's TaskScriptRunner whitespace-splits task_script_args, so any FLIP-API
+        """FLARE's TaskScriptRunner whitespace-splits task_script_args, so any FLIP-API
         placeholder we pass via that channel must substitute into a single token. The default
         keeps only ``--project_id`` (a UUID) for this reason; the SQL query is plumbed via
         the client config's top-level ``query`` key instead."""
@@ -90,7 +90,7 @@ class TestFlipFedAvgRecipe:
         assert recipe.train_args == "--project_id {project_id}"
 
     def test_export_writes_fed_job_layout(self, tmp_path: Path):
-        """``recipe.export`` produces the standard NVFLARE FedJob layout under ``<job_dir>``.
+        """``recipe.export`` produces the standard FLARE FedJob layout under ``<job_dir>``.
 
         Uses a real ``nn.Linear`` stub for ``models.get_model`` because PTFileModelPersistor
         round-trips its ``model`` arg via FedJob's JSON serialiser at export time.

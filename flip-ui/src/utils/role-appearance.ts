@@ -17,13 +17,14 @@ import { getInitials } from "@/utils/helpers";
  * Role colour-coding for the admin user-management screens.
  *
  * Roles arrive from the API as free-text names (`Admin`, `Researcher`, ...), so
- * tones are keyed by role name rather than by id. FLIP ships three roles today;
- * `purple` and `navy` are held in reserve for future roles and reached via a
- * deterministic fallback so any new role always renders a stable colour.
+ * tones are keyed by role name rather than by id. `purple` and `navy` are held in
+ * reserve for future roles and reached via a deterministic fallback so any new
+ * role always renders a stable colour. `gold` — the brand yellow — is Trust
+ * Admin's alone (FLIP#1258) and never a fallback.
  */
 
-/** The five role tones from the design handoff. */
-export type RoleToneName = "magenta" | "purple" | "steel" | "navy" | "gray";
+/** The five role tones from the design handoff, plus the brand gold for Trust Admin. */
+export type RoleToneName = "magenta" | "purple" | "steel" | "navy" | "gray" | "gold";
 
 /** A single role tone: foreground (text + dot), background tint and avatar ring. */
 export interface RoleTone {
@@ -58,6 +59,12 @@ export const ROLE_TONES: Record<RoleToneName, RoleTone> = {
         fg: "#4B5563",
         bg: "#F3F4F6",
         ring: "#E5E7EB"
+    },
+    // Brand yellow (AI Centre palette): soft gold fill, the gold ramp's dark text for contrast, bright gold ring.
+    gold: {
+        fg: "#523D05",
+        bg: "#FFD987",
+        ring: "#F4BE1D"
     }
 };
 
@@ -67,6 +74,7 @@ const NAMED_ROLE_TONES: Record<string, RoleToneName> = {
     "administrator": "magenta",
     "researcher": "steel",
     "viewer": "gray",
+    "trust admin": "gold",
     "manager": "purple",
     "project manager": "purple",
     "trust liaison": "navy"

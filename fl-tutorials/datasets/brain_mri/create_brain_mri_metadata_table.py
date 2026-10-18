@@ -172,9 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     table.to_csv(args.output, index=False)
     studies = table.drop_duplicates("AccessionNumber")
     per_trust = studies["source_trust"].value_counts().sort_index().to_dict()
-    print(
-        f"✅ {len(table)} series / {len(studies)} studies → {args.output} (studies per trust: {per_trust})"
-    )
+    print(f"✅ {len(table)} series / {len(studies)} studies → {args.output} (studies per trust: {per_trust})")
     return 0
 
 

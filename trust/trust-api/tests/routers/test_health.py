@@ -13,12 +13,14 @@
 import asyncio
 import tomllib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from trust_api.routers.health import router
+from trust_api.services import hub_status
 from trust_api.utils.background import reset_dead_background_tasks, watch_background_task
 
 
@@ -45,11 +47,40 @@ async def test_health_check(client):
 
 
 @pytest.mark.asyncio
-async def test_health_reports_package_version(client):
+async def test_health_reports_package_version(client, monkeypatch):
     """Same contract as the sibling trust services' /health (imaging-api, data-access-api)."""
+    monkeypatch.delenv("FLIP_RELEASE", raising=False)
     response = client.get("/health/")
     assert response.status_code == 200
     assert response.json()["version"] == _pyproject_version()
+
+
+@pytest.mark.asyncio
+async def test_health_reports_what_the_hub_last_said_about_itself(client):
+    """hub_version + hub_key_match come from the last heartbeat reply (FLIP#1204); the on-prem
+    readiness checklist reads them to tell an operator their kit is stale before they upgrade."""
+    hub_status.reset()
+    body = client.get("/health/").json()
+    assert body["hub_version"] is None
+    assert body["hub_key_match"] is None
+
+    with patch("trust_api.services.hub_status.aes_key_fingerprint", return_value="abcdef012345"):
+        hub_status.record({"hub_version": "v0.7.0", "aes_key_fingerprint": "abcdef012345"})
+    body = client.get("/health/").json()
+    assert body["hub_version"] == "v0.7.0"
+    assert body["hub_key_match"] is True
+    assert body["hub_key_fingerprint"] == "abcdef012345"
+    hub_status.reset()
+
+
+@pytest.mark.asyncio
+async def test_health_reports_the_baked_release_over_the_package_version(client, monkeypatch):
+    """A CI-built image carries FLIP_RELEASE; that is the build the hub's Connection Status
+    should name, not the informational pyproject number two different builds can share (FLIP#1204)."""
+    monkeypatch.setenv("FLIP_RELEASE", "sha-abc1234")
+    response = client.get("/health/")
+    assert response.status_code == 200
+    assert response.json()["version"] == "sha-abc1234"
 
 
 @pytest.mark.asyncio

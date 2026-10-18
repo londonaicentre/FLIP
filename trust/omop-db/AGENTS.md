@@ -17,18 +17,18 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
    `volumes/Trust_<N>/db_data` (which `trust/deploy/compose_trust.<env>.yml` mounts) and
    `omop_db_tools.import_tables` then loads this trust's `source_trust` slice of the published
    per-project tables (`omop-csv/<project>/`, fetched anonymously from the public HF dataset
-   `aicentreflip/trust-data` at the tag pinned by `trust/.data_version`). No pgdata snapshot is
-   downloaded any more — `make -C trust up-trust` runs the seed at bring-up.
+   `aicentreflip/trust-data` at the tag pinned by `trust/.data_version`). Bring-up downloads no
+   pgdata snapshot — `make -C trust up-trust` runs the seed.
 
 `compose.yml` here is the **standalone build/populate stack** (one empty DB per trust + opt-in pgadmin
 profile; config from gitignored `.env.build`), NOT the runtime trust stack.
 
 ## The vocabulary seeding model (FLIP#842/#843)
 
-No published artifact (image, pgdata tarball, HF dataset) carries the licensed core vocabulary. Every
+No published artifact (image, HF dataset) carries the licensed core vocabulary. Every
 environment loads it ONCE into the running database via `files/load_core_vocab.sh` (client-side
 `COPY FROM STDIN` over TCP — no mounts, no server-side files; idempotent via core-aware guards that
-tolerate the DICOM vocab already present in the tarballs):
+tolerate the DICOM vocab the seed has already loaded):
 
 - **Dev**: `make load-omop-vocab [OMOP_DB_PORT=5436]` (after the stack is up and seeded). Cohort
   queries joining `omop.concept` return nothing until this runs.
@@ -45,7 +45,7 @@ tolerate the DICOM vocab already present in the tarballs):
 - **`trust/.data_version` is THE pin and must not move**: one value for the OMOP and Orthanc mock
   data together, a git tag on `aicentreflip/trust-data` (the dataset holds one copy of every artefact
   at an unversioned path; consumers fetch `resolve/<tag>/<path>`). Its path is hardcoded in
-  `deploy/providers/AWS/Makefile` (→ Ansible `-e trust_data_version=`), both update scripts, this
+  `deploy/providers/AWS/Makefile` (→ Ansible `-e trust_data_version=`), `trust/Makefile`, `trust/seed_trust.sh`, this
   Makefile, `seed_orthanc.py` and the spleen uploader; the Helm chart carries the same value as
   `trustData.version` (`TRUST_DATA_VERSION` in `generate_values.py`). Publish with
   `make -C trust publish-trust-data VERSION=<tag> …`, then bump the pin. Never upload a versioned
@@ -53,26 +53,25 @@ tolerate the DICOM vocab already present in the tarballs):
 - **Vocabulary licensing**: the core vocab bundle — an OHDSI Athena export, 59 vocabularies incl.
   SNOMED CT, LOINC, Read, dm+d (roster + versions in README "The core vocabulary bundle") — is licensed
   material: `data/` is gitignored and must never be committed or published. Acquisition: org members via
-  `make fetch-vocab-core` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (default `flipdev-aicentre`, org AWS
-  needed); external users self-serve an equivalent export from OHDSI Athena under their own licences.
+  `make fetch-vocab-core VOCAB_S3_BUCKET=<bucket>` from `s3://$(VOCAB_S3_BUCKET)/vocab/` (no default — a
+  deploy environment's own aicentre bucket since FLIP#1371 retired the dev-account copy; org AWS needed); external users self-serve an equivalent export from OHDSI Athena under their own licences.
   The DICOM vocab (byte-identical to DICOM2OMOP `files/OMOP CDM Staging/` @ upstream `1ef3354`, Apache
-  2.0, pickle converted to CSV) is freely redistributable: it lives on the HF dataset and stays inside
-  the published tarballs.
+  2.0, pickle converted to CSV) is freely redistributable: it lives on the HF dataset, and the seed loads it
+  before the OMOP rows.
 - **Read-only roles are a security boundary**: `files/create_readonly_users.sql` creates
   `omop_readonly_base` + `data_analyst_reader` (SELECT-only, explicit REVOKEs) — the database half of
   data-access-api's SQL-injection defence-in-depth (`data_access_api/services/cohort.py`). The analyst
   password is NOT in the image — it is set at first init from `DATA_ACCESS_POSTGRES_PASSWORD` and lives
-  in the pgdata volume; rotate via `ALTER ROLE` + kit update, or rebuild volumes with a new `.env.build`
-  value (see CONTRIBUTING.md).
+  in the pgdata volume; rotate via `ALTER ROLE` + kit update, or re-initialise the trust's data dir (and
+  its `.seeded` marker) with the new kit value (see CONTRIBUTING.md).
 - **Canonical dataset + N-trust split** (`src/omop_db_tools/dataset.py`): mock rows are ONE dataset on
-  HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it belongs to, decided by
-  the dataset's generator. Partition modes: `source_trust` (default; `legacy` is an accepted alias —
-  the old name from when the mode existed only to match the two-trust cut frozen in the Orthanc
-  tarballs) and `modulo` (`person_id % N`, only for a dataset with no partition column). The
-  partition is *data*, and the per-project DICOM sets are keyed on the same column, so OMOP and PACS
-  agree by construction (#1100). All tables carry `person_id`, so person-level partitioning preserves
-  referential integrity. `CANONICAL_TABLES` is in FK-safe order — loads as listed, cleans reversed —
-  because the seed path targets a constrained, vocab-loaded running trust.
+  HF (`omop-csv/<project>/`, read at the pinned tag), each row carrying `source_trust` — the trust it
+  belongs to, decided by the dataset's generator. Partition modes: `source_trust` (default) and `modulo`
+  (`person_id % N`, only for a dataset with no partition column). The partition is *data*, and the
+  per-project DICOM sets are keyed on the same column, so OMOP and PACS agree by construction (#1100).
+  All tables carry `person_id`, so person-level partitioning preserves referential integrity.
+  `CANONICAL_TABLES` is in FK-safe order — loads as listed, cleans reversed — because the seed path
+  targets a constrained, vocab-loaded running trust.
 - **Seeding a running trust** (#1100): `make -C trust seed KIT=<CODE> PROJECTS="…"` loads the listed
   projects' rows (`import_tables --clean projects`, by the projects' own `person_id`s — Synthea rows
   and other projects untouched, one transaction per project) and their DICOMs (`orthanc/seed_orthanc.py`)
@@ -124,7 +123,7 @@ make build                          # plain docker build — no data inputs, no 
 make up-build / down-build          # the standalone per-trust build DBs
 make populate [NUM_TRUSTS=N PARTITION=modulo]  # core vocab + DICOM vocab + N trust slices (shipped
                                                # stack is two-trust; N>2 needs a compose service + port)
-make populate CORE_VOCAB=0          # vocab-free flavour (skip apply-constraints!)
+make populate CORE_VOCAB=0          # skip the licensed core vocab (then skip apply-constraints!)
 make seed-omop TRUST_INDEX=2 OMOP_DB_PORT=5436 PROJECTS="…"  # seed a RUNNING trust; normally via `make -C trust seed KIT=…`
 make apply-constraints              # AFTER a full populate
 make push [OMOP_DB_TAG=...]         # manual publish escape hatch (CI publishes normally); confirms first
@@ -137,5 +136,5 @@ make local_test                     # ruff + mypy + pytest tests/unit (no DB nee
   and the `uv-lock` pre-commit hooks. Tests live in `tests/unit/` only — anything touching a real
   Postgres belongs in `tests/integration/` (none yet).
 - SQL identifiers interpolated into statements must pass `import_tables.validate_identifier`.
-- The vocab/dataset bundles under `data/`, exported tarballs under `dist/`, and the build env
-  (`.env.build`) are gitignored — keep it that way.
+- The vocab/dataset bundles under `data/` and the build env (`.env.build`) are gitignored — keep it
+  that way.

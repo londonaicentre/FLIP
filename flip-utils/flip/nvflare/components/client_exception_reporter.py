@@ -26,9 +26,9 @@ from flip.nvflare.runtime import get_flip_model_id
 class ClientExceptionReporter(Filter):
     """Report client task failures to the FLIP hub without changing the result.
 
-    The model ID is job-scoped data and is therefore resolved exclusively from
-    ``meta.json['custom_props']['model_id']``. The sending client is obtained
-    from NVFLARE's peer context, which is populated before server result filters
+    The model ID is job-scoped data and is therefore resolved exclusively by
+    ``get_flip_model_id``, from the app's config.json. The sending client is obtained
+    from FLARE's peer context, which is populated before server result filters
     run.
     """
 

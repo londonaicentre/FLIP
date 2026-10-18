@@ -115,13 +115,7 @@ module "fl_internal_nlb_security_group" {
       cidr_blocks = concat([local.vpc_cidr_block], var.networking_ingress_cidrs)
     }
   ]
-}
-
-resource "aws_ec2_tag" "fl_internal_nlb_security_group_flip_sg" {
-  count       = var.lza_managed_network ? 1 : 0
-  resource_id = module.fl_internal_nlb_security_group[0].security_group.id
-  key         = "FlipSG"
-  value       = "true"
+  tags = { FlipSG = "true" }
 }
 
 module "fl_server_internal_nlb" {
@@ -253,7 +247,7 @@ resource "aws_security_group_rule" "ecs_flip_api_ingress_internal_nlb" {
   security_group_id        = aws_security_group.ecs_flip_api.id
 }
 
-# The NVFLARE admin kit (provisioned from net-1_project_prod.yml) targets the
+# The FLARE admin kit (provisioned from net-1_project_prod.yml) targets the
 # bare host `fl-server-net-1` — a SAN on the server cert alongside the public
 # FQDN. Legacy resolves it through the flip.local DHCP search domain
 # (dhcp.tf), which the LZA-managed VPC cannot carry, and Fargate's awsvpc

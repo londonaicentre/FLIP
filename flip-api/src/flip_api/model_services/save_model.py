@@ -22,7 +22,7 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Model, ModelTrustIntersect, ProjectTrustIntersect
 from flip_api.domain.interfaces.model import ISaveModel
 from flip_api.domain.interfaces.shared import IId
-from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
+from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustApprovalStatus, TrustIntersectStatus
 from flip_api.utils.logger import logger
 from flip_api.utils.project_manager import get_project_by_id
 
@@ -78,7 +78,8 @@ def save_model(
     # Find approved trusts for this project
     approved_trusts = db.exec(
         select(ProjectTrustIntersect.trust_id).where(
-            ProjectTrustIntersect.project_id == payload.project_id, ProjectTrustIntersect.approved
+            ProjectTrustIntersect.project_id == payload.project_id,
+            ProjectTrustIntersect.status == TrustApprovalStatus.APPROVED,
         )
     ).all()
 

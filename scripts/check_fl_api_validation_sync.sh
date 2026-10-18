@@ -12,7 +12,7 @@
 #
 # Verify that the shared URL/path guards in the two fl-api services have not drifted.
 #
-# `safe_join` and `validate_bundle_url` are byte-identical copies in the NVFLARE and Flower
+# `safe_join` and `validate_bundle_url` are byte-identical copies in the FLARE and Flower
 # fl-api services. They are the only SSRF and path-traversal guards in front of the server-side
 # bundle fetch, so a fix applied to one copy and not the other silently leaves the second service
 # vulnerable -- which is exactly what happened with the numeric-IP bypass in FLIP#893.
@@ -36,7 +36,7 @@ FLOWER_FILE="fl-services/flower/fl-api-flower/fl_api/utils/validation.py"
 # guard is covered the moment it is copied across rather than when someone remembers to edit this
 # list -- which is the FLIP#893 failure mode one function later. Naming them here still catches the
 # opposite direction: a rename or deletion that quietly empties the computed set.
-REQUIRED_SHARED_FUNCTIONS=("safe_join" "validate_bundle_url")
+REQUIRED_SHARED_FUNCTIONS=("safe_join" "validate_bundle_url" "bundle_url_allowed_origins" "warn_if_bundle_url_allow_list_empty")
 
 status=0
 
@@ -52,7 +52,11 @@ top_level_functions() {
     sed -n 's/^def \([A-Za-z_][A-Za-z0-9_]*\).*/\1/p' "$1" | sort -u
 }
 
-mapfile -t SHARED_FUNCTIONS < <(comm -12 <(top_level_functions "$NVFLARE_FILE") <(top_level_functions "$FLOWER_FILE"))
+# A read loop, not mapfile, so the check also runs on macOS's bash 3.2.
+SHARED_FUNCTIONS=()
+while IFS= read -r fname; do
+    SHARED_FUNCTIONS+=("$fname")
+done < <(comm -12 <(top_level_functions "$NVFLARE_FILE") <(top_level_functions "$FLOWER_FILE"))
 
 for required in "${REQUIRED_SHARED_FUNCTIONS[@]}"; do
     if ! printf '%s\n' "${SHARED_FUNCTIONS[@]}" | grep -qx "$required"; then

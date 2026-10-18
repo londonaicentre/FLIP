@@ -184,7 +184,8 @@ def test_target_mode_dev_comments_hub_shared() -> None:
         content = target.read_text()
         _assert("# AES_KEY_BASE64=" in content, "hub-shared key commented in dev kit")
         live = [
-            ln for ln in content.splitlines()
+            ln
+            for ln in content.splitlines()
             if not ln.lstrip().startswith("#") and ln.split("=", 1)[0] == "AES_KEY_BASE64"
         ]
         _assert(not live, "no live hub-shared line in dev kit", str(live))

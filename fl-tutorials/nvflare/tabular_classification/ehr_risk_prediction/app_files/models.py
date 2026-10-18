@@ -11,7 +11,7 @@
 
 """Model factory for the EHR risk-prediction tutorial.
 
-Kept byte-identical between the NVFLARE and Flower copies (each sits next to its own
+Kept byte-identical between the FLARE and Flower copies (each sits next to its own
 ``config.json``) — drift-checked by ``scripts/check_tutorial_sync.sh``.
 """
 
@@ -26,7 +26,7 @@ from torch import nn
 def _n_features_from_config() -> int:
     # Sizing the input layer from config.json's FEATURES list keeps the model and the
     # feature engineering from drifting apart: adding or removing a feature is a one-place
-    # config change, and both frameworks call get_model() with no arguments (NVFLARE's
+    # config change, and both frameworks call get_model() with no arguments (FLARE's
     # PTFileModelPersistor references "models.get_model" directly).
     config_path = Path(__file__).resolve().parent / "config.json"
     with open(config_path) as fh:

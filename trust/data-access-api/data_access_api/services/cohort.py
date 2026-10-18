@@ -73,10 +73,10 @@ _VOCABULARY_PROBE = text("SELECT 1 FROM omop.concept_ancestor LIMIT 1")
 def _warn_if_vocabulary_missing() -> None:
     """Log an ERROR when a zero-row cohort is explained by an unloaded OMOP vocabulary.
 
-    The published OMOP pgdata tarballs are vocabulary-free; loading it is a separate,
-    credentialed, ~25-minute step. Until it runs, ``concept_ancestor`` is empty and every
-    cohort query matches nothing while the imaging tables look perfectly healthy — so the
-    failure reads as a bad query or a broken import rather than a missing seed step.
+    The trust-data seed loads only the free DICOM vocabulary; the licensed core vocabulary (which
+    fills ``concept_ancestor``) is a separate, credentialed, ~25-minute step. Until it runs, every
+    cohort query matches nothing while the imaging tables look perfectly healthy — so the failure
+    reads as a bad query or a broken import rather than a missing core-vocabulary load.
 
     Deliberately best-effort and side-effect-free: this runs on a path that has already
     decided its response, so a failure here must never turn a valid privacy-suppressed answer
@@ -96,7 +96,7 @@ def _warn_if_vocabulary_missing() -> None:
         "Cohort query returned 0 records AND the OMOP vocabulary is not loaded "
         "(omop.concept_ancestor is empty). Cohort queries resolve concept sets through the "
         "vocabulary, so every query on this trust will match nothing until it is loaded. "
-        "The published OMOP tarballs ship without it — run: "
+        "The licensed core vocabulary is loaded separately from the trust-data seed — run: "
         "make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=<this trust's port>. "
         "Restart this service afterwards: query results are cached, so the 0-row answer would "
         "otherwise be replayed."
@@ -415,8 +415,7 @@ def _validate_query_ast(query: str) -> str:
         function_name = function.name.lower()
         if function_name not in _ALLOWED_FUNCTIONS:
             raise _invalid_query(
-                f"'{function_name}' is not an allowed function. "
-                f"Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
+                f"'{function_name}' is not an allowed function. Allowed: {', '.join(sorted(_ALLOWED_FUNCTIONS))}."
             )
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
@@ -438,6 +437,7 @@ def _validate_query_ast(query: str) -> str:
 def get_records(
     query: str | TextClause,
     params: Mapping[str, Any] | None = None,
+    use_cache: bool = True,
 ) -> pd.DataFrame:
     """
     Executes a SQL query and returns results.
@@ -447,6 +447,10 @@ def get_records(
             parameters when the query is parameterized.
         params (Mapping[str, Any] | None): Optional mapping of bind parameter names to values
             for parameterized queries.
+        use_cache (bool): Whether a cached result may be served. Snapshot creation and the two
+            row-level routes pass False: results are cached for ``CACHE_TTL_DAYS``, so a cached
+            read would freeze, or keep serving, a patient or study since removed from OMOP (an
+            opt-out). A fresh read still updates the cache afterwards.
 
     Returns:
         pd.DataFrame: The results of the query as a DataFrame.
@@ -456,9 +460,10 @@ def get_records(
     """
     logger.info("Executing SQL query")
 
-    cached = get_cached_result(query, params)
-    if cached is not None:
-        return cached
+    if use_cache:
+        cached = get_cached_result(query, params)
+        if cached is not None:
+            return cached
 
     try:
         # TODO: Trace the query filtering to understand what the final user can see.
@@ -529,7 +534,7 @@ def get_records(
         raise HTTPException(status_code=500, detail="internal_error") from e
 
 
-def count_distinct_subjects(df: pd.DataFrame) -> int | None:
+def count_distinct_subjects(df: pd.DataFrame, use_cache: bool = True) -> int | None:
     """Returns how many distinct people a cohort covers, or None when that cannot be established.
 
     ``COHORT_QUERY_THRESHOLD`` is a floor on *individuals*: the suppression it drives exists so a
@@ -559,6 +564,7 @@ def count_distinct_subjects(df: pd.DataFrame) -> int | None:
 
     Args:
         df (pd.DataFrame): The cohort DataFrame.
+        use_cache (bool): Whether the ``accession_id`` lookup may be served from the query cache.
 
     Returns:
         int | None: Distinct subjects covered, or None when the cohort exposes no column this can
@@ -567,10 +573,49 @@ def count_distinct_subjects(df: pd.DataFrame) -> int | None:
     if SUBJECT_ID_COLUMN in df.columns:
         subjects = int(_first_column(df, SUBJECT_ID_COLUMN).nunique(dropna=True))
     elif ACCESSION_ID_COLUMN in df.columns:
-        subjects = _subjects_behind_accessions(_first_column(df, ACCESSION_ID_COLUMN))
+        subjects = _subjects_behind_accessions(_first_column(df, ACCESSION_ID_COLUMN), use_cache=use_cache)
     else:
         return None
     return min(len(df), subjects)
+
+
+def keep_imaging_accessions(df: pd.DataFrame, use_cache: bool = True) -> pd.DataFrame:
+    """Returns the rows of an accession-id cohort whose value is a real imaging accession.
+
+    ``/cohort/accession-ids`` counts its subjects through ``omop.image_occurrence``, so a value
+    that resolves to no imaging study contributes nothing to the floor. Releasing such values
+    anyway let a cohort smuggle arbitrary columns out under the ``accession_id`` alias — real
+    accessions clearing the floor, and aliased person data riding along with them — past a
+    ``cohort.dataframe`` deny (FLIP#1259). Only the values the floor counted are released. What a
+    real imaging cohort can lose is an accession the trust's PACS holds but its
+    ``omop.image_occurrence`` does not; that value never counted towards the floor either, so the
+    route stops releasing what it was not gating.
+
+    Args:
+        df (pd.DataFrame): A frame whose ``accession_id`` column holds the candidate values.
+        use_cache (bool): Whether the lookup may be served from the query cache.
+
+    Returns:
+        pd.DataFrame: The rows whose ``accession_id`` is in ``omop.image_occurrence``, in cohort
+        order, duplicates kept.
+    """
+    column = _first_column(df, ACCESSION_ID_COLUMN)
+    ids = [str(value) for value in column.dropna().unique()]
+    if not ids:
+        return df.iloc[0:0]
+
+    lookup = text("""
+    SELECT DISTINCT io.accession_id AS accession_id
+    FROM omop.image_occurrence io
+    WHERE io.accession_id IN :accession_ids
+    """).bindparams(bindparam("accession_ids", expanding=True))
+    result = get_records(query=lookup, params={"accession_ids": ids}, use_cache=use_cache)
+    if ACCESSION_ID_COLUMN not in result.columns:
+        # Cannot happen against a real database. Fails closed: nothing is known to be imaging.
+        logger.error("Imaging accession lookup returned an unexpected shape; releasing no accession ids")
+        return df.iloc[0:0]
+    known = set(result[ACCESSION_ID_COLUMN].astype(str))
+    return df[column.notna() & column.astype(str).isin(known)]
 
 
 def _first_column(df: pd.DataFrame, column: str) -> pd.Series:
@@ -589,7 +634,7 @@ def _first_column(df: pd.DataFrame, column: str) -> pd.Series:
     return selected
 
 
-def _subjects_behind_accessions(accession_ids: pd.Series) -> int:
+def _subjects_behind_accessions(accession_ids: pd.Series, use_cache: bool = True) -> int:
     """Counts the distinct people the given accession numbers belong to.
 
     Accession ids are the pointer set into imaging, so ``omop.image_occurrence`` is authoritative
@@ -598,16 +643,12 @@ def _subjects_behind_accessions(accession_ids: pd.Series) -> int:
     tabular query aliasing some other column to that name, say) counts zero subjects and is refused
     rather than waved through on its row count.
 
-    This is a second round trip on top of the cohort query itself, and ``/cohort/accession-ids`` is
-    re-polled roughly every ten seconds during an imaging pull. It is one aggregate over a list the
-    caller already materialised — a sequential scan today, since the OMOP DDL carries no index on
-    ``image_occurrence.accession_id`` — against a route that re-runs the whole cohort SQL each
-    time, so the added cost is marginal by comparison. Counting inside the route's existing wrapper
-    was the alternative and was rejected: joining ``image_occurrence`` into it would risk changing
-    which accession numbers come back, which is the one thing that route must not do.
+    It is one aggregate over a list the caller already holds — a sequential scan today, since the
+    OMOP DDL carries no index on ``image_occurrence.accession_id``.
 
     Args:
         accession_ids (pd.Series): The cohort's ``accession_id`` column.
+        use_cache (bool): Whether the lookup may be served from the query cache.
 
     Returns:
         int: Distinct ``person_id`` values behind those accession numbers.
@@ -621,7 +662,7 @@ def _subjects_behind_accessions(accession_ids: pd.Series) -> int:
     FROM omop.image_occurrence io
     WHERE io.accession_id IN :accession_ids
     """).bindparams(bindparam("accession_ids", expanding=True))
-    result = get_records(query=subject_count_query, params={"accession_ids": ids})
+    result = get_records(query=subject_count_query, params={"accession_ids": ids}, use_cache=use_cache)
     if result.empty or "subject_count" not in result.columns:
         # Cannot happen against a real database: the aggregate above always yields one labelled
         # row. Guarded anyway so an unexpected shape fails closed as "no subjects established"
@@ -819,10 +860,12 @@ def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
         unique_count = df[col].nunique()
         percentage_unique = unique_count / len(df) if len(df) > 0 else 0
         logger.info(f"Column '{col}' has {unique_count} unique values ({percentage_unique:.2%} of total)")
-        if all([
-            unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
-            percentage_unique < threshold,  # Relative threshold
-        ]):
+        if all(
+            [
+                unique_count < get_settings().COHORT_QUERY_THRESHOLD,  # Absolute threshold
+                percentage_unique < threshold,  # Relative threshold
+            ]
+        ):
             logger.info(f"Column '{col}' has insufficient unique values ({threshold=}, {unique_count=})")
             return False
     return True

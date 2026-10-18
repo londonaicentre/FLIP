@@ -22,7 +22,7 @@ from fl_api.core.dependencies import get_session
 
 @pytest.fixture(autouse=True)
 def override_session(client):
-    """Override get_session with a conditional MagicMock that matches NVFLARE behavior."""
+    """Override get_session with a conditional MagicMock that matches FLARE behavior."""
     fake_session = MagicMock()
     existing_jobs = {"1234": "some_job"}
 
@@ -44,7 +44,7 @@ def override_session(client):
         return None
 
     def list_jobs_side_effect(detailed=False, limit=None, id_prefix=None, name_prefix=None, reverse=False):
-        # mimic realistic NVFLARE output: keys are job_id/job_name, status values are RunStatus strings
+        # mimic realistic FLARE output: keys are job_id/job_name, status values are RunStatus strings
         jobs = [
             {"job_id": "1234", "job_name": "training_round_1", "status": "FINISHED:COMPLETED"},
             {"job_id": "5678", "job_name": "training_round_2", "status": "RUNNING"},

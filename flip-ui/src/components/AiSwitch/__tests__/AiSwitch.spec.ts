@@ -13,6 +13,8 @@
 
 
 
+/* eslint-disable vue/one-component-per-file -- each test mounts AiSwitch inside its own inline form harness */
+
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { Form as VeeForm } from "vee-validate";
@@ -122,7 +124,7 @@ describe("AiSwitch", () => {
     });
 
     // Several switches sharing one name are one checkbox GROUP — the trust pickers in
-    // ProjectApproval (name="trusts") and TrainingOptions (name="trust_ids") — and the field
+    // ProjectStaging (name="trusts") and TrainingOptions (name="trust_ids") — and the field
     // is then an array of the values switched on. Each switch must add or remove only its own
     // value; writing the field directly would collapse the group to the last switch touched
     // (which is exactly what the staging and training e2e specs then fail on).
@@ -176,8 +178,8 @@ describe("AiSwitch", () => {
                 name: "flag",
                 value: "true",
                 label: {
-                    enabled: "Trust Included",
-                    disabled: "Trust Excluded"
+                    enabled: "On",
+                    disabled: "Off"
                 }
             },
             global: {
@@ -191,6 +193,25 @@ describe("AiSwitch", () => {
         const switchLabel = comp.get("label");
         expect(switchLabel.classes()).toContain("hidden");
         expect(switchLabel.classes()).toContain("sm:inline");
+    });
+
+    it("takes an aria-label to name a switch that has no visible label", () => {
+        const comp = mount(AiSwitch, {
+            props: {
+                name: "trust_ids",
+                value: "id-kch",
+                ariaLabel: "King's College Hospital (KCH)"
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        expect(comp.get("button[role=\"switch\"]").attributes("aria-label")).toBe("King's College Hospital (KCH)");
+        expect(comp.find("label").exists()).toBe(false);
     });
 
     it("stays on screen when disabled, greyed out, so its position still reads", async () => {

@@ -23,6 +23,7 @@ from flip import FLIP
 from flip.constants import ResourceType
 from models import get_model
 from monai.data import DataLoader, Dataset, decollate_batch
+from monai.inferers import SlidingWindowInferer
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.transforms import AsDiscrete
@@ -42,7 +43,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args,
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args,
     so the SQL query (which can contain spaces) is plumbed via the top-level
     ``query`` key in ``config/config_fed_client.json`` rather than as a CLI flag.
     In dev/simulator mode this is ignored by ``flip.get_dataframe``.
@@ -111,9 +112,7 @@ def build_datalist(flip: FLIP, dataframe: pd.DataFrame, project_id: str) -> list
                 logger.info("⚠️ Skipping non-3D image %s", img.name)
                 continue
             if img_header.shape != seg_header.shape:
-                logger.info(
-                    "⚠️ Shape mismatch for %s: image=%s label=%s", img.name, img_header.shape, seg_header.shape
-                )
+                logger.info("⚠️ Shape mismatch for %s: image=%s label=%s", img.name, img_header.shape, seg_header.shape)
                 continue
 
             datalist.append({"image": str(img), "label": seg})
@@ -172,7 +171,7 @@ def validate(
     model: torch.nn.Module,
     loader: DataLoader,
     loss_fn: torch.nn.Module,
-    inferer,
+    inferer: SlidingWindowInferer,
     device: torch.device,
     post_pred: AsDiscrete,
     post_pred_gt: AsDiscrete,
@@ -215,9 +214,7 @@ def main() -> None:
     logger.info("Device: %s", device)
 
     model = get_model().to(device)
-    loss_fn = DiceCELoss(
-        to_onehot_y=True, softmax=True, squared_pred=False, batch=True, lambda_ce=0.2, lambda_dice=0.8
-    )
+    loss_fn = DiceCELoss(to_onehot_y=True, softmax=True, squared_pred=False, batch=True, lambda_ce=0.2, lambda_dice=0.8)
     # The optimizer is created once and persists across the whole flare.is_running() loop (never
     # reset per global round), matching the legacy executor's optimizer lifecycle.
     optimizer = torch.optim.Adam(model.parameters(), lr=config["LEARNING_RATE"])
@@ -236,14 +233,20 @@ def main() -> None:
     datalist = build_datalist(flip, dataframe, args.project_id)
     train_items, val_items = split_datalist(datalist, config["VAL_SPLIT"])
 
+    num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+; persistent across rounds (FLIP#1434)
     train_loader = DataLoader(
         Dataset(train_items, transform=get_train_transforms()),
         batch_size=config["BATCH_SIZE"],
         shuffle=True,
-        num_workers=1,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     val_loader = DataLoader(
-        Dataset(val_items, transform=get_val_transforms()), batch_size=1, shuffle=False, num_workers=1
+        Dataset(val_items, transform=get_val_transforms()),
+        batch_size=1,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
 
     flare.init()
@@ -299,7 +302,7 @@ def main() -> None:
                 writer.add_scalar("VAL_DICE@epoch", float(last_val_dice), global_step=cumulative_epoch)
 
             # Send back DIFF: the server aggregates the diffs directly and applies the average
-            # to the global model (stock NVFLARE semantics).
+            # to the global model (stock FLARE semantics).
             new_state = {k: v.detach().cpu().numpy() for k, v in model.state_dict().items()}
             diff = {k: new_state[k] - torch_weights[k].detach().cpu().numpy() for k in new_state}
             flare.send(

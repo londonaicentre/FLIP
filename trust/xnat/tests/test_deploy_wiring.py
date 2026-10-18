@@ -364,3 +364,21 @@ def test_refuses_to_publish_both_services_on_one_port(tmp_path):
     result = run_xnat_reset(tmp_path, XNAT_PORT="8104", XNAT_WEB_PORT="8104")
     assert result.returncode != 0, "the collision was accepted"
     assert "must differ" in result.stdout + result.stderr
+
+
+def test_nginx_update_rides_out_the_xnat_web_restart():
+    """An in-place upgrade updates xnat-web and xnat-nginx together (FLIP#1204).
+
+    While xnat-web's task is replaced its name does not resolve, so the new nginx task exits with
+    `host not found in upstream "xnat-web"` until xnat-web is back. restart_policy retries it, but
+    Swarm's default update failure_action (pause) stops the update on the first failed start and
+    `docker stack deploy --detach=false` reports the upgrade as failed — found moving a stag trust
+    from :stag to v0.6.1-rc.1204. A first install never hits it (nothing is being replaced).
+    """
+    text = COMPOSE.read_text()
+    block = re.search(r"^  xnat-nginx:\n((?:    .*\n|\n)*)", text, re.M)
+    assert block, "xnat-nginx service not found in docker-compose-stack.yml"
+    update_policy = r"^    deploy:\n(?:      .*\n)*?      update_config:\n        failure_action: continue\n"
+    assert re.search(update_policy, block.group(1), re.M), (
+        "xnat-nginx must set deploy.update_config.failure_action: continue"
+    )

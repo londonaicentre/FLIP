@@ -171,6 +171,27 @@ export default defineConfigWithVueTs(
     },
 
     {
+        // Auth-seam guard (FLIP#919). The UI's authentication is behind
+        // `src/auth` (an `AuthProvider` per identity backend, selected from
+        // `window.AUTH_BACKEND`); `aws-amplify` is the Cognito provider's
+        // private dependency. A second importer would tie the app back to
+        // Cognito and silently break the Keycloak dev stack, so only the
+        // Cognito provider — and its own spec — may reach the SDK.
+        name: "flip-ui/no-amplify-outside-provider",
+        files: ["src/**/*.ts", "src/**/*.vue"],
+        ignores: ["src/auth/cognito-provider.ts", "src/auth/__tests__/cognito-provider.spec.ts"],
+        rules: {
+            "no-restricted-imports": ["error", {
+                patterns: [{
+                    group: ["aws-amplify", "aws-amplify/*", "@aws-amplify/*"],
+                    message: "aws-amplify is the Cognito provider's private dependency — go through "
+                        + "getAuthProvider() from src/auth (FLIP#919).",
+                }],
+            }],
+        },
+    },
+
+    {
         // Static-import guard for Mirage (FLIP#1041 review). `miragejs` is a
         // legitimate `dependency` — build:demo ships it — so the scoping rule above
         // cannot flag a static re-import from production source, which is exactly the

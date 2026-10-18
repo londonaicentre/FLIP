@@ -20,6 +20,7 @@ where they were only exercised via mocked patches in ``tests/unit/user_services/
 from unittest.mock import Mock
 from uuid import uuid4
 
+from flip_api.db.models.main_models import Trust
 from flip_api.db.models.user_models import Role, UserProfile
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.utils.paging_utils import PagingInfo
@@ -86,10 +87,14 @@ def _exec_result(rows):
     return result
 
 
-def _session(role_rows, profile_rows):
-    """`get_user_role_data` calls `session.exec` twice: roles first, then profiles."""
+def _session(role_rows, profile_rows, trust_admin_rows=()):
+    """`get_user_role_data` calls `session.exec` three times: global roles, Trust Admin grants, then profiles."""
     session = Mock()
-    session.exec.side_effect = [_exec_result(role_rows), _exec_result(profile_rows)]
+    session.exec.side_effect = [
+        _exec_result(role_rows),
+        _exec_result(list(trust_admin_rows)),
+        _exec_result(profile_rows),
+    ]
     return session
 
 
@@ -128,6 +133,24 @@ class TestGetUserRoleData:
         assert [r.id for r in by_email["alice@example.com"].roles] == [admin.id, researcher.id]
         # Bob has no role rows — he must still appear, with no roles.
         assert by_email["bob@example.com"].roles == []
+
+    def test_lists_a_trust_admin_as_that_one_role_with_its_trust(self):
+        """A Trust Admin's global Researcher row is shown as the Trust Admin role, with the trust (FLIP#1258)."""
+        alice = _user("alice@example.com")
+        researcher = Role(name="Researcher", description="Researcher")
+        trust_admin = Role(name="Trust Admin", description="Researcher access, plus one trust's decisions")
+        trust = Trust(name="Decision Trust A", code="DTA")
+        session = _session(
+            role_rows=[(alice.id, researcher)],
+            profile_rows=[],
+            trust_admin_rows=[(alice.id, trust_admin, trust)],
+        )
+
+        [listed] = get_user_role_data(_paging(), [alice], session)
+
+        assert [r.rolename for r in listed.roles] == ["Trust Admin"]
+        assert listed.trust_admin_of is not None
+        assert (listed.trust_admin_of.id, listed.trust_admin_of.code) == (trust.id, "DTA")
 
     def test_skips_role_rows_with_no_usable_role(self):
         """The `if role and role.id is not None` guard drops unjoinable rows."""
@@ -172,9 +195,7 @@ class TestGetUserRoleData:
             ],
         )
 
-        result = get_user_role_data(
-            _paging(search_str="KiNgS"), [by_email_match, by_name, by_org, excluded], session
-        )
+        result = get_user_role_data(_paging(search_str="KiNgS"), [by_email_match, by_name, by_org, excluded], session)
 
         assert {u.email for u in result} == {"kingsteam@example.com", "b@example.com", "c@example.com"}
 

@@ -22,9 +22,7 @@ from flip_api.db.seed.permissions import seed_permissions
 def session():
     """An isolated in-memory SQLite DB with only the ``permission`` table created,
     so the primary-key constraint is enforced for the rename regression below."""
-    engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine, tables=[Permission.__table__])
     with Session(engine) as session:
         yield session
@@ -50,9 +48,7 @@ def test_seed_permissions_applies_rename_keeping_same_id(session):
     """Regression: a permission renamed while keeping its id must update the
     existing row in place, not insert a duplicate id (primary-key collision)."""
     ref = next(iter(PermissionRef))
-    session.add(
-        Permission(id=ref.value, permission_name="OLD_NAME", permission_description="OLD_NAME")
-    )
+    session.add(Permission(id=ref.value, permission_name="OLD_NAME", permission_description="OLD_NAME"))
     session.commit()
 
     seed_permissions(session)  # must not raise on the existing primary key

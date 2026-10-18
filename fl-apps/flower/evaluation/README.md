@@ -21,8 +21,8 @@ side is [`EvaluationStrategy`](app/strategy.py), a thin subclass of
 [`FlipFedAvg`](../../../flip-utils/flip/flower/strategy.py) run with `fraction_train=0.0,
 fraction_evaluate=1.0`; `FedAvg` itself aggregates whatever metrics the clients return (a weighted
 average by `num-examples`), and the subclass adds only a per-client breakdown for the results
-artifact. This is the Flower counterpart of the NVFLARE
-[`evaluation`](../../nvflare/evaluation/README.md) job type, though the two differ in shape: NVFLARE
+artifact. This is the Flower counterpart of the FLARE
+[`evaluation`](../../nvflare/evaluation/README.md) job type, though the two differ in shape: FLARE
 evaluates one or more **server-listed checkpoints** (`config.json['models']`) via a dedicated
 `EvaluationModelLocator`, while this template evaluates the **single checkpoint staged for the
 run** and reports aggregate + per-client metrics natively through `FedAvg`.
@@ -51,7 +51,9 @@ run** and reports aggregate + per-client metrics natively through `FedAvg`.
 `client_name`, then delegates to `FlipFedAvg` for the actual weighted aggregation and Central Hub
 forwarding (status, per-client metrics/exceptions, round events). There is no metric declaration or
 validation anywhere in this template — whatever `client_app.py` returns in its `MetricRecord` is
-what gets aggregated and reported.
+what gets aggregated and reported. Each client's metrics show on the model page against its trust,
+upper-cased, as one point at round 1; the client must name itself with `client_name` (or `site`) in
+the reply's `config` record, or its metrics are dropped.
 
 ## What does the user upload?
 
@@ -92,12 +94,14 @@ overridden per run via `config.toml`):
 There is no server-side simulator run for this template on its own — it needs a real checkpoint and
 connected clients. The shipped consumer, `fl-tutorials/flower/3d_spleen_segmentation_evaluation`,
 runs on the flwr simulator via
-`make -C fl-tutorials sim-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
+`make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower`
 (`fl-tutorials/flower/sim-tutorial.sh`, which wraps `flwr run`). What its README discourages is a
-**raw** `flwr run`, for three reasons the script handles — a long-lived SuperLink caches its
-environment, the `ClientApp` runs from a snapshot under `~/.flwr/apps/`, and `WORKING_DIR` defaults
-to a container path. Only the compose stack exercises the deployment wiring (TLS, fl-api submit,
-SuperNode registration):
+**raw** `flwr run`, for the five reasons the script handles (listed there) — among them, a
+long-lived SuperLink caches its environment, the `ClientApp` runs from a snapshot under
+`~/.flwr/apps/`, and `WORKING_DIR` defaults to a container path. The deployment wiring (the FL
+images, fl-api submit, SuperNode registration) is exercised by
+`make -C flip-api e2e_smoke_spleen_evaluation FL_BACKEND=flower` on the dev stack; to run the
+Flower containers by hand:
 
 ```bash
 make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt
@@ -108,5 +112,5 @@ make -C fl-services/flower submit APP=3d_spleen_segmentation_evaluation
 
 See [`fl-tutorials/flower/3d_spleen_segmentation_evaluation/README.md`](../../../fl-tutorials/flower/3d_spleen_segmentation_evaluation/README.md)
 for the full walkthrough, including how to change which metrics are reported (edit the client's own
-metric registry — nothing here needs to change) and how the dev compose stack wires
+metric registry — nothing here needs to change) and how `fl-services/flower/compose.dev.yml` wires
 `DEV_DATAFRAME` / `DEV_IMAGES_DIR` / `WORKING_DIR` into the containers.

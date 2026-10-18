@@ -50,7 +50,7 @@ def sample_existing_scheduler():
     """Create a sample existing scheduler."""
     scheduler = MagicMock(spec=FLScheduler)
     scheduler.id = 1
-    scheduler.netid = 1
+    scheduler.net_id = 1
     scheduler.status = NetStatus.AVAILABLE
     return scheduler
 
@@ -60,17 +60,17 @@ def sample_all_schedulers():
     """Create sample schedulers that would be returned."""
     scheduler1 = MagicMock(spec=FLScheduler)
     scheduler1.id = 1
-    scheduler1.netid = 1
+    scheduler1.net_id = 1
     scheduler1.status = NetStatus.AVAILABLE
 
     scheduler2 = MagicMock(spec=FLScheduler)
     scheduler2.id = 2
-    scheduler2.netid = 2
+    scheduler2.net_id = 2
     scheduler2.status = NetStatus.AVAILABLE
 
     scheduler3 = MagicMock(spec=FLScheduler)
     scheduler3.id = 3
-    scheduler3.netid = 3
+    scheduler3.net_id = 3
     scheduler3.status = NetStatus.AVAILABLE
 
     return [scheduler1, scheduler2, scheduler3]
@@ -106,7 +106,7 @@ def test_seed_fl_scheduler_no_existing_schedulers(
 
     # Verify new schedulers created with correct parameters
     for i, net in enumerate(sample_nets):
-        mock_fl_scheduler_class.assert_any_call(status=NetStatus.AVAILABLE, netid=net.id)
+        mock_fl_scheduler_class.assert_any_call(status=NetStatus.AVAILABLE, net_id=net.id)
         mock_session.add.assert_any_call(mock_new_schedulers[i])
 
     assert result == sample_all_schedulers

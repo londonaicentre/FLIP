@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args,
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args,
     so the SQL query (which can contain spaces) is plumbed via the top-level
     ``query`` key in ``config/config_fed_client.json`` rather than as a CLI flag.
     In dev/simulator mode this is ignored by ``flip.get_dataframe``.
@@ -421,18 +421,26 @@ def main() -> None:
     )
     train_items, val_items, test_items = split_datalist(datalist, config["VAL_SPLIT"], config["TEST_SPLIT"])
 
+    num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+; persistent across rounds (FLIP#1434)
     train_loader = DataLoader(
-        Dataset(train_items, transform=get_xray_transforms()), batch_size=config["BATCH_SIZE"], shuffle=True
+        Dataset(train_items, transform=get_xray_transforms()),
+        batch_size=config["BATCH_SIZE"],
+        shuffle=True,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     val_loader = DataLoader(
         Dataset(val_items, transform=get_xray_transforms(is_validation=True)),
         batch_size=config["BATCH_SIZE"],
         shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     test_loader = DataLoader(
         Dataset(test_items, transform=get_xray_transforms(is_validation=True)),
         batch_size=config["BATCH_SIZE"],
         shuffle=False,
+        num_workers=num_workers,
     )
     log_class_distribution(train_items, "TRAIN", lesions)
     log_class_distribution(val_items, "VAL", lesions)

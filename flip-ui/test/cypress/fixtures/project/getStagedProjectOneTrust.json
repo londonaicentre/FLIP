@@ -10,7 +10,7 @@
             "name": "Kings College Hospital",
             "id": "SOMEIDFORKCH",
             "requested": true,
-            "approved": false
+            "status": "PENDING"
         }
     ],
     "users": [

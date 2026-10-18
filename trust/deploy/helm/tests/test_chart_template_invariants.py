@@ -59,7 +59,7 @@ HEREDOC_END = "EOSQL"
 # Where the omop-db image ships the one definition of the data_analyst_reader grants
 # (trust/omop-db/files/create_readonly_users.sql). The Compose trust runs it from
 # /docker-entrypoint-initdb.d at first initdb; the chart's postStart hook runs this
-# copy on every start, because a PVC restored by the seed-data initContainer skips
+# copy on every start, because a PVC that already holds a database skips
 # initdb.d altogether. Both halves of that contract are asserted below: the hook
 # reads the path, and the Dockerfile puts the file there. What the file grants is
 # asserted beside the file, in trust/omop-db/tests/unit — this workflow is
@@ -99,8 +99,7 @@ def _init_container_script() -> str:
 def _omop_db_post_start_script() -> str:
     """Return the omop-db StatefulSet's ``postStart`` hook body with comment lines dropped.
 
-    Bounded by the ``volumeMounts:`` that follows the lifecycle block, so the
-    seed-data initContainer's own script further up is never in the slice.
+    Bounded by the ``volumeMounts:`` that follows the lifecycle block.
 
     Returns:
         str: The postStart hook script, comments removed.
@@ -183,7 +182,10 @@ def _values_declares(dotted_path: str) -> bool:
 
         if depth and indent <= parent_indent:
             return False
-        if stripped.split(":")[0] == segments[depth] and (depth == 0 or indent > parent_indent):
+        # The first segment must be a top-level key: a nested key of the same name
+        # elsewhere (e.g. a boolean `orthanc:` flag under another block) must not
+        # anchor the walk.
+        if stripped.split(":")[0] == segments[depth] and (indent == 0 if depth == 0 else indent > parent_indent):
             depth += 1
             parent_indent = indent
             if depth == len(segments):
@@ -201,6 +203,29 @@ def test_the_init_container_delegates_to_configure_xnat() -> None:
         "inline copy of the configuration, assert the activation ordering against that copy too, "
         "or this suite guards a script the cluster never executes"
     )
+
+
+def test_the_init_job_delegates_dcm2niix_to_configure_dcm2niix() -> None:
+    """One configure-dcm2niix.sh for both shapes (FLIP#1451): the chart runs the xnat-web image's copy, not its own."""
+    text = XNAT_INIT_JOB.read_text()
+    start = text.index("        - name: configure-dcm2niix\n")
+    container = "\n".join(
+        line for line in text[start : text.index("{{- end }}", start)].splitlines() if not line.strip().startswith("#")
+    )
+
+    assert "cd /data/xnat/config" in container
+    assert "bash configure-dcm2niix.sh" in container
+    image = next(line for line in container.splitlines() if line.strip().startswith("image:"))
+    assert "$xnatWebImage" in image, f"not run from the xnat-web image: {image.strip()}"
+    assert re.search(r"\$xnatWebImage := printf .*\.Values\.xnat\.web\.image\.repository", text)
+    assert re.search(r'- name: XNAT_CS_BACKEND\n\s+value: "kubernetes"', container), "the backend switch is not set"
+    for variable in ("XNAT_URL", "XNAT_CS_PVC_NAME", "XNAT_ADMIN_USER"):
+        assert f"- name: {variable}\n" in container, f"configure-dcm2niix.sh reads {variable}, which the Job never sets"
+    assert re.search(r"- name: XNAT_ADMIN_PASSWORD\n\s+valueFrom:\n\s+secretKeyRef:", container), (
+        "the admin password must come from the chart Secret, never a literal or argv"
+    )
+    assert "/xapi/" not in container, "the container calls XNAT itself again instead of delegating"
+    assert "kind: ConfigMap" not in text, "the chart ships its own copies of trust/xnat/xnat/config/ again"
 
 
 def test_the_xnat_site_is_activated_before_the_plugin_route_gate() -> None:
@@ -237,6 +262,70 @@ def test_values_declares_every_omop_db_probe_field(probe: str) -> None:
     for field in PROBE_FIELDS:
         path = f"omopDb.probes.{probe}.{field}"
         assert _values_declares(path), f"values.yaml does not declare {path}; the rendered probe field would be empty"
+
+
+# Every FLIP-built image the chart runs. Observability images and xnat-dcm2niix carry
+# upstream versions of their own and are deliberately absent.
+FLIP_IMAGE_VALUES = (
+    "trustApi.image.tag",
+    "imagingApi.image.tag",
+    "dataAccessApi.image.tag",
+    "flClient.image.tag",
+    "omopDb.image.tag",
+    "orthanc.image.tag",
+    "xnat.web.image.tag",
+    "xnat.db.image.tag",
+    "xnat.nginx.image.tag",
+)
+
+
+def test_values_declares_the_release_pin() -> None:
+    assert _values_declares("global.image.tag"), "values.yaml does not declare global.image.tag (FLIP#1204)"
+
+
+@pytest.mark.parametrize("dotted", FLIP_IMAGE_VALUES)
+def test_every_flip_image_tag_follows_the_release_pin(dotted: str) -> None:
+    """`make upgrade-trust-k8s TAG=vX.Y.Z` sets one value, global.image.tag, and every FLIP-built
+    image must follow it (FLIP#1204). A template that still reads `.Values.<svc>.image.tag`
+    directly renders cleanly and silently keeps that one service on the old release — the
+    mixed-version site the pin exists to prevent."""
+    assert _values_declares(dotted), f"values.yaml no longer declares {dotted}"
+    direct = f".Values.{dotted}"
+    for template in sorted(TEMPLATES_DIR.glob("*.yaml")) + [TEMPLATES_DIR / "_helpers.tpl"]:
+        for line in template.read_text().splitlines():
+            if direct in line and "flip-trust.imageTag" not in line:
+                raise AssertionError(
+                    f"{template.name}: reads {direct} directly, bypassing flip-trust.imageTag: {line.strip()}"
+                )
+
+
+#: The compose OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG opt-outs, as chart values: the image
+#: value each pin holds back, and the templates that must consult it.
+IMAGE_PINS = (
+    ("omopDb.image.pin", ".Values.omopDb.image.tag", ("omop-db.yaml", "omop-db-vocab-load-job.yaml")),
+    ("orthanc.image.pin", ".Values.orthanc.image.tag", ("orthanc.yaml",)),
+    ("xnat.image.pin", ".Values.xnat.web.image.tag", ("xnat-web.yaml", "xnat-init-job.yaml")),
+    ("xnat.image.pin", ".Values.xnat.db.image.tag", ("xnat-db.yaml",)),
+    ("xnat.image.pin", ".Values.xnat.nginx.image.tag", ("xnat-nginx.yaml",)),
+    ("flClient.image.pin", ".Values.flClient.image.tag", ("_helpers.tpl", "trust-api.yaml")),
+)
+
+
+@pytest.mark.parametrize(("pin", "own", "templates"), IMAGE_PINS)
+def test_the_path_filtered_images_can_be_held_back_from_the_release_pin(
+    pin: str, own: str, templates: tuple[str, ...]
+) -> None:
+    """omop-db, orthanc and the XNAT trio only rebuild when their own tree changes, so a sha- tag
+    of any other commit has no such image; the kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG hold
+    them back from global.image.tag on compose, and `<svc>.image.pin` is the chart twin. Every
+    image line that reads the service's own tag must also pass its pin, or `helm upgrade` would
+    roll that image to a tag that does not exist and leave the StatefulSet stuck (FLIP#1204)."""
+    assert _values_declares(pin), f"values.yaml does not declare {pin}"
+    for name in templates:
+        lines = [line for line in (TEMPLATES_DIR / name).read_text().splitlines() if own in line]
+        assert lines, f"{name}: no image line reads {own}"
+        for line in lines:
+            assert f'"pin" .Values.{pin}' in line, f"{name}: image line ignores {pin}: {line.strip()}"
 
 
 def test_the_omop_db_hook_provisions_the_reader_from_the_image_shipped_sql() -> None:

@@ -14,7 +14,7 @@ Glossary
 
     **FL kit slot**
       The name an FL client is known by inside a federation (``Trust_1``, ``Trust_2``, …), taken from
-      the certificate in its provisioned participant kit (NVFLARE) or the SuperNode key pair labelled
+      the certificate in its provisioned participant kit (FLARE) or the SuperNode key pair labelled
       for that slot (Flower). Slots are a fixed pool provisioned once per
       :term:`FL net`; a Trust claims one when it registers with the Central Hub, and that name — not
       the Trust's hub-side name — is what appears in FL logs and in an app's ``AGGREGATION_WEIGHTS``
@@ -85,6 +85,9 @@ Glossary
       approved subset of a Trust's data. FLIP can be deployed inside one as an alternative to the
       on-premise model, in which case cohort queries operate on the pre-loaded subset rather than the
       full Trust population. See :ref:`tre-deployment`.
+
+    **Trust Admin**
+      A FLIP user who approves or declines projects on behalf of one participating Trust, and otherwise has ``researcher`` access. While a Trust has a Trust Admin, only its Trust Admins decide its projects; a Trust without one is decided by a Central Hub administrator. See :ref:`trust-admin-guide`.
 
     **XNAT**
       XNAT is an open-source imaging informatics platform used in FLIP to store, manage and access imaging data for research workflows. For more information on XNAT, please see the `documentation <https://wiki.xnat.org/documentation>`_.

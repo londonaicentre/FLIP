@@ -11,7 +11,7 @@
 
 """Client-API evaluator for the 3D spleen segmentation evaluation tutorial.
 
-This is the NVFLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
+This is the FLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
 (``CrossSiteModelEval`` + ``EvaluationModelLocator``, wired by ``FlipEvalRecipe``) loads the uploaded
 checkpoint and broadcasts it to every client as a single ``FLModel``; this script implements the
 canonical ``is_evaluate()`` loop — receive the global model, score it on the local cohort, and send back
@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can
+    FLARE's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can
     contain spaces) is plumbed via the top-level ``query`` key in ``config/config_fed_client.json``
     rather than as a CLI flag. In dev/simulator mode this is ignored by ``flip.get_dataframe``.
     """
@@ -208,7 +208,14 @@ def main() -> None:
         raise ValueError("The dataframe must contain an 'accession_id' column.")
 
     datalist = build_datalist(flip, dataframe, args.project_id)
-    loader = DataLoader(Dataset(datalist, transform=get_eval_transforms()), batch_size=1, shuffle=False)
+    num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+; persistent across rounds (FLIP#1434)
+    loader = DataLoader(
+        Dataset(datalist, transform=get_eval_transforms()),
+        batch_size=1,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
 
     flare.init()
     while flare.is_running():

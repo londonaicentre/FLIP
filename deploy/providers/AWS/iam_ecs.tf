@@ -180,9 +180,12 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     actions = [
       "cognito-idp:AdminCreateUser",
       "cognito-idp:AdminDeleteUser",
+      "cognito-idp:AdminDisableUser",
+      "cognito-idp:AdminEnableUser",
       "cognito-idp:AdminGetUser",
       "cognito-idp:AdminInitiateAuth",
       "cognito-idp:AdminRespondToAuthChallenge",
+      "cognito-idp:AdminSetUserMFAPreference",
       "cognito-idp:AdminSetUserPassword",
       "cognito-idp:AdminUserGlobalSignOut",
       "cognito-idp:DescribeUserPool",
@@ -362,7 +365,7 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
   }
 
   # Read access to the FL participant kits on the AICENTRE bucket — the
-  # NVFLARE kit prefix and the Flower creds prefix (#566). Used by the
+  # FLARE kit prefix and the Flower creds prefix (#566). Used by the
   # one-shot efs-provision-certs task (which runs under this role and syncs
   # the backend's kit/creds into EFS at boot). Runtime fl-server never reads
   # from these prefixes - the data lives on EFS by the time the service

@@ -15,14 +15,14 @@
 
 ## Overview
 
-This is the NVFLARE **Client API** FedOpt job type (`JOB_TYPE=fed_opt`). It differs from
+This is the FLARE **Client API** FedOpt job type (`JOB_TYPE=fed_opt`). It differs from
 [`standard`](../standard/README.md) (Federated Averaging) in that the server holds a persistent
 optimizer — and optionally a learning-rate scheduler — and updates the global model by running
 that optimizer on the averaged client weight-diffs (treated as a pseudo-gradient), instead of
 replacing the global weights with the aggregate.
 
 It is based on the paper "Adaptive Federated Optimization" by Reddi S. et al. (2020), and on
-NVFlare's implementation in their CIFAR10 tutorial available at:
+FLARE's implementation in their CIFAR10 tutorial available at:
 <https://github.com/NVIDIA/NVFlare/tree/2.4/examples/advanced/cifar10/cifar10-sim/jobs/cifar10_fedopt/cifar10_fedopt>.
 
 It replaced the retired Executor-based `fed_opt` template. The **client contract is identical to
@@ -42,7 +42,7 @@ hand-edit them — regenerate via `recipe.py` after any recipe change and commit
 - The shareable generator is `flip.nvflare.components.FlipFedOptShareableGenerator` (stock
   `PTFedOptModelShareableGenerator` extended to source the model from the user's
   `models.get_model`), which applies the averaged diff to the global model through the configured
-  server optimizer. Defaults follow stock NVFLARE FedOpt: `torch.optim.SGD` at `lr=1.0` with
+  server optimizer. Defaults follow stock FLARE FedOpt: `torch.optim.SGD` at `lr=1.0` with
   `momentum=0.6`, no LR scheduler, on a CPU-held model copy — override via
   `FlipFedOptRecipe(optimizer_args=..., lr_scheduler_args=...)` and regenerate. (The retired
   Executor template declared server Adam at `lr=0.5`, but its aggregation never actually ran —

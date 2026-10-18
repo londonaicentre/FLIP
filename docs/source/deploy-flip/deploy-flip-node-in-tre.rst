@@ -48,7 +48,8 @@ operator. The TRE operator is responsible for:
 **Compute provisioning**
 
 - Providing a host with Docker Engine, Docker Compose, and Docker Swarm support, plus at
-  least one NVIDIA GPU accessible via the NVIDIA Container Toolkit.
+  least one NVIDIA GPU accessible via the NVIDIA Container Toolkit, on NVIDIA driver 580 or
+  newer (the FL images ship CUDA 13 builds of PyTorch).
 - Creating the writable host paths the FLIP stack expects under ``/opt/flip/`` (for certs,
   FL data, OMOP DB volumes, and observability storage -- see the Ansible playbook at
   ``trust/deploy/ansible/onprem.yml``).
@@ -278,6 +279,11 @@ Compute
 - **Sufficient GPU resources**: At minimum, one NVIDIA GPU for inference/evaluation. For FL
   training, GPU memory requirements depend on the model architecture.
 
+- **NVIDIA driver 580 or newer**: The FL images ship PyTorch built for CUDA 13, which bundles its
+  own CUDA runtime but needs a host driver of at least 580. No CUDA toolkit is needed on the host.
+  Check the "Driver Version" reported by ``nvidia-smi``; on an older driver the FL client cannot
+  initialise the GPU.
+
 Networking
 -----------
 
@@ -316,6 +322,7 @@ Software
 ---------
 
 - Docker Engine (>= 24.0) with Docker Compose (>= 2.40)
+- NVIDIA driver (>= 580)
 - NVIDIA Container Toolkit
 - Python 3.12 or 3.13
 - PostgreSQL client libraries (``postgresql-client``)
@@ -440,7 +447,7 @@ and one of them does nothing until you turn it on.
        matrices. Ordinary summary statistics of the kind your output-checking process already
        handles.
      - You, through your existing airlock
-   * - Model updates, NVFLARE backend
+   * - Model updates, FLARE backend
      - Every round
      - Each update is reduced before it leaves the node: a share of the values is discarded
        rather than transmitted. FLIP applies this itself, and the researcher's uploaded code
@@ -454,7 +461,7 @@ and one of them does nothing until you turn it on.
      - Project review, not the platform
    * - Model updates, your own site rule
      - Every round
-     - **The control you own.** On the NVFLARE backend a trust can apply its own reduction to
+     - **The control you own.** On the FLARE backend a trust can apply its own reduction to
        every update leaving its node. It is set in the configuration file the trust holds
        locally, no submitted job can override or weaken it, and a node whose setting is
        invalid refuses to start rather than sending updates unprotected.
@@ -473,7 +480,7 @@ and one of them does nothing until you turn it on.
 .. admonition:: If you permit training, enable your own site control
 
    The "your own site rule" row is the one item on this page that needs an action from you. On
-   the NVFLARE backend, set the following in your node's kit file and restart the FL clients:
+   the FLARE backend, set the following in your node's kit file and restart the FL clients:
 
    .. code-block:: shell
 
@@ -489,7 +496,7 @@ What these controls do not do
 State these alongside the controls when you document your policy. They are the residual risks
 that a project-specific approval accepts, or mitigates by other means.
 
-- **The reduction applied on the NVFLARE backend is not differential privacy.** It lowers how
+- **The reduction applied on the FLARE backend is not differential privacy.** It lowers how
   much any single update reveals, but it adds no calibrated noise, carries no privacy budget,
   and most of each update still leaves the node. Describing it as differential privacy to an
   ethics committee or information governance panel would misstate it. The Flower backend does
@@ -515,7 +522,7 @@ that a project-specific approval accepts, or mitigates by other means.
 
    1. **Confirm evaluation would not answer the question.** If it would, prefer it -- it
       releases no model artefact and needs no new policy.
-   2. **Enable your own site control** if your node runs the NVFLARE backend (see above), and
+   2. **Enable your own site control** if your node runs the FLARE backend (see above), and
       note the settings you applied.
    3. **Record the decision**: which controls were applied, what was permitted to leave, and
       who approved it. SATRE 3.3.09 points towards keeping this as a structured,
@@ -565,8 +572,8 @@ Differences from On-Premise Deployment
      - Model updates via FL channel
      - Model updates via FL channel (**per-project approval; see the egress policy above**)
    * - GPU access
-     - Trust-managed DGX / GPU servers
-     - TRE-provided GPU compute with NVIDIA Container Toolkit
+     - Trust-managed DGX / GPU servers (NVIDIA driver >= 580)
+     - TRE-provided GPU compute with NVIDIA Container Toolkit (NVIDIA driver >= 580)
 
 UK TRE Federation Landscape
 ============================

@@ -15,8 +15,8 @@
 
 ## Overview
 
-This is the NVFLARE **Client API** federated-training job type (`JOB_TYPE=standard`). It performs a
-**Federated Averaging** round-trip, driving client training through the NVFLARE Client API
+This is the FLARE **Client API** federated-training job type (`JOB_TYPE=standard`). It performs a
+**Federated Averaging** round-trip, driving client training through the FLARE Client API
 (`ClientAPIExecutor`, in-process mode). It replaced the retired Executor-based `standard` template, which
 drove the clients through the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pair.
 The server side is: `InitTraining` → `ScatterAndGather` → stock `GlobalModelEval` → `BroadcastTask` cleanup.
@@ -30,7 +30,7 @@ hand-edit them — regenerate via `recipe.py` after any recipe change and commit
 For each global round (`num_rounds` in the recipe / `ScatterAndGather` args):
 
 1. The server sends the current global model to every site.
-2. Each site runs the user's `trainer.py` via `ClientAPIExecutor` (in-process mode), using the NVFLARE
+2. Each site runs the user's `trainer.py` via `ClientAPIExecutor` (in-process mode), using the FLARE
    Client API (`flare.receive()` / `flare.send()`) to receive and return model params.
 3. Sites return their update as a weight **diff** — `FLModel(params=<local minus global>,
    params_type="DIFF")` → `DataKind.WEIGHT_DIFF` (a `WEIGHTS` return is rejected by the
@@ -66,7 +66,7 @@ set `submit_model_task_name="submit_model"` to restore full cross-site evaluatio
 
 The required files (see [`required_files.json`](./required_files.json)) are:
 
-- `trainer.py` — the local training loop using the NVFLARE Client API (`flare.receive()` /
+- `trainer.py` — the local training loop using the FLARE Client API (`flare.receive()` /
   `flare.send()`). Return the update as a diff: `FLModel(params=<local minus global>,
   params_type="DIFF")` → `DataKind.WEIGHT_DIFF`.
 - `models.py` — defines the model; `models.get_model` is what the server persistor instantiates.

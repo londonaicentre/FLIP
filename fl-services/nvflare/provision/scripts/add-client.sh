@@ -12,7 +12,7 @@
 # limitations under the License.
 #
 
-# Add ONE client to an already-provisioned NVFLARE network — zero disruption.
+# Add ONE client to an already-provisioned FLARE network — zero disruption.
 #
 # Usage: ./fl-services/nvflare/provision/scripts/add-client.sh \
 #          <net_number> <new_client_name> [project_yaml] [workspace_parent_dir]
@@ -20,7 +20,7 @@
 #
 # Unlike provision-network.sh, this does NOT wipe the workspace. It runs the official
 # `nvflare provision … --add_client <yaml>` flag against the EXISTING workspace, so
-# NVFLARE's CertBuilder loads the network's root CA from the preserved state/ and
+# FLARE's CertBuilder loads the network's root CA from the preserved state/ and
 # signs only the new client's kit with it. Every already-onboarded participant's
 # files are left byte-identical (no cert churn, no fleet-wide redeploy) — contrast a
 # full re-provision, which wipes state/ and rotates the CA. This is the escape hatch
@@ -87,7 +87,7 @@ fi
 
 # Clone the project's client template (first client participant), drop its name,
 # and assign the new one. The JSON round-trip strips the template's inline comments
-# (same approach as generate-project-yaml.sh). `type` is preserved but NVFLARE
+# (same approach as generate-project-yaml.sh). `type` is preserved but FLARE
 # forces it to "client" regardless. The participant block carries the env-specific
 # fields (connect_to, enable_byoc, resource, …) so the new client matches the rest.
 CLIENT_COUNT="$(yq '[.participants[] | select(.type == "client")] | length' "${PROJECT_YAML}")"
@@ -110,10 +110,10 @@ vlog "add_client YAML:"
 # --- Provision the new client against the existing CA -------------------------
 
 # NO workspace wipe: the existing state/ (root CA) must survive so the new client is
-# signed by it and every existing participant's cert is reused unchanged. NVFLARE
+# signed by it and every existing participant's cert is reused unchanged. FLARE
 # writes a fresh prod_NN snapshot (workspace.py increments past existing ones).
 #
-# --force is required from NVFLARE 2.8.0 on: `provision` now refuses to run against an
+# --force is required from FLARE 2.8.0 on: `provision` now refuses to run against an
 # already-populated workspace in non-interactive mode (it would otherwise prompt Y/N to
 # continue). --force ONLY skips that confirmation — it does not wipe or regenerate the
 # workspace (nvflare/lighter/provision.py just bypasses the prompt branch), so state/ and

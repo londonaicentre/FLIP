@@ -171,8 +171,7 @@ def handle_imaging_task_completed(task: TrustTask, db: Session) -> None:
                 template_data=access_template_data.model_dump(mode="json"),
             )
             logger.info(
-                f"Project access notification dispatched to {added_user.email} "
-                f"for project '{imaging_project.name}'"
+                f"Project access notification dispatched to {added_user.email} for project '{imaging_project.name}'"
             )
 
         except BotoCoreError as e:
@@ -196,10 +195,7 @@ def _get_latest_query_id(project_id: UUID, db: Session) -> UUID | None:
         UUID | None: The query ID, or None if no queries exist.
     """
     query = db.exec(
-        select(Queries)
-        .where(Queries.project_id == project_id)
-        .order_by(col(Queries.created).desc())
-        .limit(1)
+        select(Queries).where(Queries.project_id == project_id).order_by(col(Queries.created).desc()).limit(1)
     ).first()
     return query.id if query else None
 

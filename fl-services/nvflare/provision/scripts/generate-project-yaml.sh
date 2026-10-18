@@ -12,9 +12,9 @@
 # limitations under the License.
 #
 
-# Generate an NVFLARE project YAML with N client participants from a base file.
+# Generate a FLARE project YAML with N client participants from a base file.
 #
-# The recommended NVFLARE pattern is to provision more participant kits than you
+# The recommended FLARE pattern is to provision more participant kits than you
 # currently need, so spare slots are always available: re-provisioning to add a
 # client regenerates every existing participant's certs (and can rotate the root
 # CA), forcing a redeploy to every already-onboarded trust. Over-provisioning

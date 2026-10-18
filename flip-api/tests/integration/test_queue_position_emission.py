@@ -40,9 +40,7 @@ from tests.integration.test_all_models_endpoint import _add_model, _add_project
 def _positions_by_job(session) -> dict[str, list[int]]:
     """All persisted QUEUE_POSITION rows oldest-first, keyed by the job id in ``details``."""
     rows = session.exec(
-        select(FLLogs)
-        .where(FLLogs.event_type == FLLogEvent.QUEUE_POSITION.value)
-        .order_by(col(FLLogs.log_date).asc())
+        select(FLLogs).where(FLLogs.event_type == FLLogEvent.QUEUE_POSITION.value).order_by(col(FLLogs.log_date).asc())
     ).all()
     by_job: dict[str, list[int]] = {}
     for row in rows:
@@ -51,23 +49,33 @@ def _positions_by_job(session) -> dict[str, list[int]]:
     return by_job
 
 
-def test_queue_position_emission_ranks_dedups_and_renders(
-    client: TestClient, session, project_factory, model_factory
-):
+def test_queue_position_emission_ranks_dedups_and_renders(client: TestClient, session, project_factory, model_factory):
     """One pass over the write path: rank → idempotence → re-rank → served feed."""
     admin_id = admin_user(session)
     project = _add_project(session, project_factory, owner_id=admin_id, name="Queue emission")
     head = _add_model(
-        session, model_factory, project_id=project.id, owner_id=admin_id,
-        name="head", status=ModelStatus.INITIATED,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=admin_id,
+        name="head",
+        status=ModelStatus.INITIATED,
     )
     mid = _add_model(
-        session, model_factory, project_id=project.id, owner_id=admin_id,
-        name="mid", status=ModelStatus.INITIATED,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=admin_id,
+        name="mid",
+        status=ModelStatus.INITIATED,
     )
     tail = _add_model(
-        session, model_factory, project_id=project.id, owner_id=admin_id,
-        name="tail", status=ModelStatus.INITIATED,
+        session,
+        model_factory,
+        project_id=project.id,
+        owner_id=admin_id,
+        name="tail",
+        status=ModelStatus.INITIATED,
     )
 
     head_job = FLJob(model_id=head.id, created=datetime(2026, 1, 1, 10, 0, 0))

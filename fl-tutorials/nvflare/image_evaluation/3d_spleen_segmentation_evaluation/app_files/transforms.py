@@ -23,27 +23,29 @@ from monai.transforms import (
 )
 
 
-def get_eval_transforms():
+def get_eval_transforms() -> Compose:
     """Return the MONAI evaluation transforms (same as trainer but with no augmentation)."""
-    return Compose([
-        LoadImaged(keys=["image", "label"]),
-        EnsureChannelFirstd(keys=["image", "label"]),
-        Orientationd(keys=["image", "label"], axcodes="RAS"),
-        ScaleIntensityRanged(
-            keys=["image"],
-            a_min=-57,
-            a_max=250,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
-        CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
-        Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest")),
-        EnsureTyped(keys=["image", "label"]),
-    ])
+    return Compose(
+        [
+            LoadImaged(keys=["image", "label"]),
+            EnsureChannelFirstd(keys=["image", "label"]),
+            Orientationd(keys=["image", "label"], axcodes="RAS"),
+            ScaleIntensityRanged(
+                keys=["image"],
+                a_min=-57,
+                a_max=250,
+                b_min=0.0,
+                b_max=1.0,
+                clip=True,
+            ),
+            CropForegroundd(keys=["image", "label"], source_key="image", allow_smaller=True),
+            Spacingd(keys=["image", "label"], pixdim=(1.5, 1.5, 2.0), mode=("bilinear", "nearest")),
+            EnsureTyped(keys=["image", "label"]),
+        ]
+    )
 
 
-def get_sliding_window_inferer(sw_device: torch.device):
+def get_sliding_window_inferer(sw_device: torch.device) -> SlidingWindowInferer:
     """Return a MONAI SlidingWindowInferer for validation and inference."""
     return SlidingWindowInferer(
         sw_batch_size=1,

@@ -150,9 +150,7 @@ def list_access_requests(
     """
     if not has_permissions(token_id, [PermissionRef.CAN_MANAGE_USERS], db):
         logger.error(f"User with ID: {token_id} attempted to list access requests without permission")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to manage access requests"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to manage access requests")
 
     try:
         paging_info = get_paging_details(dict(request.query_params))
@@ -214,9 +212,7 @@ def update_access_request_status(
     """
     if not has_permissions(token_id, [PermissionRef.CAN_MANAGE_USERS], db):
         logger.error(f"User with ID: {token_id} attempted to update an access request without permission")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to manage access requests"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to manage access requests")
 
     try:
         access_request = db.get(AccessRequest, access_request_id)

@@ -26,10 +26,6 @@ variable "environment" {
   }
 }
 
-variable "VPC_NAME" {
-  type = string
-}
-
 variable "lza_managed_network" {
   description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the legacy /flip/networking/* SSM params (fl_ingress_lza.tf publishes the LZA edge-handoff set under that prefix instead), and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
   type        = bool
@@ -116,12 +112,16 @@ variable "POSTGRES_DB" {
 
 # Permissions boundary attached to every IAM role this root owns.
 #
-# The policy itself is declared in ci/ — the root the pipeline does not apply —
-# and the CI apply role may only create a role, or write an inline policy onto
-# one, when that role carries this boundary (ci/main.tf, apply_iam). Set the name
-# to "" to detach it, which is only correct in an account where ci/ has never
-# been applied: an automated apply into an account whose roles have no boundary
-# is denied, loudly, on the first CreateRole.
+# The default policy is declared by modules/terraform_ci_bootstrap — instantiated
+# by a platform repository, or by ci/ in an account you bootstrap yourself; never
+# by this root — and the CI apply role may only create a role, or write an inline
+# policy onto one, when that role carries this boundary (apply_iam in the
+# module). The LZA modes override it with the platform's
+# AICentre-WorkloadRoleBoundary (Makefile), which an LZA SCP requires on every
+# workload role. Set the name to "" to detach it, which is only correct in a
+# self-contained account where the bootstrap has never been applied: an automated
+# apply into an account whose roles have no boundary is denied, loudly, on the
+# first CreateRole.
 variable "iam_permissions_boundary_name" {
   description = "Managed-policy name used as the permissions boundary on this root's IAM roles; \"\" disables it."
   type        = string
@@ -194,13 +194,32 @@ variable "docker_image_tag" {
 }
 
 variable "flip_fl_image_tag" {
-  description = "Docker image tag for FL services (fl-api, fl-server, fl-client)"
+  description = "Docker image tag for the FL server (fl-server-net-*), and the default for the FL API"
   type        = string
   default     = ""
 
   validation {
     condition     = lower(var.flip_fl_image_tag) != "latest" && !endswith(lower(var.flip_fl_image_tag), "-latest")
     error_message = "flip_fl_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
+  }
+}
+
+# Separate from flip_fl_image_tag because a release pin is `v<X.Y.Z>@sha256:…`
+# and a digest belongs to ONE repository (FLIP#1283). Sharing one variable across
+# both FL images pinned fl-api with fl-server's digest, which ECS pulls by digest
+# — fl-api-net-1 then fails with CannotPullContainer after a green apply.
+#
+# Empty means "whatever flip_fl_image_tag says", which is correct for every
+# caller that does not pin by digest (a laptop apply, an env file, a plain
+# sha-tag CI apply). CI's resolve-image-tags.sh sets it explicitly.
+variable "fl_api_image_tag" {
+  description = "Docker image tag for the FL API (fl-api-net-*). Empty falls back to flip_fl_image_tag."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = lower(var.fl_api_image_tag) != "latest" && !endswith(lower(var.fl_api_image_tag), "-latest")
+    error_message = "fl_api_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
   }
 }
 
@@ -228,21 +247,14 @@ variable "fl_server_name" {
   default     = "flare-fl-server"
 }
 
-variable "fl_client_name" {
-  description = "FL client Docker image name (backend-specific: flare-fl-client or flower-fl-client)"
-  type        = string
-  default     = "flare-fl-client"
-}
-
 variable "fl_backend" {
   description = "FL backend: nvflare or flower"
   type        = string
   default     = "nvflare"
 }
 
-
 variable "flare_kit_date" {
-  description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
+  description = "Date stamp for the FLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
   type        = string
   default     = ""
 }
@@ -253,20 +265,14 @@ variable "flower_kit_date" {
   default     = ""
 }
 
-# Per-job GPU resource spec requested by the fl-api when it builds an NVFLARE
-# job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.production.nvflare.yml).
-# This drives client-side GPU allocation — the hub's Fargate tasks are CPU-only;
-# the GPUs are provided by the fl-clients (trust hosts). Default 0 = no GPU
-# requirement (a CPU-only tutorial). Set to 1 in the env file (TF_VAR_...) for
-# GPU jobs such as the Ark+ evaluation.
+# The GPUs the fl-api writes into a FLARE job's meta when the job declares
+# none (mirrors JOB_RESOURCE_SPEC_NUM_GPUS in compose.production.nvflare.yml).
+# A job declares its own in its meta.json (the Ark+ tutorials do), and a
+# researcher can override it per run (FLIP#70), so keep this 0: a non-zero
+# default keeps every job off a CPU-only trust (FLIP#1390). The GPUs are the
+# fl-clients' (trust hosts); the hub's Fargate tasks are CPU-only.
 variable "JOB_RESOURCE_SPEC_NUM_GPUS" {
-  description = "Number of GPUs requested per FL client in a training/eval job's NVFLARE resource_spec"
-  type        = number
-  default     = 0
-}
-
-variable "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" {
-  description = "Memory (GiB) requested per GPU in a training/eval job's NVFLARE resource_spec"
+  description = "GPUs requested per FL client by a FLARE job whose meta.json declares none"
   type        = number
   default     = 0
 }
@@ -332,10 +338,20 @@ variable "DEMO_ASSETS_BUCKET_NAME" {
   description = <<-EOT
     S3 bucket holding the public Ark+ demo download bundles (results + model
     files zips), served through CloudFront at /ark_demo/assets/* via OAC.
-    The bucket itself is NOT Terraform-managed (objects are staged manually);
-    Terraform manages only its public-access block, its OAC bucket policy,
-    and the CloudFront origin/behavior. Leave empty (the default) to disable
-    all demo-assets resources — e.g. on stag, which hosts no public demo.
+    Who owns the bucket depends on the estate (FLIP#1199):
+      * legacy (lza_managed_network = false) — NOT Terraform-managed. The
+        bucket predates this stack and objects are staged by hand; Terraform
+        manages only its public-access block, its OAC bucket policy, and the
+        CloudFront origin/behaviour on the in-account distribution.
+      * LZA (lza_managed_network = true) — created and owned by
+        module.flip_demo_assets_bucket (services.tf), with the cross-account
+        OAC grant to the networking account's edge distribution in its policy.
+        Serving it needs a /ark_demo/assets/* behaviour on that edge
+        distribution, which lives in aicentre-lza-iac, not here.
+    Leave empty (the default) to disable all demo-assets resources — e.g. on
+    stag, which hosts no public demo. Clearing it on an LZA estate that already
+    has the bucket proposes a destroy, which prevent_destroy turns into an
+    apply failure rather than silent data loss.
   EOT
   type        = string
   default     = ""
@@ -366,18 +382,6 @@ variable "flip_cognito_admin_email" {
   type        = string
 }
 
-variable "DB_PORT" {
-  description = "Port for the FLIP database central hub"
-  type        = number
-  default     = 5432
-}
-
-variable "UI_PORT" {
-  description = "Port for FLIP UI"
-  type        = number
-  default     = 443
-}
-
 variable "ALB_HTTPS_PORT" {
   description = "HTTPS port for ALB external access"
   type        = number
@@ -390,29 +394,22 @@ variable "ALB_HTTP_PORT" {
   default     = 80
 }
 
-variable "API_PORT" {
-  description = "Port for FLIP API"
-  type        = number
-  default     = 8080
-}
-
-variable "FL_API_PORT" {
-  description = "Port for FLIP FL API"
-  type        = number
-  default     = 8000
-}
-
 variable "FL_SERVER_PORT" {
   description = "Port for FLIP FL Server"
   type        = number
   default     = 8002
 }
 
-
 variable "manage_dns" {
   description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation (legacy; on LZA the same gating applies to the internal NLB's web listener — TCP until a cert can be ISSUED, then TLS). Legacy prod/stag keep the default true."
   type        = bool
   default     = true
+}
+
+variable "release_web_alias" {
+  description = "Drop flip_alb_subdomain from this account's CloudFront distribution so another estate's edge can serve it (FLIP#749 change 2b). Alternate domain names are unique across every AWS account and an exact alias beats a wildcard, so while this distribution lists the name it serves it wherever DNS points — this flag, not DNS, is the web cutover. Setting it true also drops the custom viewer certificate, which CloudFront permits only alongside an alias. Separate from manage_dns so the drop lands in a chosen window; this account keeps its zone, records and certificate, so false plus a re-apply is the rollback. Runbook: README.md, 'Handing the public name over'."
+  type        = bool
+  default     = false
 }
 
 variable "flip_alb_subdomain" {
@@ -432,18 +429,6 @@ variable "SES_VERIFIED_EMAIL" {
   type        = string
 }
 
-variable "XNAT_PORT" {
-  description = "Port for XNAT service"
-  type        = number
-  default     = 8104
-}
-
-variable "PACS_UI_PORT" {
-  description = "Port for Orthanc PACS UI"
-  type        = number
-  default     = 8042
-}
-
 variable "TRUST_API_KEY_HEADER" {
   description = "HTTP header name carrying per-trust API keys on trust-to-hub calls. Compose default: Authorization."
   type        = string
@@ -456,7 +441,7 @@ variable "INTERNAL_SERVICE_KEY_HEADER" {
 }
 
 variable "FL_ADMIN_DIRECTORY" {
-  description = "Container path that fl-api looks at for NVFLARE admin secrets (local + startup subdirs)."
+  description = "Container path that fl-api looks at for FLARE admin secrets (local + startup subdirs)."
   type        = string
   default     = "/app/admin"
 }

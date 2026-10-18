@@ -23,6 +23,10 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.0"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
   }
 }
 
@@ -76,15 +80,48 @@ module "ec2_security_group" {
   vpc_id        = local.vpc_id
   description   = "Security group for the FLIP Central Hub SSM bastion (no inbound access)"
   ingress_rules = []
+  tags          = { FlipSG = "true" }
 }
 
-# Tag the secgroup module SGs for drift detection.
-# Remove these aws_security_group_tags resources if the secgroup module
-# ever adds a `tags` variable — until then, we tag externally.
-resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
-  resource_id = module.ec2_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+# The FlipSG drift-detection tag on the secgroup-module groups used to be set
+# by standalone `aws_ec2_tag` resources while the group itself declared no
+# tags, so every apply stripped what the other had restored (#1392). The tag is
+# now the module's `tags` argument. `destroy = false` forgets the old resources
+# rather than deleting the live tag on the way out. Safe to drop these blocks
+# once every state file (stag, prod, both LZA estates) has been applied.
+removed {
+  from = aws_ec2_tag.ec2_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.trust_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.rds_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.alb_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
+}
+
+removed {
+  from = aws_ec2_tag.fl_internal_nlb_security_group_flip_sg
+  lifecycle {
+    destroy = false
+  }
 }
 
 # Trust Security Group for Trust EC2 instance
@@ -93,7 +130,7 @@ resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
 
 # Egress allowlist for the trust EC2 (#876, GHSA-8465). Security groups can't match on hostname, so
 # every CDN-fronted / dynamic-IP destination (GHCR, Docker Hub, the Central Hub's CloudFront domain,
-# Hugging Face mock-data seeding, PyPI + download.pytorch.org, OS/package install sources, and the
+# Hugging Face mock-data seeding, PyPI for that seeding's `uv run`, OS/package install sources, and the
 # AWS services with no VPC endpoint — ssmmessages, ec2messages, monitoring) collapses into a single
 # 0.0.0.0/0 rule per port. That is the practical floor for an SG-only design — accepted as a
 # permanent, documented limitation, not a gap slated for a domain-aware firewall follow-up.
@@ -129,8 +166,8 @@ locals {
       for r in [
         # The 443 floor. One rule, because every destination behind it is the same AWS tuple:
         # Central Hub API (CloudFront), GHCR, Docker Hub, Hugging Face seeding, download.docker.com,
-        # awscli.amazonaws.com, apt/esm over HTTPS, PyPI + download.pytorch.org (Flower's per-run
-        # uv sync), the us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
+        # awscli.amazonaws.com, apt/esm over HTTPS, PyPI (seed_trust.sh's `uv run`), the
+        # us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
         # (ssmmessages, ec2messages, monitoring).
         {
           port        = 443
@@ -211,12 +248,7 @@ module "trust_security_group" {
   ingress_rules      = []
   block_all_outbound = true
   egress_rules       = local.trust_egress_rules
-}
-
-resource "aws_ec2_tag" "trust_security_group_flip_sg" {
-  resource_id = module.trust_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+  tags               = { FlipSG = "true" }
 }
 
 # RDS
@@ -234,12 +266,7 @@ module "rds_security_group" {
     }
   ]
   block_all_outbound = true
-}
-
-resource "aws_ec2_tag" "rds_security_group_flip_sg" {
-  resource_id = module.rds_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+  tags               = { FlipSG = "true" }
 }
 
 # flip-api reaches Postgres only through RDS Proxy (rds_proxy.tf), never
@@ -333,7 +360,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 # Orthanc and the OMOP DB — none of those services use boto3. The only AWS
 # call from the Trust host is `aws s3 sync` against the AI Centre bucket
 # during Ansible provisioning to fetch the FL participant kit (see the
-# NVFLARE/Flower kit-download tasks in deploy/providers/AWS/site.yml).
+# FLARE/Flower kit-download tasks in deploy/providers/AWS/site.yml).
 # Cognito, SES and the FLIP application bucket are deliberately *not*
 # granted here.
 #
@@ -386,7 +413,7 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         # in iam_ecs.tf. Bucket-wide list/read was largely inert before the kms:Decrypt grant
         # below (nothing encrypted could be read at all); granting decrypt completes the
         # capability, so the scope has to be narrowed in the same change. The bucket also holds
-        # every net's kits, the fl-server's own kit, the NVFLARE provisioning CA registry and
+        # every net's kits, the fl-server's own kit, the FLARE provisioning CA registry and
         # the licensed OMOP vocabulary — and this is the host that runs researcher-submitted
         # FL code, so it is the role that least deserves bucket-wide read.
         #
@@ -521,6 +548,15 @@ resource "aws_instance" "ec2_instance" {
     http_endpoint = "enabled"
     http_tokens   = "required"
   }
+
+  # The SSM parameter moves with every Canonical release, and ami forces
+  # replacement: without this, each new image replaces the host on the next
+  # apply, unattended ones in CI included, and site.yml is not re-run for it.
+  # Replacing on purpose (the generation marker above, or -replace) still
+  # launches from the current image.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
 
 # Application Load Balancer
@@ -547,12 +583,7 @@ module "alb_security_group" {
   vpc_id        = local.vpc_id
   description   = "Security group for FLIP ALB"
   ingress_rules = []
-}
-
-resource "aws_ec2_tag" "alb_security_group_flip_sg" {
-  resource_id = module.alb_security_group.security_group.id
-  key         = "FlipSG"
-  value       = "true"
+  tags          = { FlipSG = "true" }
 }
 
 module "alb" {
@@ -736,7 +767,7 @@ moved {
 # Only the name differs by mode, so each live state keeps the TG it already
 # holds (a name change is ForceNew).
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {
-  # Container port per backend (NVFLARE: FL_SERVER_PORT; Flower: SuperLink
+  # Container port per backend (FLARE: FL_SERVER_PORT; Flower: SuperLink
   # Fleet 9092 — see local.fl_server_container_port in ecs_tasks.tf). The
   # NLB LISTENER stays on var.FL_SERVER_PORT for both. Port is ForceNew, so
   # switching backend replaces this TG; the name is keyed by backend and

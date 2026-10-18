@@ -20,12 +20,12 @@ by default, with "Lungs in normal arrangement" as a negative override) using
 a MONAI DenseNet121 trained with multi-label BCE — from scratch, `pretrained=False`.
 An FL app must never download at run time (FLIP#1206: on a platform-managed estate the FL
 server has no internet route, nor does a trust host behind an NHS firewall, and a run-time
-fetch bypasses the scanned upload path). The NVFLARE tutorial's README records the
+fetch bypasses the scanned upload path). The FLARE tutorial's README records the
 measurement behind dropping the ImageNet initialisation rather than shipping it. Apps
-that do need pretrained weights ship them as an uploaded file; the NVFLARE
+that do need pretrained weights ship them as an uploaded file; the FLARE
 latent-diffusion tutorial shows the pattern (`make weights`).
 
-The cohort query (`query.sql`) is copied verbatim from the NVFLARE tutorial
+The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial
 and matches the chest-X-ray data seeded into the trust mock OMOP DB
 (concept ids 4215818 / 4196943 / 40481136). This is the tutorial that
 `make e2e_smoke` from FLIP picks when `FL_BACKEND=flower`.
@@ -34,7 +34,7 @@ and matches the chest-X-ray data seeded into the trust mock OMOP DB
 
 ```
 xray_classification/
-├── query.sql                  # Cohort SQL — verbatim from the NVFLARE tutorial
+├── query.sql                  # Cohort SQL — verbatim from the FLARE tutorial
 ├── pyproject.toml             # Dependency manifest; not consumed by FLIP (base bundle wins)
 ├── README.md
 └── app/
@@ -59,11 +59,38 @@ the upload flow is unaffected.
 
 ## Running this tutorial
 
-> **Run this tutorial with the Docker Compose stack, not `flwr run` / the
-> Simulation Engine.** The compose stack is the supported path; the
-> simulation path is documented below only so you understand why we avoid it.
+> **Two paths.** `make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower`
+> runs it on the flwr simulator (first below), as FLARE's tutorials do — what the release check
+> runs. To run it on the Flower containers by hand, use `fl-services/flower` (second below). The
+> deployment wiring (the FL images, fl-api submit, SuperNode registration) is exercised end to end
+> by `make e2e_smoke FL_BACKEND=flower` against the dev stack (FLIP#1435). Use the make target
+> rather than invoking `flwr run` directly.
 
-### Recommended: Docker Compose
+### Run on the flwr simulator (`make run-tutorial`)
+
+```bash
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
+```
+
+Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
+with the same `app/` code the Flower containers run: site identity comes from
+`context.node_config`'s `partition-id`, which the simulator populates and a deployed SuperNode
+accepts via `--node-config`. The deployment wiring (the FL images, fl-api submit, SuperNode
+registration) is exercised by `make e2e_smoke FL_BACKEND=flower` against the dev stack.
+
+A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
+environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
+`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
+a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
+(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
+processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
+adopts whatever already listens on the local Control API port, so the script refuses to hand the
+run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
+of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
+it. See the
+[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
+
+### On the Flower containers, by hand
 
 From the Flower service directory:
 
@@ -79,19 +106,22 @@ Then submit the run against the `fl-api` control plane:
 make submit APP=xray_classification    # from fl-services/flower/
 ```
 
-The dev compose stack (`deploy/compose.development.yml` +
-`deploy/compose.development.flower.yml`) wires everything correctly:
+`fl-services/flower/compose.dev.yml` wires the containers:
 
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
-  are resolved from `.env.development` (read by Docker Compose as the
-  `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
-  into the SuperNode and SuperLink containers — one source of truth for paths.
-- Inside the containers the mounts always land at stable locations
-  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
-  the `environment:` blocks point the app at those paths, so relative paths in
-  tutorial code resolve consistently regardless of your host layout.
-- The SuperLink's `--insecure` mode and health server are set by `command:`,
-  not by your shell — nothing to re-export between runs.
+- `DEV_DATAFRAME` and `DEV_IMAGES_DIR` come from your shell (Docker Compose's
+  `${VAR}` substitutions in each SuperNode's `volumes:` block). Export them to this
+  tutorial's data under `fl-tutorials/data/` before `make up`; unset, `make up` points
+  them at empty placeholders (`/tmp/flwr-dev-images`, `/tmp/flwr-dev-dataframe.csv`).
+  `WORKING_DIR` is fixed by the Makefile to `fl-services/flower/runs` (gitignored), the
+  same directory `sim-tutorial.sh` uses.
+- Inside the containers the mounts always land at stable locations (`/images`,
+  `/dataframe_file`, `/app/runs`, and `fl-tutorials/flower` at `/app/src`, where
+  the SuperLink reads a tutorial and its checkpoint), and the `environment:` blocks
+  point the app at those paths, so relative paths in tutorial code resolve
+  consistently regardless of your host layout.
+- `make up` runs the stack `--insecure` (the SuperLink's mode and health server
+  are set by `command:`); `make up-secure` runs it with TLS and SuperNode auth after
+  `make provision`.
 
 The `DEV_DATAFRAME` CSV must expose chest-X-ray accession IDs with the same
 column shape `query.sql` returns from the trust mock OMOP DB (concept ids
@@ -103,34 +133,9 @@ the local-sim path, and the recorded CSV omits it. DICOMs land in
 `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])` reads
 them directly when `LOCAL_DEV=true`.
 
-### Run on the flwr simulator (no containers)
-
-```bash
-make -C fl-tutorials sim-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
-```
-
-Runs every ClientApp in-process — no SuperLink container, no SuperNodes, no fl-api, no Docker —
-with the same `app/` code the compose stack deploys: site identity comes from
-`context.node_config`'s `partition-id`, which the simulator populates and a deployed SuperNode
-accepts via `--node-config`. Use it while iterating on app code; use the compose stack above
-before merging, since only that path exercises the deployment wiring (TLS, fl-api submit,
-SuperNode registration).
-
-A raw `flwr run` has five sharp edges in this project — a long-lived SuperLink caches its
-environment, the ClientApp's working directory is a snapshot under `~/.flwr/apps/`, and
-`WORKING_DIR` defaults to a container path — which is why the path is a make target rather than
-a command: `sim-tutorial.sh` handles them, and stops only its *own* stale simulator processes
-(a blanket `pkill -f flower-superlink` would also kill the FLIP dev stack's fl-server, whose
-processes are visible in the host PID namespace). Two more edges make it five: `flwr run . local`
-adopts whatever already listens on the local Control API port, so the script refuses to hand the
-run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
-of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
-it. See the
-[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
-
 ## Hyperparameters
 
-`app/config.json` mirrors the NVFLARE chest-X-ray config:
+`app/config.json` mirrors the FLARE chest-X-ray config:
 
 | Key                  | Default | Meaning |
 |----------------------|---------|---------|
@@ -155,7 +160,7 @@ best-model-metric-minimize = false
 ```
 
 `test_f1-score` is the **macro F1 across lesions** that `app/client_app.py` reports from its evaluate pass
-(`macro_mean` in `app/task.py`), matching the macro `VAL-F1-SCORE` the NVFLARE chest-X-ray tutorial selects
+(`macro_mean` in `app/task.py`), matching the macro `VAL-F1-SCORE` the FLARE chest-X-ray tutorial selects
 on. The server weight-averages it across trusts by `num-examples` and keeps the round that scores highest.
 
 What changes when it is set:
@@ -173,7 +178,7 @@ Two things worth knowing before you change the metric:
   best model at all, logging a warning per round rather than failing — check the ServerApp log if the
   artefact is missing.
 - **On Flower the metric is measured on the test split**, because that is what the evaluate phase uses here.
-  NVFLARE instead scores a pre-training pass over the *validation* split. Selecting on the test split is
+  FLARE instead scores a pre-training pass over the *validation* split. Selecting on the test split is
   convenient for a tutorial but is a mild form of selection-on-test; point `best-model-metric` at a
   validation metric if you need the split kept clean.
 
@@ -189,8 +194,8 @@ sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
 ```
 
 It is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so it covers training
-rounds only — `@app.evaluate` is untouched. That mirrors the scope of the NVFLARE apps'
-`PercentilePrivacy` result filter, though the mechanism is stronger: NVFLARE sparsifies by
+rounds only — `@app.evaluate` is untouched. That mirrors the scope of the FLARE apps'
+`PercentilePrivacy` result filter, though the mechanism is stronger: FLARE sparsifies by
 percentile and adds no noise, while this is a real (epsilon, delta) mechanism built on Flower's own
 `compute_clip_model_update` / `add_gaussian_noise_inplace`.
 
@@ -226,4 +231,5 @@ excludes them rather than crashing the client the first time clipping engages.
 - `query.sql` resolves chest-X-ray accession IDs labeled with effusion / edema
   / normal lungs from the trust mock OMOP DB.
 - DICOM payloads come back via `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])`.
+- The app reads DICOM only, so create its project with **DICOM to NIfTI** off: conversion would produce NIfTI nothing reads.
 - Each `.dcm` becomes one training sample with the row's lesion labels.

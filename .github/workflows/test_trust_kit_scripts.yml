@@ -42,6 +42,14 @@ on:
       - "deploy/compose*.yml"
       - "trust/deploy/compose*.yml"
       - "fl-services/nvflare/compose.dev.yml"
+      # test_flower_runtime_install.py asserts on the Flower composes, the Helm chart and the FL
+      # images' Dockerfiles (FLIP#1418).
+      - "fl-services/flower/compose*.yml"
+      # test_fl_kit_edge_port.py asserts on the FLARE provisioning templates (FLIP#1365).
+      - "fl-services/nvflare/provision/net-*_project_*.yml"
+      - "fl-services/flower/*/Dockerfile"
+      - "trust/deploy/helm/templates/**"
+      - "trust/deploy/helm/values*.yaml"
       # test_secret_scanning_gate.py asserts on the secret-scanning workflow, the
       # pre-commit pin and the baseline (FLIP#1215) — same trap, same fix.
       - ".github/workflows/secret-scanning.yml"
@@ -51,6 +59,14 @@ on:
       - ".env.development.example"
       - "deploy/fl_backend.mk"
       - ".github/workflows/docker_build_*.yml"
+      - ".github/workflows/fl-docker-build-*.yml"
+      - ".github/workflows/release.yml"
+      - ".github/actions/**"
+      - ".github/tests/**"
+      - "tests/**"
+      - "Makefile"
+      - "trust/Makefile"
+      - "trust/xnat/Makefile"
   pull_request:
     branches: [develop]
 
@@ -72,9 +88,11 @@ jobs:
       # themselves are stdlib-only.
       - name: Install uv
         run: pip install uv
-      - name: Run scripts/ tests
+      # scripts/tests/, plus the repo-level trees that mirror what they test: tests/ for the root
+      # Makefile, .github/tests/ for the workflows and actions. All stdlib-only.
+      - name: Run scripts/, tests/ and .github/tests/
         run: |
-          for test_file in scripts/tests/test_*.py; do
+          for test_file in scripts/tests/test_*.py tests/test_*.py $(find .github/tests -name 'test_*.py' | sort); do
             echo "== $test_file"
             python "$test_file" || exit 1
           done

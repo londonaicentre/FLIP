@@ -170,7 +170,7 @@ if [ "$fl_backend" = "nvflare" ]; then
         log_error "  and confirm FL_KIT_SLOT='$slot' is one of the provisioned slot names."
         exit 1
     fi
-    # NVFLARE's service layout requires `transfer/` to exist as a directory —
+    # FLARE's service layout requires `transfer/` to exist as a directory —
     # it's the runtime drop for trained models. Provisioner ships it empty, so
     # `aws s3 sync` (which only mirrors objects, not empty prefixes) leaves it
     # out. Recreate it here so the unpacked kit matches the layout

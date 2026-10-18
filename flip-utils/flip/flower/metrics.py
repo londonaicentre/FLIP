@@ -36,7 +36,7 @@ import logging
 import math
 from typing import TYPE_CHECKING
 
-from flip import FLIP
+from flip import FLIP, FLIPBase
 from flip.constants.flip_constants import ModelStatus
 from flip.schemas import split_x_label
 
@@ -55,7 +55,7 @@ def handle_client_metrics(
     msg: Message,
     server_round: int,
     model_id: str,
-    flip: FLIP = FLIP(),
+    flip: FLIPBase = FLIP(),
 ) -> None:
     """Forward per-client metrics from a Flower reply Message to the Central Hub.
 
@@ -133,7 +133,7 @@ def handle_client_metrics(
 def handle_client_exception(
     msg: Message,
     model_id: str,
-    flip: FLIP = FLIP(),
+    flip: FLIPBase = FLIP(),
     site_name: str | None = None,
 ) -> None:
     """Forward a crashed-client reply to the Central Hub and mark the run ERROR.
@@ -216,9 +216,8 @@ def _resolve_site_name(msg: Message) -> str | None:
     return None
 
 
-# Trailing-suffix spellings that set a metric's plot x-coordinate. ".x_" is the canonical form;
-# ".round_" is the deprecated pre-x_value spelling, kept parsing so existing apps don't break.
-_X_VALUE_SUFFIXES = (".x_", ".round_")
+# Trailing suffix that sets a metric's plot x-coordinate.
+_X_VALUE_SUFFIX = ".x_"
 
 
 def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
@@ -227,8 +226,8 @@ def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
     The key grammar is ``<label>[@<x_label>][.x_<V>]``:
 
     - ``.x_<V>`` (optional, trailing) sets the plot x-coordinate; ``V`` is a float literal (``.x_5``,
-      ``.x_1.5``, ``.x_1e-3``). Absent or non-numeric -> ``None`` (the hub plots the metric at its FL
-      global round). ``.round_<N>`` is the deprecated pre-x_value spelling and still parses.
+      ``.x_1.5``, ``.x_1e-3``). Absent, non-numeric or non-finite (nan/inf) -> ``None`` (the hub plots
+      the metric at its FL global round); a non-numeric or non-finite suffix stays on the label.
     - ``@<x_label>`` (optional) names the x-axis, e.g. "epoch"; absent -> ``None`` (the hub defaults it
       to "Global Rounds"). A plot's identity is (label, x_label), so distinct x-labels render as separate
       plots — see https://github.com/londonaicentre/FLIP/issues/148.
@@ -237,18 +236,16 @@ def _parse_metric_key(key: str) -> tuple[str, float | None, str | None]:
     ``"loss@epoch"`` -> ("loss", None, "epoch"); ``"loss@epoch.x_5"`` -> ("loss", 5.0, "epoch").
     """
     x_value: float | None = None
-    for suffix in _X_VALUE_SUFFIXES:
-        if suffix in key:
-            base, x_value_str = key.rsplit(suffix, 1)
-            try:
-                parsed = float(x_value_str)
-            except ValueError:
-                # Non-numeric suffix: leave the key (and its suffix) intact.
-                continue
+    if _X_VALUE_SUFFIX in key:
+        base, x_value_str = key.rsplit(_X_VALUE_SUFFIX, 1)
+        try:
+            parsed = float(x_value_str)
+        except ValueError:
+            pass  # Non-numeric suffix: leave the key (and its suffix) intact.
+        else:
             # nan/inf would survive to the DB and break JSON-encoding the hub's metrics response.
             if math.isfinite(parsed):
                 key, x_value = base, parsed
-                break
 
     key, x_label = split_x_label(key)
 

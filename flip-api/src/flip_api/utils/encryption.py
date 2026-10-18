@@ -41,6 +41,7 @@ payloads with a peer on the other (the roll-out is a flag day; see ``deploy/READ
 
 import base64
 import binascii
+import hashlib
 import json
 import os
 from typing import Any
@@ -85,6 +86,18 @@ def get_aes_key() -> bytes:
     aes_key_b64 = get_secret("aes_key") if stt.ENV == "production" else stt.AES_KEY_BASE64
     _aes_key_cache = _require_aes256(base64.b64decode(aes_key_b64))
     return _aes_key_cache
+
+
+#: Hex chars of the key fingerprint carried in the heartbeat reply (FLIP#1204). 48 bits of a
+#: SHA-256 over a 256-bit random key discloses nothing usable, and the route is API-key
+#: authenticated; it exists so a trust can tell a stale kit from a working one before a
+#: task fails to decrypt. trust-api computes the same digest over its own decoded key.
+_KEY_FINGERPRINT_CHARS = 12
+
+
+def aes_key_fingerprint() -> str:
+    """Short SHA-256 fingerprint of the raw shared key, for the trust heartbeat reply."""
+    return hashlib.sha256(get_aes_key()).hexdigest()[:_KEY_FINGERPRINT_CHARS]
 
 
 #: Key id of the platform-wide shared key (``AES_KEY_BASE64``).

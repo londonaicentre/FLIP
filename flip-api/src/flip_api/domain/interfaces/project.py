@@ -16,7 +16,14 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, validator
 
-from flip_api.domain.schemas.status import ImagingConnectionState, ModelStatus, ProjectStatus
+from flip_api.domain.schemas.status import (
+    CohortSnapshotState,
+    DecisionMaker,
+    ImagingConnectionState,
+    ModelStatus,
+    ProjectStatus,
+    TrustApprovalStatus,
+)
 from flip_api.domain.schemas.users import CognitoUser
 
 # Blocks the three characters most likely to enable structural XML injection
@@ -100,11 +107,21 @@ class IProjectResponse(BaseModel):
 
 
 class IApprovedTrust(BaseModel):
+    """A trust a project was staged for, with the decision on it (FLIP#1318)."""
+
     id: UUID
     name: str
     code: str | None = None
-    approved: bool
-    approved_at: str | None = Field(default=None, alias="approvedAt")
+    status: TrustApprovalStatus
+    # The decider's user id and display name, and the date. All null while PENDING; the decider is also
+    # null on approvals made before decisions were attributed, and the name on a decider with no profile.
+    decided_by: UUID | None = Field(default=None, alias="decidedBy")
+    decided_by_name: str | None = Field(default=None, alias="decidedByName")
+    decided_at: str | None = Field(default=None, alias="decidedAt")
+    # HUB or SITE: whether the hub admin or the trust's own Trust Admin decided (FLIP#1258); null while PENDING.
+    decided_as: DecisionMaker | None = Field(default=None, alias="decidedAs")
+    # True when the trust has a Trust Admin, so only they decide it.
+    has_trust_admin: bool = Field(default=False, alias="hasTrustAdmin")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -214,10 +231,14 @@ class IProjectDetails(BaseModel):
 
 
 class IProjectApproval(BaseModel):
-    project_id: UUID = Field(..., description="The ID of the project to approve.")
+    project_id: UUID = Field(..., description="The ID of the project to decide on.")
     trust_ids: list[UUID] = Field(
         ...,
         description="List of Trust IDs to approve the project for.",
+    )
+    declined_trust_ids: list[UUID] = Field(
+        default_factory=list,
+        description="List of Trust IDs that decline the project.",
     )
 
 
@@ -242,6 +263,52 @@ class IImagingImportStatus(BaseModel):
     )
 
 
+class ICohortSnapshot(BaseModel):
+    """One approved trust's cohort freeze (FLIP#857) — aggregates only.
+
+    ``status`` is FROZEN, PENDING or FAILED, as the hub knows it: a trust never frozen (PENDING or FAILED)
+    refuses training, while a frozen trust being re-checked keeps serving (PENDING, or FROZEN with ``error``
+    set when the re-check failed). The count fields are the approval-time facts
+    and are present once the trust has reported a snapshot. The frozen membership bounds who the
+    project trains on at that trust (it can shrink as patients opt out, never grow), but their
+    records are read live, so ``rowCount`` is not the live count. ``approvedRecordCount`` is the
+    count the project was staged/approved on; when it differs from ``rowCount`` the live cohort
+    drifted between submission and approval. ``error`` is a category-only reason, set when ``status`` is FAILED.
+    """
+
+    trust_id: UUID = Field(alias="trustId")
+    trust_name: str = Field(alias="trustName")
+    status: CohortSnapshotState
+    error: str | None = None
+    row_count: int | None = Field(default=None, alias="rowCount")
+    approved_record_count: int | None = Field(default=None, alias="approvedRecordCount")
+    has_accessions: bool | None = Field(default=None, alias="hasAccessions")
+    snapshot_at: datetime | None = Field(default=None, alias="snapshotAt")
+    query_id: UUID | None = Field(default=None, alias="queryId")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
+class ICohortSnapshotRequeue(BaseModel):
+    """What a re-freeze request did at one approved trust (FLIP#857).
+
+    ``queued`` is True when a new PERSIST_COHORT task was queued. When False, ``status`` is the
+    trust's unchanged state and ``reason`` says why nothing was queued there.
+    """
+
+    trust_id: UUID = Field(alias="trustId")
+    trust_name: str = Field(alias="trustName")
+    queued: bool
+    status: CohortSnapshotState
+    reason: str | None = None
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
 class IImagingStatusResponse(BaseModel):
     project_creation_completed: bool = Field(alias="projectCreationCompleted")
     # The last *known* counts, not necessarily current ones — read `connection_state` and
@@ -251,9 +318,7 @@ class IImagingStatusResponse(BaseModel):
     # Whether the newest refresh landed, so a consumer can tell a live 100% from a stale one.
     # Defaults to OK so a trust with no refresh history reads as "nothing wrong yet" rather
     # than as an error.
-    connection_state: ImagingConnectionState = Field(
-        default=ImagingConnectionState.OK, alias="connectionState"
-    )
+    connection_state: ImagingConnectionState = Field(default=ImagingConnectionState.OK, alias="connectionState")
     # When `import_status` was last confirmed against the trust. None when no refresh has ever
     # succeeded for this project.
     last_seen_at: datetime | None = Field(default=None, alias="lastSeenAt")

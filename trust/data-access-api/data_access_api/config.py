@@ -15,6 +15,9 @@ from typing import Literal
 
 from pydantic import PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy import URL
+
+from data_access_api.policy import Policy, load_policy
 
 # The shipped disclosure floor. Referenced by both the field default and the empty-string
 # coercion validator below, so the two cannot drift apart.
@@ -74,9 +77,36 @@ class Settings(BaseSettings):
             return DEFAULT_COHORT_QUERY_THRESHOLD
         return v
 
+    # Trust governance policy (FLIP#1259). The trust states its runtime access rules in a
+    # TOML document instead of having them compiled into this service. Unset means the
+    # platform defaults apply, which is today's behaviour byte for byte.
+    #
+    # Operator-owned (Host-local profile in the kit file), never hub-set: a hub admin able
+    # to write a trust's policy would defeat the purpose of having one.
+    ACCESS_POLICY_FILE: str = ""
+
     CACHE_TTL_DAYS: int = 60  # Number of days before cached query results expire
     CACHE_MAX_RESULT_ROWS: PositiveInt = 50_000  # Max rows per cached result; larger results skip caching
     CACHE_MAX_ENTRIES: PositiveInt = 64  # Max number of cached query results
+
+    # Approved-cohort membership store (FLIP#857). Directory where the membership frozen at
+    # project approval is persisted, one sub-directory per hub project id — a dedicated bind
+    # mount in the compose files. The row-level routes serve ONLY these approved cohorts (a
+    # project with no record is refused), so an unset/unwritable directory means no row-level data
+    # can be released until the store is fixed — deliberately fail-closed.
+    COHORT_SNAPSHOT_DIR: str = ""
+
+    # Hard cap on one serialized membership record. Over the cap it is REFUSED, never
+    # truncated — a partial membership would silently drop patients from training.
+    SNAPSHOT_MAX_BYTES: PositiveInt = 536_870_912  # 512 MiB
+
+    @field_validator("SNAPSHOT_MAX_BYTES", mode="before")
+    @classmethod
+    def coerce_empty_snapshot_max_bytes(cls, v: object) -> object:
+        """Treat an empty-string cap as the default (same kit-file gotcha as the threshold)."""
+        if v is None or v == "":
+            return 536_870_912
+        return v
 
     #
     OMOP_DB_SERVICE_NAME: str = "omop-db"  # The name of the OMOP database service in Docker Compose or Kubernetes
@@ -96,17 +126,38 @@ class Settings(BaseSettings):
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
     TRUST_INTERNAL_SERVICE_KEY: str = ""
 
+    # Cohort-write authorisation (FLIP#857). The snapshot create/delete routes carry a second
+    # gate on top of the trust-internal key: the caller must prove possession of AES_KEY_BASE64
+    # by sending the SHA-256 of the key in this header. This separates the services trusted to
+    # DEFINE a project's approved cohort (trust-api, which calls them; data-access-api checks the
+    # proof against its own copy of the key; imaging-api holds it too but never calls them)
+    # from fl-client, which runs researcher training code, holds the trust-internal key for its
+    # imaging reads, and deliberately has no AES key. The read routes are unaffected, so
+    # fl-client's ``get_dataframe`` keeps working; only the cohort-defining writes are locked
+    # down. The digest — not the raw key — is transmitted, so a captured header or a log line
+    # never reveals the encryption key.
+    COHORT_ADMIN_KEY_HEADER: str = "X-Cohort-Admin-Key"
+
     # Define the database URL for the OMOP database
     @property
     def OMOP_DATABASE_URL(self) -> SecretStr:
         """Construct the database URL for the OMOP database.
 
         Returns:
-            SecretStr: A ``postgresql://`` URL wrapped as a SecretStr to avoid leaking the password
-            in logs or error messages.
+            SecretStr: A ``postgresql+psycopg2://`` URL wrapped as a SecretStr to avoid leaking
+            the password in logs or error messages.
         """
+        # The driver is named because a bare ``postgresql://`` lets SQLAlchemy pick one, and
+        # this service ships psycopg2 only. URL.create escapes @, / and : in the credentials.
         return SecretStr(
-            f"postgresql://{self.DATA_ACCESS_POSTGRES_USER}:{self.DATA_ACCESS_POSTGRES_PASSWORD.get_secret_value()}@{self.OMOP_DB_SERVICE_NAME}:{self.OMOP_DB_PORT}/{self.OMOP_POSTGRES_DB}"
+            URL.create(
+                "postgresql+psycopg2",
+                username=self.DATA_ACCESS_POSTGRES_USER,
+                password=self.DATA_ACCESS_POSTGRES_PASSWORD.get_secret_value(),
+                host=self.OMOP_DB_SERVICE_NAME,
+                port=self.OMOP_DB_PORT,
+                database=self.OMOP_POSTGRES_DB,
+            ).render_as_string(hide_password=False)
         )
 
 
@@ -123,3 +174,26 @@ def get_settings() -> Settings:
         Settings: An instance of the Settings class containing configuration values.
     """
     return _settings  # type: ignore
+
+
+# Eager load the governance policy once, at import, so an invalid document stops the
+# service at startup rather than at the first cohort query (FLIP#1259). Same
+# fail-closed stance as the fl-client's site-policy renderer (#851): a policy that
+# cannot be understood must not leave the service running under the weaker built-in
+# defaults, because the operator believes their rules are in force.
+#
+# Not wrapped in try/except on purpose. AccessPolicyError propagating out of import is
+# exactly the desired behaviour — uvicorn exits non-zero and the container restarts and
+# fails again, loudly, instead of serving data under a policy nobody validated.
+_policy = load_policy(path=_settings.ACCESS_POLICY_FILE, floor=_settings.COHORT_QUERY_THRESHOLD)
+
+
+def get_policy() -> Policy | None:
+    """
+    Get the loaded trust governance policy.
+
+    Returns:
+        Policy | None: The validated policy, or ``None`` when the trust has configured
+        none — in which case the platform defaults apply and behaviour is unchanged.
+    """
+    return _policy

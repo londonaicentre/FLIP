@@ -27,6 +27,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from sphinx.application import Sphinx
 from sphinx.errors import SphinxError
 from sphinx.util import logging as sphinx_logging
 
@@ -166,8 +167,8 @@ html_sidebars = {
 }
 html_scaled_image_link = False
 html_show_sourcelink = True
-html_favicon = 'assets/favicon.ico'
-html_logo = 'assets/flip-logo.png'
+html_favicon = "assets/favicon.ico"
+html_logo = "assets/flip-logo.png"
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
@@ -175,18 +176,18 @@ html_static_path = ["_static"]
 
 
 # -- Generated figures -------------------------------------------------------
-# The Central Hub AWS diagrams (one pair per deployment mode) are diagram-as-code kept beside the Terraform they depict
-# (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). It is rendered here at
-# build time into assets/generated/ (gitignored), so the published deployment pages always show the pictures for the commit
-# it documents and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
-# build.apt_packages, the docs CI job via apt-get.
+# The Central Hub AWS diagrams (one pair per deployment mode) are diagram-as-code kept beside the Terraform they
+# depict (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). They are rendered
+# here at build time into assets/generated/ (gitignored), so the published deployment pages always show the
+# pictures for the commit they document and no PNG has to be kept in sync by hand. Needs graphviz `dot`:
+# ReadTheDocs installs it via build.apt_packages, the docs CI job via apt-get.
 
 AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
 GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"
 SKIP_DIAGRAMS_ENV = "FLIP_DOCS_SKIP_DIAGRAMS"
 
 
-def _render_generated_figures(app):
+def _render_generated_figures(app: Sphinx) -> None:
     """Render the Central Hub AWS diagrams before Sphinx reads the sources.
 
     Fails the build when graphviz is missing rather than publishing a page with an empty figure. A developer
@@ -195,7 +196,8 @@ def _render_generated_figures(app):
     """
     if os.environ.get(SKIP_DIAGRAMS_ENV) == "1":
         logger.warning(
-            "%s=1: not rendering the Central Hub AWS diagrams; the Central Hub deployment pages will report missing images",
+            "%s=1: not rendering the Central Hub AWS diagrams; the Central Hub deployment pages will report missing "
+            "images",
             SKIP_DIAGRAMS_ENV,
         )
         return
@@ -213,6 +215,53 @@ def _render_generated_figures(app):
         logger.info("rendered %s", path.relative_to(REPO_ROOT))
 
 
-def setup(app):
+# -- Documentation GIFs ------------------------------------------------------
+# The user-guide GIFs are not tracked in git (FLIP#1236): each Cypress recording from develop is published to the
+# public Hugging Face dataset aicentreflip/docs-gifs, each release tags the one it ships (FLIP#1547), and the hook
+# below fetches the set this build calls for (a release's tag, a PR's own recording, else the newest) into
+# assets/generated/gifs/ (gitignored, wiped by `make clean`) before Sphinx reads the sources, verifying every file
+# against the published manifest. Needs outbound HTTPS to huggingface.co (and *.hf.co) and nothing else: the
+# dataset is public.
+
+DOCS_SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+GIFS_DIR = GENERATED_ASSETS_DIR / "gifs"
+SKIP_GIF_FETCH_ENV = "FLIP_DOCS_SKIP_GIF_FETCH"
+
+
+def _fetch_docs_gifs(app: Sphinx) -> None:
+    """Fetch the docs GIFs before Sphinx reads the sources.
+
+    Fails the build when no set can be fetched or verified rather than publishing pages with missing figures.
+    ``FLIP_DOCS_SKIP_GIF_FETCH=1`` opts out — for a text-only build offline, or to preview GIFs recorded locally
+    with ``npm run docs:gifs``, which land in the same directory and would otherwise be restored to the published
+    bytes; that prints a warning here and Sphinx's own "image file not readable" warning for every figure it then
+    cannot find, never silently.
+    """
+    if os.environ.get(SKIP_GIF_FETCH_ENV) == "1":
+        logger.warning(
+            "%s=1: not fetching the docs GIFs; the user-guide pages will report missing images unless "
+            "assets/generated/gifs/ already holds them",
+            SKIP_GIF_FETCH_ENV,
+        )
+        return
+    sys.path.insert(0, str(DOCS_SCRIPTS_DIR))
+    import fetch_docs_gifs  # noqa: PLC0415  (import deferred: a build tool beside conf.py, not a Sphinx dependency)
+
+    revisions = fetch_docs_gifs.revisions_to_try()
+    try:
+        report = fetch_docs_gifs.fetch(
+            fetch_docs_gifs.repo_from_env(), revisions, GIFS_DIR, log=lambda message: logger.info("%s", message)
+        )
+    except fetch_docs_gifs.FetchError as exc:
+        raise SphinxError(
+            f"Could not fetch the docs GIFs: {exc}. Tried {', '.join(revisions)} (${fetch_docs_gifs.REVISION_ENV} "
+            f"picks one) on the dataset ${fetch_docs_gifs.REPO_ENV} names; behind a proxy, allow huggingface.co "
+            f"and *.hf.co; or set {SKIP_GIF_FETCH_ENV}=1 for a text-only build."
+        ) from exc
+    logger.info("docs GIFs: %s", report.summary())
+
+
+def setup(app: Sphinx) -> dict[str, bool]:
     app.connect("builder-inited", _render_generated_figures)
+    app.connect("builder-inited", _fetch_docs_gifs)
     return {"parallel_read_safe": True, "parallel_write_safe": True}

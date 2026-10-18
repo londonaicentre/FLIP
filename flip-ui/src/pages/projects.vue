@@ -499,7 +499,7 @@ const approvedTrustCount = computed(() => {
     const ids = new Set<string>();
     for (const p of data.value?.data ?? []) {
         for (const t of p.approvedTrusts ?? []) {
-            if (t.approved) ids.add(t.id);
+            if (t.status === "APPROVED") ids.add(t.id);
         }
     }
 

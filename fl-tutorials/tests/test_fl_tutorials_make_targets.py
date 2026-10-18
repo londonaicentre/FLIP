@@ -48,7 +48,40 @@ def _documented_root_targets() -> list[str]:
 def test_documented_root_target_resolves(target: str):
     # -n prints recipes instead of running them; a missing target still fails at rule lookup.
     # Recursive $(MAKE) lines run under -n too, so a forwarded name is checked in its owner.
-    result = subprocess.run(
-        ["make", "-n", "-C", str(FL_TUTORIALS), target], capture_output=True, text=True, timeout=60
-    )
+    result = subprocess.run(["make", "-n", "-C", str(FL_TUTORIALS), target], capture_output=True, text=True, timeout=60)
     assert "No rule to make target" not in result.stderr, result.stderr
+
+
+# The tutorial targets mean the same thing on both backends (FLIP#1435): run-tutorial and
+# run-all-tutorials — the pre-release tutorial check — run the simulator, and sim-tutorial is an
+# alias. On Flower that is sim-tutorial.sh; the compose-stack runner it replaced must not come back
+# under these names, or the release check would silently run something else on one backend.
+_TARGETS_LINE = re.search(r"^TUTORIAL_TARGETS := (.+)$", (FL_TUTORIALS / "Makefile").read_text(encoding="utf-8"), re.M)
+assert _TARGETS_LINE, "fl-tutorials/Makefile no longer defines TUTORIAL_TARGETS on one `:=` line; update this test"
+_TUTORIAL_TARGETS = _TARGETS_LINE.group(1).split()
+
+
+@pytest.mark.parametrize("backend", ["nvflare", "flower"])
+@pytest.mark.parametrize("target", _TUTORIAL_TARGETS)
+def test_tutorial_target_resolves_on_both_backends(target: str, backend: str):
+    result = subprocess.run(
+        ["make", "-n", "-C", str(FL_TUTORIALS), target, f"FL_BACKEND={backend}", "TUTORIAL=xray_classification"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "No rule to make target" not in result.stderr, result.stderr
+
+
+@pytest.mark.parametrize("target", ["run-tutorial", "sim-tutorial", "run-all-tutorials"])
+def test_flower_tutorial_targets_run_the_simulator(target: str):
+    result = subprocess.run(
+        ["make", "-n", "-C", str(FL_TUTORIALS), target, "FL_BACKEND=flower", "TUTORIAL=xray_classification"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert "flower/sim-tutorial.sh" in result.stdout, result.stdout
+    # The compose runner this replaced was `bash .../flower/run-tutorial.sh` (FLIP#1435).
+    assert "run-tutorial.sh" not in result.stdout, result.stdout

@@ -78,9 +78,10 @@ performs the retrieval, driven over REST by the imaging API:
 3. XNAT issues a **C-MOVE** to the PACS, naming itself as the move destination.
 4. The PACS **C-STOREs** the study back to XNAT's DICOM SCP receiver, where the site-wide
    anonymisation script runs on receipt, before the session is archived — see
-   :ref:`DICOM Anonymization <dicom-anonymization>`. That script is a denylist, and its limits
-   (vendor private tags, unshifted dates, burned-in annotation) are stated there; read them before
-   connecting a real PACS, since until now the script has only seen synthetic data.
+   :ref:`DICOM Anonymization <dicom-anonymization>`. That script is built from the DICOM PS3.15
+   Basic Profile but is not a conformant profile, and its limits (nested UIDs, burned-in
+   annotation, faces) are stated there; read them before connecting a real PACS, since the script
+   has only been exercised against synthetic data.
 
 Only accession numbers belonging to an approved project cohort are ever requested. There is no
 standing forward rule and no bulk transfer.
@@ -194,7 +195,8 @@ trust's PACS team supplies; what they supply is covered above.
        PACS, not a preference — see the table above
      - ``true``
    * - ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``
-     - When retrieval may run, as a comma-separated day list and a daily window
+     - When retrieval may run, as a comma-separated day list and a daily window whose start comes
+       before its end (see Scheduling and Throughput below)
      - all week, ``00:00``–``24:00``
    * - ``PACS_THREADS`` / ``PACS_UTILIZATION_PERCENT``
      - How hard to drive the PACS during that window
@@ -241,10 +243,14 @@ host-level rule does not close it; scope it at the network the host sits on.
 
    xnat:
      web:
-       service:
+       # The DICOM SCP has its own Service (xnat-web-dicom), separate from the web console's.
+       # Exposing it never exposes the console, which stays ClusterIP — the chart refuses a real
+       # PACS combined with an externally-exposed web.service.type.
+       dicomService:
          type: NodePort
        # Pin the port so the PACS has a stable destination. Must be inside the API server's
-       # --service-node-port-range, or that range widened to admit the DICOM port.
+       # --service-node-port-range, or that range widened to admit the DICOM port. Where you
+       # cannot change that range, use dicomService.type: LoadBalancer and omit this.
        dicomNodePort: 8104
 
    networkPolicies:
@@ -267,9 +273,14 @@ ports, which would widen the one inbound path into the trust from DICOM to every
 
 .. note::
 
-   Setting ``service.type: NodePort`` also sets ``externalTrafficPolicy: Local`` on that Service.
-   Under the default ``Cluster`` policy the PACS's source address is rewritten to the node's before
-   the pod sees it, so the ingress rule above would never match and the C-STORE would be dropped.
+   Setting ``dicomService.type`` to ``NodePort`` or ``LoadBalancer`` also sets
+   ``externalTrafficPolicy: Local`` on that Service. Under the default ``Cluster`` policy the
+   PACS's source address is rewritten to the node's before the pod sees it, so the ingress rule
+   above would never match and the C-STORE would be dropped. ``Local`` preserves the source
+   address only on a pass-through load balancer (MetalLB, an AWS NLB); a proxying load balancer
+   SNATs regardless, and the PACS CIDR will never match — scope the rule to the proxy's address
+   in that case. It also means only nodes running the pod answer, which suits the single-pod
+   trust deployment this targets.
 
 Development: the Mocked PACS
 ============================
@@ -363,21 +374,15 @@ carries an availability schedule with a per-day window, a thread count and a uti
 Where a trust has a test or pre-production PACS, connecting FLIP to that first is recommended, and
 is usually raised as a separate service request.
 
-.. warning::
+.. note::
 
-   **Verify the window that is actually in force rather than assuming the configured one applied.**
-
-   DQR pre-creates availability intervals when a PACS is registered, and rejects a write to a day
-   that already has one. On a first deployment the configured values are applied; on any XNAT where
-   intervals already exist — including one where the PACS has been re-registered, which leaves the
-   previous intervals behind — the write is rejected and the existing window stands. Changing it
-   then requires deleting the intervals through XNAT's administration UI.
-
-   Confirm with ``GET /xapi/pacs/{id}/availability`` after configuring. Note also that XNAT
-   normalises an end time of ``24:00`` to ``00:00`` when it stores it.
-
-   This matters because the window is usually something a trust's PACS manager has agreed to. If it
-   has not applied, retrieval runs outside it.
+   **The kit sets the schedule.** Every configure run (``xnat-configure``, ``upgrade-xnat``,
+   ``helm upgrade``) makes the registered PACS's schedule match the kit, so a change made in XNAT's
+   DQR administration page is reverted and the log names what it replaced. Put a window agreed with
+   the PACS manager in the kit. The window cannot cross midnight: DQR would run ``19:00``–``07:00``
+   inverted, during the day, so it is refused (FLIP#1465). For out-of-hours retrieval use
+   ``19:00``–``24:00``, ``00:00``–``07:00`` or whole days. ``trust/xnat/README.md`` (PACS
+   configuration) has the detail.
 
 Verification
 ============

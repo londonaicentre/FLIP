@@ -89,9 +89,7 @@ async def test_create_project_event_subscription_active_matches_dicom_to_nifti(
     background_tasks = MagicMock()
     await create_project_from_central_hub_project(central_hub_project, headers, background_tasks)
 
-    mock_event_sub.assert_called_once_with(
-        TEST_XNAT_PROJECT_ID, get_settings().DCM2NIIX_IMAGE, dicom_to_nifti, headers
-    )
+    mock_event_sub.assert_called_once_with(TEST_XNAT_PROJECT_ID, get_settings().DCM2NIIX_IMAGE, dicom_to_nifti, headers)
 
 
 # ── GET /projects/ ──

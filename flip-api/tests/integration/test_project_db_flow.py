@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Integration coverage of the project_services DB path: create → fetch → soft-delete → approve.
+"""Integration coverage of the project_services DB path: create → fetch → soft-delete → trust decisions.
 
 Hits ``project_services.services.project_services`` against the throwaway
 Postgres rather than mocking the session. Unit tests for the same code mock
@@ -18,10 +18,12 @@ Postgres rather than mocking the session. Unit tests for the same code mock
 relationships, default mismatches, etc.); these do.
 """
 
+import re
+import threading
 from uuid import UUID, uuid4
 
 import pytest
-from sqlmodel import select
+from sqlmodel import Session, col, create_engine, select
 
 from flip_api.db.models.main_models import (
     Projects,
@@ -31,17 +33,24 @@ from flip_api.db.models.main_models import (
     Queries,
     XNATProjectStatus,
 )
+from flip_api.db.models.user_models import UserProfile
 from flip_api.domain.interfaces.project import IProjectApproval
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
-from flip_api.domain.schemas.status import ProjectStatus, XNATImageStatus
+from flip_api.domain.schemas.status import ProjectStatus, TrustApprovalStatus, XNATImageStatus
 from flip_api.project_services.get_projects import get_projects_paginated_orm
 from flip_api.project_services.services.project_services import (
-    approve_project,
+    InvalidTrustDecisionsError,
+    TrustDecisionOutcome,
     create_project,
     delete_project,
+    get_approved_trusts_for_project,
     get_project,
     get_reimport_queries_service,
+    get_trusts_approval_status_for_project,
+    record_trust_decisions,
+    stage_project_service,
+    unstage_project_service,
 )
 from flip_api.utils.paging_utils import get_filter_details, get_paging_details
 
@@ -70,9 +79,7 @@ def test_create_project_persists_and_grants_creator_access(session, project_payl
     assert persisted.deleted is False
     assert persisted.status == ProjectStatus.UNSTAGED
 
-    access_rows = session.exec(
-        select(ProjectUserAccess).where(ProjectUserAccess.project_id == new_project_id)
-    ).all()
+    access_rows = session.exec(select(ProjectUserAccess).where(ProjectUserAccess.project_id == new_project_id)).all()
     access_user_ids = {row.user_id for row in access_rows}
     assert creator_id in access_user_ids, "Creator must be granted access on create"
     # `users` from payload added on top of the creator
@@ -139,102 +146,345 @@ def test_soft_delete_marks_row_deleted_in_place(session, project_payload, user_f
 
 @pytest.fixture
 def staged_project_with_trusts(session, user_factory, project_factory, trust_factory, project_trust_intersect_factory):
-    """A STAGED project plus two un-approved ProjectTrustIntersect rows.
+    """A STAGED project plus two PENDING ProjectTrustIntersect rows.
 
-    Mirrors the real precondition for ``approve_project``: ``stage_project_service`` builds
-    one un-approved intersect per selected trust and the project sits in STAGED until the
-    approval call flips both the intersects and the project status.
+    Mirrors the real precondition for ``record_trust_decisions``: ``stage_project_service`` builds one
+    PENDING intersect per selected trust and the project sits in STAGED until every trust is decided.
     """
     user = user_factory()
     project = project_factory.build(owner_id=user.id, status=ProjectStatus.STAGED, deleted=False)
     trusts = [trust_factory.build(), trust_factory.build()]
 
+    session.add(UserProfile(user_id=user.id, name="Ada Approver"))
     session.add(project)
     for t in trusts:
         session.add(t)
     session.flush()
     for t in trusts:
         session.add(
-            project_trust_intersect_factory.build(project_id=project.id, trust_id=t.id, approved=False)
+            project_trust_intersect_factory.build(
+                project_id=project.id, trust_id=t.id, status=TrustApprovalStatus.PENDING
+            )
         )
     session.commit()
 
     return {"user": user, "project": project, "trusts": trusts}
 
 
-def test_approve_project_flips_intersect_approval_and_project_status(session, staged_project_with_trusts):
-    """The happy path: approve every staged trust → status APPROVED + every intersect approved + audit row."""
-    ctx = staged_project_with_trusts
-    payload = IProjectApproval(project_id=ctx["project"].id, trust_ids=[t.id for t in ctx["trusts"]])
-
-    result = approve_project(session, payload, ctx["user"].id)
-
-    assert result is True
-    refreshed = session.get(Projects, ctx["project"].id)
-    assert refreshed.status == ProjectStatus.APPROVED
-
-    intersects = session.exec(
-        select(ProjectTrustIntersect).where(ProjectTrustIntersect.project_id == ctx["project"].id)
-    ).all()
-    assert {row.approved for row in intersects} == {True}
-
-    audits = session.exec(select(ProjectsAudit).where(ProjectsAudit.project_id == ctx["project"].id)).all()
-    assert len(audits) == 1
-    assert audits[0].action == ProjectAuditAction.APPROVE
-    assert audits[0].user_id == ctx["user"].id
-
-
-def test_approve_project_partial_subset_leaves_unselected_trusts_unapproved(session, staged_project_with_trusts):
-    """Approving a strict subset must leave the unselected trust(s) un-approved.
-
-    This is the invariant that gates ``save_model``'s fan-out: a project APPROVED for trust A
-    but not B must NOT spawn a ModelTrustIntersect for B. Catches a future bug where the
-    approval loop accidentally approves every staged trust.
-    """
-    ctx = staged_project_with_trusts
-    chosen, unchosen = ctx["trusts"]
-    payload = IProjectApproval(project_id=ctx["project"].id, trust_ids=[chosen.id])
-
-    assert approve_project(session, payload, ctx["user"].id) is True
-
-    intersects = session.exec(
-        select(ProjectTrustIntersect).where(ProjectTrustIntersect.project_id == ctx["project"].id)
-    ).all()
-    by_trust = {row.trust_id: row.approved for row in intersects}
-    assert by_trust[chosen.id] is True
-    assert by_trust[unchosen.id] is False
-
-
-def test_approve_project_returns_false_for_trust_not_in_staging_set(session, staged_project_with_trusts):
-    """A trust_id with no matching ProjectTrustIntersect → return False, no DB changes committed."""
-    ctx = staged_project_with_trusts
-    unstaged_trust_id = ctx["trusts"][0].id  # arbitrary; we'll mix in a bogus one below
+def _decide(session, ctx, approve=(), decline=(), user_id: UUID | None = None) -> TrustDecisionOutcome:
     payload = IProjectApproval(
         project_id=ctx["project"].id,
-        trust_ids=[unstaged_trust_id, ctx["project"].id],  # second id is deliberately not a real trust intersect
+        trust_ids=[t.id for t in approve],
+        declined_trust_ids=[t.id for t in decline],
+    )
+    return record_trust_decisions(session, payload, user_id or ctx["user"].id)
+
+
+def _intersects(session, project_id: UUID) -> dict[UUID, ProjectTrustIntersect]:
+    rows = session.exec(select(ProjectTrustIntersect).where(ProjectTrustIntersect.project_id == project_id)).all()
+    return {row.trust_id: row for row in rows}
+
+
+def _audits(session, project_id: UUID) -> list[tuple[ProjectAuditAction, UUID | None]]:
+    rows = session.exec(
+        select(ProjectsAudit).where(ProjectsAudit.project_id == project_id).order_by(col(ProjectsAudit.audit_date))
+    ).all()
+    return [(row.action, row.trust_id) for row in rows]
+
+
+def test_approving_every_trust_approves_the_project_and_attributes_each_decision(session, staged_project_with_trusts):
+    """Every trust approved → project APPROVED, each decision carries its decider, one audit row per trust."""
+    ctx = staged_project_with_trusts
+    a, b = ctx["trusts"]
+
+    assert _decide(session, ctx, approve=[a, b]).project_status == ProjectStatus.APPROVED
+
+    assert session.get(Projects, ctx["project"].id).status == ProjectStatus.APPROVED
+    for row in _intersects(session, ctx["project"].id).values():
+        assert row.status == TrustApprovalStatus.APPROVED
+        assert row.decided_by == ctx["user"].id
+        assert row.decided_at is not None
+    assert sorted(_audits(session, ctx["project"].id), key=str) == sorted(
+        [
+            (ProjectAuditAction.APPROVE_TRUST, a.id),
+            (ProjectAuditAction.APPROVE_TRUST, b.id),
+            (ProjectAuditAction.APPROVE, None),
+        ],
+        key=str,
     )
 
-    assert approve_project(session, payload, ctx["user"].id) is False
 
-    refreshed = session.get(Projects, ctx["project"].id)
-    assert refreshed.status == ProjectStatus.STAGED, "Status must not advance when any trust fails the lookup"
+def test_declining_a_trust_records_the_refusal_against_that_trust(session, staged_project_with_trusts):
+    """Approve one, decline the other → project APPROVED, and the refusal is a recorded decision, not a gap."""
+    ctx = staged_project_with_trusts
+    chosen, refused = ctx["trusts"]
+
+    assert _decide(session, ctx, approve=[chosen], decline=[refused]).project_status == ProjectStatus.APPROVED
+
+    rows = _intersects(session, ctx["project"].id)
+    assert rows[chosen.id].status == TrustApprovalStatus.APPROVED
+    assert rows[refused.id].status == TrustApprovalStatus.DECLINED
+    assert rows[refused.id].decided_by == ctx["user"].id
+    assert rows[refused.id].decided_at is not None
+    assert (ProjectAuditAction.DECLINE_TRUST, refused.id) in _audits(session, ctx["project"].id)
 
 
-def test_approve_project_raises_for_missing_project(session, user_factory):
+def test_one_approval_approves_the_project_and_leaves_the_rest_pending(session, staged_project_with_trusts):
+    """Approving some trusts approves the project and leaves the others PENDING, to decide later (FLIP#1258).
+
+    The undecided trust stays visibly undecided — no decider, no date — rather than being silently dropped, the
+    failure FLIP#1318 ended.
+    """
+    ctx = staged_project_with_trusts
+    chosen, undecided = ctx["trusts"]
+
+    assert _decide(session, ctx, approve=[chosen]).project_status == ProjectStatus.APPROVED
+
+    assert session.get(Projects, ctx["project"].id).status == ProjectStatus.APPROVED
+    rows = _intersects(session, ctx["project"].id)
+    assert rows[chosen.id].status == TrustApprovalStatus.APPROVED
+    assert rows[undecided.id].status == TrustApprovalStatus.PENDING
+    assert rows[undecided.id].decided_by is None
+    assert ProjectAuditAction.APPROVE in {action for action, _ in _audits(session, ctx["project"].id)}
+
+
+def test_declining_every_trust_keeps_the_project_staged(session, staged_project_with_trusts):
+    """All trusts declined → the project stays STAGED (to be unstaged and reconsidered), never APPROVED."""
+    ctx = staged_project_with_trusts
+    a, b = ctx["trusts"]
+
+    assert _decide(session, ctx, decline=[a, b]).project_status == ProjectStatus.STAGED
+
+    assert session.get(Projects, ctx["project"].id).status == ProjectStatus.STAGED
+    assert {row.status for row in _intersects(session, ctx["project"].id).values()} == {TrustApprovalStatus.DECLINED}
+    assert sorted(_audits(session, ctx["project"].id), key=str) == sorted(
+        [(ProjectAuditAction.DECLINE_TRUST, a.id), (ProjectAuditAction.DECLINE_TRUST, b.id)], key=str
+    )
+
+
+def test_changing_a_decision_while_staged_records_a_new_decision(session, staged_project_with_trusts, user_factory):
+    """A reversal is a new decision by its own decider; a decision re-sent unchanged is not re-recorded."""
+    ctx = staged_project_with_trusts
+    reversed_trust, kept = ctx["trusts"]
+    first, second = ctx["user"].id, user_factory().id
+
+    first_outcome = _decide(session, ctx, decline=[reversed_trust, kept], user_id=first)
+    assert first_outcome.project_status == ProjectStatus.STAGED
+    kept_decided_at = _intersects(session, ctx["project"].id)[kept.id].decided_at
+
+    second_outcome = _decide(session, ctx, approve=[reversed_trust], decline=[kept], user_id=second)
+    assert second_outcome.project_status == ProjectStatus.APPROVED
+
+    rows = _intersects(session, ctx["project"].id)
+    assert rows[reversed_trust.id].status == TrustApprovalStatus.APPROVED
+    assert rows[reversed_trust.id].decided_by == second
+    assert rows[kept.id].status == TrustApprovalStatus.DECLINED
+    assert rows[kept.id].decided_by == first
+    assert rows[kept.id].decided_at == kept_decided_at
+    audits = _audits(session, ctx["project"].id)
+    assert [action for action, trust_id in audits if trust_id == reversed_trust.id] == [
+        ProjectAuditAction.DECLINE_TRUST,
+        ProjectAuditAction.APPROVE_TRUST,
+    ]
+    assert [action for action, trust_id in audits if trust_id == kept.id] == [ProjectAuditAction.DECLINE_TRUST]
+
+
+def test_rejects_a_trust_outside_the_staging_set_and_writes_nothing(session, staged_project_with_trusts):
+    """A trust id with no intersect for the project is refused, naming it, and no decision is written for any
+    trust."""
+    ctx = staged_project_with_trusts
+    stranger = uuid4()
+    payload = IProjectApproval(
+        project_id=ctx["project"].id,
+        trust_ids=[ctx["trusts"][0].id, stranger],
+    )
+
+    with pytest.raises(InvalidTrustDecisionsError, match=str(stranger)):
+        record_trust_decisions(session, payload, ctx["user"].id)
+    session.rollback()
+
+    assert session.get(Projects, ctx["project"].id).status == ProjectStatus.STAGED
+    assert {row.status for row in _intersects(session, ctx["project"].id).values()} == {TrustApprovalStatus.PENDING}
+    assert _audits(session, ctx["project"].id) == []
+
+
+def test_rejects_a_trust_both_approved_and_declined(session, staged_project_with_trusts):
+    ctx = staged_project_with_trusts
+    a, _ = ctx["trusts"]
+
+    with pytest.raises(InvalidTrustDecisionsError, match="both approved and declined"):
+        _decide(session, ctx, approve=[a], decline=[a])
+    session.rollback()
+    assert _audits(session, ctx["project"].id) == []
+
+
+def test_a_decline_then_an_approval_starts_only_the_approved_trust(session, staged_project_with_trusts):
+    """A decline alone leaves the project STAGED and starts nothing; the approval that follows approves it and
+    starts that trust only — the declined one is never activated."""
+    ctx = staged_project_with_trusts
+    early, late = ctx["trusts"]
+
+    staged = _decide(session, ctx, decline=[late])
+    approved = _decide(session, ctx, approve=[early])
+
+    assert (staged.project_status, staged.activated_trust_ids) == (ProjectStatus.STAGED, [])
+    assert (approved.project_status, approved.activated_trust_ids) == (ProjectStatus.APPROVED, [early.id])
+
+
+def test_refuses_changing_a_decision_once_the_project_is_approved(session, staged_project_with_trusts):
+    """Checked under the project lock, so a save that lost a race to another approver's approval is refused
+    rather than rewriting a final decision of an approved project."""
+    ctx = staged_project_with_trusts
+    a, b = ctx["trusts"]
+    _decide(session, ctx, approve=[a, b])
+
+    with pytest.raises(InvalidTrustDecisionsError):
+        _decide(session, ctx, decline=[a])
+    session.rollback()
+
+    assert _intersects(session, ctx["project"].id)[a.id].status == TrustApprovalStatus.APPROVED
+    assert ProjectAuditAction.DECLINE_TRUST not in {action for action, _ in _audits(session, ctx["project"].id)}
+
+
+def test_concurrent_saves_are_serialised_on_the_project_lock(
+    pg_container, session, staged_project_with_trusts, user_factory
+):
+    """Two approvers deciding the last two pending trusts at once must not each see the other's trust as still
+    pending — both would leave the project STAGED with every trust decided. The second save waits for the
+    project lock, then reads the first's committed decision and approves the project."""
+    ctx = staged_project_with_trusts
+    project_id = ctx["project"].id
+    first, second = ctx["trusts"]
+    engine = create_engine(pg_container.get_connection_url())
+    outcome: dict[str, TrustDecisionOutcome] = {}
+
+    def second_approver() -> None:
+        with Session(engine) as other:
+            payload = IProjectApproval(project_id=project_id, trust_ids=[second.id])
+            outcome["second"] = record_trust_decisions(other, payload, user_factory().id)
+
+    try:
+        with Session(engine) as holder:
+            # The first approver's save, mid-flight: project locked, its trust decided but not yet committed.
+            holder.exec(select(Projects).where(Projects.id == project_id).with_for_update()).one()
+            row = holder.exec(
+                select(ProjectTrustIntersect).where(
+                    ProjectTrustIntersect.project_id == project_id, ProjectTrustIntersect.trust_id == first.id
+                )
+            ).one()
+            row.status = TrustApprovalStatus.APPROVED
+            holder.add(row)
+            holder.flush()
+
+            racer = threading.Thread(target=second_approver)
+            racer.start()
+            racer.join(timeout=1.0)
+            assert racer.is_alive(), "the second save must wait for the first to release the project lock"
+
+            holder.commit()
+            racer.join(timeout=10.0)
+            assert not racer.is_alive()
+    finally:
+        engine.dispose()
+
+    assert outcome["second"].project_status == ProjectStatus.APPROVED
+    assert set(outcome["second"].activated_trust_ids) == {first.id, second.id}
+
+
+def test_record_trust_decisions_raises_for_missing_project(session, user_factory):
     payload = IProjectApproval(project_id=uuid4(), trust_ids=[uuid4()])
     with pytest.raises(ValueError, match="does not exist"):
-        approve_project(session, payload, user_factory().id)
+        record_trust_decisions(session, payload, user_factory().id)
 
 
-def test_approve_project_raises_for_soft_deleted_project(session, project_payload, user_factory):
-    """A soft-deleted project must refuse approval — guards against re-approving via stale UI state."""
+def test_record_trust_decisions_raises_for_soft_deleted_project(session, project_payload, user_factory):
+    """A soft-deleted project must refuse decisions — guards against deciding via stale UI state."""
     creator_id = user_factory().id
     project_id = create_project(payload=project_payload, current_user_id=creator_id, session=session)
     delete_project(project_id, creator_id, session)
 
     payload = IProjectApproval(project_id=project_id, trust_ids=[])
     with pytest.raises(ValueError, match="does not exist or is deleted"):
-        approve_project(session, payload, creator_id)
+        record_trust_decisions(session, payload, creator_id)
+
+
+def test_unstage_then_restage_resets_every_trust_to_pending_and_keeps_the_decisions_audited(
+    session, staged_project_with_trusts
+):
+    """All declined → unstage → re-stage starts every trust PENDING; the audit is the record that survives."""
+    ctx = staged_project_with_trusts
+    project_id, user_id = ctx["project"].id, ctx["user"].id
+    a, b = ctx["trusts"]
+    _decide(session, ctx, decline=[a, b])
+
+    unstage_project_service(project_id, user_id, session)
+    stage_project_service(project_id, [a.id, b.id], user_id, session)
+
+    rows = _intersects(session, project_id)
+    assert {row.status for row in rows.values()} == {TrustApprovalStatus.PENDING}
+    assert {row.decided_by for row in rows.values()} == {None}
+    audits = _audits(session, project_id)
+    assert (ProjectAuditAction.DECLINE_TRUST, a.id) in audits
+    assert (ProjectAuditAction.DECLINE_TRUST, b.id) in audits
+    assert [action for action, _ in audits][-2:] == [ProjectAuditAction.UNSTAGE, ProjectAuditAction.STAGE]
+
+
+def test_trust_approval_status_reports_each_decision_and_its_decider(session, staged_project_with_trusts):
+    """The project's trust list carries status, decider id + display name and date, straight from SQL."""
+    ctx = staged_project_with_trusts
+    chosen, refused = ctx["trusts"]
+    _decide(session, ctx, approve=[chosen], decline=[refused])
+
+    by_id = {t.id: t for t in get_trusts_approval_status_for_project(ctx["project"].id, session)}
+
+    assert by_id[chosen.id].status == TrustApprovalStatus.APPROVED
+    assert by_id[refused.id].status == TrustApprovalStatus.DECLINED
+    for trust in by_id.values():
+        assert trust.decided_by == ctx["user"].id
+        assert trust.decided_by_name == "Ada Approver"
+        assert trust.decided_at is not None
+
+
+def test_trust_approval_status_lists_undecided_trusts_and_deciders_without_a_profile(
+    session, staged_project_with_trusts, user_factory
+):
+    """The decider join is an outer join: a freshly staged trust (no decider) and a decider with no
+    UserProfile row must both still list the trust, or the approval card has nothing to decide."""
+    ctx = staged_project_with_trusts
+    pending, decided = ctx["trusts"]
+    no_profile = user_factory().id
+    _decide(session, ctx, decline=[decided], user_id=no_profile)
+
+    by_id = {t.id: t for t in get_trusts_approval_status_for_project(ctx["project"].id, session)}
+
+    assert (by_id[pending.id].status, by_id[pending.id].decided_by, by_id[pending.id].decided_at) == (
+        TrustApprovalStatus.PENDING,
+        None,
+        None,
+    )
+    assert (by_id[decided.id].decided_by, by_id[decided.id].decided_by_name) == (no_profile, None)
+    # Exactly one UTC marker: the browser reads `…+00:00Z` as an invalid date.
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", by_id[decided.id].decided_at)
+
+
+def test_approved_trusts_exclude_declined_and_undecided_trusts(
+    session, staged_project_with_trusts, trust_factory, project_trust_intersect_factory
+):
+    """Only APPROVED trusts are selected downstream (imaging, models, FL jobs)."""
+    ctx = staged_project_with_trusts
+    chosen, refused = ctx["trusts"]
+    undecided = trust_factory.build()
+    session.add(undecided)
+    session.flush()
+    session.add(
+        project_trust_intersect_factory.build(
+            project_id=ctx["project"].id, trust_id=undecided.id, status=TrustApprovalStatus.PENDING
+        )
+    )
+    session.commit()
+    _decide(session, ctx, approve=[chosen], decline=[refused])
+
+    assert [t.id for t in get_approved_trusts_for_project(ctx["project"].id, session)] == [chosen.id]
 
 
 @pytest.fixture
@@ -294,9 +544,7 @@ def test_reimport_sweep_skips_a_soft_deleted_project(session, project_eligible_f
 
     assert get_reimport_queries_service(max_reimport_count=5, session=session) == []
 
-    status_row = session.exec(
-        select(XNATProjectStatus).where(XNATProjectStatus.project_id == ctx["project_id"])
-    ).one()
+    status_row = session.exec(select(XNATProjectStatus).where(XNATProjectStatus.project_id == ctx["project_id"])).one()
     assert status_row.retrieve_image_status == XNATImageStatus.CREATED, (
         "Imaging status must be untouched by the delete — the project row is what gates the sweep"
     )

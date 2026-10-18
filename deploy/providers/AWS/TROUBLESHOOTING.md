@@ -30,39 +30,7 @@ make full-deploy PROD=stag
 
 ---
 
-### 1.2 IAM permission denied for EFS or Service Discovery
-
-**Symptom**:
-
-```
-Error: AccessDeniedException: elasticfilesystem:TagResource
-Error: AccessDeniedException: servicediscovery:CreatePrivateDnsNamespace
-```
-
-**Root cause**: The `FlipDeveloperAccess` SSO permission set lacks `elasticfilesystem:*` and `servicediscovery:*` actions.
-
-**Fix**: Add these permissions to the IAM inline policy in the `aicentre-iac` repository at `iam_flip_developer_inline_policy.tf`:
-
-```hcl
-statement {
-  sid    = "EFSFullAccess"
-  effect = "Allow"
-  actions = ["elasticfilesystem:*"]
-  resources = ["*"]
-}
-statement {
-  sid    = "ServiceDiscoveryFullAccess"
-  effect = "Allow"
-  actions = ["servicediscovery:*"]
-  resources = ["*"]
-}
-```
-
-Merge the PR and re-sign in to AWS SSO.
-
----
-
-### 1.3 Resource already exists in AWS but not in state
+### 1.2 Resource already exists in AWS but not in state
 
 **Symptom**: `terraform apply` fails with "already exists" for resources like CloudWatch log groups, SSH key pairs, Route53 records, or VPC endpoints.
 
@@ -89,7 +57,7 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 
 ---
 
-### 1.4 Ansible `community.general.terraform` fails on S3 backend
+### 1.3 Ansible `community.general.terraform` fails on S3 backend
 
 **Symptom**: `make ansible-init` fails with `Missing required argument on backend.tf` even after `terraform init`.
 
@@ -118,7 +86,7 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 
 ---
 
-### 1.5 Trust EC2 runs out of disk during `make deploy-trust`
+### 1.4 Trust EC2 runs out of disk during `make deploy-trust`
 
 **Symptom**: `make deploy-trust` fails partway through `docker compose pull` with:
 
@@ -129,7 +97,7 @@ no space left on device
 
 `df -h /` on the trust EC2 shows the root volume near 100 % used, even though it was nominally 30+ GB free at the start of the pull.
 
-**Root cause**: The full trust image set (NVFLARE `flare-fl-client` with multi-GB torch deps, XNAT Tomcat ~4 GB compressed, Orthanc, OMOP, observability stack, three trust APIs) blows through 50 GB of overlayfs snapshot space when extracted concurrently. The 50 GB default sized for the legacy compose stack is no longer adequate.
+**Root cause**: The full trust image set (FLARE `flare-fl-client` with multi-GB torch deps, XNAT Tomcat ~4 GB compressed, Orthanc, OMOP, observability stack, three trust APIs) blows through 50 GB of overlayfs snapshot space when extracted concurrently. The 50 GB default sized for the legacy compose stack is no longer adequate.
 
 **Fix**: The trust EC2 module now provisions a 100 GB root volume (`modules/trust_ec2/main.tf`). Volume modification is in-place — no instance replacement — but the partition + filesystem still need an online resize once after `terraform apply`:
 
@@ -141,21 +109,21 @@ Then retry `make deploy-trust`. Verify with `df -h /` (should show ~100 GB).
 
 ---
 
-### 1.6 AWS SSO token expired
+### 1.5 AWS SSO token expired
 
 **Symptom**: All `aws` commands return `Unable to locate credentials` or `AccessDenied`.
 
 **Fix**:
 
 ```bash
-aws sso login --profile FlipDeveloperAccess-080369786334 --use-device-code
+aws sso login --profile lza-stag --use-device-code   # or lza-prod
 ```
 
 Use `--use-device-code` for headless/SSH environments.
 
 ---
 
-### 1.7 ALB returns 502 / NLB shows unhealthy targets after ECS cutover
+### 1.6 ALB returns 502 / NLB shows unhealthy targets after ECS cutover
 
 **Symptom**: After bringing ECS Fargate up alongside the legacy EC2 stack, the ALB still returns 502 for `/api/*` and the NLB target group shows the legacy EC2 target as unhealthy. Trust-side fl-client cannot reach fl-server. trust-api heartbeats may also return 401 because they hit the legacy flip-api whose secret hashes are stale.
 
@@ -167,17 +135,17 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ---
 
-### 1.8 ECS-internal call from fl-api → fl-server hangs in `try_connect`
+### 1.7 ECS-internal call from fl-api → fl-server hangs in `try_connect`
 
-**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its NVFLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
+**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its FLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
 
-**Root cause**: fl-api is the NVFLARE admin client and connects directly to fl-server inside the VPC (the NLB path is reserved for off-VPC trust FL clients). The fl-server SG had no ingress on 8002 from the fl-api SG, so the in-VPC connect attempt timed out.
+**Root cause**: fl-api is the FLARE admin client and connects directly to fl-server inside the VPC (the NLB path is reserved for off-VPC trust FL clients). The fl-server SG had no ingress on 8002 from the fl-api SG, so the in-VPC connect attempt timed out.
 
-**Fix**: `ecs_sg.tf` now opens fl-server SG ingress on 8002 from the fl-api SG. If you add another in-VPC NVFLARE admin consumer, add its SG to the same ingress rule.
+**Fix**: `ecs_sg.tf` now opens fl-server SG ingress on 8002 from the fl-api SG. If you add another in-VPC FLARE admin consumer, add its SG to the same ingress rule.
 
 ---
 
-### 1.9 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
+### 1.8 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
 
 **Symptom**: After a `make deploy-centralhub` (or a legacy `--force-new-deployment`) of `fl-server-net-1` / `fl-api-net-1`, you check the running task's image digest against the GHCR tag — the pinned `sha-<short7>` tag since FLIP#751, the mutable `:stag`/`:prod` tag before it — to confirm the new build is live. One container's `imageDigest` does **not** match the GHCR manifest, and worse, querying GHCR for that digest returns **HTTP 404** (it does not exist in GHCR at all). Looks like the task is running a stale/unknown image.
 
@@ -289,11 +257,11 @@ ssh flip-trust "docker restart trust1-imaging-api-1"
 
 ---
 
-### 2.5 NVFLARE participant kit fails `LoadResult.INVALID_SIGNATURE` on fl-api / fl-server boot
+### 2.5 FLARE participant kit fails `LoadResult.INVALID_SIGNATURE` on fl-api / fl-server boot
 
-**Symptom**: After regenerating an NVFLARE participant kit and redeploying, fl-api or fl-server crash-loops with `LoadResult.INVALID_SIGNATURE`. Or fl-client connects to fl-server but TLS handshake fails with `SSLV3_ALERT_BAD_CERTIFICATE` / `CERTIFICATE_VERIFY_FAILED`.
+**Symptom**: After regenerating a FLARE participant kit and redeploying, fl-api or fl-server crash-loops with `LoadResult.INVALID_SIGNATURE`. Or fl-client connects to fl-server but TLS handshake fails with `SSLV3_ALERT_BAD_CERTIFICATE` / `CERTIFICATE_VERIFY_FAILED`.
 
-**Root cause**: NVFLARE signs every file in the kit at provision time (`signature.json` references a hash of `fed_admin.json`, `rootCA.pem`, `client.crt`, etc.). Two failure modes:
+**Root cause**: FLARE signs every file in the kit at provision time (`signature.json` references a hash of `fed_admin.json`, `rootCA.pem`, `client.crt`, etc.). Two failure modes:
 
 1. **In-place edits**: Sed-patching `fed_admin.json` after the kit lands (e.g. to swap a hostname) tears the signature.
 2. **Stale `aws s3 sync`**: `aws s3 sync` skips files when source and destination have similar size + mtime, so a freshly regenerated kit can leave a stale `rootCA.pem` / `client.crt` / `fed_client.json` next to a fresh `signature.json` (or vice versa). The on-disk kit is then signed by one rootCA but presents a cert from another.
@@ -301,7 +269,7 @@ ssh flip-trust "docker restart trust1-imaging-api-1"
 **Fix**:
 
 1. Never edit the kit after provision. If a hostname needs to change, regenerate the kit with the right hostname baked in.
-2. The EFS provisioner (`ecs_efs_provision.tf`) and the trust Ansible playbook (`site.yml`, both NVFLARE Trust_1 and Flower trust syncs) now wipe the destination with `find <dest> -mindepth 1 -delete` immediately before the `aws s3 sync` / `aws s3 cp`. This forces a clean copy. If you script your own kit sync somewhere new, mirror this pattern.
+2. The EFS provisioner (`ecs_efs_provision.tf`) and the trust Ansible playbook (`site.yml`, both FLARE Trust_1 and Flower trust syncs) now wipe the destination with `find <dest> -mindepth 1 -delete` immediately before the `aws s3 sync` / `aws s3 cp`. This forces a clean copy. If you script your own kit sync somewhere new, mirror this pattern.
 
 To recover a stuck stack: re-run `make full-deploy` (central hub) or `make deploy-trust` (trust EC2). Both now wipe before sync.
 
@@ -355,7 +323,7 @@ make: *** [Makefile:388: deploy-ui] Error 1
 
 `aws sso login` reported success seconds earlier, and other Make targets (`make plan`, `make apply`, `make status`) work in the same shell.
 
-**Root cause**: Same class of bug as 1.6 / handoff §2 (Terraform SSO poisoning). The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_AWS_ENV` macro at the top of the Makefile, or `_TF` for `terraform` calls), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
+**Root cause**: Same class of bug as 1.5 / handoff §2 (Terraform SSO poisoning). The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_AWS_ENV` macro at the top of the Makefile, or `_TF` for `terraform` calls), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
 
 **Fix**: Prefix every `aws` call in the `deploy-ui` recipe with `$(_AWS_ENV)` (which expands to `unset AWS_* … ; AWS_PROFILE=$(AWS_PROFILE)`). Already applied — if you see this on a fresh checkout, confirm the recipe matches:
 
@@ -518,7 +486,7 @@ Related states with different causes:
 
 **Symptom**: Trust `fl-client-net-1` logs show `cannot send to 'server': target_unreachable` or connection retries.
 
-**Root cause**: The FL server container was restarted (e.g., during `deploy-centralhub`) and the client needs to re-establish the gRPC connection. The NVFLARE client retries automatically every 10 seconds. The FL server log should show `Re-activate the client: Trust_1`.
+**Root cause**: The FL server container was restarted (e.g., during `deploy-centralhub`) and the client needs to re-establish the gRPC connection. The FLARE client retries automatically every 10 seconds. The FL server log should show `Re-activate the client: Trust_1`.
 
 **Fix**: Usually self-healing. Verify the FL server is listening:
 
@@ -576,7 +544,7 @@ If you see `Permission denied` on `/app/data/images/...`, you have the same bug.
 ssh flip-trust 'sudo chown -R 1000:1000 /opt/flip/data/trust-1 /opt/flip/data/trust-2'
 ```
 
-**Flower variant — same symptom, different writer.** Each fl-client bind-mounts only its own net's slice (`<base>/net-N`), and it writes there too (`flip.add_resource` stages under `net-N/upload/`). On NVFLARE the client is uid 1000, so the ownership above covers it. The Flower client is built on upstream `flwr/base` and runs as `app` (uid/gid **49999**): on a `1000:1000` `0755` net dir it is only "other", and `add_resource` fails with EACCES while imaging-api's own downloads succeed. `site.yml` provisions the `net-N` dirs `ubuntu:49999` `0775` when `fl_backend == flower` (matching the K8s chart's `images-init`), and `trust/Makefile`'s `$(ensure_net_dirs)` now *fails* the bring-up rather than warning if it cannot apply that. Hot-fix on an existing host:
+**Flower variant — same symptom, different writer.** Each fl-client bind-mounts only its own net's slice (`<base>/net-N`), and it writes there too (`flip.add_resource` stages under `net-N/upload/`). On FLARE the client is uid 1000, so the ownership above covers it. The Flower client is built on upstream `flwr/base` and runs as `app` (uid/gid **49999**): on a `1000:1000` `0755` net dir it is only "other", and `add_resource` fails with EACCES while imaging-api's own downloads succeed. `site.yml` provisions the `net-N` dirs `ubuntu:49999` `0775` when `fl_backend == flower` (matching the K8s chart's `images-init`), and `trust/Makefile`'s `$(ensure_net_dirs)` now *fails* the bring-up rather than warning if it cannot apply that. Hot-fix on an existing host:
 
 ```bash
 ssh flip-trust 'sudo chown 1000:49999 /opt/flip/data/trust-{1,2}/net-{1,2} && \
@@ -686,7 +654,7 @@ kit, not `.env.stag`).
 **Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
 
 ```bash
-aws ec2 reboot-instances --instance-ids <instance-id> --profile FlipDeveloperAccess
+aws ec2 reboot-instances --instance-ids <instance-id> --profile lza-stag   # or lza-prod
 ```
 
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).

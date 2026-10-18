@@ -35,6 +35,7 @@ from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import (
     ModelStatus,
     ProjectStatus,
+    TrustApprovalStatus,
     TrustIntersectStatus,
 )
 from flip_api.model_services.save_model import save_model
@@ -42,7 +43,9 @@ from flip_api.model_services.services.model_service import (
     delete_model,
     edit_model,
     get_model_status,
+    validate_trust_ids,
 )
+from flip_api.project_services.services.image_service import get_imaging_projects
 
 
 @pytest.fixture
@@ -53,10 +56,13 @@ def approved_project_with_trusts(
     trust_factory,
     project_trust_intersect_factory,
 ):
-    """Approved project owned by ``user`` with two approved trusts and one un-approved trust.
+    """Approved project owned by ``user`` with two approved trusts, one declined and one still pending.
 
-    Returns a dict so tests can pull just the bit they care about — the un-approved trust is
-    only relevant for the fan-out test, the rest only need ``user`` / ``project``.
+    The pending trust is the shape a project approved before FLIP#1318 migrates to: a trust left out of
+    that approval was never refused, so it maps to PENDING rather than DECLINED.
+
+    Returns a dict so tests can pull just the bit they care about — the declined and pending trusts are
+    only relevant for the exclusion tests, the rest only need ``user`` / ``project``.
     """
     user = user_factory()
     project = project_factory.build(
@@ -66,19 +72,27 @@ def approved_project_with_trusts(
     )
     approved_trusts = [trust_factory.build(), trust_factory.build()]
     unapproved_trust = trust_factory.build()
+    pending_trust = trust_factory.build()
 
     session.add(project)
-    for t in [*approved_trusts, unapproved_trust]:
+    for t in [*approved_trusts, unapproved_trust, pending_trust]:
         session.add(t)
     session.flush()
 
     for t in approved_trusts:
         session.add(
-            project_trust_intersect_factory.build(project_id=project.id, trust_id=t.id, approved=True)
+            project_trust_intersect_factory.build(
+                project_id=project.id, trust_id=t.id, status=TrustApprovalStatus.APPROVED
+            )
         )
     session.add(
         project_trust_intersect_factory.build(
-            project_id=project.id, trust_id=unapproved_trust.id, approved=False
+            project_id=project.id, trust_id=unapproved_trust.id, status=TrustApprovalStatus.DECLINED
+        )
+    )
+    session.add(
+        project_trust_intersect_factory.build(
+            project_id=project.id, trust_id=pending_trust.id, status=TrustApprovalStatus.PENDING
         )
     )
     session.commit()
@@ -88,6 +102,7 @@ def approved_project_with_trusts(
         "project": project,
         "approved_trusts": approved_trusts,
         "unapproved_trust": unapproved_trust,
+        "pending_trust": pending_trust,
     }
 
 
@@ -131,21 +146,41 @@ def test_save_model_persists_model_and_fans_out_to_approved_trusts_only(session,
     assert persisted.project_id == ctx["project"].id
     assert persisted.deleted is False
 
-    intersects = session.exec(
-        select(ModelTrustIntersect).where(ModelTrustIntersect.model_id == created.id)
-    ).all()
-    # The un-approved ProjectTrustIntersect must NOT show up in the fan-out — that's the
-    # invariant a mocked Session would happily violate.
+    intersects = session.exec(select(ModelTrustIntersect).where(ModelTrustIntersect.model_id == created.id)).all()
+    # Neither the declined nor the pending ProjectTrustIntersect may show up in the fan-out —
+    # that's the invariant a mocked Session would happily violate.
     assert {row.trust_id for row in intersects} == {t.id for t in ctx["approved_trusts"]}
     assert all(row.status == TrustIntersectStatus.PENDING for row in intersects)
+
+
+@pytest.mark.parametrize("excluded", ["unapproved_trust", "pending_trust"])
+def test_declined_and_pending_trusts_cannot_be_trained(session, approved_project_with_trusts, excluded):
+    """Training is gated on the model's trusts, so a trust the project did not approve is refused.
+
+    ``validate_trust_ids`` is what ``initiate_training`` and the FL scheduler check before a job runs.
+    """
+    ctx = approved_project_with_trusts
+    payload = ISaveModel(name="my-model", description="desc", projectId=ctx["project"].id)
+    model = save_model(request=MagicMock(), payload=payload, db=session, user_id=ctx["user"].id)
+
+    assert validate_trust_ids(model.id, [t.id for t in ctx["approved_trusts"]], session) is True
+    assert validate_trust_ids(model.id, [ctx[excluded].id], session) is False
+
+
+def test_declined_and_pending_trusts_get_no_imaging_project(session, approved_project_with_trusts):
+    """The project's imaging list — what the imaging status card and the re-import sweep read — holds approved
+    trusts only."""
+    ctx = approved_project_with_trusts
+
+    imaging = get_imaging_projects(ctx["project"].id, session)
+
+    assert {row.trust_id for row in imaging} == {t.id for t in ctx["approved_trusts"]}
 
 
 def test_save_model_403_when_user_is_not_project_owner(session, approved_project_with_trusts, user_factory):
     """A user who is not the owner (and lacks CAN_MANAGE_PROJECTS) gets 403."""
     other_user = user_factory()
-    payload = ISaveModel(
-        name="x", description="d", projectId=approved_project_with_trusts["project"].id
-    )
+    payload = ISaveModel(name="x", description="d", projectId=approved_project_with_trusts["project"].id)
 
     with pytest.raises(HTTPException) as exc:
         save_model(request=MagicMock(), payload=payload, db=session, user_id=other_user.id)
@@ -162,7 +197,11 @@ def test_save_model_400_when_project_not_approved(
     trust = trust_factory.build()
     session.add_all([project, trust])
     session.flush()
-    session.add(project_trust_intersect_factory.build(project_id=project.id, trust_id=trust.id, approved=True))
+    session.add(
+        project_trust_intersect_factory.build(
+            project_id=project.id, trust_id=trust.id, status=TrustApprovalStatus.APPROVED
+        )
+    )
     session.commit()
 
     payload = ISaveModel(name="x", description="d", projectId=project.id)
@@ -176,14 +215,16 @@ def test_save_model_400_when_project_not_approved(
 def test_save_model_400_when_no_approved_trusts(
     session, user_factory, project_factory, trust_factory, project_trust_intersect_factory
 ):
-    """A project with only un-approved trust intersects has nothing to fan out to."""
+    """A project whose only trust declined has nothing to fan out to."""
     user = user_factory()
     project = project_factory.build(owner_id=user.id, status=ProjectStatus.APPROVED, deleted=False)
     trust = trust_factory.build()
     session.add_all([project, trust])
     session.flush()
     session.add(
-        project_trust_intersect_factory.build(project_id=project.id, trust_id=trust.id, approved=False)
+        project_trust_intersect_factory.build(
+            project_id=project.id, trust_id=trust.id, status=TrustApprovalStatus.DECLINED
+        )
     )
     session.commit()
 

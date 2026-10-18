@@ -12,6 +12,17 @@
 # ---------------------------------------------------------------------------
 # Global trust-wide configuration
 # ---------------------------------------------------------------------------
+global:
+  image:
+    # The release this site runs (FLIP#1204): one pin for every FLIP-built image — trust-api,
+    # imaging-api, data-access-api, the fl-client, omop-db, orthanc and the three XNAT images.
+    # `make upgrade-trust-k8s KIT=<CODE> TAG=vX.Y.Z` sets it; `sync-kit` fills it from the kit's
+    # DOCKER_TAG. Empty = each service's own image.tag below applies (the mutable `stag`, which
+    # moves under a site on every develop merge). Observability images and xnat-dcm2niix carry
+    # upstream versions of their own and never follow it. omop-db, orthanc and the XNAT trio can
+    # be held back from it with their `image.pin` (the kit's OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG).
+    tag: ""
+
 trustName: "Trust_1"
 trustNumber: 1
 environment: production
@@ -23,24 +34,62 @@ logLevel: INFO
 # it holds no AWS credentials and its kit is staged onto the node out-of-band.
 awsRegion: "eu-west-2"
 
-# S3 bucket for uploaded federated data (mounted by FL client)
+# S3 bucket for uploaded federated data (s3://…). Leave empty to omit the variable
+# from the FL client (flip-utils then uses its default); an empty string is rejected.
 uploadedFederatedDataBucket: ""
 
 # FL backend selection — switches image, command, volumes, env for the FL client
 # Supported values: "nvflare" | "flower"
 flBackend: "nvflare"
 
+# ---------------------------------------------------------------------------
+# Trust governance policy (FLIP#1259)
+# ---------------------------------------------------------------------------
+# This trust's own governance document, carried here as the TOML *document itself* (not a
+# path — a path on the deploy host means nothing inside a pod). data-access-api reads its
+# [disclosure] and [access] sections; on FLARE the fl-client's governance-extract init
+# container hands the client its [fl_privacy.nvflare] section and nothing else (researcher
+# code runs in the client). Flower reads no site privacy section, so there the document
+# reaches data-access-api only, and a document carrying one is refused by sync-kit.
+#
+# Setting it is OPT-IN. Empty — the default — means the platform defaults apply exactly as
+# before (COHORT_QUERY_THRESHOLD and FL_SITE_PRIVACY_* only): no ConfigMap, no volume, no
+# mount, no env var, no checksum annotation.
+#
+# Operator-owned: the hub can neither set nor read it. A policy can only TIGHTEN what the
+# platform allows — a document that lowers the cohort floor, names an unknown section/key,
+# or describes an invalid filter stops the service at startup rather than being ignored.
+#
+# Set it through the kit, not by hand: point ACCESS_POLICY_FILE at the document in
+# trust/.env.<CODE>.<env>, validate it, and deploy —
+#   make -C trust check-governance KIT=<CODE> PROD=<env>
+#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>   (or upgrade-trust-k8s)
+# Both targets regenerate k8s-trust-<CODE>.yaml from the kit first (sync-kit), which embeds
+# the document, validates both halves with the services' own loaders, and writes
+# flPrivacyChecksum. A document passed with `helm upgrade --set-file governance.document=…`
+# is NOT kept: the next deploy-trust-k8s / upgrade-trust-k8s passes the -f files without
+# --reuse-values and the policy silently disappears.
+#
+# Rolling: data-access-api rolls on any edit (checksum of the whole document). The FLARE
+# fl-client rolls only when its [fl_privacy.nvflare] section changes — flPrivacyChecksum —
+# and rolling it interrupts any job it is running, so apply such edits between runs.
+governance:
+  document: ""
+  # sha256 of the fl-client's extracted section, written by sync-kit. Empty = the whole
+  # document's checksum stands in (rolls the client on every edit, never misses one).
+  flPrivacyChecksum: ""
+
 # Mock trust data (the public aicentreflip/trust-data dataset on Hugging Face). One value
 # covers both stores: a data version is a git TAG on that dataset (FLIP pins it in
 # trust/.data_version) and every artefact — the canonical OMOP tables omop-csv/<project>/
 # and the DICOM sets dicom/<project>.tar.gz — is fetched at that tag from an unversioned path.
 #
-# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
-# OMOP_DATA_VERSION became TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
-# existing values file pinning the old ones keeps installing and silently stops taking effect —
-# see README "Upgrading: trustData.version replaces the two per-store pins".
+# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion.
+# Helm ignores unknown keys, so an existing values file pinning the old ones keeps installing
+# and silently stops taking effect — see README "Upgrading: trustData.version replaces the two
+# per-store pins".
 trustData:
-  version: "20260917"
+  version: "20261014"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
@@ -278,11 +327,8 @@ imagingApi:
     # XNAT_PORT and XNAT_AETITLE are deliberately absent here. They describe XNAT's DICOM SCP
     # receiver, so they come from xnat.web.dicomPort / xnat.web.dicomAet — the same values the init
     # job registers the receiver with. Restating them here made two sources for one number, which is
-    # the defect FLIP#993 set out to remove.
-    PACS_ID: "1"
-    # Topology only — no password here (FLIP-PT-056): imaging-api splices in the
-    # xnat-datasource-password secret at startup (see templates/imaging-api.yaml).
-    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat@xnat-db:5432/xnat"
+    # the defect FLIP#993 set out to remove. There is no PACS id either: imaging-api's queries let
+    # DQR use its default query/retrieve PACS, and each import reads that PACS's id from XNAT.
     DATA_ACCESS_API_URL: "http://data-access-api:8000"
     BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
 
@@ -291,6 +337,9 @@ imagingApi:
 # ---------------------------------------------------------------------------
 dataAccessApi:
   enabled: true
+  # The trust's minimum-cohort disclosure floor (COHORT_QUERY_THRESHOLD). sync-kit writes the
+  # kit's value here; the governance document may raise it but never lower it.
+  cohortQueryThreshold: 10
   image:
     repository: ghcr.io/londonaicentre/data-access-api
     tag: stag
@@ -331,6 +380,24 @@ dataAccessApi:
     OMOP_DB_SERVICE_NAME: "omop-db"
     OMOP_POSTGRES_DB: "trustomopdb"
     DATA_ACCESS_POSTGRES_USER: "data_analyst_reader"
+  # Approved-cohort membership store (FLIP#857): one small JSON record per approved project
+  # (the query of record + the approved person/accession ids, no clinical values). Back the
+  # PV up — losing it refuses every approved project until the hub re-queues its snapshot
+  # (POST /projects/{id}/cohort-snapshots?include_frozen=true, or the backfill's
+  # --include-frozen), which re-freezes from live OMOP. Serving is
+  # fail-closed: with this disabled (or the volume unwritable) every project is
+  # refused row-level data, so only disable it deliberately. accessMode RWO matches
+  # replicas: 1 — scaling data-access-api out needs a ReadWriteMany storage class so every
+  # replica reads the same store.
+  snapshots:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+    accessMode: ReadWriteOnce
+    # The GHCR image runs non-root (uid 1000); fsGroup makes a fresh PVC group-writable
+    # for it. The chart otherwise avoids fsGroup (see README "Known Limitations") — this
+    # one is load-bearing, not cosmetic.
+    fsGroup: 1000
 
 # ---------------------------------------------------------------------------
 # Shared images PVC — used by imaging-api and fl-client to share downloaded
@@ -382,7 +449,7 @@ flClient:
                   - imaging-api
           topologyKey: kubernetes.io/hostname
   # Absolute path ON THE NODE holding this trust's already-provisioned FL participant
-  # kit — the contents of the slot's kit directory (for NVFLARE: local/, startup/,
+  # kit — the contents of the slot's kit directory (for FLARE: local/, startup/,
   # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
   #
   # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
@@ -405,6 +472,12 @@ flClient:
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
+    # Beats global.image.tag for the FL client alone — the compose stack's DOCKER_FL_TAG.
+    # sync-kit fills it from the kit only when DOCKER_FL_TAG names an immutable image
+    # (vX.Y.Z / sha-…); a dev kit's local `dev` or the floating `stag` leaves the client
+    # on the release pin. The FL images' builds are path-filtered like orthanc's, so a
+    # sha- move usually needs it (`make upgrade-trust-k8s … FL_TAG=`); a release never does.
+    pin: ""
     pullPolicy: Always
   nvflare:
     # Site-enforced privacy policy (FLIP#851): rendered into /app/local/privacy.json
@@ -476,6 +549,9 @@ omopDb:
     # own /flip/omop/load_core_vocab.sh, which only exists in CI-published
     # (vocab-free, FLIP#842) images.
     tag: stag
+    # Beats global.image.tag for this one image (the kit's OMOP_DB_TAG): omop-db only
+    # rebuilds when trust/omop-db/** changes, so most sha- tags carry no omop-db image.
+    pin: ""
     pullPolicy: Always
   persistence:
     enabled: true
@@ -511,7 +587,7 @@ omopDb:
       timeoutSeconds: 15
       failureThreshold: 10
   # Streams the licensed core vocabulary into the running database after
-  # install/upgrade (the published image and pgdata tarballs are vocab-free —
+  # install/upgrade (the published image and the seeded data carry no licensed vocabulary —
   # FLIP#842/843).
   #
   # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
@@ -528,8 +604,8 @@ omopDb:
   # on another environment's bucket. `make -C trust/deploy/helm
   # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
   # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
-  # a hub-managed key — a kit scaffolded from trust/.env.example ships the dev
-  # bucket).
+  # a hub-managed key — a kit scaffolded from trust/.env.example ships it commented
+  # out, so the release loads no core vocabulary until it is set).
   #
   # The AWS *credentials* live on this block too (vocabLoad.awsProfile /
   # vocabLoad.hostAwsMount, below): this is the chart's only AWS-bearing Job now
@@ -623,6 +699,9 @@ orthanc:
   image:
     repository: ghcr.io/londonaicentre/orthanc
     tag: stag
+    # Beats global.image.tag for this one image (the kit's ORTHANC_TAG): orthanc only
+    # rebuilds when trust/orthanc/** changes, so most sha- tags carry no orthanc image.
+    pin: ""
     pullPolicy: Always
   replicas: 1
   service:
@@ -654,6 +733,10 @@ orthanc:
 # ---------------------------------------------------------------------------
 xnat:
   enabled: true
+  image:
+    # Beats global.image.tag for xnat-web, xnat-db and xnat-nginx together (the kit's
+    # XNAT_TAG, the same role it plays for the compose stack in trust/xnat/Makefile).
+    pin: ""
   initJob:
     enabled: true
   web:
@@ -666,17 +749,30 @@ xnat:
     # that leg (FLIP#993).
     dicomAet: XNAT
     dicomPort: 8104
-    # Fixed NodePort for the DICOM receiver, used with service.type: NodePort. Required when the
-    # PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association back
-    # to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the mocked
-    # Orthanc, which reaches the receiver over the cluster network.
+    # Fixed NodePort for the DICOM receiver, used with dicomService.type: NodePort. Required when
+    # the PACS is outside the cluster: after XNAT issues C-MOVE the PACS opens a *new* association
+    # back to XNAT to C-STORE the studies, so that port must be reachable. Leave empty for the
+    # mocked Orthanc, which reaches the receiver over the cluster network.
     # Must be inside the API server's --service-node-port-range (default 30000-32767), or the range
     # widened to admit the DICOM port. Set it equal to dicomPort so one number is true end to end.
     dicomNodePort: ""
+    # The DICOM SCP gets its own Service, separate from the web-UI `service` below — so exposing it
+    # externally (NodePort or LoadBalancer) never also exposes the Tomcat/web console. ClusterIP
+    # (default) is only valid for the mocked Orthanc PACS (see validatePacsReachable); a real PACS
+    # needs NodePort (with dicomNodePort set, subject to the node-port-range constraint above) or
+    # LoadBalancer — the only two options that reach a PACS outside the cluster.
+    dicomService:
+      type: ClusterIP
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
       pullPolicy: Always
+    # Tomcat/web-console only — the DICOM SCP is dicomService above, deliberately never on this
+    # Service, so a NodePort/LoadBalancer exposure for DICOM can never expose the web UI with it.
+    # Held at ClusterIP for a real-PACS install (validatePacsReachable refuses anything else): this
+    # field used to be the one that exposed DICOM, so an upgrade of an install that set it to
+    # NodePort for that reason would otherwise put the admin console on a node address instead.
+    # Reach the console with `kubectl port-forward`.
     service:
       port: 8080
       type: ClusterIP
@@ -692,6 +788,7 @@ xnat:
       limits:
         memory: "4Gi"
         cpu: "2"
+    # Timing only. The probe paths, and why, are in templates/xnat-web.yaml.
     probes:
       liveness:
         initialDelaySeconds: 120
@@ -706,8 +803,9 @@ xnat:
       image: python:3.12-slim
       # These URLs are the single source of the plugin roster: the download
       # init-container derives each jar's filename from the URL, so a version
-      # bump is a one-line change here. Keep them in step with the Swarm roster
-      # baked by trust/xnat/xnat/Dockerfile — the chart mounts an emptyDir over
+      # bump is a one-line change here. Keep them identical to the plugin lines of
+      # trust/xnat/artifacts.manifest, which the Swarm image is built from (pinned by
+      # trust/xnat/tests/test_artifacts.py) — the chart mounts an emptyDir over
       # ${XNAT_HOME}/plugins, so these downloads REPLACE the image's plugins
       # rather than adding to them, and the XNAT_VERSION compatibility matrices
       # apply to whatever is listed here.
@@ -716,6 +814,13 @@ xnat:
       #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
       # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
       #   https://wiki.xnat.org/xnat-ohif-viewer
+      # Convention, relied on by `make status`: each key is the jar's basename up to the
+      # version, so the filename reads `<key>-<version>...jar`. The roster check pairs a
+      # key with the jars on the pod by exactly that shape; a key spelled otherwise still
+      # deploys fine, but a version skew under it reports as a missing download rather
+      # than a stale jar, sending the operator to init-container logs that are clean.
+      # A new plugin also needs its XNAT plugin id in check_status.py's XNAT_PLUGIN_IDS
+      # (README "Verify the DICOM ingest path"); its test fails until it has one.
       urls:
         container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar"
         dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
@@ -874,6 +979,8 @@ pacs:
   supportsExtendedNegotiations: true
   # Throttle. A production PACS may refuse further associations after a certain volume, and a trust
   # may want retrieval confined to out-of-hours. Agree the window with the PACS manager.
+  # Every helm upgrade sets XNAT's schedule from these, reverting edits made in XNAT's UI. The window
+  # must not cross midnight (FLIP#1465): for out-of-hours use 19:00-24:00, 00:00-07:00 or whole days.
   availability:
     days: MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY,SATURDAY,SUNDAY
     start: "00:00"
@@ -894,7 +1001,10 @@ networkPolicies:
   # The only intended use is the DICOM C-STORE return leg: FLIP retrieves by pull, so after XNAT
   # issues C-MOVE the PACS opens a new association back to XNAT. That is inbound, and without an
   # allowance here it is dropped — queries succeed and retrievals silently time out (FLIP#993).
-  # Scope this to the PACS itself, not the whole trust network.
+  # Scope this to the PACS itself, not the whole trust network. validatePacsReachable fails the
+  # render if it sees the literal 0.0.0.0/0 here — a tripwire, not a CIDR validator: Helm cannot
+  # evaluate a CIDR, so 0.0.0.0/1, ::/0 and anything else that still reaches the PACS pass it, and
+  # the rule in this comment is what forbids them.
   # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP).
   allowedIngressCIDRsWithPorts: []
   # - cidrs:

@@ -14,7 +14,7 @@
 # Ark+ Fine-tuning — Chest X-ray Classification
 
 FLIP tutorial for **federated fine-tuning** of an Ark+ Swin foundation model on chest X-ray
-classification, using the NVFLARE **Client API** (`nvflare.client`). It replaces the earlier
+classification, using the FLARE **Client API** (`nvflare.client`). It replaces the earlier
 Executor-based implementation that used to live here: the finetuning semantics are unchanged (frozen
 backbone, fresh 5-class head, local teacher/student EMA), only the FL plumbing was ported from the
 legacy Executor API to the Client API. The job is defined entirely in Python via
@@ -25,7 +25,7 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 
 `config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
 as an in-process Client-API script (`flare.init()` → `flare.receive()`/`flare.send()` round loop) via
-NVFLARE's `ClientAPIExecutor` (`in_process` mode). There is **no `validator.py`** — the held-out validation folds
+FLARE's `ClientAPIExecutor` (`in_process` mode). There is **no `validator.py`** — the held-out validation folds
 into the trainer's `flare.is_evaluate()` branch (server-driven cross-site evaluation).
 
 ## Target labels
@@ -48,7 +48,7 @@ row are treated as negative. Labels come from the per-site dataframe (see Datase
 
 ## Model & Ark+ integration
 
-NVFLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
+FLARE's persistor loads `models.get_model` from [`app_files/models.py`](app_files/models.py).
 `get_model()` builds an `ArkSwinTransformer` (in [`app_files/arkplus_flat_models.py`](app_files/arkplus_flat_models.py))
 sized from the `ARKPLUS` block, loads the backbone-only checkpoint that `make prepare-checkpoint` derives
 from the raw Ark6 file (`preprocess_checkpoints.py` strips `omni_heads.*` unconditionally, so the heads
@@ -62,7 +62,7 @@ under `ark_model.omni_heads`, so only the classifier head trains.
 When `USE_TEACHER_STUDENT=true`, each client holds a trainable **student** (initialised from the
 global weights) and a frozen EMA **teacher**. The per-step loss combines a BCE label loss with an MSE
 feature-consistency loss between student and teacher embeddings, weighted by `CONSISTENCY_WEIGHT`.
-Only the student weights are returned to NVFLARE; the teacher is never aggregated.
+Only the student weights are returned to FLARE; the teacher is never aggregated.
 
 ## Finetuning mechanisms
 
@@ -84,7 +84,11 @@ round 0.
 
 Training settings live in [`app_files/config.json`](app_files/config.json): `GLOBAL_ROUNDS`,
 `LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`, `BATCH_SIZE`, plus the `LESIONS`
-and `ARKPLUS` blocks.
+and `ARKPLUS` blocks. The shipped file sets `GLOBAL_ROUNDS: 50` and `LOCAL_ROUNDS: 5` (local epochs
+per round); the staging validation in
+[`ARKPLUS_EXPERIMENTS_GUIDE.md`](../../ARKPLUS_EXPERIMENTS_GUIDE.md) ran a reduced
+`GLOBAL_ROUNDS: 5` × `LOCAL_ROUNDS: 2`. On the platform `GLOBAL_ROUNDS` sets the round count; the local
+simulator takes its round count from `NUM_ROUNDS` instead (see [How to run](#how-to-run)).
 
 ## Dataset setup
 
@@ -152,12 +156,12 @@ already exists). Fetch the raw checkpoint with `make download-raw-checkpoint`, o
 ## How to run
 
 ```bash
-# Local NVFLARE simulator (GPU + DECAF data + checkpoint). Prepares the checkpoint, then runs job.py.
+# Local FLARE simulator (GPU + DECAF data + checkpoint). Prepares the checkpoint, then runs job.py.
 make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning
 #   ...or, from this directory:
 make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
 
-# Export the full NVFLARE job under ./fl_job/flip_fedavg/ (no GPU needed)
+# Export the full FLARE job under ./fl_job/flip_fedavg/ (no GPU needed)
 make export
 ```
 
@@ -170,6 +174,23 @@ make export NUM_ROUNDS=10 N_CLIENTS=3
 make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning NUM_ROUNDS=10
 ```
 
+`MAX_SAMPLES` (default `128`) caps how many dataframe rows each simulated site reads, so a plain
+`make run`/`make sim` is a quick smoke test of the whole round-trip — a few minutes on a GPU instead
+of the ~1,900 studies per site the full dataset holds. The subset is deterministic and
+class-balanced (`cap_dataframe` in [`app_files/data_utils.py`](app_files/data_utils.py)), so the
+label-aware train/val split and the per-lesion AUCs still compute. `MAX_SAMPLES=0` (or empty) reads
+the full dataset:
+
+```bash
+make run MAX_SAMPLES=0                                                 # full dataset, 3 rounds
+make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning MAX_SAMPLES=0 NUM_ROUNDS=50
+```
+
+The cap is simulator-only: only the `LOCAL_DEV` dataframe path reads it, it never reaches the exported
+job config, and a deployed job trains on whatever cohort the trust's data-access-api returns. The
+number of local epochs per round is not a sim knob — the simulator uses `LOCAL_ROUNDS` from
+`config.json`, exactly as a deployed job does.
+
 or pass the flags directly using the recipe syntax (the Makefile's `uv` environment — flip-utils with
 the `full` extra — matches the deployed FL image; a bare `uv run` resolves to an env without
 torch/nvflare):
@@ -181,7 +202,7 @@ uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
 > reads `GLOBAL_ROUNDS` from `config.json` at submit time and overrides whatever `job.py` baked into
 > the exported config — deployed round counts come from `config.json`, never from these flags.
-> (The standalone NVFLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
+> (The standalone FLARE submit path, `make -C fl-services/nvflare submit`, is not wired — run
 > locally via the simulator, or exercise the platform path through the FLIP UI / `make e2e_smoke`.)
 
 ## Round metrics & platform comparison
@@ -193,7 +214,7 @@ a deployed run — and writes the same artefacts (`rounds.tsv`, `summary.md`, a 
 `round_metrics/` in this directory:
 
 ```bash
-make run NUM_ROUNDS=50            # full-length local replica (GPU, hours; smoke-test with the default 3 first)
+make run NUM_ROUNDS=50 MAX_SAMPLES=0   # full-length, full-dataset replica (GPU, hours; smoke-test with the defaults first)
 make round-metrics                # -> round_metrics/simulator-<workspace>-<timestamp>/
 make round-metrics COMPARE=/path/to/platform/rounds.tsv   # adds a platform − simulator overhead table
 ```
@@ -214,7 +235,8 @@ local training. Knobs: `WORKSPACE` (simulator workspace parsed for logs; default
 
 For a collaborating site reproducing the baseline (no FLIP hub or AWS access needed), a single
 target chains the whole experiment — download the HF tutorial data (~6.3 GB) and the Ark+
-checkpoint if missing, run the full-length simulator replica, extract the metrics, and pack
+checkpoint if missing, run the full-length simulator replica on the full dataset (`MAX_SAMPLES=0`),
+extract the metrics, and pack
 everything to send back:
 
 ```bash
@@ -248,6 +270,6 @@ There is **no `validator.py`** — validation runs in the trainer's `flare.is_ev
 
 ## Dependency note
 
-The Ark+ model imports `timm`. If the FLIP/NVFLARE runtime does not include `timm`, model construction
+The Ark+ model imports `timm`. If the FLIP/FLARE runtime does not include `timm`, model construction
 fails — add it to the runtime dependencies, or set `ARKPLUS.REQUIRE_ARKPLUS_IMPORT=false` in
 `config.json` only for a non-Ark fallback smoke test.

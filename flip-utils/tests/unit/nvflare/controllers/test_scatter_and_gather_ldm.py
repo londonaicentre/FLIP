@@ -13,9 +13,9 @@
 # limitations under the License.
 
 # ScatterAndGatherLDM subclasses FLIP's ScatterAndGather and delegates the round loop to stock
-# NVFLARE; these tests cover only the LDM-specific overrides (per-phase round counts, the config
+# FLARE; these tests cover only the LDM-specific overrides (per-phase round counts, the config
 # override, the phase-1 -> phase-2 weight handoff, and the delegation itself). Stock's own round
-# loop behaviour is exercised by NVFLARE's tests, and the FLIP hooks by test_scatter_and_gather.py.
+# loop behaviour is exercised by FLARE's tests, and the FLIP hooks by test_scatter_and_gather.py.
 
 import json
 import os
@@ -575,7 +575,7 @@ class TestFedJobSerialisation:
 
     LDM declares its full signature explicitly (no *args/**kwargs), so
     ``get_component_init_parameters`` reads it directly. If this __init__ is ever thinned to a
-    ``*args/**kwargs`` passthrough it must declare BOTH so NVFLARE's base-class walk still runs
+    ``*args/**kwargs`` passthrough it must declare BOTH so FLARE's base-class walk still runs
     (see the equivalent guard on ScatterAndGather)."""
 
     def test_init_exposes_all_config_args_for_recipe_serialisation(self):
