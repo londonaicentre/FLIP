@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: Flip NVFLARE FL API CI
+name: Flip FLARE FL API CI
 
 permissions:
   id-token: write

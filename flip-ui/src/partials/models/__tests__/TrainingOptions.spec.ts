@@ -255,8 +255,8 @@ describe("TrainingOptions GPU request (FLIP#70)", () => {
         expect(wrapper.text()).toContain("Flower does not schedule jobs by GPU");
     });
 
-    it("says nothing about Flower on an NVFlare net", () => {
-        const wrapper = mountTrainingOptions([], false, undefined, "NVFlare");
+    it("says nothing about Flower on a FLARE net", () => {
+        const wrapper = mountTrainingOptions([], false, undefined, "FLARE");
 
         expect(wrapper.text()).not.toContain("Flower does not schedule jobs by GPU");
     });

@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# NVFLARE Federated Learning Services
+# FLARE Federated Learning Services
 
 This folder contains base code to create NVIDIA FLARE federated learning networks, each containing a set of clients, a server and an API. `fl-api-base` and `fl-base` are base services used by the provisioning command to build upon. `fl-base` can be used to test applications locally, but is a single container that does not constitute a fully working FL network.
 
@@ -81,7 +81,7 @@ are two different things and conflating them was FLIP#1171.
   the **host** user with the image's gid. The host uid is what has to match the bind mounts: the
   provisioned kit is written by whoever ran `make provision` (no dev compose mounts `~/.aws` any more,
   FLIP#1291). The gid stays the image's because `/app` and `/home/flip` are
-  group-writable (see `fl-base/Dockerfile`), which is what keeps NVFLARE's job workspace and torch's cache
+  group-writable (see `fl-base/Dockerfile`), which is what keeps FLARE's job workspace and torch's cache
   writable for a foreign uid. Production sets no `user:` and runs as `flip` unchanged.
 
 Previously the build args carried the developer's own uid, so images worked for whoever built them and
@@ -242,7 +242,7 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 
 > ⚠️ Do **not** add a client by appending it to the project YAML and re-running
 > `make provision*`. Those targets `rm -rf` the workspace first (including `state/`), so
-> NVFLARE mints a fresh root CA and regenerates **every** participant's certs — forcing a
+> FLARE mints a fresh root CA and regenerates **every** participant's certs — forcing a
 > redeploy of every already-onboarded trust. `provision-add-client` preserves `state/`
 > and avoids that.
 >
@@ -294,7 +294,7 @@ Then `make register-trust KIT=<CODE>` (see
 the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
 trust-host deploy pulls that kit from the S3 path above.
 
-> Flower caveat: the dynamic path is NVFLARE-only. Flower's per-slot SuperNode key
+> Flower caveat: the dynamic path is FLARE-only. Flower's per-slot SuperNode key
 > labelling reads `TRUST_NAMES` at net startup, so a slot added at runtime isn't usable
 > on a running Flower net until its containers are recreated.
 
@@ -308,7 +308,7 @@ make -C fl-services/nvflare up NET_NUMBER=<N>     # fl-server + fl-api + 2 clien
 make -C fl-services/nvflare down                  # tear it down
 ```
 
-`make -C fl-services/nvflare submit` is **intentionally not wired** for NVFLARE: job submission goes
+`make -C fl-services/nvflare submit` is **intentionally not wired** for FLARE: job submission goes
 through the provisioned FLARE admin API, not a simple HTTP POST (unlike Flower's `submit`). To run a
 job standalone, use the simulator harness instead:
 

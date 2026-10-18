@@ -45,7 +45,7 @@ on:
       # test_flower_runtime_install.py asserts on the Flower composes, the Helm chart and the FL
       # images' Dockerfiles (FLIP#1418).
       - "fl-services/flower/compose*.yml"
-      # test_fl_kit_edge_port.py asserts on the NVFLARE provisioning templates (FLIP#1365).
+      # test_fl_kit_edge_port.py asserts on the FLARE provisioning templates (FLIP#1365).
       - "fl-services/nvflare/provision/net-*_project_*.yml"
       - "fl-services/flower/*/Dockerfile"
       - "trust/deploy/helm/templates/**"

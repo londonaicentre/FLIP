@@ -72,15 +72,6 @@ def fl_client_pin(env: dict) -> str:
     return tag if IMMUTABLE_IMAGE_TAG.match(tag) else ""
 
 
-# Env vars this script used to read, and what replaced them. Dropping one from
-# ENV_VAR_MAP is silent by construction: the variable simply stops reaching the
-# generated values and the deployment follows the chart default instead — a
-# changed data version rather than an error. An operator environment that has
-# not caught up gets told (FLIP#1100).
-RENAMED_ENV_VARS = {
-    "OMOP_DATA_VERSION": "TRUST_DATA_VERSION",
-}
-
 # Where the operator placed this trust's kit ON THE NODE when the kit file does not say.
 # The canonical FLIP kit path: every shipped kit sets FL_KIT_DIR to it, the Ansible
 # EC2/on-prem plays stage to it, and the chart Makefile's stage-kit KIT_DEST defaults to it.
@@ -149,25 +140,8 @@ def parse_env_file(path: str) -> dict[str, str]:
     return env
 
 
-def warn_renamed(env: dict[str, str]) -> None:
-    """Name any env var that has been renamed away, so its loss is not silent."""
-    for old, new in RENAMED_ENV_VARS.items():
-        if not env.get(old):
-            continue
-        if env.get(new):
-            print(f"⚠️  {old} is no longer read; {new}={env[new]} is in effect.", file=sys.stderr)
-        else:
-            print(
-                f"⚠️  {old}={env[old]} is no longer read — it is now {new} (one pin covering OMOP "
-                f"and Orthanc). Set {new}={env[old]} to keep the version you had, or the chart "
-                f"default applies.",
-                file=sys.stderr,
-            )
-
-
 def build_values(env: dict[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
     """Build (values_overrides, secrets_dict) from parsed env vars."""
-    warn_renamed(env)
     overrides: dict[str, Any] = {}
     for env_var, (yaml_path, _) in ENV_VAR_MAP.items():
         if env_var not in env or not env[env_var]:

@@ -308,7 +308,7 @@ const { data: flStatus } = useSWRV(
 );
 
 const formatBackend = (backend: "nvflare" | "flower") =>
-    backend === "nvflare" ? "NVFlare" : "Flower";
+    backend === "nvflare" ? "FLARE" : "Flower";
 
 const flBackendLabel = computed(() => {
     const backend = Array.isArray(flStatus.value)

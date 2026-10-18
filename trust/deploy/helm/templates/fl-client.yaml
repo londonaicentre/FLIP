@@ -117,7 +117,7 @@ spec:
         # SuperNode's `app` uid (49999)
         # with group-write, because the client itself must also write inside the
         # net dir (`flip.add_resource` stages files under <netId>/upload/;
-        # NVFLARE's CleanupImages deletes the dir's children — both need write,
+        # FLARE's CleanupImages deletes the dir's children — both need write,
         # read-only is NOT sufficient for the client). Without this, every
         # imaging-api download would 500 with EACCES and training would die
         # later with a misleading num_samples=0.
@@ -274,7 +274,7 @@ spec:
             {{- if $governed }}
             # The governance document's [fl_privacy.nvflare] section (FLIP#1259), as extracted
             # by governance-extract. The same filter as FL_SITE_PRIVACY_* below: set it in one
-            # place or the other, since both set stops the client. NVFLARE only — nothing on
+            # place or the other, since both set stops the client. FLARE only — nothing on
             # Flower reads a site privacy section, so the Flower pod gets neither the document
             # nor this variable (check-governance and sync-kit fail such a document instead).
             - name: ACCESS_POLICY_FILE
@@ -348,7 +348,7 @@ spec:
               command:
 {{ toYaml .Values.flClient.probes.liveness.exec.command | indent 16 }}
 {{- else if eq .Values.flBackend "nvflare" }}
-            # NVFLARE clients make outbound-only connections (no listening port),
+            # FLARE clients make outbound-only connections (no listening port),
             # so probe the client_train process instead of a TCP socket.
             exec:
               command:

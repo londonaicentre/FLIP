@@ -64,7 +64,7 @@ $(SHARED_CHECKPOINT):
 run: sim
 
 # --- Export job config (no GPU needed) ---
-# Builds a complete NVFLARE job under ./fl_job/flip_diffusion/ including meta.json,
+# Builds a complete FLARE job under ./fl_job/flip_diffusion/ including meta.json,
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
 # FLIP-specific values (project_id, query) are injected via environment variables. Both bundling
 # paths (this and sim) need the shipped backbone in app_files/ first — hence `weights`.
@@ -77,7 +77,7 @@ export: weights
 		--num_rounds_dm $(NUM_ROUNDS_DM)
 
 # --- SimEnv local simulation (requires GPU + data) ---
-# Runs the job under the NVFLARE simulator. Requires a GPU and the reference
+# Runs the job under the FLARE simulator. Requires a GPU and the reference
 # dataset (run `make -C fl-tutorials download-spleen-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers

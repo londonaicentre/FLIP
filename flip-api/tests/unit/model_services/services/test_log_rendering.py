@@ -128,7 +128,7 @@ class TestRenderLog:
         row = _row(event_type=FLLogEvent.QUEUE_POSITION.value, details=details)
         assert render_log(row) == "Model Queued"
 
-    # ── NVFLARE's scheduling verdict (FLIP#1390) ─────────────────────────────────────
+    # ── FLARE's scheduling verdict (FLIP#1390) ─────────────────────────────────────
 
     def test_waiting_for_resources_says_what_the_trust_was_asked_for_and_which_try(self):
         row = _row(
@@ -149,7 +149,7 @@ class TestRenderLog:
         )
         assert (
             render_log(row)
-            == "Training could not start · this trust cannot provide 2 GPUs · NVFLARE gave up after 10 tries"
+            == "Training could not start · this trust cannot provide 2 GPUs · FLARE gave up after 10 tries"
         )
 
     @pytest.mark.parametrize("requested", [{}, {"num_of_gpus": 0}, {"num_of_gpus": 0, "num_of_cpus": 4}])
@@ -167,7 +167,7 @@ class TestRenderLog:
             event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES.value,
             details={"attempt": 10, "max_attempts": 10, "final": True},
         )
-        assert render_log(row) == "Training could not start · NVFLARE gave up after 10 tries"
+        assert render_log(row) == "Training could not start · FLARE gave up after 10 tries"
 
     @pytest.mark.parametrize(
         "details",

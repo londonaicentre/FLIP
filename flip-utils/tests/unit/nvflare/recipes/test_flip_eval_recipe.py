@@ -65,14 +65,14 @@ class TestFlipEvalRecipe:
         assert recipe.evaluate_task_name == "validate"
 
     def test_default_eval_args_have_no_whitespace_values(self):
-        """NVFlare's TaskScriptRunner whitespace-splits task_script_args, so the default keeps only
+        """FLARE's TaskScriptRunner whitespace-splits task_script_args, so the default keeps only
         ``--project_id`` (a UUID); the SQL query is plumbed via the client config's top-level ``query``."""
         recipe = FlipEvalRecipe()
         assert "--query" not in recipe.eval_args
         assert recipe.eval_args == "--project_id {project_id}"
 
     def test_export_writes_fed_job_layout(self, tmp_path: Path):
-        """``recipe.export`` produces the standard NVFLARE FedJob layout with the FLIP evaluation wiring."""
+        """``recipe.export`` produces the standard FLARE FedJob layout with the FLIP evaluation wiring."""
         import torch
 
         sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)

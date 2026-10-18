@@ -36,8 +36,8 @@ echo "✅ log_config.json written to ${LOG_CFG}"
 # Optional: Activate virtual env if needed
 source /app/.venv/bin/activate
 
-# FLIP's server site components (FLIP#1390): NVFLARE loads local/*__p_resources.json into the
-# server's parent process, where its job scheduler runs. Without it a job NVFLARE cannot schedule
+# FLIP's server site components (FLIP#1390): FLARE loads local/*__p_resources.json into the
+# server's parent process, where its job scheduler runs. Without it a job FLARE cannot schedule
 # never reaches the hub, so refuse to start rather than run blind.
 if ! python -m flip.nvflare.server_site_config /app/local; then
     echo "❌ cannot register FLIP's server components in /app/local"

@@ -24,7 +24,7 @@ Kubernetes site) and moves between releases with one command.
 Two rules shape everything below:
 
 - **A site runs the release its hub runs.** Hub↔site coupling is real — the FL framework pin
-  (an NVFLARE 2.9 client cannot join a 2.8 server), the payload cipher, the task contract — so
+  (a FLARE 2.9 client cannot join a 2.8 server), the payload cipher, the task contract — so
   the upgrade command defaults to the hub's release, read from the hub's ``/api/health``, and
   refuses to guess when the hub cannot say. "Latest on GitHub" is not the target; the hub is.
   The command does tell you when a newer release exists, and offers it only once the Central Hub runs it.

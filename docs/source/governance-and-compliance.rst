@@ -226,7 +226,7 @@ rather than a cascade the hub can trigger. A trust's own retention schedule gove
 when it happens.
 
 **Working copies at FL clients.** During training each FL client holds a working copy
-of its own net's converted imaging. On the NVFLARE backend the application cleans this
+of its own net's converted imaging. On the FLARE backend the application cleans this
 up after the run; bounded retention for the Flower backend's cache is open, tracked
 work (FLIP#1050).
 

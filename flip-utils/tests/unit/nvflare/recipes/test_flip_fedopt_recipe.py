@@ -20,7 +20,7 @@ from flip.nvflare.recipes.flip_fedopt_recipe import _DEFAULT_OPTIMIZER_ARGS
 
 class TestFlipFedOptRecipe:
     def test_defaults_match_stock_nvflare_fedopt(self):
-        """The server-optimizer defaults must track stock NVFLARE FedOpt: SGD at lr=1.0 with
+        """The server-optimizer defaults must track stock FLARE FedOpt: SGD at lr=1.0 with
         momentum=0.6 and no LR schedule. (Deliberately NOT the retired template's server Adam,
         which was never live — its aggregation was broken by the ScatterAndGather guard bug —
         and destroys the global model in one step.) ``device="cpu"`` is FLIP's own default:

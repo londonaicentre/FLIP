@@ -659,7 +659,7 @@ def check_fl_server_clients(net_numbers: list[int]) -> None:
     """Verify the ECS fl-server log shows trust FL clients connected.
 
     Reads ``/ecs/fl-server-net-N`` CloudWatch logs (last 24h) for the
-    ``Re-activate the client`` line NVFLARE emits when a registered client
+    ``Re-activate the client`` line FLARE emits when a registered client
     reconnects. Falls back to ``Client: New`` for first-time registrations.
     """
     print_status("INFO", "Checking FL server clients (CloudWatch /ecs/fl-server-net-N)...")

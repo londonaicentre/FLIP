@@ -1,0 +1,659 @@
+# DICOM PS3.15 2026d, Table E.1-1 (Basic Profile column)
+tag,action,name
+"(0008,0050)",Z,Accession Number
+"(0018,4000)",X,Acquisition Comments
+"(0040,0556)",X,Acquisition Context Description
+"(0040,0555)",X/Z,Acquisition Context Sequence
+"(0008,0022)",X/Z,Acquisition Date
+"(0008,002A)",X/Z/D,Acquisition DateTime
+"(0018,1400)",X/D,Acquisition Device Processing Description
+"(0018,11BB)",D,Acquisition Field of View Label
+"(0018,9424)",X,Acquisition Protocol Description
+"(0008,0032)",X/Z,Acquisition Time
+"(0008,0017)",U,Acquisition UID
+"(0040,4035)",X,Actual Human Performers Sequence
+"(0010,21B0)",X,Additional Patient History
+"(0040,A353)",X,Address (Trial)
+"(0038,0010)",X,Admission ID
+"(0038,0020)",X,Admitting Date
+"(0008,1084)",X,Admitting Diagnoses Code Sequence
+"(0008,1080)",X,Admitting Diagnoses Description
+"(0038,0021)",X,Admitting Time
+"(0000,1000)",X,Affected SOP Instance UID
+"(0010,2110)",X,Allergies
+"(0040,B034)",X,Annotation DateTime
+"(006A,0006)",X,Annotation Group Description
+"(006A,0005)",D,Annotation Group Label
+"(006A,0003)",D,Annotation Group UID
+"(0044,0004)",X,Approval Status DateTime
+"(4000,0010)",X,Arbitrary
+"(0044,0104)",D,Assertion DateTime
+"(0044,0105)",X,Assertion Expiration DateTime
+"(0400,0562)",D,Attribute Modification DateTime
+"(0040,A078)",X,Author Observer Sequence
+"(2200,0005)",X/Z,Barcode Value
+"(300A,00C3)",X,Beam Description
+"(300C,0127)",D,Beam Hold Transition DateTime
+"(300A,00DD)",X,Bolus Description
+"(0010,1081)",X,Branch of Service
+"(0014,407E)",X,Calibration Date
+"(0018,1203)",Z,Calibration DateTime
+"(0014,407C)",X,Calibration Time
+"(0016,004D)",X,Camera Owner Name
+"(0018,1007)",X,Cassette ID
+"(0400,0115)",D,Certificate of Signer
+"(0400,0310)",X,Certified Timestamp
+"(003A,020C)",X,Channel Derivation Description
+"(003A,0203)",X,Channel Label
+"(0012,0060)",Z,Clinical Trial Coordinating Center Name
+"(0012,0082)",X,Clinical Trial Protocol Ethics Committee Approval Number
+"(0012,0081)",D,Clinical Trial Protocol Ethics Committee Name
+"(0012,0020)",D,Clinical Trial Protocol ID
+"(0012,0021)",Z,Clinical Trial Protocol Name
+"(0012,0072)",X,Clinical Trial Series Description
+"(0012,0071)",X,Clinical Trial Series ID
+"(0012,0030)",Z,Clinical Trial Site ID
+"(0012,0031)",Z,Clinical Trial Site Name
+"(0012,0010)",D,Clinical Trial Sponsor Name
+"(0012,0040)",D,Clinical Trial Subject ID
+"(0012,0042)",D,Clinical Trial Subject Reading ID
+"(0012,0051)",X,Clinical Trial Time Point Description
+"(0012,0050)",Z,Clinical Trial Time Point ID
+"(0040,0310)",X,Comments on Radiation Dose
+"(0040,0280)",X,Comments on the Performed Procedure Step
+"(300A,02EB)",X,Compensator Description
+"(0020,9161)",U,Concatenation UID
+"(3010,000F)",Z,Conceptual Volume Combination Description
+"(3010,0017)",Z,Conceptual Volume Description
+"(3010,0006)",U,Conceptual Volume UID
+"(0040,3001)",X,Confidentiality Constraint on Patient Data Description
+"(3010,0013)",U,Constituent Conceptual Volume UID
+"(0008,009C)",Z,Consulting Physician's Name
+"(0008,009D)",X,Consulting Physician Identification Sequence
+"(0050,001B)",X,Container Component ID
+"(0040,051A)",X,Container Description
+"(0040,0512)",D,Container Identifier
+"(0070,0086)",X,Content Creator's Identification Code Sequence
+"(0070,0084)",Z/D,Content Creator's Name
+"(0008,0023)",Z/D,Content Date
+"(0040,A730)",D,Content Sequence
+"(0008,0033)",Z/D,Content Time
+"(0008,0107)",D,Context Group Local Version
+"(0008,0106)",D,Context Group Version
+"(0018,0010)",Z/D,Contrast/Bolus Agent
+"(0018,1042)",X,Contrast/Bolus Start Time
+"(0018,1043)",X,Contrast/Bolus Stop Time
+"(0018,A002)",X,Contribution DateTime
+"(0018,A003)",X,Contribution Description
+"(0010,2150)",X,Country of Residence
+"(2100,0040)",X,Creation Date
+"(2100,0050)",X,Creation Time
+"(0040,A307)",X,Current Observer (Trial)
+"(0038,0300)",X,Current Patient Location
+"(50xx,xxxx)",X,Curve Data
+"(0008,0025)",X,Curve Date
+"(0008,0035)",X,Curve Time
+"(0040,A07C)",X,Custodial Organization Sequence
+"(FFFC,FFFC)",X,Data Set Trailing Padding
+"(0040,A121)",D,Date
+"(0040,A110)",X,Date of Document or Verbal Transaction (Trial)
+"(0018,1205)",X,Date of Installation
+"(0018,1200)",X,Date of Last Calibration
+"(0018,700C)",X/D,Date of Last Detector Calibration
+"(0018,1204)",X,Date of Manufacture
+"(0018,1012)",X,Date of Secondary Capture
+"(0040,A120)",D,DateTime
+"(0018,1202)",X,DateTime of Last Calibration
+"(0018,9701)",D,Decay Correction DateTime
+"(0018,937F)",X,Decomposition Description
+"(0008,2111)",X,Derivation Description
+"(2100,0140)",D,Destination AE
+"(0018,700A)",X/D,Detector ID
+"(3010,001B)",Z,Device Alternate Identifier
+"(0050,0020)",X,Device Description
+"(3010,002D)",D,Device Label
+"(0018,1000)",X/Z/D,Device Serial Number
+"(0016,004B)",X,Device Setting Description
+"(0018,1002)",U,Device UID
+"(0400,0105)",D,Digital Signature DateTime
+"(FFFA,FFFA)",X,Digital Signatures Sequence
+"(0400,0100)",U,Digital Signature UID
+"(0020,9164)",U,Dimension Organization UID
+"(0038,0030)",X,Discharge Date
+"(0038,0040)",X,Discharge Diagnosis Description
+"(0038,0032)",X,Discharge Time
+"(300A,079A)",X,Displacement Reference Label
+"(0040,E012)",X,Display URI
+"(4008,011A)",X,Distribution Address
+"(4008,0119)",X,Distribution Name
+"(3004,007F)",X,Dose Calculation Model Name
+"(300A,0016)",X,Dose Reference Description
+"(300A,0013)",U,Dose Reference UID
+"(3010,006E)",U,Dosimetric Objective UID
+"(0068,6226)",D,Effective DateTime
+"(0040,A034)",X,Effective Start DateTime
+"(0040,A035)",X,Effective Stop DateTime
+"(0042,0011)",D,Encapsulated Document
+"(0018,9517)",X/D,End Acquisition DateTime
+"(3010,0037)",X,Entity Description
+"(3010,0035)",D,Entity Label
+"(3010,0038)",D,Entity Long Label
+"(3010,0036)",X,Entity Name
+"(300A,0676)",X,Equipment Frame of Reference Description
+"(0012,0087)",X,Ethics Committee Approval Effectiveness End Date
+"(0012,0086)",X,Ethics Committee Approval Effectiveness Start Date
+"(0010,2160)",X,Ethnic Group
+"(0010,2161)",X,Ethnic Group Code Sequence
+"(0010,2162)",X,Ethnic Groups
+"(0018,9804)",D,Exclusion Start DateTime
+"(0040,4011)",X,Expected Completion DateTime
+"(0008,0058)",U,Failed SOP Instance UID List
+"(0070,031A)",U,Fiducial UID
+"(0040,2017)",Z,Filler Order Number / Imaging Service Request
+"(003A,032B)",X,Filter Lookup Table Description
+"(0040,A023)",X,Findings Group Recording Date (Trial)
+"(0040,A024)",X,Findings Group Recording Time (Trial)
+"(3008,0054)",X/D,First Treatment Date
+"(300A,0196)",X,Fixation Device Description
+"(0034,0002)",D,Flow Identifier
+"(0034,0001)",D,Flow Identifier Sequence
+"(3010,007F)",Z,Fractionation Notes
+"(300A,0072)",X,Fraction Group Description
+"(0018,9074)",D,Frame Acquisition DateTime
+"(0020,9158)",X,Frame Comments
+"(0020,0052)",U,Frame of Reference UID
+"(0034,0007)",D,Frame Origin Timestamp
+"(0018,9151)",D,Frame Reference DateTime
+"(0018,9623)",D,Functional Sync Pulse
+"(0018,1008)",X,Gantry ID
+"(0010,0044)",X,Gender Identity Code Sequence
+"(0010,0045)",X,Gender Identity Comment
+"(0010,0041)",X,Gender Identity Sequence
+"(0018,1005)",X,Generator ID
+"(0016,0076)",X,GPS Altitude​
+"(0016,0075)",X,GPS Altitude​ Ref
+"(0016,008C)",X,GPS Area ​Information
+"(0016,008D)",X,GPS Date​ Stamp
+"(0016,0088)",X,GPS Dest ​Bearing
+"(0016,0087)",X,GPS Dest​ Bearing Ref
+"(0016,008A)",X,GPS Dest ​Distance
+"(0016,0089)",X,GPS Dest ​Distance Ref
+"(0016,0084)",X,GPS Dest​ Latitude
+"(0016,0083)",X,GPS Dest​ Latitude Ref
+"(0016,0086)",X,GPS Dest ​Longitude
+"(0016,0085)",X,GPS Dest ​Longitude Ref
+"(0016,008E)",X,GPS Differential
+"(0016,007B)",X,GPS DOP
+"(0016,0081)",X,GPS Img ​Direction
+"(0016,0080)",X,GPS Img​ Direction Ref
+"(0016,0072)",X,GPS Latitude​
+"(0016,0071)",X,GPS Latitude​ Ref
+"(0016,0074)",X,GPS Longitude
+"(0016,0073)",X,GPS Longitude Ref
+"(0016,0082)",X,GPS Map​ Datum
+"(0016,007A)",X,GPS Measure ​Mode
+"(0016,008B)",X,GPS Processing​ Method
+"(0016,0078)",X,GPS Satellites
+"(0016,007D)",X,GPS Speed​
+"(0016,007C)",X,GPS Speed​ Ref
+"(0016,0079)",X,GPS Status
+"(0016,0077)",X,GPS Time​ Stamp
+"(0016,007F)",X,GPS Track
+"(0016,007E)",X,GPS Track ​Ref
+"(0016,0070)",X,GPS Version ID
+"(0070,0001)",D,Graphic Annotation Sequence
+"(0072,000A)",D,Hanging Protocol Creation DateTime
+"(0018,1011)",X,Hardcopy Creation Device ID
+"(0008,1304)",X,Histological Diagnoses Code Sequence
+"(0040,E004)",X,HL7 Document Effective Time
+"(0040,4037)",X,Human Performer's Name
+"(0040,4036)",X,Human Performer's Organization
+"(0088,0200)",X,Icon Image Sequence (see Note 11)
+"(0008,4000)",X,Identifying Comments
+"(0020,4000)",X,Image Comments
+"(0028,4000)",X,Image Presentation Comments
+"(0040,2400)",X,Imaging Service Request Comments
+"(003A,0314)",D,Impedance Measurement DateTime
+"(4008,0300)",X,Impressions
+"(0068,6270)",D,Information Issue DateTime
+"(0008,0015)",X,Instance Coercion DateTime
+"(0008,0012)",X/D,Instance Creation Date
+"(0008,0013)",X/Z/D,Instance Creation Time
+"(0008,0014)",U,Instance Creator UID
+"(0400,0600)",X,Instance Origin Status
+"(0008,0081)",X,Institution Address
+"(0008,1040)",X,Institutional Department Name
+"(0008,1041)",X,Institutional Department Type Code Sequence
+"(0008,0082)",X/Z/D,Institution Code Sequence
+"(0008,0080)",X/Z/D,Institution Name
+"(0018,9919)",Z/D,Instruction Performed DateTime
+"(0010,1050)",X,Insurance Plan Identification
+"(3010,0085)",X,Intended Fraction Start Time
+"(3010,004D)",X/D,Intended Phase End Date
+"(3010,004C)",X/D,Intended Phase Start Date
+"(0040,1011)",X,Intended Recipients of Results Identification Sequence
+"(300A,0741)",D,Interlock DateTime
+"(300A,0742)",D,Interlock Description
+"(300A,0783)",D,Interlock Origin Description
+"(4008,0112)",X,Interpretation Approval Date
+"(4008,0113)",X,Interpretation Approval Time
+"(4008,0111)",X,Interpretation Approver Sequence
+"(4008,010C)",X,Interpretation Author
+"(4008,0115)",X,Interpretation Diagnosis Description
+"(4008,0200)",X,Interpretation ID
+"(4008,0202)",X,Interpretation ID Issuer
+"(4008,0100)",X,Interpretation Recorded Date
+"(4008,0101)",X,Interpretation Recorded Time
+"(4008,0102)",X,Interpretation Recorder
+"(4008,010B)",X,Interpretation Text
+"(4008,010A)",X,Interpretation Transcriber
+"(4008,0108)",X,Interpretation Transcription Date
+"(4008,0109)",X,Interpretation Transcription Time
+"(0018,0035)",X,Intervention Drug Start Time
+"(0018,0027)",X,Intervention Drug Stop Time
+"(0008,3010)",U,Irradiation Event UID
+"(0040,2004)",X,Issue Date of Imaging Service Request
+"(0038,0011)",X,Issuer of Admission ID
+"(0038,0014)",X,Issuer of Admission ID Sequence
+"(0012,0022)",X,Issuer of Clinical Trial Protocol ID
+"(0012,0073)",X,Issuer of Clinical Trial Series ID
+"(0012,0032)",X,Issuer of Clinical Trial Site ID
+"(0012,0041)",X,Issuer of Clinical Trial Subject ID
+"(0012,0043)",X,Issuer of Clinical Trial Subject Reading ID
+"(0012,0055)",X,Issuer of Clinical Trial Time Point ID
+"(0010,0021)",X,Issuer of Patient ID
+"(0038,0061)",X,Issuer of Service Episode ID
+"(0038,0064)",X,Issuer of Service Episode ID Sequence
+"(0040,0513)",Z,Issuer of the Container Identifier Sequence
+"(0040,0562)",Z,Issuer of the Specimen Identifier Sequence
+"(0040,2005)",X,Issue Time of Imaging Service Request
+"(2200,0002)",X/Z,Label Text
+"(0028,1214)",U,Large Palette Color Lookup Table UID
+"(0010,21D0)",X,Last Menstrual Date
+"(0016,004F)",X,Lens Make
+"(0016,0050)",X,Lens Model
+"(0016,0051)",X,Lens Serial Number
+"(0016,004E)",X,Lens Specification
+"(0050,0021)",X,Long Device Description
+"(0400,0404)",X,MAC
+"(0016,002B)",X,Maker Note
+"(0018,100B)",U,Manufacturer's Device Class UID
+"(3010,0043)",Z,Manufacturer's Device Identifier
+"(0002,0003)",U,Media Storage SOP Instance UID
+"(0010,2000)",X,Medical Alerts
+"(0010,1090)",X,Medical Record Locator
+"(0010,1080)",X,Military Rank
+"(0400,0550)",X,Modified Attributes Sequence
+"(0020,3403)",X,Modified Image Date
+"(0020,3406)",X,Modified Image Description
+"(0020,3405)",X,Modified Image Time
+"(0020,3401)",X,Modifying Device ID
+"(0400,0563)",D,Modifying System
+"(0040,B03F)",X,Montage Channel Label
+"(0040,B03B)",X,Montage Name
+"(3008,0056)",X/D,Most Recent Treatment Date
+"(0018,937B)",X,Multi-energy Acquisition Description
+"(003A,0020)",X,Multiplex Group Label
+"(003A,0310)",U,Multiplex Group UID
+"(0008,1060)",X,Name of Physician(s) Reading Study
+"(0040,1010)",X,Names of Intended Recipients of Results
+"(0010,0012)",X,Name to Use
+"(0010,0013)",X,Name to Use Comment
+"(0008,1000)",X,Network ID
+"(0400,0552)",X,Nonconforming Data Element Value
+"(0400,0551)",X,Nonconforming Modified Attributes Sequence
+"(0040,A192)",X,Observation Date (Trial)
+"(0040,A032)",X/D,Observation DateTime
+"(0040,A033)",X,Observation Start DateTime
+"(0040,A402)",U,Observation Subject UID (Trial)
+"(0040,A193)",X,Observation Time (Trial)
+"(0040,A171)",U,Observation UID
+"(0010,2180)",X,Occupation
+"(0008,1072)",X/D,Operator Identification Sequence
+"(0008,1070)",X/Z/D,Operators' Name
+"(0040,2010)",X,Order Callback Phone Number
+"(0040,2011)",X,Order Callback Telecom Information
+"(0040,2008)",X,Order Entered By
+"(0040,2009)",X,Order Enterer's Location
+"(0400,0561)",X,Original Attributes Sequence
+"(2100,0070)",X,Originator
+"(0012,0023)",X,Other Clinical Trial Protocol IDs Sequence
+"(0010,1000)",X,Other Patient IDs
+"(0010,1002)",X,Other Patient IDs Sequence
+"(0010,1001)",X,Other Patient Names
+"(60xx,4000)",X,Overlay Comments
+"(60xx,3000)",X,Overlay Data
+"(0008,0024)",X,Overlay Date
+"(0008,0034)",X,Overlay Time
+"(300A,0760)",D,Override DateTime
+"(0028,1199)",U,Palette Color Lookup Table UID
+"(0040,A07A)",X,Participant Sequence
+"(0040,A082)",Z,Participation DateTime
+"(0010,1040)",X,Patient's Address
+"(0010,1010)",X,Patient's Age
+"(0010,0030)",Z,Patient's Birth Date
+"(0010,1005)",X,Patient's Birth Name
+"(0010,0032)",X,Patient's Birth Time
+"(0038,0400)",X,Patient's Institution Residence
+"(0010,0050)",X,Patient's Insurance Plan Code Sequence
+"(0010,1060)",X,Patient's Mother's Birth Name
+"(0010,0010)",Z,Patient's Name
+"(0010,0101)",X,Patient's Primary Language Code Sequence
+"(0010,0102)",X,Patient's Primary Language Modifier Code Sequence
+"(0010,21F0)",X,Patient's Religious Preference
+"(0010,0040)",Z,Patient's Sex
+"(0010,2203)",X/Z,Patient's Sex Neutered
+"(0010,1020)",X,Patient's Size
+"(0010,2155)",X,Patient's Telecom Information
+"(0010,2154)",X,Patient's Telephone Numbers
+"(0010,1030)",X,Patient's Weight
+"(0010,4000)",X,Patient Comments
+"(0010,0020)",Z/D,Patient ID
+"(300A,0794)",X,Patient Setup Photo Description
+"(300A,0650)",U,Patient Setup UID
+"(0038,0500)",X,Patient State
+"(0040,1004)",X,Patient Transport Arrangements
+"(300A,0792)",X,Patient Treatment Preparation Method Description
+"(300A,078E)",X,Patient Treatment Preparation Procedure Parameter Description
+"(0040,0243)",X,Performed Location
+"(0040,0254)",X,Performed Procedure Step Description
+"(0040,0250)",X,Performed Procedure Step End Date
+"(0040,4051)",X,Performed Procedure Step End DateTime
+"(0040,0251)",X,Performed Procedure Step End Time
+"(0040,0253)",X,Performed Procedure Step ID
+"(0040,0244)",X,Performed Procedure Step Start Date
+"(0040,4050)",X,Performed Procedure Step Start DateTime
+"(0040,0245)",X,Performed Procedure Step Start Time
+"(0040,0241)",X,Performed Station AE Title
+"(0040,4030)",X,Performed Station Geographic Location Code Sequence
+"(0040,0242)",X,Performed Station Name
+"(0040,4028)",X,Performed Station Name Code Sequence
+"(0008,1050)",X,Performing Physician's Name
+"(0008,1052)",X,Performing Physician Identification Sequence
+"(0040,1102)",X,Person's Address
+"(0040,1104)",X,Person's Telecom Information
+"(0040,1103)",X,Person's Telephone Numbers
+"(0040,1101)",D,Person Identification Code Sequence
+"(0040,A123)",D,Person Name
+"(0010,0011)",X,Person Names to Use Sequence
+"(0008,1048)",X,Physician(s) of Record
+"(0008,1049)",X,Physician(s) of Record Identification Sequence
+"(0008,1062)",X,Physician(s) Reading Study Identification Sequence
+"(4008,0114)",X,Physician Approving Interpretation
+"(0040,2016)",Z,Placer Order Number / Imaging Service Request
+"(0018,1004)",X,Plate ID
+"(3002,0123)",X,Position Acquisition Template Description
+"(3002,0121)",X,Position Acquisition Template Name
+"(0010,21C0)",X,Pregnancy Status
+"(0040,0012)",X,Pre-Medication
+"(300A,000E)",X,Prescription Description
+"(3010,007B)",Z,Prescription Notes
+"(3010,0081)",Z,Prescription Notes Sequence
+"(0070,0082)",X,Presentation Creation Date
+"(0070,0083)",X,Presentation Creation Time
+"(0070,1101)",U,Presentation Display Collection UID
+"(0070,1102)",U,Presentation Sequence Collection UID
+"(0008,1302)",X,Primary Diagnosis Code Sequence
+"(0008,1301)",X,Principal Diagnosis Code Sequence
+"(3010,0061)",X,Prior Treatment Dose Description
+"(gggg,eeee) where gggg is odd",X,Private Attributes
+"(0040,4052)",X,Procedure Step Cancellation DateTime
+"(0044,000B)",X,Product Expiration DateTime
+"(0010,0015)",X,Pronoun Code Sequence
+"(0010,0016)",X,Pronoun Comment
+"(0018,1030)",X/D,Protocol Name
+"(0008,1088)",X,Pyramid Description
+"(0020,0027)",X,Pyramid Label
+"(0008,0019)",U,Pyramid UID
+"(300A,0619)",D,Radiation Dose Identification Label
+"(300A,0623)",D,Radiation Dose In-Vivo Measurement Label
+"(300A,067D)",Z,Radiation Generation Mode Description
+"(300A,067C)",D,Radiation Generation Mode Label
+"(0018,1078)",X,Radiopharmaceutical Start DateTime
+"(0018,1072)",X,Radiopharmaceutical Start Time
+"(0018,1079)",X,Radiopharmaceutical Stop DateTime
+"(0018,1073)",X,Radiopharmaceutical Stop Time
+"(300C,0113)",X,Reason for Omission Description
+"(0040,100A)",X,Reason for Requested Procedure Code Sequence
+"(0032,1030)",X,Reason for Study
+"(3010,005C)",Z,Reason for Superseding
+"(0400,0565)",D,Reason for the Attribute Modification
+"(0040,2001)",X,Reason for the Imaging Service Request
+"(0040,1002)",X,Reason for the Requested Procedure
+"(0032,1066)",X,Reason for Visit
+"(0032,1067)",X,Reason for Visit Code Sequence
+"(0074,1234)",X,Receiving AE
+"(300A,073A)",D,Recorded RT Control Point DateTime
+"(3010,000B)",U,Referenced Conceptual Volume UID
+"(0040,A13A)",D,Referenced DateTime
+"(0400,0402)",X,Referenced Digital Signature Sequence
+"(300A,0083)",U,Referenced Dose Reference UID
+"(3010,006F)",U,Referenced Dosimetric Objective UID
+"(3010,0031)",U,Referenced Fiducials UID
+"(3006,0024)",U,Referenced Frame of Reference UID
+"(0040,4023)",U,Referenced General Purpose Scheduled Procedure Step Transaction UID
+"(0008,1140)",X/Z/U*,Referenced Image Sequence
+"(0040,A172)",U,Referenced Observation UID (Trial)
+"(0038,0004)",X,Referenced Patient Alias Sequence
+"(0010,1100)",X,Referenced Patient Photo Sequence
+"(0008,1120)",X,Referenced Patient Sequence
+"(0008,1111)",X/Z/D,Referenced Performed Procedure Step Sequence
+"(0400,0403)",X,Referenced SOP Instance MAC Sequence
+"(0008,1155)",U,Referenced SOP Instance UID
+"(0004,1511)",U,Referenced SOP Instance UID in File
+"(0008,1110)",X/Z,Referenced Study Sequence
+"(300A,0785)",U,Referenced Treatment Position Group UID
+"(0008,0092)",X,Referring Physician's Address
+"(0008,0090)",Z,Referring Physician's Name
+"(0008,0094)",X,Referring Physician's Telephone Numbers
+"(0008,0096)",X,Referring Physician Identification Sequence
+"(0010,2152)",X,Region of Residence
+"(3006,00C2)",U,Related Frame of Reference UID
+"(0040,0275)",X,Request Attributes Sequence
+"(0032,1070)",X,Requested Contrast Agent
+"(0040,1400)",X,Requested Procedure Comments
+"(0032,1060)",X/Z,Requested Procedure Description
+"(0040,1001)",X,Requested Procedure ID
+"(0040,1005)",X,Requested Procedure Location
+"(0018,9937)",X,Requested Series Description
+"(0000,1001)",U,Requested SOP Instance UID
+"(0074,1236)",X,Requesting AE
+"(0032,1032)",X,Requesting Physician
+"(0032,1033)",X,Requesting Service
+"(0018,9185)",X,Respiratory Motion Compensation Technique Description
+"(0010,2299)",X,Responsible Organization
+"(0010,2297)",X,Responsible Person
+"(4008,4000)",X,Results Comments
+"(4008,0118)",X,Results Distribution List Sequence
+"(4008,0040)",X,Results ID
+"(4008,0042)",X,Results ID Issuer
+"(0008,0054)",X,Retrieve AE Title
+"(300E,0004)",Z,Review Date
+"(300E,0008)",X/Z,Reviewer Name
+"(300E,0005)",Z,Review Time
+"(3006,004D)",X,ROI Creator Sequence
+"(3006,002D)",X,ROI DateTime
+"(3006,0028)",X,ROI Description
+"(3006,0038)",X,ROI Generation Description
+"(3006,00A6)",Z,ROI Interpreter
+"(3006,004E)",X,ROI Interpreter Sequence
+"(3006,0026)",Z,ROI Name
+"(3006,002E)",X,ROI Observation DateTime
+"(3006,0088)",X,ROI Observation Description
+"(3006,0085)",X,ROI Observation Label
+"(300A,0615)",Z,RT Accessory Device Slot ID
+"(300A,0611)",Z,RT Accessory Holder Slot ID
+"(3010,005A)",Z,RT Physician Intent Narrative
+"(300A,0006)",X/D,RT Plan Date
+"(300A,0004)",X,RT Plan Description
+"(300A,0002)",D,RT Plan Label
+"(300A,0003)",X,RT Plan Name
+"(300A,0007)",X/D,RT Plan Time
+"(3010,0054)",D,RT Prescription Label
+"(300A,062A)",D,RT Tolerance Set Label
+"(3010,0056)",X/D,RT Treatment Approach Label
+"(3010,003B)",U,RT Treatment Phase UID
+"(3008,0162)",D,Safe Position Exit Date
+"(3008,0164)",D,Safe Position Exit Time
+"(3008,0166)",D,Safe Position Return Date
+"(3008,0168)",D,Safe Position Return Time
+"(0038,001A)",X,Scheduled Admission Date
+"(0038,001B)",X,Scheduled Admission Time
+"(0038,001C)",X,Scheduled Discharge Date
+"(0038,001D)",X,Scheduled Discharge Time
+"(0040,4034)",X,Scheduled Human Performers Sequence
+"(0038,001E)",X,Scheduled Patient Institution Residence
+"(0040,0006)",X,Scheduled Performing Physician's Name
+"(0040,000B)",X,Scheduled Performing Physician Identification Sequence
+"(0040,0007)",X,Scheduled Procedure Step Description
+"(0040,0004)",X,Scheduled Procedure Step End Date
+"(0040,0005)",X,Scheduled Procedure Step End Time
+"(0040,4008)",X,Scheduled Procedure Step Expiration DateTime
+"(0040,0009)",X,Scheduled Procedure Step ID
+"(0040,0011)",X,Scheduled Procedure Step Location
+"(0040,4010)",X,Scheduled Procedure Step Modification DateTime
+"(0040,0002)",X,Scheduled Procedure Step Start Date
+"(0040,4005)",X,Scheduled Procedure Step Start DateTime
+"(0040,0003)",X,Scheduled Procedure Step Start Time
+"(0040,0001)",X,Scheduled Station AE Title
+"(0040,4027)",X,Scheduled Station Geographic Location Code Sequence
+"(0040,0010)",X,Scheduled Station Name
+"(0040,4025)",X,Scheduled Station Name Code Sequence
+"(0032,1020)",X,Scheduled Study Location
+"(0032,1021)",X,Scheduled Study Location AE Title
+"(0032,1000)",X,Scheduled Study Start Date
+"(0032,1001)",X,Scheduled Study Start Time
+"(0032,1010)",X,Scheduled Study Stop Date
+"(0032,1011)",X,Scheduled Study Stop Time
+"(0018,1010)",X,Secondary Capture Device ID
+"(0008,1303)",X,Secondary Diagnoses Code Sequence
+"(0040,B036)",X,Segment Definition DateTime
+"(0072,005E)",D,Selector AE Value
+"(0072,005F)",D,Selector AS Value
+"(0072,0061)",D,Selector DA Value
+"(0072,0063)",D,Selector DT Value
+"(0072,0066)",D,Selector LO Value
+"(0072,0068)",D,Selector LT Value
+"(0072,0065)",D,Selector OB Value
+"(0072,006A)",D,Selector PN Value
+"(0072,006C)",D,Selector SH Value
+"(0072,006E)",D,Selector ST Value
+"(0072,006B)",D,Selector TM Value
+"(0072,006D)",D,Selector UN Value
+"(0072,0071)",D,Selector UR Value
+"(0072,0070)",D,Selector UT Value
+"(0008,0021)",X/D,Series Date
+"(0008,103E)",X,Series Description
+"(0020,000E)",U,Series Instance UID
+"(0008,0031)",X/D,Series Time
+"(0038,0062)",X,Service Episode Description
+"(0038,0060)",X,Service Episode ID
+"(300A,01B2)",X,Setup Technique Description
+"(0010,0046)",X,Sex Parameters for Clinical Use Category Code Sequence
+"(0010,0042)",X,Sex Parameters for Clinical Use Category Comment
+"(0010,0047)",X,Sex Parameters for Clinical Use Category Reference
+"(0010,0043)",X,Sex Parameters for Clinical Use Category Sequence
+"(300A,01A6)",X,Shielding Device Description
+"(0040,06FA)",X,Slide Identifier
+"(0010,21A0)",X,Smoking Status
+"(0100,0420)",X,SOP Authorization DateTime
+"(0008,0018)",U,SOP Instance UID
+"(3010,0015)",U,Source Conceptual Volume UID
+"(0018,936A)",D,Source End DateTime
+"(0064,0003)",U,Source Frame of Reference UID
+"(0034,0005)",D,Source Identifier
+"(0008,2112)",X/Z/U*,Source Image Sequence
+"(300A,0216)",X,Source Manufacturer
+"(0400,0564)",Z,Source of Previous Values
+"(3008,0105)",X/Z,Source Serial Number
+"(0018,9369)",D,Source Start DateTime
+"(300A,022C)",D,Source Strength Reference Date
+"(300A,022E)",D,Source Strength Reference Time
+"(0038,0050)",X,Special Needs
+"(0040,050A)",X,Specimen Accession Number
+"(0040,0602)",X,Specimen Detailed Description
+"(0040,0551)",D,Specimen Identifier
+"(0040,0610)",Z,Specimen Preparation Sequence
+"(0040,0600)",X,Specimen Short Description
+"(0040,0554)",U,Specimen UID
+"(0018,9516)",X/D,Start Acquisition DateTime
+"(0008,0055)",X,Station AE Title
+"(0008,1010)",X/Z/D,Station Name
+"(0088,0140)",U,Storage Media File-set UID
+"(3006,0008)",Z,Structure Set Date
+"(3006,0006)",X,Structure Set Description
+"(3006,0002)",D,Structure Set Label
+"(3006,0004)",X,Structure Set Name
+"(3006,0009)",Z,Structure Set Time
+"(0032,1040)",X,Study Arrival Date
+"(0032,1041)",X,Study Arrival Time
+"(0032,4000)",X,Study Comments
+"(0032,1050)",X,Study Completion Date
+"(0032,1051)",X,Study Completion Time
+"(0008,0020)",Z,Study Date
+"(0008,1030)",X,Study Description
+"(0020,0010)",Z,Study ID
+"(0032,0012)",X,Study ID Issuer
+"(0020,000D)",U,Study Instance UID
+"(0032,0034)",X,Study Read Date
+"(0032,0035)",X,Study Read Time
+"(0008,0030)",Z,Study Time
+"(0032,0032)",X,Study Verified Date
+"(0032,0033)",X,Study Verified Time
+"(0044,0010)",X,Substance Administration DateTime
+"(0020,0200)",U,Synchronization Frame of Reference UID
+"(300A,0054)",U,Table Top Position Alignment UID
+"(0018,2042)",U,Target UID
+"(0040,A354)",X,Telephone Number (Trial)
+"(0040,DB0D)",U,Template Extension Creator UID
+"(0040,DB0C)",U,Template Extension Organization UID
+"(0040,DB07)",X,Template Local Version
+"(0040,DB06)",X,Template Version
+"(4000,4000)",X,Text Comments
+"(2030,0020)",X,Text String
+"(0010,0014)",X,Third Person Pronouns Sequence
+"(0040,A122)",D,Time
+"(0040,A112)",X,Time of Document Creation or Verbal Transaction (Trial)
+"(0018,1201)",X,Time of Last Calibration
+"(0018,700E)",X/D,Time of Last Detector Calibration
+"(0018,1014)",X,Time of Secondary Capture
+"(0008,0201)",X,Timezone Offset From UTC
+"(0088,0910)",X,Topic Author
+"(0088,0912)",X,Topic Keywords
+"(0088,0906)",X,Topic Subject
+"(0088,0904)",X,Topic Title
+"(0062,0021)",U,Tracking UID
+"(0008,1195)",U,Transaction UID
+"(0018,5011)",X,Transducer Identification Sequence
+"(3008,0024)",D,Treatment Control Point Date
+"(3008,0025)",D,Treatment Control Point Time
+"(3008,0250)",X/D,Treatment Date
+"(300A,00B2)",X/Z,Treatment Machine Name
+"(300A,0608)",D,Treatment Position Group Label
+"(300A,0609)",U,Treatment Position Group UID
+"(300A,0700)",U,Treatment Session UID
+"(3010,0077)",X/D,Treatment Site
+"(300A,000B)",X,Treatment Sites
+"(3010,007A)",Z,Treatment Technique Notes
+"(3008,0251)",X/D,Treatment Time
+"(300A,0736)",D,Treatment Tolerance Violation DateTime
+"(300A,0734)",D,Treatment Tolerance Violation Description
+"(0018,100A)",X,UDI Sequence
+"(0040,A124)",U,UID
+"(0070,0006)",D,Unformatted Text Value
+"(0018,1009)",X,Unique Device Identifier
+"(3010,0033)",D,User Content Label
+"(3010,0034)",D,User Content Long Label
+"(0040,A352)",X,Verbal Source (Trial)
+"(0040,A358)",X,Verbal Source Identifier Code Sequence (Trial)
+"(0040,A030)",D,Verification DateTime
+"(0040,A088)",Z,Verifying Observer Identification Code Sequence
+"(0040,A075)",D,Verifying Observer Name
+"(0040,A073)",D,Verifying Observer Sequence
+"(0040,A027)",D,Verifying Organization
+"(0038,4000)",X,Visit Comments
+"(0040,B020)",X/D,Waveform Annotation Sequence
+"(003A,0329)",X,​Waveform Filter Description
+"(0018,9371)",D,X-Ray Detector ID
+"(0018,9373)",X,X-Ray Detector Label
+"(0018,9367)",D,X-Ray Source ID

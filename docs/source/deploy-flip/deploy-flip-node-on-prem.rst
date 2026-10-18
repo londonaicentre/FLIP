@@ -275,7 +275,7 @@ fl-client container, so preserve it as extracted.
    to the Host-local profile before your next deployment; the shipped
    allocation is 8104 for DICOM and 8105 for the web UI.
 
-**Optional — set your site privacy policy (NVFLARE backend).** As the data
+**Optional — set your site privacy policy (FLARE backend).** As the data
 holder you can enforce your own update-privacy filter on everything the
 fl-client sends to the FL server, independently of the researcher's app
 configuration: uncomment ``FL_SITE_PRIVACY_POLICY`` (and optionally its

@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_modify_model
@@ -28,11 +28,8 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 # [#114] ✅
 @router.post("/stop/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-@router.post("/stop/{model_id}/{target}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
-@router.post("/stop/{model_id}/{target}/{clients}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def stop_training(
     model_id: UUID,
-    request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> None:
@@ -41,7 +38,6 @@ def stop_training(
 
     Args:
         model_id (UUID): The ID of the model to stop training.
-        request (Request): The incoming HTTP request.
         db (Session): Database session.
         user_id (UUID): User ID from authentication.
 
@@ -58,7 +54,7 @@ def stop_training(
         )
 
     try:
-        abort_model_training(request, model_id, db)
+        abort_model_training(model_id, db)
         update_model_status(model_id, ModelStatus.STOPPED, db)
 
     except Exception as e:

@@ -17,7 +17,7 @@ from flip.nvflare.components.keep_vars_filter import KeepOnlyVars
 
 
 def _ctx():
-    # NVFLARE's logging path validates get_peer_context() is an FLContext or None.
+    # FLARE's logging path validates get_peer_context() is an FLContext or None.
     ctx = MagicMock()
     ctx.get_peer_context.return_value = None
     return ctx

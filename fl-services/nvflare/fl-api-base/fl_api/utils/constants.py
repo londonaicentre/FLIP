@@ -21,12 +21,12 @@ MODELS = "models.py"
 
 # config.json key fl-api writes the hub's model id under, for FLIP's components on the FL server
 # (flip.nvflare.runtime.get_flip_model_id). The counterpart of the Flower fl-api's ``flip-model-id``
-# run-config key: the job's FLIP config carries it, not NVFLARE's meta.json (FLIP#70).
+# run-config key: the job's FLIP config carries it, not FLARE's meta.json (FLIP#70).
 FLIP_MODEL_ID = "FLIP_MODEL_ID"
 
 # Server-only evaluation checkpoints: the hub bundler diverts them to this S3 prefix, and the
 # FL API stages them on the shared checkpoint volume (SERVER_CHECKPOINT_ROOT) for the fl-server
-# to load from disk. They are never placed in the NVFLARE job, so they are never deployed to
+# to load from disk. They are never placed in the FLARE job, so they are never deployed to
 # clients — mirroring the Flower backend, which keeps the checkpoint server-side.
 SERVER_CHECKPOINTS_PREFIX = "server_checkpoints"
 SERVER_CHECKPOINT_ROOT_ENV = "SERVER_CHECKPOINT_ROOT"

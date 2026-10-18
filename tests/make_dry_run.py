@@ -77,8 +77,6 @@ DESTRUCTIVE = (
     "ensure-seeded",
     "seed-omop",
     "seed-orthanc",
-    "update-omop-data",
-    "update-orthanc-data",
     "rm -rf",
     "down-trust",
 )

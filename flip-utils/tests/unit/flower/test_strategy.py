@@ -178,6 +178,32 @@ class TestTrainPhaseWiring:
         assert aggregated_event.kwargs["details"] == {"returned": 2, "expected": 2}
 
 
+class TestEvaluationMetricsForwarding:
+    """FLIP#1526: an evaluation-only run forwards each client's returned metrics to the hub."""
+
+    def test_each_evaluation_reply_is_forwarded_under_its_client_name(self):
+        flip = MagicMock()
+        strategy = FlipFedAvg(flip, "model-1", fraction_train=0.0)
+        messages = list(strategy.configure_evaluate(1, ArrayRecord(), ConfigRecord(), _StubGrid([101, 202])))
+        replies = [
+            Message(
+                content=RecordDict(
+                    {
+                        "metrics": MetricRecord({"mean_dice": dice, "num-examples": 5}),
+                        "config": ConfigRecord({"client_name": site}),
+                    }
+                ),
+                reply_to=msg,
+            )
+            for msg, site, dice in zip(messages, ["Trust_1", "Trust_2"], [0.5, 0.75])
+        ]
+
+        strategy.aggregate_evaluate(1, replies)
+
+        sent = {(c.kwargs["client_name"], c.kwargs["label"], c.kwargs["value"]) for c in flip.send_metrics.mock_calls}
+        assert sent == {("Trust_1", "MEAN_DICE", 0.5), ("Trust_2", "MEAN_DICE", 0.75)}
+
+
 class TestMinClients:
     """min_clients pins every node threshold to the participating-trust count.
 

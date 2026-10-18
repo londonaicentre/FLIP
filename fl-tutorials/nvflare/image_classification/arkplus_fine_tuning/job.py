@@ -15,13 +15,13 @@ This module defines the federated fine-tuning job using :class:`FlipFedAvgRecipe
 execution modes:
 
 *Export* (``--export --export-dir <path>``):
-    Writes the complete NVFLARE job to ``<path>/flip_fedavg/``, including ``meta.json`` (carrying
+    Writes the complete FLARE job to ``<path>/flip_fedavg/``, including ``meta.json`` (carrying
     ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client configs) and
     ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files). This is the
     primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the NVFLARE simulator. Requires a GPU, the DECAF chest X-ray
+    Runs a local simulation under the FLARE simulator. Requires a GPU, the DECAF chest X-ray
     dataset, and the processed backbone checkpoint (``make prepare-checkpoint``). FLIP-specific values
     are injected via environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``). Per-site data is
     selected inside the trainer via ``flare.get_site_name()`` (see ``app_files/data_utils.py``).
@@ -37,7 +37,7 @@ Finetuning specifics driven by ``app_files/config.json``:
   client-side rebuild). This reproduces locally what the fl-server injects from the same config key at
   deploy, so ``make run``/``make sim`` exercises the full frozen-backbone round-trip.
 
-Both modes go through NVFLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
+Both modes go through FLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
 from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
 exports-or-runs accordingly — so there is no separate ``--export`` branch here.
 
@@ -113,7 +113,7 @@ def main() -> None:
         default="/tmp/nvflare/arkplus_finetuning",
         help="SimEnv workspace root",
     )
-    # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them
+    # NOTE: ``--export``/``--export-dir`` are handled by FLARE's ``Recipe.execute`` (it strips them
     # from ``sys.argv`` before this parser runs), so they are intentionally not declared here.
     args = parser.parse_args()
 

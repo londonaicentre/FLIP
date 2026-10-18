@@ -30,7 +30,7 @@ class ReconstructFullModel(DXOFilter):
     Stateful: the retained model persists across rounds (the filter is a job-scoped component,
     instantiated once for the run). If a trimmed update arrives before any full model was cached —
     e.g. a client that (re)joined after round 0 and so never received the backbone — the filter
-    raises, which NVFLARE surfaces as a task-data-filter error, failing the round loudly rather than
+    raises, which FLARE surfaces as a task-data-filter error, failing the round loudly rather than
     silently training on a partial model.
     """
 
@@ -91,7 +91,7 @@ class ReconstructFullModelForEval(ReconstructFullModel):
     Why one component on two tasks. The frozen backbone the client needs to reconstruct against is
     the one it received at training round 0 — in production the pretrained checkpoint is de-bundled
     server-side and never shipped to clients (see ``InitialCheckpointPTModelPersistor``), so the
-    client's ONLY copy of the backbone is the round-0 broadcast cached during training. NVFLARE builds
+    client's ONLY copy of the backbone is the round-0 broadcast cached during training. FLARE builds
     a fresh filter instance per filter-chain occurrence, so the training cache is shared with the
     evaluation phase ONLY when the same component instance handles both tasks — i.e. one filter chain
     whose ``tasks`` are ``["train", "validate"]``. This class is therefore wired onto both.
@@ -114,7 +114,7 @@ class ReconstructFullModelForEval(ReconstructFullModel):
         Args:
             data_kinds: DXO kinds to filter; defaults to WEIGHTS and WEIGHT_DIFF.
             evaluate_task_name: the task name under which cross-site validation broadcasts the model.
-                Defaults to NVFLARE's ``AppConstants.TASK_VALIDATION`` ("validate").
+                Defaults to FLARE's ``AppConstants.TASK_VALIDATION`` ("validate").
         """
         super().__init__(data_kinds=data_kinds)
         self._evaluate_task_name = evaluate_task_name

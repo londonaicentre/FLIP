@@ -173,7 +173,7 @@ class TestTrainingLog:
             TrainingLog(event_type=FLLogEvent.ROUND_AGGREGATED)
 
     def test_the_scheduling_event_carries_no_round(self):
-        """A job NVFLARE has not scheduled yet has no round; the scheduling verdict is sent round-less."""
+        """A job FLARE has not scheduled yet has no round; the scheduling verdict is sent round-less."""
         payload = TrainingLog(
             event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES,
             details={"attempt": 1, "max_attempts": 10, "final": False, "sites": {"AZ1": {"num_of_gpus": 1}}},

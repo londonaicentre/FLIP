@@ -242,7 +242,7 @@ interface IModelUploadProps {
     modelId: string;
     requiredFiles: string[];
     jobType: JobType;
-    // "NVFlare" or "Flower", when known.
+    // "FLARE" or "Flower", when known.
     flBackendLabel?: string;
     // True when the job-types map could not be loaded, so `jobType` is a default rather than this
     // model's actual job type.
@@ -301,7 +301,7 @@ const CHIP_CLASS = "px-2 py-0.5 font-semibold rounded-full bg-primary-100 text-p
 
 // Each FL backend's brand colour, both light enough to need dark text: NVIDIA green, Flower yellow.
 const BACKEND_CHIP_CLASSES: Record<string, string> = {
-    NVFlare: "px-2 py-0.5 font-semibold rounded-full bg-[#76B900] text-ink",
+    FLARE: "px-2 py-0.5 font-semibold rounded-full bg-[#76B900] text-ink",
     Flower: "px-2 py-0.5 font-semibold rounded-full bg-[#F2B705] text-ink"
 };
 

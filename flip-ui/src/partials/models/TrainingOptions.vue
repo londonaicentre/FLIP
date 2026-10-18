@@ -166,7 +166,7 @@ interface ITrainingOptionsProps {
     // A dispatched run's configuration is a record, not a form: the controls stay
     // on screen so you can see which trusts took part, but nothing is editable.
     disabled?: boolean
-    // "NVFlare" or "Flower", when known: Flower records a GPU request without enforcing it.
+    // "FLARE" or "Flower", when known: Flower records a GPU request without enforcing it.
     flBackendLabel?: string
     // The files this model's backend + job type require, with their upload status. Empty while the
     // job types are unknown, which hides the row.

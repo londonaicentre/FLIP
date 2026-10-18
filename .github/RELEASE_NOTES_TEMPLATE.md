@@ -22,7 +22,7 @@
 
 ## :warning: Breaking Changes
 
-- **Flower hub and Flower sites upgrade together** (#1272). The hub's SuperLink and every trust's SuperNode move from Flower 1.36 to 1.38 in the same Deployment-Mode window. NVFLARE hubs and sites are unaffected.
+- **Flower hub and Flower sites upgrade together** (#1272). The hub's SuperLink and every trust's SuperNode move from Flower 1.36 to 1.38 in the same Deployment-Mode window. FLARE hubs and sites are unaffected.
 - **The Flower SuperLink Control API is on port 8000 over HTTP** (#1272). Anything outside FLIP that called the gRPC Control API on 9093 must move. The host-side published ports (`FLOWER_SUPERLINK_NET_{1,2}_PORT`) are unchanged.
 
 ## :arrows_counterclockwise: Site upgrade
@@ -34,8 +34,8 @@
      flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
      Deployment-Mode window, and a site left behind fails every task until it moves. -->
 
-- **Required:** **yes for Flower sites**, which must move to Flower 1.38 with the hub. NVFLARE sites: recommended, not required. The release fixes imaging-api reporting a failed XNAT upload as a success (#1397) and quotes XNAT URLs (#1352, #1399). **Yes, as a flag day, from v0.6.x or earlier** (v0.7.0's AES-256-GCM change has no CBC fallback).
-- **Ordering:** Flower: hub and sites together, in one Deployment-Mode window. NVFLARE: sites at their own pace, before or after the hub.
+- **Required:** **yes for Flower sites**, which must move to Flower 1.38 with the hub. FLARE sites: recommended, not required. The release fixes imaging-api reporting a failed XNAT upload as a success (#1397) and quotes XNAT URLs (#1352, #1399). **Yes, as a flag day, from v0.6.x or earlier** (v0.7.0's AES-256-GCM change has no CBC fallback).
+- **Ordering:** Flower: hub and sites together, in one Deployment-Mode window. FLARE: sites at their own pace, before or after the hub.
 - **Kubernetes trusts:** recommended. The fl-client no longer crash-loops when `uploadedFederatedDataBucket` is unset (#1427), and `preflight` / `sync-kit` resolve LZA kits and keep working under Helm 4 after `patch-kit-secrets` (#1366).
 - **Refreshed kit needed:** no. The Hub-shared block is unchanged.
 - **Operator command**, on the trust host, from your FLIP checkout:
@@ -82,16 +82,16 @@
 
 Tutorial suite, on a GPU host:
 
-- [x] NVFLARE — `make -C fl-tutorials run-all-tutorials`
+- [x] FLARE — `make -C fl-tutorials run-all-tutorials`
 - [x] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
 - [x] Host and date recorded: RTX 5090 workstation, 12 October 2026
 
-NVFLARE: all eight tutorials passed on the simulator — xray_classification 53 s, ehr_risk_prediction 31 s, 3d_spleen_segmentation 10 min 50 s, 3d_spleen_segmentation_evaluation 89 s, latent_diffusion_model 2 min 38 s, arkplus_fine_tuning 1 min 57 s, arkplus_baseline_classification_evaluation 42 s, arkplus_multimodel_classification_evaluation 79 s. The three Ark+ tutorials first failed because their checkpoint (`Ark6_swinLarge768_ep50.pth.tar`) was not staged; it is not part of any dataset download, so fetch it first (`make download-raw-checkpoint` in each Ark+ tutorial).
+FLARE: all eight tutorials passed on the simulator — xray_classification 53 s, ehr_risk_prediction 31 s, 3d_spleen_segmentation 10 min 50 s, 3d_spleen_segmentation_evaluation 89 s, latent_diffusion_model 2 min 38 s, arkplus_fine_tuning 1 min 57 s, arkplus_baseline_classification_evaluation 42 s, arkplus_multimodel_classification_evaluation 79 s. The three Ark+ tutorials first failed because their checkpoint (`Ark6_swinLarge768_ep50.pth.tar`) was not staged; it is not part of any dataset download, so fetch it first (`make download-raw-checkpoint` in each Ark+ tutorial).
 Flower: all five tutorials passed on the compose stack (what `run-all-tutorials FL_BACKEND=flower` runs at this commit), at the release commit on locally built FL images with #1433's tutorial values and GPU overlay — xray_classification 3 min 17 s, ehr_risk_prediction 1 min 54 s, 3d_spleen_segmentation 4 min 37 s, 3d_spleen_segmentation_evaluation 88 s (those four in parallel stacks), 3d_prostate_segmentation 1 min 41 s (12 PI-CAI studies).
 
 Full-platform smoke test, against a running deployment:
 
-- [x] NVFLARE — `make e2e_smoke`
+- [x] FLARE — `make e2e_smoke`
 - [x] Flower — `make e2e_smoke FL_BACKEND=flower`
 
 Both passed on 12 October 2026 on the dev stack on an RTX 5090 workstation, with the hub, both trusts and the FL images (built locally from the release branch at `8f7242c82`, after #1422) at the release commit: create project, cohort query, trust approval, image pull, training (`xray_classification`, CPU clients), results uploaded and downloaded. Flower completed every round, past the second-round launch where #1418 used to fail, with no per-run dependency install.

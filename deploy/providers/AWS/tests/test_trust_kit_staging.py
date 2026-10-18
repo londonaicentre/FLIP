@@ -37,7 +37,7 @@ The properties, all of them regressions that would otherwise leave CI green:
   reproduces the original ``net-1//`` no-op.
 * The Flower sync fetches this host's own SuperNode credential and nothing else; the
   prefix also holds every other slot's private key and the SuperLink's server key.
-* The NVFLARE stage proves the staged kit belongs to *this* slot, not merely that some
+* The FLARE stage proves the staged kit belongs to *this* slot, not merely that some
   kit arrived.
 * ``trust_ec2_s3`` reads objects under named prefixes rather than the whole bucket, and
   its KMS grant is decrypt-only and confined to decrypts S3 performs for this host.
@@ -64,7 +64,7 @@ SITE_YML = AWS_PROVIDER_DIR / "site.yml"
 KIT_STAGE_TASKS = REPO_ROOT / "trust" / "deploy" / "ansible" / "roles" / "flip_fl_kit" / "tasks" / "s3.yml"  # noqa: E501
 MAIN_TF = AWS_PROVIDER_DIR / "main.tf"
 
-NVFLARE_SYNC_TASK = "sync NVFLARE participant kit from S3"
+NVFLARE_SYNC_TASK = "sync FLARE participant kit from S3"
 FLOWER_SYNC_TASK = "sync Flower net-1 certificates and keys from S3"
 
 TASK_BODY_INDENT = 4
@@ -183,7 +183,7 @@ def test_kit_sources_are_consumed_bare():
 def test_nvflare_stage_proves_the_kit_belongs_to_this_slot():
     """A kit for the wrong slot would register this host under another trust's identity."""
     script = _task_shell(NVFLARE_SYNC_TASK)
-    assert "fqsn" in script, "the NVFLARE stage no longer checks fed_client.json's site name"
+    assert "fqsn" in script, "the FLARE stage no longer checks fed_client.json's site name"
     assert "fl_kit_slot" in script.split("fqsn")[1], "the fqsn check no longer compares against the staged slot"
 
 

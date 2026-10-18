@@ -10,17 +10,17 @@
 # limitations under the License.
 #
 
-"""Relay NVFLARE's scheduling verdict to the Central Hub (FLIP#1390).
+"""Relay FLARE's scheduling verdict to the Central Hub (FLIP#1390).
 
 A job's ``resource_spec`` states what it needs at each site, and each site's resource manager reports
-what it has. NVFLARE's ``DefaultJobScheduler`` asks every site before it starts a job; when a site
+what it has. FLARE's ``DefaultJobScheduler`` asks every site before it starts a job; when a site
 says no, the job waits and is retried with a growing interval, and after ``max_schedule_count`` tries
-it is marked ``FINISHED:CAN_NOT_SCHEDULE``. NVFLARE logs why, but only on the FL server, and the job
+it is marked ``FINISHED:CAN_NOT_SCHEDULE``. FLARE logs why, but only on the FL server, and the job
 never starts, so no component inside it can tell the hub anything.
 
 This component runs in the server's parent process instead, as a site-level component registered in
 the server kit's ``local/flip__p_resources.json`` (``python -m flip.nvflare.server_site_config`` writes
-it at container start, and NVFLARE adds its components to the provisioned ``resources.json`` ones). It
+it at container start, and FLARE adds its components to the provisioned ``resources.json`` ones). It
 listens for ``AFTER_CHECK_CLIENT_RESOURCES``, the event the scheduler fires once every site has
 answered, and when the job will not start it sends the hub a ``JOB_WAITING_FOR_RESOURCES`` event for
 each site that fell short, saying what it was asked for. On the scheduler's last attempt it also fails
@@ -47,7 +47,7 @@ from flip.utils.utils import Utils
 # DefaultJobScheduler's own default, used when the scheduler component cannot be read.
 NVFLARE_DEFAULT_MAX_SCHEDULE_COUNT = 10
 
-# On the scheduler's last try the model's ERROR is all that frees its net, and NVFLARE does not call the
+# On the scheduler's last try the model's ERROR is all that frees its net, and FLARE does not call the
 # reporter for that job again, so the update is retried until the hub accepts it. Seconds to wait before each
 # retry, about a minute in all: enough for a brief hub outage. The waits run inside the event handler, so they
 # block the scheduler's thread: no other queued job on this server is tried until they end. That costs little
@@ -78,7 +78,7 @@ def scheduling_shortfall(
     """
     ok_sites = {site for site, (enough, _token) in (check_results or {}).items() if enough}
     required = job_meta.get(JobMetaKey.MANDATORY_CLIENTS) or []
-    # NVFLARE's own default (nvflare/apis/job_def.py job_from_meta).
+    # FLARE's own default (nvflare/apis/job_def.py job_from_meta).
     min_sites = job_meta.get(JobMetaKey.MIN_CLIENTS, 1)
     if check_results and len(ok_sites) >= min_sites and all(site in ok_sites for site in required):
         return None
@@ -86,7 +86,7 @@ def scheduling_shortfall(
 
 
 class JobSchedulingReporter(FLComponent):
-    """Tells the hub why NVFLARE's scheduler has not started a FLIP job.
+    """Tells the hub why FLARE's scheduler has not started a FLIP job.
 
     Args:
         job_scheduler_id (str): component id of the server's job scheduler, read for its
@@ -146,7 +146,7 @@ class JobSchedulingReporter(FLComponent):
                 success=not final,
             )
         if not shortfall:
-            # Nothing was checked (NVFLARE then logs "resource check results is None or empty"), so no site can
+            # Nothing was checked (FLARE then logs "resource check results is None or empty"), so no site can
             # be named. One row against the model still says how far the scheduler got; without "requested" the
             # hub does not claim that a trust failed to confirm its resources.
             self.flip.send_event(

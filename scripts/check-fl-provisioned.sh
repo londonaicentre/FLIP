@@ -13,7 +13,7 @@
 #
 
 # Fail fast when a backend's per-net credentials are missing, instead of letting the FL
-# containers crash-loop (NVFLARE's fl-server logs "start.sh: No such file or directory";
+# containers crash-loop (FLARE's fl-server logs "start.sh: No such file or directory";
 # Flower's SuperLink dies on an absent TLS cert). Neither backend's credentials are created
 # by `make up` — they come from `make -C fl-services/<backend> provision...`. Net IDs come
 # from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir).
@@ -24,7 +24,7 @@
 #   FL_PROVISIONED_DIR  per-backend credential root, derived in deploy/fl_backend.mk:
 #                         nvflare → <net>/services/fl-server-<net>/startup/start.sh
 #                         flower  → <net>/certificates/ca.crt
-#   FL_API_KEY_GID      development only (unset elsewhere): the gid the NVFLARE FL API joins
+#   FL_API_KEY_GID      development only (unset elsewhere): the gid the FLARE FL API joins
 #                       (group_add), which must own and be able to read its admin client.key
 
 set -euo pipefail
@@ -36,7 +36,7 @@ FL_PROVISIONED_DIR="${FL_PROVISIONED_DIR:-fl-services/nvflare/provision/workspac
 case "${FL_BACKEND}" in
     nvflare)
         marker_suffix="services/fl-server-NET/startup/start.sh"
-        missing_desc="NVFLARE workspace not provisioned"
+        missing_desc="FLARE workspace not provisioned"
         missing_hint="Startup kits are missing under ${FL_PROVISIONED_DIR}/<net>/services/"
         provision_cmds="       make -C fl-services/nvflare provision-2-nets          # net-1 + net-2
        make -C fl-services/nvflare provision NET_NUMBER=<N>  # a single net"
@@ -88,7 +88,7 @@ if [ -n "${missing}" ]; then
     exit 1
 fi
 
-# NVFLARE writes private keys 0600, and in development the FL API reads its admin key through the
+# FLARE writes private keys 0600, and in development the FL API reads its admin key through the
 # host group (group_add in deploy/compose.development.nvflare.yml). `make provision` opens the key to
 # that group; a workspace provisioned before it did, or by another user, leaves a key the FL API
 # cannot open, and it would die at boot with a bare PermissionError (FLIP#1384). The marker above is
@@ -109,13 +109,13 @@ if [ "${FL_BACKEND}" = nvflare ] && [ -n "${FL_API_KEY_GID:-}" ]; then
         fi
     done
     if [ -n "${absent}" ]; then
-        echo "❌ The NVFLARE FL API admin key is missing (the workspace has no complete FL API kit):" >&2
+        echo "❌ The FLARE FL API admin key is missing (the workspace has no complete FL API kit):" >&2
         for key in ${absent}; do echo "     ${key}" >&2; done
         echo "   Re-provision:  make -C fl-services/nvflare provision NET_NUMBER=<N>" >&2
         exit 1
     fi
     if [ -n "${unreadable}" ]; then
-        echo "❌ The NVFLARE FL API cannot read its admin key (it needs group ${FL_API_KEY_GID}, mode 640):" >&2
+        echo "❌ The FLARE FL API cannot read its admin key (it needs group ${FL_API_KEY_GID}, mode 640):" >&2
         for key in ${unreadable}; do echo "     ${key}" >&2; done
         echo "   Fix it in place:  chgrp ${FL_API_KEY_GID} <key> && chmod 640 <key>" >&2
         echo "   or re-provision:  make -C fl-services/nvflare provision NET_NUMBER=<N>" >&2

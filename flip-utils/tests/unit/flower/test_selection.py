@@ -232,7 +232,7 @@ class TestParseBestModelRunConfig:
         assert parse_best_model_run_config({"best-model-metric": "   "}, num_rounds=5) == (None, False)
 
     def test_metric_is_stripped(self):
-        # Mirrors fl-api's NVFLARE-side fix (#673): a stray space in the config must not
+        # Mirrors fl-api's FLARE-side fix (#673): a stray space in the config must not
         # survive parsing and silently never match the metric label the clients report.
         config = {"best-model-metric": " val_f1 "}
 
@@ -268,7 +268,7 @@ class TestParseBestModelRunConfig:
         assert parse_best_model_run_config(config, num_rounds=5) == (None, False)
 
     def test_single_round_selection_warns_but_stays_enabled(self, caplog):
-        # Unlike NVFLARE (whose IntimeModelSelector skips round 0, so a 1-round job can
+        # Unlike FLARE (whose IntimeModelSelector skips round 0, so a 1-round job can
         # never save a best model), Flower's round-1 evaluation still feeds the selector:
         # best == final is redundant, not broken, so this warns instead of rejecting.
         with caplog.at_level(logging.WARNING, logger="flip.flower.selection"):

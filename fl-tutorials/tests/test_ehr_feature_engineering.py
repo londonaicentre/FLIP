@@ -11,7 +11,7 @@
 
 """Unit tests for the EHR risk-prediction tutorial's shared feature engineering and model.
 
-The module under test is the NVFLARE copy — ``scripts/check_tutorial_sync.sh`` pins the Flower
+The module under test is the FLARE copy — ``scripts/check_tutorial_sync.sh`` pins the Flower
 copy byte-identical to it, so one import covers both backends. Fixtures are synthesised
 in-process (no dataset download); everything runs on CPU in the flip-utils[full] env.
 """
@@ -184,7 +184,7 @@ def test_model_forward_shape_and_state_dict_roundtrip():
 def test_default_model_width_and_configs_agree_across_backends():
     """FEATURES/LABEL_COLUMN drive both backends' preprocessing and the model input width.
 
-    The two config.json files are NOT sync-checked (Flower's carries no NVFLARE-only keys),
+    The two config.json files are NOT sync-checked (Flower's carries no FLARE-only keys),
     so this is the guard that keeps the shared columns — and therefore the model each
     backend builds — from drifting apart.
     """

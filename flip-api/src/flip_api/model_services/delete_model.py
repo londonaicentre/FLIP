@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
@@ -29,7 +29,6 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 # [#114] ✅
 @router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_model_endpoint(
-    request: Request,
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
@@ -38,7 +37,6 @@ def delete_model_endpoint(
     Delete a specific model.
 
     Args:
-        request (Request): The incoming HTTP request.
         model_id (UUID): The ID of the model to delete.
         db (Session): Database session.
         user_id (UUID): User ID from authentication.
@@ -70,7 +68,7 @@ def delete_model_endpoint(
     try:
         delete_model(model_id, user_id, db)
 
-        abort_model_training(request, model_id, db)
+        abort_model_training(model_id, db)
 
     except SQLAlchemyError:
         error_message = "Database error occurred during model deletion."

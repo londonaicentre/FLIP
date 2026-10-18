@@ -122,7 +122,7 @@ def render_log(row: FLLogs) -> str:
 
 
 def _render_waiting_for_resources(details: dict[str, Any]) -> str:
-    """NVFLARE's scheduler held the job because this row's trust lacks what the job asked for (FLIP#1390).
+    """FLARE's scheduler held the job because this row's trust lacks what the job asked for (FLIP#1390).
 
     The row is attributed to the trust, so the text says what it was asked for and how far the
     scheduler's retries have got. Any field that is not usable is left out rather than guessed.
@@ -151,7 +151,7 @@ def _render_waiting_for_resources(details: dict[str, Any]) -> str:
 
     attempt, max_attempts = details.get("attempt"), details.get("max_attempts")
     if _is_count(attempt) and _is_count(max_attempts):
-        parts.append(f"NVFLARE gave up after {max_attempts} tries" if final else f"try {attempt} of {max_attempts}")
+        parts.append(f"FLARE gave up after {max_attempts} tries" if final else f"try {attempt} of {max_attempts}")
     return " · ".join(parts)
 
 

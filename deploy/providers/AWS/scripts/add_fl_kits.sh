@@ -12,7 +12,7 @@
 # limitations under the License.
 #
 
-# Ensure N more *claimable* FL kit slots exist on a running stag/prod NVFLARE
+# Ensure N more *claimable* FL kit slots exist on a running stag/prod FLARE
 # deployment, end to end. N is a target ("N more live slots"), not a mint count:
 #
 #   1. discover the deployment's nets from S3

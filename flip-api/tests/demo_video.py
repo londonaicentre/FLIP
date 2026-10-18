@@ -86,7 +86,7 @@ APPS: dict[str, dict[str, Any]] = {
             "nvflare": {
                 "app_dir": "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
                 "query_file": "fl-tutorials/nvflare/image_classification/xray_classification/query.sql",
-                "label": "NVFLARE",
+                "label": "FLARE",
             },
             "flower": {
                 "app_dir": "fl-tutorials/flower/xray_classification/app",
@@ -112,7 +112,7 @@ APPS: dict[str, dict[str, Any]] = {
             "nvflare": {
                 "app_dir": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
                 "query_file": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql",
-                "label": "NVFLARE",
+                "label": "FLARE",
             },
             "flower": {
                 "app_dir": "fl-tutorials/flower/ehr_risk_prediction/app",
@@ -129,7 +129,7 @@ APPS: dict[str, dict[str, Any]] = {
             "nvflare": {
                 "app_dir": "fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files",
                 "query_file": "fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql",
-                "label": "NVFLARE",
+                "label": "FLARE",
             },
             "flower": {
                 "app_dir": "fl-tutorials/flower/3d_spleen_segmentation/app",

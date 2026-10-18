@@ -43,7 +43,7 @@ locals {
   # FL backend shape (#566): the same task FAMILIES (fl-api-net-1,
   # fl-server-net-1 — deploy-centralhub addresses services by family) serve
   # both backends; var.fl_backend switches image (via var.fl_*_name from
-  # fl_backend.mk), container ports, command, env map and mounts. NVFLARE
+  # fl_backend.mk), container ports, command, env map and mounts. FLARE
   # mirrors compose.production.nvflare.yml; Flower mirrors
   # compose.production.flower.yml.
   # flwr>=1.40 serves every SuperLink API — Fleet, Control, Runtime — on control_port;
@@ -65,7 +65,7 @@ locals {
   # checkpoints, the ECS analogue of compose's ${FL_JOBS_DIR}/net-1 bind)
   # between fl-api and fl-server, and mounts the SuperLink certs read-only
   # on both (fl-api only reads ca.crt). The fl_server_certs / fl_server_keys
-  # access points were NVFLARE leftovers kept for state continuity — Flower
+  # access points were FLARE leftovers kept for state continuity — Flower
   # now genuinely uses them.
   fl_api_task_volumes = {
     nvflare = {
@@ -182,8 +182,8 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
         { name = k, value = v }
       ]
 
-      # Container paths must match what the fl-api image expects. NVFLARE
-      # (compose.production.nvflare.yml): /app/admin/{local,startup} — NVFLARE
+      # Container paths must match what the fl-api image expects. FLARE
+      # (compose.production.nvflare.yml): /app/admin/{local,startup} — FLARE
       # initialises a Workspace from FL_ADMIN_DIRECTORY/startup at boot; if the
       # dir is missing the lifespan startup raises and the task crashes. The
       # checkpoints mount is the writer side of the shared staging volume
@@ -232,8 +232,8 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       # the check fails and ECS replaces the task — catching the
       # wedged-but-alive case that removing uvicorn --reload (entrypoint)
       # does not. The image is python-slim with no curl, but the venv python
-      # is on PATH. startPeriod covers the NVFLARE workspace/admin-session
-      # init at boot. Endpoint per backend: NVFLARE fl-api exposes the
+      # is on PATH. startPeriod covers the FLARE workspace/admin-session
+      # init at boot. Endpoint per backend: FLARE fl-api exposes the
       # session-independent /health/; the Flower fl-api image is probed on
       # /openapi.json, mirroring its compose healthcheck.
       healthCheck = {
@@ -292,7 +292,7 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       # The Flower fleet proxy below reserves the remaining 128 MiB of the task.
       memoryReservation = var.fl_backend == "flower" ? 8064 : 8192
 
-      # Flower-only settings, null (dropped by the ECS API) for NVFLARE. The
+      # Flower-only settings, null (dropped by the ECS API) for FLARE. The
       # SuperLink image's entrypoint takes the TLS + SuperNode-auth flags as
       # its command (mirroring the compose overlay); initProcessEnabled
       # mirrors compose's `init: true` (the SuperLink forks per-run
@@ -309,7 +309,7 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       ] : null
       linuxParameters = var.fl_backend == "flower" ? { initProcessEnabled = true } : null
 
-      # NVFLARE serves client gRPC + admin multiplexed on one port. Flower's
+      # FLARE serves client gRPC + admin multiplexed on one port. Flower's
       # SuperLink serves its HTTP APIs on 8000 (fl-api submits runs to the
       # Control API there) and health on 9097; the NLB's 9092 is the fleet
       # proxy's, below.
@@ -338,10 +338,10 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       ]
 
       # Container paths must match what the fl-server image expects.
-      # NVFLARE (compose.production.nvflare.yml): /app/{local,startup,
+      # FLARE (compose.production.nvflare.yml): /app/{local,startup,
       # transfer} — the entrypoint chmods scripts in /app/startup and reads
       # /app/local/log_config.template.json; wrong paths -> crash loop.
-      # certs and keys live inside /app/local (NVFLARE puts them under
+      # certs and keys live inside /app/local (FLARE puts them under
       # site-1/ssl-key, ssl-cert), so no separate mount is needed. The
       # checkpoints mount is the reader side of the shared staging volume
       # (SERVER_CHECKPOINT_ROOT — FLIP#695).
@@ -442,13 +442,13 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
   ] : []))
 
   # Volume set per backend (local.fl_server_task_volumes). Shared-volume
-  # notes: the NVFLARE checkpoints volume is the SAME access point
+  # notes: the FLARE checkpoints volume is the SAME access point
   # fl-api-net-1 writes to (both tasks pinned to uid/gid 1001 by the access
   # point, so reader sees writer's files — FLIP#695); the Flower jobs volume
-  # is likewise shared RW with fl-api-net-1. NVFLARE keeps SSL key + cert
+  # is likewise shared RW with fl-api-net-1. FLARE keeps SSL key + cert
   # under /app/local/site-1/ssl-* (inside the local volume) so it needs no
   # certs mount; Flower mounts the fl_server_certs access point that was
-  # previously an NVFLARE leftover.
+  # previously a FLARE leftover.
   dynamic "volume" {
     for_each = local.fl_server_task_volumes[var.fl_backend]
     content {

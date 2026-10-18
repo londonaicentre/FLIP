@@ -10,17 +10,17 @@
 # limitations under the License.
 #
 
-"""Register FLIP's site components on the NVFLARE server (FLIP#1390).
+"""Register FLIP's site components on the FLARE server (FLIP#1390).
 
 Run by the fl-server at container start (``python -m flip.nvflare.server_site_config /app/local``).
-NVFLARE merges every ``local/*__p_resources.json`` into the server's *parent* process config and
+FLARE merges every ``local/*__p_resources.json`` into the server's *parent* process config and
 appends its ``components`` to the provisioned ``resources.json`` ones, so FLIP's components live in a
 file of their own: the provisioned kit is never edited, and no job process loads them.
 
 The file carries ``components`` only. Any other key the provisioned ``resources.json`` also sets would
 be a merge conflict.
 
-Stdlib-only, like ``site_policy``: it runs before NVFLARE starts.
+Stdlib-only, like ``site_policy``: it runs before FLARE starts.
 """
 
 import argparse
@@ -32,7 +32,7 @@ PARENT_RESOURCES_FILE = "flip__p_resources.json"
 
 SERVER_COMPONENTS = [
     {
-        # Tells the hub why NVFLARE's scheduler has not started a job, and fails the model on its last try.
+        # Tells the hub why FLARE's scheduler has not started a job, and fails the model on its last try.
         "id": "flip_job_scheduling_reporter",
         "path": "flip.nvflare.components.job_scheduling_reporter.JobSchedulingReporter",
         "args": {},
@@ -54,7 +54,7 @@ def write_server_site_config(local_dir: Path) -> Path:
     """
     local_dir = Path(local_dir)
     if not local_dir.is_dir():
-        raise FileNotFoundError(f"NVFLARE server local directory not found: {local_dir}")
+        raise FileNotFoundError(f"FLARE server local directory not found: {local_dir}")
     target = local_dir / PARENT_RESOURCES_FILE
     target.write_text(json.dumps({"components": SERVER_COMPONENTS}, indent=2) + "\n")
     return target
@@ -62,7 +62,7 @@ def write_server_site_config(local_dir: Path) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("local_dir", type=Path, help="the NVFLARE server kit's local directory")
+    parser.add_argument("local_dir", type=Path, help="the FLARE server kit's local directory")
     args = parser.parse_args(argv)
     try:
         target = write_server_site_config(args.local_dir)

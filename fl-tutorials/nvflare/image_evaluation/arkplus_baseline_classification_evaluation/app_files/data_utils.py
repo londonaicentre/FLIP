@@ -39,7 +39,7 @@ from monai.transforms.transform import MapTransform
 def _is_local_dev() -> bool:
     """Whether to read data from local files (simulator) or the FLIP API (real trust).
 
-    ``True`` in the NVFLARE simulator (``LOCAL_DEV=true``): resolve data from the local
+    ``True`` in the FLARE simulator (``LOCAL_DEV=true``): resolve data from the local
     ``SITE{N}_*``/``DEV_*`` env paths. ``False`` on a real federated client: fetch the
     dataframe + DICOMs from the trust APIs via the FLIP package. Mirrors the flip
     package's own ``LOCAL_DEV`` switch
@@ -214,7 +214,7 @@ def get_site_data_config(config: dict | None = None, site_name: str | None = Non
     requested_site = normalize_site_name(site_name)
 
     # Per-site data resolution for the in-process Client-API simulator (no Docker mounts). Precedence:
-    #   1. SITE{N}_IMAGES_DIR / SITE{N}_DATAFRAME env (mapped from the NVFLARE site name, "site-1" -> "SITE1")
+    #   1. SITE{N}_IMAGES_DIR / SITE{N}_DATAFRAME env (mapped from the FLARE site name, "site-1" -> "SITE1")
     #   2. the single-site DEV_* env fallback
     # The real per-site host paths live in .env.app as SITE{N}_*. (In the legacy executor tutorial this
     # per-site wiring was done by the testing harness' Docker mounts.) The deployed run (LOCAL_DEV=false)

@@ -10,10 +10,10 @@
 # limitations under the License.
 #
 
-"""NVFLARE trust kits dial their own estate's server on its LZA edge port (FLIP#1365).
+"""FLARE trust kits dial their own estate's server on its LZA edge port (FLIP#1365).
 
 Production and staging share one edge NLB address: ``:8002`` forwards to production's FL server and
-``:8003`` to staging's FL server, which listens on 8002. A client's ``connect_to.port`` (NVFLARE falls
+``:8003`` to staging's FL server, which listens on 8002. A client's ``connect_to.port`` (FLARE falls
 back to the server's ``fed_learn_port`` when it is absent) therefore chooses the estate.
 
 Flower's kit carries no address, so its SuperNode takes the port from the trust kit's ``FL_EDGE_PORT``.
@@ -38,7 +38,7 @@ EXPECTED = {
 
 
 def participants(path: Path) -> list[str]:
-    """The text of each ``participants:`` entry in an NVFLARE project file."""
+    """The text of each ``participants:`` entry in a FLARE project file."""
     body = re.search(r"^participants:\n(.*?)(?=^[A-Za-z])", path.read_text(), re.M | re.S)
     assert body, f"no participants block in {path}"
     return re.split(r"^  - ", body.group(1), flags=re.M)[1:]

@@ -193,7 +193,7 @@ class TestFlipLocalDpMod:
     """The mod's contract: privatise train updates, leave everything else alone."""
 
     def test_disabled_returns_the_apps_reply_untouched(self):
-        """The off switch mirrors the NVFLARE filter's `off` flag: same app, no component removed."""
+        """The off switch mirrors the FLARE filter's `off` flag: same app, no component removed."""
         trained = {"w": np.array([9.0, 9.0, 9.0], dtype=np.float32)}
 
         released = _released({"w": np.array([1.0, 2.0, 3.0], dtype=np.float32)}, trained, {CONFIG_ENABLED: False})
@@ -294,7 +294,7 @@ class TestFlipLocalDpMod:
     def test_default_config_preserves_a_realistic_update(self):
         """The shipped defaults must not gut a realistic fine-tuning update.
 
-        The counterpart of the NVFLARE suite's ``test_recipe_default_config_preserves_headonly_update``,
+        The counterpart of the FLARE suite's ``test_recipe_default_config_preserves_headonly_update``,
         which pins the config that once discarded 95% of every head diff. Here the risk is the noise
         scale rather than sparsification: with per-step magnitudes as seen in the tutorials, the
         released update must still point the same way as the raw one and stay the same order of

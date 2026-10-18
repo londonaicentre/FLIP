@@ -123,7 +123,7 @@ That separation is a design decision, and it buys three things:
   or a broken bundle config marks a successful multi-Trust run as failed, because export never
   executes inside the job.
 * **The FL runtime carries no deployment dependencies.** If export ran inside ``fl-server``, that
-  image would have to carry the MONAI Deploy toolchain and reconcile it against the NVFLARE and
+  image would have to carry the MONAI Deploy toolchain and reconcile it against the FLARE and
   torch pins already there. Those version sets do not currently agree — see
   :ref:`map-environment-traps` and :ref:`map-deepcos` — so coupling them would make both harder to
   move independently.
@@ -244,7 +244,7 @@ Step 1 — Obtain the aggregated checkpoint
 =========================================
 
 A completed FLIP training run uploads its results to S3 as a zip containing
-``FL_global_model.pt``. This is an NVFLARE persistence-format checkpoint: an ``OrderedDict`` with
+``FL_global_model.pt``. This is a FLARE persistence-format checkpoint: an ``OrderedDict`` with
 a ``model`` key holding the state dict, alongside ``train_conf`` and optionally ``meta_props``.
 
 .. warning::
@@ -575,7 +575,7 @@ Step 4 — Package the MAP
 Application templates live in ``map-apps/`` — ``map-apps/segmentation`` for models that emit a
 mask, ``map-apps/classification`` for models that emit labels. They are backend-agnostic: a MAP
 consumes trained weights, not federated-learning configuration, so the same template serves an app
-trained under either NVFLARE or Flower.
+trained under either FLARE or Flower.
 
 .. code-block:: bash
 
@@ -922,7 +922,7 @@ per-backend manifest of known job types (``bundle_nvflare_application`` /
 unrecognised ``job_type`` is rejected; a missing one falls back to ``standard``. The file itself is
 a required file on both backends, so a submission without it is rejected before bundling.
 
-**For NVFLARE, the FL API then validates a fixed set of platform keys** when it assembles the job
+**For FLARE, the FL API then validates a fixed set of platform keys** when it assembles the job
 (``validate_config`` in ``fl-services/nvflare/fl-api-base/fl_api/utils/prepare_config.py``). Several
 of those failures are hard rejections that stop the job rather than silent fallbacks: an unknown
 ``AGGREGATOR``, an ``AGGREGATION_WEIGHTS`` weight outside 0–1, an uncompilable

@@ -11,14 +11,14 @@ Create a FLIP app from a FLARE app
    This page is the NVIDIA FLARE twin of :doc:`create-flip-app-from-flower` and follows the same
    structure. If you change one page, check whether the other needs the same change.
 
-This page walks through the code changes required to adapt a stock NVIDIA FLARE **Client API** training script (for example, one copied from the official `NVFLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_ or pulled from the internal FLIP app hub) so that it can run on FLIP. Every NVFLARE job type on FLIP drives the client code through the Client API (``nvflare.client``) — a plain Python script that FLIP's ``ClientAPIExecutor`` runs in-process on each Trust. The walkthrough covers the FLIP touchpoints such a script needs:
+This page walks through the code changes required to adapt a stock NVIDIA FLARE **Client API** training script (for example, one copied from the official `FLARE examples <https://github.com/NVIDIA/NVFlare/tree/main/examples/hello-world>`_ or pulled from the internal FLIP app hub) so that it can run on FLIP. Every FLARE job type on FLIP drives the client code through the Client API (``nvflare.client``) — a plain Python script that FLIP's ``ClientAPIExecutor`` runs in-process on each Trust. The walkthrough covers the FLIP touchpoints such a script needs:
 
 - ``flip.get_dataframe(...)`` to retrieve the project's cohort DataFrame
 - ``flip.get_by_accession_number(...)`` to pull imaging resources for each accession
-- ``SummaryWriter.add_scalar(...)`` (NVFLARE's own tracking API) to publish per-epoch metrics, which FLIP forwards to the model page
+- ``SummaryWriter.add_scalar(...)`` (FLARE's own tracking API) to publish per-epoch metrics, which FLIP forwards to the model page
 - the ``FLModel`` contract for what the trainer receives and returns each round
 
-There is no ``flip.update_status(...)`` to call: on NVFLARE the whole server side is FLIP's, and its ``ServerEventHandler`` drives the model lifecycle for you (see :ref:`flare-server-side`).
+There is no ``flip.update_status(...)`` to call: on FLARE the whole server side is FLIP's, and its ``ServerEventHandler`` drives the model lifecycle for you (see :ref:`flare-server-side`).
 
 A full, runnable reference is available in-tree:
 
@@ -50,12 +50,12 @@ A full, runnable reference is available in-tree:
      - ``SummaryWriter.add_scalar``, forwarded by ``FlipAnalyticsBridge``
    * - Client identity
      - ``client_identity(context)`` placed in the reply's ``ConfigRecord``
-     - NVFLARE site name, resolved from the event origin (nothing to do)
+     - FLARE site name, resolved from the event origin (nothing to do)
    * - Privacy filter on updates
      - ``flip_local_dp_mod`` registered by the uploaded ``client_app.py``
      - ``PercentilePrivacy`` wired by the template (nothing to do)
    * - Local run
-     - ``make run-tutorial`` (simulator), as on NVFLARE
+     - ``make run-tutorial`` (simulator), as on FLARE
      - ``job.py`` recipe: ``make export`` / ``make sim``
 
 *****************
@@ -80,7 +80,7 @@ A FLARE app that FLIP can run is a folder of user files plus, for local runs onl
 
 .. note::
 
-   Unlike a hand-written NVFLARE job, you do **not** write ``config_fed_server.json`` or ``config_fed_client.json``. Those come from the platform's template for the job type (``fl-apps/nvflare/<job_type>/``), which is itself generated from ``flip.nvflare.recipes``; an uploaded copy lands in ``custom/`` and is never read as a config file. Researchers cannot change what happens on the server side — see the *Job types* section of :ref:`flip-fl-nets`. ``meta.json`` is optional: upload one to declare the job's GPUs (``{"resource_spec": {"@default": {"num_of_gpus": 1}}}``), and FLIP keeps its ``resource_spec`` and ``custom_props`` and writes the rest — see *NVFLARE meta.json* in :ref:`flip-fl-nets`.
+   Unlike a hand-written FLARE job, you do **not** write ``config_fed_server.json`` or ``config_fed_client.json``. Those come from the platform's template for the job type (``fl-apps/nvflare/<job_type>/``), which is itself generated from ``flip.nvflare.recipes``; an uploaded copy lands in ``custom/`` and is never read as a config file. Researchers cannot change what happens on the server side — see the *Job types* section of :ref:`flip-fl-nets`. ``meta.json`` is optional: upload one to declare the job's GPUs (``{"resource_spec": {"@default": {"num_of_gpus": 1}}}``), and FLIP keeps its ``resource_spec`` and ``custom_props`` and writes the rest — see *FLARE meta.json* in :ref:`flip-fl-nets`.
 
 .. note::
 
@@ -92,9 +92,9 @@ A FLARE app that FLIP can run is a folder of user files plus, for local runs onl
 The server side is FLIP's (nothing to do)
 *****************************************
 
-On NVFLARE, FLIP owns the entire server side. The ``standard`` template runs four workflows in order — ``InitTraining`` → ``ScatterAndGather`` (federated averaging) → NVFLARE's stock ``GlobalModelEval`` → ``BroadcastTask`` (post-run cleanup) — and wires the FLIP components that talk to the Central Hub. The pieces that matter to an app author:
+On FLARE, FLIP owns the entire server side. The ``standard`` template runs four workflows in order — ``InitTraining`` → ``ScatterAndGather`` (federated averaging) → FLARE's stock ``GlobalModelEval`` → ``BroadcastTask`` (post-run cleanup) — and wires the FLIP components that talk to the Central Hub. The pieces that matter to an app author:
 
-- **Model lifecycle.** ``ServerEventHandler`` moves the model through ``INITIATED`` → ``PREPARED`` → ``RUNNING`` → ``RESULTS_UPLOADED`` (or ``ERROR`` / ``STOPPED``) on NVFLARE's own events, and ``PersistToS3AndCleanup`` zips the run directory — ``FL_global_model.pt``, ``cross_val_results.json`` and, when selection is on, ``best_FL_global_model.pt`` — and uploads it at the end of the run. This is what drives the progress bar and downloads on the model page (see :ref:`view-results`).
+- **Model lifecycle.** ``ServerEventHandler`` moves the model through ``INITIATED`` → ``PREPARED`` → ``RUNNING`` → ``RESULTS_UPLOADED`` (or ``ERROR`` / ``STOPPED``) on FLARE's own events, and ``PersistToS3AndCleanup`` zips the run directory — ``FL_global_model.pt``, ``cross_val_results.json`` and, when selection is on, ``best_FL_global_model.pt`` — and uploads it at the end of the run. This is what drives the progress bar and downloads on the model page (see :ref:`view-results`).
 - **Round telemetry.** ``ScatterAndGather`` and ``ServerEventHandler`` emit the round-started / result-received / round-aggregated facts shown in the model page's Live activity feed. Your code never calls ``flip.send_event``.
 - **Your ``models.py`` runs on the server too.** The persistor and the model locator instantiate ``models.get_model()`` on the FL server to seed the round-0 global model and to load it for post-training evaluation — so ``models.py`` must import cleanly without data, GPUs or your trainer's dependencies (see :ref:`flare-models-py`).
 - **Aggregation.** Clients return a weight **diff**; the server averages the diffs (``InTimeAccumulateWeightedAggregator``, weighted by the ``NUM_STEPS_CURRENT_ROUND`` each client reports) and adds the average onto the global model. This fixes the return contract of your trainer (see :ref:`the diff warning below <flare-return-diff>`).
@@ -127,9 +127,9 @@ Imports
 Reading the FLIP run values
 ===========================
 
-FLIP hands the trainer two values at run time, and they arrive through different channels because NVFLARE's ``TaskScriptRunner`` whitespace-splits the executor's ``task_script_args``:
+FLIP hands the trainer two values at run time, and they arrive through different channels because FLARE's ``TaskScriptRunner`` whitespace-splits the executor's ``task_script_args``:
 
-- The **project ID** arrives as a CLI flag. The template's executor is configured with ``task_script_args = "--project_id {project_id}"``, and NVFLARE resolves ``{project_id}`` against the top-level ``project_id`` key of ``config_fed_client.json``, which FLIP's FL API writes at submit time.
+- The **project ID** arrives as a CLI flag. The template's executor is configured with ``task_script_args = "--project_id {project_id}"``, and FLARE resolves ``{project_id}`` against the top-level ``project_id`` key of ``config_fed_client.json``, which FLIP's FL API writes at submit time.
 - The **cohort query** cannot be a CLI flag — SQL contains spaces — so it is read straight out of the same file's top-level ``query`` key.
 
 .. code-block:: python
@@ -153,7 +153,7 @@ FLIP hands the trainer two values at run time, and they arrive through different
        with open(Path(__file__).parent / "config.json") as f:
            return json.load(f)
 
-Both loaders use paths relative to ``__file__`` because on-platform the script runs from NVFLARE's job workspace, not from your project directory: ``trainer.py`` is at ``<app>/custom/trainer.py`` and the client config at ``<app>/config/config_fed_client.json``.
+Both loaders use paths relative to ``__file__`` because on-platform the script runs from FLARE's job workspace, not from your project directory: ``trainer.py`` is at ``<app>/custom/trainer.py`` and the client config at ``<app>/config/config_fed_client.json``.
 
 Fetching the FLIP DataFrame
 ===========================
@@ -208,7 +208,7 @@ Once you have the cohort DataFrame, iterate its ``accession_id`` column and call
 The round loop
 ==============
 
-After the data pipeline is built, call ``flare.init()`` and loop on ``flare.receive()``. Each received ``FLModel`` carries the current global weights in ``params`` (as numpy arrays, since the template sets ``params_exchange_format = "numpy"``) and the 0-based round index in ``current_round``. Two task types reach the trainer: ``train`` (one per global round) and, after the last round, ``validate`` — NVFLARE's ``GlobalModelEval`` broadcasting the final aggregated model for cross-site evaluation.
+After the data pipeline is built, call ``flare.init()`` and loop on ``flare.receive()``. Each received ``FLModel`` carries the current global weights in ``params`` (as numpy arrays, since the template sets ``params_exchange_format = "numpy"``) and the 0-based round index in ``current_round``. Two task types reach the trainer: ``train`` (one per global round) and, after the last round, ``validate`` — FLARE's ``GlobalModelEval`` broadcasting the final aggregated model for cross-site evaluation.
 
 .. code-block:: python
 
@@ -270,7 +270,7 @@ The ``is_evaluate()`` branch's metrics land, per site, in ``cross_val_results.js
 trainer.py: sending per-epoch metrics
 *****************************************
 
-Per-epoch, per-site metrics are published through NVFLARE's own tracking API — ``SummaryWriter.add_scalar`` (``flare.log`` works too). The template's ``FlipAnalyticsBridge`` component catches the analytics events the Client API fires and re-emits them to the FL server, whose ``ScatterAndGather`` controller forwards them to the Central Hub with ``flip.send_metrics``. This is what populates the graphs on the model page (see the "Metrics" section of :doc:`/user-guides/user-common`).
+Per-epoch, per-site metrics are published through FLARE's own tracking API — ``SummaryWriter.add_scalar`` (``flare.log`` works too). The template's ``FlipAnalyticsBridge`` component catches the analytics events the Client API fires and re-emits them to the FL server, whose ``ScatterAndGather`` controller forwards them to the Central Hub with ``flip.send_metrics``. This is what populates the graphs on the model page (see the "Metrics" section of :doc:`/user-guides/user-common`).
 
 .. code-block:: python
 
@@ -291,7 +291,7 @@ Per-epoch, per-site metrics are published through NVFLARE's own tracking API —
 
 .. note::
 
-   The site name shown against each metric in the FLIP UI is resolved automatically from the NVFLARE event origin — the Trust's FL kit slot (``Trust_1``, ``Trust_2``, …), which the hub maps back to the owning Trust. There is no client identity to resolve in the trainer, unlike Flower's ``client_identity(context)``.
+   The site name shown against each metric in the FLIP UI is resolved automatically from the FLARE event origin — the Trust's FL kit slot (``Trust_1``, ``Trust_2``, …), which the hub maps back to the owning Trust. There is no client identity to resolve in the trainer, unlike Flower's ``client_identity(context)``.
 
 .. note::
 
@@ -354,7 +354,7 @@ Keep it self-contained: import only the model library, read any architecture par
 config.json: job type and run settings
 *****************************************
 
-``config.json`` is required for every job type on both backends. On NVFLARE it carries the platform-recognised training settings **and** whatever your own code reads from it:
+``config.json`` is required for every job type on both backends. On FLARE it carries the platform-recognised training settings **and** whatever your own code reads from it:
 
 .. code-block:: json
 
@@ -382,7 +382,7 @@ The full list of platform keys, their defaults and validation rules — includin
 Best-model selection (optional)
 ===============================
 
-When ``config.json`` names a ``BEST_MODEL_METRIC``, FLIP injects NVFLARE's stock ``IntimeModelSelector`` server-side and saves ``best_FL_global_model.pt`` next to the final model whenever the averaged metric improves. The trainer's part is to **evaluate the received global model before training mutates it** and report that metric on the returned ``FLModel``:
+When ``config.json`` names a ``BEST_MODEL_METRIC``, FLIP injects FLARE's stock ``IntimeModelSelector`` server-side and saves ``best_FL_global_model.pt`` next to the final model whenever the averaged metric improves. The trainer's part is to **evaluate the received global model before training mutates it** and report that metric on the returned ``FLModel``:
 
 .. code-block:: python
 
@@ -429,7 +429,7 @@ At submit time, the FLIP FL API:
 Local testing before upload
 ************************************
 
-The tutorials describe the job in Python with ``FlipFedAvgRecipe`` — the same class the platform's ``standard`` template is generated from — and run it through NVFLARE's ``Recipe.execute``. A minimal ``job.py``, abridged from ``fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/job.py``:
+The tutorials describe the job in Python with ``FlipFedAvgRecipe`` — the same class the platform's ``standard`` template is generated from — and run it through FLARE's ``Recipe.execute``. A minimal ``job.py``, abridged from ``fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/job.py``:
 
 .. code-block:: python
 
@@ -485,7 +485,7 @@ The tutorials describe the job in Python with ``FlipFedAvgRecipe`` — the same 
 
 Two execution modes come from that one script:
 
-**Export (no GPU, no data).** Writes the complete NVFLARE job — ``meta.json``, ``app/config/``, and ``app/custom/`` with your files staged — under ``./fl_job/flip_fedavg/``, so you can inspect exactly what the platform will run:
+**Export (no GPU, no data).** Writes the complete FLARE job — ``meta.json``, ``app/config/``, and ``app/custom/`` with your files staged — under ``./fl_job/flip_fedavg/``, so you can inspect exactly what the platform will run:
 
 .. code-block:: bash
 
@@ -493,7 +493,7 @@ Two execution modes come from that one script:
    uv run --project ../../../../flip-utils --extra full \
        python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 2
 
-**Simulation (GPU + data).** Runs the job under the NVFLARE simulator against local data. ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, both named in the app's ``.env.app``:
+**Simulation (GPU + data).** Runs the job under the FLARE simulator against local data. ``LOCAL_DEV`` mode (the ``flip-utils`` default outside the platform) makes ``get_dataframe`` read a CSV and ``get_by_accession_number`` read a directory, both named in the app's ``.env.app``:
 
 .. code-block:: text
 
@@ -517,7 +517,7 @@ Run ``job.py`` in the ``flip-utils`` environment with the ``full`` extra, as the
 
 .. note::
 
-   The standalone NVFLARE stack under ``fl-services/nvflare`` has no HTTP submit path (its FL API is admin-API based), so unlike Flower there is no compose-stack submit for a single app: use the simulator, or the full platform path (upload through the FLIP UI, or ``make e2e_smoke``).
+   The standalone FLARE stack under ``fl-services/nvflare`` has no HTTP submit path (its FL API is admin-API based), so unlike Flower there is no compose-stack submit for a single app: use the simulator, or the full platform path (upload through the FLIP UI, or ``make e2e_smoke``).
 
 See ``fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/README.md`` for the full local-run instructions, including the data-enrichment (label upload) step needed before the segmentation tutorials can train on a real FLIP project.
 
@@ -525,7 +525,7 @@ See ``fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/README.md``
 Other job types
 ************************************
 
-The walkthrough above is for ``standard`` (federated averaging). The other NVFLARE job types keep the same Client API shape and change only what the script must return:
+The walkthrough above is for ``standard`` (federated averaging). The other FLARE job types keep the same Client API shape and change only what the script must return:
 
 - ``fed_opt`` — identical client contract to ``standard`` (a ``DIFF`` per round); only the server-side optimiser differs. Upload the same three files.
 - ``evaluation`` — no training. Upload ``evaluator.py``, ``models.py`` and ``config.json``, and list the checkpoints to evaluate under ``config.json``'s ``models`` (each entry naming a ``checkpoint`` file you upload with the app). The script handles ``flare.is_evaluate()`` only, returning aggregate metrics with ``flare.send(flare.FLModel(metrics={...}))`` — never per-patient values. Reference: ``fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation/``.
@@ -544,4 +544,4 @@ Common pitfalls
 - **Expecting ``GLOBAL_ROUNDS`` to reach your code.** It is consumed by the platform; ``LOCAL_ROUNDS`` is the one your trainer reads. A ``GLOBAL_ROUNDS`` value outside 1–1000 is silently discarded and the run defaults to a **single** round — check it if training finishes suspiciously early.
 - **``BEST_MODEL_METRIC`` with one round.** Selection skips round 0, so the platform refuses the job at Initiate Training (after the files have uploaded cleanly); use ``GLOBAL_ROUNDS >= 2`` or drop the key.
 - **Missing ``ResourceType`` or labels.** If a Trust does not have the resource type you requested for a given accession, ``get_by_accession_number`` raises — skip the accession. If *no* accession yields a usable sample, raise with a message pointing at the data-enrichment step rather than letting the DataLoader fail on ``num_samples=0``.
-- **Uploading NVFLARE config files.** ``config_fed_server.json``, ``config_fed_client.json`` and ``job.py`` are not read on the platform; the template's copies are used. Only the files under ``app_files/`` matter. ``meta.json`` is the exception: an uploaded one declares the job's resources, and one carrying anything beyond what *NVFLARE meta.json* in :ref:`flip-fl-nets` lists (a ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at Initiate Training.
+- **Uploading FLARE config files.** ``config_fed_server.json``, ``config_fed_client.json`` and ``job.py`` are not read on the platform; the template's copies are used. Only the files under ``app_files/`` matter. ``meta.json`` is the exception: an uploaded one declares the job's resources, and one carrying anything beyond what *FLARE meta.json* in :ref:`flip-fl-nets` lists (a ``launcher_spec``, a per-site ``resource_spec`` block, …) fails at Initiate Training.

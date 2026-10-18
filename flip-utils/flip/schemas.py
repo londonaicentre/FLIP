@@ -36,7 +36,7 @@ def split_x_label(key: str) -> tuple[str, str | None]:
 
     The ``@<x_label>`` segment names the x-axis a metric is plotted against (FLIP#148); absent, the
     x_label is ``None`` and the hub defaults it to "Global Rounds". Shared by every path that encodes
-    the x-label inside a metric name (Flower MetricRecord keys, NVFLARE Client-API SummaryWriter tags).
+    the x-label inside a metric name (Flower MetricRecord keys, FLARE Client-API SummaryWriter tags).
 
     Args:
         key (str): The metric key, e.g. ``"train_loss@epoch"`` or ``"train_loss"``.
@@ -58,16 +58,16 @@ class FLLogEvent(StrEnum):
     redeploy and never an FL-image rebuild. Mirrors flip-api's
     ``domain/schemas/types.py::FLLogEvent``.
 
-    Rounds are 1-based on every round event, on both backends (NVFLARE's internal
+    Rounds are 1-based on every round event, on both backends (FLARE's internal
     ``_current_round`` is 0-based and must be normalised before sending).
-    ``JOB_WAITING_FOR_RESOURCES`` is the one round-less event: NVFLARE's scheduler
+    ``JOB_WAITING_FOR_RESOURCES`` is the one round-less event: FLARE's scheduler
     has not started the job yet, so there is no round to name (FLIP#1390).
     """
 
     ROUND_STARTED = "ROUND_STARTED"
     CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
     ROUND_AGGREGATED = "ROUND_AGGREGATED"
-    # Sent by the fl-server's JobSchedulingReporter when NVFLARE's scheduler holds a job because a
+    # Sent by the fl-server's JobSchedulingReporter when FLARE's scheduler holds a job because a
     # site cannot provide what its resource_spec asks for. One row per such site, attributed to it;
     # details = {"attempt", "max_attempts", "final", "requested": the site's resource request}.
     JOB_WAITING_FOR_RESOURCES = "JOB_WAITING_FOR_RESOURCES"
@@ -81,7 +81,7 @@ class TrainingMetrics(BaseModel):
     """A single training/evaluation metric value reported for one FL client.
 
     ``fl_client_name`` is the FL client's identity as the FL server sees it —
-    the FL participant name for NVFLARE, the SUPERNODE_NAME for Flower. The hub resolves
+    the FL participant name for FLARE, the SUPERNODE_NAME for Flower. The hub resolves
     it to a trust before storing the metric.
 
     ``global_round`` is provenance — always the FL global round the metric was reported in, never

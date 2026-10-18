@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE entry model for Ark+ inside the FLIP x-ray tutorial.
+"""FLARE entry model for Ark+ inside the FLIP x-ray tutorial.
 
-NVFLARE's PTFileModelPersistor loads ``models.get_model`` from this file.
+FLARE's PTFileModelPersistor loads ``models.get_model`` from this file.
 This adapter constructs the Ark+ FedArk chest-xray model from flat files in this
 directory so it can be uploaded through FLIP interfaces that do not support
 nested folders.
@@ -80,7 +80,7 @@ class ArkPlusNVFlareWrapper(nn.Module):
     The real Ark+ model returns ``(features, logits)`` when called with a head id.
     The existing FLIP x-ray trainer/validator expects ``model(images) -> logits``.
     This wrapper keeps the real Ark+ model as ``self.ark_model`` while exposing a
-    normal classifier forward for the NVFLARE tutorial.
+    normal classifier forward for the FLARE tutorial.
     """
 
     def __init__(self, ark_model: nn.Module, head_id: int = 0, num_classes: int = 2):
@@ -122,9 +122,9 @@ class ArkPlusNVFlareWrapper(nn.Module):
 
 
 def get_model() -> nn.Module:
-    """Return a fresh Ark+ model for NVFLARE.
+    """Return a fresh Ark+ model for FLARE.
 
-    This zero-argument function is required by the FLIP/NVFLARE standard job
+    This zero-argument function is required by the FLIP/FLARE standard job
     config: ``models.get_model``.
 
     The ~759 MiB backbone (``pretrained_weights.pt``) is NOT a hard requirement here.

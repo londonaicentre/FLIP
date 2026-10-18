@@ -11,16 +11,16 @@
 # limitations under the License.
 #
 # Verify that tutorial files kept as byte-identical copies of another file have not
-# drifted. What remains here is tutorial-to-tutorial: the Ark+ NVFLARE pair (two evaluation
+# drifted. What remains here is tutorial-to-tutorial: the Ark+ FLARE pair (two evaluation
 # apps that share data_utils.py and arkplus_flat_models.py between themselves) and the EHR
-# risk-prediction tutorial's cross-backend files (the Flower copy must match the NVFLARE one).
+# risk-prediction tutorial's cross-backend files (the Flower copy must match the FLARE one).
 #
 # The Flower half used to live here too, as six hand-written pairs. It moved to
 # fl-tutorials/tests/test_flower_platform_parity.py, which derives the same pairs from the
 # tree -- every fl-tutorials/flower/*/app against the fl-apps template its config.json job
 # type selects. A hand-maintained list only holds while every future author remembers to
 # extend it, and a new tutorial that never got added would have deployed drifted code with
-# CI green. These NVFLARE pairs stay listed because they are tutorial-to-tutorial: nothing
+# CI green. These FLARE pairs stay listed because they are tutorial-to-tutorial: nothing
 # in the tree says the two Ark+ apps are meant to share a file, so there is nothing to
 # derive them from.
 #
@@ -44,8 +44,8 @@ cd "$(dirname "$0")/.." || exit 1
 PAIRS=(
   # The EHR risk-prediction tutorial exists on both backends and shares its feature engineering,
   # model factory and cohort query as byte-identical copies (the same preprocessing/architecture
-  # must train on NVFLARE and Flower alike). Like the Ark+ pair below this is tutorial-to-tutorial,
-  # so nothing in the tree can derive it. The NVFLARE copy is the reference; resync by copying it
+  # must train on FLARE and Flower alike). Like the Ark+ pair below this is tutorial-to-tutorial,
+  # so nothing in the tree can derive it. The FLARE copy is the reference; resync by copying it
   # over the Flower copy. These pairs' reference side lives under
   # fl-tutorials/nvflare/tabular_classification/, which fl-apps-check-tutorial-sync.yml's path
   # filters must include (see the NOTE below).

@@ -21,7 +21,7 @@ from fl_api.utils.schemas import ClientInfoModel, JobInfoModel, ServerInfoModel,
 
 
 class FLIP_Session(Session):
-    """NVFLARE admin ``Session`` with reconnect-on-drop, plus FLIP-shaped system info.
+    """FLARE admin ``Session`` with reconnect-on-drop, plus FLIP-shaped system info.
 
     There is deliberately **no** ``__init__`` override. The base already stores everything this
     subclass needs (``username``, ``startup_path``, ``secure_mode``, ``_debug``, ``_study``), so an
@@ -63,11 +63,11 @@ class FLIP_Session(Session):
         re-raised immediately — there is no further retry loop.
 
         ``*args`` / ``**kwargs`` are forwarded untouched so this override stays transparent to the
-        base signature (``enforce_meta``, ``props``, and anything a future NVFLARE adds). The first
+        base signature (``enforce_meta``, ``props``, and anything a future FLARE adds). The first
         parameter is named ``command`` to match the base exactly: forwarding does not repair a
         renamed positional, so ``_do_command(command=...)`` would still be a ``TypeError``.
 
-        Accepting only ``cmd`` used to break every caller that passes those keywords. NVFLARE 2.8.0
+        Accepting only ``cmd`` used to break every caller that passes those keywords. FLARE 2.8.0
         has **eight** such sites — ``_shell_command_on_target``, ``_collect_info``,
         ``report_resources``, ``report_version``, ``get_job_logs``, ``configure_job_log``,
         ``configure_site_log`` and ``do_app_command`` — of which four are reachable from this
@@ -150,10 +150,10 @@ class FLIP_Session(Session):
         """
         Get system info of the FL system, as FLIP's serialisable schema.
 
-        **This shadows a base method NVFLARE calls internally**, and returns a different type
-        (``SystemInfoModel`` rather than NVFLARE's ``SystemInfo``). Keeping the base's name is a
+        **This shadows a base method FLARE calls internally**, and returns a different type
+        (``SystemInfoModel`` rather than FLARE's ``SystemInfo``). Keeping the base's name is a
         deliberate trade — the FL API's ``/get_system_info`` route serialises the result directly —
-        but it means NVFLARE's own callers get this object instead of theirs. They are
+        but it means FLARE's own callers get this object instead of theirs. They are
         ``_client_last_connect_times``, ``_wait_for_clients_shutdown``, ``_wait_for_clients_restart``,
         ``restart`` and ``get_connected_client_list``, and between them they read exactly four
         attributes:
@@ -165,7 +165,7 @@ class FLIP_Session(Session):
 
         That is the whole contract this substitution rests on. It is duck-typed, so nothing enforces
         it at runtime — ``test_flip_session.py`` pins those four attributes instead. **Renaming or
-        dropping any of them on the models breaks NVFLARE's restart and client-shutdown waits
+        dropping any of them on the models breaks FLARE's restart and client-shutdown waits
         silently**, which is why the pin exists. Widen the models rather than reshape them.
 
         Returns:

@@ -90,7 +90,7 @@ services:
       # (see imaging-api in compose_trust.production.yml for the full rationale;
       # mirrors ORTHANC_STORAGE_DIR's default).
       - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}/net-1:/app/data/images/net-1
-      # Provisioned NVFLARE secrets (certificates, fed_client.json).
+      # Provisioned FLARE secrets (certificates, fed_client.json).
       # FL_KIT_DIR is the kit root on the trust host — Ansible-managed
       # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever
       # the on-prem operator extracted their selectively-synced kit (see
@@ -119,7 +119,7 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
-      # Site-enforced NVFLARE privacy policy (FLIP#851) — set in the trust's kit file
+      # Site-enforced FLARE privacy policy (FLIP#851) — set in the trust's kit file
       # (Host-local profile) and rendered into /app/local/privacy.json by the fl-client
       # entrypoint at container start. Unset/empty = no site policy (previous behavior).
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
@@ -146,7 +146,7 @@ services:
   #   volumes:
   #     # This net's slice of the images download directory (see fl-client-net-1 above)
   #     - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}/net-2:/app/data/images/net-2
-  #     # Provisioned NVFLARE secrets (certificates, fed_client.json)
+  #     # Provisioned FLARE secrets (certificates, fed_client.json)
   #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
   #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
   #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
@@ -160,7 +160,7 @@ services:
   #     # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
   #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
   #     - IMAGING_API_URL=${IMAGING_API_URL}
-  #     # Site-enforced NVFLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
+  #     # Site-enforced FLARE privacy policy (FLIP#851) — see the fl-client-net-1 note.
   #     - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
   #     - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
   #     - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}

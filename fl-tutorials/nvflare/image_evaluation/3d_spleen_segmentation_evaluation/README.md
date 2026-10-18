@@ -1,10 +1,10 @@
-# Evaluation of a 3D segmentation model (NVFLARE Client API) — FLIP tutorial
+# Evaluation of a 3D segmentation model (FLARE Client API) — FLIP tutorial
 
-FLIP tutorial for federated evaluation of a 3D spleen segmentation model using the **NVFLARE Client
+FLIP tutorial for federated evaluation of a 3D spleen segmentation model using the **FLARE Client
 API**. It evaluates a model trained with
 [`../../image_segmentation/3d_spleen_segmentation`](../../image_segmentation/3d_spleen_segmentation).
 It replaced the retired Executor-API evaluation tutorial (removed along with the other legacy-syntax
-NVFLARE tutorials); the differences from that legacy flow, for anyone migrating an old app:
+FLARE tutorials); the differences from that legacy flow, for anyone migrating an old app:
 
 | | Legacy Executor flow | This tutorial (`evaluation`) |
 |---|---|---|
@@ -59,7 +59,7 @@ run matches the deployed image.
 `job.py` drives the recipe in two modes.
 
 ```bash
-# Export the complete NVFLARE job for review or Docker deployment (no GPU needed)
+# Export the complete FLARE job for review or Docker deployment (no GPU needed)
 make export        # writes ./fl_job/flip_evaluation/
 
 # SimEnv local simulation (requires GPU + data + checkpoint)
@@ -84,6 +84,8 @@ The evaluator returns **aggregate** (cohort-mean) metrics only, collected into `
 - `mean_hausdorff_95` — 95th-percentile Hausdorff distance (voxels)
 - `mean_surface_dice` — normalized Surface Dice at a 1-voxel tolerance (`SURFACE_DICE_TOLERANCE_VOXELS`)
 - `mean_iou` — mean intersection-over-union
+
+The FL server also sends them to the hub, where they show on the model page per trust (`MEAN_DICE`, …).
 
 Per-sample (row-level) scores are deliberately not exported: a per-patient list would leak the exact
 evaluation cohort size and be linkable to individual patients.

@@ -61,7 +61,7 @@ their tests subclass one shared contract, `tests/arkplus_sim_cap_contract.py` (a
 `tutorial_apps.py`, not collected on its own). Because the three test files share a basename, the
 tutorial directory and its `app_files/` carry an `__init__.py`, which makes each module's import name
 start at the tutorial (`arkplus_fine_tuning.app_files.test_data_utils`). `nvflare/` and `image_*/`
-deliberately do **not** carry one: a package named `nvflare` would shadow the real NVFLARE library
+deliberately do **not** carry one: a package named `nvflare` would shadow the real FLARE library
 the apps import.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
@@ -144,7 +144,7 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_a_listener_this_checkout_did_not_start_is_refused` / `test_a_free_control_port_passes_the_check` / `test_a_port_probe_that_cannot_tell_counts_as_taken` | The script refuses to hand the run to a local SuperLink it did not start: a real listener on a throwaway port set as `FLWR_LOCAL_SUPERLINK_HTTP_API_PORT` is refused with its pid and command line (where `ss` can see them), a free port passes silently, and an `ss` that errors counts as taken rather than free. |
 | `test_the_port_release_wait_returns_once_the_port_frees` / `test_the_port_release_wait_gives_up_loudly` | After stopping its own leftover SuperLink the script waits for the ports to free, and gives up with a message rather than racing flwr's replacement. |
 | `test_the_library_flag_only_works_when_sourced` | `SIM_TUTORIAL_LIB=1` exported into a real run is refused, not a silent successful no-op. |
-| `test_the_arkplus_tutorials_declare_their_gpu_need` / `test_a_shipped_meta_json_has_the_shape_the_fl_api_accepts` | The three Ark+ tutorials declare their GPU need in their own `app_files/meta.json` (`resource_spec["@default"]`) rather than relying on a hub-wide default (FLIP#70), and every shipped NVFLARE `meta.json` (tutorials and fl-apps templates) holds only what the fl-api accepts — a malformed one would otherwise be refused only when training starts. |
+| `test_the_arkplus_tutorials_declare_their_gpu_need` / `test_a_shipped_meta_json_has_the_shape_the_fl_api_accepts` | The three Ark+ tutorials declare their GPU need in their own `app_files/meta.json` (`resource_spec["@default"]`) rather than relying on a hub-wide default (FLIP#70), and every shipped FLARE `meta.json` (tutorials and fl-apps templates) holds only what the fl-api accepts — a malformed one would otherwise be refused only when training starts. |
 | `test_every_flower_tutorial_has_a_simulator_data_mapping` | Every `fl-tutorials/flower/<tutorial>/app` is named in the script's data-mapping `case`. |
 | `test_main_flow_*` | The script end to end against the fakes (`flwr run` faked too, `pgrep` shimmed away from real processes, a synthetic `SIM_DATA_ROOT`): a completed run passes and the EHR mapping exports exactly `DEV_DATAFRAME` (no images dir); a failed run, a failed submission (`flwr run` non-zero) and a missing run id each fail with the right status. |
 | `test_app_loads_checkpoints_weights_only` (in `test_offline_apps.py`) | Every `torch.load` in a shipped app dir passes `weights_only=True` explicitly — an implicit default or `weights_only=False` unpickles arbitrary objects from the checkpoint. Host-side `process_tools/` conversions are outside the walked app dirs and stay exempt. |

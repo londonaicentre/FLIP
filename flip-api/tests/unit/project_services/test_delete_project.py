@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from unittest.mock import ANY, MagicMock
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -111,5 +111,5 @@ def test_delete_project_abort_training_called(override_dependencies, mock_servic
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_services["abort_model_training"].assert_called_once_with(
-        request=ANY, model_id=model_mock.id, session=override_dependencies["mock_db"]
+        model_id=model_mock.id, session=override_dependencies["mock_db"]
     )
