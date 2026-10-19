@@ -30,34 +30,38 @@ hub on AWS see :doc:`deploy-central-hub`; for a real Trust see
    :local:
    :depth: 1
 
-***********************************
-What still needs AWS (and what not)
-***********************************
+*******************************
+What you need from AWS: nothing
+*******************************
 
-Neither the hub nor the two example Trusts need a **cloud account**. Sign-in is
-a local Keycloak container, email is printed to the flip-api log, and model
-files, FL app bundles and results live in a local S3-compatible object store
-(RustFS, data under ``./object-store/``). The Trusts' XNAT WAR and plugins are
-public upstream downloads, and the mock patient data (OMOP rows and DICOM
-studies) comes anonymously from the public Hugging Face dataset
-``aicentreflip/trust-data``.
+A local deployment needs no **cloud account and no AWS credentials**, for the
+hub or for either Trust. Sign-in is a local Keycloak container, email is
+printed to the flip-api log, and model files, FL app bundles and results live
+in a local S3-compatible object store (RustFS, data under ``./object-store/``).
+The Trusts' XNAT WAR and plugins are public upstream downloads, and the mock
+patient data (OMOP rows and DICOM studies) comes anonymously from the public
+Hugging Face dataset ``aicentreflip/trust-data``. The walkthrough below,
+including the x-ray tutorial and ``make e2e_smoke``, runs with no AWS CLI
+installed and no credentials configured.
 
-AWS is used for one optional step: the **OMOP core vocabulary** (Step 7). It is
-licensed (SNOMED CT, LOINC, ...), so it is never published, and
-``make -C trust/omop-db load-omop-vocab`` fetches the AI Centre's copy from the
-``vocab/`` prefix of a FLIP deployment's S3 bucket. The x-ray tutorial and
-the end-to-end smoke test run without it, through ``query_novocab.sql``, a
-copy of the tutorial's cohort query with the names of the handful of concepts
-the mock data uses written in. You need the vocabulary for the tutorials'
-own ``query.sql`` and for any query of yours that looks concepts up by name.
+The one thing that *can* come from AWS is the **OMOP core vocabulary** (Step
+7), and only for AI Centre staff. It is licensed (SNOMED CT, LOINC, ...), so it
+is never published, and ``make -C trust/omop-db load-omop-vocab`` fetches the
+AI Centre's copy from the ``vocab/`` prefix of a FLIP deployment's S3 bucket.
+You do not need it for the standard walkthrough: the x-ray tutorial and the
+end-to-end smoke test run without it, through ``query_novocab.sql``, a copy of
+the tutorial's cohort query with the names of the handful of concepts the mock
+data uses written in. You need the vocabulary for the tutorials' own
+``query.sql`` and for any query of yours that looks concepts up by name.
 
 .. note::
 
-   **External contributors can skip Step 3 entirely.** The SSO profile and the
+   **Outside the AI Centre, skip Step 3 entirely.** The SSO profile and the
    maintainer access it mentions only apply to the AI Centre team. Download an
    equivalent vocabulary export from `OHDSI Athena <https://athena.ohdsi.org/>`_
    under your own licence instead — see
    `the core vocabulary bundle <https://github.com/londonaicentre/FLIP/blob/develop/trust/omop-db/README.md#the-core-vocabulary-bundle>`__.
+   That route needs no AWS account either.
 
 *************
 Prerequisites
@@ -72,9 +76,10 @@ Prerequisites
 - A GitHub account with read access to the FLIP packages on GitHub Container
   Registry (``ghcr.io/londonaicentre``). Without it, use ``make up BUILD=true``
   to build every image locally.
-- Optional, AI Centre team only: the `AWS CLI v2 <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>`_
+- Optional, AI Centre team only, and only for the vocabulary in Step 7: the
+  `AWS CLI v2 <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>`_
   and an AWS IAM Identity Center (SSO) user with read access to the bucket
-  holding the OMOP vocabulary (see above).
+  holding the OMOP vocabulary (see above). Nothing else in this guide uses it.
 - Free host ports for the hub (UI, ``8080`` API, ``5432`` database, ``8180``
   Keycloak, ``9000``/``9001`` object store) and for the two Trusts (their ports
   are listed in ``trust/.env.GSTT.development.example`` and
@@ -149,12 +154,13 @@ You do **not** need to create the Trust files by hand. ``make up`` copies
 to ``trust/.env.<CODE>.development`` on the first run and fills in each
 Trust's credentials when it registers it with the hub.
 
-*****************************************
-Step 3 — Set up AWS SSO (vocabulary only)
-*****************************************
+*******************************************************
+Step 3 — (Optional) Set up AWS SSO for the vocabulary
+*******************************************************
 
-Skip this step unless you are on the AI Centre team and want the vocabulary
-from its bucket (Step 7).
+**Skip this step and the stack stays entirely AWS-free.** It only matters if
+you are on the AI Centre team and want the licensed vocabulary from its bucket
+(Step 7). Everything up to and including a training run works without it.
 
 1. Configure an SSO profile for the AWS account whose bucket holds the
    vocabulary. A maintainer tells you the SSO start URL, the account, the role
@@ -296,12 +302,12 @@ To start only part of the stack:
    * - ``make up-trusts``
      - The Trusts only, against an already-running hub
 
-*********************************
-Step 7 — Load the OMOP vocabulary
-*********************************
+********************************************
+Step 7 — (Optional) Load the OMOP vocabulary
+********************************************
 
 **Optional** — skip it unless you need concept names in your own cohort
-queries (see `What still needs AWS (and what not)`_). The published OMOP data
+queries (see `What you need from AWS: nothing`_). The published OMOP data
 carries only the freely licensed DICOM vocabulary. To add the core vocabulary,
 load it once per Trust, naming each Trust's kit file so the loader uses that
 Trust's port and credentials, then restart the data-access APIs so they drop
