@@ -151,12 +151,40 @@ def test_pooled_statistics_equal_the_centralised_correlation(ff, config):
     frame = sample_scm(900, 11)
     full = ff.prepare_matrix(frame, config)
     parts = {f"site-{i + 1}": ff.prepare_matrix(frame[frame.person_id % 3 == i], config) for i in range(3)}
-    weighted = [(len(m), *ff.site_statistics(m, config, ff.site_slot(name))) for name, m in parts.items()]
+    weighted = [(len(m), *ff.site_statistics(m)) for m in parts.values()]
     total = sum(n for n, _, _ in weighted)
     mean = sum(n * mu for n, mu, _ in weighted) / total
     moment = sum(n * mo for n, _, mo in weighted) / total
-    pooled = ff.pooled_correlation(mean, moment)[0]
+    pooled = ff.pooled_correlation(mean, moment)
     assert np.allclose(pooled, np.corrcoef(full.T), atol=1e-10)
+
+
+def test_bootstrap_correlations_are_shared_centred_and_standardised(ff, config):
+    """The parametric bootstrap: same stream at every site, spread around the pooled correlation."""
+    full = ff.prepare_matrix(sample_scm(600, 13), config)
+    mean, moment = ff.site_statistics(full)
+    boot = {**config, "N_BOOTSTRAPS": 400}
+    draws = ff.bootstrap_correlations(mean, moment, len(full), boot)
+    again = ff.bootstrap_correlations(mean, moment, len(full), boot)
+    p = len(VARIABLES)
+    assert draws.shape == (400, p, p)
+    assert np.array_equal(draws, again)  # no site term in the stream: every site sees the same resamples
+    assert np.allclose(np.einsum("bii->bi", draws), 1.0)  # correlation matrices
+    pooled = ff.pooled_correlation(mean, moment)
+    assert np.abs(draws.mean(axis=0) - pooled).max() < 0.03  # centred on the pooled correlation
+    off = ~np.eye(p, dtype=bool)
+    assert 0.005 < draws.std(axis=0)[off].mean() < 0.08  # a real spread, of the order 1/sqrt(n)
+    assert ff.bootstrap_correlations(mean, moment, len(full), config).shape == (1, p, p)  # N_BOOTSTRAPS 0
+
+
+def test_a_site_below_the_row_floor_refuses_to_release_statistics(ff, config):
+    small = ff.prepare_matrix(sample_scm(40, 2), config)
+    state = ff.empty_state(config)
+    with pytest.raises(ValueError, match="MIN_SITE_ROWS"):
+        ff.client_round(state, 0, 2, small, "site-1", {**config, "MIN_SITE_ROWS": 50})
+    target, weight, _ = ff.client_round(state, 0, 2, small, "site-1", {**config, "MIN_SITE_ROWS": 40})
+    assert weight == 40
+    assert target["stats_moment"].shape == (len(VARIABLES), len(VARIABLES))
 
 
 def test_correlation_fisherz_matches_causallearn_on_the_same_rows(ff, config):
@@ -216,10 +244,11 @@ def test_site_slot_without_a_number_is_stable_and_in_range(ff):
 def test_state_shapes_follow_the_config(ff, config):
     shapes = ff.state_shapes({**config, "N_BOOTSTRAPS": 7})
     p = len(VARIABLES)
-    assert shapes["stats_moment"] == (7, p, p)
+    assert shapes["stats_mean"] == (p,)  # one statistic per site, whatever the bootstrap count
+    assert shapes["stats_moment"] == (p, p)
     assert shapes["sepsets"] == (7, p, p, p)
     assert shapes["site_counts"] == (ff.MAX_SITES,)
-    assert shapes["padding"][0] >= ff.PADDING_FRACTION * (7 * (p + 2 * p * p + p**3 + p * p) + ff.MAX_SITES)
+    assert shapes["padding"][0] >= ff.PADDING_FRACTION * (p + p * p + 7 * (2 * p * p + p**3) + ff.MAX_SITES)
     assert ff.state_shapes(config)["pag"] == (1, p, p)  # N_BOOTSTRAPS 0 -> one unresampled slab
 
 
@@ -228,7 +257,7 @@ def test_encode_decode_round_trip_keeps_seven_digits(ff, config):
     state["stats_moment"][:] = 123.456789
     state["pag"][0, 0, 1] = 2
     back = ff.decode(ff.encode(state))
-    assert back["stats_moment"][0, 0, 0] == pytest.approx(123.456789, rel=1e-6)
+    assert back["stats_moment"][0, 0] == pytest.approx(123.456789, rel=1e-6)
     assert ff.as_pags(back["pag"])[0, 0, 1] == 2
     assert list(ff.encode(state)) == list(ff.STATE_KEYS)
 
@@ -296,6 +325,18 @@ def test_bootstraps_give_frequencies_strictly_between_zero_and_one_somewhere(ff,
     rows = ff.edge_frequencies(ff.as_pags(final["pag"]), VARIABLES)
     assert any(0 < r["probability"] < 1 for r in rows)
     assert all(r["count"] <= 6 for r in rows)
+
+
+def test_the_final_model_carries_graphs_and_counts_but_no_statistics(ff, config, two_sites):
+    """What a researcher downloads: PAGs and row counts. The pooled moments never travel on."""
+    final = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=2)
+    assert np.any(ff.as_pags(final["pag"]))
+    assert ff.recover_site_counts(final["site_counts"], True)[0] == sum(len(m) for m in two_sites.values())
+    assert not np.any(final["stats_mean"])
+    assert not np.any(final["stats_moment"])
+    # ... whereas after round one the pooled statistics are, by design, what the state holds.
+    after_round_one = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=1)
+    assert np.any(after_round_one["stats_moment"])
 
 
 def test_every_site_computes_the_same_pag_so_averaging_is_exact(ff, config, two_sites):

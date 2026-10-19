@@ -56,15 +56,20 @@ flowchart LR
     end
 ```
 
-**`pooled_statistics`** is the federated-CI-test idea of FedC²SL (Wang et al., 2023) specialised to
-Fisher's z, whose test needs nothing but second moments and a sample size. Each site sends, per
-bootstrap, the mean vector and second-moment matrix of its (log-transformed, fixed-scaled) variables,
-weighted by its row count. The weighted mean of those is exactly the pooled cohort's statistics, so
-the correlation matrix every site gets back in round 2 is the centralised one to machine precision,
-and FCI on it — the complete algorithm, possible-D-sep stage and all, run identically at every site
-— is exactly centralised Fisher-z FCI on the pooled rows (`tests/test_biomarker_causal_discovery.py`
-pins this against causal-learn's own `fci()`). Two rounds, one `p × p` matrix per bootstrap on the
-wire, no raw rows.
+**`pooled_statistics`** is the pooled-test idea of FedC²SL (Wang et al., 2023) specialised to
+Fisher's z, whose test needs nothing but second moments and a sample size. Each site sends **one**
+mean vector and **one** second-moment matrix of its (log-transformed, fixed-scaled) variables over
+all its rows, weighted by its row count — `p + p²` numbers, 132 for the eleven variables here. The
+weighted mean of those is exactly the pooled cohort's statistics, so the correlation matrix every
+site gets back in round 2 is the centralised one to machine precision, and FCI on it — the complete
+algorithm, possible-D-sep stage and all, run identically at every site — is exactly centralised
+Fisher-z FCI on the pooled rows (`tests/test_biomarker_causal_discovery.py` pins this against
+causal-learn's own `fci()`). The bootstrap is drawn *after* pooling, from the pooled correlation
+(a parametric bootstrap: Wishart draws of the sample covariance under the Gaussian model Fisher's z
+already assumes, re-standardised, with a stream every site shares), so no site ever releases more
+than that one statistic — see "Privacy" for why a per-resample statistic would be too much. In
+round 2 the statistics are zeroed out of what a site returns, so the downloaded model carries only
+graphs and row counts. Two rounds, no raw rows.
 
 **`layer_voting`** is FedPC (Huang et al., 2023), whose MATLAB release the design was read from: one
 global round per conditioning-set size ℓ. Each site tests every still-adjacent pair against subsets
@@ -201,7 +206,9 @@ variable keeps the graph simple, and Fisher's z on an ordinal is the usual appro
 `models.get_model()` returns a parameter-free `nn.Module` whose buffers are the exchanged arrays
 (`site_counts, stats_mean, stats_moment, skeleton, sepsets, pag, padding`), sized from
 `config.json`. The downloaded `FL_global_model.pt` therefore *is* the result: `summarise_results.py`
-decodes it into the edge-frequency table and the figure below (`make summarise RESULTS=<path>`).
+decodes it into the edge-frequency table and the figure below (`make summarise RESULTS=<path>`). By
+the time it is downloaded the statistics buffers are zero — only `pag` and `site_counts` carry
+anything — so the result bundle says nothing about the variables beyond the graphs.
 Per-round metrics streamed to the hub are `site_rows`, `pooled_rows`, `sites_seen`, `stable_edges`,
 `mean_edges_per_pag`, `stable_adjacencies` (and `mean_edges_kept` per voting layer); the final
 evaluation reports the same for the aggregated PAGs. There is no best-model selection — "best" has
@@ -230,9 +237,9 @@ i9-9900K): **under one minute** end to end, of which FCI on 50 bootstraps is abo
 The federated run reports the centralised analysis's stable set — 16 edges at frequency ≥ 0.5 — and
 a licence holder following the four steps gets these numbers to the second decimal. The table puts the
 three ways of getting the graph side by side on the same cohort: the centralised Fisher-z analysis
-(200 whole-cohort bootstraps, APOE4 as two dummies), the FedC²SL-style `pooled_statistics` mode
-(the default) and the FedPC-style `layer_voting` mode (`GLOBAL_ROUNDS=6`, `NUM_ROUNDS=6`,
-`VOTE_RATIO=0.5`), both federated runs with 50 site-stratified bootstraps:
+(200 whole-cohort bootstraps, APOE4 as two dummies), the `pooled_statistics` mode (the default;
+50 parametric bootstraps drawn after pooling) and the FedPC-style `layer_voting` mode
+(`GLOBAL_ROUNDS=6`, `NUM_ROUNDS=6`, `VOTE_RATIO=0.5`; 50 site-stratified bootstraps):
 
 | Edge | Centralised | Pooled (FedC²SL) | Voting (FedPC) |
 |------|-------------|------------------|----------------|
@@ -242,16 +249,16 @@ three ways of getting the graph side by side on the same cohort: the centralised
 | APOE4 → pTau217 | 1.00 | 1.00 | 0.94 |
 | hippocampus → ADAS | 1.00 | 1.00 | 1.00 |
 | pTau217 → ADAS | 1.00 | 1.00 | 1.00 |
-| NfL → pTau217 | 0.85 | 0.92 | 0.46 |
-| sex → ADAS | 0.98 | 0.84 | 0.52 |
-| APOE4 → Aβ42/40 | 0.92 | 0.78 | 0.28 |
-| education → ADAS | 0.88 | 0.74 | 0.12 |
-| ICV ↔ hippocampus (latent head size) | 0.79 | 0.72 | 0.40 |
+| NfL → pTau217 | 0.85 | 0.96 | 0.46 |
+| sex → ADAS | 0.98 | 0.82 | 0.52 |
+| APOE4 → Aβ42/40 | 0.92 | 0.82 | 0.28 |
+| education → ADAS | 0.88 | 0.80 | 0.12 |
+| ICV ↔ hippocampus (latent head size) | 0.79 | 0.62 | 0.40 |
 | NfL → GFAP | 0.57 | 0.68 | 0.82 |
-| pTau217 → hippocampus | 0.69 | 0.64 | 0.00 |
-| pTau217 → Aβ42/40 | 0.49 | 0.60 | 0.42 |
-| age → GFAP | 0.50 | 0.56 | 0.06 |
-| pTau217 → GFAP | 0.31 | 0.52 | 0.42 |
+| pTau217 → hippocampus | 0.69 | 0.72 | 0.00 |
+| pTau217 → Aβ42/40 | 0.49 | 0.66 | 0.42 |
+| age → GFAP | 0.50 | 0.54 | 0.06 |
+| pTau217 → GFAP | 0.31 | 0.60 | 0.42 |
 | **edges at ≥ 0.5** | **14** | **16** | **8** |
 
 Pooled statistics track the centralised run on every edge: the differences sit on the weaker edges
@@ -280,16 +287,35 @@ see the dependence (try 0.3, FedPC's value).
 
 ## Privacy
 
-What leaves a site in pooled mode is, per bootstrap, a `p × p` second-moment matrix and a mean
-vector of the transformed variables, plus its row count: aggregate statistics, not rows, and
-exactly what a meta-analysis would publish. They are *not* differentially private — the NVFLARE
-percentile filter is deliberately rendered inert (above) and the Flower twin sets `dp-enabled =
-false` — because clipping and noising a covariance matrix is not a meaningful mechanism for it and
-does break the arithmetic the federation relies on. With a handful of sites and small cohorts a
-second-moment matrix does bound individual values somewhat loosely; a site that needs a formal
-guarantee should look at FedC²SL's random-projection encoding of the statistics (the paper's
-mechanism), which this tutorial does not implement. Voting mode releases less (0/1 decisions per
-bootstrap and layer) but is not formally private either.
+**What leaves a site, how often, and what protects it.** In pooled mode a site releases exactly one
+mean vector and one second-moment matrix of its transformed variables (`p + p²` = 132 numbers) plus
+its row count, once, in round 1. Those are the quantities a meta-analysis would publish, and a single
+covariance of a few hundred rows cannot be inverted back to the rows: there are 11 numbers per
+participant and 132 numbers in total. The hub, the FL server and every other site see them in the
+clear — FLIP has no secure aggregation — and nothing is noised. The final model a researcher
+downloads holds only the bootstrap graphs and the row counts. Voting mode releases 0/1 decisions per
+edge, bootstrap and layer and no statistics; its leakage has **not** been analysed and it is kept for
+experiments (the kernel test), not for deployment.
+
+**Why not one statistic per bootstrap.** An earlier version of this tutorial sent a mean and a
+second-moment matrix for *each* of the 50 resamples, with resample indices drawn from a seed in
+`config.json`. A reviewer showed that this is a system of 50 known weighted sums of the same rows
+with publicly reproducible weights, and recovered a 120-row site's rows exactly from one upload, and
+most of a 280-row site's binary columns. The present design — one statistic per site, the bootstrap
+drawn after pooling from the pooled correlation — removes that channel; the cost is that the
+resamples are parametric (Gaussian, the model Fisher's z assumes anyway) rather than resamples of
+the actual rows, and the frequencies differ from the earlier runs by a few hundredths.
+
+**Floors and what is still unprotected.** A site refuses to release its statistics below
+`MIN_SITE_ROWS` rows (30 by default; a trust's own `COHORT_QUERY_THRESHOLD` applies first). A
+researcher controls `N_BOOTSTRAPS` and `SEED`, but neither changes what a site releases any more.
+What remains unprotected is the one covariance per site itself: with two sites, each can subtract
+its own from the pooled one and read the other's. A formal guarantee would add calibrated Gaussian
+noise to that single matrix (Analyze Gauss, Dwork et al. 2014), which costs little accuracy at this
+dimension; the NVFLARE percentile filter and Flower's per-update clip-and-noise are not that
+mechanism — both are calibrated for weight deltas and would corrupt the arithmetic above, which is
+why the payload is shaped so the former is a no-op and the latter is off. Secure aggregation, so the
+hub sees only the sum, is platform work and only helps with three or more sites.
 
 ## How to run
 
@@ -319,6 +345,8 @@ installs.
 - The pooled mode is exact for Fisher's z only — a linear-Gaussian test. The kernel test (KCI) of
   the centralised main analysis has no sufficient statistics, so it is available only in voting
   mode, whose approximations are its own.
+- The pooled mode's bootstrap is parametric (drawn from the pooled correlation under the Gaussian
+  model), not a resample of the rows; the frequencies are a stability measure under that model.
 - The sites' stratified bootstrap is not the centralised analysis's whole-cohort bootstrap; with
   very unequal sites the frequencies differ slightly.
 - The reference run reproduces the centralised analysis's graph from the same 560 participants,
@@ -338,7 +366,12 @@ installs.
 - **FedC²SL** (the `pooled_statistics` idea): Wang, Z., Ma, P., Wang, S. "Towards Practical
   Federated Causal Structure Learning", *ECML PKDD 2023*, LNCS 14170. https://arxiv.org/abs/2306.09433,
   code https://github.com/wangzhaoyu07/FedC2SL. Their federated CI test is for discrete variables
-  with a secure random-projection encoding; here the Gaussian case reduces to pooled moments.
+  and travels under secure aggregation with a random-projection encoding; here only the pooled-test
+  idea is used, in the Gaussian case where it reduces to one moment matrix per site, with neither
+  of those protections — the privacy section says what that leaves exposed.
+- **Analyze Gauss** (the follow-up for a formal guarantee): Dwork, C., Talwar, K., Thakurta, A.,
+  Zhang, L. "Analyze Gauss: optimal bounds for privacy-preserving principal component analysis",
+  *STOC 2014* — Gaussian noise on a covariance matrix.
 - **Related**: Li, L. et al. "Federated Causal Discovery from Heterogeneous Data", *ICLR 2024*
   (FedCDH, https://github.com/lokali/FedCDH); Hahn, J. et al. "fedCI-IOD", arXiv:2603.05149, 2026
   (federated IOD under latent confounding).

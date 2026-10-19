@@ -33,9 +33,9 @@ cohort from a licence holder's own download, never the data.*
 
 ```mermaid
 flowchart LR
-    C1[ClientApp, round 1:<br/>per-bootstrap mean + second moments<br/>of its own rows, num-examples = n] -->|template FedAvg:<br/>size-weighted mean| G[pooled statistics<br/>= centralised correlation]
-    G --> C2[ClientApp, round 2:<br/>full FCI on the pooled correlation,<br/>identical PAGs at every site]
-    C2 -->|mean of identical PAGs| M[FL_global_model.pt:<br/>bootstrap PAGs + statistics]
+    C1[ClientApp, round 1:<br/>one mean + one second-moment matrix<br/>of its own rows, num-examples = n] -->|template FedAvg:<br/>size-weighted mean| G[pooled statistics<br/>= centralised correlation]
+    G --> C2[ClientApp, round 2:<br/>parametric bootstrap of the pooled correlation,<br/>full FCI on each draw, identical PAGs at every site;<br/>statistics zeroed]
+    C2 -->|mean of identical PAGs| M[FL_global_model.pt:<br/>bootstrap PAGs + row counts only]
     M --> R[summarise_results.py:<br/>edge frequencies, figure]
 ```
 
@@ -96,10 +96,13 @@ through which every site learns the pooled sample size Fisher's z needs.
 ## Differential privacy
 
 Off for this tutorial (`dp-enabled = false` in both `pyproject.toml` and `config.toml`). What
-leaves a site is a `p × p` second-moment matrix and a mean vector per bootstrap, or 0/1 votes —
-aggregate statistics rather than rows, but without a formal guarantee. The NVFLARE README's
-"Privacy" section has the reasoning and the pointer to FedC²SL's encoded statistics for sites that
-need one.
+leaves a site in pooled mode is one `p × p` second-moment matrix and one mean vector, once, plus
+its row count — not per bootstrap: the resamples are drawn after pooling — and the downloaded
+model holds only graphs and counts. That is aggregate statistics rather than rows, but with no
+formal guarantee and visible to the hub and the other sites. The NVFLARE README's "Privacy"
+section says exactly what is and is not protected, why the per-resample design it replaced was
+unsafe, and what a formal guarantee would add. Flower's per-update clip-and-noise mod is not that
+mechanism, which is why it is off rather than tuned.
 
 ## Data
 

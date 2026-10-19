@@ -21,14 +21,17 @@ kept byte-identical between the two tutorials (``scripts/check_tutorial_sync.sh`
 Two federation modes, selected by ``config.json``'s ``FEDERATION``:
 
 ``pooled_statistics``
-    Each site sends the sufficient statistics of Fisher's z test — the per-bootstrap mean
-    vector and second-moment matrix of its (log-transformed) variables — weighted by its
+    Each site sends the sufficient statistics of Fisher's z test — ONE mean vector and ONE
+    second-moment matrix of its (log-transformed) variables over all its rows — weighted by its
     sample size. The weighted mean of those *is* the pooled cohort's statistics, so the
     correlation matrix every site receives back is exactly the one a centralised run would
     compute, and FCI on it (round 2, run identically at every site) is exactly centralised
-    FCI with the Fisher-z test. This is the "federated CI test" idea of FedC²SL (Wang et al.,
-    2023) specialised to the Gaussian case, where the test needs nothing but second moments.
-    Two rounds; one exchange of ``p × p`` matrices per bootstrap; no raw rows leave a site.
+    FCI with the Fisher-z test. This is the pooled-test idea of FedC²SL (Wang et al., 2023)
+    specialised to the Gaussian case, where the test needs nothing but second moments — without
+    that paper's secure aggregation or random-projection encoding, which FLIP does not provide.
+    Two rounds; one exchange of ``p + p × p`` numbers per site; no raw rows leave a site.
+    In round 2 the statistics are zeroed in what a site sends back, so the final model carries
+    only the graphs and the row counts.
 
 ``layer_voting``
     The FedPC scheme (Huang et al., 2023): one global round per conditioning-set size. Each
@@ -40,10 +43,17 @@ Two federation modes, selected by ``config.json``'s ``FEDERATION``:
     CI test (``CI_TEST: "kci"`` included), at the cost of exactness: a vote is not a pooled
     test, and FedPC's own paper discusses the inconsistent-separating-set problem it creates.
 
-Bootstrapping is *stratified by site*: bootstrap ``b`` at site ``s`` resamples that site's own
-rows with the stream ``(SEED, s, b)``, so a run is reproducible and the ``B`` resamples line up
-across sites. Everything is computed for all ``B`` bootstraps at once (arrays carry a leading
-bootstrap axis), so the number of rounds does not depend on ``B``.
+Bootstrapping differs by mode, and the difference is a privacy decision. In pooled mode the
+``B`` resamples are drawn *after* pooling, from the pooled correlation itself (a parametric
+bootstrap: Wishart draws of the sample covariance under the Gaussian model Fisher's z assumes,
+re-standardised, with a stream shared by every site), so a site never sends more than one
+statistic of its rows. Sending one mean and one moment matrix per bootstrap resample instead would
+hand out ``B`` different weighted sums of the same rows with publicly reproducible weights — a
+linear system a reviewer showed can be solved back to the rows for cohorts of a few hundred. In
+voting mode (0/1 decisions, no statistics) bootstrap ``b`` at site ``s`` still resamples that
+site's own rows with the stream ``(SEED, s, b)``. Everything is computed for all ``B`` bootstraps
+at once (the graph arrays carry a leading bootstrap axis), so the number of rounds does not
+depend on ``B``.
 
 Two platform details shape the wire format:
 
@@ -52,9 +62,11 @@ Two platform details shape the wire format:
   clips the rest to ±0.01 per local step. Both are no-ops here by construction: arrays are
   sent multiplied by :data:`ENCODING_SCALE` (so no entry reaches the clip), and a zero
   ``padding`` array a quarter the size of the rest guarantees the 10th percentile is exactly
-  zero (so nothing non-zero is zeroed). The Flower local-DP mod is simply off in config.toml,
-  because clipping and noising a correlation matrix is not a meaningful privacy mechanism for
-  it — see the README's privacy section for what is and is not protected.
+  zero (so nothing non-zero is zeroed). The Flower local-DP mod is off in config.toml: its
+  per-update clip-and-noise is calibrated for weight deltas, not for a moment matrix whose
+  entries the federation adds exactly; a calibrated Gaussian mechanism on the single covariance
+  (Analyze Gauss, Dwork et al. 2014) is the right tool for a formal guarantee and is left as
+  follow-up work — see the README's privacy section for what is and is not protected.
 * No site knows how many sites there are, yet Fisher's z needs the pooled sample size. Each
   site writes its own count into one slot of ``site_counts`` (slot = its site index); after
   size-weighted averaging slot ``j`` holds ``n_j² / N``, and ``N = (Σ_j √slot_j)²`` recovers
@@ -141,13 +153,17 @@ def federation_mode(config: dict) -> str:
 
 
 def state_shapes(config: dict) -> dict[str, tuple[int, ...]]:
-    """Shape of every array in the wire format, from the variable count and bootstrap count."""
+    """Shape of every array in the wire format, from the variable count and bootstrap count.
+
+    The statistics carry no bootstrap axis on purpose (see the module docstring): one mean
+    vector and one second-moment matrix per site, whatever ``N_BOOTSTRAPS`` says.
+    """
     p = len(config["VARIABLES"])
     b = n_bootstrap_slabs(config)
     core = {
         "site_counts": (MAX_SITES,),
-        "stats_mean": (b, p),
-        "stats_moment": (b, p, p),
+        "stats_mean": (p,),
+        "stats_moment": (p, p),
         "skeleton": (b, p, p),
         "sepsets": (b, p, p, p),
         "pag": (b, p, p),
@@ -285,26 +301,46 @@ def column_order(b: int, seed: int, p: int) -> np.ndarray:
 # --- pooled statistics ----------------------------------------------------------------------
 
 
-def site_statistics(matrix: np.ndarray, config: dict, slot: int) -> tuple[np.ndarray, np.ndarray]:
-    """Per-bootstrap mean vector and second-moment matrix of this site's rows."""
-    b_total = n_bootstrap_slabs(config)
-    resample = resampling_enabled(config)
-    seed = int(config.get("SEED", 0))
-    means = np.zeros((b_total, matrix.shape[1]))
-    moments = np.zeros((b_total, matrix.shape[1], matrix.shape[1]))
-    for b in range(b_total):
-        sample = matrix[bootstrap_rows(matrix, b, seed, slot, resample)]
-        means[b] = sample.mean(axis=0)
-        moments[b] = sample.T @ sample / sample.shape[0]
-    return means, moments
+def site_statistics(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The one mean vector and one second-moment matrix of this site's rows that leave it."""
+    return matrix.mean(axis=0), matrix.T @ matrix / matrix.shape[0]
 
 
-def pooled_correlation(means: np.ndarray, moments: np.ndarray) -> np.ndarray:
-    """Correlation matrices from size-weighted mean vectors and second moments."""
-    cov = moments - np.einsum("bi,bj->bij", means, means)
-    scale = np.sqrt(np.clip(np.einsum("bii->bi", cov), 1e-300, None))
-    corr = cov / (scale[:, :, None] * scale[:, None, :])
-    return np.clip(corr, -1.0, 1.0)
+def pooled_correlation(mean: np.ndarray, moment: np.ndarray) -> np.ndarray:
+    """The correlation matrix from a size-weighted mean vector and second-moment matrix."""
+    cov = moment - np.outer(mean, mean)
+    scale = np.sqrt(np.clip(np.diag(cov), 1e-300, None))
+    return np.clip(cov / np.outer(scale, scale), -1.0, 1.0)
+
+
+def bootstrap_correlations(mean: np.ndarray, moment: np.ndarray, sample_size: int, config: dict) -> np.ndarray:
+    """``B`` correlation matrices resampled from the pooled statistics — the parametric bootstrap.
+
+    Under the Gaussian model Fisher's z assumes, the sample covariance of ``n`` rows is Wishart
+    with ``n − 1`` degrees of freedom around the true covariance. Drawing from that law with the
+    pooled correlation as the truth, then re-standardising, gives the spread of correlation
+    matrices a resample of the pooled rows would have shown — without any site sending per-resample
+    statistics. The stream is shared by every site (no site term), so the sites agree on every
+    PAG. ``N_BOOTSTRAPS`` of 0 returns the pooled correlation itself, once.
+    """
+    from scipy.stats import wishart
+
+    corr = pooled_correlation(mean, moment)
+    if not resampling_enabled(config):
+        return corr[None]
+    p = corr.shape[0]
+    df = max(int(sample_size) - 1, p + 1)
+    # A pooled correlation can sit on the boundary of positive definiteness (a float32 round trip,
+    # a near-collinear pair); nudge it inside so the Wishart law is defined.
+    eigenvalues, eigenvectors = np.linalg.eigh(corr)
+    floor = 1e-6
+    if eigenvalues.min() < floor:
+        corr = (eigenvectors * np.maximum(eigenvalues, floor)) @ eigenvectors.T
+    rng = np.random.default_rng([int(config.get("SEED", 0)), 104729])
+    draws = wishart(df=df, scale=corr / df).rvs(size=n_bootstrap_slabs(config), random_state=rng)
+    draws = np.asarray(draws, dtype=np.float64).reshape(-1, p, p)
+    scale = np.sqrt(np.einsum("bii->bi", draws))
+    return np.clip(draws / (scale[:, :, None] * scale[:, None, :]), -1.0, 1.0)
 
 
 def recover_site_counts(site_counts: np.ndarray, weighted_by_size: bool) -> tuple[int, dict[int, int]]:
@@ -675,8 +711,14 @@ def client_round(
 
     if mode == "pooled_statistics":
         if round_index == 0:
+            min_rows = int(config.get("MIN_SITE_ROWS", 30))
+            if n < min_rows:
+                raise ValueError(
+                    f"site {site_name!r} holds {n} complete rows, below MIN_SITE_ROWS={min_rows}: a mean and "
+                    "second-moment matrix of that few rows is too close to the rows themselves to release"
+                )
             target = empty_state(config)
-            target["stats_mean"], target["stats_moment"] = site_statistics(matrix, config, slot)
+            target["stats_mean"], target["stats_moment"] = site_statistics(matrix)
             target["site_counts"][slot] = n * COUNT_SCALE
             assert_within_filter_bounds(target, n)
             return target, n, metrics
@@ -684,10 +726,14 @@ def client_round(
         metrics["pooled_rows"] = float(pooled_n)
         metrics["sites_seen"] = float(len(sizes))
         if not np.any(as_pags(received["pag"])):
-            correlation = pooled_correlation(received["stats_mean"], received["stats_moment"])
+            correlations = bootstrap_correlations(received["stats_mean"], received["stats_moment"], pooled_n, config)
             target["pag"] = np.stack(
-                [fci_from_correlation(correlation[b], pooled_n, variables, config, b) for b in range(b_total)]
+                [fci_from_correlation(correlations[b], pooled_n, variables, config, b) for b in range(b_total)]
             ).astype(np.float64)
+        # The pooled statistics have done their job. They do not travel on: the final model the
+        # researcher downloads holds the graphs and the row counts, nothing about the variables.
+        target["stats_mean"][:] = 0.0
+        target["stats_moment"][:] = 0.0
         metrics.update(summary_metrics(target["pag"], variables, stable_prob))
         assert_within_filter_bounds(target, n)
         return target, n, metrics
