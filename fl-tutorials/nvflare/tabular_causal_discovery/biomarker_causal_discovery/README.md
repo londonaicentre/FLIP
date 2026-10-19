@@ -289,13 +289,21 @@ see the dependence (try 0.3, FedPC's value).
 
 **What leaves a site, how often, and what protects it.** In pooled mode a site releases exactly one
 mean vector and one second-moment matrix of its transformed variables (`p + p²` = 132 numbers) plus
-its row count, once, in round 1. Those are the quantities a meta-analysis would publish, and a single
-covariance of a few hundred rows cannot be inverted back to the rows: there are 11 numbers per
-participant and 132 numbers in total. The hub, the FL server and every other site see them in the
-clear — FLIP has no secure aggregation — and nothing is noised. The final model a researcher
-downloads holds only the bootstrap graphs and the row counts. Voting mode releases 0/1 decisions per
-edge, bootstrap and layer and no statistics; its leakage has **not** been analysed and it is kept for
-experiments (the kernel test), not for deployment.
+its row count, once, in round 1 — the pooled-statistics pattern of DataSHIELD and of secure
+regression on distributed databases (Gaye et al. 2014; Karr et al. 2005). A single covariance of a
+few hundred rows is not invertible to the rows for the *continuous* columns: 11 numbers per
+participant against 132 released. The **discrete** columns are different: the moments of sex and
+the APOE4 count are exact level counts, and their cross-moments are the sum of every other
+variable over each level, so a level held by very few rows would be published as such. A site
+therefore refuses to release when any discrete column has a level below `MIN_CELL_COUNT` rows
+(5, raisable in config, never lowerable), the small-cell rule of statistical disclosure control.
+The hub, the FL server and every other site see the released statistics in the clear — FLIP has
+no secure aggregation — and nothing is noised. The final model a researcher downloads holds only
+the bootstrap graphs and the row counts. Voting mode releases 0/1 decisions per edge, bootstrap
+and layer and no statistics, but on resamples whose indices are public; its leakage has **not**
+been analysed, so off the simulator it runs only where the trust sets
+`FLIP_CAUSAL_ALLOW_LAYER_VOTING=1` in its FL client environment — a researcher's `config.json`
+cannot switch it on.
 
 **Why not one statistic per bootstrap.** An earlier version of this tutorial sent a mean and a
 second-moment matrix for *each* of the 50 resamples, with resample indices drawn from a seed in
@@ -306,16 +314,23 @@ drawn after pooling from the pooled correlation — removes that channel; the co
 resamples are parametric (Gaussian, the model Fisher's z assumes anyway) rather than resamples of
 the actual rows, and the frequencies differ from the earlier runs by a few hundredths.
 
-**Floors and what is still unprotected.** A site refuses to release its statistics below
-`MIN_SITE_ROWS` rows (30 by default; a trust's own `COHORT_QUERY_THRESHOLD` applies first). A
-researcher controls `N_BOOTSTRAPS` and `SEED`, but neither changes what a site releases any more.
-What remains unprotected is the one covariance per site itself: with two sites, each can subtract
-its own from the pooled one and read the other's. A formal guarantee would add calibrated Gaussian
-noise to that single matrix (Analyze Gauss, Dwork et al. 2014), which costs little accuracy at this
-dimension; the NVFLARE percentile filter and Flower's per-update clip-and-noise are not that
-mechanism — both are calibrated for weight deltas and would corrupt the arithmetic above, which is
-why the payload is shaped so the former is a no-op and the latter is off. Secure aggregation, so the
-hub sees only the sum, is platform work and only helps with three or more sites.
+**Floors and what is still unprotected.** A site refuses to release its statistics below 30
+complete rows. That floor is a constant in the module; `MIN_SITE_ROWS` in `config.json` can raise it
+and never lower it, and the trust raises it further from its own FL client environment
+(`FL_SITE_MIN_ROWS`, or `COHORT_QUERY_THRESHOLD` where the trust forwards it to the client). The
+trust's cohort threshold on its own does not bound this count: it is applied before incomplete rows
+are dropped. Refusals carry no count — both backends forward a client's exception text to the hub.
+In pooled mode a researcher's `N_BOOTSTRAPS` and `SEED` change nothing a site releases; in voting
+mode they do, which is one reason that mode is gated. What remains unprotected is the one covariance
+per site itself: with two sites, each can subtract its own from the pooled one and read the
+other's. A formal guarantee would add calibrated noise to that single matrix — the Gaussian
+mechanism of Analyze Gauss (Dwork et al. 2014) or the Wishart mechanism (Jiang et al. 2016) — at
+little accuracy cost at this dimension; the NVFLARE percentile filter and Flower's per-update
+clip-and-noise are not that mechanism, both being calibrated for weight deltas, which is why the
+payload is shaped so the former is a no-op and the latter is off. A trust that tightens the NVFLARE
+filter's `gamma` through its site policy is honoured: the payload bound is checked against the
+site's effective clip, not the stock one. Secure aggregation, so the hub sees only the sum, is
+platform work and only helps with three or more sites.
 
 ## How to run
 
@@ -369,9 +384,27 @@ installs.
   and travels under secure aggregation with a random-projection encoding; here only the pooled-test
   idea is used, in the Gaussian case where it reduces to one moment matrix per site, with neither
   of those protections — the privacy section says what that leaves exposed.
-- **Analyze Gauss** (the follow-up for a formal guarantee): Dwork, C., Talwar, K., Thakurta, A.,
-  Zhang, L. "Analyze Gauss: optimal bounds for privacy-preserving principal component analysis",
-  *STOC 2014* — Gaussian noise on a covariance matrix.
+- **Pooled sufficient statistics across sites** (the pattern `pooled_statistics` instantiates): Karr,
+  A. F., Lin, X., Sanil, A. P., Reiter, J. P. "Secure regression on distributed databases", *Journal
+  of Computational and Graphical Statistics* 14(2), 2005; Gaye, A. et al. "DataSHIELD: taking the
+  analysis to the data, not the data to the analysis", *International Journal of Epidemiology* 43(6),
+  2014.
+- **The Fisher-z test** used on the pooled correlation (`CorrelationFisherZ`): Kalisch, M.,
+  Bühlmann, P. "Estimating high-dimensional directed acyclic graphs with the PC-algorithm", *JMLR*
+  8, 2007 — partial correlations from the correlation matrix, `n − |S| − 3` degrees of freedom.
+- **PC-stable**, the order-independent skeleton search each voting layer runs: Colombo, D.,
+  Maathuis, M. H. "Order-independent constraint-based causal structure learning", *JMLR* 15, 2014.
+- **Bootstrap edge frequencies** as confidence in a learned structure: Friedman, N., Goldszmidt,
+  M., Wyner, A. "Data analysis with Bayesian networks: a bootstrap approach", *UAI 1999*. **The
+  parametric bootstrap** drawn from the pooled correlation: Efron, B., Tibshirani, R. J. *An
+  Introduction to the Bootstrap*, Chapman & Hall, 1993, §6.5 (Wishart sampling of the covariance).
+- **Why per-resample statistics were withdrawn**: Dinur, I., Nissim, K. "Revealing information while
+  preserving privacy", *PODS 2003* — enough released linear functions of the same rows reconstruct
+  them.
+- **Formal protection for the released covariance** (follow-up): Dwork, C., Talwar, K., Thakurta,
+  A., Zhang, L. "Analyze Gauss: optimal bounds for privacy-preserving principal component analysis",
+  *STOC 2014*; Jiang, W., Xie, C., Zhang, Z. "Wishart mechanism for differentially private principal
+  components analysis", *AAAI 2016*.
 - **Related**: Li, L. et al. "Federated Causal Discovery from Heterogeneous Data", *ICLR 2024*
   (FedCDH, https://github.com/lokali/FedCDH); Hahn, J. et al. "fedCI-IOD", arXiv:2603.05149, 2026
   (federated IOD under latent confounding).

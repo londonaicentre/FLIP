@@ -177,14 +177,65 @@ def test_bootstrap_correlations_are_shared_centred_and_standardised(ff, config):
     assert ff.bootstrap_correlations(mean, moment, len(full), config).shape == (1, p, p)  # N_BOOTSTRAPS 0
 
 
-def test_a_site_below_the_row_floor_refuses_to_release_statistics(ff, config):
+def test_a_site_below_the_row_floor_refuses_without_saying_how_many(ff, config):
     small = ff.prepare_matrix(sample_scm(40, 2), config)
     state = ff.empty_state(config)
-    with pytest.raises(ValueError, match="MIN_SITE_ROWS"):
+    with pytest.raises(ValueError, match="too few complete rows") as refused:
         ff.client_round(state, 0, 2, small, "site-1", {**config, "MIN_SITE_ROWS": 50})
+    assert "40" not in str(refused.value)  # the count stays in the site's own log
     target, weight, _ = ff.client_round(state, 0, 2, small, "site-1", {**config, "MIN_SITE_ROWS": 40})
     assert weight == 40
     assert target["stats_moment"].shape == (len(VARIABLES), len(VARIABLES))
+
+
+def test_the_row_floor_is_the_hard_floor_raised_by_config_or_the_trust(ff, config, monkeypatch):
+    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 1}, env={}) == ff.HARD_MIN_SITE_ROWS  # config cannot lower it
+    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}, env={}) == 80
+    assert ff.site_row_floor(config, env={"COHORT_QUERY_THRESHOLD": "100"}) == 100  # the trust raises it
+    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}, env={"FL_SITE_MIN_ROWS": "60"}) == 80
+    assert ff.site_row_floor(config, env={"FL_SITE_MIN_ROWS": "junk"}) == ff.HARD_MIN_SITE_ROWS
+
+
+def test_a_small_cell_in_a_discrete_column_blocks_the_release(ff, config):
+    matrix = ff.prepare_matrix(sample_scm(200, 3), config)
+    b = VARIABLES.index("b_root")
+    assert ff.small_cells(matrix, config) == []
+    matrix[:, b] = 0.0
+    matrix[:2, b] = 1.0  # two rows in one level: their moments would publish that pair
+    assert ff.small_cells(matrix, config) == [b]
+    with pytest.raises(ValueError, match="b_root") as refused:
+        ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config)
+    assert "2 " not in str(refused.value)
+    assert ff.small_cells(matrix, {**config, "MIN_CELL_COUNT": 1}) == [b]  # config cannot lower the floor
+    matrix[:6, b] = 1.0  # six rows: clears the default floor of five ...
+    assert ff.small_cells(matrix, config) == []
+    assert ff.small_cells(matrix, {**config, "MIN_CELL_COUNT": 8}) == [b]  # ... but not a raised one
+
+
+def test_layer_voting_needs_the_simulator_or_the_trusts_opt_in(ff, config, two_sites):
+    voting = {**config, "FEDERATION": "layer_voting"}
+    matrix = next(iter(two_sites.values()))
+    assert ff.layer_voting_allowed(True, env={})
+    assert not ff.layer_voting_allowed(False, env={})
+    assert ff.layer_voting_allowed(False, env={ff.LAYER_VOTING_OPT_IN_VAR: "1"})
+    with pytest.raises(ValueError, match="experimental"):
+        ff.client_round(ff.empty_state(voting), 0, 6, matrix, "site-1", voting, local_dev=False)
+    ff.client_round(ff.empty_state(voting), 0, 6, matrix, "site-1", voting, local_dev=True)
+
+
+def test_filter_bound_follows_a_stricter_site_policy(ff, monkeypatch):
+    class Policy:
+        gamma = 0.001
+
+    monkeypatch.setattr(ff, "resolve_policy", lambda env: (Policy(), "env"))
+    assert ff.effective_percentile_clip() == pytest.approx(0.001)
+    monkeypatch.setattr(ff, "resolve_policy", lambda env: (None, "none"))
+    assert ff.effective_percentile_clip() == ff.PERCENTILE_CLIP
+    looser = type("P", (), {"gamma": 0.5})()
+    monkeypatch.setattr(ff, "resolve_policy", lambda env: (looser, "env"))
+    assert ff.effective_percentile_clip() == ff.PERCENTILE_CLIP  # never looser than the stock clip
+    monkeypatch.setattr(ff, "resolve_policy", lambda env: (_ for _ in ()).throw(RuntimeError("bad policy")))
+    assert ff.effective_percentile_clip() == ff.PERCENTILE_CLIP
 
 
 def test_correlation_fisherz_matches_causallearn_on_the_same_rows(ff, config):

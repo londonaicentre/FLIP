@@ -45,6 +45,7 @@ Design notes, mirroring ``synthea_ehr.py``:
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -194,7 +195,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cohort", type=Path, required=True, help="The converter's dataframe.csv (never committed).")
     parser.add_argument("--trust-index", type=int, required=True, help="1-based index of this trust.")
     parser.add_argument("--num-trusts", type=int, default=2, help="Total number of trusts (person_id split).")
+    parser.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="Load into a database that is not on this host, or under PROD. Off by default: the cohort is "
+        "licence-restricted and belongs on the licence holder's own machines only.",
+    )
     return parser.parse_args(argv)
+
+
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def refuse_unless_local(host: str, env: dict, allow_remote: bool) -> None:
+    """The documentation's 'never a shared or published trust' rule, enforced.
+
+    A remote ``OMOP_DB_HOST`` or a ``PROD`` environment means a trust other people's projects read;
+    ADNI rows there would breach the Data Use Agreement. ``--allow-remote`` is the explicit override.
+    """
+    if allow_remote:
+        return
+    problems = []
+    if host not in LOCAL_HOSTS:
+        problems.append(f"OMOP_DB_HOST={host!r} is not this host")
+    if env.get("PROD"):
+        problems.append(f"PROD={env['PROD']!r} selects a deployed environment")
+    if problems:
+        raise SystemExit(
+            "❌ Refusing to load the ADNI cohort: " + "; ".join(problems) + ". This loader is for a LOCAL dev "
+            "trust only (the Data Use Agreement covers the licence holder's own machines); pass --allow-remote "
+            "only if that trust is yours alone."
+        )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -205,7 +236,9 @@ def main(argv: list[str] | None = None) -> None:
     if not args.cohort.exists():
         raise SystemExit(f"❌ {args.cohort} does not exist — run `make -C fl-tutorials convert-adni-cohort` first")
     frame = read_cohort(args.cohort)
-    engine = create_engine(get_settings().OMOP_DATABASE_URL.get_secret_value(), echo=False)
+    settings = get_settings()
+    refuse_unless_local(settings.OMOP_DB_HOST, dict(os.environ), args.allow_remote)
+    engine = create_engine(settings.OMOP_DATABASE_URL.get_secret_value(), echo=False)
     load_adni_cohort(engine, frame, args.num_trusts, args.trust_index)
     print("🎉 ADNI biomarker cohort loaded — the tutorial's query.sql now returns it on this trust.")
 

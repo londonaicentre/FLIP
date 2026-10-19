@@ -55,6 +55,25 @@ site's own rows with the stream ``(SEED, s, b)``. Everything is computed for all
 at once (the graph arrays carry a leading bootstrap axis), so the number of rounds does not
 depend on ``B``.
 
+Where the pieces come from (full references in the README):
+
+* Pooling the Gaussian sufficient statistics of horizontally partitioned data and running the
+  analysis on the pooled ones is the DataSHIELD / secure-regression pattern (Karr, Lin, Sanil &
+  Reiter, JCGS 2005; Gaye et al., IJE 2014); FedC²SL (Wang, Ma & Wang, ECML PKDD 2023) is the
+  same move for the conditional-independence test inside PC/FCI, with secure aggregation.
+* Fisher's z on partial correlations from the correlation matrix, with ``n − |S| − 3`` degrees
+  of freedom, is the PC-algorithm test of Kalisch & Bühlmann (JMLR 2007); FCI and its orientation
+  rules are Spirtes, Glymour & Scheines (2000) and Zhang (AI 2008), as implemented in causal-learn.
+* Bootstrap edge frequencies as confidence in a learned structure: Friedman, Goldszmidt & Wyner
+  (UAI 1999). The parametric bootstrap from a fitted Gaussian: Efron & Tibshirani (1993, §6.5);
+  the sample covariance of ``n`` Gaussian rows is Wishart with ``n − 1`` degrees of freedom.
+* The layer-wise skeleton search is PC-stable (Colombo & Maathuis, JMLR 2014) voted across sites
+  as in FedPC (Huang et al., IEEE TBD 2023).
+* Why per-resample statistics were withdrawn: many released linear functions of the same rows
+  reconstruct them (Dinur & Nissim, PODS 2003). Formal protection for the one covariance that is
+  released would be the Gaussian mechanism on it (Analyze Gauss: Dwork, Talwar, Thakurta & Zhang,
+  STOC 2014) or the Wishart mechanism (Jiang, Xie & Zhang, AAAI 2016) — follow-up work.
+
 Two platform details shape the wire format:
 
 * The NVFLARE standard template applies a percentile-privacy filter to every training result:
@@ -79,7 +98,9 @@ import contextlib
 import hashlib
 import io
 import itertools
+import logging
 import math
+import os
 import re
 import zlib
 from collections.abc import Iterable, Sequence
@@ -93,6 +114,13 @@ from causallearn.search.ConstraintBased import FCI as fci_rules
 from causallearn.utils.cit import CIT, CIT_Base
 from causallearn.utils.FAS import fas
 from causallearn.utils.PCUtils.BackgroundKnowledge import BackgroundKnowledge
+
+try:  # the trust's NVFLARE site policy (percentile / gamma); stdlib-only module, absent on a bare Flower image
+    from flip.nvflare.site_policy import resolve_policy
+except ImportError:  # pragma: no cover - exercised where flip-utils is not importable
+    resolve_policy = None
+
+logger = logging.getLogger(__name__)
 
 # causal-learn iterates over *sets* of nodes in several orientation rules, and GraphNode hashes
 # its name — which Python salts per process. Without a fixed hash the same inputs can orient
@@ -108,6 +136,25 @@ ENCODING_SCALE = 1e-5
 #: must stay below it once scaled, or the filter silently truncates it — hence ``SCALE`` in
 #: config.json and the check in :func:`assert_within_filter_bounds`.
 PERCENTILE_CLIP = 0.01
+#: No site releases its statistics for fewer complete rows than this, whatever the researcher's
+#: config.json says (``MIN_SITE_ROWS`` there can only raise it). A trust raises it further through
+#: :data:`SITE_FLOOR_VARS` in the FL client's environment. With 11 numbers per row and p + p² = 132
+#: released, a floor of 30 keeps the released system well under-determined; the small-cell rule
+#: below covers the discrete columns, where a moment is an exact count.
+HARD_MIN_SITE_ROWS = 30
+#: Environment variables (the trust's FL client environment, which the researcher cannot edit) that
+#: raise the row floor; the first one set wins. COHORT_QUERY_THRESHOLD is the trust's disclosure floor
+#: for cohort egress; it is read here when the trust forwards it to the FL client.
+SITE_FLOOR_VARS = ("FL_SITE_MIN_ROWS", "COHORT_QUERY_THRESHOLD")
+#: A discrete column (three or fewer distinct values: sex, an allele count) releases, through its
+#: moments, the exact count of every level and the sum of every other variable over that level. A
+#: level with fewer rows than this is a small cell in the statistical-disclosure-control sense, and
+#: the site refuses to release rather than publish it. ``MIN_CELL_COUNT`` in config.json can only raise it.
+MIN_CELL_COUNT = 5
+#: ``layer_voting`` is experimental (its leakage is unanalysed: per-bootstrap 0/1 test outcomes on
+#: resamples whose indices are public). Off the simulator it runs only when the trust sets this in
+#: the FL client's environment — a researcher's config.json cannot switch it on.
+LAYER_VOTING_OPT_IN_VAR = "FLIP_CAUSAL_ALLOW_LAYER_VOTING"
 #: Slots in ``site_counts``. A site's slot is its index (Trust_1 → 0); a site whose name
 #: carries no number hashes into the table, with a small collision risk that only ever
 #: *under*-estimates the pooled sample size (a conservative test).
@@ -191,6 +238,22 @@ def as_pags(pag_array: np.ndarray) -> np.ndarray:
     return np.rint(np.asarray(pag_array, dtype=np.float64)).astype(np.int8)
 
 
+def effective_percentile_clip(env: dict | None = None) -> float:
+    """The clip the trust's NVFLARE site policy actually applies: the stock gamma, or a stricter one.
+
+    A trust may lower ``gamma`` through ``FL_SITE_PRIVACY_GAMMA`` or its governance document, and
+    the stock filter clips silently, so the bound checked below must be the site's, not the default.
+    """
+    if resolve_policy is None:
+        return PERCENTILE_CLIP
+    try:
+        policy, _ = resolve_policy(os.environ if env is None else env)
+    except Exception as error:  # a malformed policy stops the container elsewhere; here, stay strict
+        logger.warning("could not resolve the site privacy policy (%s); assuming the stock clip", error)
+        return PERCENTILE_CLIP
+    return PERCENTILE_CLIP if policy is None else min(PERCENTILE_CLIP, float(policy.gamma))
+
+
 def assert_within_filter_bounds(target: dict[str, np.ndarray], weight: int) -> None:
     """Refuse a payload the platform's percentile-privacy clip would truncate.
 
@@ -200,7 +263,7 @@ def assert_within_filter_bounds(target: dict[str, np.ndarray], weight: int) -> N
     what ``LOG_TRANSFORM`` and ``SCALE`` in config.json exist for; this check turns a forgotten
     one into an error that names it.
     """
-    limit = PERCENTILE_CLIP * max(int(weight), 1) / ENCODING_SCALE
+    limit = effective_percentile_clip() * max(int(weight), 1) / ENCODING_SCALE
     for key, array in target.items():
         largest = float(np.max(np.abs(array))) if array.size else 0.0
         if largest > limit:
@@ -208,6 +271,44 @@ def assert_within_filter_bounds(target: dict[str, np.ndarray], weight: int) -> N
                 f"{key} holds a value of {largest:.3g}, above the {limit:.3g} the platform's privacy filter "
                 "would clip at: scale the variable down (config.json SCALE) or log-transform it (LOG_TRANSFORM)"
             )
+
+
+# --- what a site may release ---------------------------------------------------------------
+
+
+def site_row_floor(config: dict, env: dict | None = None) -> int:
+    """Fewest complete rows a site releases statistics for: the hard floor, raised by config or the trust."""
+    env = os.environ if env is None else env
+    floor = max(HARD_MIN_SITE_ROWS, int(config.get("MIN_SITE_ROWS", 0)))
+    for var in SITE_FLOOR_VARS:
+        raw = env.get(var)
+        if raw:
+            with contextlib.suppress(ValueError):
+                floor = max(floor, int(float(raw)))
+            break
+    return floor
+
+
+def small_cells(matrix: np.ndarray, config: dict) -> list[int]:
+    """Column indices whose discrete levels include a cell smaller than the minimum cell count.
+
+    A column with three or fewer distinct values is treated as discrete. Its mean and its moments
+    with every other column are exact level counts and per-level sums, so a level held by very few
+    rows is published as such; those columns make the site refuse to release.
+    """
+    minimum = max(MIN_CELL_COUNT, int(config.get("MIN_CELL_COUNT", 0)))
+    offenders = []
+    for j in range(matrix.shape[1]):
+        values, counts = np.unique(matrix[:, j], return_counts=True)
+        if len(values) <= 3 and np.any(counts < minimum):
+            offenders.append(j)
+    return offenders
+
+
+def layer_voting_allowed(local_dev: bool, env: dict | None = None) -> bool:
+    """Voting mode runs on the simulator, or where the trust opted in through its own environment."""
+    env = os.environ if env is None else env
+    return bool(local_dev) or env.get(LAYER_VOTING_OPT_IN_VAR, "").strip() in {"1", "true", "yes"}
 
 
 # --- data ---------------------------------------------------------------------------------
@@ -316,8 +417,9 @@ def pooled_correlation(mean: np.ndarray, moment: np.ndarray) -> np.ndarray:
 def bootstrap_correlations(mean: np.ndarray, moment: np.ndarray, sample_size: int, config: dict) -> np.ndarray:
     """``B`` correlation matrices resampled from the pooled statistics — the parametric bootstrap.
 
-    Under the Gaussian model Fisher's z assumes, the sample covariance of ``n`` rows is Wishart
-    with ``n − 1`` degrees of freedom around the true covariance. Drawing from that law with the
+    The parametric bootstrap of Efron & Tibshirani (1993, §6.5), with the fitted model the
+    Gaussian one Fisher's z assumes: the sample covariance of ``n`` rows is then Wishart with
+    ``n − 1`` degrees of freedom around the true covariance. Drawing from that law with the
     pooled correlation as the truth, then re-standardising, gives the spread of correlation
     matrices a resample of the pooled rows would have shown — without any site sending per-resample
     statistics. The stream is shared by every site (no site term), so the sites agree on every
@@ -360,6 +462,10 @@ def recover_site_counts(site_counts: np.ndarray, weighted_by_size: bool) -> tupl
 
 class CorrelationFisherZ(CIT_Base):
     """Fisher's z test from a correlation matrix and a sample size, no data needed.
+
+    The partial correlation comes from the inverse of the sub-correlation matrix and the
+    statistic is ``√(n − |S| − 3) · atanh(r)``, as in Kalisch & Bühlmann (JMLR 2007) — the same
+    test causal-learn's ``fisherz`` computes from rows (pinned by the tests).
 
     causal-learn's ``FisherZ`` computes the correlation matrix from rows; this one takes the
     matrix directly (the pooled one), so the full FCI machinery — including the possible-D-sep
@@ -625,6 +731,11 @@ def layer_step(
 
 
 def edge_frequencies(pags: np.ndarray, variables: Sequence[str]) -> list[dict]:
+    """How often each (source, mark, target) edge appears across the bootstrap PAGs.
+
+    Bootstrap frequency as confidence in a learned structural feature: Friedman, Goldszmidt &
+    Wyner (UAI 1999). It is a stability measure under resampling, not a posterior probability.
+    """
     """How often each edge type links each pair across the bootstrap PAGs, strongest first."""
     pags = np.asarray(pags)
     n_boot, p, _ = pags.shape
@@ -689,6 +800,7 @@ def client_round(
     matrix: np.ndarray,
     site_name: str,
     config: dict,
+    local_dev: bool = True,
 ) -> tuple[dict[str, np.ndarray], int, dict[str, float]]:
     """What this site sends back in global round ``round_index`` (0-based), and with what weight.
 
@@ -700,8 +812,17 @@ def client_round(
     variables = list(config["VARIABLES"])
     mode = federation_mode(config)
     n = int(matrix.shape[0])
+    # Refusals below carry no count: both backends forward a client's exception text to the hub, and a
+    # below-floor count is exactly what the platform's cohort threshold keeps indistinguishable from
+    # empty. The count goes to the site's own log only.
     if n < 5:
-        raise ValueError(f"site {site_name!r} holds {n} complete rows; too few for a conditional-independence test")
+        logger.info("site %s: %d complete rows, too few for any conditional-independence test", site_name, n)
+        raise ValueError(f"site {site_name!r} holds too few complete rows for a conditional-independence test")
+    if mode == "layer_voting" and not layer_voting_allowed(local_dev):
+        raise ValueError(
+            "layer_voting is experimental (its leakage is unanalysed) and runs only on the simulator, or where "
+            f"the trust sets {LAYER_VOTING_OPT_IN_VAR}=1 in its FL client environment; use pooled_statistics"
+        )
     slot = site_slot(site_name)
     b_total = n_bootstrap_slabs(config)
     stable_prob = float(config.get("STABLE_EDGE_PROB", 0.5))
@@ -711,11 +832,20 @@ def client_round(
 
     if mode == "pooled_statistics":
         if round_index == 0:
-            min_rows = int(config.get("MIN_SITE_ROWS", 30))
-            if n < min_rows:
+            floor = site_row_floor(config)
+            if n < floor:
+                logger.info("site %s: %d complete rows, below the release floor of %d", site_name, n, floor)
                 raise ValueError(
-                    f"site {site_name!r} holds {n} complete rows, below MIN_SITE_ROWS={min_rows}: a mean and "
-                    "second-moment matrix of that few rows is too close to the rows themselves to release"
+                    f"site {site_name!r} holds too few complete rows to release its statistics (below the site "
+                    "floor): a mean and second-moment matrix of that few rows is too close to the rows themselves"
+                )
+            cells = small_cells(matrix, config)
+            if cells:
+                names = ", ".join(variables[j] for j in cells)
+                logger.info("site %s: small cells in discrete column(s) %s", site_name, names)
+                raise ValueError(
+                    f"site {site_name!r} refuses to release its statistics: a discrete variable ({names}) has a "
+                    "level held by too few rows, and its moments would publish that cell"
                 )
             target = empty_state(config)
             target["stats_mean"], target["stats_moment"] = site_statistics(matrix)

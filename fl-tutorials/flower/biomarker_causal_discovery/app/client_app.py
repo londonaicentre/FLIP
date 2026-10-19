@@ -29,9 +29,10 @@ from pathlib import Path
 import numpy as np
 import torch
 from flip import FLIP
+from flip.constants import FlipConstants
 from flip.flower.identity import client_identity, partition_cohort
 from flip.flower.privacy import flip_local_dp_mod
-from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
+from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
 
@@ -46,19 +47,27 @@ def _load_config() -> dict:
         return json.load(fh)
 
 
+_COHORT_CACHE = "cohort"
+
+
 def _fetch_matrix(context: Context, config: dict) -> np.ndarray:
-    """This site's analysis matrix via FLIP.
+    """This site's analysis matrix via FLIP, fetched once per run and kept in ``context.state``.
 
     Deployed: the trust's data-access-api serves its own cohort. Under ``LOCAL_DEV`` every
     site reads the same CSV, so ``partition_cohort`` slices out this site's ``person_id``
-    partition (a no-op when deployed).
+    partition (a no-op when deployed). Every round and the final evaluation call this; the cache
+    means one row-level cohort egress per run at the trust, not one per round.
     """
+    cached = context.state.get(_COHORT_CACHE)
+    if cached is not None:
+        return cached["matrix"].numpy().astype(np.float64)
     project_id = context.run_config.get("flip-project-id", "causal-flower-tutorial")
     query = context.run_config.get("flip-cohort-query", "*")
     log(INFO, f"Fetching FLIP dataframe project_id={project_id}")
     dataframe = partition_cohort(FLIP().get_dataframe(project_id, query), context)
     matrix = prepare_matrix(dataframe, config)
     log(INFO, f"Cohort for {client_identity(context)}: {len(dataframe)} persons, {matrix.shape[0]} complete rows")
+    context.state[_COHORT_CACHE] = ArrayRecord({"matrix": Array(np.ascontiguousarray(matrix))})
     return matrix
 
 
@@ -88,7 +97,9 @@ def train(msg: Message, context: Context) -> Message:
 
     matrix = _fetch_matrix(context, config)
     received = decode(_received_arrays(msg))
-    target, weight, metrics = client_round(received, round_index, total_rounds, matrix, client_name, config)
+    target, weight, metrics = client_round(
+        received, round_index, total_rounds, matrix, client_name, config, local_dev=bool(FlipConstants.LOCAL_DEV)
+    )
     log(INFO, f"Round {round_index + 1}/{total_rounds} at {client_name}: {metrics}")
 
     # "@round" names the x-axis and ".x_<N>" the coordinate — the "<label>[@<x_label>][.x_<V>]"

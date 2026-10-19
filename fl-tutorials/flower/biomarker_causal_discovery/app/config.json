@@ -4,6 +4,7 @@
   "FEDERATION": "pooled_statistics",
   "N_BOOTSTRAPS": 50,
   "MIN_SITE_ROWS": 30,
+  "MIN_CELL_COUNT": 5,
   "SEED": 42,
   "ALPHA": 0.05,
   "CI_TEST": "fisherz",

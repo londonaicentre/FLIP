@@ -102,7 +102,8 @@ model holds only graphs and counts. That is aggregate statistics rather than row
 formal guarantee and visible to the hub and the other sites. The NVFLARE README's "Privacy"
 section says exactly what is and is not protected, why the per-resample design it replaced was
 unsafe, and what a formal guarantee would add. Flower's per-update clip-and-noise mod is not that
-mechanism, which is why it is off rather than tuned.
+mechanism, which is why it is off rather than tuned. The ClientApp fetches the cohort once per run
+and keeps it in `context.state`, so a trust logs one row-level egress per run, not one per round.
 
 ## Data
 

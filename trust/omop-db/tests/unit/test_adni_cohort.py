@@ -38,6 +38,7 @@ from omop_db_tools.adni_cohort import (
     load_adni_cohort,
     main,
     read_cohort,
+    refuse_unless_local,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -226,6 +227,7 @@ class TestMain:
         calls: dict[str, object] = {}
 
         class FakeSettings:
+            OMOP_DB_HOST = "localhost"
             OMOP_DATABASE_URL = SecretStr("postgresql://omop-host:5434/omop")
 
         monkeypatch.setattr(adni_cohort, "get_settings", lambda: FakeSettings())
@@ -238,3 +240,35 @@ class TestMain:
         main(["--cohort", str(path), "--trust-index", "2", "--num-trusts", "2"])
         assert calls["engine"] == ("postgresql://omop-host:5434/omop", False)
         assert calls["load"] == (4, 2, 2)
+
+
+class TestLocalOnly:
+    """The loader refuses a trust that is not on this host, or a deployed environment, unless overridden."""
+
+    def test_local_host_and_no_prod_pass(self):
+        refuse_unless_local("localhost", {}, allow_remote=False)
+        refuse_unless_local("127.0.0.1", {"PROD": ""}, allow_remote=False)
+
+    def test_remote_host_is_refused_and_names_the_reason(self):
+        with pytest.raises(SystemExit, match="OMOP_DB_HOST='omop.stag.example' is not this host"):
+            refuse_unless_local("omop.stag.example", {}, allow_remote=False)
+
+    def test_prod_environment_is_refused(self):
+        with pytest.raises(SystemExit, match="PROD='stag'"):
+            refuse_unless_local("localhost", {"PROD": "stag"}, allow_remote=False)
+
+    def test_override_lets_it_through(self):
+        refuse_unless_local("omop.stag.example", {"PROD": "stag"}, allow_remote=True)
+
+    def test_main_checks_before_connecting(self, tmp_path: Path, cohort: pd.DataFrame, monkeypatch):
+        path = tmp_path / "dataframe.csv"
+        cohort.to_csv(path, index=False)
+
+        class RemoteSettings:
+            OMOP_DB_HOST = "omop.stag.example"
+            OMOP_DATABASE_URL = SecretStr("postgresql://omop.stag.example:5434/omop")
+
+        monkeypatch.setattr(adni_cohort, "get_settings", lambda: RemoteSettings())
+        monkeypatch.setattr(adni_cohort, "create_engine", lambda url, echo: pytest.fail("connected before the guard"))
+        with pytest.raises(SystemExit, match="not this host"):
+            main(["--cohort", str(path), "--trust-index", "1"])

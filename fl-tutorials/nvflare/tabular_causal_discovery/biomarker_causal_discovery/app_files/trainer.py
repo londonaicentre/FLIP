@@ -119,7 +119,13 @@ def main() -> None:
             round_index = int(input_model.current_round or 0)
             total_rounds = int(input_model.total_rounds or config.get("GLOBAL_ROUNDS", 2))
             target, weight, metrics = client_round(
-                decode(received_arrays), round_index, total_rounds, matrix, site_name, config
+                decode(received_arrays),
+                round_index,
+                total_rounds,
+                matrix,
+                site_name,
+                config,
+                local_dev=bool(FlipConstants.LOCAL_DEV),
             )
             encoded = encode(target)
             # DIFF relative to the received state: the server adds the weighted-mean diff to its
