@@ -1,0 +1,141 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The Snowflake (SPCS) shape of a FLIP trust node, beside helm/ and the compose files
+# (FLIP#1589). Infrastructure - roles, warehouse, pools, database, stages, image
+# repository - belongs to the Terraform root trust/deploy/terraform/snowflake (FLIP#1581);
+# this Makefile owns the node: images, secrets, specs and the services themselves.
+#
+# Every target that talks to Snowflake accepts DRY_RUN=true, which prints the SQL instead
+# of running it. That is not only a safety net: it is how the deploy path is tested, since
+# CI has no Snowflake account and no credentials.
+
+SNOWFLAKE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+REPO_ROOT := $(abspath $(SNOWFLAKE_DIR)/../../..)
+
+# Kit-file env token (ENV) from PROD, derived in one place for every FLIP Makefile that
+# reads PROD - including lza / lza-stag, whose kits are trust/.env.<CODE>.lza-prod and
+# .lza-stag. Included before anything that needs the kit file's name, as the Helm
+# Makefile does.
+include $(REPO_ROOT)/deploy/env_mode.mk
+
+KIT ?=
+KIT_ENV := $(ENV)
+KIT_FILE := $(REPO_ROOT)/trust/.env.$(KIT).$(KIT_ENV)
+
+# The snow CLI connection to act through. Default is the shared test account; an operator
+# deploying a real trust names their own. Never a credential: `snow connection add` holds
+# the key pair, outside this repo.
+SNOW_CONNECTION ?= flip-test
+SNOW ?= snow
+PYTHON ?= python3
+
+# Where the rendered specs land. One directory per trust and environment, so two trusts
+# synced from one workstation cannot overwrite each other's specs.
+RENDER_DIR := $(SNOWFLAKE_DIR)rendered/$(shell echo $(KIT) | tr 'a-z' 'A-Z').$(KIT_ENV)
+
+# Images mirrored into the account repository. GHCR is the source; the account repository
+# is what SPCS can pull from, and a digest recorded at mirror time is what the specs then
+# reference. linux/amd64 explicitly: SPCS runs amd64 only, and an arm64 workstation pulls
+# arm64 by default, which would push an image no compute pool can start.
+GHCR_ORG ?= ghcr.io/londonaicentre
+MIRROR_PLATFORM := linux/amd64
+# FL client image name follows the kit's backend (fl-client-nvflare / fl-client-flower).
+MIRROR_IMAGES ?= trust-api data-access-api imaging-api orthanc xnat-web xnat-db xnat-nginx xnat-dcm2niix
+
+DRY_RUN ?=
+ifeq ($(strip $(DRY_RUN)),true)
+RUN_SQL = cat
+SQL_MODE = (dry run - not executed)
+else
+RUN_SQL = $(SNOW) sql --stdin --connection $(SNOW_CONNECTION)
+SQL_MODE =
+endif
+
+.PHONY: help require-kit render mirror-images sync-kit up down suspend status selftest test clean
+
+help:
+	@echo "FLIP trust on Snowflake (SPCS) - trust/deploy/snowflake"
+	@echo ""
+	@echo "  make render        KIT=<CODE> PROD=<env>   Render one SPCS spec per service"
+	@echo "  make mirror-images KIT=<CODE> PROD=<env>   Mirror GHCR images into the account repository"
+	@echo "  make sync-kit      KIT=<CODE> PROD=<env>   Write SECRET objects, push FL kit + governance"
+	@echo "  make up            KIT=<CODE> PROD=<env>   CREATE OR ALTER SERVICE from the rendered specs"
+	@echo "  make down          KIT=<CODE> PROD=<env>   Drop every service"
+	@echo "  make suspend       KIT=<CODE> PROD=<env>   Suspend every service AND every compute pool"
+	@echo "  make status        KIT=<CODE> PROD=<env>   Service and compute-pool status"
+	@echo "  make selftest      KIT=<CODE> PROD=<env>   Placeholder self-test (real asserts: FLIP#1585)"
+	@echo "  make test                                  Spec and sync-kit guards (no account needed)"
+	@echo ""
+	@echo "  Add DRY_RUN=true to any Snowflake target to print the SQL instead of running it."
+	@echo "  SNOW_CONNECTION=$(SNOW_CONNECTION)"
+
+require-kit:
+	@if [ -z "$(strip $(KIT))" ]; then \
+		echo "❌ KIT is required - the trust CODE, e.g. make render KIT=GSTT PROD=stag"; \
+		exit 1; \
+	fi
+
+# ── Specs ────────────────────────────────────────────────────────────────────
+render: require-kit
+	@$(PYTHON) $(SNOWFLAKE_DIR)render_specs.py --kit $(KIT) --env $(KIT_ENV) --out-dir $(RENDER_DIR)
+
+# ── Images ───────────────────────────────────────────────────────────────────
+# Pull by tag from GHCR, retag into the account repository, push, and record the digest
+# the registry returned. The digest is what the rendered specs reference: a tag in the
+# account repository can be moved afterwards, a digest cannot, so this is the difference
+# between a reproducible deploy and one that silently changes under a re-push.
+mirror-images: require-kit
+	@$(PYTHON) $(SNOWFLAKE_DIR)mirror_images.py \
+		--kit $(KIT) --env $(KIT_ENV) \
+		--connection $(SNOW_CONNECTION) --snow $(SNOW) \
+		--ghcr-org $(GHCR_ORG) --platform $(MIRROR_PLATFORM) \
+		--images "$(MIRROR_IMAGES)" \
+		$(if $(filter true,$(DRY_RUN)),--dry-run,)
+
+# ── Secrets, FL kit, governance ──────────────────────────────────────────────
+sync-kit: require-kit
+	@$(PYTHON) $(SNOWFLAKE_DIR)sync_snowflake_kit.py \
+		--kit $(KIT) --env $(KIT_ENV) \
+		--connection $(SNOW_CONNECTION) --snow $(SNOW) \
+		$(if $(FL_KIT_DIR),--fl-kit-dir $(FL_KIT_DIR),) \
+		$(if $(filter true,$(DRY_RUN)),--dry-run,)
+
+# ── Services ─────────────────────────────────────────────────────────────────
+up: require-kit render
+	@echo "🚀 CREATE OR ALTER SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py up --dir $(RENDER_DIR) | $(RUN_SQL)
+
+down: require-kit
+	@echo "🛑 DROP SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py down --dir $(RENDER_DIR) | $(RUN_SQL)
+
+# Idle pools bill every node they hold, and a resource monitor does not cover them.
+suspend: require-kit
+	@echo "💤 Suspending services and compute pools for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py suspend --dir $(RENDER_DIR) | $(RUN_SQL)
+
+status: require-kit
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py status --dir $(RENDER_DIR) | $(RUN_SQL)
+
+selftest: require-kit
+	@echo "🧪 Self-test for $(KIT) ($(KIT_ENV)) $(SQL_MODE) - placeholder, real asserts in FLIP#1585"
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py selftest --dir $(RENDER_DIR) | $(RUN_SQL)
+
+# ── Guards ───────────────────────────────────────────────────────────────────
+# No Snowflake account, no credentials, no network: everything is asserted over rendered
+# specs and a fake `snow` binary.
+test:
+	@cd $(SNOWFLAKE_DIR) && uv run --no-project --with pytest --with "pyyaml==6.0.3" pytest tests/ -v
+
+clean:
+	@rm -rf $(SNOWFLAKE_DIR)rendered
+	@echo "✓ Removed rendered specs"
