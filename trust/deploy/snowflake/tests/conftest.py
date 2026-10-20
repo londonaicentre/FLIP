@@ -59,8 +59,8 @@ def kit() -> dict[str, str]:
         "TRUST_NAME": "Example Trust",
         "TRUST_CODE": CODE,
         "CENTRAL_HUB_API_URL": "https://hub.example.org",
-        "TRUST_API_KEY_HEADER": "Authorization",
-        "TRUST_INTERNAL_SERVICE_KEY_HEADER": "X-Trust-Internal-Service-Key",
+        "TRUST_API_KEY_HEADER": "Authorization",  # pragma: allowlist secret
+        "TRUST_INTERNAL_SERVICE_KEY_HEADER": "X-Trust-Internal-Service-Key",  # pragma: allowlist secret
         "POLL_INTERVAL_SECONDS": "5",
         "TRUST_LOG_LEVEL": "INFO",
         "COHORT_QUERY_THRESHOLD": "15",

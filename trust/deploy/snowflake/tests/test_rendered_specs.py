@@ -94,7 +94,7 @@ def test_secrets_are_object_references_not_literals(specs: dict) -> None:
             for entry in container.get("secrets", []):
                 assert set(entry) == {"snowflakeSecret", "envVarName", "secretKeyRef"}, name
                 assert entry["snowflakeSecret"]["objectName"].startswith("FLIP_TRUST_GSTT.APP."), name
-                assert entry["secretKeyRef"] == "secret_string", name
+                assert entry["secretKeyRef"] == "secret_string", name  # pragma: allowlist secret
 
 
 def test_fl_client_holds_no_aes_key(specs: dict) -> None:

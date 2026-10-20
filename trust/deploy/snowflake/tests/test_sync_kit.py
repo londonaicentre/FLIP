@@ -139,8 +139,8 @@ def test_secrets_are_altered_not_replaced(kit: dict) -> None:
     """CREATE OR REPLACE would drop every grant on the secret, and the next deploy's
     services would fail to start on a privilege error about an object that plainly
     exists. The IF NOT EXISTS + ALTER pair is idempotent and keeps the grants."""
-    statements, skipped = sync.secret_statements(sync.Names(CODE), kit)
-    assert skipped == []
+    statements = sync.secret_statements(sync.Names(CODE), kit)
+    assert sync.skipped_secrets(kit) == []
     joined = "\n".join(statements)
     assert "CREATE OR REPLACE SECRET" not in joined
     assert joined.count("CREATE SECRET IF NOT EXISTS") == len(SENTINELS)
@@ -150,7 +150,7 @@ def test_secrets_are_altered_not_replaced(kit: dict) -> None:
 
 
 def test_secret_objects_follow_the_naming_contract(kit: dict) -> None:
-    statements, _ = sync.secret_statements(sync.Names(CODE), kit)
+    statements = sync.secret_statements(sync.Names(CODE), kit)
     for secret in sync.SECRETS:
         assert f"FLIP_TRUST_{CODE}.APP.{secret}" in "\n".join(statements)
 
@@ -159,8 +159,8 @@ def test_a_kit_without_a_value_leaves_that_secret_alone(kit: dict) -> None:
     """A trust running no XNAT has no XNAT passwords, and nothing maps them."""
     partial = dict(kit)
     partial["ORTHANC_PASSWORD"] = ""
-    statements, skipped = sync.secret_statements(sync.Names(CODE), partial)
-    assert skipped == ["ORTHANC_PASSWORD"]
+    statements = sync.secret_statements(sync.Names(CODE), partial)
+    assert sync.skipped_secrets(partial) == ["ORTHANC_PASSWORD"]
     assert "ORTHANC_PASSWORD" not in "\n".join(statements)
 
 
@@ -169,7 +169,7 @@ def test_quote_in_a_value_cannot_break_out_of_the_literal(kit: dict) -> None:
     escapes inside single-quoted literals, so a trailing one would escape the closing
     quote and turn the rest of the statement into string data."""
     nasty = dict(kit, TRUST_API_KEY="a'; DROP DATABASE FLIP_TRUST_GSTT; --\\")
-    statements, _ = sync.secret_statements(sync.Names(CODE), nasty)
+    statements = sync.secret_statements(sync.Names(CODE), nasty)
     joined = "\n".join(statements)
     assert "DROP DATABASE" in joined  # present as data ...
     # ... inside one quoted literal, so it is never a statement of its own: the quote is
@@ -178,13 +178,32 @@ def test_quote_in_a_value_cannot_break_out_of_the_literal(kit: dict) -> None:
     assert not any(statement.lstrip().upper().startswith("DROP") for statement in statements)
 
 
-def test_redaction_covers_escaped_values(kit: dict) -> None:
+def test_redacted_statements_never_hold_a_value(kit: dict) -> None:
+    """The dry-run form is built from :data:`REDACTED`, not substituted afterwards, so no
+    spelling of a value (escaped or not) can survive into what is printed."""
     nasty = dict(kit, AES_KEY_BASE64="we'ird\\value")
-    statements, _ = sync.secret_statements(sync.Names(CODE), nasty)
-    redacted = "\n".join(sync.redact(statements, nasty))
-    assert "we'ird" not in redacted
+    redacted = "\n".join(sync.secret_statements(sync.Names(CODE), nasty, redacted=True))
+    for value in (nasty[var] for var in sync.SECRET_KIT_VAR.values()):
+        assert value not in redacted
     assert "we\\'ird" not in redacted
-    assert sync.REDACTED in redacted
+    assert redacted.count(sync.REDACTED) == len(sync.SECRETS)
+
+
+def test_a_failed_snow_call_does_not_echo_its_output(tmp_path: Path, kit: dict) -> None:
+    """``snow`` can quote the failing statement, and the statement carries the value."""
+    leaky = tmp_path / "snow"
+    leaky.write_text("#!/bin/sh\ncat >&2\nexit 3\n")
+    leaky.chmod(0o755)
+    statements = sync.secret_statements(sync.Names(CODE), kit)
+    try:
+        sync.run_sql(str(leaky), "flip-test", statements, dry_run=False)
+    except sync.SyncError as error:
+        message = str(error)
+    else:
+        raise AssertionError("a failing snow call must raise")
+    assert "exit 3" in message
+    for var in sync.SECRET_KIT_VAR.values():
+        assert kit[var] not in message
 
 
 def test_fl_kit_is_pushed_under_its_net_prefix(fake_snow, kit_file: Path, tmp_path: Path) -> None:

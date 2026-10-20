@@ -140,7 +140,7 @@ def _secrets(service: str, names: Names) -> list[dict[str, Any]]:
         {
             "snowflakeSecret": {"objectName": names.secret(secret)},
             "envVarName": env_var,
-            "secretKeyRef": "secret_string",
+            "secretKeyRef": "secret_string",  # pragma: allowlist secret
         }
         for secret, env_var in sorted(SECRET_MAP[service].items())
     ]
