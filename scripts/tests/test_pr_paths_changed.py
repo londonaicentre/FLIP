@@ -55,6 +55,7 @@ GATED_WORKFLOWS = (
     "test_trust_omop_db.yml",
     "test_trust_data_tools.yml",
     "local_auth_smoke.yml",
+    "test_docs_scripts.yml",
 )
 
 GATE_PATHS = ["flip-ui/**", ".github/workflows/test_flip_ui.yml"]

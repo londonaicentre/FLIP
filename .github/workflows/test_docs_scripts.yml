@@ -40,7 +40,29 @@ permissions:
   contents: read
 
 jobs:
+  # PRs into develop use the same path list as the push trigger; PRs into main
+  # always run through pr_paths_changed.yml's release-branch exception.
+  changes:
+    uses: ./.github/workflows/pr_paths_changed.yml
+    permissions:
+      contents: read
+      pull-requests: read
+    with:
+      paths: |
+        docs/scripts/**
+        docs/tests/**
+        docs/Makefile
+        docs/source/conf.py
+        docs/source/**/*.rst
+        flip-ui/test/cypress/docs/**
+        flip-ui/scripts/videos-to-gifs.sh
+        .github/workflows/test_docs_scripts.yml
+        .github/workflows/regenerate_docs_gifs.yml
+        .github/workflows/release.yml
+
   docs-scripts:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
 
     steps:
