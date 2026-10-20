@@ -301,8 +301,9 @@ def test_keycloak_backend_requires_its_urls_and_admin_secret():
     assert "KEYCLOAK_ADMIN_CLIENT_SECRET" in message
 
 
-def test_dev_settings_carry_working_keycloak_defaults():
+def test_dev_settings_carry_working_keycloak_defaults(monkeypatch):
     """Dev needs no Keycloak lines in its env file: the defaults match the compose service."""
+    monkeypatch.delenv("KEYCLOAK_PORT", raising=False)
     settings = DevSettings(AUTH_BACKEND="keycloak")
     assert settings.KEYCLOAK_URL == "http://keycloak:8080"
     assert settings.KEYCLOAK_PUBLIC_URL == "http://localhost:8180"
@@ -328,6 +329,27 @@ def test_keycloak_settings_tolerate_empty_strings():
     assert settings.KEYCLOAK_URL == "http://keycloak:8080"
     assert settings.KEYCLOAK_REALM == "flip"
     assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None
+
+
+@pytest.mark.parametrize(
+    ("port", "expected"),
+    [(None, "http://localhost:8180"), ("", "http://localhost:8180"), ("18180", "http://localhost:18180")],
+)
+def test_dev_keycloak_public_url_follows_keycloak_port(monkeypatch, port, expected):
+    """Unset, the public URL derives from KEYCLOAK_PORT as compose does, so a second instance signs in at its own."""
+    monkeypatch.delenv("KEYCLOAK_PUBLIC_URL", raising=False)
+    if port is None:
+        monkeypatch.delenv("KEYCLOAK_PORT", raising=False)
+    else:
+        monkeypatch.setenv("KEYCLOAK_PORT", port)
+    assert DevSettings(AUTH_BACKEND="keycloak").KEYCLOAK_PUBLIC_URL == expected
+    assert DevSettings(AUTH_BACKEND="keycloak", KEYCLOAK_PUBLIC_URL="").KEYCLOAK_PUBLIC_URL == expected
+
+
+def test_explicit_keycloak_public_url_beats_keycloak_port(monkeypatch):
+    monkeypatch.setenv("KEYCLOAK_PORT", "18180")
+    settings = DevSettings(AUTH_BACKEND="keycloak", KEYCLOAK_PUBLIC_URL="http://kc.example:9999")
+    assert settings.KEYCLOAK_PUBLIC_URL == "http://kc.example:9999"
 
 
 @pytest.mark.parametrize(
