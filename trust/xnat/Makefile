@@ -204,6 +204,13 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # rejects `-c` — otherwise counts zero and is reported as wrong ownership, which
 # sends the reader after the wrong fault. A missing directory still counts zero
 # and still fires the guard, now with stat naming the path it could not read.
+# `stat` with a GNU format: `-c` on Linux, `-f` on a BSD/macOS dev host (whose octal mode is %Lp).
+ifeq ($(shell stat -c %u / 2>/dev/null),)
+stat_fmt = stat -f '$(subst %a,%Lp,$(1))'
+else
+stat_fmt = stat -c '$(1)'
+endif
+
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
 	if [ "$$owned" != "$(or $(3),$(words $(XNAT_DATA_DIRS)))" ]; then \
@@ -456,7 +463,7 @@ upgrade-xnat: create-xnat-network
 	xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
 	case "$$xnat_endpoint" in \
 		ssh://*) $(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS)",ssh $$xnat_ctx,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
-		*) $(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
+		*) $(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
 	esac
 	$(MAKE) xnat-backup KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -490,7 +497,7 @@ xnat-backup:
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
 	     | docker run --rm -i -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
 	         mkdir -p /x/backups && cat > /x/$$dump \
-	         && zcat /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
+	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \
 	fi; \
@@ -604,7 +611,7 @@ xnat-reset:
 				sudo rm -rf $(XNAT_DATA_DIR); \
 				sudo mkdir -p $(XNAT_DATA_DIRS); \
 				sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
-				$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
+				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 				;; \
 		esac; \
 	else \
@@ -620,7 +627,7 @@ xnat-reset:
 		$$priv rm -rf $(XNAT_DATA_DIR); \
 		$$priv mkdir -p $(XNAT_DATA_DIRS); \
 		$$priv chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
-		$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
+		$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.

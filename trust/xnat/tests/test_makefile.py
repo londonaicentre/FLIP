@@ -150,9 +150,9 @@ class XnatImageRegistry(unittest.TestCase):
         result = run_target(
             "__registry",
             "-s",
-            "--eval=__registry: ; @echo registry=[$$DOCKER_REGISTRY]",
             *extra,
             subdir="trust/xnat",
+            probe="__registry: ; @echo registry=[$$DOCKER_REGISTRY]\n",
             kit=KIT + f"DOCKER_REGISTRY={self.ECR}\n",
             env=env,
         )
