@@ -295,7 +295,9 @@ def main() -> int:
         for object_name in object_names(names, present):
             print(f"      {object_name}")
         if absent:
-            print(f"  ⓘ  No kit value for: {', '.join(absent)} - left untouched.")
+            print("  ⓘ  No kit value for these objects, left untouched:")
+            for object_name in object_names(names, absent):
+                print(f"      {object_name}")
         print()
 
         if not args.no_fl_kit:
