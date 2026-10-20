@@ -100,7 +100,11 @@ register_one_kit() {
         return 0
     fi
 
-    log_info "Registering trust '$name' (kit $(basename "$kit_file")) via a one-off ECS task..."
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        log_info "Rotating keys for trust '$name' (kit $(basename "$kit_file")) via a one-off ECS task..."
+    else
+        log_info "Registering trust '$name' (kit $(basename "$kit_file")) via a one-off ECS task..."
+    fi
     # Mint an ephemeral SSM parameter for the kit handoff (S-1). The ECS
     # task PUTs the kit JSON here as a SecureString; we GET + DELETE it
     # after the task completes. This keeps the plaintext kit out of
@@ -111,9 +115,15 @@ register_one_kit() {
     ssm_param="/flip/trust-kits/ephemeral/${uuid}"
 
     local cmd_args
-    cmd_args=(uv run python -m flip_api.scripts.register_trust --name "$name" --out-ssm-parameter "$ssm_param")
-    [ -n "$code" ] && cmd_args+=(--code "$code")
-    [ -n "$region" ] && cmd_args+=(--region "$region")
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        # Rotation reissues the keys of an existing trust in place: same id, same code, same FL kit
+        # slot, only api_key_hash changes. The name identifies it; the code is not needed.
+        cmd_args=(uv run python -m flip_api.scripts.rotate_trust_keys --name "$name" --out-ssm-parameter "$ssm_param")
+    else
+        cmd_args=(uv run python -m flip_api.scripts.register_trust --name "$name" --out-ssm-parameter "$ssm_param")
+        [ -n "$code" ] && cmd_args+=(--code "$code")
+        [ -n "$region" ] && cmd_args+=(--region "$region")
+    fi
     local overrides
     # `--args -- ` is required: cmd_args contains dash-prefixed values (`-m`, `--name`, ...)
     # and jq scans the whole argv for options regardless of `--args`. The `--` end-of-options
@@ -183,6 +193,11 @@ register_one_kit() {
         [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
         return 1
     fi
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        log_error "Kit for '$name' came back without credentials — rotation FAILED."
+        [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
+        return 1
+    fi
     kit="$(echo "$kit" | jq -c '.[0]')"
     # Detect skip path: kit present but credentials absent (hub stores only hashes).
     if ! echo "$kit" | jq -e '.trust_api_key' >/dev/null 2>&1; then
@@ -201,6 +216,12 @@ register_one_kit() {
 # prod kit (trust/.env.*.<suffix>). .example templates are not matched by the
 # glob (they end in .example, not the env suffix).
 failed=0
+if [ "${ROTATE_KEYS:-0}" = "1" ] && [ -z "${KIT:-}" ]; then
+    # Never rotate every trust in one go: each rotation needs its kit delivered to that site
+    # before the old key can be retired, so the loop has to be one operator-chosen trust at a time.
+    log_error "ROTATE_KEYS=1 requires KIT=<CODE> — rotation is one trust at a time."
+    exit 1
+fi
 if [ -n "${KIT:-}" ]; then
     kit_file="$REPO_ROOT/trust/.env.${KIT}.${ENV_SUFFIX}"
     if [ ! -f "$kit_file" ]; then

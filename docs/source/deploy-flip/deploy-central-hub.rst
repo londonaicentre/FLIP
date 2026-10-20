@@ -384,6 +384,37 @@ file are kept.
      cp trust/.env.<CODE>.<suffix> trust/.env.<slot>
      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=<env>
 
+.. _deploy-central-hub-rotate-trust-keys:
+
+*************
+Rotating keys
+*************
+
+*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and internal service key are reissued in
+place, without re-registering it:
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> PROD=<env>
+
+``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot;
+only ``api_key_hash`` changes, in one transaction with a ``ROTATED`` entry in the trust audit log. The new
+credentials are written into ``trust/.env.<CODE>.<suffix>``.
+
+Two things to plan for:
+
+- **Deliver the kit before treating the old key as dead.** The hub accepts the new key from the moment rotation
+  commits, so the trust must restart from the updated kit to pick it up. Until it does, it still presents the old key
+  and is refused. Deliver the kit with ``deploy-trust`` or ``package-onprem-trust-kit``, restart the trust, then
+  confirm a task reaches it.
+- **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
+  caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
+  must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the
+  ``ALTER ROLE`` commands it prints.
+
+Rotating on a trust that has no FL kit slot fails with ``MissingKitSlotError`` rather than minting keys the trust
+could not use: reclaiming a slot is a separate operation.
+
 If registration fails
 =====================
 

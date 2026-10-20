@@ -48,9 +48,15 @@ class TrustAuditAction(StrEnum):
     Trust Admin (FLIP#1258); the row's ``subject_user_id`` names that user. They live in
     this registry rather than the user audit because the question an operator asks later —
     "who could decide for this trust, and since when" — is a question about the trust.
+
+    ROTATED is written by ``rotate_trust_keys`` when a trust's api and internal-service
+    keys are reissued in place (FLIP#1569). The trust row, its id and its FL kit slot
+    assignment are unchanged, so the audit row is the only record that the credentials
+    changed and when.
     """
 
     REGISTERED = "REGISTERED"
+    ROTATED = "ROTATED"
     DELETED = "DELETED"
     ADMIN_ADDED = "ADMIN_ADDED"
     ADMIN_REMOVED = "ADMIN_REMOVED"

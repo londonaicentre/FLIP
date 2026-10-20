@@ -1344,6 +1344,15 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	##   (no KIT)   → register every live trust/.env.*.<env> kit
 	@KIT=$(KIT) KIT_ENV_SUFFIX=$(KIT_ENV_SUFFIX) bash scripts/register-trusts.sh
 
+.PHONY: rotate-trust-keys
+rotate-trust-keys: ## Reissue one trust's api + internal-service keys in place (FLIP#1569)
+	## Same one-off ECS task + SSM handoff as register-trusts, different CLI. KIT=<CODE> is
+	## required and exactly one trust is rotated per run: the new kit must reach that site before
+	## its old key stops working, so this is never a fan-out. Writes the fresh credentials back
+	## into trust/.env.<CODE>.<env>; delivering it is `deploy-trust` or `package-onprem-trust-kit`.
+	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=KCL)"; exit 1; }
+	@KIT=$(KIT) ROTATE_KEYS=1 KIT_ENV_SUFFIX=$(KIT_ENV_SUFFIX) bash scripts/register-trusts.sh
+
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
 	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
