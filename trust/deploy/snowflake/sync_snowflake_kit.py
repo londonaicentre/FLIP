@@ -91,14 +91,14 @@ def object_names(names: Names, entries: list[str]) -> list[str]:
     return [names.secret(entry) for entry in entries]
 
 
-def skipped_secrets(kit: dict[str, str]) -> list[str]:
-    """The secrets the kit carries no real value for.
+def absent_kit_entries(kit: dict[str, str]) -> list[str]:
+    """The kit entries with no real value (identifiers from :data:`SECRETS`, not values).
 
     A skipped secret is not an error: a trust running no XNAT has no XNAT passwords, and
     the services that would map it are not deployed. Returns names from :data:`SECRETS`
     only, never anything read from the kit, so the result is safe to print.
     """
-    return [secret for secret in SECRETS if is_placeholder(kit.get(SECRET_KIT_VAR[secret], ""))]
+    return [entry for entry in SECRETS if is_placeholder(kit.get(SECRET_KIT_VAR[entry], ""))]
 
 
 def _object_statements(names: Names, literals: dict[str, str]) -> list[str]:
@@ -121,7 +121,7 @@ def _object_statements(names: Names, literals: dict[str, str]) -> list[str]:
 
 def secret_statements(names: Names, kit: dict[str, str]) -> list[str]:
     """SQL carrying the real values. Executed only, never printed."""
-    skipped = set(skipped_secrets(kit))
+    skipped = set(absent_kit_entries(kit))
     return _object_statements(
         names, {entry: sql_literal(kit[SECRET_KIT_VAR[entry]]) for entry in SECRETS if entry not in skipped}
     )
@@ -284,7 +284,7 @@ def main() -> int:
         print("   These come from registration + the Hub-shared block.")
         return 1
 
-    absent = skipped_secrets(kit)
+    absent = absent_kit_entries(kit)
     present = [entry for entry in SECRETS if entry not in absent]
     try:
         if args.dry_run:

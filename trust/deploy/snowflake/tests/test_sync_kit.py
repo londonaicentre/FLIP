@@ -140,7 +140,7 @@ def test_secrets_are_altered_not_replaced(kit: dict) -> None:
     services would fail to start on a privilege error about an object that plainly
     exists. The IF NOT EXISTS + ALTER pair is idempotent and keeps the grants."""
     statements = sync.secret_statements(sync.Names(CODE), kit)
-    assert sync.skipped_secrets(kit) == []
+    assert sync.absent_kit_entries(kit) == []
     joined = "\n".join(statements)
     assert "CREATE OR REPLACE SECRET" not in joined
     assert joined.count("CREATE SECRET IF NOT EXISTS") == len(SENTINELS)
@@ -160,7 +160,7 @@ def test_a_kit_without_a_value_leaves_that_secret_alone(kit: dict) -> None:
     partial = dict(kit)
     partial["ORTHANC_PASSWORD"] = ""
     statements = sync.secret_statements(sync.Names(CODE), partial)
-    assert sync.skipped_secrets(partial) == ["ORTHANC_PASSWORD"]
+    assert sync.absent_kit_entries(partial) == ["ORTHANC_PASSWORD"]
     assert "ORTHANC_PASSWORD" not in "\n".join(statements)
 
 
@@ -182,7 +182,7 @@ def test_redacted_statements_never_hold_a_value(kit: dict) -> None:
     """The dry-run form is built from :data:`REDACTED`, not substituted afterwards, so no
     spelling of a value (escaped or not) can survive into what is printed."""
     nasty = dict(kit, AES_KEY_BASE64="we'ird\\value")
-    present = [e for e in sync.SECRETS if e not in sync.skipped_secrets(nasty)]
+    present = [e for e in sync.SECRETS if e not in sync.absent_kit_entries(nasty)]
     redacted = "\n".join(sync.redacted_statements(sync.Names(CODE), present))
     for value in (nasty[var] for var in sync.SECRET_KIT_VAR.values()):
         assert value not in redacted
