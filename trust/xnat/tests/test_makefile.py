@@ -173,5 +173,28 @@ class XnatImageRegistry(unittest.TestCase):
             assert image.startswith("xnat-"), image
 
 
+class UpXnatBuild(unittest.TestCase):
+    """`make up BUILD=true` builds the XNAT images from this checkout and deploys exactly those.
+
+    The swarm agent re-pulls a tag on every deploy and keeps a local image only when that pull
+    fails, so the build goes to the unpublished `dev` tag: tagged `stag`, it would be replaced
+    by the registry's `stag` and the stack would run images built from another commit.
+    """
+
+    def test_build_true_builds_then_deploys_the_local_tag(self):
+        out = dry_run("up-xnat", "BUILD=true", subdir="trust/xnat")
+        for image in ("xnat-web", "xnat-db", "xnat-nginx"):
+            assert f"{image}:dev " in out, f"{image} is not built at :dev:\n{out}"
+        assert "XNAT_TAG=dev" in out, out
+        assert '--resolve-image "never"' in out, out
+        # Built before the running stack is torn down, so a failed build leaves it up.
+        assert out.index("docker build") < out.index("down-xnat"), out
+
+    def test_default_up_xnat_builds_nothing_and_deploys_the_kit_tag(self):
+        out = dry_run("up-xnat", subdir="trust/xnat")
+        assert "docker build" not in out, out
+        assert "XNAT_TAG=sha-badcff1" in out, out
+
+
 if __name__ == "__main__":
     main()

@@ -530,7 +530,9 @@ make up BUILD=true     # rebuild the repo-built services from local source inste
 Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
 system packages, or a `Dockerfile` — those live in the image layer, so a plain
 `make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
-no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+no GHCR image). `BUILD=true` also builds `omop-db` and the XNAT images (the latter
+deployed at the local-only `:dev` tag, so the swarm cannot swap them for the registry's).
+Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
 compose with baked images and no bind-mounts.
 
 ## The contribution process

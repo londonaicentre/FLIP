@@ -111,12 +111,15 @@ make undeploy-trust-k8s    # Remove trust services from Kubernetes
 #### Dev image sourcing: pull-by-default
 
 In development (`PROD` unset), `make up` **pulls** the repo-built services
-(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`, `omop-db`) from GHCR
 rather than building them — they carry `image:` + `pull_policy: always` in the dev
 compose, with local `src/` bind-mounted on top so live reload still runs your
 working copy. Pass `BUILD=true` (e.g. `make up BUILD=true`) to rebuild from source
 instead — required after a dependency (`uv.lock`/`pyproject.toml`) or Dockerfile
-change, since those live in the image layer, not the mounted `src/`.
+change, since those live in the image layer, not the mounted `src/`. It also builds the
+XNAT images (`xnat-web`, `xnat-db`, `xnat-nginx`, via `make -C trust/xnat build`, which fetches
+the WAR and plugins) and deploys them at the unpublished `:dev` tag — the swarm agent re-pulls a
+tag on every deploy and would replace a local `:stag` build with the registry's.
 
 - **Prerequisite:** be logged into GHCR (`docker login ghcr.io`) and have the
   `${DOCKER_TAG}` tag published (dev defaults to `:stag`, the `develop` build).

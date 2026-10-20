@@ -69,6 +69,30 @@ def hub_only_networks() -> set[str]:
     return {names[key] for key in keys}
 
 
+def repo_built_services(compose: str) -> dict[str, str]:
+    """Each dev-compose service that runs a repo-built image, mapped to its service block."""
+    blocks = re.findall(r"^  ([\w-]+):\n((?:(?:    .*)?\n)+)", (REPO / compose).read_text(), re.MULTILINE)
+    return {
+        name: body
+        for name, body in blocks
+        if re.search(r"^    image: (?:ghcr\.io/londonaicentre/|\$\{DOCKER_REGISTRY\})", body, re.MULTILINE)
+    }
+
+
+class BuildTrue(unittest.TestCase):
+    """`make up BUILD=true` (`--build --pull missing`) rebuilds only services with a build: block."""
+
+    def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
+        services = {
+            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("trust/deploy/compose_trust.development.yml"),
+        }
+        assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
+        for name, body in services.items():
+            assert re.search(r"^    pull_policy: always$", body, re.MULTILINE), f"{name} lacks pull_policy: always"
+            assert re.search(r"^    build:$", body, re.MULTILINE), f"{name} has no build: for BUILD=true"
+
+
 class UpgradeOnpremTrust(unittest.TestCase):
     def test_upgrade_onprem_trust_is_gated_and_data_safe(self):
         out = dry_run("upgrade-onprem-trust", "TAG=v0.6.0", "YES=1", subdir=".")

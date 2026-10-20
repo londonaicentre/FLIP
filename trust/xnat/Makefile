@@ -76,6 +76,15 @@ ifneq ("$(wildcard $(KIT_FILE))","")
 export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(KIT_FILE))
 endif
 
+# BUILD=true (propagated from `make up BUILD=true`): up-xnat builds the XNAT images from this
+# checkout and deploys them. They go to the unpublished `dev` tag, not DOCKER_TAG: the swarm agent
+# re-pulls a tag on every deploy and keeps a local image only when that pull fails, so a local
+# `stag` build would be replaced by the registry's `stag` — built from another commit. Set after
+# the kit include so it also beats a kit's XNAT_TAG pin.
+ifeq ($(BUILD),true)
+XNAT_TAG := dev
+endif
+
 # INSTANCE_PREFIX for the per-instance trust network. FLIP_INSTANCE arrives already exported
 # by ../../deploy/instance.mk when trust/Makefile drives this sub-make; on the standalone
 # `make -C trust/xnat ...` path it must come from the environment, which
@@ -302,17 +311,17 @@ build:
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \
 		--build-arg XNAT_HOME=${XNAT_HOME} \
-		-t ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-web:${XNAT_TAG} \
 		xnat/
 	@echo "🐳 Building xnat-db image..."
 	docker build \
 		--build-arg PG_VERSION=${PG_VERSION} \
-		-t ${DOCKER_REGISTRY}xnat-db:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-db:${XNAT_TAG} \
 		postgres/
 	@echo "🐳 Building xnat-nginx image..."
 	docker build \
 		--build-arg NGINX_VERSION=${NGINX_VERSION} \
-		-t ${DOCKER_REGISTRY}xnat-nginx:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-nginx:${XNAT_TAG} \
 		nginx/
 	@echo "✅ XNAT Docker images built successfully!"
 
@@ -342,12 +351,16 @@ up:
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
+ifeq ($(BUILD),true)
+	$(MAKE) build
+endif
 ifdef XNAT_PLUGINS_FROM_HOST
 	$(MAKE) xnat-plugins-check
 endif
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
+	XNAT_TAG=$(XNAT_TAG) \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
 	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
@@ -391,7 +404,8 @@ endif
 # `xnat-configure`, neither of which consumes the value, and on each sub-make the
 # trust/xnat/tests suite spawns.
 XNAT_NODE_ARCH = $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
-XNAT_RESOLVE_IMAGE ?= $(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always)
+# BUILD=true deploys a local-only tag, so there is no registry digest to resolve.
+XNAT_RESOLVE_IMAGE ?= $(if $(filter true,$(BUILD)),never,$(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always))
 
 down:
 	@for f in ../.env.*.$(ENV); do \

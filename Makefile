@@ -105,7 +105,7 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
-# Default: repo-built services (flip-api + trust APIs + orthanc) carry
+# Default: repo-built services (flip-api + trust APIs + orthanc + omop-db) carry
 # `pull_policy: always` in the dev compose, so they always pull from GHCR on
 # their own. This flag only adds the global `--pull always` that keeps FL images
 # fresh — and it's dropped when DOCKER_FL_REGISTRY is empty (local `:dev` FL
@@ -116,6 +116,8 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 # `--build` forces the build; `--pull missing` overrides the per-service
 # `pull_policy: always` for this run so the fresh build isn't immediately
 # re-pulled away, while still fetching any absent FL/infra image.
+# BUILD reaches trust/ and trust/xnat/ through MAKEFLAGS: omop-db builds with the
+# trust compose, and up-xnat builds the XNAT images and deploys them at :dev.
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)

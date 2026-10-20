@@ -288,10 +288,9 @@ container.
 > (config/archive/build/cache/plugins), so `make up`'s XNAT configure step fails on both trusts
 > (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
 > from a branch whose images are not yet published, build the hardened images locally:
-> `make up BUILD=true` covers the compose-built services (including orthanc), and the XNAT stack
-> needs `make -C trust/xnat build DOCKER_REGISTRY= DOCKER_TAG=dev` followed by redeploying the
-> stack with the same `DOCKER_REGISTRY=`/`XNAT_TAG=dev` overrides so `docker stack deploy`
-> resolves the locally built image instead of the GHCR one.
+> `make up BUILD=true` covers the compose-built services (including orthanc and omop-db) and the
+> XNAT stack, which it builds and deploys at the local-only `:dev` tag so `docker stack deploy`
+> runs the locally built images instead of the GHCR ones.
 
 ### Docker Socket Isolation (XNAT Container Service)
 

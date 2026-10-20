@@ -171,9 +171,9 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-direc
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
-# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc)
-# carry `pull_policy: always` in compose_trust.development.yml, so they always
-# pull from GHCR on their own. This flag only adds the global `--pull always`
+# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc,
+# omop-db) carry `pull_policy: always` in compose_trust.development.yml, so they
+# always pull from GHCR on their own. This flag only adds the global `--pull always`
 # that keeps FL images fresh — dropped when DOCKER_FL_REGISTRY is empty (local
 # `:dev` FL images, e.g. flare-fl-client:dev), since docker can't pull an
 # unpublished manifest and `--pull always` would error.
@@ -182,6 +182,7 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-direc
 # `--build` forces the build; `--pull missing` overrides the per-service
 # `pull_policy: always` for this run so the fresh build isn't re-pulled away.
 # Propagated automatically from `make up BUILD=true` at the repo root.
+# up-trust's XNAT step builds and deploys the XNAT images too (trust/xnat/Makefile).
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
