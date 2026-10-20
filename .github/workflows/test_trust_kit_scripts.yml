@@ -65,6 +65,7 @@ on:
       - ".github/tests/**"
       - "tests/**"
       - "Makefile"
+      - "flip-api/Makefile"
       - "trust/Makefile"
       - "trust/xnat/Makefile"
   pull_request:

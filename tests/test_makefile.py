@@ -496,5 +496,28 @@ class HubProjectOwnerGuard(unittest.TestCase):
                 assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
 
 
+class GenerateInternalServiceKey(unittest.TestCase):
+    """The key lands in the env file the stack runs from, not always `.env.development` (FLIP#1603)."""
+
+    def env_file_arg(self, *extra: str) -> str:
+        out = dry_run("generate-internal-service-key", *extra, subdir=".")
+        line = next(line for line in out.splitlines() if "generate_internal_service_key" in line)
+        args = shlex.split(line)
+        return args[args.index("--env-file") + 1]
+
+    def test_it_follows_main_env_file(self):
+        assert self.env_file_arg().endswith("/.env.production")  # run_target pins PROD=true
+        assert self.env_file_arg("MAIN_ENV_FILE=.env.b.development").endswith("/.env.b.development")
+
+    def test_it_resolves_against_the_repo_root(self):
+        for extra in ((), ("ENV_FILE=.env.x",)):
+            path = Path(self.env_file_arg(*extra))
+            assert path.is_absolute(), path
+            assert path.parent.name != "flip-api", path
+
+    def test_an_explicit_env_file_wins(self):
+        assert self.env_file_arg("ENV_FILE=/abs/.env.x") == "/abs/.env.x"
+
+
 if __name__ == "__main__":
     main()

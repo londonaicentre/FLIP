@@ -585,8 +585,10 @@ reset-keycloak: _check-compose-project-owner
 seed-demo-projects:
 	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
+# The key goes into the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE),
+# made absolute here because the sub-make runs in flip-api/ (FLIP#1603).
 generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
+	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE))) $(if $(FORCE),FORCE=$(FORCE))
 
 # Poll flip-api /api/health before registering. The entrypoint seeds the DB —
 # including the FL kit-slot pool that register_trust claims from — *before* the
