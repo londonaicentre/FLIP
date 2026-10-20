@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from make_dry_run import REPO, assert_data_safe, dry_run, main  # noqa: E402
+from make_dry_run import REPO, assert_data_safe, dry_run, main, run_target  # noqa: E402
 
 HUB_ONLY_SERVICES = {"flip-db", "flip-api"}  # what `make central-hub` starts (flip-api/Makefile `up`)
 
@@ -494,6 +494,51 @@ class HubProjectOwnerGuard(unittest.TestCase):
         for target in sorted(OWNER_GUARDED_TARGETS):
             with self.subTest(target=target):
                 assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
+
+
+class BuildFl(unittest.TestCase):
+    """`make build-fl` tags the whole FL image chain with DOCKER_FL_TAG from the command line, else :dev (FLIP#1605).
+
+    `:dev` is global to the Docker daemon, so an isolated instance building with its own tag must not
+    overwrite the images other stacks on the host run. The env file's DOCKER_FL_TAG (the GHCR pull tag,
+    exported into the backend Makefile's environment) is not a build tag.
+    """
+
+    COMPOSE_FILES = {
+        "nvflare": ["compose.dev.yml"],
+        "flower": ["compose.dev.yml", "compose.secure.yml"],
+    }
+
+    def build_lines(self, backend: str, *extra: str) -> list[str]:
+        env = {"DOCKER_FL_TAG": "stag"}  # what the env file exports into the backend Makefile
+        out = run_target("build-fl", f"FL_BACKEND={backend}", *extra, subdir=".", dry=True, env=env)
+        assert out.returncode == 0, out.stdout + out.stderr
+        lines = [line for line in out.stdout.splitlines() if "docker compose" in line and " build " in line]
+        assert len(lines) == 2, out.stdout  # fl-base, then the images built FROM it
+        return lines
+
+    def test_default_tag_stays_dev(self):
+        for backend in self.COMPOSE_FILES:
+            for line in self.build_lines(backend):
+                assert "DOCKER_FL_TAG=dev " in line, line
+
+    def test_command_line_tag_reaches_every_build(self):
+        for backend in self.COMPOSE_FILES:
+            for line in self.build_lines(backend, "DOCKER_FL_TAG=rc-check"):
+                assert "DOCKER_FL_TAG=rc-check " in line, line
+
+    def test_compose_images_and_base_follow_the_tag(self):
+        for backend, files in self.COMPOSE_FILES.items():
+            for name in files:
+                text = (REPO / "fl-services" / backend / name).read_text()
+                images = re.findall(r"^\s+image: ((?:flare|flower)-\S+)", text, re.M)
+                bases = re.findall(r"^\s+BASE_REF: (\S+)", text, re.M)
+                assert images, name
+                assert bases, name
+                for ref in images:
+                    assert ref.endswith(":${DOCKER_FL_TAG:-dev}"), f"{backend}/{name}: {ref}"
+                for ref in bases:
+                    assert ref.endswith(":${DOCKER_FL_TAG:-dev}}"), f"{backend}/{name}: {ref}"
 
 
 if __name__ == "__main__":

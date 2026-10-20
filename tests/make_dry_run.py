@@ -103,6 +103,8 @@ def run_target(
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "fl-services/flower/Makefile",
+            "fl-services/nvflare/Makefile",
             "trust/Makefile",
             "trust/xnat/Makefile",
         ):

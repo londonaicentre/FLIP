@@ -34,8 +34,8 @@ include $(REPO_ROOT)/deploy/fl_backend.mk
 # host user) stay writable. compose reads ${DOCKER_GID} in each service's group_add.
 export DOCKER_GID := $(shell id -g)
 
-DEV_COMPOSE      := docker compose -f $(REPO_ROOT)/fl-services/flower/compose.dev.yml
-SECURE_COMPOSE   := docker compose -f $(REPO_ROOT)/fl-services/flower/compose.secure.yml
+DEV_COMPOSE      := DOCKER_FL_TAG=$(FL_BUILD_TAG) docker compose -f $(REPO_ROOT)/fl-services/flower/compose.dev.yml
+SECURE_COMPOSE   := DOCKER_FL_TAG=$(FL_BUILD_TAG) docker compose -f $(REPO_ROOT)/fl-services/flower/compose.secure.yml
 PROVISION_SCRIPT := $(REPO_ROOT)/fl-services/flower/provision/scripts/generate-tls-certificates.sh
 LOCAL_DEV        ?= false
 NET_NUMBER       ?= 1
@@ -46,12 +46,12 @@ export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 .PHONY: build provision upload-creds-to-s3 generate-tls-certificates-net-1 generate-tls-certificates-net-2 \
         up up-secure down submit _ensure-dev-dirs
 
-# Build the flower-* :dev images. flwr-base builds first (own invocation) — a plain
+# Build the flower-* images, tagged $(FL_BUILD_TAG) (:dev unless DOCKER_FL_TAG is given). flwr-base builds first (own invocation) — a plain
 # FROM flower-fl-base in the derived Dockerfiles is invisible to Compose's build graph.
 build:
-	@echo "🛠️  Building flower-fl-base:dev (LOCAL_DEV=$(LOCAL_DEV))..."
+	@echo "🛠️  Building flower-fl-base:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
 	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build flwr-base
-	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:dev..."
+	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:$(FL_BUILD_TAG)..."
 	$(DEV_COMPOSE) build fl-api superlink supernode-1
 
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of

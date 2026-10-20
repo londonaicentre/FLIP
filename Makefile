@@ -133,7 +133,8 @@ build:
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
 
-# Build the FLARE FL service images locally, tagged :dev, for iterating on fl-services/
+# Build the FL service images locally, tagged :dev (or DOCKER_FL_TAG given on the command
+# line — FLIP#1605: :dev is daemon-wide, so an isolated instance builds its own tag), for iterating on fl-services/
 # or the flip-utils `flip` package before pushing. The deploy compose pulls FL images from
 # GHCR (DOCKER_FL_TAG), so they are NOT built by `make build`; this uses the build defs in
 # fl-services/<backend>/compose.dev.yml. fl-base must build first, in its own invocation: a plain
@@ -148,7 +149,7 @@ build:
 # deployments are tested: make -C fl-services/<backend> {build,provision,up,down,submit}.
 build-fl:
 	@$(MAKE) -C fl-services/$(FL_BACKEND) build LOCAL_DEV=$(LOCAL_DEV)
-	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
+	@echo "✅ FL :$(FL_BUILD_TAG) images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=$(FL_BUILD_TAG)"
 
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
