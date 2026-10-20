@@ -289,7 +289,7 @@ container.
 > (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
 > from a branch whose images are not yet published, build the hardened images locally:
 > `make up BUILD=true` covers the compose-built services (including orthanc and omop-db) and the
-> XNAT stack, which it builds and deploys at the local-only `:dev` tag so `docker stack deploy`
+> XNAT stack, which it builds and deploys at the local-only `:dev` tag (or a command-line `XNAT_TAG`) so `docker stack deploy`
 > runs the locally built images instead of the GHCR ones.
 
 ### Docker Socket Isolation (XNAT Container Service)

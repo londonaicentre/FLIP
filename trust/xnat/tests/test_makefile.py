@@ -190,6 +190,20 @@ class UpXnatBuild(unittest.TestCase):
         # Built before the running stack is torn down, so a failed build leaves it up.
         assert out.index("docker build") < out.index("down-xnat"), out
 
+    def test_a_command_line_xnat_tag_names_the_build(self):
+        """Tags are daemon-wide: a second stack on the host (a release check) keeps off the shared :dev."""
+        out = dry_run("up-xnat", "BUILD=true", "XNAT_TAG=rel0130", subdir="trust/xnat")
+        for image in ("xnat-web", "xnat-db", "xnat-nginx"):
+            assert f"{image}:rel0130 " in out, f"{image} is not built at :rel0130:\n{out}"
+        assert "XNAT_TAG=rel0130" in out, out
+        assert ":dev" not in out, out
+        assert '--resolve-image "never"' in out, out
+
+    def test_a_kit_xnat_tag_is_a_pull_pin_not_a_build_tag(self):
+        out = dry_run("up-xnat", "BUILD=true", subdir="trust/xnat", kit=KIT + "XNAT_TAG=stag\n")
+        assert "xnat-web:dev " in out, out
+        assert "XNAT_TAG=dev" in out, out
+
     def test_default_up_xnat_builds_nothing_and_deploys_the_kit_tag(self):
         out = dry_run("up-xnat", subdir="trust/xnat")
         assert "docker build" not in out, out

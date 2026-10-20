@@ -119,7 +119,9 @@ instead — required after a dependency (`uv.lock`/`pyproject.toml`) or Dockerfi
 change, since those live in the image layer, not the mounted `src/`. It also builds the
 XNAT images (`xnat-web`, `xnat-db`, `xnat-nginx`, via `make -C trust/xnat build`, which fetches
 the WAR and plugins) and deploys them at the unpublished `:dev` tag — the swarm agent re-pulls a
-tag on every deploy and would replace a local `:stag` build with the registry's.
+tag on every deploy and would replace a local `:stag` build with the registry's. Tags are
+daemon-wide, so a second stack on the host (a release check) passes its own: `XNAT_TAG=<tag>` on
+the command line (e.g. `make up BUILD=true XNAT_TAG=rel0130`).
 
 - **Prerequisite:** be logged into GHCR (`docker login ghcr.io`) and have the
   `${DOCKER_TAG}` tag published (dev defaults to `:stag`, the `develop` build).

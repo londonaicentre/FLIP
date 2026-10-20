@@ -77,10 +77,13 @@ export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(KIT_
 endif
 
 # BUILD=true (propagated from `make up BUILD=true`): up-xnat builds the XNAT images from this
-# checkout and deploys them. They go to the unpublished `dev` tag, not DOCKER_TAG: the swarm agent
-# re-pulls a tag on every deploy and keeps a local image only when that pull fails, so a local
-# `stag` build would be replaced by the registry's `stag` — built from another commit. Set after
-# the kit include so it also beats a kit's XNAT_TAG pin.
+# checkout and deploys them, at an unpublished tag rather than DOCKER_TAG: the swarm agent re-pulls
+# a tag on every deploy and keeps a local image only when that pull fails, so a local `stag` build
+# would be replaced by the registry's `stag` — built from another commit. The tag is `dev`, or
+# XNAT_TAG when given on the command line (a command-line value beats this assignment): tags are
+# daemon-wide, so a second stack on the host (FLIP_INSTANCE, a release check) passes its own, e.g.
+# `make up BUILD=true XNAT_TAG=rel0130`. An XNAT_TAG from the kit or the environment is a pull
+# pin, not a build tag, and is ignored here — this is set after the kit include for that reason.
 ifeq ($(BUILD),true)
 XNAT_TAG := dev
 endif

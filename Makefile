@@ -117,7 +117,8 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 # `pull_policy: always` for this run so the fresh build isn't immediately
 # re-pulled away, while still fetching any absent FL/infra image.
 # BUILD reaches trust/ and trust/xnat/ through MAKEFLAGS: omop-db builds with the
-# trust compose, and up-xnat builds the XNAT images and deploys them at :dev.
+# trust compose, and up-xnat builds the XNAT images and deploys them at :dev
+# (or a command-line XNAT_TAG).
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
