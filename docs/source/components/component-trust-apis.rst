@@ -272,6 +272,8 @@ Disclosure threshold
   smaller categories are folded into *Other*.
 - Both row-level endpoints refuse a cohort with fewer distinct patients than the threshold. They use one fixed
   message, so a below-threshold cohort looks the same as an empty one.
+- The FL client is given the same value, so an app that releases site-level statistics instead of model weights
+  (the biomarker causal-discovery tutorial) refuses below it as well.
 - The hub cannot change it. A Trust's optional **governance document** can raise it, never lower it, and can
   also deny these routes for chosen projects; a denial looks the same as a below-threshold cohort. See the
   :gh:`Trust README <trust/README.md#trust-governance-policy-optional>`.

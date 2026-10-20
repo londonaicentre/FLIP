@@ -299,11 +299,12 @@ therefore refuses to release when any discrete column has a level below `MIN_CEL
 (5, raisable in config, never lowerable), the small-cell rule of statistical disclosure control.
 The hub, the FL server and every other site see the released statistics in the clear — FLIP has
 no secure aggregation — and nothing is noised. The final model a researcher downloads holds only
-the bootstrap graphs and the row counts. Voting mode releases 0/1 decisions per edge, bootstrap
-and layer and no statistics, but on resamples whose indices are public; its leakage has **not**
-been analysed, so off the simulator it runs only where the trust sets
-`FLIP_CAUSAL_ALLOW_LAYER_VOTING=1` in its FL client environment — a researcher's `config.json`
-cannot switch it on.
+the bootstrap graphs and the row counts, because round 2 consumes the statistics and zeroes them;
+a site therefore refuses a job with `GLOBAL_ROUNDS` of 1, whose result would be the statistics
+themselves, and a job the hub stops after its first round still leaves them in that run's state.
+Voting mode releases 0/1 decisions per edge, bootstrap and layer and no statistics, but on resamples
+whose indices are public; its leakage has **not** been analysed, so it runs on the simulator only.
+A deployed FL client has no switch for it, and a researcher's `config.json` cannot turn it on.
 
 **Why not one statistic per bootstrap.** An earlier version of this tutorial sent a mean and a
 second-moment matrix for *each* of the 50 resamples, with resample indices drawn from a seed in
@@ -316,10 +317,12 @@ the actual rows, and the frequencies differ from the earlier runs by a few hundr
 
 **Floors and what is still unprotected.** A site refuses to release its statistics below 30
 complete rows. That floor is a constant in the module; `MIN_SITE_ROWS` in `config.json` can raise it
-and never lower it, and the trust raises it further from its own FL client environment
-(`FL_SITE_MIN_ROWS`, or `COHORT_QUERY_THRESHOLD` where the trust forwards it to the client). The
-trust's cohort threshold on its own does not bound this count: it is applied before incomplete rows
-are dropped. Refusals carry no count — both backends forward a client's exception text to the hub.
+and never lower it, and the trust raises it further through its own disclosure floor: the kit's
+`COHORT_QUERY_THRESHOLD`, which the trust compose files and the Helm chart export to the FL client
+as well as to the data-access-api. That threshold on its own does not bound this count — it is
+applied before incomplete rows are dropped — which is why the module reads it again here. Refusals
+name neither the count nor, for a small cell, the column: both backends forward a client's exception
+text to the hub.
 In pooled mode a researcher's `N_BOOTSTRAPS` and `SEED` change nothing a site releases; in voting
 mode they do, which is one reason that mode is gated. What remains unprotected is the one covariance
 per site itself: with two sites, each can subtract its own from the pooled one and read the
@@ -349,7 +352,7 @@ installs.
 
 **On the platform:** upload `app_files/` as a `standard` job with imaging **off**
 (`has_imaging=false`; the cohort is tabular), paste `query.sql` as the cohort query, and set
-`GLOBAL_ROUNDS` in `config.json` to the mode's round count. The result bundle's
+`GLOBAL_ROUNDS` in `config.json` to 2 (a site refuses a one-round pooled job, see Privacy). The result bundle's
 `FL_global_model.pt` goes through `summarise_results.py` on your machine.
 
 ## Honest caveats
@@ -362,8 +365,8 @@ installs.
   mode, whose approximations are its own.
 - The pooled mode's bootstrap is parametric (drawn from the pooled correlation under the Gaussian
   model), not a resample of the rows; the frequencies are a stability measure under that model.
-- The sites' stratified bootstrap is not the centralised analysis's whole-cohort bootstrap; with
-  very unequal sites the frequencies differ slightly.
+- In voting mode the sites' stratified bootstrap is not the centralised analysis's whole-cohort
+  bootstrap; with very unequal sites the frequencies differ slightly.
 - The reference run reproduces the centralised analysis's graph from the same 560 participants,
   so agreement between the two is a check of the federation machinery, not independent evidence
   about Alzheimer's disease.

@@ -125,6 +125,9 @@ services:
       - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
       - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
       - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+      # The trust's disclosure floor, the same COHORT_QUERY_THRESHOLD data-access-api enforces, so an
+      # app that releases site-level statistics (the causal-discovery tutorial) can refuse below it.
+      - COHORT_QUERY_THRESHOLD=${COHORT_QUERY_THRESHOLD:-10}
       # The governance document's [fl_privacy.nvflare] section (FLIP#1259), extracted into
       # this client's kit local/ dir by fl-governance-init — never the whole document. The
       # same filter as the three variables above: set it in one place or the other, since
@@ -164,6 +167,7 @@ services:
   #     - FL_SITE_PRIVACY_POLICY=${FL_SITE_PRIVACY_POLICY:-}
   #     - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
   #     - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
+  #     - COHORT_QUERY_THRESHOLD=${COHORT_QUERY_THRESHOLD:-10}
   #   shm_size: '8gb'
   #   # GPU passthrough: add fl-client-net-2 to compose_trust.production.gpu.yml when enabling this net
 

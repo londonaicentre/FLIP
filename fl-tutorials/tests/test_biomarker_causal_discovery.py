@@ -105,14 +105,19 @@ def sample_scm(n: int, seed: int, age_shift: float = 0.0) -> pd.DataFrame:
     )
 
 
-def fedavg(ff, config: dict, sites: dict[str, np.ndarray], total_rounds: int) -> dict[str, np.ndarray]:
-    """The platform's aggregation, emulated: a weight-weighted mean of every site's encoded target."""
+def fedavg(
+    ff, config: dict, sites: dict[str, np.ndarray], total_rounds: int, stop_after: int | None = None
+) -> dict[str, np.ndarray]:
+    """The platform's aggregation, emulated: a weight-weighted mean of every site's encoded target.
+
+    ``stop_after`` plays the hub stopping a ``total_rounds`` job early, after that many rounds.
+    """
     encoded = ff.encode(ff.empty_state(config))
-    for round_index in range(total_rounds):
+    for round_index in range(total_rounds if stop_after is None else stop_after):
         targets, weights = [], []
         for site_name, matrix in sites.items():
             target, weight, _ = ff.client_round(
-                ff.decode(encoded), round_index, total_rounds, matrix, site_name, config
+                ff.decode(encoded), round_index, total_rounds, matrix, site_name, config, local_dev=True
             )
             targets.append(ff.encode(target))
             weights.append(float(weight))
@@ -192,8 +197,9 @@ def test_the_row_floor_is_the_hard_floor_raised_by_config_or_the_trust(ff, confi
     assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 1}, env={}) == ff.HARD_MIN_SITE_ROWS  # config cannot lower it
     assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}, env={}) == 80
     assert ff.site_row_floor(config, env={"COHORT_QUERY_THRESHOLD": "100"}) == 100  # the trust raises it
-    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}, env={"FL_SITE_MIN_ROWS": "60"}) == 80
-    assert ff.site_row_floor(config, env={"FL_SITE_MIN_ROWS": "junk"}) == ff.HARD_MIN_SITE_ROWS
+    assert ff.site_row_floor({**config, "MIN_SITE_ROWS": 80}, env={"COHORT_QUERY_THRESHOLD": "60"}) == 80
+    assert ff.site_row_floor(config, env={"COHORT_QUERY_THRESHOLD": "junk"}) == ff.HARD_MIN_SITE_ROWS
+    assert ff.site_row_floor(config, env={"COHORT_QUERY_THRESHOLD": " "}) == ff.HARD_MIN_SITE_ROWS
 
 
 def test_a_small_cell_in_a_discrete_column_blocks_the_release(ff, config):
@@ -203,24 +209,34 @@ def test_a_small_cell_in_a_discrete_column_blocks_the_release(ff, config):
     matrix[:, b] = 0.0
     matrix[:2, b] = 1.0  # two rows in one level: their moments would publish that pair
     assert ff.small_cells(matrix, config) == [b]
-    with pytest.raises(ValueError, match="b_root") as refused:
+    with pytest.raises(ValueError, match="discrete variable") as refused:
         ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config)
     assert "2 " not in str(refused.value)
+    assert "b_root" not in str(refused.value)  # neither the count nor the column reaches the hub
     assert ff.small_cells(matrix, {**config, "MIN_CELL_COUNT": 1}) == [b]  # config cannot lower the floor
     matrix[:6, b] = 1.0  # six rows: clears the default floor of five ...
     assert ff.small_cells(matrix, config) == []
     assert ff.small_cells(matrix, {**config, "MIN_CELL_COUNT": 8}) == [b]  # ... but not a raised one
 
 
-def test_layer_voting_needs_the_simulator_or_the_trusts_opt_in(ff, config, two_sites):
+def test_layer_voting_runs_on_the_simulator_only(ff, config, two_sites):
     voting = {**config, "FEDERATION": "layer_voting"}
     matrix = next(iter(two_sites.values()))
-    assert ff.layer_voting_allowed(True, env={})
-    assert not ff.layer_voting_allowed(False, env={})
-    assert ff.layer_voting_allowed(False, env={ff.LAYER_VOTING_OPT_IN_VAR: "1"})
+    assert ff.layer_voting_allowed(True)
+    assert not ff.layer_voting_allowed(False)
     with pytest.raises(ValueError, match="experimental"):
         ff.client_round(ff.empty_state(voting), 0, 6, matrix, "site-1", voting, local_dev=False)
+    with pytest.raises(ValueError, match="experimental"):
+        ff.client_round(ff.empty_state(voting), 0, 6, matrix, "site-1", voting)  # the default is the deployed answer
     ff.client_round(ff.empty_state(voting), 0, 6, matrix, "site-1", voting, local_dev=True)
+
+
+def test_pooled_mode_refuses_a_one_round_job(ff, config, two_sites):
+    matrix = next(iter(two_sites.values()))
+    with pytest.raises(ValueError, match="GLOBAL_ROUNDS"):
+        ff.client_round(ff.empty_state(config), 0, 1, matrix, "site-1", config)
+    target, weight, _ = ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config)
+    assert weight == matrix.shape[0]
 
 
 def test_filter_bound_follows_a_stricter_site_policy(ff, monkeypatch):
@@ -385,8 +401,8 @@ def test_the_final_model_carries_graphs_and_counts_but_no_statistics(ff, config,
     assert ff.recover_site_counts(final["site_counts"], True)[0] == sum(len(m) for m in two_sites.values())
     assert not np.any(final["stats_mean"])
     assert not np.any(final["stats_moment"])
-    # ... whereas after round one the pooled statistics are, by design, what the state holds.
-    after_round_one = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=1)
+    # ... whereas a two-round job the hub stops after round one holds, by design, the pooled statistics.
+    after_round_one = fedavg(ff, {**config, "N_BOOTSTRAPS": 6}, two_sites, total_rounds=2, stop_after=1)
     assert np.any(after_round_one["stats_moment"])
 
 
@@ -406,6 +422,26 @@ def test_every_site_computes_the_same_pag_so_averaging_is_exact(ff, config, two_
         ff.client_round(ff.decode(pooled), 1, 2, matrix, name, config)[0]["pag"] for name, matrix in two_sites.items()
     ]
     assert np.array_equal(pags[0], pags[1])
+
+
+def test_a_variable_constant_across_the_pooled_cohort_is_refused_not_isolated(ff, config, two_sites):
+    """The parametric bootstrap would draw pure noise for it and the graph would show it unconnected."""
+    b = VARIABLES.index("b_root")
+    sites = {name: matrix.copy() for name, matrix in two_sites.items()}
+    for matrix in sites.values():
+        matrix[:, b] = 1.0  # the same single level at every site clears the small-cell rule
+    encoded = ff.encode(ff.empty_state(config))
+    targets, weights = [], []
+    for name, matrix in sites.items():
+        t, w, _ = ff.client_round(ff.decode(encoded), 0, 2, matrix, name, config)
+        targets.append(ff.encode(t))
+        weights.append(w)
+    pooled = {
+        k: sum(w * t[k].astype(np.float64) for w, t in zip(weights, targets, strict=True)) / sum(weights)
+        for k in ff.STATE_KEYS
+    }
+    with pytest.raises(ValueError, match="constant across the pooled cohort.*b_root"):
+        ff.client_round(ff.decode(pooled), 1, 2, next(iter(sites.values())), "site-1", config)
 
 
 # --- summaries and bookkeeping ------------------------------------------------------------

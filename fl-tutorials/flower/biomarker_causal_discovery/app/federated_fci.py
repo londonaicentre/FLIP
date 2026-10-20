@@ -138,23 +138,20 @@ ENCODING_SCALE = 1e-5
 PERCENTILE_CLIP = 0.01
 #: No site releases its statistics for fewer complete rows than this, whatever the researcher's
 #: config.json says (``MIN_SITE_ROWS`` there can only raise it). A trust raises it further through
-#: :data:`SITE_FLOOR_VARS` in the FL client's environment. With 11 numbers per row and p + p² = 132
+#: :data:`SITE_FLOOR_VAR` in the FL client's environment. With 11 numbers per row and p + p² = 132
 #: released, a floor of 30 keeps the released system well under-determined; the small-cell rule
 #: below covers the discrete columns, where a moment is an exact count.
 HARD_MIN_SITE_ROWS = 30
-#: Environment variables (the trust's FL client environment, which the researcher cannot edit) that
-#: raise the row floor; the first one set wins. COHORT_QUERY_THRESHOLD is the trust's disclosure floor
-#: for cohort egress; it is read here when the trust forwards it to the FL client.
-SITE_FLOOR_VARS = ("FL_SITE_MIN_ROWS", "COHORT_QUERY_THRESHOLD")
+#: The trust's own disclosure floor (its kit file's ``COHORT_QUERY_THRESHOLD``, the same value its
+#: data-access-api refuses cohorts below), which the trust compose files and the Helm chart export to
+#: the FL client as well. The researcher cannot edit the client's environment, so this can only raise
+#: the floor above the constant and config.json.
+SITE_FLOOR_VAR = "COHORT_QUERY_THRESHOLD"
 #: A discrete column (three or fewer distinct values: sex, an allele count) releases, through its
 #: moments, the exact count of every level and the sum of every other variable over that level. A
 #: level with fewer rows than this is a small cell in the statistical-disclosure-control sense, and
 #: the site refuses to release rather than publish it. ``MIN_CELL_COUNT`` in config.json can only raise it.
 MIN_CELL_COUNT = 5
-#: ``layer_voting`` is experimental (its leakage is unanalysed: per-bootstrap 0/1 test outcomes on
-#: resamples whose indices are public). Off the simulator it runs only when the trust sets this in
-#: the FL client's environment — a researcher's config.json cannot switch it on.
-LAYER_VOTING_OPT_IN_VAR = "FLIP_CAUSAL_ALLOW_LAYER_VOTING"
 #: Slots in ``site_counts``. A site's slot is its index (Trust_1 → 0); a site whose name
 #: carries no number hashes into the table, with a small collision risk that only ever
 #: *under*-estimates the pooled sample size (a conservative test).
@@ -280,12 +277,12 @@ def site_row_floor(config: dict, env: dict | None = None) -> int:
     """Fewest complete rows a site releases statistics for: the hard floor, raised by config or the trust."""
     env = os.environ if env is None else env
     floor = max(HARD_MIN_SITE_ROWS, int(config.get("MIN_SITE_ROWS", 0)))
-    for var in SITE_FLOOR_VARS:
-        raw = env.get(var)
-        if raw:
-            with contextlib.suppress(ValueError):
-                floor = max(floor, int(float(raw)))
-            break
+    raw = (env.get(SITE_FLOOR_VAR) or "").strip()
+    if raw:
+        try:
+            floor = max(floor, int(float(raw)))
+        except ValueError:
+            logger.warning("%s=%r is not a number; the site floor stays at %d", SITE_FLOOR_VAR, raw, floor)
     return floor
 
 
@@ -305,10 +302,14 @@ def small_cells(matrix: np.ndarray, config: dict) -> list[int]:
     return offenders
 
 
-def layer_voting_allowed(local_dev: bool, env: dict | None = None) -> bool:
-    """Voting mode runs on the simulator, or where the trust opted in through its own environment."""
-    env = os.environ if env is None else env
-    return bool(local_dev) or env.get(LAYER_VOTING_OPT_IN_VAR, "").strip() in {"1", "true", "yes"}
+def layer_voting_allowed(local_dev: bool) -> bool:
+    """Voting mode runs on the simulator only, until its leakage has been analysed.
+
+    ``layer_voting`` releases per-bootstrap 0/1 test outcomes on resamples whose indices are public.
+    There is no opt-in: a deployed trust's FL client has no switch for it, and a researcher's
+    config.json cannot turn it on.
+    """
+    return bool(local_dev)
 
 
 # --- data ---------------------------------------------------------------------------------
@@ -731,12 +732,11 @@ def layer_step(
 
 
 def edge_frequencies(pags: np.ndarray, variables: Sequence[str]) -> list[dict]:
-    """How often each (source, mark, target) edge appears across the bootstrap PAGs.
+    """How often each edge type links each pair across the bootstrap PAGs, strongest first.
 
     Bootstrap frequency as confidence in a learned structural feature: Friedman, Goldszmidt &
     Wyner (UAI 1999). It is a stability measure under resampling, not a posterior probability.
     """
-    """How often each edge type links each pair across the bootstrap PAGs, strongest first."""
     pags = np.asarray(pags)
     n_boot, p, _ = pags.shape
     rows = []
@@ -800,14 +800,15 @@ def client_round(
     matrix: np.ndarray,
     site_name: str,
     config: dict,
-    local_dev: bool = True,
+    local_dev: bool = False,
 ) -> tuple[dict[str, np.ndarray], int, dict[str, float]]:
     """What this site sends back in global round ``round_index`` (0-based), and with what weight.
 
     Returns ``(target, weight, metrics)``: ``target`` is the decoded state the site wants the
     global state to *become* (each transport turns it into a full array or a diff as its
     backend expects), ``weight`` the aggregation weight (its sample size in pooled mode, one
-    vote in voting mode), and ``metrics`` the scalars to report for this round.
+    vote in voting mode), and ``metrics`` the scalars to report for this round. ``local_dev``
+    defaults to the deployed (restrictive) answer: a transport that forgets it gets the gates.
     """
     variables = list(config["VARIABLES"])
     mode = federation_mode(config)
@@ -820,9 +821,13 @@ def client_round(
         raise ValueError(f"site {site_name!r} holds too few complete rows for a conditional-independence test")
     if mode == "layer_voting" and not layer_voting_allowed(local_dev):
         raise ValueError(
-            "layer_voting is experimental (its leakage is unanalysed) and runs only on the simulator, or where "
-            f"the trust sets {LAYER_VOTING_OPT_IN_VAR}=1 in its FL client environment; use pooled_statistics"
+            "layer_voting is experimental (its leakage is unanalysed) and runs only on the simulator; "
+            "use pooled_statistics"
         )
+    if mode == "pooled_statistics" and int(total_rounds) < 2:
+        # Round 2 is where the pooled statistics are consumed and zeroed. With one round the job's
+        # result bundle would be the pooled mean and second-moment matrix themselves.
+        raise ValueError("pooled_statistics needs GLOBAL_ROUNDS of at least 2: one round would publish the statistics")
     slot = site_slot(site_name)
     b_total = n_bootstrap_slabs(config)
     stable_prob = float(config.get("STABLE_EDGE_PROB", 0.5))
@@ -841,11 +846,12 @@ def client_round(
                 )
             cells = small_cells(matrix, config)
             if cells:
-                names = ", ".join(variables[j] for j in cells)
-                logger.info("site %s: small cells in discrete column(s) %s", site_name, names)
+                # Which column, like the count, stays in the site's own log: naming it to the hub would
+                # say which level of a public summary this site holds almost none of.
+                logger.info("site %s: small cells in discrete column(s) %s", site_name, [variables[j] for j in cells])
                 raise ValueError(
-                    f"site {site_name!r} refuses to release its statistics: a discrete variable ({names}) has a "
-                    "level held by too few rows, and its moments would publish that cell"
+                    f"site {site_name!r} refuses to release its statistics: a discrete variable has a level held "
+                    "by too few rows, and its moments would publish that cell"
                 )
             target = empty_state(config)
             target["stats_mean"], target["stats_moment"] = site_statistics(matrix)
@@ -856,6 +862,14 @@ def client_round(
         metrics["pooled_rows"] = float(pooled_n)
         metrics["sites_seen"] = float(len(sizes))
         if not np.any(as_pags(received["pag"])):
+            variance = np.diag(received["stats_moment"] - np.outer(received["stats_mean"], received["stats_mean"]))
+            # Relative to the second moment: the statistics made a float32 round trip through the transport.
+            negligible = 1e-5 * np.maximum(np.abs(np.diag(received["stats_moment"])), 1e-300)
+            constant = [variables[j] for j in np.flatnonzero(variance <= negligible)]
+            if constant:
+                # A constant variable has no correlation with anything; the parametric bootstrap would
+                # draw pure noise for it and the graph would show it isolated as if that were a finding.
+                raise ValueError(f"constant across the pooled cohort, so no test can involve it: {', '.join(constant)}")
             correlations = bootstrap_correlations(received["stats_mean"], received["stats_moment"], pooled_n, config)
             target["pag"] = np.stack(
                 [fci_from_correlation(correlations[b], pooled_n, variables, config, b) for b in range(b_total)]
