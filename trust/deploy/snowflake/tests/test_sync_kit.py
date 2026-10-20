@@ -182,7 +182,8 @@ def test_redacted_statements_never_hold_a_value(kit: dict) -> None:
     """The dry-run form is built from :data:`REDACTED`, not substituted afterwards, so no
     spelling of a value (escaped or not) can survive into what is printed."""
     nasty = dict(kit, AES_KEY_BASE64="we'ird\\value")
-    redacted = "\n".join(sync.secret_statements(sync.Names(CODE), nasty, redacted=True))
+    present = [e for e in sync.SECRETS if e not in sync.skipped_secrets(nasty)]
+    redacted = "\n".join(sync.redacted_statements(sync.Names(CODE), present))
     for value in (nasty[var] for var in sync.SECRET_KIT_VAR.values()):
         assert value not in redacted
     assert "we\\'ird" not in redacted
@@ -196,7 +197,7 @@ def test_a_failed_snow_call_does_not_echo_its_output(tmp_path: Path, kit: dict) 
     leaky.chmod(0o755)
     statements = sync.secret_statements(sync.Names(CODE), kit)
     try:
-        sync.run_sql(str(leaky), "flip-test", statements, dry_run=False)
+        sync.run_sql(str(leaky), "flip-test", statements)
     except sync.SyncError as error:
         message = str(error)
     else:

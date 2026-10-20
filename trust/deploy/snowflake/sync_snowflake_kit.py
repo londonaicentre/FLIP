@@ -86,6 +86,11 @@ def sql_literal(value: str) -> str:
     return f"'{escaped}'"
 
 
+def object_names(names: Names, entries: list[str]) -> list[str]:
+    """Fully qualified object names for kit entries: identifiers, never values."""
+    return [names.secret(entry) for entry in entries]
+
+
 def skipped_secrets(kit: dict[str, str]) -> list[str]:
     """The secrets the kit carries no real value for.
 
@@ -96,28 +101,15 @@ def skipped_secrets(kit: dict[str, str]) -> list[str]:
     return [secret for secret in SECRETS if is_placeholder(kit.get(SECRET_KIT_VAR[secret], ""))]
 
 
-def secret_statements(names: Names, kit: dict[str, str], *, redacted: bool = False) -> list[str]:
-    """SQL for every secret the kit carries a real value for.
-
-    Args:
-        names: The trust's object names.
-        kit: The parsed kit file.
-        redacted: Build the statements with :data:`REDACTED` in place of every value. A
-            dry run prints only this form, so a value is never in a string that is printed;
-            redacting after the fact would leave the value in that string until the
-            substitution ran, and miss any spelling of it the substitution did not expect.
-    """
+def _object_statements(names: Names, literals: dict[str, str]) -> list[str]:
+    """The SQL for each kit entry in ``literals`` (entry name to an already-quoted literal)."""
     statements = [
         f"USE ROLE {names.admin_role};",
         f"USE DATABASE {names.database};",
         f"USE SCHEMA {names.app_schema};",
     ]
-    skipped = set(skipped_secrets(kit))
-    for secret in SECRETS:
-        if secret in skipped:
-            continue
-        literal = f"'{REDACTED}'" if redacted else sql_literal(kit[SECRET_KIT_VAR[secret]])
-        qualified = names.secret(secret)
+    for entry, literal in literals.items():
+        qualified = names.secret(entry)
         statements += [
             f"CREATE SECRET IF NOT EXISTS {qualified} TYPE = GENERIC_STRING SECRET_STRING = {sql_literal('')};",
             f"ALTER SECRET {qualified} SET SECRET_STRING = {literal};",
@@ -127,22 +119,41 @@ def secret_statements(names: Names, kit: dict[str, str], *, redacted: bool = Fal
     return statements
 
 
-def run_sql(snow: str, connection: str, statements: list[str], dry_run: bool) -> None:
-    """Execute statements through ``snow sql`` on stdin, or print them on a dry run.
+def secret_statements(names: Names, kit: dict[str, str]) -> list[str]:
+    """SQL carrying the real values. Executed only, never printed."""
+    skipped = set(skipped_secrets(kit))
+    return _object_statements(
+        names, {entry: sql_literal(kit[SECRET_KIT_VAR[entry]]) for entry in SECRETS if entry not in skipped}
+    )
+
+
+def redacted_statements(names: Names, present: list[str]) -> list[str]:
+    """The same SQL with :data:`REDACTED` for every value, for a dry run to print.
+
+    Takes only the entry names, never the kit, so no value can reach what is printed:
+    building the printed form from placeholders is safer than substituting values out
+    of the real form afterwards.
+    """
+    return _object_statements(names, {entry: f"'{REDACTED}'" for entry in present})
+
+
+def print_sql(snow: str, connection: str, statements: list[str]) -> None:
+    """Show what a dry run would pipe to ``snow``. Callers pass only redacted statements."""
+    print("ⓘ  --dry-run: the SQL below would be piped to:")
+    print(f"     {snow} sql --stdin --connection {connection}")
+    for statement in statements:
+        print(f"     {statement}")
+
+
+def run_sql(snow: str, connection: str, statements: list[str]) -> None:
+    """Execute statements through ``snow sql`` on stdin. Prints nothing.
 
     stdin, never ``-q``: an argument is visible in ``ps`` to every user on the host and
     is recorded by any command-logging the operator's shell or their CI runner does.
-    On a dry run the caller passes the redacted form. On failure ``snow``'s output is
-    not echoed: it can quote the failing statement, which can carry a value. The
-    operator reruns with ``--dry-run`` to see the SQL, and ``snow`` keeps its own log.
+    On failure ``snow``'s output is not echoed: it can quote the failing statement, which
+    can carry a value. The operator reruns with ``--dry-run`` to see the SQL.
     """
     command = [snow, "sql", "--stdin", "--connection", connection]
-    if dry_run:
-        print("ⓘ  --dry-run: the SQL below would be piped to:")
-        print(f"     {' '.join(command)}")
-        for statement in statements:
-            print(f"     {statement}")
-        return
     result = subprocess.run(command, input="\n".join(statements) + "\n", text=True, capture_output=True)
     if result.returncode != 0:
         raise SyncError(
@@ -273,16 +284,18 @@ def main() -> int:
         print("   These come from registration + the Hub-shared block.")
         return 1
 
-    skipped = skipped_secrets(kit)
-    statements = secret_statements(names, kit, redacted=args.dry_run)
+    absent = skipped_secrets(kit)
+    present = [entry for entry in SECRETS if entry not in absent]
     try:
-        run_sql(args.snow, args.connection, statements, args.dry_run)
-        written = [s for s in SECRETS if s not in skipped]
-        print(f"  ✓ {len(written)} SECRET object(s) created or updated (names only shown):")
-        for secret in written:
-            print(f"      {names.secret(secret)}")
-        if skipped:
-            print(f"  ⓘ  No kit value for: {', '.join(skipped)} - left untouched.")
+        if args.dry_run:
+            print_sql(args.snow, args.connection, redacted_statements(names, present))
+        else:
+            run_sql(args.snow, args.connection, secret_statements(names, kit))
+        print(f"  ✓ {len(present)} SECRET object(s) created or updated (names only shown):")
+        for object_name in object_names(names, present):
+            print(f"      {object_name}")
+        if absent:
+            print(f"  ⓘ  No kit value for: {', '.join(absent)} - left untouched.")
         print()
 
         if not args.no_fl_kit:
