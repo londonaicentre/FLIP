@@ -456,6 +456,28 @@ broken checkov install can never produce a vacuous green. The script's own guard
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
 
+### Snowflake trust root (Terraform)
+
+The trust's Snowflake infrastructure lives in its own root, `trust/deploy/terraform/snowflake`
+(FLIP#1581), with its own state and no hub credentials. Its targets run from that directory:
+
+```bash
+make -C trust/deploy/terraform/snowflake lint     # tofu fmt, tofu validate, tflint, checkov
+make -C trust/deploy/terraform/snowflake test     # the credential-free pytest guards
+make -C trust/deploy/terraform/snowflake plan     # needs terraform.<env>.tfvars and Snowflake credentials
+make -C trust/deploy/terraform/snowflake apply    # shows the plan and asks before applying
+make -C trust/deploy/terraform/snowflake destroy
+```
+
+`lint` and `test` need nothing but `tofu` (or `terraform`), `tflint`, `uvx` and `uv`; they are what
+`validate_terraform.yml`'s `Snowflake trust root static checks` job runs. The guards in
+`trust/deploy/terraform/snowflake/tests/` pin the invariants no plan can show without an account:
+no grant to `PUBLIC`, server-side encryption on every stage, auto-suspend on every compute pool,
+hub egress off by default and limited to the hub host plus the FL endpoints when on, and no secret
+value or password field anywhere in Terraform. Read that root's
+[README](trust/deploy/terraform/snowflake/README.md) before changing it: secrets are written by
+`make sync-kit` (FLIP#1582), never by Terraform.
+
 ### TFLint (Terraform)
 
 `validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset
