@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432
+    # Where this trust's OMOP lives (FLIP#13). Only the health probe reads it here: a
+    # Snowflake account is not a TCP port on the trust network, so the raw TCP probe below
+    # would report a Snowflake trust's OMOP as permanently down. Empty / unset means
+    # ``postgres``, so an existing kit file is unaffected.
+    OMOP_BACKEND: str = "postgres"
     # The fl-client image tag this deployment configured (compose: DOCKER_FL_TAG; the K8s
     # chart: the tag flip-trust.imageTag resolves for the fl-client — its pin, else
     # global.image.tag, else flClient.image.tag). The fl-client has no health endpoint, so this is how its

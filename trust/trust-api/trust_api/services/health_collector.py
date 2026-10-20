@@ -22,7 +22,11 @@ contract with the hub (``healthy | degraded | down | unknown``):
 - ``dicom`` is the PACS connector, probed transitively via imaging-api's ``ping_pacs``
   (imaging-api → XNAT → DIMSE echo). A transport/HTTP failure there proves nothing about
   the PACS itself, so it maps to ``unknown`` rather than ``down``.
-- ``omop`` is a raw TCP connect — trust-api deliberately carries no Postgres driver.
+- ``omop`` is a raw TCP connect on the Postgres backend — trust-api deliberately carries no
+  database driver. On the Snowflake backend (FLIP#13) there is no TCP port to connect to, so
+  the probe asks data-access-api's ``/health/omop`` instead: the service that actually holds
+  the driver opens a session and reports what happened, rather than this one reporting a
+  permanently red port.
 
 Failure semantics: a probe can never raise out of ``collect_once`` (a leaked bug maps to
 ``unknown``), and a cycle that fails **or hangs** drops the cached snapshot entirely —
@@ -50,6 +54,7 @@ IMAGING_API_URL = get_settings().IMAGING_API_URL
 XNAT_URL = get_settings().XNAT_URL
 OMOP_DB_HOST = get_settings().OMOP_DB_HOST
 OMOP_DB_PORT = get_settings().OMOP_DB_PORT
+OMOP_BACKEND = get_settings().OMOP_BACKEND or "postgres"
 HEALTH_COLLECT_INTERVAL_SECONDS = get_settings().HEALTH_COLLECT_INTERVAL_SECONDS
 HEALTH_PROBE_DEGRADED_MS = get_settings().HEALTH_PROBE_DEGRADED_MS
 FL_CLIENT_IMAGE_TAG = get_settings().FL_CLIENT_IMAGE_TAG
@@ -168,6 +173,45 @@ async def _probe_health_endpoint(client: httpx.AsyncClient, url: str) -> dict:
         return _entry("down")
     elapsed_ms = int((time.monotonic() - start) * 1000)
     return _entry(_status_from_latency(elapsed_ms), _version_from_body(response), elapsed_ms)
+
+
+async def _probe_omop(client: httpx.AsyncClient) -> dict:
+    """Probe the trust's OMOP, however it is reachable on this backend.
+
+    A local Postgres is a TCP port on the trust network and trust-api carries no driver, so it
+    is probed with a bare connect. A Snowflake OMOP is an HTTPS endpoint in the trust's own
+    Snowflake tenancy reached with credentials only data-access-api holds, so the probe is
+    delegated to that service's ``/health/omop`` — the alternative is a port probe that can
+    only ever answer "down" (FLIP#13).
+
+    Args:
+        client (httpx.AsyncClient): HTTP client shared across probes.
+
+    Returns:
+        dict: Wire-shaped entry.
+    """
+    if OMOP_BACKEND == "postgres":
+        return await _probe_tcp(OMOP_DB_HOST, OMOP_DB_PORT)
+
+    start = time.monotonic()
+    try:
+        response = await client.get(f"{DATA_ACCESS_API_URL}/health/omop")
+    except Exception as e:
+        logger.warning(f"OMOP health probe failed: {type(e).__name__}: {e}")
+        return _entry("down")
+    if not response.is_success:
+        logger.warning(f"OMOP health probe answered HTTP {response.status_code}")
+        return _entry("down")
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    try:
+        reported = response.json().get("status")
+    except ValueError:
+        # A 2xx with a body this probe cannot read proves nothing about the warehouse.
+        logger.warning("OMOP health probe returned an unreadable body")
+        return _entry("unknown", response_ms=elapsed_ms)
+    if reported != "ok":
+        return _entry("down", response_ms=elapsed_ms)
+    return _entry(_status_from_latency(elapsed_ms), response_ms=elapsed_ms)
 
 
 async def _probe_xnat(client: httpx.AsyncClient) -> dict:
@@ -331,7 +375,7 @@ async def collect_once(client: httpx.AsyncClient) -> dict:
         _probe_health_endpoint(client, f"{DATA_ACCESS_API_URL}/health"),
         _probe_xnat(client),
         _pacs_ping.run(lambda: _probe_dicom(client)),
-        _probe_tcp(OMOP_DB_HOST, OMOP_DB_PORT),
+        _probe_omop(client),
         return_exceptions=True,
     )
     # strict: a sixth probe added without a sixth name would otherwise be dropped

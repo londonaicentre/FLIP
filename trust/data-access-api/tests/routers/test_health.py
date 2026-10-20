@@ -12,10 +12,12 @@
 
 import tomllib
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from data_access_api.routers import health as health_module
 from data_access_api.routers.health import router
@@ -105,3 +107,54 @@ async def test_health_reports_null_version_when_the_key_is_absent(client, tmp_pa
         assert client.get("/health/").json()["version"] is None
     finally:
         health_module._service_version.cache_clear()
+
+
+# ── /health/omop: a truthful OMOP status on any backend (FLIP#13) ────────────────────
+# trust-api probes OMOP with a raw TCP connect because it carries no database driver, which
+# reports a Snowflake trust's OMOP as permanently down. This endpoint is the answer from the
+# service that does hold the driver.
+
+
+@pytest.mark.asyncio
+async def test_omop_health_reports_ok_when_the_backend_answers(client):
+    engine = MagicMock()
+    with patch.object(health_module, "get_engine", return_value=engine):
+        response = client.get("/health/omop")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "backend": "postgres"}
+
+
+@pytest.mark.asyncio
+async def test_omop_health_reports_down_when_the_backend_is_unreachable(client):
+    engine = MagicMock()
+    engine.connect.side_effect = SQLAlchemyError("could not connect")
+    with patch.object(health_module, "get_engine", return_value=engine):
+        response = client.get("/health/omop")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "down"
+
+
+@pytest.mark.asyncio
+async def test_omop_health_never_leaks_the_drivers_text(client):
+    """Unauthenticated, like /health: driver text can name hosts, roles and pool internals."""
+    engine = MagicMock()
+    engine.connect.side_effect = SQLAlchemyError("password authentication failed for user secret_svc")
+    with patch.object(health_module, "get_engine", return_value=engine):
+        body = client.get("/health/omop").json()
+
+    assert body == {"status": "down", "backend": "postgres"}
+
+
+@pytest.mark.asyncio
+async def test_omop_health_names_the_configured_backend(client):
+    """So an operator can see from the probe alone which OMOP the service believes it reads."""
+    engine = MagicMock()
+    settings = MagicMock()
+    settings.OMOP_BACKEND = "snowflake"
+    with (
+        patch.object(health_module, "get_engine", return_value=engine),
+        patch.object(health_module, "get_settings", return_value=settings),
+    ):
+        assert client.get("/health/omop").json() == {"status": "ok", "backend": "snowflake"}
