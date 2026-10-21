@@ -116,7 +116,9 @@ def main() -> None:
 
     env = SimEnv(
         num_clients=args.n_clients,
-        num_threads=args.n_clients,
+        # One site at a time: a site peaks at ~20 GB of GPU memory, so two at once overflow a 32 GB
+        # card (seen as CUDNN_STATUS_INTERNAL_ERROR in backward, not as an out-of-memory error).
+        num_threads=1,
         workspace_root=args.workspace,
     )
     run = recipe.execute(env)
