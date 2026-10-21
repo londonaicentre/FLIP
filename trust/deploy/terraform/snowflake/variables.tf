@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 variable "organization_name" {
   description = "Snowflake organization name. Supplied at apply time; never committed."
   type        = string
@@ -22,13 +23,17 @@ variable "account_name" {
 }
 
 variable "terraform_role" {
-  description = "Role the provider assumes. The one-off bootstrap runs as ACCOUNTADMIN; every later run uses the trust admin role."
+  description = "The role the provider assumes. Always the workload role, FLIP_<CODE>_DEPLOY: this root needs nothing more."
   type        = string
-  default     = "SYSADMIN"
+
+  validation {
+    condition     = can(regex("^FLIP_[A-Z0-9]+_DEPLOY$", var.terraform_role))
+    error_message = "the workload root is applied as FLIP_<CODE>_DEPLOY. ACCOUNTADMIN, SECURITYADMIN and SYSADMIN belong to the platform root."
+  }
 }
 
 variable "terraform_warehouse" {
-  description = "Warehouse the provider uses for its own queries."
+  description = "Warehouse the provider uses for its own queries. FLIP_<CODE>_WH once the first apply has created it."
   type        = string
   default     = "COMPUTE_WH"
 }
@@ -43,16 +48,6 @@ variable "trust_code" {
   }
 }
 
-variable "deploy_user_public_key" {
-  description = "PEM body (no header, footer or newlines) of the deploy SERVICE user's RSA public key. The private half never reaches Terraform."
-  type        = string
-
-  validation {
-    condition     = can(regex("^[A-Za-z0-9+/=]{300,}$", var.deploy_user_public_key))
-    error_message = "deploy_user_public_key must be the base64 body of an RSA public key, without the PEM header and footer."
-  }
-}
-
 variable "warehouse_statement_timeout_secs" {
   description = "STATEMENT_TIMEOUT_IN_SECONDS on the trust warehouse: a runaway OMOP query is cancelled rather than billed."
   type        = number
@@ -63,6 +58,12 @@ variable "warehouse_auto_suspend_secs" {
   description = "Seconds of inactivity before the trust warehouse suspends."
   type        = number
   default     = 60
+}
+
+variable "attach_resource_monitor" {
+  description = "Attach the platform tier's FLIP_<CODE>_RM to this warehouse. Needs the MODIFY grant the platform root issues; set false only when the platform root has not been applied yet."
+  type        = bool
+  default     = true
 }
 
 variable "pool_instance_family" {
@@ -119,55 +120,9 @@ variable "enable_gpu_pool" {
 }
 
 variable "enable_hub_egress" {
-  description = "Create the external access integration that lets services reach the hub. Off by default: trial accounts exclude external network access, so the trial runs hubless."
+  description = "Whether the platform root created FLIP_<CODE>_HUB_EAI. This root creates no integration and no network rule: it only reports the name so #1582's specs can reference it."
   type        = bool
   default     = false
-}
-
-variable "hub_api_host" {
-  description = "Hostname of the Central Hub API, no scheme. Reached on 443 only. Empty unless enable_hub_egress is true."
-  type        = string
-  default     = ""
-}
-
-variable "fl_server_endpoints" {
-  description = "FL server endpoints as host:port (the FLARE or Flower edge from the kit). Each becomes one HOST_PORT value in the egress rule."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for e in var.fl_server_endpoints : can(regex("^[A-Za-z0-9.-]+:[0-9]{1,5}$", e))])
-    error_message = "every fl_server_endpoints entry must be host:port."
-  }
-}
-
-variable "admin_allowed_cidrs" {
-  description = "CIDRs allowed to sign in to the account. Applied as an account network policy, so an empty list means no policy is attached."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for c in var.admin_allowed_cidrs : can(cidrnetmask(c))])
-    error_message = "every admin_allowed_cidrs entry must be an IPv4 CIDR."
-  }
-}
-
-variable "credit_quota" {
-  description = "Monthly credit quota of the resource monitor. It covers warehouses only; compute pools are capped by auto-suspend and the nightly task."
-  type        = number
-  default     = 50
-}
-
-variable "credit_notify_triggers" {
-  description = "Percentages of the credit quota that notify the account's notification users."
-  type        = list(number)
-  default     = [50, 75, 90]
-}
-
-variable "resource_monitor_start_timestamp" {
-  description = "Start of the resource monitor's first billing window, as Snowflake accepts it (YYYY-MM-DD HH:MM) or IMMEDIATELY."
-  type        = string
-  default     = "IMMEDIATELY"
 }
 
 variable "num_fl_nets" {

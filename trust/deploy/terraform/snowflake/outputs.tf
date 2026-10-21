@@ -11,8 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# What `trust/deploy/snowflake/Makefile` (#1582) reads to render the service specs. Names only:
-# no credential, no account identifier, nothing that is a secret.
+
+# Everything #1582's Makefile and specs need, by name. No credential, no account identifier,
+# nothing that is a secret. The role, user and integration names are derived by convention from
+# trust_code, exactly as the platform root derives them: the two roots share no state.
 output "database_name" {
   description = "The trust's database."
   value       = snowflake_database.trust.name
@@ -55,23 +57,18 @@ output "warehouse_name" {
 }
 
 output "role_names" {
-  description = "The six FLIP roles, by purpose."
+  description = "The five FLIP roles by purpose, derived from trust_code. Created by the platform root, not here."
   value       = local.roles
 }
 
 output "deploy_user_name" {
-  description = "The deploy SERVICE user. Its private key lives outside Terraform."
-  value       = snowflake_service_user.deploy.name
+  description = "The deploy SERVICE user this root is applied as. Created by the platform root."
+  value       = local.deploy_user
 }
 
 output "external_access_integration_name" {
-  description = "The hub egress integration, or an empty string when enable_hub_egress is false."
+  description = "The hub egress integration created by the platform root, or an empty string when it is off."
   value       = var.enable_hub_egress ? local.hub_eai : ""
-}
-
-output "event_table_name" {
-  description = "Fully qualified event table the account logs to (#1584)."
-  value       = "${snowflake_database.trust.name}.${local.schemas.obs}.${local.event_table}"
 }
 
 output "fl_net_image_prefixes" {

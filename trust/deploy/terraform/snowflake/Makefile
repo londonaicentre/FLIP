@@ -9,9 +9,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Snowflake trust node infrastructure (FLIP#1581). This directory creates Snowflake objects and
-# nothing else: the SPCS service specs and their lifecycle targets live in trust/deploy/snowflake
-# (FLIP#1582), and the kit file is the only coupling to a hub. No hub state, no hub credentials.
+# Snowflake trust node infrastructure, WORKLOAD tier (FLIP#1581, epic #1589).
+#
+# Applied routinely as FLIP_<CODE>_DEPLOY_USER (TYPE = SERVICE, key-pair auth). It creates the
+# trust database and its schemas, the warehouse, the compute pools, the image repository, the SSE
+# stages, the nightly pool-suspend task, and the grants on those objects to the service, OMOP and
+# observer roles. Nothing here is an account-level security object.
+#
+# The roles themselves, the deploy user, the account grants, the egress integration, the account
+# policies, the event table and the resource monitor belong to the break-glass tier next door,
+# ../snowflake-platform, applied rarely by a person user with MFA. The two roots keep separate
+# state, so a routine apply cannot reach an account security object even by mistake.
+#
+# The SPCS service specs and their lifecycle targets live in trust/deploy/snowflake (FLIP#1582),
+# and the kit file is the only coupling to a hub. No hub state, no hub credentials.
 #
 # Credentials come from the environment (SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY_PATH,
 # SNOWFLAKE_AUTHENTICATOR=SNOWFLAKE_JWT) or ~/.snowflake/connections.toml, never from a variable.
@@ -45,7 +56,7 @@ endef
 .PHONY: help init plan apply destroy output lint fmt validate test
 
 help: ## Show this help message
-	@echo "FLIP Snowflake trust infrastructure:"
+	@echo "FLIP Snowflake trust infrastructure (workload tier):"
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?##"}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
 
 init: ## Initialise the root (BACKEND_CONFIG=path=... or a site's remote backend settings)

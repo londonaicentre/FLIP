@@ -11,12 +11,16 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Humans sign in with MFA and a password that meets this policy; the deploy identity is a SERVICE
-# user and has no password at all. The policy exists so that an account that later grows a human
-# user inherits it rather than the Snowflake default.
-resource "snowflake_password_policy" "trust" {
-  database = snowflake_database.trust.name
-  schema   = snowflake_schema.trust["app"].name
+
+# Account password and session policies. They live in the platform database, not in the trust
+# database, so a workload destroy cannot take the account's policies with it.
+#
+# The deploy identity is a SERVICE user and has no password at all. The password policy exists so
+# that the break-glass person users, and any human user the account later grows, inherit it rather
+# than the Snowflake default.
+resource "snowflake_password_policy" "account" {
+  database = snowflake_database.platform.name
+  schema   = snowflake_schema.platform["policies"].name
   name     = local.password_policy
 
   min_length           = 14
@@ -30,27 +34,27 @@ resource "snowflake_password_policy" "trust" {
   lockout_time_mins    = 30
   history              = 5
 
-  comment = "FLIP ${local.code}: account password policy."
+  comment = "FLIP platform: account password policy."
 }
 
-resource "snowflake_account_password_policy_attachment" "trust" {
-  password_policy = snowflake_password_policy.trust.fully_qualified_name
+resource "snowflake_account_password_policy_attachment" "account" {
+  password_policy = snowflake_password_policy.account.fully_qualified_name
 }
 
-resource "snowflake_session_policy" "trust" {
-  database = snowflake_database.trust.name
-  schema   = snowflake_schema.trust["app"].name
+resource "snowflake_session_policy" "account" {
+  database = snowflake_database.platform.name
+  schema   = snowflake_schema.platform["policies"].name
   name     = local.session_policy
 
   session_idle_timeout_mins    = 60
   session_ui_idle_timeout_mins = 30
 
-  comment = "FLIP ${local.code}: idle sessions expire."
+  comment = "FLIP platform: idle sessions expire."
 }
 
 # Person users only: a SERVICE user has no interactive session to time out, and the provider
 # refuses both flags at once, so the service-user half is deliberately left unattached.
-resource "snowflake_account_session_policy_attachment" "trust" {
-  session_policy_name  = snowflake_session_policy.trust.fully_qualified_name
+resource "snowflake_account_session_policy_attachment" "account" {
+  session_policy_name  = snowflake_session_policy.account.fully_qualified_name
   for_all_person_users = true
 }

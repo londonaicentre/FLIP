@@ -8,13 +8,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Shared paths for the Snowflake trust root's static tests (FLIP#1581)."""
+"""Shared paths for the Snowflake WORKLOAD root's static tests (FLIP#1581)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 SNOWFLAKE_DIR = Path(__file__).resolve().parent.parent
+PLATFORM_DIR = SNOWFLAKE_DIR.parent / "snowflake-platform"
 TF_FILES = sorted(p for p in SNOWFLAKE_DIR.glob("*.tf"))
 
 

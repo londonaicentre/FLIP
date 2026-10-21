@@ -11,17 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Six account roles, no grant to PUBLIC anywhere in this root. ACCOUNTADMIN is used once, by hand,
-# to create the admin role and hand it the account-level privileges this root needs (README,
-# "Bootstrap"); nothing in automation assumes it.
-resource "snowflake_account_role" "admin" {
-  name    = local.roles.admin
-  comment = "FLIP ${local.code}: owns the trust's objects. Parent of every other FLIP ${local.code} role."
-}
 
+# Five account roles, created here and nowhere else. The workload root cannot create a role: it
+# holds no CREATE ROLE on the account (grants.tf), which the static guards in both roots pin.
 resource "snowflake_account_role" "deploy" {
   name    = local.roles.deploy
-  comment = "FLIP ${local.code}: deploy identity. Creates and operates services, never reads clinical data."
+  comment = "FLIP ${local.code}: the least-privilege workload role. Owns the trust database, warehouse, pools, repository, stages and services."
 }
 
 resource "snowflake_account_role" "svc" {
@@ -41,33 +36,36 @@ resource "snowflake_account_role" "omop_loader" {
 
 resource "snowflake_account_role" "observer" {
   name    = local.roles.observer
-  comment = "FLIP ${local.code}: read-only on the event table views and object metadata."
+  comment = "FLIP ${local.code}: read-only on the event table and on object metadata."
 }
 
-# Hierarchy. Every role rolls up to the trust admin role, and the trust admin role to SYSADMIN, so
-# an account admin can see and clean up the tree. Nothing rolls up to the deploy role except the
-# service role it has to create services for.
-resource "snowflake_grant_account_role" "svc_to_deploy" {
-  role_name        = snowflake_account_role.svc.name
+# How the platform tier hands the roles to the workload tier.
+#
+# The workload role owns the objects it creates, and an owner may grant privileges on its own
+# objects without MANAGE GRANTS. What it cannot do is name a role it does not hold. So the four
+# consumer roles are granted TO the deploy role here, once, and from then on a routine workload
+# apply can say "GRANT SELECT ON ... TO ROLE FLIP_<CODE>_OMOP_READER" entirely within its own
+# privileges. Ownership of every object stays with the deploy role.
+resource "snowflake_grant_account_role" "to_deploy" {
+  for_each = {
+    svc         = snowflake_account_role.svc.name
+    omop_reader = snowflake_account_role.omop_reader.name
+    omop_loader = snowflake_account_role.omop_loader.name
+    observer    = snowflake_account_role.observer.name
+  }
+
+  role_name        = each.value
   parent_role_name = snowflake_account_role.deploy.name
 }
 
+# A service reads OMOP through the service role.
 resource "snowflake_grant_account_role" "omop_reader_to_svc" {
   role_name        = snowflake_account_role.omop_reader.name
   parent_role_name = snowflake_account_role.svc.name
 }
 
-resource "snowflake_grant_account_role" "to_admin" {
-  for_each = {
-    deploy      = snowflake_account_role.deploy.name
-    omop_loader = snowflake_account_role.omop_loader.name
-    observer    = snowflake_account_role.observer.name
-  }
-  role_name        = each.value
-  parent_role_name = snowflake_account_role.admin.name
-}
-
-resource "snowflake_grant_account_role" "admin_to_sysadmin" {
-  role_name        = snowflake_account_role.admin.name
+# The tree rolls up to SYSADMIN so an account admin can see and clean it up.
+resource "snowflake_grant_account_role" "deploy_to_sysadmin" {
+  role_name        = snowflake_account_role.deploy.name
   parent_role_name = "SYSADMIN"
 }

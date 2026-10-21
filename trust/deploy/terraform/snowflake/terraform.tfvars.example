@@ -15,34 +15,26 @@
 organization_name = "MYORG"
 account_name      = "MYACCOUNT"
 
-# The role Terraform runs as. ACCOUNTADMIN only for the one-off bootstrap (see README.md).
-terraform_role      = "FLIP_GSTT_ADMIN"
+# The workload root is always applied as the deploy role. The deploy user, the role and the four
+# account privileges it holds are created by ../snowflake-platform.
+terraform_role      = "FLIP_GSTT_DEPLOY"
 terraform_warehouse = "FLIP_GSTT_WH"
 
 trust_code = "GSTT"
 
-# The deploy SERVICE user's RSA public key: the base64 body only, no PEM header, footer or
-# newlines. Generate with `openssl genrsa 2048 | openssl rsa -pubout`, keep the private half out
-# of this repository.
-deploy_user_public_key = "REPLACE_WITH_THE_PUBLIC_KEY_BODY"
-
-# Cost guards.
+# Cost guards. The credit quota lives in the platform root; this root attaches that monitor.
 warehouse_statement_timeout_secs = 300
 pool_auto_suspend_secs           = 600
-credit_quota                     = 50
+attach_resource_monitor          = true
 suspend_pools_cron               = "0 22 * * *"
 suspend_pools_timezone           = "Europe/London"
 
 # Off on a trial account: no GPU quota, and trials exclude external network access.
-enable_gpu_pool   = false
+enable_gpu_pool = false
+
+# Set to true only when the platform root created FLIP_GSTT_HUB_EAI. This root creates no
+# integration: it just reports the name for #1582's service specs.
 enable_hub_egress = false
-
-# Only read when enable_hub_egress is true.
-# hub_api_host        = "api.example.invalid"
-# fl_server_endpoints = ["fl.example.invalid:8002", "fl.example.invalid:8003"]
-
-# Sign-in allowlist for the account. Empty means no account network policy is attached.
-# admin_allowed_cidrs = ["203.0.113.4/32"]
 
 num_fl_nets = 1
 

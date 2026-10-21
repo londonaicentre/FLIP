@@ -11,9 +11,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Every name in this root comes from here, and from nowhere else, so the Makefile and the service
-# specs in #1582 can derive the same names from the same trust code. The contract is recorded in
-# the epic (#1589): account objects are prefixed FLIP_<CODE>_, the database is FLIP_TRUST_<CODE>.
+
+# Every name in this root comes from here, and from nowhere else, so this root, the platform root
+# (../snowflake-platform) and the service specs in #1582 derive the same names from the same trust
+# code. The contract is recorded in the epic (#1589).
+#
+# The role names below are NOT resources here: the platform tier creates them, and this root only
+# names them in grants on objects it owns. There is no remote-state data source between the two
+# roots: convention is the whole coupling.
 locals {
   code   = upper(var.trust_code)
   prefix = "FLIP_${local.code}"
@@ -26,8 +31,8 @@ locals {
     obs    = "OBS"
   }
 
+  # FLIP_<CODE>_ADMIN is retired (two-tier decision, 2026-10-20, epic #1589).
   roles = {
-    admin       = "${local.prefix}_ADMIN"
     deploy      = "${local.prefix}_DEPLOY"
     svc         = "${local.prefix}_SVC"
     omop_reader = "${local.prefix}_OMOP_READER"
@@ -42,10 +47,6 @@ locals {
   gpu_pool         = "${local.prefix}_GPU_POOL"
   hub_eai          = "${local.prefix}_HUB_EAI"
   resource_monitor = "${local.prefix}_RM"
-  network_policy   = "${local.prefix}_ADMIN_NP"
-  password_policy  = "${local.prefix}_PASSWORD_POLICY"
-  session_policy   = "${local.prefix}_SESSION_POLICY"
-  event_table      = "FLIP_EVENTS"
   suspend_task     = "${local.prefix}_SUSPEND_POOLS"
   image_repository = "IMAGES"
 
@@ -71,10 +72,4 @@ locals {
     },
     var.enable_gpu_pool ? { (local.gpu_pool) = var.gpu_pool_instance_family } : {}
   )
-
-  # Egress is a closed list: the hub API on 443 and the FL server endpoints from the kit.
-  egress_hosts = var.enable_hub_egress ? concat(
-    var.hub_api_host == "" ? [] : ["${var.hub_api_host}:443"],
-    var.fl_server_endpoints,
-  ) : []
 }

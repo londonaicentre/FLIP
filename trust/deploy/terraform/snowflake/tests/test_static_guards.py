@@ -8,11 +8,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Static guards for the Snowflake trust root (FLIP#1581).
+"""Static guards for the Snowflake WORKLOAD root (FLIP#1581, epic #1589).
 
-These are the invariants no runtime test can see without a Snowflake account: nothing is granted
-to PUBLIC, every stage is server-side encrypted, every compute pool suspends itself, egress is off
-by default and closed when on, and no secret value or password field ever reaches Terraform.
+The least-privilege tier, applied routinely as FLIP_<CODE>_DEPLOY_USER. These are the invariants
+no runtime test can see without a Snowflake account, and most of them are about what this root
+must NOT contain: no role, no user, no integration, no account policy, no account parameter and no
+account-level grant. Everything in that list belongs to ../snowflake-platform, the break-glass
+tier. Plus the posture guards: nothing to PUBLIC, SSE on every stage, auto-suspend on every pool,
+and no secret value or password field in Terraform.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from __future__ import annotations
 import re
 
 import pytest
-from conftest import SNOWFLAKE_DIR, TF_FILES, all_terraform, source
+from conftest import PLATFORM_DIR, SNOWFLAKE_DIR, TF_FILES, all_terraform, source
 from tf_blocks import hcl_block, resource_blocks
 
 ROOT_FILES = (
@@ -29,19 +32,36 @@ ROOT_FILES = (
     "providers.tf",
     "variables.tf",
     "locals.tf",
-    "roles.tf",
-    "user.tf",
     "database.tf",
     "warehouse.tf",
     "compute_pools.tf",
     "image_repository.tf",
     "stages.tf",
-    "network.tf",
-    "policies.tf",
-    "observability.tf",
     "cost.tf",
     "grants.tf",
     "outputs.tf",
+)
+
+# Resource types that would put an account-level security object back in the routine apply.
+FORBIDDEN_RESOURCES = (
+    "snowflake_account_role",
+    "snowflake_user",
+    "snowflake_service_user",
+    "snowflake_legacy_service_user",
+    "snowflake_grant_account_role",
+    "snowflake_external_access_integration",
+    "snowflake_api_integration",
+    "snowflake_notification_integration",
+    "snowflake_storage_integration",
+    "snowflake_network_rule",
+    "snowflake_network_policy",
+    "snowflake_network_policy_attachment",
+    "snowflake_password_policy",
+    "snowflake_session_policy",
+    "snowflake_account_password_policy_attachment",
+    "snowflake_account_session_policy_attachment",
+    "snowflake_account_parameter",
+    "snowflake_resource_monitor",
 )
 
 # The stages the naming contract (#1589) requires, each mounted by a different service.
@@ -70,7 +90,69 @@ def test_apache_header(path):
     assert "Licensed under the Apache License, Version 2.0" in path.read_text(), path.name
 
 
-# --- grants -------------------------------------------------------------------------------------
+def test_the_platform_root_exists_beside_this_one():
+    assert (PLATFORM_DIR / "roles.tf").is_file(), (
+        "the account's roles, user, integration, policies and account grants live in ../snowflake-platform"
+    )
+
+
+# --- what this tier may not contain ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("resource_type", FORBIDDEN_RESOURCES)
+def test_no_account_level_security_resource(resource_type):
+    assert not resource_blocks(all_terraform(), resource_type), (
+        f"{resource_type} belongs to the break-glass platform root, not to the routine apply"
+    )
+
+
+def test_no_account_level_grant():
+    for block in resource_blocks(source("grants.tf"), "snowflake_grant_privileges_to_account_role"):
+        assert not re.search(r"^\s*on_account\s*=\s*true", block, re.M), (
+            "an account privilege is granted once, by the platform root. This root grants only on objects it owns:"
+            f"\n{block}"
+        )
+
+
+@pytest.mark.parametrize(
+    "privilege",
+    [
+        "CREATE ROLE",
+        "CREATE USER",
+        "CREATE INTEGRATION",
+        "CREATE NETWORK POLICY",
+        "MANAGE GRANTS",
+        "CREATE DATABASE",
+        "CREATE WAREHOUSE",
+        "CREATE COMPUTE POOL",
+        "BIND SERVICE ENDPOINT",
+    ],
+)
+def test_no_account_privilege_is_named_here(privilege):
+    """Including the four the deploy role does hold: they are granted in the platform root only."""
+    for path in TF_FILES:
+        assert f'"{privilege}"' not in path.read_text(), f"{path.name} names the account privilege {privilege}"
+
+
+def test_the_admin_role_is_retired():
+    text = re.sub(r"#.*", "", all_terraform())
+    assert "_ADMIN" not in text, "FLIP_<CODE>_ADMIN is retired (two-tier decision, epic #1589)"
+
+
+def test_the_root_is_applied_as_the_deploy_role():
+    block = hcl_block(source("variables.tf"), 'variable "terraform_role"')
+    assert "FLIP_[A-Z0-9]+_DEPLOY" in block, "the role is validated, so a privileged role cannot be passed by mistake"
+    assert "default" not in block, "the role is supplied at apply time"
+
+
+def test_accountadmin_is_never_a_configured_value():
+    for path in TF_FILES:
+        assert not re.search(r'=\s*"(ACCOUNTADMIN|SECURITYADMIN|SYSADMIN)"', path.read_text()), (
+            f"{path.name}: privileged roles belong to the platform root"
+        )
+
+
+# --- grants ---------------------------------------------------------------------------------------
 
 
 def test_nothing_is_granted_to_public():
@@ -81,12 +163,13 @@ def test_nothing_is_granted_to_public():
     )
 
 
-def test_every_grant_names_a_flip_role():
+def test_every_grant_names_a_flip_role_by_convention():
+    """The roles are not resources here: the platform tier owns them, this root names them."""
     for block in resource_blocks(source("grants.tf"), "snowflake_grant_privileges_to_account_role"):
         match = re.search(r"account_role_name\s*=\s*([^\n]+)", block)
         assert match, block
-        assert match.group(1).startswith("snowflake_account_role."), (
-            f"a grant must name one of this root's roles, not {match.group(1)!r}"
+        assert match.group(1).strip().startswith("local.roles."), (
+            f"a grant must name one of the contract's roles, not {match.group(1)!r}"
         )
 
 
@@ -96,12 +179,9 @@ def test_no_grant_uses_all_privileges_or_grant_option():
     assert "with_grant_option" not in text, "no role may pass its privileges on"
 
 
-def test_accountadmin_is_never_a_configured_value():
-    """It may be named in a comment or a description (the documented one-off bootstrap), never set."""
-    for path in TF_FILES:
-        assert not re.search(r'=\s*"ACCOUNTADMIN"', path.read_text()), (
-            f"{path.name}: ACCOUNTADMIN is a documented one-off bootstrap, never a configured role"
-        )
+def test_the_deploy_role_grants_itself_nothing():
+    """It owns every object this root creates; an owner needs no grant."""
+    assert "local.roles.deploy" not in source("grants.tf")
 
 
 # --- secrets ------------------------------------------------------------------------------------
@@ -117,7 +197,7 @@ def test_no_secret_resource_and_no_password_field():
     text = all_terraform()
     assert "snowflake_secret_with" not in text, "Terraform must create no SECRET: it would hold the value in state"
     assert not re.search(r"^\s*password\s*=", text, re.M), "no resource in this root may carry a password"
-    assert "private_key" not in text, "only the deploy user's public key is an input"
+    assert "private_key" not in text, "the deploy key never reaches Terraform"
 
 
 def test_secret_privileges_are_declared_as_future_grants():
@@ -159,8 +239,7 @@ def test_pool_auto_suspend_cannot_be_disabled():
 
 
 def test_the_gpu_pool_is_off_by_default():
-    block = hcl_block(source("variables.tf"), 'variable "enable_gpu_pool"')
-    assert "default     = false" in block
+    assert "default     = false" in hcl_block(source("variables.tf"), 'variable "enable_gpu_pool"')
 
 
 def test_a_nightly_task_suspends_the_pools():
@@ -170,50 +249,17 @@ def test_a_nightly_task_suspends_the_pools():
     assert "started   = true" in block or "started = true" in block
 
 
-def test_a_resource_monitor_caps_warehouse_credits():
-    block = hcl_block(source("cost.tf"), 'resource "snowflake_resource_monitor" "trust"')
-    assert "credit_quota = var.credit_quota" in block
-    assert "suspend_immediate_trigger = 100" in block
-
-
-# --- egress -------------------------------------------------------------------------------------
-
-
-def test_hub_egress_is_off_by_default():
-    block = hcl_block(source("variables.tf"), 'variable "enable_hub_egress"')
-    assert "default     = false" in block
-
-
-def test_the_egress_integration_exists_only_when_enabled():
-    text = source("network.tf")
-    for header in (
-        'resource "snowflake_network_rule" "hub_egress"',
-        'resource "snowflake_external_access_integration" "hub"',
-    ):
-        block = hcl_block(text, header)
-        assert "count = var.enable_hub_egress ? 1 : 0" in block, f"{header} must be gated on enable_hub_egress"
-
-
-def test_egress_is_limited_to_the_hub_and_the_fl_endpoints():
-    block = hcl_block(source("network.tf"), 'resource "snowflake_network_rule" "hub_egress"')
-    assert 'type       = "HOST_PORT"' in block, "egress is named hosts and ports, never an address range"
-    assert "value_list = local.egress_hosts" in block
-    locals_text = source("locals.tf")
-    assert "var.hub_api_host}:443" in locals_text, "the hub is reachable on 443 only"
-    assert "var.fl_server_endpoints" in locals_text
-    assert "0.0.0.0" not in locals_text, "no catch-all egress"
-
-
-def test_the_integration_allows_no_authentication_secrets():
-    block = hcl_block(source("network.tf"), 'resource "snowflake_external_access_integration" "hub"')
-    assert "none = true" in block, "secrets are bound to services by sync-kit, not through the integration"
+def test_the_warehouse_attaches_the_platform_resource_monitor():
+    block = hcl_block(source("warehouse.tf"), 'resource "snowflake_warehouse" "trust"')
+    assert "var.attach_resource_monitor ? local.resource_monitor : null" in block, (
+        "the monitor is created by the platform tier and attached, not created, here"
+    )
 
 
 # --- account hygiene ------------------------------------------------------------------------------
 
 
 def test_no_account_identifier_is_committed():
-    """organization_name / account_name are variables with no default, and no tfvars is tracked."""
     for name in ("organization_name", "account_name"):
         block = hcl_block(source("variables.tf"), f'variable "{name}"')
         assert "default" not in block, f"{name} must be supplied at apply time, never defaulted"
@@ -229,12 +275,6 @@ def test_gitignore_hides_state_tfvars_and_the_encryption_block():
 def test_the_backend_is_a_partial_configuration():
     block = hcl_block(source("backend.tf"), "terraform {")
     assert 'backend "local" {}' in block, "settings come from -backend-config, never from tracked values"
-
-
-def test_the_deploy_identity_is_a_service_user_with_a_public_key():
-    block = hcl_block(source("user.tf"), 'resource "snowflake_service_user" "deploy"')
-    assert block, "the deploy identity must be a SERVICE user"
-    assert "rsa_public_key = var.deploy_user_public_key" in block
 
 
 def test_no_auto_approve_anywhere():

@@ -11,17 +11,38 @@
     limitations under the License.
 -->
 
-# Snowflake trust infrastructure (FLIP#1581)
+# Snowflake trust infrastructure, workload tier (FLIP#1581)
 
-The OpenTofu root that creates the Snowflake objects a FLIP trust node runs on: roles, the deploy
-identity, the database and its schemas, the warehouse, the compute pools, the image repository, the
-encrypted stages, the egress rules, the account policies, the event table and the cost guards.
+The OpenTofu root a FLIP trust node is deployed with: the trust database and its schemas, the
+warehouse, the compute pools, the image repository, the encrypted stages, the nightly pool-suspend
+task, and the grants on those objects to the service, OMOP and observer roles.
+
+It is the **workload tier** of a two-tier split (epic
+[#1589](https://github.com/londonaicentre/FLIP/issues/1589), decided 2026-10-20). It is applied
+**routinely**, as `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key-pair auth), whose role holds
+four account privileges and nothing more:
+
+```
+CREATE DATABASE, CREATE WAREHOUSE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT
+```
+
+Everything else about the account, the roles themselves, the deploy user, that account grant, the
+egress integration, the account network/password/session policies, the event table and the
+`EVENT_TABLE` parameter, and the resource monitor, lives in the break-glass root next door,
+[`../snowflake-platform`](../snowflake-platform/README.md), applied rarely by a **person** user
+with **MFA**. The two roots keep **separate state**, so a routine apply cannot reach an account
+security object even by mistake, and the pytest guards in `tests/` fail this root if a role, a
+user, an integration, an account policy, an account parameter or an `on_account` grant ever
+appears in it.
+
+There is **no remote-state coupling** between the roots: both derive every name from `trust_code`
+by the contract in #1589.
 
 It creates **infrastructure only**. The SPCS service specs and the node lifecycle targets
 (`mirror-images`, `sync-kit`, `up`, `down`, `suspend`, `status`) land in `trust/deploy/snowflake/`
 under [#1582](https://github.com/londonaicentre/FLIP/issues/1582), which consumes this root's
 outputs. Per the layout decided in [#1438](https://github.com/londonaicentre/FLIP/issues/1438) this
-root has **its own state and reads nothing from a hub**: no hub state, no hub credentials, no hub
+root has its own state and **reads nothing from a hub**: no hub state, no hub credentials, no hub
 env file. The kit file is the trust's only coupling to a hub.
 
 Not production yet. The target is a test account proving the implementation, built to production
@@ -29,24 +50,35 @@ security standards so an NHS trust can use the same code.
 
 ## Object names
 
-Every name comes from `locals.tf` and from the shared contract in
-[#1589](https://github.com/londonaicentre/FLIP/issues/1589), so this root and #1582 derive the same
-names from the same `trust_code`. With `trust_code = GSTT`:
+Every name comes from `locals.tf` and from the shared contract in #1589, so this root, the
+platform root and #1582 derive the same names from the same `trust_code`. With
+`trust_code = GSTT`:
 
-| Object | Name |
-| ------ | ---- |
-| Roles | `FLIP_GSTT_ADMIN`, `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER` |
-| Deploy user | `FLIP_GSTT_DEPLOY_USER` (TYPE = SERVICE, key pair) |
-| Warehouse | `FLIP_GSTT_WH` (XSMALL) |
-| Compute pools | `FLIP_GSTT_POOL`, `FLIP_GSTT_JOB_POOL`, `FLIP_GSTT_GPU_POOL` (optional) |
-| Egress integration | `FLIP_GSTT_HUB_EAI` (optional) |
-| Resource monitor | `FLIP_GSTT_RM` |
-| Database | `FLIP_TRUST_GSTT`, schemas `APP`, `OMOP`, `STAGES`, `OBS` |
-| Stages (`STAGES`, all SSE) | `FL_KIT`, `SEED`, `XNAT_ARCHIVE`, `IMAGES`, `CONVERTER_IO`, `GOVERNANCE`, `COHORT_SNAPSHOTS` |
-| Image repository | `FLIP_TRUST_GSTT.APP.IMAGES` |
+| Object | Name | Created by |
+| ------ | ---- | ---------- |
+| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER` | platform root |
+| Deploy user | `FLIP_GSTT_DEPLOY_USER` (TYPE = SERVICE, key pair) | platform root |
+| Egress integration | `FLIP_GSTT_HUB_EAI` (optional) | platform root |
+| Resource monitor | `FLIP_GSTT_RM` | platform root (attached here) |
+| Event table | `FLIP_PLATFORM.OBS.FLIP_EVENTS` | platform root |
+| Database | `FLIP_TRUST_GSTT`, schemas `APP`, `OMOP`, `STAGES`, `OBS` | here |
+| Warehouse | `FLIP_GSTT_WH` (XSMALL) | here |
+| Compute pools | `FLIP_GSTT_POOL`, `FLIP_GSTT_JOB_POOL`, `FLIP_GSTT_GPU_POOL` (optional) | here |
+| Stages (`STAGES`, all SSE) | `FL_KIT`, `SEED`, `XNAT_ARCHIVE`, `IMAGES`, `CONVERTER_IO`, `GOVERNANCE`, `COHORT_SNAPSHOTS` | here |
+| Image repository | `FLIP_TRUST_GSTT.APP.IMAGES` | here |
+
+`FLIP_<CODE>_ADMIN` is **retired**. An account bootstrapped with it needs the migration in the
+[platform README](../snowflake-platform/README.md#migrating-an-account-bootstrapped-with-flip_code_admin).
 
 ## Security posture
 
+- **Least privilege by construction.** This root's role can create a database, a warehouse, a
+  compute pool and bind a service endpoint. It cannot create a role, a user, an integration or a
+  network policy, and it has no `MANAGE GRANTS`.
+- **Grants work through ownership.** The deploy role owns every object here, and an owner may
+  grant privileges on its own objects without `MANAGE GRANTS`. The platform tier granted the four
+  consumer roles to the deploy role, so this root may name them. The deploy role grants itself
+  nothing: it owns what it creates.
 - **No secret value passes through Terraform.** The root creates no `SECRET` object and holds no
   password field. `make sync-kit` (#1582) writes the kit's values into the `APP` schema directly.
 - **Grants on secrets are declared, not the secrets themselves.** `grants.tf` carries a FUTURE
@@ -54,20 +86,15 @@ names from the same `trust_code`. With `trust_code = GSTT`:
   later creates is covered without this root naming or reading one. Secrets that already exist when
   the root is first applied are not covered by a future grant: `sync-kit` issues `GRANT USAGE` for
   those itself. In practice the order is apply first, `sync-kit` second, so the future grant does
-  the work.
+  the work. A future grant inside a schema is an owner privilege, so it needs no `MANAGE GRANTS`.
 - **Nothing is granted to `PUBLIC`,** and the database's `PUBLIC` schema is dropped at creation.
-- **No `ACCOUNTADMIN` in automation.** It is used once, by hand, for the bootstrap below.
-- **The deploy identity is a `SERVICE` user with key-pair auth.** Only the public half is an input;
-  the private key stays on the operator machine or in a CI secret store.
-- **Egress is closed by default.** `enable_hub_egress = false` creates no network rule and no
-  external access integration. When enabled, the rule is a `HOST_PORT` list holding exactly the hub
-  API on 443 plus the FL server endpoints from the kit.
+- **No `ACCOUNTADMIN` anywhere.** `terraform_role` is validated against `FLIP_<CODE>_DEPLOY`, so a
+  privileged role cannot be passed to this root by mistake.
+- **Egress.** This root creates no network rule and no integration. `enable_hub_egress` only tells
+  it whether the platform root created `FLIP_<CODE>_HUB_EAI`, so the name can be reported to
+  #1582's service specs. `USAGE` on the integration is granted by the platform tier.
 - **No public endpoints.** Service endpoints are `public: false` in #1582's specs; nothing here
   creates one.
-- **Account policies.** A password policy and a session policy are attached to the account (the
-  session policy to person users: a `SERVICE` user has no interactive session, and the provider
-  refuses both attachment flags at once). `admin_allowed_cidrs` attaches an account network policy;
-  it is empty by default so a first apply cannot lock the operator out.
 
 ## Cost guards
 
@@ -78,14 +105,18 @@ not cover compute pools**. Three independent guards, all on by default:
    variable refuses 0.
 2. A nightly task, `FLIP_<CODE>_SUSPEND_POOLS`, suspends every pool at `suspend_pools_cron`
    (default 22:00 Europe/London), so a forgotten `make up` costs one evening.
-3. `FLIP_<CODE>_RM`, a monthly resource monitor on the warehouse: notify at 50/75/90 per cent,
-   suspend at 95, suspend immediately at 100.
+3. `FLIP_<CODE>_RM`, the platform tier's monthly resource monitor, attached to this warehouse when
+   `attach_resource_monitor` is true: notify at 50/75/90 per cent, suspend at 95, suspend
+   immediately at 100. Attaching it uses the `MODIFY` grant the platform tier issues; creating a
+   monitor would need `ACCOUNTADMIN`, which is why it is not created here.
 
 ## Prerequisites
 
 - OpenTofu (`tofu`) 1.9 or later. `terraform` works as a fallback, but local state encryption is an
   OpenTofu feature, so the test-account path assumes `tofu`.
 - A Snowflake account (the test account is AWS eu-west-2, Enterprise edition).
+- **The platform root applied first.** It creates the roles and the deploy user this root signs in
+  as.
 - Credentials in the environment, never in a variable:
 
   ```bash
@@ -97,31 +128,19 @@ not cover compute pools**. Three independent guards, all on by default:
   `~/.snowflake/connections.toml` works too. The provider block in `providers.tf` sets only the
   organization, account, role and warehouse, all from variables.
 
-## Bootstrap (one off, by hand)
+## Bootstrap
 
-An account admin runs this once, in Snowsight, so that nothing afterwards needs `ACCOUNTADMIN`:
-
-```sql
-USE ROLE ACCOUNTADMIN;
-CREATE ROLE IF NOT EXISTS FLIP_GSTT_ADMIN;
-GRANT ROLE FLIP_GSTT_ADMIN TO ROLE SYSADMIN;
-GRANT CREATE DATABASE, CREATE WAREHOUSE, CREATE COMPUTE POOL, CREATE ROLE, CREATE USER,
-      CREATE INTEGRATION, CREATE NETWORK POLICY, EXECUTE TASK, MONITOR USAGE
-  ON ACCOUNT TO ROLE FLIP_GSTT_ADMIN;
-GRANT BIND SERVICE ENDPOINT ON ACCOUNT TO ROLE FLIP_GSTT_ADMIN WITH GRANT OPTION;
-CREATE USER IF NOT EXISTS FLIP_GSTT_DEPLOY_USER TYPE = SERVICE
-  RSA_PUBLIC_KEY = '<public key body>';
-GRANT ROLE FLIP_GSTT_ADMIN TO USER FLIP_GSTT_DEPLOY_USER;
-```
-
-The first apply then runs as `FLIP_GSTT_ADMIN` and adopts the user and role it finds
-(`terraform import`, or let the apply fail once and import the two objects). Later applies need
-nothing above that role.
+There is no hand-written bootstrap any more: it **is** the platform root. Apply that once, with a
+person user holding `ACCOUNTADMIN` and MFA, then come back here. See
+[`../snowflake-platform/README.md`](../snowflake-platform/README.md), and keep a second emergency
+`ACCOUNTADMIN` person user with separate MFA and offline credentials as it describes.
 
 ## State
 
 The backend is a **partial configuration**: `backend.tf` fixes the type, every setting arrives
-through `-backend-config`, which the Makefile passes as `BACKEND_CONFIG`.
+through `-backend-config`, which the Makefile passes as `BACKEND_CONFIG`. The platform root uses a
+different state file name (`terraform-platform.<env>.tfstate`), so the two tiers can never share
+one.
 
 **Test account: local state plus OpenTofu state encryption.**
 
@@ -160,33 +179,29 @@ behaviour yet. No target skips the confirmation prompt.
 
 `make output` prints what #1582 reads: `database_name`, `schema_names`, `image_repository_name`,
 `image_repository_url`, `compute_pool_names`, `stage_names`, `warehouse_name`, `role_names`,
-`deploy_user_name`, `external_access_integration_name`, `event_table_name` and
-`fl_net_image_prefixes`. Names only: no credential, no account identifier.
+`deploy_user_name`, `external_access_integration_name` and `fl_net_image_prefixes`. Names only: no
+credential, no account identifier. The role, user and integration names are derived from
+`trust_code` by convention, not read from the platform root's state.
 
 ## CI
 
 Static and credential-free, in `validate_terraform.yml`: `tofu fmt`, `tofu validate`, tflint
 (bundled terraform ruleset, there is no Snowflake plugin), checkov, and the pytest guards in
-`tests/`. No Snowflake credential exists in CI, so nothing plans or applies there. The workflow's
-path filter covers `trust/deploy/terraform/snowflake/**` only, so a change here never triggers the
-hub's plan or apply workflows.
+`tests/`, for **both** roots. No Snowflake credential exists in CI, so nothing plans or applies
+there. The workflow's path filter covers `trust/deploy/terraform/**` only, so a change here never
+triggers the hub's plan or apply workflows.
 
 ## Open points
 
-- **No event-table resource.** The 2.x provider has none, so `observability.tf` creates the event
-  table through `snowflake_execute` (a statement pair whose revert drops it) and wires it to the
-  account with the `EVENT_TABLE` account parameter. Replace it with a first-class resource when one
-  appears. The parameter is account-wide, so an account hosting two trusts points at the last one
-  applied; one trust per account is the tested shape.
 - **No budget resource.** Snowflake budgets are a native application, with no provider resource, so
-  the credit cap here is the resource monitor plus the pool guards. A budget is still worth setting
-  by hand on an On-Demand account (#1586).
-- **Preview resources.** Stages, compute pools, image repositories, network rules, the external
-  access integration and the password/session/network policy attachments are still preview features
-  in the 2.x provider and are enabled explicitly in `providers.tf`. A provider upgrade that
-  promotes or renames one of them fails there rather than drifting silently.
+  the credit cap is the platform tier's resource monitor plus the pool guards here. A budget is
+  still worth setting by hand on an On-Demand account (#1586).
+- **Preview resources.** Stages, compute pools and image repositories are still preview features in
+  the 2.x provider and are enabled explicitly in `providers.tf`. A provider upgrade that promotes
+  or renames one of them fails there rather than drifting silently.
 - **Services are not here yet.** `manage_services` is a placeholder variable for #1582 and changes
   nothing.
-- **Trial accounts have no external network access,** so `enable_hub_egress` stays false until the
-  account is converted to On-Demand (#1586). Flower's run-time `uv sync` needs PyPI egress; either
-  pre-bake the dependencies or add those endpoints to `fl_server_endpoints` when that happens.
+- **Trial accounts have no external network access,** so the platform tier's `enable_hub_egress`
+  stays false until the account is converted to On-Demand (#1586). Flower's run-time `uv sync`
+  needs PyPI egress; either pre-bake the dependencies or add those endpoints to the platform root's
+  `fl_server_endpoints` when that happens.

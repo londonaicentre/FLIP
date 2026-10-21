@@ -28,5 +28,8 @@ resource "snowflake_warehouse" "trust" {
 
   statement_timeout_in_seconds        = var.warehouse_statement_timeout_secs
   statement_queued_timeout_in_seconds = var.warehouse_statement_timeout_secs
-  resource_monitor                    = snowflake_resource_monitor.trust.fully_qualified_name
+  # The resource monitor is an account object created by the platform tier. Attaching it needs
+  # MODIFY on the monitor, which that tier grants to the deploy role; nothing here can create or
+  # alter a monitor.
+  resource_monitor = var.attach_resource_monitor ? local.resource_monitor : null
 }

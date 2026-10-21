@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# The WORKLOAD tier, applied routinely as FLIP_<CODE>_DEPLOY_USER (TYPE = SERVICE) with key-pair
+# auth. The role it assumes holds four account privileges and nothing more; the account's security
+# objects live in ../snowflake-platform and are out of this root's reach.
+#
 # No credential is ever written here or into a variable: the provider reads the deploy identity
-# from the environment (SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY or SNOWFLAKE_PRIVATE_KEY_PATH,
+# from the environment (SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY_PATH,
 # SNOWFLAKE_AUTHENTICATOR=SNOWFLAKE_JWT) or from ~/.snowflake/connections.toml. A private key in a
 # Terraform variable would land in state and in every plan output.
 provider "snowflake" {
@@ -28,12 +32,5 @@ provider "snowflake" {
     "snowflake_stage_internal_resource",
     "snowflake_compute_pool_resource",
     "snowflake_image_repository_resource",
-    "snowflake_network_rule_resource",
-    "snowflake_external_access_integration_resource",
-    "snowflake_password_policy_resource",
-    "snowflake_session_policy_resource",
-    "snowflake_account_password_policy_attachment_resource",
-    "snowflake_account_session_policy_attachment_resource",
-    "snowflake_network_policy_attachment_resource",
   ]
 }

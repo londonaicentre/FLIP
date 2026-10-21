@@ -11,15 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Egress. A trust node makes exactly two kinds of outbound call: the hub API on 443 and the FL
-# server endpoint(s) from its kit. Both are named, both are off by default, and there is no
-# catch-all rule: a trial account has no external network access at all, so the trial runs hubless
-# and this whole file is inert until enable_hub_egress is set.
+
+# Account-level network objects. The workload role holds neither CREATE INTEGRATION nor CREATE
+# NETWORK POLICY, so everything here can only change through a break-glass apply.
+#
+# Egress is a closed list: the hub API on 443 and the FL server endpoint(s) from the kit. Both are
+# named, both are off by default, and there is no catch-all rule: a trial account has no external
+# network access at all, so the trial runs hubless and this file is inert until enable_hub_egress
+# is set.
 resource "snowflake_network_rule" "hub_egress" {
   count = var.enable_hub_egress ? 1 : 0
 
-  database   = snowflake_database.trust.name
-  schema     = snowflake_schema.trust["app"].name
+  database   = snowflake_database.platform.name
+  schema     = snowflake_schema.platform["policies"].name
   name       = "${local.prefix}_HUB_EGRESS"
   type       = "HOST_PORT"
   mode       = "EGRESS"
@@ -43,7 +47,7 @@ resource "snowflake_external_access_integration" "hub" {
   comment               = "FLIP ${local.code}: hub and FL server egress."
 
   # Secrets are created by `make sync-kit` (#1582) and bound to services there, not through the
-  # integration: nothing in this root may reference a secret value.
+  # integration: nothing in either root may reference a secret value.
   allowed_authentication_secrets {
     none = true
   }

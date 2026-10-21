@@ -11,23 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# Two independent cost guards, because they cover different things.
+
+# A trust node on SPCS bills per compute-pool node while the pool runs, and resource monitors do
+# NOT cover compute pools. So:
 #
-# 1. A resource monitor caps warehouse credits. It does NOT cover SPCS compute pools.
-# 2. Compute pools suspend themselves (compute_pools.tf) and a nightly task suspends whatever is
-#    still running, so a forgotten `make up` costs one evening rather than one month.
-resource "snowflake_resource_monitor" "trust" {
-  name         = local.resource_monitor
-  credit_quota = var.credit_quota
-
-  frequency       = "MONTHLY"
-  start_timestamp = var.resource_monitor_start_timestamp
-
-  notify_triggers           = var.credit_notify_triggers
-  suspend_trigger           = 95
-  suspend_immediate_trigger = 100
-}
-
+# 1. The platform tier's resource monitor caps warehouse credits (attached in warehouse.tf).
+# 2. Compute pools suspend themselves (compute_pools.tf) and this nightly task suspends whatever
+#    is still running, so a forgotten `make up` costs one evening rather than one month.
 resource "snowflake_task" "suspend_pools" {
   database  = snowflake_database.trust.name
   schema    = snowflake_schema.trust["app"].name
