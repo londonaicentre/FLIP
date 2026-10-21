@@ -9,7 +9,7 @@
     "GRAD_CLIP_NORM": 1.0,
     "VAL_SPLIT": 0.2,
     "BATCH_SIZE": 6,
-    "SAVE_DEBUG_SAMPLES": true,
+    "SAVE_DEBUG_SAMPLES": false,
     "spatial_shape": [
         128,
         128
