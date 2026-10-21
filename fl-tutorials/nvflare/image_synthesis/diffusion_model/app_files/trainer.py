@@ -342,6 +342,7 @@ class DiffusionTrainer:
         self.project_id = project_id
 
         self.params_diffusion = {"lr": config["LR_START"], "epochs": config.get("LOCAL_ROUNDS", 5)}
+        self.num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
 
         # Model creation
         self.model = get_model()
@@ -432,12 +433,14 @@ class DiffusionTrainer:
         return datalist[val_size:], datalist[:val_size]
 
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
-        train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
+        train_loader = DataLoader(
+            self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
+        )
+        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
         return train_loader, val_loader
 
     def val_loader(self, batch_size: int) -> DataLoader:
-        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
+        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights, strict=False)
