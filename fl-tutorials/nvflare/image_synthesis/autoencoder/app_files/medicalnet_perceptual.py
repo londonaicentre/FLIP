@@ -35,7 +35,7 @@ the published MedicalNet state dict loads into it with **zero missing and zero u
 intensity standardisation, one forward pass per input channel, the **final** feature map only,
 L2-normalisation across channels, squared difference summed over channels and averaged over space.
 ``ResNetFeatures`` exposes all five scales; MONAI's hub network returns only its ``layer4`` output,
-so this takes ``[-1]`` to match. For a 96-cubed volume that final map is ``512 x 3 x 3 x 3`` — 27
+so this takes ``[-1]`` to match. For the 96x112x80 grid that final map is ``2048 x 3 x 4 x 3`` — 36
 spatial positions, i.e. a global-structure signal rather than a texture one. That is a real
 limitation of the reference loss, not an accident of this port; using the earlier, higher-resolution
 maps as well would score fine detail, but would no longer be the MONAI loss.

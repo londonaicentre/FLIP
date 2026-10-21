@@ -17,13 +17,17 @@ from pathlib import Path
 import monai.transforms as mt
 
 
-def load_spatial_shape() -> list[int]:
-    """Read ``spatial_shape`` from the ``config.json`` next to this file."""
+def load_config() -> dict:
+    """Read the ``config.json`` next to this file."""
     with open(Path(__file__).parent / "config.json", "r") as f:
-        return list(json.load(f)["spatial_shape"])
+        return json.load(f)
 
 
-SPATIAL_SHAPE = load_spatial_shape()
+#: The grid every volume is cropped or padded to, after resampling to ``VOXEL_SPACING`` millimetres.
+#: Task01's scans are 240x240x155 mm; at 2 mm, 96x112x80 holds every brain in it whole (the largest is
+#: 160x187x149 mm, and brains sit up to 20 mm off-centre), where a 96^3 grid would cut 95 of 484.
+SPATIAL_SHAPE = list(load_config()["spatial_shape"])
+VOXEL_SPACING = list(load_config()["voxel_spacing"])
 
 #: Non-image keys carried through the chain; ``modality_index`` is the latent diffusion condition.
 MODALITY_KEYS = ("modality", "modality_index")
@@ -42,7 +46,11 @@ def get_brain_mri_transforms(is_validation: bool = False) -> mt.Compose:
         mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
         mt.Orientationd(keys=["image"], axcodes="RAS"),
-        mt.Resized(keys=["image"], spatial_size=SPATIAL_SHAPE),
+        # A fixed physical voxel size, then a centre crop or pad, as MONAI's 3-D latent diffusion
+        # tutorial does, so anatomy keeps its proportions. Resizing straight to the grid would scale
+        # each axis by a different factor.
+        mt.Spacingd(keys=["image"], pixdim=VOXEL_SPACING, mode="bilinear"),
+        mt.ResizeWithPadOrCropd(keys=["image"], spatial_size=SPATIAL_SHAPE),
         mt.NormalizeIntensityd(keys=["image"], channel_wise=True),
     ]
     if not is_validation:

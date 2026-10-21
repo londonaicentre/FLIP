@@ -150,7 +150,7 @@ def detect_axial_anisotropy(image_path: str, threshold: float = 1.5) -> bool:
     :meth:`AutoencoderTrainer.reset_perceptual_to_anisotropic`).
 
     Not called by the shipped brain-MRI loader, on purpose. ``transforms.py`` resamples every volume
-    onto an isotropic 96^3 grid, so by the time a tensor reaches a loss there is no through-plane
+    to isotropic 2 mm voxels, so by the time a tensor reaches a loss there is no through-plane
     axis to be coarse: the answer would always be False, and asking on the *raw* geometry instead
     (240x240x155, a ratio of 1.55) would log "found axial anisotropy" about data that is about to be
     made isotropic. Kept, and worth calling on the first readable volume, for a cohort that is
@@ -284,7 +284,7 @@ def foreground_ssim(
     """Mean SSIM between a reconstruction and its input, over the **foreground only**.
 
     Background is excluded because it would otherwise decide the score. These volumes are
-    skull-stripped, so everything outside the brain is one constant value — roughly 90% of a 96^3
+    skull-stripped, so everything outside the brain is one constant value — roughly 80% of the
     grid. Both the input and any reconstruction are near that constant there, SSIM is ~1 over all
     of it, and the reported number ends up measuring how much air the volume contains rather than
     how well the brain came back. The unmasked metric on this cohort reads ~0.72 after one round,
@@ -302,7 +302,7 @@ def foreground_ssim(
 
     * ``compute_ssim_and_cs`` returns the **full SSIM map**, not a scalar, so it can be masked at all
       — but it is a *valid* convolution, so the map is ``kernel_size - 1`` smaller per spatial axis
-      (96 -> 86). The mask is therefore cropped by ``(kernel_size - 1) // 2`` on each side, which
+      (96 -> 86 on the first). The mask is therefore cropped by ``(kernel_size - 1) // 2`` on each side, which
       lines each map voxel up with the window centred on it.
     * It returns ``(ssim, contrast_sensitivity)`` **in that order**. Taking the second element gives
       contrast sensitivity — one factor of SSIM, not SSIM — which reads higher and moves less.

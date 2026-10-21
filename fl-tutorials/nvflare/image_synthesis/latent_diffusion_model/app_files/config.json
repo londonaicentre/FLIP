@@ -22,8 +22,13 @@
     "LATENT_SCALE_FACTOR": null,
     "spatial_shape": [
         96,
-        96,
-        96
+        112,
+        80
+    ],
+    "voxel_spacing": [
+        2.0,
+        2.0,
+        2.0
     ],
     "net_config": {
         "spatial_dims": 3,

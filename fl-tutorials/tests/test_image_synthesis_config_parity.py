@@ -57,9 +57,11 @@ import importlib.util
 import json
 import re
 import sys
+import warnings
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
+import nibabel as nib
 import numpy as np
 import pytest
 import torch
@@ -533,6 +535,49 @@ def test_spatial_shape_matches_the_transform_resize(tutorial: Path) -> None:
     """
     transforms = _load_app_module(tutorial, "transforms")
     assert _config(tutorial)["spatial_shape"] == list(transforms.SPATIAL_SHAPE)
+
+
+def test_the_brain_tutorials_share_one_geometry() -> None:
+    """Both brain tutorials resample to the same voxel size and grid.
+
+    The latent job encodes its images with the autoencoder the other tutorial trained; a grid or voxel
+    size that autoencoder never saw hands it anatomy at a scale it was not fit to.
+    """
+    autoencoder, latent = _config(_AUTOENCODER), _config(_LATENT_DIFFUSION)
+    assert latent["spatial_shape"] == autoencoder["spatial_shape"]
+    assert latent["voxel_spacing"] == autoencoder["voxel_spacing"]
+
+
+@pytest.mark.parametrize("tutorial", _BRAIN_MRI_TUTORIALS, ids=lambda p: p.name)
+def test_the_largest_brain_comes_through_whole_and_in_proportion(tutorial: Path, tmp_path: Path) -> None:
+    """The chain resamples and centre-crops; it neither cuts a brain nor stretches one.
+
+    Task01's scans are 240x240x155 at 1 mm. Measured over all 484 cases, a centre crop must span
+    164x202x155 mm to keep every brain whole: the largest is 160x187x149 mm and brains sit up to 20 mm
+    off-centre. An ellipsoid of that size at that offset stands in for it. Resizing straight to the
+    grid, as the chain once did, fails it.
+    """
+    transforms = _load_app_module(tutorial, "transforms")
+    spacing = np.array(_config(tutorial)["voxel_spacing"])
+    size, centre = np.array([160.0, 187.0, 149.0]), np.array([120.0, 120.0, 77.5]) + [2.0, -7.5, -2.5]
+    x, y, z = np.ogrid[:240, :240, :155]
+    brain = sum(((axis + 0.5 - c) / (s / 2)) ** 2 for axis, c, s in zip((x, y, z), centre, size)) <= 1
+    path = tmp_path / "brain.nii.gz"
+    nib.save(nib.Nifti1Image(brain.astype(np.float32) * 100, np.eye(4)), path)
+
+    with warnings.catch_warnings():
+        # MONAI 1.6's notice that Orientationd's `labels` default will change, which pytest.ini
+        # escalates; it is about meta-tensor axis labels, not geometry. As in the spleen parity test.
+        warnings.filterwarnings(
+            "ignore", category=FutureWarning, message=r"monai\.transforms.*Orientationd\.__init__:labels"
+        )
+        chain = transforms.get_brain_mri_transforms(is_validation=True)
+    image = chain({"image": str(path)})["image"][0]
+    assert list(image.shape) == _config(tutorial)["spatial_shape"]
+    foreground = (image > image.min()).numpy()
+    assert not any(foreground.take(i, axis=a).any() for a in range(3) for i in (0, -1)), "the crop cut the brain"
+    extent_mm = (np.ptp(np.argwhere(foreground), axis=0) + 1) * spacing
+    np.testing.assert_allclose(extent_mm, size, atol=2 * spacing.max())
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)

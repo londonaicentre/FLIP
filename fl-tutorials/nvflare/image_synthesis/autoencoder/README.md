@@ -35,7 +35,10 @@ KL autoencoder, but keep the anatomy and the tumour.
 The **brain MRI** cohort — MSD Task01_BrainTumour, the Medical Segmentation Decathlon's cut of BraTS
 (see [`fl-tutorials/datasets/brain_mri/`](../../../datasets/brain_mri/)). Each study is **four
 co-registered MR sequences**: FLAIR, T1w, T1Gd and T2w, arriving as four separate single-channel
-NIfTI volumes.
+NIfTI volumes. Each volume is resampled to **2 mm voxels** and centre-cropped or padded to a
+**96 × 112 × 80** grid (`voxel_spacing` and `spatial_shape` in `config.json`), the way MONAI's 3-D
+latent diffusion tutorial prepares the same data: every brain keeps its proportions and stays whole.
+Each is then z-scored.
 
 ```bash
 make -C fl-tutorials download-brain-mri-msd-raw            # 7.6 GB MSD tar, once
@@ -100,7 +103,7 @@ The discriminator can be either 2D or 3D. The reason for a 2D discriminator in a
   (`self.perceptual_slices`). **Both operands of a comparison reuse the same indices** — otherwise
   the loss compares unrelated anatomy.
 - **`detect_axial_anisotropy(path)`** reports whether a volume is thick-slice. It is *not* called by
-  the shipped loader, deliberately: the chain resamples to an isotropic 96³ grid, so the answer would
+  the shipped loader, deliberately: the chain resamples to isotropic 2 mm voxels, so the answer would
   always be no, and asking on the raw geometry instead (240×240×155, a ratio of 1.55) would log
   "found axial anisotropy" about data that is about to be made isotropic. It is there for a cohort
   that is genuinely thick-slice and resampled to a grid that keeps it that way.
