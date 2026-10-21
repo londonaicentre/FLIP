@@ -144,6 +144,15 @@ published state dict lands in it with **zero missing and zero unexpected keys**,
 time: a partial load under `strict=False` would leave a randomly-initialised critic still reporting
 plausible, smoothly-falling numbers.
 
+**Attribution.** MedicalNet is Tencent's: Chen, Ma and Zheng, *Med3D: Transfer Learning for 3D Medical
+Image Analysis*, [arXiv:1904.00625](https://arxiv.org/abs/1904.00625) (2019), code at
+[Tencent/MedicalNet](https://github.com/Tencent/MedicalNet). The weights are released under the MIT
+licence on Hugging Face ([`TencentMedicalNet/MedicalNet-Resnet50`](https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50),
+[`-Resnet10`](https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet10)), which is where
+`make weights` fetches them from (the repository carries no copy). Cite the paper if you publish
+results that use this loss. How the loss reads the network (intensity normalisation, final feature
+map) follows MONAI's `PerceptualLoss` for the same backbones.
+
 Note that MedicalNet's raw values are 5–9× smaller than the 2-D LPIPS backbone, so adjust `w_perceptual_loss` according to the backbone. 
 
 ### A note on mixed precision

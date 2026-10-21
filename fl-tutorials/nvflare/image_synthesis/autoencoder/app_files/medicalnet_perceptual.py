@@ -11,6 +11,9 @@
 
 """A 3-D MedicalNet perceptual loss that never reaches the network.
 
+MedicalNet: Chen, Ma and Zheng, "Med3D: Transfer Learning for 3D Medical Image Analysis",
+arXiv:1904.00625 (2019); weights released by Tencent under the MIT licence.
+
 MONAI ships this loss as ``PerceptualLoss(spatial_dims=3, network_type="medicalnet_resnet10_23datasets")``,
 but that constructor is unusable in a FLIP app: it builds its backbone with
 ``torch.hub.load("Project-MONAI/perceptual-models:main", ...)``, which fetches a **GitHub repository

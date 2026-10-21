@@ -68,7 +68,8 @@ class Checkpoint:
 
 CHECKPOINTS: dict[str, Checkpoint] = {
     "squeezenet1_1": Checkpoint("https://download.pytorch.org/models/squeezenet1_1-b8a52dc0.pth"),
-    # MedicalNet ResNet-10, the 3-D perceptual backbone the autoencoder tutorial ships. Published
+    # MedicalNet (Chen, Ma and Zheng, arXiv:1904.00625; Tencent, MIT licence), the 3-D perceptual
+    # backbone the autoencoder tutorial ships (ResNet-50; ResNet-10 the lighter option). Published
     # on the Hugging Face hub without a hash in the filename, so the digest is pinned here and the
     # file is staged under the hash-named form the app verifies against. Fetched by plain URL
     # rather than `hf_hub_download` to keep this tool's one download path (and its hash check).
