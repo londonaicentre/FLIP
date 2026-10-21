@@ -194,9 +194,7 @@ def main() -> int:
     ):
         _assert(_check(report, name).get("ok") is True, f"check '{name}' passed", json.dumps(_check(report, name)))
     _assert(calls.exists() and "down-trust KIT=SELFTEST HUB=prod" in calls.read_text(), "stack torn down afterwards")
-    kit = dict(
-        line.split("=", 1) for line in (tmp / ".env.SELFTEST.prod").read_text().splitlines() if "=" in line
-    )
+    kit = dict(line.split("=", 1) for line in (tmp / ".env.SELFTEST.prod").read_text().splitlines() if "=" in line)
     password = kit.get("ORTHANC_PASSWORD", "")
     _assert(bool(password) and password not in calls.read_text(), "the Orthanc password never appears in argv")
     token = base64.b64encode(f"{kit['ORTHANC_USERNAME']}:{password}".encode()).decode()
