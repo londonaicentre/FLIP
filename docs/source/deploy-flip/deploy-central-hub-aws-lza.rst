@@ -383,8 +383,9 @@ The Makefile refuses to run when ``AWS_PROFILE`` does not match ``PROD``, and ne
 
    - ``full-deploy``, ``make status`` and ``make destroy`` are built for the self-contained mode and are not yet
      tested here. Several ``full-deploy`` steps (the cloud trust EC2, SSH and Ansible setup) do not apply.
-   - ``deploy-ui`` does not invalidate a CloudFront cache, because the edge distribution is in another account.
-     Instead ``index.html`` is served uncached and the hashed assets as immutable.
+   - CI publishes the UI after each successful apply, so ``deploy-ui`` is only needed when that publish fails or
+     the UI must be rolled back. It does not invalidate a CloudFront cache, because the edge distribution is in
+     another account. Instead ``index.html`` is served uncached and the hashed assets as immutable.
 
 ***************
 Further reading

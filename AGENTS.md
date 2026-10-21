@@ -436,7 +436,7 @@ the compose files' container-identity contract, plus the repo-level `tests/` (ro
 `docker_build_*.yml` (per-service GHCR publish; the application images and
 `docker_build_omop_db.yml` are gated on that service's test workflow, while
 `docker_build_orthanc.yml` and `docker_build_xnat_{db,dcm2niix,nginx,web}.yml` publish
-straight from a push — see "Docker image builds" below), `validate_terraform.yml` (fmt/validate + a tflint lint (`make tflint-lint`) + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` from the repo root, or all three static checks with `make -C deploy/providers/AWS lint` (the AWS Makefile's parse-time env guards stand aside when every goal is a static one, FLIP#1440), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `lint_python.yml` (`ruff check` + `ruff format --check` over every tracked Python file — the only lint that reaches the trees outside a service directory (`scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/`) and the only format check covering the whole repo (flip-utils, `trust/orthanc` and the trust data tools also check their own); unfiltered, ruff pinned, files from `git ls-files` so a gitignored path cannot hide a tracked file, no auto-fix; flip-api's generated Alembic revisions are excluded from both, in `flip-api/pyproject.toml`; shape pinned by `.github/tests/workflows/test_lint_python.py` — FLIP#1326), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+straight from a push — see "Docker image builds" below), `validate_terraform.yml` (fmt/validate + a tflint lint (`make tflint-lint`) + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` from the repo root, or all three static checks with `make -C deploy/providers/AWS lint` (the AWS Makefile's parse-time env guards stand aside when every goal is a static one, FLIP#1440), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `publish_ui.yml` (reusable; the flip-ui publish after an apply, FLIP#1186), `terraform_drift.yml`, `lint_python.yml` (`ruff check` + `ruff format --check` over every tracked Python file — the only lint that reaches the trees outside a service directory (`scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/`) and the only format check covering the whole repo (flip-utils, `trust/orthanc` and the trust data tools also check their own); unfiltered, ruff pinned, files from `git ls-files` so a gitignored path cannot hide a tracked file, no auto-fix; flip-api's generated Alembic revisions are excluded from both, in `flip-api/pyproject.toml`; shape pinned by `.github/tests/workflows/test_lint_python.py` — FLIP#1326), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 Further workflows, grouped: **unit tests** — `unit-tests.yml` (flip-utils + the FLARE
 fl-api-base, on push) and `unit-tests-heavy.yml` (flip-utils, GPU-adjacent suite, push or
@@ -480,9 +480,13 @@ The eight service test workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the f
 
 `validate_terraform.yml` does the credential-free `fmt`/`validate` pass. On top of that, three
 OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub: `terraform_plan.yml`
-(plan staging on every PR touching `deploy/providers/AWS/**`), `terraform_apply.yml` (push to
-`develop` → stag, push to `main` → **prod**), and `terraform_drift.yml` (nightly plan, one issue per
-environment). **Merging to `main` changes production infrastructure.**
+(plan staging on every PR touching `deploy/providers/AWS/**`), `terraform_apply.yml` (every push to
+`develop` → stag, every push to `main` → **prod**), and `terraform_drift.yml` (nightly plan, one issue per
+environment). **Merging to `main` changes production infrastructure.** After a successful apply the
+`ui` job calls the reusable `publish_ui.yml` (FLIP#1186): a credential-free build job, then a publish
+job under the bootstrap module's bucket-only `AICentre-FLIPUiPublishRole` (`TF_UI_PUBLISH_ROLE_ARN`)
+running `deploy/providers/AWS/scripts/publish-ui.sh`, the same script `make deploy-ui` runs. A held
+apply holds the UI too.
 
 Two guards make the unattended apply safe (`resolve-image-tags.sh` pins this commit's sha tag;
 `check-fl-plan-impact.sh` holds any apply that would kill an in-flight training run), and Terraform
@@ -502,8 +506,8 @@ passes on `develop` or `main`** — they trigger via `workflow_run` and a job-le
 success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
 build still only fires when that service changed. (`orthanc` and `xnat_*` keep their direct push
 trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead. `flip-ui`
-is a CI smoke test that never publishes — it is rebuilt locally by `make deploy-ui` and never consumed
-from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
+is a CI smoke test that never publishes an image — the UI is built by `publish_ui.yml` after each apply,
+or by `make deploy-ui`, and never consumed from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
 hub ECS deploys pin — see
 [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#image-tags-deploys-and-the-fl-quiesce)
 for deploys, rollback and the FL quiesce reminder.

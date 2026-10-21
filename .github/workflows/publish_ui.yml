@@ -1,0 +1,197 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Publish flip-ui to the environment's UI bucket (FLIP#1186). Called by
+# terraform_apply.yml once an apply has succeeded, so the UI never reaches users
+# ahead of the API it calls: a held apply holds the UI too.
+#
+# Two jobs, so the build never holds credentials:
+#
+#   build    npm ci runs third-party install scripts, so this job has no
+#            id-token, no AWS step and no secrets. window.js is generated from
+#            the environment's public values only (it is served to every
+#            browser anyway); the composed Terraform env file, which carries
+#            the AES key and the admin password, never reaches it.
+#   publish  assumes the UI-publish role (modules/terraform_ci_bootstrap), which
+#            can write the UI bucket and nothing else, and runs the same
+#            scripts/publish-ui.sh as `make deploy-ui`.
+#
+# The role trusts this file at the environment's branch: a job inside a reusable
+# workflow presents the called file as job_workflow_ref, whoever calls it.
+
+name: Publish flip-ui
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: GitHub environment to publish into (aws-stag or aws-prod).
+        type: string
+        required: true
+      release_tag:
+        description: The release being applied (v<X.Y.Z>), or empty for a sha build.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    # For the environment's variables. Declaring it grants nothing by itself:
+    # this job requests no token and references no secret.
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+    outputs:
+      configured: ${{ steps.role.outputs.set }}
+    steps:
+      # A job-level `if` is evaluated before the environment's variables load,
+      # so whether this environment publishes at all is decided here, once.
+      # Until the role exists the publish is skipped rather than failed.
+      - name: Check for the UI-publish role
+        id: role
+        env:
+          ROLE_ARN: ${{ vars.TF_UI_PUBLISH_ROLE_ARN }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          if [[ -n "${ROLE_ARN}" ]]; then
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=flip-ui not published::${ENVIRONMENT} has no TF_UI_PUBLISH_ROLE_ARN, so the UI was not published. Run make deploy-ui, or create the role (modules/terraform_ci_bootstrap, ui_bucket_name) and set the variable."
+            echo "set=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout code
+        if: steps.role.outputs.set == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        if: steps.role.outputs.set == 'true'
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      # generate-window-js.sh falls back to localhost for an unset API URL, which
+      # would publish a UI that talks to nothing. Fail here instead.
+      - name: Check the window.js inputs
+        if: steps.role.outputs.set == 'true'
+        env:
+          AWS_COGNITO_USER_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
+          AWS_COGNITO_APP_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
+          CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for key in AWS_COGNITO_USER_POOL_ID AWS_COGNITO_APP_CLIENT_ID CENTRAL_HUB_API_URL AWS_REGION; do
+            [[ -n "${!key}" ]] || missing="${missing} ${key}"
+          done
+          [[ -z "${missing}" ]] ||
+            { echo "::error::${ENVIRONMENT} is missing the variable(s):${missing}. See deploy/providers/AWS/README.md, \"flip-ui on S3 + CloudFront\"."; exit 1; }
+
+      - name: Build
+        if: steps.role.outputs.set == 'true'
+        working-directory: flip-ui
+        env:
+          AUTH_BACKEND: cognito
+          AWS_COGNITO_USER_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
+          AWS_COGNITO_APP_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
+          CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          BLACKLISTED_MODEL_FILES: ${{ vars.BLACKLISTED_MODEL_FILES }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The build's own version, shown in the user menu: the release, or
+          # sha-<short7>, the name of this commit's image builds.
+          export RELEASE_VERSION="${RELEASE_TAG:-sha-${GIT_SHA:0:7}}"
+          npm ci
+          # postbuild:deploy writes dist/js/window.js from the env above.
+          npm run build:deploy
+
+      # Artifacts of a public repository are public downloads. This one holds
+      # only what the site itself serves.
+      - name: Upload the build
+        if: steps.role.outputs.set == 'true'
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: flip-ui-dist
+          path: flip-ui/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish
+    needs: build
+    if: needs.build.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write # assume the UI-publish role
+    steps:
+      - name: Checkout the publish script
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          sparse-checkout: deploy/providers/AWS/scripts/publish-ui.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Download the build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: flip-ui-dist
+          path: dist
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          role-to-assume: ${{ vars.TF_UI_PUBLISH_ROLE_ARN }}
+          role-session-name: flip-ui-publish-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The bucket is the variable cloudfront.tf creates it from, which is also
+      # the role's scope. UI_DISTRIBUTION_ID is set only where the FLIP root owns
+      # the distribution; on LZA it is empty and nothing is invalidated.
+      - name: Publish
+        env:
+          FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
+          UI_DISTRIBUTION_ID: ${{ vars.UI_DISTRIBUTION_ID }}
+        run: deploy/providers/AWS/scripts/publish-ui.sh dist "${FLIP_UI_BUCKET_NAME}" "${UI_DISTRIBUTION_ID}"
+
+      # index.html and window.js are no-cache, so the edge serves the new
+      # window.js once it has re-fetched it. Reading it back proves the build
+      # reached users, not just the bucket.
+      - name: Check the served window.js
+        env:
+          CENTRAL_HUB_API_URL: ${{ vars.CENTRAL_HUB_API_URL }}
+        run: |
+          set -euo pipefail
+          expected="$(grep -o 'window.RELEASE_VERSION *= *"[^"]*"' dist/js/window.js)"
+          url="${CENTRAL_HUB_API_URL%/api}/js/window.js"
+          for attempt in 1 2 3 4 5 6 7 8; do
+            if curl -fsS "${url}" | grep -Fq "${expected}"; then
+              echo "${url} serves ${expected}."
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::${url} does not serve ${expected} after two minutes. The objects are in the bucket; check the edge's caching of js/window.js."
+          exit 1

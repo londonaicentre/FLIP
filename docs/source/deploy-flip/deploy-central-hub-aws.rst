@@ -200,7 +200,11 @@ Several on-prem trusts can share one host if each kit uses its own ports and dat
 UI-only deploys
 ===============
 
-To redeploy just the UI, no Terraform is needed:
+On an account CI applies, the UI ships with every apply: once the apply of a push to ``develop`` or ``main``
+succeeds, CI builds the UI from the same commit and publishes it. A held apply holds the UI too, so users never get
+a UI that is newer than the API. If that publish fails, re-run it from the apply run in GitHub Actions.
+
+To redeploy just the UI by hand, for example to roll it back from an older checkout, no Terraform is needed:
 
 .. code-block:: shell
 

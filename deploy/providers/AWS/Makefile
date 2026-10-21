@@ -937,45 +937,28 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	@echo "   frontend/backend mismatch."
 
 .PHONY: deploy-ui
-deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
+deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucket (CI does this after every apply, FLIP#1186)
 	@echo "🖼️  Building flip-ui from working tree..."
 	@# Uses build:deploy (vite build only). The type-checked `npm run build` fails
-	@# on pre-existing TypeScript errors in the repo — tracked separately.
+	@# on pre-existing TypeScript errors in the repo — tracked separately. Its
+	@# postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
+	@# this Makefile exports.
 	@cd ../../../flip-ui && npm ci && npm run build:deploy
-	@echo "🔧 Generating window.js from $(MAIN_ENV_FILE)..."
-	@cd ../../../flip-ui && sh scripts/generate-window-js.sh > dist/js/window.js
-	@echo "📦 Syncing static assets to the deployed UI bucket..."
-	@# Hashed bundles are content-addressed and safe to cache forever.
-	@# index.html and window.js must never be cached long — they reference the hashed bundles.
+	@# The sync and its cache-control split are scripts/publish-ui.sh, shared with
+	@# .github/workflows/publish_ui.yml. On LZA there is no workload distribution to
+	@# invalidate (cloudfront.tf gates it off; the networking account's edge
+	@# distribution serves the bucket) and no cross-account invalidation permission
+	@# -- BY DESIGN (FLIP#749): the hashed bundles are immutable and
+	@# index.html/window.js carry no-cache metadata, so a deploy is visible on the
+	@# next index.html fetch with no invalidation at all.
 	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
-	echo "   s3://$$UI_BUCKET/"; \
-	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
-		--delete \
-		--cache-control "public, max-age=31536000, immutable" \
-		--exclude "index.html" --exclude "js/window.js" --exclude "ark_demo/*"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
-		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "text/html; charset=utf-8"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
-		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "application/javascript; charset=utf-8"
-	@# On LZA there is no workload distribution to invalidate (cloudfront.tf gates
-	@# it off; the networking account's edge distribution serves the bucket) and no
-	@# cross-account invalidation permission -- BY DESIGN (FLIP#749): the hashed
-	@# bundles are immutable and index.html/window.js carry no-cache metadata, so a
-	@# deploy is visible on the next index.html fetch with no invalidation at all.
-ifneq ($(IS_LZA),)
-	@echo "🧹 Skipping CloudFront invalidation on LZA (edge distribution honours the Cache-Control metadata)."
-else
-	@echo "🧹 Invalidating CloudFront..."
-	@DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
-	[ -n "$$DIST_ID" ] || { echo "❌ Terraform output CloudfrontDistributionId is empty"; exit 1; }; \
-	$(_AWS_ENV) aws cloudfront create-invalidation \
-		--distribution-id "$$DIST_ID" \
-		--paths "/*" >/dev/null
-endif
-	@echo "✅ deploy-ui complete."
+	DIST_ID=""; \
+	if [ -z "$(IS_LZA)" ]; then \
+		DIST_ID=$$($(_AWS_ENV) terraform output -raw CloudfrontDistributionId); \
+		[ -n "$$DIST_ID" ] || { echo "❌ Terraform output CloudfrontDistributionId is empty"; exit 1; }; \
+	fi; \
+	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist "$$UI_BUCKET" "$$DIST_ID"
 
 .PHONY: deploy-ark-demo
 deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix) + invalidate CloudFront
