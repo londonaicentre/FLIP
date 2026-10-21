@@ -149,6 +149,20 @@ def test_secrets_are_altered_not_replaced(kit: dict) -> None:
     assert "GRANT WRITE" not in joined
 
 
+def test_secrets_are_owned_by_the_deploy_role_and_read_by_the_service_role(kit: dict) -> None:
+    """FLIP_<CODE>_ADMIN is retired (epic FLIP#1589). The deploy role creates and owns the
+    secrets, and an owner grants READ on its own objects without MANAGE GRANTS."""
+    names = sync.Names(CODE)
+    sql = "\n".join(sync.secret_statements(names, kit))
+    assert f"USE ROLE {names.deploy_role};" in sql
+    assert f"FLIP_{CODE}_ADMIN" not in sql, "the admin role is retired"
+    assert not hasattr(names, "admin_role"), "Names must no longer offer the retired admin role"
+    for entry in sync.SECRETS:
+        if entry in sync.absent_kit_entries(kit):
+            continue
+        assert f"GRANT READ ON SECRET {names.secret(entry)} TO ROLE {names.service_role};" in sql
+
+
 def test_secret_objects_follow_the_naming_contract(kit: dict) -> None:
     statements = sync.secret_statements(sync.Names(CODE), kit)
     for secret in sync.SECRETS:

@@ -64,7 +64,14 @@ def sql_up(directory: Path, manifest: dict[str, Any]) -> list[str]:
     block volumes (xnat-db's and Orthanc's databases) and every grant on it. ALTER
     applies the new specification to the running service in place.
     """
-    statements = [f"USE DATABASE {manifest['database']};", f"USE SCHEMA {manifest['database']}.APP;"]
+    statements = [
+        # Services are created by the deploy role, which owns them and every object they
+        # reference. It holds BIND SERVICE ENDPOINT on the account and nothing else that is
+        # account-level (epic FLIP#1589).
+        f"USE ROLE {manifest['role']};",
+        f"USE DATABASE {manifest['database']};",
+        f"USE SCHEMA {manifest['database']}.APP;",
+    ]
     for service in manifest["services"]:
         body = _spec_body(directory, service)
         if service["kind"] == JOB_KIND:
@@ -88,7 +95,8 @@ def sql_up(directory: Path, manifest: dict[str, Any]) -> list[str]:
 def sql_down(manifest: dict[str, Any]) -> list[str]:
     """DROP every service, newest first. Block volumes keep their snapshot on delete."""
     services = [s for s in manifest["services"] if s["kind"] != JOB_KIND]
-    return [f"DROP SERVICE IF EXISTS {service['sql_name']};" for service in reversed(services)]
+    statements = [f"USE ROLE {manifest['role']};", f"USE SCHEMA {manifest['database']}.APP;"]
+    return statements + [f"DROP SERVICE IF EXISTS {service['sql_name']};" for service in reversed(services)]
 
 
 def sql_suspend(manifest: dict[str, Any]) -> list[str]:
@@ -99,7 +107,8 @@ def sql_suspend(manifest: dict[str, Any]) -> list[str]:
     manual half of the cost control the epic requires alongside pool auto-suspend.
     """
     services = [s for s in manifest["services"] if s["kind"] != JOB_KIND]
-    statements = [f"ALTER SERVICE IF EXISTS {service['sql_name']} SUSPEND;" for service in reversed(services)]
+    statements = [f"USE ROLE {manifest['role']};", f"USE SCHEMA {manifest['database']}.APP;"]
+    statements += [f"ALTER SERVICE IF EXISTS {service['sql_name']} SUSPEND;" for service in reversed(services)]
     statements += [f"ALTER COMPUTE POOL IF EXISTS {pool} SUSPEND;" for pool in sorted(set(manifest["pools"].values()))]
     return statements
 

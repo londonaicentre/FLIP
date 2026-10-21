@@ -42,11 +42,15 @@ trust's kit file, and never pass through Terraform variables or state.
 ## Quick start
 
 ```bash
-# 0. One-off: a snow CLI connection with key-pair auth for the deploy SERVICE user.
+# 0. One-off: a snow CLI connection with key-pair auth for the deploy SERVICE user,
+#    FLIP_<CODE>_DEPLOY_USER, whose default role is FLIP_<CODE>_DEPLOY.
 #    Humans use MFA; no ACCOUNTADMIN in automation.
 snow connection add --connection-name flip-test ...
 
-# 1. Infrastructure (the other root, FLIP#1581)
+# 1a. Account security objects, break glass, rarely, by a person user with MFA (FLIP#1581)
+make -C trust/deploy/terraform/snowflake-platform apply KIT=GSTT PROD=stag
+
+# 1b. Infrastructure, the workload root (FLIP#1581)
 make -C trust/deploy/terraform/snowflake apply KIT=GSTT PROD=stag
 
 # 2. Images into the account repository (needs docker + GHCR login + egress)
@@ -152,6 +156,28 @@ deploy's services fail to start on a privilege error about an object that plainl
 `sync-kit` also issues `GRANT READ ON SECRET ... TO ROLE FLIP_<CODE>_SVC`, because the
 Terraform provider cannot grant on an object that does not exist yet and these objects
 are created here, not there.
+
+## Roles
+
+Everything in this directory runs as **`FLIP_<CODE>_DEPLOY`**, the least-privilege
+workload role, signed in as the `FLIP_<CODE>_DEPLOY_USER` `SERVICE` user with key-pair
+auth. `FLIP_<CODE>_ADMIN` is **retired** (two-tier decision, 2026-10-20, epic FLIP#1589).
+
+| Object | Owner | Granted |
+| --- | --- | --- |
+| Services (`CREATE OR ALTER SERVICE`) | `FLIP_<CODE>_DEPLOY` | the service runs with `FLIP_<CODE>_SVC` through its spec |
+| Secrets (`sync-kit`) | `FLIP_<CODE>_DEPLOY` | `READ` to `FLIP_<CODE>_SVC` |
+| Database, schemas, warehouse, pools, repository, stages | `FLIP_<CODE>_DEPLOY` | per the Terraform workload root |
+
+That role holds exactly four account privileges, granted once by the break-glass
+Terraform root: `CREATE DATABASE`, `CREATE WAREHOUSE`, `CREATE COMPUTE POOL`,
+`BIND SERVICE ENDPOINT`. It has no `CREATE ROLE`, no `CREATE USER`, no
+`CREATE INTEGRATION`, no `CREATE NETWORK POLICY` and no `MANAGE GRANTS`. The grants this
+directory issues all work through **ownership**: an owner may grant privileges on its own
+objects without `MANAGE GRANTS`.
+
+Attaching `FLIP_<CODE>_HUB_EAI` to a service is deliberately **not** done here: hub egress
+is tracked by FLIP#1586, and the integration itself is created by the break-glass root.
 
 A kit that carries no value for a secret leaves that secret untouched and says so. That
 is not an error: a trust running no XNAT has no XNAT passwords, and nothing maps them.

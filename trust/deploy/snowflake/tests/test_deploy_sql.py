@@ -60,6 +60,30 @@ def test_up_carries_no_secret_value(rendered: Path, manifest: dict) -> None:
         assert value not in sql, f"{name} reached the deploy SQL"
 
 
+def test_every_deploy_statement_runs_as_the_deploy_role(rendered: Path, manifest: dict) -> None:
+    """FLIP_<CODE>_ADMIN is retired (epic FLIP#1589): services are created, dropped and
+    suspended by the least-privilege workload role, which owns them."""
+    assert manifest["role"] == "FLIP_GSTT_DEPLOY"
+    for sql in (
+        "\n".join(spcs_sql.sql_up(rendered, manifest)),
+        "\n".join(spcs_sql.sql_down(manifest)),
+        "\n".join(spcs_sql.sql_suspend(manifest)),
+    ):
+        assert "USE ROLE FLIP_GSTT_DEPLOY;" in sql
+        assert "FLIP_GSTT_ADMIN" not in sql, "the admin role is retired"
+        assert "ACCOUNTADMIN" not in sql
+
+
+def test_the_hub_eai_is_not_attached_here(rendered: Path, manifest: dict) -> None:
+    """Hub egress is tracked by FLIP#1586, and the integration belongs to the break-glass
+    Terraform root. Nothing in the deploy SQL or in a rendered spec may reference it."""
+    sql = "\n".join(spcs_sql.sql_up(rendered, manifest))
+    assert "EXTERNAL_ACCESS_INTEGRATIONS" not in sql.upper()
+    assert "HUB_EAI" not in sql.upper()
+    for spec in sorted(rendered.glob("*.yaml")):
+        assert "HUB_EAI" not in spec.read_text().upper(), spec.name
+
+
 def test_the_job_service_is_not_created_as_a_running_service(rendered: Path, manifest: dict) -> None:
     sql = "\n".join(spcs_sql.sql_up(rendered, manifest))
     assert "CREATE OR ALTER SERVICE FLIP_TRUST_GSTT.APP.DCM2NIIX" not in sql
@@ -77,8 +101,9 @@ def test_suspend_covers_the_compute_pools(manifest: dict) -> None:
 def test_down_drops_every_service(manifest: dict) -> None:
     sql = spcs_sql.sql_down(manifest)
     expected = [s for s in manifest["services"] if s["kind"] != "job"]
-    assert len(sql) == len(expected)
-    assert all(statement.startswith("DROP SERVICE IF EXISTS") for statement in sql)
+    drops = [statement for statement in sql if statement.startswith("DROP SERVICE IF EXISTS")]
+    assert len(drops) == len(expected)
+    assert all(statement.startswith(("USE ", "DROP SERVICE IF EXISTS")) for statement in sql)
 
 
 def test_status_and_selftest_read_through_sql_only(manifest: dict) -> None:

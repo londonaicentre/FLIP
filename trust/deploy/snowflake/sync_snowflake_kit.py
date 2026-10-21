@@ -104,7 +104,7 @@ def absent_kit_entries(kit: dict[str, str]) -> list[str]:
 def _object_statements(names: Names, literals: dict[str, str]) -> list[str]:
     """The SQL for each kit entry in ``literals`` (entry name to an already-quoted literal)."""
     statements = [
-        f"USE ROLE {names.admin_role};",
+        f"USE ROLE {names.deploy_role};",
         f"USE DATABASE {names.database};",
         f"USE SCHEMA {names.app_schema};",
     ]
@@ -113,7 +113,9 @@ def _object_statements(names: Names, literals: dict[str, str]) -> list[str]:
         statements += [
             f"CREATE SECRET IF NOT EXISTS {qualified} TYPE = GENERIC_STRING SECRET_STRING = {sql_literal('')};",
             f"ALTER SECRET {qualified} SET SECRET_STRING = {literal};",
-            # The owner role creating a service needs READ on every secret it maps.
+            # Secrets are owned by the deploy role, which creates them here and owns every
+            # other object in the trust database. An owner grants on its own objects without
+            # MANAGE GRANTS, so READ goes to the role the services run as.
             f"GRANT READ ON SECRET {qualified} TO ROLE {names.service_role};",
         ]
     return statements

@@ -103,10 +103,10 @@ class Names:
         self.code = normalise_code(code)
 
     # ── account-level ────────────────────────────────────────────────────
-    @property
-    def admin_role(self) -> str:
-        return f"FLIP_{self.code}_ADMIN"
-
+    # FLIP_<CODE>_ADMIN is retired (two-tier decision, 2026-10-20, epic FLIP#1589). The
+    # account's security objects belong to the break-glass Terraform root
+    # (trust/deploy/terraform/snowflake-platform); everything this directory does runs as
+    # the least-privilege workload role below, which owns the trust's objects.
     @property
     def deploy_role(self) -> str:
         return f"FLIP_{self.code}_DEPLOY"

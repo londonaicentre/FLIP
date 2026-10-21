@@ -109,6 +109,10 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
         "code": names.code,
         "env": env,
         "database": names.database,
+        # The role every deploy statement runs as: the least-privilege workload role, which
+        # owns the database, the pools, the repository, the stages, the secrets and the
+        # services (epic FLIP#1589). FLIP_<CODE>_ADMIN is retired.
+        "role": names.deploy_role,
         "schema": "APP",
         "warehouse": names.warehouse,
         "image_repository": names.image_repository,
