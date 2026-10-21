@@ -194,16 +194,6 @@ DEBUG_SAMPLES_DIR=../../../data/debug_samples/autoencoder python dev/plot_utils.
 Reads the simulator logs and writes `losses_<site>.png` next to the samples. Runs on your machine
 only, never at a trust.
 
-## Base-image dependency (torchvision)
-
-This tutorial needs `torchvision` at runtime for the 2-D discriminator path; it must be built
-against the **same torch** as the
-`flare-fl-base` image (pinned `torch>=2.13`, cu130, in
-[`flip-utils/pyproject.toml`](../../../../flip-utils/pyproject.toml)). A base image whose
-`torchvision` predates that pin fails at runtime with
-`RuntimeError: operator torchvision::nms does not exist`. The perceptual network's weights are **not** downloaded at run
-time — see *Note on the perceptual loss* above.
-
 ## FLIP-specific values
 
 `FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (set stubs in `.env.app`).

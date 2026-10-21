@@ -72,7 +72,7 @@ except ModuleNotFoundError as err:
 logger = logging.getLogger(__name__)
 
 
-# The perceptual loss is MedicalNet ResNet-10, a 3-D network, staged offline by
+# The perceptual loss is MedicalNet ResNet-50, a 3-D network, staged offline by
 # `medicalnet_perceptual` — see that module for why MONAI's own `PerceptualLoss(...)` constructor
 # cannot be used here (it builds its backbone through `torch.hub.load`, and FL apps never download
 # at run time, FLIP#1206). Being genuinely 3-D, it scores the whole volume rather than sampled
