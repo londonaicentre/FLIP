@@ -408,9 +408,7 @@ _MESSAGE_RE = re.compile(r" - (?:DEBUG|INFO|WARNING|ERROR|CRITICAL) - (?P<messag
 #: commas and hyphens, which is what keeps a name from bridging across ``a: 1, b: 2`` or reaching
 #: back into the logger prefix; ``nan``/``inf`` are accepted as values so a run that broke still
 #: plots up to the point it broke.
-_PAIR_RE = re.compile(
-    r"(?P<name>[A-Za-z][\w ()]*?)\s*:\s*(?P<value>[-+]?(?:\d+\.?\d*(?:[eE][-+]?\d+)?|nan|inf))\b"
-)
+_PAIR_RE = re.compile(r"(?P<name>[A-Za-z][\w ()]*?)\s*:\s*(?P<value>[-+]?(?:\d+\.?\d*(?:[eE][-+]?\d+)?|nan|inf))\b")
 
 #: Fixed colours for the names this tree logs today, so two sites' figures can be read side by side
 #: and successive runs stay comparable. Anything unrecognised is assigned from _PALETTE in sorted

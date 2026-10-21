@@ -115,14 +115,9 @@ def test_every_zero_grad_sits_inside_a_step_branch() -> None:
     completely ordinary, which is why it needs a test rather than a reviewer.
     """
     tree = ast.parse(TRAINER.read_text())
-    train = next(
-        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "train"
-    )
+    train = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "train")
     guarded = {
-        id(call)
-        for branch in ast.walk(train)
-        if isinstance(branch, ast.If)
-        for call in _calls(branch, "zero_grad")
+        id(call) for branch in ast.walk(train) if isinstance(branch, ast.If) for call in _calls(branch, "zero_grad")
     }
     for call in _calls(train, "zero_grad"):
         assert id(call) in guarded, f"unguarded zero_grad at line {call.lineno} discards the accumulation"

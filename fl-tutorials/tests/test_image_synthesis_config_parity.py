@@ -630,9 +630,7 @@ def test_debug_samples_writes_nothing_when_disabled(tmp_path: Path, monkeypatch:
     assert not list(tmp_path.iterdir())
 
 
-def test_debug_samples_writes_one_png_per_call_when_enabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_debug_samples_writes_one_png_per_call_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Enabled, ``save_grid`` writes a single PNG tiling the batches it was given."""
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
     _as_simulator(monkeypatch, plot_utils, tmp_path)
@@ -697,9 +695,7 @@ def test_diffusion_configs_carry_no_debug_key_their_trainer_ignores(tutorial: Pa
         assert "DEBUG_SAMPLES_MAX" not in config, f"{tutorial.name} ships DEBUG_SAMPLES_MAX but never reads it"
 
 
-def test_triplanar_is_gated_on_the_debug_flag_and_the_interval(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_triplanar_is_gated_on_the_debug_flag_and_the_interval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``due_for_plot`` fires on step 0 and every Nth after, and never while debugging is off.
 
     Step 0 matters: it is the only look at an untrained model, and a run that dies early would
@@ -710,7 +706,12 @@ def test_triplanar_is_gated_on_the_debug_flag_and_the_interval(
     on = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 100}
 
     assert [plot_utils.due_for_plot(i, on) for i in (0, 1, 99, 100, 101, 200)] == [
-        True, False, False, True, False, True,
+        True,
+        False,
+        False,
+        True,
+        False,
+        True,
     ]
     off = {"SAVE_DEBUG_SAMPLES": False, "DEBUG_PLOT_EVERY": 1}
     assert not any(plot_utils.due_for_plot(i, off) for i in range(3))
@@ -750,17 +751,14 @@ def test_triplanar_gate_and_file_name_count_the_same_step() -> None:
     steps = [
         keyword.value
         for node in ast.walk(gate)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "save_triplanar"
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "save_triplanar"
         for keyword in node.keywords
         if keyword.arg == "step"
     ]
     assert len(steps) == 1, "expected one save_triplanar(step=...) under the gate"
     assert isinstance(steps[0], ast.Name)
     assert steps[0].id == gated_on.id, (
-        f"gated on {gated_on.id!r} but named the file after {steps[0].id!r}; "
-        "both must be the global step"
+        f"gated on {gated_on.id!r} but named the file after {steps[0].id!r}; both must be the global step"
     )
 
 
@@ -860,9 +858,13 @@ def test_foreground_ssim_masks_the_background_and_reads_real_ssim() -> None:
 
     assert trainer.foreground_ssim(images, images) == pytest.approx(1.0, abs=1e-4)
 
-    whole = compute_ssim_and_cs(
-        degraded, images, spatial_dims=3, data_range=1, kernel_size=[11] * 3, kernel_sigma=[1.5] * 3
-    )[0].mean().item()
+    whole = (
+        compute_ssim_and_cs(
+            degraded, images, spatial_dims=3, data_range=1, kernel_size=[11] * 3, kernel_sigma=[1.5] * 3
+        )[0]
+        .mean()
+        .item()
+    )
     masked = trainer.foreground_ssim(degraded, images)
     assert masked < whole, f"masking changed nothing (masked={masked}, whole-volume={whole})"
 
@@ -884,8 +886,12 @@ def test_foreground_ssim_mask_lines_up_with_the_ssim_map() -> None:
 
     images = torch.rand(1, 1, 24, 26, 28)
     ssim_map = compute_ssim_and_cs(
-        images, images, spatial_dims=3, data_range=1,
-        kernel_size=[trainer.SSIM_KERNEL_SIZE] * 3, kernel_sigma=[trainer.SSIM_KERNEL_SIGMA] * 3,
+        images,
+        images,
+        spatial_dims=3,
+        data_range=1,
+        kernel_size=[trainer.SSIM_KERNEL_SIZE] * 3,
+        kernel_sigma=[trainer.SSIM_KERNEL_SIGMA] * 3,
     )[0]
 
     trim = (trainer.SSIM_KERNEL_SIZE - 1) // 2
@@ -1164,9 +1170,7 @@ def test_no_trainer_gates_debug_output_on_local_dev(tutorial: Path) -> None:
     """
     source = (tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8")
     offenders = [
-        line.strip()
-        for line in source.splitlines()
-        if "LOCAL_DEV" in line and not line.strip().startswith("#")
+        line.strip() for line in source.splitlines() if "LOCAL_DEV" in line and not line.strip().startswith("#")
     ]
     assert not offenders, (
         f"{tutorial.name}/trainer.py gates on LOCAL_DEV: {offenders}. Debug output is gated by "
@@ -1363,9 +1367,7 @@ def test_conditioned_samples_are_keyed_by_modality_so_the_columns_are_labelled()
     source = (_LATENT_DIFFUSION / "app_files" / "trainer.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     function = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "sample_and_save"
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "sample_and_save"
     )
     comprehensions = [node for node in ast.walk(function) if isinstance(node, ast.DictComp)]
     assert comprehensions, "sample_and_save does not build a per-modality dict of volumes"

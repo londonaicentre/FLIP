@@ -135,8 +135,7 @@ def test_the_two_dimensionalities_are_not_the_same_network(discriminator_config,
     kernel's extra dimension, so comparing them catches that.
     """
     counts = {
-        dims: sum(parameter.numel() for parameter in _build(discriminator_config, dims).parameters())
-        for dims in (2, 3)
+        dims: sum(parameter.numel() for parameter in _build(discriminator_config, dims).parameters()) for dims in (2, 3)
     }
     assert counts[3] > counts[2], f"a 3-D discriminator should carry more parameters, got {counts}"
 

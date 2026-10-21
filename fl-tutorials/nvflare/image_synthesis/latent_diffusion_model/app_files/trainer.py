@@ -362,9 +362,9 @@ def sample_and_save(
     was_training = model.diffusion_model.training
     model.diffusion_model.eval()
     try:
-        noise = torch.randn(
-            [sample_count] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
-        ).to(device)
+        noise = torch.randn([sample_count] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape).to(
+            device
+        )
         conditioning = one_hot_condition(torch.arange(sample_count), len(modalities), device) if conditioned else None
         with torch.no_grad():
             # save_intermediates=False: LatentDiffusionInferer would otherwise retain the whole
@@ -490,12 +490,14 @@ class LatentDiffusionTrainer:
                 if modality is None:
                     # A sequence this run excludes, not an error: MODALITIES is the cohort filter.
                     continue
-                items.append({
-                    "image": str(image),
-                    "accession_id": str(accession_id),
-                    "modality": modality,
-                    "modality_index": modalities.index(modality),
-                })
+                items.append(
+                    {
+                        "image": str(image),
+                        "accession_id": str(accession_id),
+                        "modality": modality,
+                        "modality_index": modalities.index(modality),
+                    }
+                )
             if items:
                 by_accession[str(accession_id)] = items
 

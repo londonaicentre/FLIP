@@ -110,9 +110,12 @@ def test_a_multi_line_message_is_not_dropped(plot_utils, tmp_path) -> None:
 def test_the_timestamp_is_not_read_as_data(plot_utils, tmp_path) -> None:
     """``21:22:20,945`` is three colon-separated numbers at the head of every single line."""
     series = plot_utils.parse_log(_write(tmp_path, ITERATION_LINE))
-    assert not [name for name in series if any(character.isdigit() for character in name)] or set(
-        series
-    ) == {"KL", "l1", "perceptual", "gan"}
+    assert not [name for name in series if any(character.isdigit() for character in name)] or set(series) == {
+        "KL",
+        "l1",
+        "perceptual",
+        "gan",
+    }
 
 
 def test_non_finite_values_are_kept_rather_than_skipped(plot_utils, tmp_path) -> None:
@@ -142,8 +145,7 @@ def test_incidental_pairs_are_kept_out_of_the_figure(plot_utils, tmp_path) -> No
 def test_a_tutorial_logging_only_per_epoch_gets_one_populated_panel(plot_utils, tmp_path) -> None:
     """The two diffusion tutorials log no per-iteration line, and must not yield an empty panel."""
     text = "".join(
-        f"2026-09-24 08:4{index % 10}:00,000 - __main__ - INFO - Total loss DM: 0.3{index}\n"
-        for index in range(20)
+        f"2026-09-24 08:4{index % 10}:00,000 - __main__ - INFO - Total loss DM: 0.3{index}\n" for index in range(20)
     )
     dense, sparse = plot_utils.split_by_cadence(plot_utils.parse_log(_write(tmp_path, text)))
     assert set(dense) == {"Total loss DM"}

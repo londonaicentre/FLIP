@@ -85,9 +85,7 @@ def _phantom(seed: int, scale: float = 1.0, size: int = 48) -> torch.Tensor:
 def _blur(volume: torch.Tensor, width: int) -> torch.Tensor:
     kernel = torch.ones(1, 1, width, width, width) / width**3
     padding = width // 2
-    return torch.nn.functional.conv3d(
-        torch.nn.functional.pad(volume, (padding,) * 6, mode="replicate"), kernel
-    )
+    return torch.nn.functional.conv3d(torch.nn.functional.pad(volume, (padding,) * 6, mode="replicate"), kernel)
 
 
 def test_the_reconstruction_reaches_the_metric_unclamped(foreground_ssim) -> None:  # noqa: ARG001
