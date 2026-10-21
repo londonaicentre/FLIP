@@ -466,6 +466,48 @@ broken checkov install can never produce a vacuous green. The script's own guard
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
 
+### Snowflake trust roots (Terraform)
+
+The trust's Snowflake infrastructure is **two** roots with **separate state** (FLIP#1581, epic
+FLIP#1589), neither holding hub credentials:
+
+| Root | Tier | Applied by | When |
+| --- | --- | --- | --- |
+| `trust/deploy/terraform/snowflake-platform` | break glass | a **person** user with **MFA**, `ACCOUNTADMIN` or `SECURITYADMIN` | rarely, by hand, never in CI |
+| `trust/deploy/terraform/snowflake` | workload | `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key pair) | every deploy |
+
+The platform root creates the account's security objects: the five `FLIP_<CODE>_*` roles and the
+role hierarchy, the deploy `SERVICE` user, the egress integration, the account
+network/password/session policies, the event table and `EVENT_TABLE` parameter, the resource
+monitor, and the single account-level grant in the whole design, exactly `CREATE DATABASE`,
+`CREATE WAREHOUSE`, `CREATE COMPUTE POOL`, `BIND SERVICE ENDPOINT`. The workload root creates the
+trust database and schemas, the warehouse, the compute pools, the image repository, the SSE
+stages, the nightly pool-suspend task and the grants on those objects. `FLIP_<CODE>_ADMIN` is
+retired; the platform README carries the migration for an account bootstrapped with it.
+
+Targets are the same in both directories:
+
+```bash
+make -C trust/deploy/terraform/snowflake lint              # tofu fmt, tofu validate, tflint, checkov
+make -C trust/deploy/terraform/snowflake test              # the credential-free pytest guards
+make -C trust/deploy/terraform/snowflake plan              # needs terraform.<env>.tfvars and Snowflake credentials
+make -C trust/deploy/terraform/snowflake apply             # shows the plan and asks before applying
+make -C trust/deploy/terraform/snowflake-platform lint
+make -C trust/deploy/terraform/snowflake-platform test
+make -C trust/deploy/terraform/snowflake-platform apply    # prints a BREAK GLASS banner and asks twice
+```
+
+`lint` and `test` need nothing but `tofu` (or `terraform`), `tflint`, `uvx` and `uv`; they are what
+`validate_terraform.yml`'s `Snowflake <root> static checks` matrix runs. The guards pin the
+invariants no plan can show without an account. In the workload root: no `snowflake_account_role`,
+no user, no integration, no network/password/session policy, no account parameter and no
+`on_account` grant (all of those belong to the platform root), plus no grant to `PUBLIC`,
+server-side encryption on every stage, and auto-suspend on every compute pool. In the platform
+root: the deploy role receives exactly those four account privileges and no others, the
+break-glass identity authenticates with MFA, and no password, passcode or key is ever a Terraform
+variable. Read both READMEs before changing either: secrets are written by `make sync-kit`
+(FLIP#1582), never by Terraform.
+
 ### TFLint (Terraform)
 
 `validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset

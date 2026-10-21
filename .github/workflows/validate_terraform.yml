@@ -17,6 +17,11 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # The two Snowflake trust roots (FLIP#1581, epic #1589): the break-glass platform tier and
+      # the least-privilege workload tier. fmt/validate/tflint/checkov plus their pytest guards,
+      # all credential-free. They are trust roots with their own state, so they are deliberately
+      # absent from terraform_plan/apply/drift, which drive the hub's state.
+      - "trust/deploy/terraform/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
@@ -31,6 +36,11 @@ on:
     branches: [main, develop]
     paths:
       - "deploy/providers/AWS/**"
+      # The two Snowflake trust roots (FLIP#1581, epic #1589): the break-glass platform tier and
+      # the least-privilege workload tier. fmt/validate/tflint/checkov plus their pytest guards,
+      # all credential-free. They are trust roots with their own state, so they are deliberately
+      # absent from terraform_plan/apply/drift, which drive the hub's state.
+      - "trust/deploy/terraform/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
@@ -60,6 +70,13 @@ jobs:
           # Never applied by CI, but validating it exercises the module — so a
           # broken trust policy is caught before any caller picks it up.
           - ./deploy/providers/AWS/ci
+          # The Snowflake trust node's two roots (FLIP#1581, epic #1589). Validated with a
+          # backend-free init, so neither the local backend nor any Snowflake credential is
+          # needed. snowflake-platform is the break-glass tier (roles, deploy user, account
+          # grants, EAI, account policies, event table, resource monitor); snowflake is the
+          # least-privilege workload tier applied as FLIP_<CODE>_DEPLOY_USER.
+          - ./trust/deploy/terraform/snowflake-platform
+          - ./trust/deploy/terraform/snowflake
     defaults:
       run:
         working-directory: ${{ matrix.root }}
@@ -81,6 +98,57 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
+
+  # The Snowflake trust roots' own static gates (FLIP#1581, epic #1589): tflint with the bundled
+  # terraform ruleset (there is no Snowflake plugin), checkov, and the credential-free pytest
+  # guards that pin the invariants no plan can show without an account. For the workload root:
+  # no role, user, integration, account policy, account parameter or account-level grant, no
+  # PUBLIC grant, SSE on every stage, auto-suspend on every compute pool, no secret value in
+  # Terraform. For the platform root: exactly four account privileges to the deploy role and no
+  # others, MFA on the break-glass identity, no credential as a variable, egress off by default.
+  snowflake-trust-root:
+    name: Snowflake ${{ matrix.root }} static checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root:
+          - snowflake-platform
+          - snowflake
+    defaults:
+      run:
+        working-directory: trust/deploy/terraform/${{ matrix.root }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          # Keep in sync with TFLINT_VERSION in deploy/providers/AWS/scripts/tflint_lint.sh.
+          tflint_version: v0.64.0
+
+      - name: TFLint
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --init --config="$PWD/.tflint.hcl"
+          tflint --config="$PWD/.tflint.hcl"
+
+      - name: Install checkov
+        # Keep in sync with CHECKOV_VERSION in deploy/providers/AWS/scripts/checkov_lint.sh.
+        run: pip install checkov==3.3.14
+
+      - name: Checkov
+        run: checkov --directory . --framework terraform --quiet --compact
+
+      - name: Static guards
+        run: pip install pytest && pytest tests/ -v
 
   # Black-box harnesses for the deploy scripts, every external tool stubbed on
   # PATH — no credentials, no network, no checkov install. add_fl_kits.sh mints
