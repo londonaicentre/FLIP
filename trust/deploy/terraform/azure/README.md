@@ -59,6 +59,17 @@ at the end of a session removes the node and keeps the bootstrap layer.
 
 ## Steps
 
+**Bootstrapped before this tree moved from `deploy/providers/azure` (FLIP#1438)?** The bootstrap's state is a
+local, gitignored file that the move left behind. Without it `init` cannot find the state storage and
+`make bootstrap` would create a second one. Move it (and any packed kits in `build/`) from the repo root;
+the vm and aks state is remote, so `init` / `aks-init` is all they need:
+
+```bash
+mv deploy/providers/azure/bootstrap/terraform.tfstate* trust/deploy/terraform/azure/bootstrap/
+[ -d deploy/providers/azure/build ] && mv deploy/providers/azure/build trust/deploy/terraform/azure/
+make -C trust/deploy/terraform/azure init AZ_SUBSCRIPTION="$SUB"       # aks-init for the AKS root
+```
+
 ```bash
 cd trust/deploy/terraform/azure
 SUB="Azure subscription 1"
