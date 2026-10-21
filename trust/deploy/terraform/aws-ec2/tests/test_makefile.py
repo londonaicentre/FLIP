@@ -87,6 +87,28 @@ def test_provision_without_a_kit_bucket_expects_an_out_of_band_kit(kit):
     assert "--skip-tags omop-vocab,seed" in out
     assert "-e node_alias=flip-stag-test" in out
     assert "-e trust_num=3" in out
+    assert "-e fl_kit_precreate_slot=Trust_3" in out, "the tree is laid down for the kit's own slot"
+
+
+def test_a_local_kit_dir_is_copied_over(kit, tmp_path):
+    out = make("stage-kit", kit, f"KIT_SRC={tmp_path}").stdout
+    assert "--tags flkit" in out
+    assert f"-e fl_kit_source=local -e fl_kit_local_src={tmp_path}" in out
+
+
+def test_stage_kit_needs_a_bucket_or_a_local_dir(kit):
+    result = make("stage-kit", kit, dry=False)
+    assert result.returncode != 0
+    assert "KIT_SRC=" in result.stdout + result.stderr
+
+
+def test_seed_without_a_kit_bucket_skips_the_vocabulary(kit, tmp_path):
+    assert "--tags data --skip-tags omop-vocab" in make("seed", kit).stdout
+    hub_env = tmp_path / ".env.stag"
+    hub_env.write_text(HUB_ENV)
+    with_bucket = make("seed", kit, f"HUB_ENV_FILE={hub_env}").stdout
+    assert "--skip-tags omop-vocab" not in with_bucket
+    assert "-e vocab_s3_bucket=hub-kits" in with_bucket
 
 
 def test_deploy_seeds_between_stopping_and_starting_the_stack(kit):

@@ -94,9 +94,17 @@ define play
 	$(ANSIBLE) ansible-playbook aws-ec2.yml \
 		-e node_alias=$(NAME) -e trust_data_version=$(TRUST_DATA_VERSION) \
 		-e fl_backend=$(FL_BACKEND) -e trust_num=$(KIT_SLOT) \
-		$(if $(KIT_BUCKET),-e flip_aicentre_bucket=$(KIT_BUCKET) -e fl_kit_date=$(FL_KIT_DATE),-e fl_kit_source=precreate) \
+		$(KIT_SOURCE_ARGS) \
 		$(1)
 endef
+
+# Where the FL kit comes from: the hub's bucket (KIT_BUCKET, the preset), a directory on this machine
+# holding the slot's own kit (KIT_SRC, for a node in another account), or neither: the directory
+# tree is laid down for the slot and the kit is placed by hand.
+KIT_SRC ?=
+KIT_SOURCE_ARGS = $(if $(KIT_BUCKET),-e flip_aicentre_bucket=$(KIT_BUCKET) -e fl_kit_date=$(FL_KIT_DATE),$(if \
+	$(KIT_SRC),-e fl_kit_source=local -e fl_kit_local_src=$(abspath $(KIT_SRC)),-e fl_kit_source=precreate \
+	-e fl_kit_precreate_slot=Trust_$(KIT_SLOT)))
 
 .PHONY: help init plan apply destroy output ssh-config provision stage-kit seed deploy upgrade shell test lint
 
@@ -138,14 +146,17 @@ provision: ## Configure the host (aws-ec2.yml), all but the data plays
 	@[ -n "$(TRUST_DATA_VERSION)" ] || { echo "❌ trust/.data_version not found."; exit 1; }
 	$(call play,--skip-tags omop-vocab$(,)seed)
 
-stage-kit: ## Re-stage the FL kit for the trust's registered slot (from KIT_BUCKET)
+stage-kit: ## Stage the FL kit for the trust's registered slot (from KIT_BUCKET, or KIT_SRC=<slot kit dir>)
 	$(require_kit)
-	@[ -n "$(KIT_BUCKET)" ] || { echo "❌ KIT_BUCKET= is required: the kit is staged from S3. A kit delivered out of band is copied by hand."; exit 1; }
+	@[ -n "$(KIT_BUCKET)$(KIT_SRC)" ] || { echo "❌ KIT_BUCKET= (the hub's kit bucket) or KIT_SRC=<dir holding this slot's kit> is required."; exit 1; }
+	@[ -z "$(KIT_SRC)" ] || [ -d "$(KIT_SRC)" ] || { echo "❌ KIT_SRC=$(KIT_SRC) is not a directory."; exit 1; }
 	$(call play,--tags flkit)
 
-seed: ## Seed OMOP + Orthanc from the canonical dataset, then load the vocabulary (stack stopped)
+# The vocabulary comes from the kit bucket; without one the seed loads the dataset only, as on the
+# Azure node, and cohort queries need the vocabulary-free form.
+seed: ## Seed OMOP + Orthanc from the canonical dataset, then (with KIT_BUCKET) load the vocabulary (stack stopped)
 	$(require_kit)
-	$(call play,--tags data \
+	$(call play,--tags data $(if $(KIT_BUCKET),,--skip-tags omop-vocab) \
 		-e omop_postgres_user=$(call kit_get,OMOP_POSTGRES_USER) -e omop_postgres_password=$(call kit_get,OMOP_POSTGRES_PASSWORD) \
 		-e omop_postgres_db=$(call kit_get,OMOP_POSTGRES_DB) -e data_access_postgres_password=$(call kit_get,DATA_ACCESS_POSTGRES_PASSWORD) \
 		-e orthanc_username=$(call kit_get,ORTHANC_USERNAME) -e orthanc_password=$(call kit_get,ORTHANC_PASSWORD) \

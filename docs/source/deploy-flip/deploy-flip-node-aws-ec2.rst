@@ -146,10 +146,13 @@ Build the node and join
    make apply     KIT=$KIT HUB=$HUB                        # shows the plan and the account, asks for yes
    make ssh-config KIT=$KIT HUB=$HUB                       # ~/.ssh/config entry, Host flip-<env>-<code>
    make provision KIT=$KIT HUB=$HUB                        # aws-ec2.yml: packages, Docker, dirs, agent
+   make stage-kit KIT=$KIT HUB=$HUB KIT_SRC=<slot kit dir> # copy the FL kit from the hub admin onto the node
    make deploy    KIT=$KIT HUB=$HUB                        # networks, seed with the stack down, start
 
-``make provision`` expects the FL kit delivered out of band unless ``KIT_BUCKET`` (and ``FL_KIT_DATE``)
-name the bucket it is published in. Check the node joined from the hub's *Trusts* page (the trust is
+The FL kit arrives out of band with the kit file. ``KIT_SRC`` is the slot's own kit, as the Kubernetes
+chart takes it: ``local/``, ``startup/`` and ``transfer/`` for FLARE, ``certificates/`` and ``keys/`` for
+Flower. ``stage-kit`` refuses a FLARE kit that names another slot. Without a ``KIT_BUCKET`` the seed
+loads no OMOP vocabulary, so cohort queries use the vocabulary-free form. Check the node joined from the hub's *Trusts* page (the trust is
 online) and from the trust: ``make shell`` and ``curl -s localhost:<TRUST_API_PORT>/health`` reports
 ``hub_key_match: true``.
 

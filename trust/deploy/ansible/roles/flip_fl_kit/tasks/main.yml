@@ -13,10 +13,10 @@
 - name: check the FL kit inputs
   ansible.builtin.assert:
     that:
-      - fl_kit_source is defined and fl_kit_source in ["s3", "precreate", "none"]
+      - fl_kit_source is defined and fl_kit_source in ["s3", "local", "precreate", "none"]
       - fl_backend is defined and fl_backend in ["nvflare", "flower"]
     fail_msg: >-
-      fl_kit_source must be s3, precreate or none (got {{ fl_kit_source | default('unset') }}) and
+      fl_kit_source must be s3, local, precreate or none (got {{ fl_kit_source | default('unset') }}) and
       fl_backend must be nvflare or flower (got {{ fl_backend | default('unset') }}).
       The play sets fl_kit_source; pass -e fl_backend=<nvflare|flower>. A wrong value wipes and
       stages the wrong kit layout, and a missing source would stage nothing.
@@ -34,6 +34,10 @@
 - name: stage the kit from S3
   import_tasks: s3.yml
   when: fl_kit_source == "s3"
+
+- name: copy the kit from a directory on the controller
+  import_tasks: local.yml
+  when: fl_kit_source == "local"
 
 - name: pre-create the kit directory tree for an out-of-band kit
   import_tasks: precreate.yml
