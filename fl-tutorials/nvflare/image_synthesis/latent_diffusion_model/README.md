@@ -94,9 +94,6 @@ These files are compatible with `JOB_TYPE=standard` in the base application
 `trainer.py`, `config.json`, `models.py`; `transforms.py`, `latent_utils.py` **and the autoencoder
 checkpoint** are uploaded alongside them.
 
-This tutorial does not use `JOB_TYPE=diffusion_model`. That job type is the platform's *two-stage*
-autoencoder-then-diffusion job, and none of these three tutorials uses it.
-
 ## Getting the autoencoder (do this first)
 
 The frozen encoder is declared by `SERVER_CHECKPOINT` in `app_files/config.json` and must exist as

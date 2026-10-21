@@ -44,11 +44,9 @@ The paths are in `.env.app` (`SITE{1,2}_*` for Ark+, `DEV_*` for mini). Images a
 through the pinned `PydicomReader` chain in `app_files/transforms.py` and resized to
 `spatial_shape`. The cohort's label columns are ignored.
 
-## Job type: `standard`, not `diffusion_model`
+## Job type: `standard`
 
-Careful here — **this directory is named `diffusion_model`, but the job type it uses is `standard`**,
-not the job type of the same name. `JOB_TYPE=diffusion_model` refers to the platform's
-*two-stage* (autoencoder-then-diffusion) job, which none of these three tutorials uses. All three are ordinary single-stage FedAvg jobs, so they all declare
+All three image-synthesis tutorials are ordinary single-stage FedAvg jobs, so they all declare
 `JOB_TYPE=standard` and pair with
 [`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/). The required upload set is
 `trainer.py`, `config.json`, `models.py`; `transforms.py` is uploaded alongside them as an extra app

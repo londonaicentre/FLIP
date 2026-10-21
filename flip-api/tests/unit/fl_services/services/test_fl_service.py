@@ -92,11 +92,10 @@ def mock_job_types_file():
     ``JobRequiredFiles.is_valid_job_type`` from this mapping so a name absent from it (e.g.
     "invalid") is rejected with ``UnknownJobTypeError``.
     """
-    # Mirrors the real fl-apps/nvflare/required_files.json contract (post Client-API rename:
-    # no validator.py outside diffusion_model; evaluation requires models.py + evaluator.py).
+    # Mirrors the real fl-apps/nvflare/required_files.json contract (evaluation requires models.py +
+    # evaluator.py).
     return {
         "standard": ["trainer.py", "config.json", "models.py"],
-        "diffusion_model": ["trainer.py", "validator.py", "config.json", "models.py"],
         "fed_opt": ["trainer.py", "config.json", "models.py"],
         "evaluation": ["evaluator.py", "config.json", "models.py"],
     }
@@ -722,7 +721,6 @@ def test_bundle_nvflare_application_model_files_overwrite(
     "job_type",
     [
         "standard",
-        "diffusion_model",
         "fed_opt",
         "evaluation",
         "invalid",
@@ -920,7 +918,6 @@ def test_bundle_flower_application_model_files_overwrite(
     "job_type",
     [
         "standard",
-        "diffusion_model",
         "fed_opt",
         "evaluation",
         "invalid",
@@ -2672,13 +2669,12 @@ class TestNormaliseJobType:
         [
             ("standard_client_api", "standard"),
             ("evaluation_client_api", "evaluation"),
-            ("diffusion_model_client_api", "diffusion_model"),
         ],
     )
     def test_pre_rename_aliases_resolve_against_the_real_manifest(self, real_manifest_settings, alias, resolved):
         assert fl_service._normalise_job_type(alias, FLBackend.NVFLARE) == resolved
 
-    @pytest.mark.parametrize("job_type", ["standard", "evaluation", "diffusion_model", "fed_opt"])
+    @pytest.mark.parametrize("job_type", ["standard", "evaluation", "fed_opt"])
     def test_plain_names_pass_through_against_the_real_manifest(self, real_manifest_settings, job_type):
         assert fl_service._normalise_job_type(job_type, FLBackend.NVFLARE) == job_type
 
@@ -2687,6 +2683,12 @@ class TestNormaliseJobType:
         map keeps those uploads working."""
         for alias in fl_service.JOB_TYPE_ALIASES:
             assert not fl_service.JobRequiredFiles.is_valid_job_type(alias, FLBackend.NVFLARE)
+
+    @pytest.mark.parametrize("job_type", ["diffusion_model", "diffusion_model_client_api"])
+    def test_the_removed_diffusion_model_job_type_is_refused(self, real_manifest_settings, job_type):
+        """The two-stage diffusion job type is gone from the manifest, under either spelling."""
+        with pytest.raises(fl_service.UnknownJobTypeError):
+            fl_service._normalise_job_type(job_type, FLBackend.NVFLARE)
 
     def test_unknown_type_error_names_the_valid_set_and_the_fix(self, real_manifest_settings):
         with pytest.raises(fl_service.UnknownJobTypeError) as excinfo:

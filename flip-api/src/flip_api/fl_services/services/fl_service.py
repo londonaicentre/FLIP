@@ -56,7 +56,6 @@ class UnknownJobTypeError(Exception):
 JOB_TYPE_ALIASES = {
     "standard_client_api": "standard",
     "evaluation_client_api": "evaluation",
-    "diffusion_model_client_api": "diffusion_model",
 }
 
 

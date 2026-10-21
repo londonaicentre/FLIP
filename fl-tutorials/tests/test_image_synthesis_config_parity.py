@@ -178,12 +178,7 @@ def latent_state_dict_keys() -> list[str]:
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
 def test_declares_standard_job_type(tutorial: Path) -> None:
-    """All three are single-stage FedAvg jobs, so all three declare ``job_type: standard``.
-
-    The ``diffusion_model`` *directory* deliberately shares its name with the platform's
-    two-stage ``diffusion_model`` *job type*, which none of these tutorials uses — this pins that
-    distinction so a future edit cannot quietly adopt the wrong one.
-    """
+    """All three are single-stage FedAvg jobs, so all three declare ``job_type: standard``."""
     assert _config(tutorial)["job_type"] == "standard"
 
 

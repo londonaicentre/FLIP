@@ -123,13 +123,12 @@ Type                         Description
 ===========================  ====================================================================================
 ``standard``                 Federated training with FedAvg aggregation (default)
 ``evaluation``               Distributed model evaluation without training
-``diffusion_model``          Two-stage training: VAE encoder followed by diffusion model training
 ``fed_opt``                  Custom federated optimization with flexible aggregation strategies
 ===========================  ====================================================================================
 
 The FLARE backend additionally ships a template directory under
 ``fl-apps/nvflare/`` for each Client-API job type (``standard``,
-``evaluation``, ``diffusion_model``, ``fed_opt``); the template names match the
+``evaluation``, ``fed_opt``); the template names match the
 ``JobType`` enum values above. The Flower backend ships its own ``standard`` and
 ``evaluation`` templates under ``fl-apps/flower/`` — selected at the deploy
 layer by ``FL_BACKEND=flower``.

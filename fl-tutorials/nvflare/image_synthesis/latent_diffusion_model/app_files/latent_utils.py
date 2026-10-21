@@ -15,9 +15,8 @@ The diffusion model denoises inside the frozen autoencoder's latent space, so bo
 the validation pass need to know that space's shape and scale. Those helpers live here because both
 passes in ``trainer.py`` share them.
 
-Not named ``validator.py``: that is a required file of the platform's two-stage `diffusion_model`
-job type, and this tutorial is a `standard` job, whose required upload set is
-``trainer.py``/``config.json``/``models.py``.
+This tutorial is a `standard` job, whose required upload set is
+``trainer.py``/``config.json``/``models.py``; this module is uploaded beside them.
 """
 
 import logging
