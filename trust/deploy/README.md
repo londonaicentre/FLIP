@@ -59,17 +59,17 @@ were deliberately relocated here from `trust/` — one level down, into `trust/d
 
 ```bash
 # trust/Makefile
-docker compose --env-file <kit> --project-directory . -f deploy/compose_trust.<env>.yml ...
+docker compose --env-file <kit> --project-directory . -f deploy/compose/compose_trust.<env>.yml ...
 
 # trust/<service>/Makefile
-docker compose --project-directory .. -f ../deploy/compose_trust.development.yml ...
+docker compose --project-directory .. -f ../deploy/compose/compose_trust.development.yml ...
 ```
 
 If you ever see a build context that looks wrong by one level, **the fix is the `--project-directory` flag on
 the caller, not rewriting `./X` to `../X` in these files.** Rewriting them would break every other caller.
 
-`compose.test.yml` is the one exception: Testcontainers runs it with the context set to `trust/deploy/`, so
-its paths are genuinely one level up (`../trust-api`, `../data-access-api`, `../observability`).
+`compose.test.yml` is the one exception: Testcontainers runs it with the context set to `trust/deploy/compose/`, so
+its paths are genuinely two levels up (`../../trust-api`, `../../data-access-api`, `../../observability`).
 
 ## Networks
 

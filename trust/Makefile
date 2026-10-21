@@ -83,8 +83,8 @@ include ../deploy/instance.mk
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
 
-COMMON_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).yml
-FL_BACKEND_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
+COMMON_COMPOSE_FILE := deploy/compose/compose_trust.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := deploy/compose/compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
 # Resolve FL_PROVISIONED_DIR (from .env) to an absolute path against the repo root — see
 # abs_or_relative_to in ../deploy/fl_backend.mk. Already-absolute values pass through
@@ -165,7 +165,7 @@ endef
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.development.debug.override.yml
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose/compose_trust.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
@@ -228,7 +228,7 @@ COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter pr
 COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
-TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-1_override.yml,)
+TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose/compose_trust-1_override.yml,)
 
 # GPU passthrough: apply the device-reservation overlay (compose_trust.<env>.gpu.yml)
 # only when the kit declares NUM_AVAILABLE_GPUS > 0. A GPU-less host (the AWS EC2
@@ -236,7 +236,7 @@ TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-
 # is skipped and the fl-client comes up CPU-only instead of failing with "could not
 # select device driver". The same value feeds the fl-client app's own GPU hint, so
 # Docker exposure and the app stay in lockstep. Mirrors the TRUST_OVERRIDE pattern.
-GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
+GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
 GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
 
 # TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
@@ -354,7 +354,7 @@ endef
 #   - the trust compose (Orthanc's DICOM_MODALITIES entry, imaging-api's XNAT_AETITLE) uses
 #     ${XNAT_AETITLE:-XNAT}, because those consumers default the value in code and have no
 #     empty-value check of their own — a bare-dash pass-through would register an empty AE title
-#     rather than fail (see the note above imaging-api's environment in deploy/compose_trust.*.yml).
+#     rather than fail (see the note above imaging-api's environment in deploy/compose/compose_trust.*.yml).
 # So the explicit empty is refused here, once, before compose or the stack runs, and both sides
 # keep agreeing on the AE title DQR matches the C-MOVE destination against. An undefined
 # XNAT_AETITLE (line absent or commented out in the kit) still takes the XNAT default in both
@@ -435,7 +435,7 @@ build:
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
 onboard-onprem-trust:
-	@HUB="$(HUB)" uv run --no-config ../scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
+	@HUB="$(HUB)" uv run --no-config deploy/scripts/onboard_onprem_trust.py $(KIT) --kit-file '$(subst ','"'"',$(if $(filter /%,$(KIT_FILE)),$(KIT_FILE),$(CURDIR)/$(KIT_FILE)))' $(ONBOARD_ARGS)
 
 # Prepare the third-party artifacts a development trust needs before `make up` (FLIP#1292): the
 # XNAT plugins its dev stack bind-mounts. They are public upstream downloads, pinned with their
@@ -506,7 +506,7 @@ GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
 # /opt/flip/selftest, then teardown (SELFTEST_KEEP_UP=1 keeps it up). Run as root on an
 # Azure node by `flip-node selftest <backend>`; needs no AWS and no hub.
 selftest-node:
-	@bash ../scripts/selftest_node.sh "$(FL_BACKEND)"
+	@bash deploy/scripts/selftest_node.sh "$(FL_BACKEND)"
 
 check-governance:
 	$(require_kit_file)
@@ -665,7 +665,7 @@ restart-trust: down-trust up-trust
 # an existing site; use up-trust only to install one.
 #
 # Two phases, because the kit is -include'd at parse time: phase 1 lets the resolver
-# (scripts/site_upgrade.py) pick the target — TAG=, else the release the hub runs —
+# (trust/deploy/scripts/site_upgrade.py) pick the target — TAG=, else the release the hub runs —
 # confirm it — refusing a release target unless THIS checkout is at that tag, since the
 # compose files below come from the checkout, not the images (ALLOW_CHECKOUT_DRIFT=1
 # overrides) — and rewrite DOCKER_TAG/DOCKER_FL_TAG in the kit; phase 2 is a sub-make
@@ -676,7 +676,7 @@ upgrade-trust: require-xnat-aetitle
 	$(require_kit_file)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
-	uv run --no-config ../scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
+	uv run --no-config deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) HUB=$(HUB) DEBUG=$(DEBUG)
 
 # Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the
@@ -1052,7 +1052,7 @@ _debug-service:
 
 
 # Trust-side integration tests (issue #369, B3). Each delegated target brings up
-# the shared trust/deploy/compose.test.yml stack via Testcontainers — run them serially
+# the shared trust/deploy/compose/compose.test.yml stack via Testcontainers — run them serially
 # so the per-suite session fixtures don't fight over Docker resources.
 integration_test:
 	$(MAKE) -C data-access-api integration_test

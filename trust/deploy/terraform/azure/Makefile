@@ -294,14 +294,14 @@ aks-allow-ip: ## Admit your current IP (and keep the nodes' egress) on the API s
 # (named after the cluster). values-aks.yaml takes the FL kit from a Secret, values-small-node.yaml
 # fits the trust on the one 4-vCPU node, and the vocabulary load is off: the site loads its own
 # licensed copy (see the runbook). MOCK_PACS=1 seeds the mock studies into Orthanc, for a test node.
-REPO_ROOT := $(abspath $(CURDIR)/../../..)
+REPO_ROOT := $(abspath $(CURDIR)/../../../..)
 HELM_DIR := $(REPO_ROOT)/trust/deploy/helm
 K8S_NAMESPACE ?= flip-trust
 KUBECTL = kubectl --context $(AKS_NAME)
 CHART = $(MAKE) -C $(HELM_DIR) KUBE_CONTEXT=$(AKS_NAME) NAMESPACE=$(K8S_NAMESPACE)
 # Paths are relative to the chart directory, where helm runs: the kit file records them, so an
 # absolute one would break an upgrade from a checkout somewhere else.
-AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(filter 1,$(MOCK_PACS)), ../../../deploy/providers/azure/aks/values-mock-pacs.yaml)
+AKS_VALUES ?= values-aks.yaml values-small-node.yaml$(if $(filter 1,$(MOCK_PACS)), ../terraform/azure/aks/values-mock-pacs.yaml)
 AKS_KIT_DIR = build/kits/$(notdir $(TARBALL:.tar.gz=))
 # The kit file's name carries the env token (trust/.env.<KIT>.<env>), derived from HUB in one place.
 ifneq ($(filter aks-join,$(MAKECMDGOALS)),)

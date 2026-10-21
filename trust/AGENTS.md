@@ -42,7 +42,7 @@ the commented dev form):
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
-that `scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kits.py` and
+that `trust/deploy/scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kits.py` and
 `sync_trust_kit.py` both write through its `write_kit`. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
 `flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
@@ -55,7 +55,7 @@ results to S3); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
 
 `make sync-trust-kit KIT=<CODE> HUB=<env>` refreshes the Hub-shared block in
 `trust/.env.<CODE>.<env>` from the admin's local `$(MAIN_ENV_FILE)` without
-rotating credentials. Implemented by `scripts/sync_trust_kit.py` (uv
+rotating credentials. Implemented by `trust/deploy/scripts/sync_trust_kit.py` (uv
 PEP 723 script — stdlib only, no docker/jq/ECS round-trip). Works
 identically across dev/stag/prod — the root Makefile's `include
 $(MAIN_ENV_FILE)` + `export` populates os.environ before the script
@@ -100,11 +100,11 @@ GHCR login from `~/.docker/config.json`.
 | `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
 | `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/providers/AWS/site.yml` composes for the EC2 trust: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> HUB=<hub>`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
 | `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins |
-| `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
-| `deploy/compose_trust.prod.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
-| `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
-| `deploy/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
-| `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
+| `deploy/compose/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
+| `deploy/compose/compose_trust.prod.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
+| `deploy/compose/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
+| `deploy/compose/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
+| `deploy/compose/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
 | `.env.<CODE>.<env>` | Per-trust kit file, e.g. `.env.GSTT.development`, `.env.<CODE>.prod` (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: per-trust dev examples `.env.GSTT.development.example` / `.env.KCH.development.example`; the generic scaffold base `.env.example`, consumed by `make new-trust`. Same kit-file schema everywhere — `make -C trust up-trust KIT=<CODE> HUB=<env>` is the only dispatch |
 
 On Kubernetes the trust's per-trust keys reach the cluster twice: `patch-kit-secrets`

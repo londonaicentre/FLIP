@@ -26,7 +26,7 @@ preserving the operator's host-local edits:
 
 Replaces the bash upsert in scripts/distribute-trust-kits.sh and
 deploy/providers/AWS/scripts/register-trusts.sh::write_kit_file(), and the
-in-place upsert in scripts/sync_trust_kit.py.
+in-place upsert in trust/deploy/scripts/sync_trust_kit.py.
 """
 
 from __future__ import annotations

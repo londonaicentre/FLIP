@@ -12,14 +12,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Black-box tests for scripts/sync_trust_kit.py.
+"""Black-box tests for trust/deploy/scripts/sync_trust_kit.py.
 
 Mirrors the contract of the old test_sync_trust_kits.sh (which targeted the
 deprecated sync-trust-kits.sh + sync-trust-kit.sh shell pair) but exercises
 the new env-driven, KIT-keyed Python interface.
 
 Usage:
-    uv run scripts/tests/test_sync_trust_kit.py
+    uv run trust/deploy/scripts/tests/test_sync_trust_kit.py
 """
 
 from __future__ import annotations
@@ -73,9 +73,9 @@ def _run(
     """Run sync_trust_kit.py against a temp repo root, return CompletedProcess."""
     env = {**HUB_SHARED_DEFAULTS, **(env_overrides or {}), "PATH": os.environ.get("PATH", "")}
     # Copy the script into the temp repo (symlinking won't work — the script
-    # uses Path(__file__).resolve().parent.parent to discover the repo root,
+    # uses Path(__file__).resolve().parents[3] to discover the repo root,
     # which would follow a symlink straight back to the real repo).
-    scripts_dir = repo_root / "scripts"
+    scripts_dir = repo_root / "trust/deploy/scripts"
     scripts_dir.mkdir(parents=True, exist_ok=True)
     copy = scripts_dir / "sync_trust_kit.py"
     if not copy.exists():
@@ -99,7 +99,7 @@ def test_1_appends_hub_shared_block() -> None:
     print("▶ sync appends hub-shared block on legacy kit (preserves creds)")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text(
             "TRUST_API_KEY=preserved-key\n"
@@ -124,7 +124,7 @@ def test_2_idempotent_rotation() -> None:
     print("▶ sync rotates values idempotently, never touches creds")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text("TRUST_API_KEY=preserved-key\n")
 
@@ -144,7 +144,7 @@ def test_3_missing_kit_file_is_error() -> None:
     print("▶ sync errors on missing kit file (does not create it)")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         result = _run(root, "Trust_1")
         _assert(result.returncode != 0, "exit non-zero")
         _assert(not (root / "trust" / ".env.Trust_1").exists(), "missing kit file not created")
@@ -156,14 +156,14 @@ def test_4_missing_env_var_is_error() -> None:
     print("▶ sync errors when env vars are missing")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text("TRUST_API_KEY=preserved\n")
 
-        # Copy the script into the temp repo so Path(__file__).parent.parent
+        # Copy the script into the temp repo so Path(__file__).parents[3]
         # resolves here (not the real repo); otherwise it errors on the real
         # repo's (absent) trust/.env.Trust_1 before reaching the env check.
-        scripts_dir = root / "scripts"
+        scripts_dir = root / "trust/deploy/scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
         copy = scripts_dir / "sync_trust_kit.py"
         shutil.copy2(SYNC_SCRIPT, copy)
@@ -188,7 +188,7 @@ def test_5_in_place_replacement_on_template() -> None:
     print("▶ sync replaces <run-make-sync-trust-kit> placeholders in place")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text(
             "# host-local section\n"
@@ -212,7 +212,7 @@ def test_6_hub_registry_stays_out_of_the_kit() -> None:
     print("▶ sync never writes the hub's registry into a kit")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text("TRUST_API_KEY=preserved\n")
         ecr = "111122223333.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/"
@@ -226,7 +226,7 @@ def test_6_hub_registry_stays_out_of_the_kit() -> None:
 def _sync_one(kit_name: str, overrides: dict[str, str]) -> tuple[subprocess.CompletedProcess[str], str]:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         kit = root / "trust" / f".env.{kit_name}"
         kit.write_text("TRUST_API_KEY=k\n")
         result = _run(root, kit_name, env_overrides=overrides)
@@ -270,7 +270,7 @@ def test_10_prod_refuses_a_sha_tag_without_its_release() -> None:
     print("▶ sync for a prod hub refuses a sha- tag with no release")
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        (root / "trust").mkdir()
+        (root / "trust").mkdir(exist_ok=True)
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text("TRUST_API_KEY=preserved\n")
 

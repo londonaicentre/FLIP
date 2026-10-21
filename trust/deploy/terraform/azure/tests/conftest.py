@@ -18,7 +18,7 @@ import subprocess
 from pathlib import Path
 
 AZURE_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = AZURE_DIR.parent.parent.parent
+REPO_ROOT = AZURE_DIR.parents[3]
 
 # $AZ_FAIL names one command ("storage blob", "aks update") that fails; $AZ_ACCOUNT_ID replaces
 # the subscription id `account show` answers; `group exists` is true only for $AZ_EXISTING_RG.

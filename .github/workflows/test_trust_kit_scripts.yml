@@ -25,6 +25,7 @@ on:
     branches: [develop]
     paths:
       - "scripts/**"
+      - "trust/deploy/scripts/**"
       - ".github/workflows/test_trust_kit_scripts.yml"
       # Some guards here assert on files outside scripts/ — test_container_identity.py
       # on the compose files, test_workflow_trust_guards.py on the image-build
@@ -40,7 +41,7 @@ on:
       - ".github/workflows/test_*.yml"
       - ".github/workflows/pr_paths_changed.yml"
       - "deploy/compose*.yml"
-      - "trust/deploy/compose*.yml"
+      - "trust/deploy/compose/*.yml"
       - "fl-services/nvflare/compose.dev.yml"
       # test_flower_runtime_install.py asserts on the Flower composes, the Helm chart and the FL
       # images' Dockerfiles (FLIP#1418).
@@ -89,11 +90,12 @@ jobs:
       # themselves are stdlib-only.
       - name: Install uv
         run: pip install uv
-      # scripts/tests/, plus the repo-level trees that mirror what they test: tests/ for the root
-      # Makefile, .github/tests/ for the workflows and actions. All stdlib-only.
-      - name: Run scripts/, tests/ and .github/tests/
+      # scripts/tests/ and trust/deploy/scripts/tests/, plus the repo-level trees that mirror what
+      # they test: tests/ for the root Makefile, .github/tests/ for the workflows and actions. All
+      # stdlib-only.
+      - name: Run scripts/, trust/deploy/scripts/, tests/ and .github/tests/
         run: |
-          for test_file in scripts/tests/test_*.py tests/test_*.py $(find .github/tests -name 'test_*.py' | sort); do
+          for test_file in scripts/tests/test_*.py trust/deploy/scripts/tests/test_*.py tests/test_*.py $(find .github/tests -name 'test_*.py' | sort); do
             echo "== $test_file"
             python "$test_file" || exit 1
           done

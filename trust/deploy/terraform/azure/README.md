@@ -60,7 +60,7 @@ at the end of a session removes the node and keeps the bootstrap layer.
 ## Steps
 
 ```bash
-cd deploy/providers/azure
+cd trust/deploy/terraform/azure
 SUB="Azure subscription 1"
 
 make bootstrap AZ_SUBSCRIPTION="$SUB" STATE_SA=flipaztfstate<random> ALERT_EMAIL=<you>
@@ -118,7 +118,7 @@ make aks-deploy   KIT=<CODE> HUB=<env>      # redeploy or upgrade from the insta
 make aks-clear-jobs                          # dcm2niix Jobs from before the conversion cap
 ```
 
-These drive [`trust/deploy/helm`](../../../trust/deploy/helm/README.md) on the cluster's kube context,
+These drive [`trust/deploy/helm`](../../helm/README.md) on the cluster's kube context,
 with `values-aks.yaml`, `values-small-node.yaml` and no vocabulary load.
 
 ## Joining a hub

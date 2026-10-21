@@ -146,7 +146,7 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    `--out-ssm-parameter /flip/trust-kits/ephemeral/<uuid>` so the kit body is PUT as a SecureString and never
    reaches CloudWatch — only the parameter *name* transits stdout. The script then GETs the parameter with
    decryption, deletes it, and deletes the task's log stream.
-3. Writes the kit through `scripts/distribute_trust_kits.py` (repo root), the same in-place upsert writer the dev
+3. Writes the kit through `trust/deploy/scripts/distribute_trust_kits.py` (repo root), the same in-place upsert writer the dev
    path and `sync-trust-kit` use: credentials on first registration only, operator host-local edits preserved, and
    the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
    and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared

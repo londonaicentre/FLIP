@@ -48,7 +48,7 @@ def main() -> None:
     parser.add_argument("--trust-dir", default=None, help="Override the trust/ directory (testing).")
     args = parser.parse_args()
 
-    trust_dir = Path(args.trust_dir) if args.trust_dir else Path(__file__).resolve().parent.parent / "trust"
+    trust_dir = Path(args.trust_dir) if args.trust_dir else Path(__file__).resolve().parents[3] / "trust"
     target = trust_dir / f".env.{args.code}.{args.env}"
     if target.exists():
         print(f"❌ {target} already exists — refusing to overwrite (delete it first).", file=sys.stderr)

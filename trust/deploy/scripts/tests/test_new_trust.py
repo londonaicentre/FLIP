@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Black-box tests for scripts/new_trust.py — the kit scaffolder.
+"""Black-box tests for trust/deploy/scripts/new_trust.py — the kit scaffolder.
 
 new_trust.py copies the base kit template and injects the trust's identity
 (TRUST_NAME / TRUST_CODE / TRUST_REGION), producing trust/.env.<CODE>.<env>
@@ -20,7 +20,7 @@ ready for `make register-trust` to fill the managed blocks. It refuses to
 overwrite an existing kit.
 
 Usage:
-    uv run --no-config scripts/tests/test_new_trust.py
+    uv run --no-config trust/deploy/scripts/tests/test_new_trust.py
 """
 
 from __future__ import annotations
@@ -54,9 +54,9 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
 
 def _temp_repo() -> Path:
     root = Path(tempfile.mkdtemp())
-    (root / "scripts").mkdir()
-    (root / "trust").mkdir()
-    shutil.copy2(NEW_TRUST, root / "scripts" / "new_trust.py")
+    (root / "trust/deploy/scripts").mkdir(parents=True)
+    (root / "trust").mkdir(exist_ok=True)
+    shutil.copy2(NEW_TRUST, root / "trust/deploy/scripts" / "new_trust.py")
     # Minimal base template with a host-local default + managed placeholders.
     (root / "trust" / ".env.example").write_text(
         "# Host-local profile\n"
@@ -69,7 +69,7 @@ def _temp_repo() -> Path:
 
 def _run(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["python3", str(root / "scripts" / "new_trust.py"), *args],
+        ["python3", str(root / "trust/deploy/scripts" / "new_trust.py"), *args],
         cwd=root,
         env={**os.environ, "PATH": os.environ.get("PATH", "")},
         capture_output=True,

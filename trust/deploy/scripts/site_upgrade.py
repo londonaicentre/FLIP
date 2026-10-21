@@ -55,7 +55,7 @@ Everything that decides *what* to move to happens here, before any container is 
    move usually needs it); a release moves everything to one tag and never does.
 
 Usage:
-    uv run --no-config scripts/site_upgrade.py plan --kit-file trust/.env.<CODE>.<env> \\
+    uv run --no-config trust/deploy/scripts/site_upgrade.py plan --kit-file trust/.env.<CODE>.<env> \\
         [--tag vX.Y.Z] [--fl-tag vX.Y.Z] [--force] [--yes] [--hub-url URL] [--dry-run] \\
         [--allow-checkout-drift]
 
@@ -100,7 +100,7 @@ EXIT_CHECKOUT_MISMATCH = 6
 
 #: The FLIP checkout this script runs from — what the compose files, Makefiles and XNAT stack
 #: come from. Not configurable: the verb is `make …` in that checkout.
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 _GIT_TIMEOUT_SECONDS = 10.0
 
 _HUB_TIMEOUT_SECONDS = 10.0
@@ -118,8 +118,8 @@ _STABLE_RELEASE = re.compile(r"^v\d+\.\d+\.\d+$")
 #: files hardcode it and trust/xnat/Makefile pins it (FLIP#1480).
 _SITE_REGISTRY = "ghcr.io/londonaicentre/"
 
-#: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.prod.yml`,
-#: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.prod.<backend>.yml`)
+#: Every repo-built image a compose site pulls (`trust/deploy/compose/compose_trust.prod.yml`,
+#: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose/compose_trust.prod.<backend>.yml`)
 #: with the kit key that pins it away from ``DOCKER_TAG`` when set — the compose files'
 #: ``${OMOP_DB_TAG:-${DOCKER_TAG}}`` / ``${ORTHANC_TAG:-…}`` opt-outs and the XNAT Makefile's
 #: ``XNAT_TAG ?= ${DOCKER_TAG}``. A pinned image is checked at its pin, not at the target.

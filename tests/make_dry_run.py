@@ -112,10 +112,9 @@ def run_target(
             shutil.copy(REPO / rel, dst)
         shutil.copy(REPO / "trust" / "xnat" / ".env", root / "trust" / "xnat" / ".env")
         (root / "trust" / ".env.SCR.prod").write_text(kit)
-        # scripts/ paths are referenced relative to trust/, so the resolver must exist to
-        # be printed; an empty file is enough for -n.
-        (root / "scripts").mkdir()
-        (root / "scripts" / "site_upgrade.py").write_text("")
+        # The resolver must exist to be printed; an empty file is enough for -n.
+        (root / "trust" / "deploy" / "scripts").mkdir(parents=True)
+        (root / "trust" / "deploy" / "scripts" / "site_upgrade.py").write_text("")
         return subprocess.run(
             ["make", *(["-n"] if dry else []), "-C", str(root / subdir), target, "KIT=SCR", "HUB=prod", *extra],
             capture_output=True,

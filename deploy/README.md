@@ -255,7 +255,7 @@ backend outside the full trust stack — carry no `cap_drop` either, but for a d
 they are simply **not hardened yet**, not blocked from it. They run the same non-root
 `flare-fl-client` image and the same kit dirs as the hardened `fl-client-net-*` services below, so
 a later pass can harden them the same way. The trust-deployment `fl-client-net-*` services (in
-`trust/deploy/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the rows
+`trust/deploy/compose/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the rows
 below. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |

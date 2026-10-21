@@ -28,7 +28,7 @@ import sys
 import uuid
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 PLACEHOLDER = re.compile(r"^([A-Z0-9_]+)=<run-make-[a-z-]+>$")
 
 

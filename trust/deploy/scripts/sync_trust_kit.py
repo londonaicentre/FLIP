@@ -15,7 +15,7 @@
 """Refresh the Hub-shared block in trust/.env.<KIT> from environment variables.
 
 Usage:
-    uv run scripts/sync_trust_kit.py <KIT>
+    uv run trust/deploy/scripts/sync_trust_kit.py <KIT>
 
 Picks the Hub-shared values out of the caller's environment and upserts each
 into trust/.env.<KIT> under the managed sentinel — credentials and operator
@@ -64,7 +64,7 @@ def main() -> None:
     parser.add_argument("--env-class", required=True, choices=("stag", "prod"), help="ENV_CLASS from env_mode.mk")
     args = parser.parse_args()
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parents[3]
     target = repo_root / "trust" / f".env.{args.kit}"
     if not target.is_file():
         die(f"❌ Kit file {target} not found — create it from the matching .example first.")

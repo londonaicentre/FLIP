@@ -204,25 +204,25 @@ make -C deploy/providers/AWS lint   # Three of validate_terraform.yml's checks o
 ### Azure trust node (FLIP#1390)
 
 ```bash
-make -C deploy/providers/azure help                                   # every target
-make -C deploy/providers/azure bootstrap AZ_SUBSCRIPTION="<name>" STATE_SA=<unique> ALERT_EMAIL=<you>
-make -C deploy/providers/azure init plan apply AZ_SUBSCRIPTION="<name>"
-make -C deploy/providers/azure selftest-kit AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # pack the FL kit HERE, put it in the kit drop
-make -C deploy/providers/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # node fetches that kit and self-tests on it
-make -C deploy/providers/azure kit-upload AZ_SUBSCRIPTION="<name>" TARBALL=<flip-trust-kit-….tar.gz>
-make -C deploy/providers/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<kit> HUB=<env>  # install a hub-registered kit + up-onprem-trust
-make -C deploy/providers/azure destroy AZ_SUBSCRIPTION="<name>"
-make -C deploy/providers/azure aks-init aks-plan aks-apply AZ_SUBSCRIPTION="<name>"  # AKS instead of the VM (refused while the VM exists)
-make -C deploy/providers/azure aks-start AZ_SUBSCRIPTION="<name>"     # start, then admit your current IP to the API server (aks-allow-ip after an IP change; aks-stop, aks-destroy)
-make -C deploy/providers/azure aks-join TARBALL=<kit tarball> KIT=<CODE> HUB=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then aks-deploy (the chart with values-aks/-small-node, no vocab load); aks-selftest, aks-clear-jobs
-make -C deploy/providers/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
+make -C trust/deploy/terraform/azure help                                   # every target
+make -C trust/deploy/terraform/azure bootstrap AZ_SUBSCRIPTION="<name>" STATE_SA=<unique> ALERT_EMAIL=<you>
+make -C trust/deploy/terraform/azure init plan apply AZ_SUBSCRIPTION="<name>"
+make -C trust/deploy/terraform/azure selftest-kit AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # pack the FL kit HERE, put it in the kit drop
+make -C trust/deploy/terraform/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # node fetches that kit and self-tests on it
+make -C trust/deploy/terraform/azure kit-upload AZ_SUBSCRIPTION="<name>" TARBALL=<flip-trust-kit-….tar.gz>
+make -C trust/deploy/terraform/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<kit> HUB=<env>  # install a hub-registered kit + up-onprem-trust
+make -C trust/deploy/terraform/azure destroy AZ_SUBSCRIPTION="<name>"
+make -C trust/deploy/terraform/azure aks-init aks-plan aks-apply AZ_SUBSCRIPTION="<name>"  # AKS instead of the VM (refused while the VM exists)
+make -C trust/deploy/terraform/azure aks-start AZ_SUBSCRIPTION="<name>"     # start, then admit your current IP to the API server (aks-allow-ip after an IP change; aks-stop, aks-destroy)
+make -C trust/deploy/terraform/azure aks-join TARBALL=<kit tarball> KIT=<CODE> HUB=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then aks-deploy (the chart with values-aks/-small-node, no vocab load); aks-selftest, aks-clear-jobs
+make -C trust/deploy/terraform/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
 make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
 ```
 
 `AZ_SUBSCRIPTION` is mandatory and never defaults to the CLI's subscription; no target skips
 Terraform's confirmation. The node receives kits only through the **kit drop** (`modules/kit_drop`: shared
 keys off, firewall = node subnet + operator IP, one-day blob expiry), fetched with its managed identity — never
-provisioned on the node and never in a Run Command parameter. Detail: [`deploy/providers/azure/README.md`](deploy/providers/azure/README.md).
+provisioned on the node and never in a Run Command parameter. Detail: [`trust/deploy/terraform/azure/README.md`](trust/deploy/terraform/azure/README.md).
 
 ### Debugging
 
