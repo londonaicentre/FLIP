@@ -88,8 +88,11 @@ min_cohort_size = 50
 # On a Flower trust, delete this section: nothing on Flower enforces it yet (FLIP#852), so
 # check-governance refuses a document that carries it rather than report it active.
 #
-# The site filter runs BEFORE any filter the researcher's app configures and a job
-# cannot opt out or select a weaker scope.
+# The site filter runs BEFORE any filter the researcher's app configures and a job's
+# configuration cannot opt out or select a weaker scope. It binds the job's
+# configuration, not its code: every FLARE template runs the Client API in_process, so
+# researcher code runs in the client's job process, alongside the privacy service and
+# the filter objects, and is not currently isolated from them (FLIP#1572).
 [fl_privacy.nvflare]
 policy = "percentile"
 percentile = 10

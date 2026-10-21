@@ -175,10 +175,17 @@ different policies in the same federation, with no hub redeploy.
 
 How the site policy behaves (verified against FLARE 2.9.0):
 
-- **The job cannot bypass it.** FLARE runs site filters *before* the job's own filters, in one chain, and the
-  site filter has no ``off`` switch. It also covers jobs whose app has no filter of its own.
-- **Jobs cannot choose a weaker scope.** The policy defines a single default scope, and FLIP refuses any job whose
-  ``meta.json`` sets a ``scope``.
+- **A job's configuration cannot opt out of it.** FLARE runs site filters *before* the job's own filters, in one
+  chain, and the site filter has no ``off`` switch a job config can set. It also covers jobs whose app has no
+  filter of its own.
+- **A job's configuration cannot choose a weaker scope.** The policy defines a single default scope, and FLIP
+  refuses any job whose ``meta.json`` sets a ``scope``.
+- **Job code is not isolated from the filter.** Every FLARE training template runs the Client API with
+  ``"execution_mode": "in_process"``, so the job's training code runs inside the FL client's job process,
+  alongside the privacy service and the filter objects it is meant to be bound by. The filter therefore binds
+  what a job *declares*, not what its code can *do* at runtime. Review of uploaded training code remains the
+  control against code that sets out to reach the filter. Moving job execution into a process or pod that does
+  not hold the site privacy scope is tracked as FLIP#1572.
 - **The percentile covers the whole model.** The site filter runs before FLIP drops the frozen parameters of a
   head-only fine-tune, so its percentile includes their all-zero diffs. Keep site percentiles modest (the default
   ``10``); the convergence warning above applies doubly.

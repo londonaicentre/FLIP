@@ -290,7 +290,9 @@ provisioned identity.
   leaves the trust, and an uploaded app cannot turn this off. It is **statistical
   clipping and sparsification, not formal differential privacy**: there is no calibrated
   noise and no privacy budget. A trust can also enforce its own filter as site policy,
-  which a job cannot bypass.
+  which a job's configuration cannot opt out of. That binds what a job declares, not
+  what its code does: FLARE job code currently runs inside the client's job process,
+  so review of uploaded code remains the control there (FLIP#1572).
 - **Flower.** Local differential privacy (clipping plus calibrated noise) is available,
   but it is **opt-in**: the researcher's uploaded code must enable it. Code that does not
   sends raw updates, and only review of the uploaded code catches that. There is no
