@@ -75,10 +75,9 @@ workstation (prod AWS creds required):
    on the prod hub and fills the Kit credentials; then
    `make sync-trust-kit KIT=<CODE> HUB=prod` fills the rest of the Hub-shared block.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`
-tarballs the populated kit file as-is, as `.env.<slot>.prod` (`<slot>` is its
-`FL_KIT_SLOT`, which the packager is keyed on), + the operator's slice of the FL
-participant kit S3 bucket into
+Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
+tarballs the populated kit file as-is, as `.env.<CODE>.prod`, + the operator's
+slice of the FL participant kit S3 bucket (its `FL_KIT_SLOT`'s) into
 `deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 

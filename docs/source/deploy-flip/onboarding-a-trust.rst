@@ -123,10 +123,10 @@ checks out that release before installing.
 
        .. code-block:: shell
 
-          make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
+          make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
 
-       The packaging is keyed on the slot, so it takes the kit by path and ships it as ``.env.<slot>.prod``. It
-       refuses to run if the slot in the file does not match ``KIT``, or if any placeholder is still unfilled. It fetches the FL kit share from S3 and writes the
+       It ships the kit as ``.env.<CODE>.prod`` with the FL kit share of its ``FL_KIT_SLOT``, and refuses to run if
+       any placeholder is still unfilled. It fetches the FL kit share from S3 and writes the
        tarball under ``deploy/providers/AWS/build/trust-kits/``. It does not modify the kit file.
    * - Kubernetes
      - The kit file ``trust/.env.<CODE>.prod`` and this trust's share of the FL participant kit. The operator

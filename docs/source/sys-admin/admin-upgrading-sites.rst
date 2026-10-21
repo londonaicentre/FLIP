@@ -390,12 +390,12 @@ until it is re-keyed. On the admin workstation:
 
       make sync-trust-kits HUB=prod
 
-#. **Package each site's kit** and send it over the encrypted channel used at onboarding. The packaging is keyed on
-   the kit's ``FL_KIT_SLOT``, so the kit is passed by path:
+#. **Package each site's kit** and send it over the encrypted channel used at onboarding. It packs the FL kit share
+   of the kit's ``FL_KIT_SLOT``:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
+      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
 
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.

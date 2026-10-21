@@ -308,11 +308,11 @@ ifneq ($(filter aks-join,$(MAKECMDGOALS)),)
 include $(REPO_ROOT)/deploy/env_mode.mk
 endif
 
-aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (TARBALL=<path> KIT=<slot> HUB=<env> [MOCK_PACS=1])
-	@[ -f "$(TARBALL)" ] && [ -n "$(KIT)" ] && [ -n "$(HUB)" ] || { echo "❌ TARBALL=<kit tarball from the hub admin> KIT=<slot> HUB=<env> are required."; exit 1; }
+aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (TARBALL=<path> KIT=<CODE> HUB=<env> [MOCK_PACS=1])
+	@[ -f "$(TARBALL)" ] && [ -n "$(KIT)" ] && [ -n "$(HUB)" ] || { echo "❌ TARBALL=<kit tarball from the hub admin> KIT=<trust code> HUB=<env> are required."; exit 1; }
 	@$(call check_arg,KIT,$(KIT),$(KIT_PATTERN))
 	@rm -rf "$(AKS_KIT_DIR)" && mkdir -p -m 700 "$(AKS_KIT_DIR)" && tar -xzf "$(TARBALL)" -C "$(AKS_KIT_DIR)" --no-same-owner
-	@[ -f "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" ] || { echo "❌ $(notdir $(TARBALL)) has no .env.$(KIT).$(ENV); is KIT the slot it was packaged for?"; exit 1; }
+	@[ -f "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" ] || { echo "❌ $(notdir $(TARBALL)) has no .env.$(KIT).$(ENV); is KIT the code it was packaged for?"; exit 1; }
 	install -m 0600 "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)"
 	@# The chart's own deploy and upgrade targets read the overlays from the kit file, so a plain
 	@# upgrade-trust-k8s keeps them too (without values-aks.yaml PGDATA and the kit would move).
@@ -320,21 +320,21 @@ aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (T
 	python3 $(HELM_DIR)/scripts/generate_values.py --env-file "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)" \
 		--output-dir "$(AKS_KIT_DIR)" --secrets-file $(HELM_DIR)/values-secrets.yaml
 	$(KUBECTL) create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
-	$(MAKE) _aks-fl-kit AKS_KIT_DIR="$(AKS_KIT_DIR)" KIT=$(KIT)
+	$(MAKE) _aks-fl-kit AKS_KIT_DIR="$(AKS_KIT_DIR)" SLOT="$$(sed -n 's/^FL_KIT_SLOT=//p' "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" | tail -1)"
 	$(CHART) kit-secret KIT_SRC="$(abspath $(AKS_KIT_DIR))/fl-kit-secret"
 	$(MAKE) aks-deploy KIT=$(KIT) HUB=$(HUB)
 
-# What goes into the FL kit Secret. NVFLARE: the slot's services/<slot>/ as shipped. Flower: only what
+# What goes into the FL kit Secret. NVFLARE: the slot's services/<SLOT>/ as shipped (SLOT is the kit's FL_KIT_SLOT). Flower: only what
 # the SuperNode reads, ca.crt and this slot's credential; the tarball's certificates/ also holds the
 # SuperLink's server.key, which kit-secret refuses to put in a trust's Secret.
 _aks-fl-kit:
 	@k="$(AKS_KIT_DIR)/fl-kit/net-1"; s="$(AKS_KIT_DIR)/fl-kit-secret"; rm -rf "$$s"; \
-	if [ -d "$$k/services/$(KIT)" ]; then cp -Rp "$$k/services/$(KIT)" "$$s"; \
+	if [ -d "$$k/services/$(SLOT)" ]; then cp -Rp "$$k/services/$(SLOT)" "$$s"; \
 	else mkdir -p -m 700 "$$s/certificates" "$$s/keys" && cp -p "$$k/certificates/ca.crt" "$$s/certificates/" && \
 	  for f in "$$k"/keys/supernode_credentials_*; do case "$$f" in *.pub) ;; *) cp -p "$$f" "$$s/keys/" ;; esac; done; fi
 
-aks-deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<slot> HUB=<env> [MOCK_PACS=1])
-	@[ -n "$(KIT)" ] && [ -n "$(HUB)" ] || { echo "❌ KIT=<slot> HUB=<env> are required."; exit 1; }
+aks-deploy: ## Deploy or upgrade the trust on the cluster from its installed kit (KIT=<CODE> HUB=<env> [MOCK_PACS=1])
+	@[ -n "$(KIT)" ] && [ -n "$(HUB)" ] || { echo "❌ KIT=<trust code> HUB=<env> are required."; exit 1; }
 	$(CHART) deploy-trust-k8s KIT=$(KIT) HUB=$(HUB) PLATFORM_VALUES="$(AKS_VALUES)"
 
 aks-selftest: ## Run the trust self-test against the deployed release (report under build/selftest/ at the repo root)
