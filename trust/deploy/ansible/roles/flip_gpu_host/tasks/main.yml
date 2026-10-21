@@ -1,0 +1,37 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Before the apt upgrade. A GPU image (the Deep Learning Base GPU AMI) ships the NVIDIA driver and
+# container toolkit; a blanket upgrade would move the kernel out from under the driver's modules, so
+# hold the driver and kernel the image shipped. A newer driver comes from a newer image, not apt.
+# Sets trust_has_gpu for runtime.yml. Does nothing on a host without nvidia-smi.
+---
+- name: probe for nvidia-smi
+  command: nvidia-smi --query-gpu=driver_version --format=csv,noheader
+  register: nvidia_smi_probe
+  changed_when: false
+  failed_when: false
+
+- name: record whether this trust host has a GPU
+  set_fact:
+    trust_has_gpu: "{{ nvidia_smi_probe.rc == 0 }}"
+
+- name: hold the NVIDIA driver and kernel packages the image shipped
+  shell: |
+    set -o pipefail
+    dpkg-query -W -f='${Package} ${Status}\n' \
+      | awk '$4 == "installed" && $1 ~ /^(nvidia-|libnvidia-|cuda-drivers|linux-(image|headers|modules|aws))/ {print $1}' \
+      | xargs --no-run-if-empty apt-mark hold
+  args:
+    executable: /bin/bash
+  register: gpu_hold
+  changed_when: "'set on hold' in gpu_hold.stdout"
+  when: trust_has_gpu

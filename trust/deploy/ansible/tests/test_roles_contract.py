@@ -13,7 +13,8 @@
 # limitations under the License.
 """Static guard: the shared roles' input contract (FLIP#1213 review).
 
-The roles are composed by onprem.yml, deploy/providers/AWS/site.yml and (next) azure.yml.
+The roles are composed by onprem.yml, azure.yml and aws-ec2-host.yml (imported by aws-ec2.yml and
+deploy/providers/AWS/site.yml).
 A missing or misspelt input must stop the play, not fall back to a value that silently
 re-owns the net-N dirs for the wrong backend or stages no FL kit at all. The same goes for
 flip_observability_config's hand-kept file list: a file added under trust/observability

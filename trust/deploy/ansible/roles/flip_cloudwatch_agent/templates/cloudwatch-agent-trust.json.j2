@@ -21,12 +21,12 @@ limitations under the License.
                 "collect_list": [
                     {
                         "file_path": "/var/log/syslog",
-                        "log_group_name": "/aws/ec2/flip-trust",
+                        "log_group_name": "{{ cloudwatch_log_group | default('/aws/ec2/flip-trust') }}",
                         "log_stream_name": "{{ ansible_ec2_instance_id }}/syslog"
                     },
                     {
                         "file_path": "/var/lib/docker/containers/*/*.log",
-                        "log_group_name": "/aws/ec2/flip-trust",
+                        "log_group_name": "{{ cloudwatch_log_group | default('/aws/ec2/flip-trust') }}",
                         "log_stream_name": "{{ ansible_ec2_instance_id }}/docker"
                     }
                 ]
