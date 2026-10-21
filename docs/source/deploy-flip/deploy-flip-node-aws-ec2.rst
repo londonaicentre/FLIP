@@ -76,16 +76,60 @@ The root has two network modes:
 The hub never checks a trust's IP address: it admits a trust by its API key and the kit's mTLS
 certificates. So the node needs no fixed address, and no hub change is needed to add or remove it.
 
-**Egress the site must allow** (the node's security group allows these and nothing else):
+**Does the node expose an IP address?** No. The instance has no public IP and its security group no
+inbound rule; even Session Manager is a connection the node's own agent opens. The one public address in
+own-VPC mode is the NAT gateway's Elastic IP, which AWS requires for a public NAT gateway: it is the
+*source* address of the node's outbound connections, accepts no unsolicited inbound traffic, and is
+destroyed with the stack. In existing-subnet mode there is none: the node leaves through the site's own
+egress, typically a central firewall or inspection VPC that holds the site's public addresses and
+allowlists the destinations below.
 
-- the hub URL on 443;
-- the hub's FL endpoint on 8002 (prod) or 8003 (stag), the kit's ``FL_EDGE_PORT``. **Exempt it from TLS
-  inspection**: the FL connection is mutual TLS, which a re-signing proxy breaks;
-- the image registry (``ghcr.io``) on 443, and the Hugging Face dataset the seed downloads from;
-- Ubuntu's apt mirrors on 80 and 443;
-- AWS: SSM (``ssm``, ``ssmmessages``, ``ec2messages``), CloudWatch, and S3 if the kit and vocabulary come
-  from a bucket. On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` to create the
-  interface endpoints (~$24/month per AZ). A subnet with no route to GHCR needs a registry mirror.
+**Egress the site must allow** (the node's security group allows only 443, 80, the FL port and the VPC
+DNS resolver; a site firewall narrows that to these names):
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 12 48
+
+   * - Destination
+     - Port
+     - For
+   * - the hub URL (``CENTRAL_HUB_API_URL``)
+     - 443
+     - polling, heartbeat, results
+   * - the hub's FL endpoint
+     - 8002 prod, 8003 stag (the kit's ``FL_EDGE_PORT``)
+     - federated training. **Exempt it from TLS inspection**: the connection is mutual TLS, which a
+       re-signing proxy breaks. A firewall without a DNS proxy needs a rule on the endpoint's address
+   * - ``ghcr.io`` **and** ``pkg-containers.githubusercontent.com``
+     - 443
+     - trust images; the second serves the layers, and ``ghcr.io`` alone fails every pull
+   * - ``registry-1.docker.io``, ``auth.docker.io``, ``production.cloudfront.docker.com``
+     - 443
+     - the observability, Postgres and socket-proxy images
+   * - ``huggingface.co``
+     - 443
+     - the seed dataset (``aicentreflip/trust-data``)
+   * - Ubuntu's apt mirrors and ``esm.ubuntu.com``; ``download.docker.com``
+     - 80, 443
+     - packages and Docker at provisioning
+   * - ``pypi.org``, ``files.pythonhosted.org``
+     - 443
+     - the seed's loaders
+   * - ``awscli.amazonaws.com``; the CloudWatch agent package on ``s3.amazonaws.com``
+     - 443
+     - the AWS CLI and the agent at provisioning
+   * - AWS: SSM (``ssm``, ``ssmmessages``, ``ec2messages``), CloudWatch, and S3 if the kit and vocabulary
+       come from a bucket
+     - 443
+     - access, logs, the kit. On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true`` for
+       interface endpoints (~$24/month per AZ)
+
+The registry, Docker Hub and FL rows were measured behind a firewall on the Azure node (October 2026),
+along with XNAT's plugin downloads at start (``xnat.org``, ``api.bitbucket.org`` and
+``bbuseruploads.s3.amazonaws.com``, ``github.com`` and ``release-assets.githubusercontent.com``), which
+that Kubernetes node needed; the provisioning rows come from the EC2 host's own installs. A site with no
+route to the registries needs a mirror.
 
 **What the instance role may do**: open Session Manager sessions (no ``ssm:GetParameter``, so it cannot
 read parameters in its account), ship logs and metrics to CloudWatch, and, only when ``KIT_BUCKET`` is
