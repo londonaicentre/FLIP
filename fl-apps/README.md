@@ -114,7 +114,7 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
     byte-identical copies (same preprocessing/architecture must train on either backend). The
     FLARE copy is the reference; resync by copying it over the Flower copy. Watched paths
     include `fl-tutorials/nvflare/tabular_classification/**` and
-    `fl-tutorials/flower/ehr_risk_prediction/**`.
+    `fl-tutorials/flower/tabular_classification/ehr_risk_prediction/**`.
 
   Adding another hand-listed pair means extending that workflow's path filters too, or drift
   on the new path goes uncaught.

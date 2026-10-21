@@ -82,7 +82,7 @@ load-dicom-vocab: fetch-vocab-dicom
 
 # Load the public Synthea-in-OMOP EHR cohort (person + conditions + visits) into a RUNNING trust
 # omop-db — the populate side of the EHR risk-prediction tutorial
-# (fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction). The shipped mock OMOP
+# (fl-tutorials/{nvflare,flower}/tabular_classification/ehr_risk_prediction). The shipped mock OMOP
 # carries no condition rows, so that tutorial's query.sql returns nothing until this runs. Downloads
 # ~5 MB from the AWS Open Data Registry at run time (anonymous HTTPS, cached under data/synthea-ehr/,
 # never committed) and appends a per-trust person_id-modulo slice (ids shifted clear of the imaging

@@ -80,7 +80,7 @@ Prerequisites:
 - No smoked trust has a Trust Admin (FLIP#1258): the smoke approves as the hub admin, and a trust with a Trust Admin refuses the hub, so the whole approve call answers 403.
 - The tutorial files are in-tree at `fl-tutorials/<backend>/` (FLARE and Flower both migrated from the legacy fl-base repos).
 
-Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at the in-tree `fl-tutorials/flower/xray_classification/`. Common overrides:
+Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at the in-tree `fl-tutorials/flower/image_classification/xray_classification/`. Common overrides:
 
 ```bash
 make e2e_smoke FL_BACKEND=flower                               # use the Flower tutorial
@@ -107,7 +107,7 @@ confirmed complete, even when nothing was added).
 
 **Which supervised apps need it:** only those whose labels are **not in OMOP**. A segmentation mask is a 3D
 volume with nowhere to live in the cohort query, so the spleen apps
-(`fl-tutorials/flower/3d_spleen_segmentation*`, `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation`) pair each converted `input_*.nii.gz` with a sibling
+(`fl-tutorials/flower/image_segmentation/3d_spleen_segmentation*`, `fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation`) pair each converted `input_*.nii.gz` with a sibling
 `label_*.nii.gz` that has to be uploaded to XNAT. The xray classification tutorial is the counter-example: its
 labels *are* in OMOP, projected as dataframe columns by `query.sql` (`image_feature` → `observation`), and it
 needs no enrichment. Skip a required enrichment and the smoke pulls, converts, starts training and then fails
@@ -166,13 +166,13 @@ cd flip-api && uv run python -m tests.e2e_smoke \
 `$$FLIP_PROJECT_ID` survives; the **root** `make e2e_smoke` re-expands through a second make and shell, so no
 `$`-escape survives it — `$$` lands empty and `$$$$` injects the recipe shell's PID. Pass the id literally
 there. The in-Makefile targets handle this for you. Note that `e2e_smoke_spleen` uploads the **Flower**
-tutorial (`../fl-tutorials/flower/3d_spleen_segmentation/{app,query.sql}`), not the FLARE paths shown in the
+tutorial (`../fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/{app,query.sql}`), not the FLARE paths shown in the
 direct-invocation example above — pair it with `FL_BACKEND=flower`, or invoke `tests.e2e_smoke` directly with
 the FLARE paths for the FLARE tutorial. The enrichment step itself is backend-agnostic and runs out of the
 shared `fl-tutorials/datasets/spleen/` tree either way.)
 
 **Prostate.** `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` does the same for the PI-CAI
-tutorial (`fl-tutorials/flower/3d_prostate_segmentation`, Flower only). The cohort is `prostate_project`
+tutorial (`fl-tutorials/flower/image_segmentation/3d_prostate_segmentation`, Flower only). The cohort is `prostate_project`
 (`make -C trust seed-trusts PROJECTS=prostate_project`), and enrichment uploads two masks per study with
 `fl-tutorials/datasets/prostate/upload_prostate_labels_to_xnat.py`: the whole gland as `label_*` and the
 PZ/TZ zones as `zonal_*`. No mapping is fetched, because the accession number is the label file's name.
@@ -209,7 +209,7 @@ runs both against one synthetic OMOP database and fails if they disagree). A tes
 `QUERY_FILE` still wins, and the spleen and EHR variants pin their own queries. With `PROD` set (a deployed hub)
 such a trust needs it passed by hand:
 `QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql` (Flower:
-`fl-tutorials/flower/xray_classification/query_novocab.sql`).
+`fl-tutorials/flower/image_classification/xray_classification/query_novocab.sql`).
 
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the

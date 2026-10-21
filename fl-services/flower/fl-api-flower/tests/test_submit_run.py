@@ -219,3 +219,42 @@ def test_validate_tutorial_folder_rejects_traversal(src_root, bad):
     with pytest.raises(HTTPException) as exc:
         app_module._validate_tutorial_folder(bad)
     assert exc.value.status_code == 400
+
+
+# --- Tutorial submit resolves <category>/<name> (FLIP#1500: fl-tutorials/flower mirrors the NVFLARE tree) ---
+
+
+def test_submit_tutorial_resolves_a_categorised_folder(client, src_root, mock_flwr_run):
+    """`make submit APP=xray_classification` keeps posting the bare name after the move."""
+    (src_root / "image_classification" / "xray_classification").mkdir(parents=True)
+    mock_flwr_run(stdout=_NUMPY_RUN_OK)
+
+    response = client.post("/submit_tutorial/xray_classification")
+
+    assert response.status_code == 200
+
+
+def test_resolve_tutorial_dir_prefers_a_flat_folder(src_root):
+    (src_root / "numpy").mkdir(parents=True)
+    (src_root / "some_category" / "numpy").mkdir(parents=True)
+
+    assert app_module._resolve_tutorial_dir("numpy") == src_root / "numpy"
+
+
+def test_resolve_tutorial_dir_refuses_a_name_in_two_categories(src_root):
+    (src_root / "image_classification" / "numpy").mkdir(parents=True)
+    (src_root / "tabular_classification" / "numpy").mkdir(parents=True)
+
+    with pytest.raises(HTTPException) as exc:
+        app_module._resolve_tutorial_dir("numpy")
+    assert exc.value.status_code == 400
+    assert "ambiguous" in str(exc.value.detail)
+
+
+def test_resolve_tutorial_dir_names_both_places_it_looked(src_root):
+    (src_root / "image_classification").mkdir(parents=True)
+
+    with pytest.raises(HTTPException) as exc:
+        app_module._resolve_tutorial_dir("numpy")
+    assert exc.value.status_code == 400
+    assert "<category>/numpy" in str(exc.value.detail)

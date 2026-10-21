@@ -1,6 +1,6 @@
 ---
 name: new-tutorial-flower
-description: Loaded by the new-tutorial router for a Flower tutorial (fl-tutorials/flower/<name>/) — the app/ package, the byte-identical template files, the run-config keys, the sim-tutorial.sh mapping, and the why behind fl-tutorials/specs/backend-flower.yaml.
+description: Loaded by the new-tutorial router for a Flower tutorial (fl-tutorials/flower/<category>/<name>/) — the app/ package, the byte-identical template files, the run-config keys, the sim-tutorial.sh mapping, and the why behind fl-tutorials/specs/backend-flower.yaml.
 user-invocable: false
 ---
 
@@ -18,11 +18,17 @@ Spec: `fl-tutorials/specs/backend-flower.yaml` (FLWR-01 to FLWR-25), on top of `
 ## Where it lives and how it is found
 
 ```
-fl-tutorials/flower/<name>/        # one level, no category
+fl-tutorials/flower/<category>/<name>/      # two levels, the NVFLARE layout (#1500)
 ```
 
-Discovery is `$(wildcard */app/.)` in `fl-tutorials/flower/Makefile`: a direct subdirectory with
-an `app/` is a tutorial (FLWR-01). Use the same `<name>` as the NVFLARE twin when one exists.
+Discovery is `$(wildcard */*/app/.)` in `fl-tutorials/flower/Makefile`: a directory two levels down
+carrying an `app/` is a tutorial (FLWR-01). Use the NVFLARE twin's `<category>/<name>` (COMMON-31);
+a Flower-only tutorial takes the category its job type and modality imply (prostate:
+`image_segmentation`). `run-tutorial TUTORIAL=<name>` and `sim-tutorial.sh` resolve the bare name to
+its directory and refuse a name found in two categories, so names stay unique across categories and
+backends. Depth is exactly two: a checkout that pulled the move keeps ignored caches at the old flat
+`fl-tutorials/flower/<name>/`, which the harness reports as stale leftovers (`git clean -fdX`), never
+as tutorials.
 
 **One hand-written registration is mandatory:** `fl-tutorials/flower/sim-tutorial.sh` has a
 `case "$TUTORIAL" in` block mapping each tutorial to its dev data (FLWR-10). Without an entry the

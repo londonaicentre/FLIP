@@ -251,10 +251,10 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_baseline_classification_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_multimodel_classification_evaluation` |
 | nvflare | `diffusion_model` | `nvflare/image_synthesis/latent_diffusion_model` |
-| flower | `standard` | `flower/xray_classification` |
-| flower | `standard` | `flower/3d_spleen_segmentation` |
-| flower | `standard` | `flower/ehr_risk_prediction` |
-| flower | `evaluation` | `flower/3d_spleen_segmentation_evaluation` |
+| flower | `standard` | `flower/image_classification/xray_classification` |
+| flower | `standard` | `flower/image_segmentation/3d_spleen_segmentation` |
+| flower | `standard` | `flower/tabular_classification/ehr_risk_prediction` |
+| flower | `evaluation` | `flower/image_evaluation/3d_spleen_segmentation_evaluation` |
 
 The plain job-type names (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) are the
 Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and

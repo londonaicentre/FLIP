@@ -23,7 +23,7 @@ Settle these with the user, or state your assumption. Together they are the mani
 (`fl-tutorials/specs/README.md` has the schema — copy the nearest tutorial's `tutorial.yaml`):
 
 1. **Backend(s).** New tutorials usually ship on both (`twin:` names the other copy, same
-   `<name>`); single-backend is fine when the user says so (prostate is Flower-only; two-stage
+   `<category>/<name>` under `fl-tutorials/<backend>/`, COMMON-31); single-backend is fine when the user says so (prostate is Flower-only; two-stage
    diffusion is NVFLARE-only).
 2. **Data.** `imaging_2d` (DICOM series through MONAI), `imaging_3d` (NIfTI converted by XNAT,
    labels as enrichment) or `tabular` (OMOP-only, `has_imaging` off, CPU).

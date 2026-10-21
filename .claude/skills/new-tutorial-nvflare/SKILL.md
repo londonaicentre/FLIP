@@ -23,7 +23,7 @@ fl-tutorials/nvflare/<category>/<name>/      # two levels: category/name
 Discovery is `$(wildcard */*/.env.app)` in `fl-tutorials/nvflare/Makefile`: a directory counts
 as a tutorial **iff** it sits two levels down and carries a `.env.app` (NVF-01). `run-tutorial`
 matches `TUTORIAL=` against the basename only, so the name must be unique across categories and
-across backends (the Flower twin uses the same name; the e2e harness and docs assume that).
+across backends (the Flower twin uses the same `<category>/<name>` since #1500; the e2e harness and docs assume that).
 
 Existing categories: `image_classification`, `image_segmentation`, `image_evaluation`,
 `image_synthesis`, `tabular_classification`. Reuse one; add a category only for a new task

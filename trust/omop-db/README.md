@@ -118,7 +118,7 @@ indices, the read-only role); later starts find `PG_VERSION` and skip them.
 
 The shipped mock OMOP is built from the imaging projects and carries **no `condition_occurrence`
 rows**. The EHR risk-prediction tutorial
-([`fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction`](../../fl-tutorials))
+([`fl-tutorials/{nvflare,flower}/tabular_classification/ehr_risk_prediction`](../../fl-tutorials))
 runs a cohort query over person demographics + condition/visit history, so it needs those tables
 populated. `load-synthea-ehr` fetches the fully synthetic 1k-person
 [Synthea-in-OMOP dataset](https://registry.opendata.aws/synthea-omop/) from the AWS Open Data

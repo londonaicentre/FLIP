@@ -133,7 +133,9 @@ def discover_tutorials() -> list[Tutorial]:
     found: list[Tutorial] = []
     for env in sorted((FL_TUTORIALS / "nvflare").glob("*/*/.env.app")):
         found.append(_tutorial(env.parent, "nvflare"))
-    for app in sorted((FL_TUTORIALS / "flower").glob("*/app")):
+    # Both trees are <backend>/<category>/<name>/ (#1500); depth two only, so ignored leftovers at the
+    # old flat fl-tutorials/flower/<name>/app in an older checkout are not mistaken for tutorials.
+    for app in sorted((FL_TUTORIALS / "flower").glob("*/*/app")):
         if app.is_dir():
             found.append(_tutorial(app.parent, "flower"))
     return found
@@ -456,6 +458,18 @@ def builtin_twin_exists(check, tutorial, ctx):
     return bool(twins), f"{twin} twin {'found' if twins else 'missing'}"
 
 
+def builtin_twin_same_category(check, tutorial, ctx):
+    """The twin sits in the same <category>/<name> on the other backend (#1500)."""
+    twin = tutorial.manifest.get("twin")
+    if not twin:
+        return True, "no twin declared"
+    twins = [t for t in discover_tutorials() if t.name == tutorial.name and t.backend == twin]
+    if not twins:
+        return False, f"{twin} twin missing"
+    mine, theirs = tutorial.path.parent.name, twins[0].path.parent.name
+    return mine == theirs, f"{tutorial.backend}: {mine}/{tutorial.name}, {twin}: {theirs}/{tutorial.name}"
+
+
 def builtin_query_source_exists(check, tutorial, ctx):
     """``query_from`` names a tutorial that carries the query.sql this one reuses (evaluation twins, the LDM)."""
     source = tutorial.manifest.get("query_from")
@@ -544,6 +558,7 @@ BUILTINS: dict[str, CheckFn] = {
     "required_files": builtin_required_files,
     "twin_exists": builtin_twin_exists,
     "twin_query_in_sync_pairs": builtin_twin_query_in_sync_pairs,
+    "twin_same_category": builtin_twin_same_category,
     "query_source_exists": builtin_query_source_exists,
     "git_ignored": builtin_git_ignored,
     "demo_profile_registered": builtin_demo_profile_registered,
@@ -642,9 +657,9 @@ def select(name: str | None, backend: str, tutorials: list[Tutorial]) -> list[Tu
         hint = (
             f"fl-tutorials/nvflare/<category>/{name}/.env.app"
             if backend == "nvflare"
-            else f"fl-tutorials/flower/{name}/app/"
+            else f"fl-tutorials/flower/<category>/{name}/app/"
             if backend == "flower"
-            else f"fl-tutorials/nvflare/<category>/{name}/.env.app or fl-tutorials/flower/{name}/app/"
+            else f"fl-tutorials/nvflare/<category>/{name}/.env.app or fl-tutorials/flower/<category>/{name}/app/"
         )
         print(f"❌ no tutorial named {name!r} on {backend}: the discovery marker is {hint}", file=sys.stderr)
         sys.exit(1)
