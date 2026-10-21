@@ -398,6 +398,7 @@ OWNER_GUARDED_TARGETS = {
     "up-pgadmin",
     "reset-keycloak",
     "register-trust",
+    "rotate-trust-keys",
 }
 
 

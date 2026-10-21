@@ -56,7 +56,8 @@ class TrustAuditAction(StrEnum):
     """
 
     REGISTERED = "REGISTERED"
-    ROTATED = "ROTATED"
     DELETED = "DELETED"
     ADMIN_ADDED = "ADMIN_ADDED"
     ADMIN_REMOVED = "ADMIN_REMOVED"
+    # Last: Postgres appends ADD VALUE to the end, and the migration test compares order.
+    ROTATED = "ROTATED"
