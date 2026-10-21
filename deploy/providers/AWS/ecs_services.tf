@@ -108,6 +108,18 @@ resource "aws_ecs_service" "flip_api" {
     aws_lb_listener_rule.api_routing,
     module.fl_server_internal_nlb,
   ]
+
+  # FLIP#1596. Staging is stopped outside a deploy, its hold window and the end to
+  # end check: scripts/staging-power.sh scales this service to 0 and the nightly
+  # guard puts it back to 0 if something left it up. A hard-coded desired_count
+  # would make that stopped estate read as drift every night and the next apply
+  # would silently restart it, so the count is Terraform's on create and the
+  # estate's thereafter. The start path sets it (scripts/staging-power.sh start),
+  # which is why stopping staging does not need a Terraform change and starting it
+  # does not need an apply.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
 }
 
 ############################
@@ -146,6 +158,18 @@ resource "aws_ecs_service" "fl_api_net_1" {
     aws_ecs_task_definition.fl_api_net_1[0],
     null_resource.provision_efs_certs[0],
   ]
+
+  # FLIP#1596. Staging is stopped outside a deploy, its hold window and the end to
+  # end check: scripts/staging-power.sh scales this service to 0 and the nightly
+  # guard puts it back to 0 if something left it up. A hard-coded desired_count
+  # would make that stopped estate read as drift every night and the next apply
+  # would silently restart it, so the count is Terraform's on create and the
+  # estate's thereafter. The start path sets it (scripts/staging-power.sh start),
+  # which is why stopping staging does not need a Terraform change and starting it
+  # does not need an apply.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
 }
 
 ############################
@@ -199,4 +223,16 @@ resource "aws_ecs_service" "fl_server_net_1" {
     aws_ecs_task_definition.fl_server_net_1[0],
     null_resource.provision_efs_certs[0],
   ]
+
+  # FLIP#1596. Staging is stopped outside a deploy, its hold window and the end to
+  # end check: scripts/staging-power.sh scales this service to 0 and the nightly
+  # guard puts it back to 0 if something left it up. A hard-coded desired_count
+  # would make that stopped estate read as drift every night and the next apply
+  # would silently restart it, so the count is Terraform's on create and the
+  # estate's thereafter. The start path sets it (scripts/staging-power.sh start),
+  # which is why stopping staging does not need a Terraform change and starting it
+  # does not need an apply.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
 }
