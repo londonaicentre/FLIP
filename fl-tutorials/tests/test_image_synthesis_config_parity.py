@@ -1014,6 +1014,26 @@ def test_checkpoint_verification_cannot_see_norm_num_groups() -> None:
     extract.verify_against_checkpoint(architecture, _tensors_for(regrouped))
 
 
+def test_extraction_records_the_architecture_the_run_was_trained_with(tmp_path: Path) -> None:
+    """The recorded architecture comes from the run's ``config.json``, not the checkout's.
+
+    A platform run trains with the ``config.json`` uploaded beside it. Recording the checkout's
+    instead would describe a network the weights were not trained with, and for ``norm_num_groups``
+    no check downstream could tell (see the test above).
+    """
+    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
+    config = _config(_AUTOENCODER)
+    config["net_config"]["stage_1"]["norm_num_groups"] = 16
+    run_config = tmp_path / "config.json"
+    run_config.write_text(json.dumps(config))
+
+    shipped, _ = extract.describe_autoencoder()
+    trained, _ = extract.describe_autoencoder(config_path=run_config)
+
+    assert shipped["norm_num_groups"] == 32
+    assert trained["norm_num_groups"] == 16
+
+
 def test_the_latent_network_refuses_to_guess_a_missing_autoencoder_config(tmp_path: Path) -> None:
     """No YAML means stop, not fall back on a default.
 

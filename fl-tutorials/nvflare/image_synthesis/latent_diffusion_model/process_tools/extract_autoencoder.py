@@ -33,11 +33,12 @@ parameter shape, so a network built with the wrong value loads the checkpoint *c
 ``strict=True`` and merely produces wrong latents.
 
 The fix is to stop guessing. Alongside the ``.pt`` this writes an ``autoencoder_config.yaml``
-recording the architecture, taken from the `autoencoder` tutorial's own
-``models.autoencoder_kwargs`` rather than transcribed from its ``config.json`` — what the network
-was *built* with, not what a config file claims. The latent tutorial's ``models.py`` reads that YAML
-to define its frozen autoencoder, so the architecture has exactly one definition and travels with
-the weights it describes.
+recording the architecture: the `autoencoder` tutorial's ``models.autoencoder_kwargs`` applied to
+the ``config.json`` the run was trained with — what the network was *built* with, not a transcription.
+That config defaults to the tutorial's own, which is only right for an unedited run; for a run whose
+uploaded ``config.json`` changed the network, pass that file as ``--autoencoder-config``. The latent
+tutorial's ``models.py`` reads that YAML to define its frozen autoencoder, so the architecture has
+exactly one definition and travels with the weights it describes.
 
 Before writing anything, the recorded architecture is instantiated and compared against the
 extracted tensors, key by key and shape by shape. That is what turns "wrong checkpoint" from a
@@ -46,7 +47,8 @@ parameter shapes (``norm_num_groups``, ``norm_eps``): those are trustworthy beca
 from the network definition, not because this check confirms them.
 
 Usage:
-    python extract_autoencoder.py --src <autoencoder run's .pt> --dst ../app_files/pretrained_autoencoder.pt
+    python extract_autoencoder.py --src <autoencoder run's .pt> --dst ../app_files/pretrained_autoencoder.pt \
+        [--autoencoder-config <the config.json that run was trained with>]
 
 Writes ``autoencoder_config.yaml`` next to ``--dst`` unless ``--config-out`` says otherwise, so the
 checkpoint and its config stay together wherever you stage them.
@@ -101,15 +103,21 @@ def _load_autoencoder_models(tutorial: Path) -> Any:
     return module
 
 
-def describe_autoencoder(tutorial: Path = _AUTOENCODER_TUTORIAL) -> tuple[dict[str, Any], dict[str, Any]]:
+def describe_autoencoder(
+    tutorial: Path = _AUTOENCODER_TUTORIAL, config_path: Path | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return ``(architecture, training_context)`` for the `autoencoder` tutorial's network.
 
     The architecture is the literal kwargs its ``models.py`` passes to ``AutoencoderKL``. The
     training context is the data geometry that shaped the weights — not needed to build the network,
     recorded because the latent geometry is only reproducible with it.
+
+    Args:
+        tutorial: The `autoencoder` tutorial directory; its ``models.py`` maps a config to the network.
+        config_path: The ``config.json`` the run was trained with. Defaults to the tutorial's own.
     """
     models = _load_autoencoder_models(tutorial)
-    with open(tutorial / "app_files" / "config.json") as handle:
+    with open(config_path or tutorial / "app_files" / "config.json") as handle:
         config = json.load(handle)
     architecture = models.autoencoder_kwargs(config["net_config"])
     training = {
@@ -278,6 +286,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="The `autoencoder` tutorial directory whose models.py defines the architecture.",
     )
     parser.add_argument(
+        "--autoencoder-config",
+        type=Path,
+        default=None,
+        help=(
+            "The config.json the autoencoder run was trained with (on the platform, the one uploaded "
+            "with that model). Defaults to the `autoencoder` tutorial's own app_files/config.json."
+        ),
+    )
+    parser.add_argument(
         "--verify-only",
         action="store_true",
         help=(
@@ -325,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         return verify_prepared(args.dst, config_out)
 
     tensors = extract(args.src, args.dst)
-    architecture, training = describe_autoencoder(args.autoencoder_tutorial)
+    architecture, training = describe_autoencoder(args.autoencoder_tutorial, args.autoencoder_config)
     # Before writing either file, so a mismatch leaves no half-built artifact behind.
     verify_against_checkpoint(architecture, tensors)
 

@@ -52,6 +52,9 @@ PROCESSED_CONFIG ?= app_files/autoencoder_config.yaml
 # Point this at a finished `autoencoder` tutorial run's checkpoint (the downloaded FL global model,
 # or the simulator's FL_global_model.pt) to build PROCESSED_CHECKPOINT from it.
 RAW_CHECKPOINT ?=
+# The config.json that run was trained with. Defaults to the autoencoder tutorial's own, so set it
+# whenever the run's uploaded config.json changed the network.
+RAW_CONFIG ?=
 
 .PHONY: run export sim prepare-checkpoint clean
 
@@ -94,6 +97,7 @@ prepare-checkpoint:
 		echo "Extracting the autoencoder from $(RAW_CHECKPOINT) ..."; \
 		$(UV_RUN) python process_tools/extract_autoencoder.py \
 			--src "$(RAW_CHECKPOINT)" \
+			$(if $(RAW_CONFIG),--autoencoder-config "$(RAW_CONFIG)") \
 			--dst "$(PROCESSED_CHECKPOINT)" \
 			--config-out "$(PROCESSED_CONFIG)"; \
 		echo "✅ Wrote $(PROCESSED_CHECKPOINT) and $(PROCESSED_CONFIG)"; \
