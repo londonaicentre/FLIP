@@ -71,8 +71,9 @@
     fail_msg: >-
       source_trust {{ seed_source_trust }} is not a partition of the dataset (it has
       {{ seed_num_trusts }}): this trust's FL kit slot number is being used as the default and
-      exceeds it. Pick the partition this trust should receive and pass it explicitly, e.g.
-      make seed-trust-data KIT=<CODE> HUB=<env> SOURCE_TRUST=1
+      exceeds it. Pick the partition this trust should receive and pass it explicitly as
+      SOURCE_TRUST=<n> to the seed: make seed-trust-data for the hub's trust EC2, make seed or
+      make deploy for a node from trust/deploy/terraform/aws-ec2.
 
 # omop-db's entrypoint takes ownership of its data dir itself (it runs as root with CHOWN);
 # Orthanc runs as uid 999 with no way to chown, so its directories must be 999-owned first.

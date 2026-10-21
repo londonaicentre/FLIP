@@ -31,6 +31,13 @@ ANSIBLE_DIR := $(REPO_ROOT)/trust/deploy/ansible
 ANSIBLE := uv run --project $(REPO_ROOT)/deploy/providers/AWS
 
 KIT ?=
+# Checked when parsed: every target derives NAME and the kit file from KIT. A KIT holding spaces is
+# usually one argument carrying several assignments (zsh does not split `make init $V`).
+ifneq ($(KIT),)
+ifneq ($(shell [[ '$(KIT)' =~ ^[A-Za-z0-9_]+$$ ]] && echo ok),ok)
+$(error KIT='$(KIT)' is not a kit code: it must match [A-Za-z0-9_]+. Pass each variable as its own argument)
+endif
+endif
 KIT_FILE = $(call kit_file,$(REPO_ROOT)/trust/,$(KIT))
 kit_get = $(shell sed -n 's/^$(1)=//p' $(KIT_FILE) 2>/dev/null | tail -1)
 KIT_SLOT = $(call kit_get,FL_KIT_SLOT_NUMBER)

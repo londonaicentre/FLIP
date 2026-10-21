@@ -81,6 +81,14 @@ def test_plan_refuses_a_kit_the_hub_has_not_registered(tmp_path):
     assert "register the trust first" in result.stdout + result.stderr
 
 
+def test_a_kit_that_is_not_a_code_stops_every_target(kit):
+    """zsh does not split `make init $V`, so KIT once held every assignment and REGION kept its default."""
+    result = make("init", kit, "KIT=TEST HUB=stag REGION=eu-north-1", "STATE_BUCKET=b")
+    assert result.returncode != 0
+    assert "is not a kit code" in result.stderr
+    assert "terraform" not in result.stdout
+
+
 def test_provision_without_a_kit_bucket_expects_an_out_of_band_kit(kit):
     out = make("provision", kit).stdout
     assert "aws-ec2.yml" in out

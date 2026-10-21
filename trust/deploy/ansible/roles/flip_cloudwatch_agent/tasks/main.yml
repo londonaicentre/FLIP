@@ -18,6 +18,26 @@
     dest: "/tmp/amazon-cloudwatch-agent.deb"
     mode: "0644"
 
+# The package creates cwagent with the highest free system uid, which on a fresh host is 999: the
+# Orthanc container's uid, so the agent's account would own the DICOM store on the host. The
+# package keeps an account that already exists, so create it first, below 999.
+- name: create the cwagent account below the Orthanc uid
+  shell: |
+    set -euo pipefail
+    if ! getent group cwagent >/dev/null; then
+      groupadd --system -K SYS_GID_MAX=998 cwagent
+      echo created
+    fi
+    if ! id cwagent >/dev/null 2>&1; then
+      useradd --system -K SYS_UID_MAX=998 -M -d /home/cwagent -g cwagent -s /usr/sbin/nologin \
+        -c "Cloudwatch Agent" cwagent
+      echo created
+    fi
+  args:
+    executable: /bin/bash
+  register: cwagent_account
+  changed_when: "'created' in cwagent_account.stdout"
+
 - name: install CloudWatch agent
   apt:
     deb: "/tmp/amazon-cloudwatch-agent.deb"

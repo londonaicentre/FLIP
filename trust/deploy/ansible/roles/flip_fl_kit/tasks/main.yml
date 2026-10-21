@@ -42,3 +42,16 @@
 - name: pre-create the kit directory tree for an out-of-band kit
   import_tasks: precreate.yml
   when: fl_kit_source == "precreate"
+
+# The kit holds the FL client's private key, and both staging sources leave it 0644: the copy keeps
+# the source's mode, aws s3 sync uses the umask. The owner is the image's user, as the Helm chart's
+# stage-kit has it. precreate is skipped: there the operator extracts the kit afterwards.
+- name: make the kit readable by the FL client only
+  file:
+    path: "{{ fl_kit_dir }}/net-1"
+    state: directory
+    recurse: true
+    owner: "{{ fl_kit_owner }}"
+    group: "{{ fl_kit_owner }}"
+    mode: "u+rwX,go-rwx"
+  when: fl_kit_source in ["s3", "local"]

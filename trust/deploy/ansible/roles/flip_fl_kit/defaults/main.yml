@@ -52,3 +52,7 @@ fl_kit_precreate_slot: Trust_2
 # "'trust_num' is undefined" error; the assert in s3.yml fires first and says
 # what to pass instead. Role defaults are lazy, so this is only evaluated on the s3 path.
 fl_kit_slot: "Trust_{{ trust_num }}"
+
+# The uid the FL client runs as, which alone may read the staged kit: CI builds the FLARE client at
+# 1000, and Flower's SuperNode runs as upstream flwr/base's 49999.
+fl_kit_owner: "{{ '49999' if fl_backend == 'flower' else '1000' }}"
