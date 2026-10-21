@@ -37,7 +37,9 @@ def test_a_code_named_kit_packs_its_slot(tmp_path: Path) -> None:
         shutil.copy2(SCRIPTS / name, scripts / name)
     kit = tmp_path / "repo" / "trust" / ".env.AZ1.stag"
     kit.parent.mkdir()
-    kit.write_text("FL_BACKEND=nvflare\nFLARE_KIT_DATE=20261009\nFL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
+    kit.write_text(
+        "\n".join(["FL_BACKEND=nvflare", "FLARE_KIT_DATE=20261009", "FL_KIT_SLOT=Trust_3", "FL_KIT_SLOT_NUMBER=3", ""])
+    )
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "aws").write_text(AWS_STUB)
