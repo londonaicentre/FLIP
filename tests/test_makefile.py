@@ -23,6 +23,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -520,6 +521,92 @@ class E2eSmokeQuery(unittest.TestCase):
 
     def test_an_explicit_query_file_still_wins(self):
         assert self.query_file("PROD=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
+
+
+HUB_MAKEFILES = ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk")
+KEY_PAIR = ("INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")
+
+
+class FirstUpInternalServiceKey(unittest.TestCase):
+    """The first `make up` hands compose the key pair generate-internal-service-key just wrote (FLIP#1501).
+
+    The root Makefile exports the env file at parse time, before the generator runs, so compose used
+    to receive the example's stale pair: flip-api's hash then matched no key and every fl-server call
+    was a 401. Runs the real generator (stdlib-only) behind a stub `uv`, with a stub `docker` that
+    records what compose was given, on a non-default MAIN_ENV_FILE.
+    """
+
+    def run_up(self, target, env_text):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / "checkout"
+            for rel in (*HUB_MAKEFILES, "flip-api/Makefile"):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(REPO / rel, root / rel)
+            env_file = root / ".env.b.development"
+            env_file.write_text(env_text)
+            bin_dir = base / "bin"
+            bin_dir.mkdir()
+            seen = base / "compose-env.json"
+            (bin_dir / "uv").write_text(  # `uv run python -m <module> <args>` -> the real module
+                f"#!{sys.executable}\nimport os, sys\n"
+                f"sys.path.insert(0, {str(REPO / 'flip-api' / 'src')!r})\n"
+                "args = sys.argv[sys.argv.index('-m') + 1:]\n"
+                "sys.argv = args\n"
+                "import runpy; runpy.run_module(args[0], run_name='__main__')\n"
+            )
+            (bin_dir / "docker").write_text(
+                f"#!{sys.executable}\nimport json, os, sys\n"
+                "if 'compose' in sys.argv and 'up' in sys.argv:\n"
+                f"    keys = {sorted(KEY_PAIR)!r}\n"
+                f"    json.dump({{k: os.environ.get(k) for k in keys}}, open({str(seen)!r}, 'w'))\n"
+            )
+            for stub in bin_dir.iterdir():
+                stub.chmod(0o755)
+            excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "FORCE", "ENV_FILE", *KEY_PAIR}
+            env = {key: value for key, value in os.environ.items() if key not in excluded}
+            env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+            skipped = ("create-networks", "_ensure-fl-jobs-dir", "_ensure-object-store-dir", "_check-fl-provisioned")
+            result = subprocess.run(
+                ["make", "--no-print-directory", "-C", str(root), target, "MAIN_ENV_FILE=.env.b.development"]
+                + [f"--old-file={name}" for name in skipped],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            written = dict(line.split("=", 1) for line in env_file.read_text().splitlines() if "=" in line)
+            return json.loads(seen.read_text()), written
+
+    def test_compose_gets_the_pair_the_generator_wrote(self):
+        cases = {
+            "generated": "INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n",
+            "hash repaired": "INTERNAL_SERVICE_KEY=k\nINTERNAL_SERVICE_KEY_HASH=stale\n",
+        }
+        for name, env_text in cases.items():
+            with self.subTest(case=name):
+                seen, written = self.run_up("up-no-trust", env_text)
+                key, key_hash = written["INTERNAL_SERVICE_KEY"], written["INTERNAL_SERVICE_KEY_HASH"]
+                assert key, written
+                assert key_hash == hashlib.sha256(key.encode()).hexdigest(), written
+                assert seen == {"INTERNAL_SERVICE_KEY": key, "INTERNAL_SERVICE_KEY_HASH": key_hash}, seen
+
+    def test_every_target_that_generates_the_key_composes_with_the_fresh_pair(self):
+        makefile = (REPO / "Makefile").read_text()
+        targets = re.findall(r"^([\w-]+):[^=\n]*\bgenerate-internal-service-key\b", makefile, re.M)
+        assert {"up", "up-no-trust"} <= set(targets), targets
+        for target in targets:
+            recipe = re.search(rf"^{re.escape(target)}:.*\n((?:\t.*\n)+)", makefile, re.M)[1]
+            compose = [line for line in recipe.splitlines() if COMPOSE_COMMAND.search(line)]
+            with self.subTest(target=target):
+                assert compose, recipe
+                assert all("$(FRESH_INTERNAL_SERVICE_KEY)" in line for line in compose), recipe
+
+    def test_the_example_ships_no_pair_to_repair(self):
+        example = (REPO / ".env.development.example").read_text()
+        assert re.search(r"^INTERNAL_SERVICE_KEY=$", example, re.M), "the example's key must be empty"
+        assert re.search(r"^INTERNAL_SERVICE_KEY_HASH=$", example, re.M), "the example's hash must be empty"
 
 
 if __name__ == "__main__":

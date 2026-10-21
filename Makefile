@@ -96,6 +96,10 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+# generate-internal-service-key may rewrite the key pair after the include above exported it, so
+# the compose call that follows it reads both from the file at run time (FLIP#1501).
+FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$$(sed -n 's/^INTERNAL_SERVICE_KEY=//p' $(MAIN_ENV_FILE))" \
+	INTERNAL_SERVICE_KEY_HASH="$$(sed -n 's/^INTERNAL_SERVICE_KEY_HASH=//p' $(MAIN_ENV_FILE))"
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
 # Through compose, addressing the service rather than the container: the containers are
 # named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
@@ -157,7 +161,7 @@ up: _check-compose-project-owner generate-internal-service-key create-networks _
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
@@ -229,7 +233,7 @@ _check-compose-project-owner:
 up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
@@ -586,7 +590,7 @@ seed-demo-projects:
 	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
 generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
+	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE))) $(if $(FORCE),FORCE=$(FORCE))
 
 # Poll flip-api /api/health before registering. The entrypoint seeds the DB —
 # including the FL kit-slot pool that register_trust claims from — *before* the
