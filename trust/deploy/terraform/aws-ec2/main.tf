@@ -75,13 +75,43 @@ resource "aws_iam_role" "node" {
   permissions_boundary = local.boundary
 }
 
-resource "aws_iam_role_policy_attachment" "node" {
-  for_each = toset([
-    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
-    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
-  ])
+# CloudWatchAgentServerPolicy reads only the agent's own AmazonCloudWatch-* parameters.
+resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
   role       = aws_iam_role.node.name
-  policy_arn = each.value
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+# Session Manager and the agent's own channel, in place of AmazonSSMManagedInstanceCore: that grants
+# ssm:GetParameter* and GetDocument on everything in the account, which in the hub's account would
+# include the parameters register-trusts hands kits over in. Nothing on the host reads a parameter.
+data "aws_iam_policy_document" "ssm_session" {
+  statement {
+    actions   = ["ssm:UpdateInstanceInformation"]
+    resources = ["arn:aws:ec2:${var.region}:*:instance/*"]
+  }
+
+  # These take no resource-level permissions.
+  statement {
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+      "ec2messages:AcknowledgeMessage",
+      "ec2messages:DeleteMessage",
+      "ec2messages:FailMessage",
+      "ec2messages:GetEndpoint",
+      "ec2messages:GetMessages",
+      "ec2messages:SendReply",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "ssm_session" {
+  name   = "ssm-session"
+  role   = aws_iam_role.node.id
+  policy = data.aws_iam_policy_document.ssm_session.json
 }
 
 # Read-only, and only this node's own kit: its FLARE slot directory, or Flower's CA certificate and

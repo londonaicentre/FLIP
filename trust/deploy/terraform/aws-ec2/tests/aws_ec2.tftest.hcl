@@ -117,6 +117,19 @@ run "egress_allows_the_fl_endpoint_ports_given" {
   }
 }
 
+run "ssm_access_is_sessions_only_never_parameters" {
+  command = plan
+
+  assert {
+    condition     = aws_iam_role_policy_attachment.cloudwatch_agent.policy_arn == "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+    error_message = "The only managed policy is the CloudWatch agent's."
+  }
+  assert {
+    condition     = length([for a in flatten(data.aws_iam_policy_document.ssm_session.statement[*].actions) : a if startswith(a, "ssm:") && a != "ssm:UpdateInstanceInformation"]) == 0
+    error_message = "The node may not read SSM parameters or documents: in the hub's account those hold kits."
+  }
+}
+
 run "no_kit_bucket_grants_no_s3_or_kms" {
   command = plan
 
