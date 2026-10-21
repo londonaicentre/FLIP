@@ -13,8 +13,9 @@
 
 # Trust Compose Stack
 
-> **Deploys: trust only.** The trust-side container stack as Docker Compose, with its two siblings
-> [`helm/`](helm/README.md) (the same stack for Kubernetes) and [`ansible/`](ansible/README.md) (prepares a
+> **Deploys: trust only.** The trust-side container stack as Docker Compose, with its siblings
+> [`helm/`](helm/README.md) (the same stack for Kubernetes), [`snowflake/`](snowflake/README.md) (the same
+> stack on Snowpark Container Services, FLIP#1582) and [`ansible/`](ansible/README.md) (prepares a
 > site-owned host for these files). The Central Hub stack lives in [`deploy/`](../../deploy/README.md); see
 > [where things live](../../deploy/README.md#where-things-live) for the rule behind the layout.
 

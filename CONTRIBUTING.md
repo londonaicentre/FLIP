@@ -703,6 +703,27 @@ smoke, and a `sync_k8s_kit.py` script that syncs a registered trust's kit file (
 itself still goes through `register_trust` / `make register-trusts`) into the chart's Kubernetes
 Secret and a Helm values override. See the [K8s README](trust/deploy/helm/README.md) for details.
 
+**Snowflake (SPCS) node testing**: The Snowflake shape of the trust node at
+`trust/deploy/snowflake/` is tested entirely offline - no Snowflake account, no
+credentials, no network:
+
+```bash
+# Spec guards (no public endpoints, no secret literals, the per-service secret map,
+# the fl-client's read-only kit and net-N-only images mount, block volumes only for
+# xnat-db and orthanc, resource limits everywhere) plus the sync-kit guards, which
+# drive a fake `snow` binary and assert no secret value reaches argv or any log
+make -C trust/deploy/snowflake test
+
+# Print the deploy SQL instead of running it. Every Snowflake target takes DRY_RUN
+make -C trust/deploy/snowflake up KIT=<CODE> PROD=<env> DRY_RUN=true
+```
+
+Secret values are fed to `snow sql` on **stdin** and never as arguments: an argument is
+visible in `ps` to every user on the host and is recorded by shell history and most CI
+runners' command logging. Keep it that way when extending `sync_snowflake_kit.py` - the
+guard that catches a regression is `tests/test_sync_kit.py`. CI runs the suite from
+`.github/workflows/test_snowflake_specs.yml`, path-gated like every other service suite.
+
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
 All new functionality should be accompanied by an appropriate set of tests. Existing tests throughout the services can serve as examples.
