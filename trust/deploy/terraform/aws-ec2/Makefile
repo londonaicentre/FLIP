@@ -12,7 +12,7 @@
 # AWS EC2 trust node (FLIP#1528). Site targets need the trust's kit file only (KIT=<CODE> HUB=<env>)
 # and AWS credentials for the account the node goes in; they never read a hub env file, hub state
 # or hub credentials. One target group is hub-admin: given HUB_ENV_FILE=, the preset fills in the
-# hub's own VPC, kit bucket, key, boundary and state bucket, for our mock and test trusts. No target
+# hub's own VPC, kit bucket, key, boundary and state bucket (not on an LZA estate: no egress). No target
 # skips Terraform's confirmation: apply and destroy show the plan and ask.
 #
 # Order: register the trust on the hub (make register-trusts KIT=<CODE> HUB=<env>), then
@@ -38,7 +38,7 @@ FL_PORT = $(call kit_get,FL_EDGE_PORT)
 FL_BACKEND = $(call kit_get,FL_BACKEND)
 lower = $(shell printf '%s' '$(1)' | tr '[:upper:]_' '[:lower:]-')
 
-# ---- hub-admin preset: our mock trusts in the hub's own VPC -----------------------------------
+# ---- hub-admin preset: a node in the hub's own VPC (not on LZA, which has no internet egress) ----
 # The trust root never reads the hub; this only looks the hub's values up and passes them in. The
 # subnet is the one the hub's own trust EC2 uses: the first app subnet of the LZA VPC, by tag.
 ifneq ($(HUB_ENV_FILE),)
@@ -174,9 +174,11 @@ upgrade: ## Move the node to a release tag, data in place (TAG=, FL_TAG=, FORCE=
 shell: ## Open a shell on the node over SSM
 	aws ssm start-session --region $(REGION) --target "$$($(TF) output -raw instance_id)"
 
+# The tests get their own data dir: after `make init` the root's .terraform/ names the S3 backend,
+# which `init -backend=false` does not undo, and `terraform test` would then want AWS credentials.
 test: ## Credential-free checks: terraform test in the root and its module, plus pytest
 	@for d in modules/network .; do \
-		echo "── $$d"; ( cd $$d && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
+		echo "── $$d"; ( cd $$d && export TF_DATA_DIR=.terraform-test && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
 	done
 	uv run --no-project --with pytest --with diagrams pytest tests/ -q
 

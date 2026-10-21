@@ -154,12 +154,19 @@ online) and from the trust: ``make shell`` and ``curl -s localhost:<TRUST_API_PO
 ``hub_key_match: true``.
 
 ****************************************************
-Our mock and test trusts: the hub-VPC preset
+The hub-VPC preset (not on an LZA estate)
 ****************************************************
 
-*Who: hub admin.* The FLIP team's own mock trusts go in the hub's VPC, so they pay for no NAT gateway of
-their own. ``HUB_ENV_FILE`` fills in the hub's values; the trust root itself still reads nothing from
-the hub:
+*Who: hub admin.* ``HUB_ENV_FILE`` places a node in the hub's own VPC, so a mock trust pays for no NAT
+gateway of its own; the trust root itself still reads nothing from the hub.
+
+.. warning::
+
+   **It does not work on a Landing Zone Accelerator estate**, which is where every FLIP hub runs. The
+   workload accounts there have no internet egress by design (VPC endpoints only), so a node in the hub's
+   VPC can reach SSM and S3 but not the image registry, the seed dataset, or the hub's public URL and FL
+   endpoint. Checked on stag on 21 Oct 2026. Run mock trusts off the estate: in an account with internet
+   egress (own-VPC mode), on-prem, Kubernetes or Azure.
 
 .. code-block:: bash
 
