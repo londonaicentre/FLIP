@@ -154,7 +154,7 @@ demo_video:
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
 #     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
 #     make e2e_smoke QUERY_FILE=/path/to/your_cohort.sql
-# The x-ray query is picked automatically from PROD (see XRAY_QUERY_NAME below): a test trust
+# The x-ray query is picked automatically from HUB (see XRAY_QUERY_NAME below): a test trust
 # deployed without the OMOP vocabulary (the Helm chart's NO_VOCAB_LOAD=1, FLIP#1390) gets the
 # vocabulary-free copy, because there query.sql's concept joins return nothing and staging refuses
 # the project. Pass QUERY_FILE explicitly to override.

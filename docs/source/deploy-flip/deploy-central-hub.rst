@@ -592,11 +592,20 @@ the platform team owns the edge and the network, and the hub's workload account 
 There is no in-place migration. The Terraform no longer describes the single-account network, so a plan against an
 old state would destroy it. Move the hub instead:
 
-1. **Stand up the new hub** in an LZA workload account. Agree the network and the edge with the platform team first:
-   see :ref:`deploy-central-hub-aws-lza-account`.
-2. **Decide what to keep.** :ref:`admin-backup-and-restore` lists what the hub holds; FLIP has no tool that copies it
-   to another account.
-3. **Re-onboard each trust** against the new hub (:ref:`onboarding-a-trust`), and rename its kit file to the
-   ``HUB`` naming (``trust/.env.<CODE>.prod`` or ``.stag``).
-4. **Destroy the old account's stack** once no trust points at it.
+1. **Archive the old hub's files.** Move the old hub env file and every kit file for it out of the checkout; do not
+   rename them. The old staging names (``.env.stag``, ``trust/.env.<CODE>.stag``) are already the new ones, and make
+   tells you to rename the old production names, so either way the retired hub's AES key and URLs would reach the new
+   hub's files.
+2. **Stand up the new hub** in an LZA workload account, with a fresh ``.env.prod`` or ``.env.stag``. Agree the
+   network, the edge and the hub's public URL and domain with the platform team first: see
+   :ref:`deploy-central-hub-aws-lza-account`.
+3. **Decide what to keep.** :ref:`admin-backup-and-restore` lists what the hub holds; FLIP has no tool that copies it
+   to another account. Unrestored, the new hub starts with no projects, models or audit records. Its Cognito pool is
+   new either way, so invite every user again and re-grant their roles.
+4. **Re-onboard each trust** against the new hub from Step 1 of :ref:`onboarding-a-trust`. The hub URL, AES key and
+   FL kit all change. On a trust host that is already running, install the new kit and FL kit and upgrade the trust;
+   do not use the first-install commands, which re-seed its data and reset XNAT.
+5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
+   (``v0.13.1`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
+   the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
 

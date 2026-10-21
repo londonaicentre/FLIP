@@ -417,8 +417,8 @@ On a cluster with no route to AWS, ``values-aks.yaml`` keeps the S3 load out wha
 it the metadata endpoint, which on Azure hands out managed-identity tokens; ``NO_VOCAB_LOAD=1`` does the same for
 ``sync-kit`` on any other cluster. The trust then runs without the vocabulary until one is loaded another way, and
 cohort queries that name concepts through ``omop.concept`` return nothing. The x-ray tutorial ships
-``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``PROD`` unset) smokes such a trust with it.
-With ``PROD`` set, pass it by hand:
+``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``HUB`` unset) smokes such a trust with it.
+With ``HUB`` set, pass it by hand:
 ``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
 ``fl-tutorials/flower/xray_classification/query_novocab.sql``).
 

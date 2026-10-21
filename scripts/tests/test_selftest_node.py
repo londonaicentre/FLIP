@@ -143,7 +143,7 @@ def _run(
         '  *tail*) echo "INFO stored instance";;\n'
         "esac; fi\nexit 0",
     )
-    kit_out = tmp / ".env.SELFTEST.production"
+    kit_out = tmp / ".env.SELFTEST.prod"
     if stale_kit:
         kit_out.write_text("STALE_KIT=1\n")
     env = {
@@ -193,9 +193,9 @@ def main() -> int:
         "fl client running",
     ):
         _assert(_check(report, name).get("ok") is True, f"check '{name}' passed", json.dumps(_check(report, name)))
-    _assert(calls.exists() and "down-trust KIT=SELFTEST PROD=true" in calls.read_text(), "stack torn down afterwards")
+    _assert(calls.exists() and "down-trust KIT=SELFTEST HUB=prod" in calls.read_text(), "stack torn down afterwards")
     kit = dict(
-        line.split("=", 1) for line in (tmp / ".env.SELFTEST.production").read_text().splitlines() if "=" in line
+        line.split("=", 1) for line in (tmp / ".env.SELFTEST.prod").read_text().splitlines() if "=" in line
     )
     password = kit.get("ORTHANC_PASSWORD", "")
     _assert(bool(password) and password not in calls.read_text(), "the Orthanc password never appears in argv")
@@ -206,7 +206,7 @@ def main() -> int:
     print("an_aborted_run_still_tears_the_stack_down")
     aborted, _, aborted_calls, _ = _run("abort", abort_in_sleep=True)
     _assert(aborted.returncode == 143, "the run exits on the signal", aborted.stdout + aborted.stderr)
-    _assert("down-trust KIT=SELFTEST PROD=true" in aborted_calls.read_text(), "the trap tears the stack down")
+    _assert("down-trust KIT=SELFTEST HUB=prod" in aborted_calls.read_text(), "the trap tears the stack down")
 
     print("keep_up_survives_an_abort")
     _, _, kept_calls, _ = _run("keepup", abort_in_sleep=True, keep_up=True)
@@ -218,7 +218,7 @@ def main() -> int:
     _assert(
         f"chown -R 1000:1000 {tmp / 'fl-kit' / 'net-1'}" in calls.read_text(), "and handed to the client's uid 1000"
     )
-    kit = (tmp / ".env.SELFTEST.production").read_text()
+    kit = (tmp / ".env.SELFTEST.prod").read_text()
     _assert(f"FL_KIT_DIR={tmp / 'fl-kit'}" in kit, "the kit points the stack at the staged copy")
 
     print("fl_kit_is_staged_for_the_flower_supernode")
@@ -238,7 +238,7 @@ def main() -> int:
 
     print("failed_kit_step_never_starts_a_stale_kit")
     result, report, calls, tmp = _run("stale", stale_kit=True, bad_template=True)
-    _assert(not (tmp / ".env.SELFTEST.production").exists(), "the previous run's kit is removed")
+    _assert(not (tmp / ".env.SELFTEST.prod").exists(), "the previous run's kit is removed")
     _assert("up-trust" not in calls.read_text(), "up-trust is not run")
     _assert(
         _check(report, "stack up").get("ok") is False and "skipped" in _check(report, "stack up").get("detail", ""),
