@@ -1120,7 +1120,7 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	@:$(if $(KIT),,$(call old_kits_hint,$(REPO_ROOT)/trust/))
 	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
 	@# The XNAT stack passwords are trust-side secrets the hub never mints, as in the dev register-trust.
-	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE=$$kit || exit 1; done
+	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE="$$kit" FORCE= || exit 1; done
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator

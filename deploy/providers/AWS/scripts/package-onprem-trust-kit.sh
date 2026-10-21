@@ -64,9 +64,8 @@ fi
 KIT_NAME=".env.${KIT}.${HUB:?HUB is required — run via make package-onprem-trust-kit KIT=<CODE> HUB=<env>}"
 KIT_FILE="${KIT_FILE:-$REPO_ROOT/trust/$KIT_NAME}"
 if [ ! -f "$KIT_FILE" ]; then
-    log_error "Kit file $KIT_FILE not found."
-    log_error "Pass the trust's registered kit by path (KIT is its FL_KIT_SLOT):"
-    log_error "    make package-onprem-trust-kit KIT=${KIT} KIT_FILE=\$PWD/trust/.env.<CODE>.${HUB} HUB=${HUB}"
+    log_error "Kit file $KIT_FILE not found. KIT is the trust's code: create and register its kit first"
+    log_error "(make new-trust, then register-trusts), or pass the kit by path with KIT_FILE=<path>."
     exit 1
 fi
 
@@ -89,6 +88,14 @@ fi
 get_var() {
     sed -n "s/^${1}=//p" "$KIT_FILE" | head -1
 }
+
+# KIT names the kit in the tarball, so a KIT_FILE= for another trust would ship its
+# credentials under this trust's name.
+kit_code="$(get_var TRUST_CODE)"
+if [ -n "$kit_code" ] && [ "$kit_code" != "$KIT" ]; then
+    log_error "$KIT_FILE is the kit for TRUST_CODE=$kit_code, not KIT=$KIT."
+    exit 1
+fi
 
 fl_backend="$(get_var FL_BACKEND)"
 slot="$(get_var FL_KIT_SLOT)"

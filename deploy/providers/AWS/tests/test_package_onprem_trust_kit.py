@@ -30,16 +30,18 @@ exit 0
 """
 
 
-def test_a_code_named_kit_packs_its_slot(tmp_path: Path) -> None:
+KIT_LINES = ["FL_BACKEND=nvflare", "FLARE_KIT_DATE=20261009", "FL_KIT_SLOT=Trust_3", "FL_KIT_SLOT_NUMBER=3"]
+
+
+def _pack(tmp_path: Path, kit_lines: list[str]) -> tuple[subprocess.CompletedProcess, Path]:
+    """Run the packager with KIT=AZ1 HUB=stag over a kit of ``kit_lines``; returns the run and the aws calls log."""
     scripts = tmp_path / "repo" / "deploy" / "providers" / "AWS" / "scripts"
     scripts.mkdir(parents=True)
     for name in ("package-onprem-trust-kit.sh", "utils.sh"):
         shutil.copy2(SCRIPTS / name, scripts / name)
     kit = tmp_path / "repo" / "trust" / ".env.AZ1.stag"
     kit.parent.mkdir()
-    kit.write_text(
-        "\n".join(["FL_BACKEND=nvflare", "FLARE_KIT_DATE=20261009", "FL_KIT_SLOT=Trust_3", "FL_KIT_SLOT_NUMBER=3", ""])
-    )
+    kit.write_text("\n".join([*kit_lines, ""]))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     (bin_dir / "aws").write_text(AWS_STUB)
@@ -55,16 +57,43 @@ def test_a_code_named_kit_packs_its_slot(tmp_path: Path) -> None:
         "HUB": "stag",
         "KIT_FILE": str(kit),
     }
-
     result = subprocess.run(
         ["bash", str(scripts / "package-onprem-trust-kit.sh")], env=env, capture_output=True, text=True
     )
+    return result, calls
+
+
+def _tarballs(tmp_path: Path) -> list[Path]:
+    return list((tmp_path / "repo" / "deploy" / "providers" / "AWS" / "build" / "trust-kits").glob("*.tar.gz"))
+
+
+def test_a_code_named_kit_packs_its_slot(tmp_path: Path) -> None:
+    result, calls = _pack(tmp_path, ["TRUST_CODE=AZ1", *KIT_LINES])
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "/net-1/services/Trust_3/" in calls.read_text()
     assert "make up-onprem-trust KIT=AZ1 HUB=stag" in result.stdout
-    (tarball,) = (tmp_path / "repo" / "deploy" / "providers" / "AWS" / "build" / "trust-kits").glob("*.tar.gz")
+    (tarball,) = _tarballs(tmp_path)
     with tarfile.open(tarball) as tar:
         names = tar.getnames()
     assert ".env.AZ1.stag" in names
     assert "fl-kit/net-1/services/Trust_3/startup.sh" in names
+
+
+def test_another_trusts_kit_is_refused(tmp_path: Path) -> None:
+    """KIT names the kit in the tarball, so KIT_FILE= pointing at another trust's kit must not ship under it."""
+    result, _ = _pack(tmp_path, ["TRUST_CODE=KCH", *KIT_LINES])
+
+    assert result.returncode != 0
+    assert "TRUST_CODE=KCH" in result.stdout + result.stderr
+    assert not _tarballs(tmp_path)
+
+
+def test_a_kit_without_a_slot_is_refused(tmp_path: Path) -> None:
+    result, calls = _pack(
+        tmp_path, ["TRUST_CODE=AZ1", *(line for line in KIT_LINES if not line.startswith("FL_KIT_SLOT="))]
+    )
+
+    assert result.returncode != 0
+    assert "FL_KIT_SLOT is empty" in result.stdout + result.stderr
+    assert not calls.exists()

@@ -37,10 +37,8 @@ How to read it
      - Meaning
    * - ``<CODE>``
      - The trust's short code, chosen in step 1.
-   * - ``<slot>``
-     - The FL kit slot the hub assigns in step 2 (``FL_KIT_SLOT`` in the kit file), for example ``Trust_2``.
    * - ``<N>``
-     - The slot's number (``FL_KIT_SLOT_NUMBER`` in the kit file).
+     - The trust's FL slot number (``FL_KIT_SLOT_NUMBER`` in the kit file), for example ``2``.
 
 The commands target the production hub (``HUB=prod``, kit file ``trust/.env.<CODE>.prod``). For the staging hub use
 ``HUB=stag`` (``.stag``).
@@ -247,8 +245,8 @@ whatever the researcher's app configures.
    stops the FL client at startup, by design.
 #. Apply it:
 
-   - **Docker Compose host:** ``sudo -E make onboard-onprem-trust KIT=<slot>`` from the repo root validates the
-     settings; then restart the FL clients with ``sudo -E make -C trust up-fl-clients-kit KIT=<slot> HUB=prod``.
+   - **Docker Compose host:** ``sudo -E make onboard-onprem-trust KIT=<CODE>`` from the repo root validates the
+     settings; then restart the FL clients with ``sudo -E make -C trust up-fl-clients-kit KIT=<CODE> HUB=prod``.
    - **Kubernetes:** re-run the deploy (Step 4 on :doc:`deploy-flip-node-kubernetes`), which carries the settings
      into the chart.
 
@@ -276,7 +274,7 @@ to be re-issued.
 
 #. *Trust operator:* replace only the *Hub-shared* block in your kit file, then apply it:
 
-   - **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<slot> YES=1`` from the repo root.
+   - **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<CODE> YES=1`` from the repo root.
    - **Kubernetes:** re-run the deploy (Step 4 on :doc:`deploy-flip-node-kubernetes`); it re-patches the keys into
      the Secret and restarts the API services.
 
@@ -293,7 +291,7 @@ Later — upgrade to a new release
 
 Check out the new release tag, then:
 
-- **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<slot>`` from the repo root.
+- **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<CODE>`` from the repo root.
 - **Kubernetes:** ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=prod``; see "Upgrading" on
   :doc:`deploy-flip-node-kubernetes`.
 

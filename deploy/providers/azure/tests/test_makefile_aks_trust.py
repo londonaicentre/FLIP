@@ -122,6 +122,18 @@ def test_an_nvflare_kit_secret_is_the_slots_directory(tmp_path):
     assert not (kit / "fl-kit-secret/x").exists()
 
 
+def test_a_kit_without_a_slot_is_refused(tmp_path):
+    """An empty SLOT would copy the whole services/ tree into the Secret, one level too deep."""
+    kit = tmp_path / "kit"
+    _kit(kit, {"fl-kit/net-1/services/Trust_3/startup/fed_client.json": "{}"})
+
+    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), SLOT="")
+
+    assert result.returncode != 0
+    assert "FL_KIT_SLOT" in result.stdout + result.stderr
+    assert not (kit / "fl-kit-secret").exists()
+
+
 def _job(name: str, cpu_limit: str | None) -> dict:
     resources = {"limits": {"cpu": cpu_limit}} if cpu_limit else {}
     return {"metadata": {"name": name}, "spec": {"template": {"spec": {"containers": [{"resources": resources}]}}}}

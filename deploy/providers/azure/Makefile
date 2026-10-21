@@ -328,6 +328,7 @@ aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (T
 # the SuperNode reads, ca.crt and this slot's credential; the tarball's certificates/ also holds the
 # SuperLink's server.key, which kit-secret refuses to put in a trust's Secret.
 _aks-fl-kit:
+	@[ -n "$(SLOT)" ] || { echo "❌ The kit file has no FL_KIT_SLOT; ask the hub admin to re-package the kit."; exit 1; }
 	@k="$(AKS_KIT_DIR)/fl-kit/net-1"; s="$(AKS_KIT_DIR)/fl-kit-secret"; rm -rf "$$s"; \
 	if [ -d "$$k/services/$(SLOT)" ]; then cp -Rp "$$k/services/$(SLOT)" "$$s"; \
 	else mkdir -p -m 700 "$$s/certificates" "$$s/keys" && cp -p "$$k/certificates/ca.crt" "$$s/certificates/" && \

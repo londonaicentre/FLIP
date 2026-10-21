@@ -43,7 +43,7 @@ Two rules apply throughout:
      - Command (from a FLIP checkout at the release tag)
    * - On-premises (Docker Compose)
      - Site operator
-     - ``sudo -E make upgrade-onprem-trust KIT=<slot>``
+     - ``sudo -E make upgrade-onprem-trust KIT=<CODE>``
    * - Kubernetes (Helm)
      - Site operator
      - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env>``
@@ -84,7 +84,7 @@ Step 2 — Replace the Hub-shared block (refreshed kit only)
 
 *Who: site operator*
 
-If you were sent a refreshed kit, open the new ``.env.<slot>.prod`` and copy **only** the block between
+If you were sent a refreshed kit, open the new ``.env.<CODE>.prod`` and copy **only** the block between
 ``# ── Hub-shared (managed …)`` and ``# ── Kit credentials (managed)`` into your own kit file. Keep your Host-local
 profile (ports, data directories, ``FL_KIT_DIR``) and your Trust-local credentials. Do not copy the whole file over
 yours.
@@ -138,8 +138,8 @@ From the checkout:
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot>                # e.g. KIT=Trust_2; targets the hub's release
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z     # or pin the release explicitly
+   sudo -E make upgrade-onprem-trust KIT=<CODE>                # e.g. KIT=GSTT; targets the hub's release
+   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z     # or pin the release explicitly
 
 .. list-table:: Options
    :header-rows: 1
@@ -147,8 +147,9 @@ From the checkout:
 
    * - Option
      - Effect
-   * - ``KIT=<slot>``
-     - Required. The trust's kit slot.
+   * - ``KIT=<CODE>``
+     - Required. The name in your kit file, ``trust/.env.<KIT>.prod``: the trust's code, or its FL slot (for
+       example ``Trust_2``) for a kit packaged before FLIP#1419.
    * - ``TAG=vX.Y.Z``
      - The release to move to. Default: the release the hub reports.
    * - ``HUB=<env>``
@@ -258,7 +259,7 @@ A healthy reply looks like
      - ``true`` when trust-api's encryption key matches the hub's.
 
 The hub fields are ``null`` until the next accepted heartbeat (a few seconds), and again whenever the hub rejects one.
-Run ``make onboard-onprem-trust KIT=<slot>`` to see every checklist row again.
+Run ``make onboard-onprem-trust KIT=<CODE>`` to see every checklist row again.
 
 On the hub, the FLIP admin sees the same versions in *Connection Status → trust drawer*. Any container still on another
 build shows an amber ``≠ hub`` pill.
@@ -333,7 +334,7 @@ Check out the previous release's tag, then run the upgrade with that tag and ``F
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z FORCE=1
+   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z FORCE=1
 
 **Rolling back to v0.7.0 or earlier.** Those releases have no ``:vX.Y.Z`` images (the registry check refuses
 ``TAG=v0.7.0``) and their checkouts have no upgrade command. Stay on your current checkout and use the images built from
@@ -351,7 +352,7 @@ that release's commit:
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=sha-23cf331
+   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=sha-23cf331
 
 A ``sha-`` tag has no release order, so the command does not see this as a downgrade and needs no ``FORCE=1``: check the
 printed ``site <current> → target sha-…`` yourself. The old images then run under the newer checkout's compose files, a

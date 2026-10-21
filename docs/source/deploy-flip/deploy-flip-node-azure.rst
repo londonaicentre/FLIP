@@ -216,7 +216,7 @@ The tarball then goes to the node through the kit drop, and ``join`` installs it
 
    make kit-upload AZ_SUBSCRIPTION="$SUB" TARBALL=flip-trust-kit-<slot>-<date>.tar.gz
    make join       AZ_SUBSCRIPTION="$SUB" NAME=flip-trust-kit-<slot>-<date>.tar.gz KIT=<CODE> HUB=<env>
-   make logs       AZ_SUBSCRIPTION="$SUB" UNIT=flip-join-<slot>
+   make logs       AZ_SUBSCRIPTION="$SUB" UNIT=flip-join-<CODE>
 
 ``join`` fetches the kit with the node's identity, installs its kit file (owner-only) with the
 node's own settings appended, stages the FL kit for the client that reads it and runs

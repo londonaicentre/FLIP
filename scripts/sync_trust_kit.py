@@ -97,7 +97,12 @@ def main() -> None:
         if tag.startswith("sha-"):
             release = site_upgrade.release_for_sha(tag)
             if not release and args.env_class == "prod":
-                die(f"❌ {key}={tag} is not a release: deploy the hub at one, or check out the release it is from.")
+                die(
+                    f"❌ {key}={tag} is not a release at this checkout: deploy the hub at one, "
+                    "or check out the release it is from."
+                )
+            if not release:
+                print(f"   {key}: {tag} is not a release at this checkout, so the kit gets stag.")
             new_values[key] = release or "stag"
 
     # Surface the source env file + destination URL up-front — doubles as a

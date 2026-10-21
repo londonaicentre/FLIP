@@ -261,6 +261,7 @@ def test_9_sha_tag_becomes_a_site_tag() -> None:
     result, content = _sync_one("Trust_1", {"DOCKER_TAG": "sha-3e4fd83", "DOCKER_FL_TAG": "v0.12.0"})
     _assert(result.returncode == 0, "exit 0", result.stderr)
     _assert("DOCKER_TAG=stag" in content, "a sha- tag outside its release checkout becomes the branch tag")
+    _assert("sha-3e4fd83 is not a release at this checkout" in result.stdout, "the swap is reported", result.stdout)
     _assert("DOCKER_FL_TAG=v0.12.0" in content, "a release tag passes through")
 
 
@@ -280,6 +281,26 @@ def test_10_prod_refuses_a_sha_tag_without_its_release() -> None:
         _assert("DOCKER_TAG=" not in kit.read_text(), "kit file not mutated")
 
 
+def test_11_prod_maps_a_sha_tag_to_its_release() -> None:
+    """From a checkout at the release commit, the hub's sha- build of it becomes the release tag."""
+    print("▶ sync for a prod hub swaps the release commit's sha- tag for the release")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "trust").mkdir()
+        kit = root / "trust" / ".env.Trust_1"
+        kit.write_text("TRUST_API_KEY=preserved\n")
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.org"]
+        subprocess.run([*git, "init", "-q"], check=True)
+        subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "release"], check=True)
+        subprocess.run([*git, "tag", "v1.2.3"], check=True)
+        head = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout
+
+        result = _run(root, "Trust_1", env_overrides={"DOCKER_TAG": f"sha-{head[:7]}"}, env_class="prod")
+
+        _assert(result.returncode == 0, "exit 0", result.stderr)
+        _assert("DOCKER_TAG=v1.2.3" in kit.read_text(), "the kit gets the release tag", kit.read_text())
+
+
 def main() -> None:
     if not SYNC_SCRIPT.is_file():
         sys.exit(f"❌ {SYNC_SCRIPT} not found")
@@ -296,6 +317,7 @@ def main() -> None:
     test_8_edge_port_is_required_on_lza_staging()
     test_9_sha_tag_becomes_a_site_tag()
     test_10_prod_refuses_a_sha_tag_without_its_release()
+    test_11_prod_maps_a_sha_tag_to_its_release()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
