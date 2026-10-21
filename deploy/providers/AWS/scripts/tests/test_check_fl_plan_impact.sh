@@ -40,7 +40,7 @@ SCRIPT="$(cd "${HERE}/.." && pwd)/check-fl-plan-impact.sh"
 # in CI), and each of the eight held-plan fixtures appends a bogus "Apply held"
 # block to the real job summary — the harness forging the very signal it exists
 # to check. The two Actions-surface tests set both explicitly, per command.
-unset GITHUB_ACTIONS GITHUB_STEP_SUMMARY
+unset GITHUB_ACTIONS GITHUB_STEP_SUMMARY FL_SERVICES_STOPPED
 
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
@@ -462,6 +462,89 @@ grep -q 'Apply held' "${summary_adv}" && no "summary does not claim a hold" "$(c
     || ok "summary does not claim a hold"
 printf '%s' "${out}" | grep -q '::warning title=FL infrastructure would be disturbed' \
     && ok "emits an advisory annotation" || no "emits an advisory annotation" "${out}"
+
+# ===========================================================================
+# FL_SERVICES_STOPPED: the stopped staging release (FLIP#1596)
+# ===========================================================================
+#
+# When fl-server-net-1 and fl-api-net-1 are at desired count 0 there is no
+# training run to interrupt, so an apply that recreates them disturbs nothing and
+# must not demand an fl_quiesced dispatch. The release is narrow on purpose: it
+# answers the ECS question only, and every other reason to hold survives it.
+
+echo ""
+echo "-- FL_SERVICES_STOPPED=true releases an FL-disruptive ECS plan"
+STDOUT="$(FL_SERVICES_STOPPED=true bash "${SCRIPT}" "${fl_disruptive_plan}" 2>"${TEST_ROOT}/err")"
+RC=$?
+STDERR="$(cat "${TEST_ROOT}/err")"
+expect_rc 0 "a stopped FL estate applies without quiescing"
+printf '%s' "${STDOUT}" | grep -q 'FL is stopped' && ok "says why it was released" \
+    || no "says why it was released" "${STDOUT}"
+printf '%s' "${STDOUT}" | grep -qF 'aws_ecs_service.fl_server_net_1[0]' \
+    && ok "still names what it let through" || no "still names what it let through" "${STDOUT}"
+printf '%s' "${STDERR}" | grep -q 'holding' && no "does not claim a hold" "${STDERR}" \
+    || ok "does not claim a hold"
+
+#     An EFS delete destroys bundles, checkpoints and staged results. Whether a
+#     task is running makes no difference to that, so the release must not reach
+#     it. This is the assertion that keeps the release narrow.
+echo ""
+echo "-- FL_SERVICES_STOPPED=true still holds an EFS delete"
+efs_delete_plan="$(plan_with "aws_efs_file_system fl aws_efs_file_system.fl[0] delete")"
+STDOUT="$(FL_SERVICES_STOPPED=true bash "${SCRIPT}" "${efs_delete_plan}" 2>"${TEST_ROOT}/err")"
+RC=$?
+STDERR="$(cat "${TEST_ROOT}/err")"
+expect_rc 1 "an EFS delete is held even with FL stopped"
+printf '%s' "${STDERR}" | grep -q 'destroys FL job state' && ok "names the EFS consequence" \
+    || no "names the EFS consequence" "${STDERR}"
+
+#     Same fail-towards-the-gate rule as ADVISORY_ONLY: only the literal "true".
+echo ""
+echo "-- a mis-set FL_SERVICES_STOPPED leaves the gate intact"
+for value in yes 1 True TRUE ""; do
+    FL_SERVICES_STOPPED="${value}" bash "${SCRIPT}" "${fl_disruptive_plan}" >/dev/null 2>&1
+    rc=$?
+    [[ "${rc}" -eq 1 ]] && ok "FL_SERVICES_STOPPED='${value}' still holds" \
+        || no "FL_SERVICES_STOPPED='${value}' still holds" "got ${rc}"
+done
+
+#     Unset is the production path, and production is never stopped.
+FL_SERVICES_STOPPED= bash "${SCRIPT}" "${fl_disruptive_plan}" >/dev/null 2>&1
+rc=$?
+[[ "${rc}" -eq 1 ]] && ok "an absent FL_SERVICES_STOPPED holds" \
+    || no "an absent FL_SERVICES_STOPPED holds" "got ${rc}"
+
+#     A plan the script cannot read is still exit 2: the release says the services
+#     are down, not that an unreadable document is safe.
+STDOUT="$(FL_SERVICES_STOPPED=true bash "${SCRIPT}" "${not_a_plan}" 2>"${TEST_ROOT}/err")"
+RC=$?
+STDERR="$(cat "${TEST_ROOT}/err")"
+expect_rc 2 "a parse error is still a parse error with FL stopped"
+
+#     The release is recorded on the job summary, so a reader can tell "the plan
+#     was harmless" from "the services were down" after the fact.
+echo ""
+echo "-- the release is written to the job summary"
+summary_stopped="${TEST_ROOT}/summary-stopped.md"
+: >"${summary_stopped}"
+FL_SERVICES_STOPPED=true GITHUB_STEP_SUMMARY="${summary_stopped}" GITHUB_ACTIONS=true \
+    bash "${SCRIPT}" "${fl_disruptive_plan}" >/dev/null 2>&1
+rc=$?
+[[ "${rc}" -eq 0 ]] && ok "released under Actions too" || no "released under Actions too" "got ${rc}"
+grep -q 'FL gate released' "${summary_stopped}" && ok "the summary records the release" \
+    || no "the summary records the release" "$(cat "${summary_stopped}")"
+grep -q 'Apply held' "${summary_stopped}" && no "the summary does not claim a hold" \
+    "$(cat "${summary_stopped}")" || ok "the summary does not claim a hold"
+
+#     A clean plan on a stopped estate still reports clean, and still says the
+#     services were down.
+echo ""
+echo "-- a harmless plan on a stopped estate"
+STDOUT="$(FL_SERVICES_STOPPED=true bash "${SCRIPT}" "${safe_plan}" 2>"${TEST_ROOT}/err")"
+RC=$?
+expect_rc 0 "a harmless plan still applies"
+printf '%s' "${STDOUT}" | grep -q 'FL is stopped' && ok "the stopped state is still recorded" \
+    || no "the stopped state is still recorded" "${STDOUT}"
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

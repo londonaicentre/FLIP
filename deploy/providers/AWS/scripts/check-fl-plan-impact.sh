@@ -35,6 +35,19 @@
 #     scripts/check-fl-plan-impact.sh plan.json
 #     scripts/check-fl-plan-impact.sh --advisory-only plan.json   (or ADVISORY_ONLY=true)
 #
+# FL_SERVICES_STOPPED=true (FLIP#1596) releases the ECS half of the gate. The gate
+# asks "could this apply disturb a training run"; when fl-server-net-1 and
+# fl-api-net-1 are both at desired count 0 there is no task to disturb and no run
+# can start, so the answer is no regardless of what the plan does to them. The
+# caller is responsible for the claim being true, and terraform_apply.yml
+# establishes it the only way that is sound: by asking ECS, in the same job,
+# moments before the plan is read (scripts/staging-power.sh status). It is a
+# measurement, not an operator attestation like fl_quiesced.
+#
+# It releases the ECS half ONLY. An EFS delete still holds: EFS carries uploaded
+# bundles, checkpoints and staged results, and destroying those is just as
+# unrecoverable on a stopped estate as on a running one.
+#
 # Exit codes:
 #     0  no watched resource changes — safe to apply unattended
 #     1  a watched resource changes — hold for an operator
@@ -197,6 +210,52 @@ lza_hits="$(jq_hits ".resource_changes[]
 
 total_changes="$(jq "[.resource_changes[] | select(${ACTION_FILTER})] | length" "${PLAN_JSON}")" || die "${PLAN_JSON} could not be read as a plan document (change count)"
 
+# FLIP#1596. A stopped estate has no FL tasks running, so recreating the FL
+# services interrupts nothing. Anything other than the literal "true" leaves the
+# gate intact, for the same reason ADVISORY_ONLY does: a mis-set value must fail
+# towards holding.
+FL_SERVICES_STOPPED="${FL_SERVICES_STOPPED:-false}"
+[[ "${FL_SERVICES_STOPPED}" == "true" ]] || FL_SERVICES_STOPPED=false
+
+stopped_ecs_hits=""
+if [[ "${FL_SERVICES_STOPPED}" == "true" && -n "${ecs_hits}" ]]; then
+    stopped_ecs_hits="${ecs_hits}"
+    ecs_hits=""
+fi
+
+# Said on every run that used the release, including the ones with nothing to
+# release, so the log records which question the gate actually answered. Without
+# this, "no FL-disruptive changes" is ambiguous between "the plan is harmless"
+# and "the services were down", and those want different responses if the apply
+# later goes wrong.
+announce_stopped_release() {
+    [[ "${FL_SERVICES_STOPPED}" == "true" ]] || return 0
+    echo "ℹ️  FL is stopped (fl-server-net-1 and fl-api-net-1 at desired count 0), so no"
+    echo "   training run can be in flight and the ECS half of this gate does not apply."
+    if [[ -n "${stopped_ecs_hits}" ]]; then
+        echo "   Released, and applied anyway:"
+        while IFS=$'\t' read -r action address; do
+            printf '     %-16s %s\n' "${action}" "${address}"
+        done <<<"${stopped_ecs_hits}"
+    fi
+    if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+        {
+            echo "### ℹ️ FL gate released: the FL services are stopped"
+            echo
+            echo "\`fl-server-net-1\` and \`fl-api-net-1\` are at desired count 0, so no training"
+            echo "run can be in flight. No \`fl_quiesced\` dispatch was needed."
+            if [[ -n "${stopped_ecs_hits}" ]]; then
+                echo
+                echo "| Action | Resource |"
+                echo "| --- | --- |"
+                while IFS=$'\t' read -r action address; do
+                    echo "| \`${action}\` | \`${address}\` |"
+                done <<<"${stopped_ecs_hits}"
+            fi
+        } >>"${GITHUB_STEP_SUMMARY}"
+    fi
+}
+
 # Advisory only — emitted on every path, never consulted for the exit code.
 emit_lza_ingress_advisory() {
     [[ -n "${lza_hits}" ]] || return 0
@@ -247,12 +306,14 @@ EOF
 }
 
 if [[ -z "${ecs_hits}" && -z "${efs_hits}" ]]; then
+    announce_stopped_release
     echo "✅ No FL-disruptive resource changes in ${PLAN_JSON} (${total_changes} resource change(s) total)."
     echo "   Safe to apply without quiescing FL."
     emit_lza_ingress_advisory
     exit 0
 fi
 
+announce_stopped_release
 emit_lza_ingress_advisory
 
 # Advisory-only: report what the gate would do, and do not do it. Said on stdout
