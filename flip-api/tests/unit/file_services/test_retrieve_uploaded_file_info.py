@@ -216,9 +216,7 @@ class TestGetUploadedFilesInfo:
             return_value=True,
         ) as access_check:
             with pytest.raises(HTTPException) as exc_info:
-                get_uploaded_files_info(
-                    file_ids=str(sample_file_ids[0]), db=MockSession(), user_id=uuid.uuid4()
-                )
+                get_uploaded_files_info(file_ids=str(sample_file_ids[0]), db=MockSession(), user_id=uuid.uuid4())
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
         # Orphan files must not even reach the access check.

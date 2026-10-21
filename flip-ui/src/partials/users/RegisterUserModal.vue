@@ -157,6 +157,33 @@
                                             <div v-if="!!errors?.role" class="mt-1 text-sm text-red-500 dark:text-red-400">
                                                 {{ errors.role }}
                                             </div>
+                                            <!-- A Trust Admin administers exactly one trust (FLIP#1258). -->
+                                            <div v-if="trustAdminChosen" class="mt-3">
+                                                <label
+                                                    for="register-trust"
+                                                    class="block text-sm font-medium text-gray-700 dark:text-gray-200"
+                                                >
+                                                    Administers
+                                                </label>
+                                                <select
+                                                    id="register-trust"
+                                                    data-test="register-trust-select"
+                                                    class="block w-full py-2 pl-3 pr-8 mt-1 text-sm text-gray-900 bg-white border border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:text-gray-100 dark:border-gray-700 focus:border-primary-500 focus:ring-primary-500"
+                                                    :class="!!errors?.trust && 'border-red-500 ring-1 ring-red-500'"
+                                                    :value="trust.value.value ?? ''"
+                                                    @change="setFieldValue('trust', ($event.target as HTMLSelectElement).value)"
+                                                >
+                                                    <option value="" disabled>
+                                                        Choose a trust
+                                                    </option>
+                                                    <option v-for="t in trusts" :key="t.id" :value="t.id">
+                                                        {{ t.code ? `${t.name} (${t.code})` : t.name }}
+                                                    </option>
+                                                </select>
+                                                <div v-if="!!errors?.trust" class="mt-1 text-sm text-red-500 dark:text-red-400">
+                                                    {{ errors.trust }}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -202,7 +229,7 @@ import { object, string } from "yup";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import { IOption } from "@/interfaces/select";
-import { IRole } from "@/services/role-service";
+import { IRole, TRUST_ADMIN_ROLE_NAME } from "@/services/role-service";
 import { IRegisterUserDto, registerUser } from "@/services/user-service";
 import { useErrorStore } from "@/store/error";
 import { extractErrorDetail } from "@/utils/api-errors";
@@ -215,7 +242,9 @@ interface IRegisterUserModalProps {
     // Optional pre-fill (e.g. "Enroll" from an access request passes the
     // requester's name + email); organisation + role are still admin-chosen.
     initialName?: string,
-    initialEmail?: string
+    initialEmail?: string,
+    // The trusts a Trust Admin can be registered for (FLIP#1258).
+    trusts?: { id: string; name: string; code: string | null }[]
 }
 
 interface RegisterUserForm {
@@ -223,6 +252,7 @@ interface RegisterUserForm {
     organisation: string;
     email: string;
     role: string;
+    trust: string;
 }
 
 const props = withDefaults(
@@ -230,7 +260,8 @@ const props = withDefaults(
         title: "Register User",
         dialog: false,
         initialName: "",
-        initialEmail: ""
+        initialEmail: "",
+        trusts: () => []
     }
 );
 
@@ -245,19 +276,24 @@ const schema = object().shape({
         .required("An email address is required")
         .email("Please enter a valid email address"),
     role: string()
-        .required("Please select a role")
+        .required("Please select a role"),
+    // Required only for a Trust Admin; checked in submitAction, where the chosen role is known.
+    trust: string()
 });
 
 const errorStore = useErrorStore();
 const selectedOption = ref<IOption>();
 const isSubmitting = ref(false);
 
-const { errors, resetForm, setFieldValue, validate, validateField } =
+const { errors, resetForm, setFieldError, setFieldValue, validate, validateField } =
     useForm<RegisterUserForm>({ validationSchema: schema });
 const name = useField("name");
 const organisation = useField("organisation");
 const email = useField("email");
 const role = useField<string>("role");
+const trust = useField<string>("trust");
+
+const trustAdminChosen = computed(() => selectedOption.value?.description === TRUST_ADMIN_ROLE_NAME);
 
 // When enrolling from an access request the requester's name + email are fixed
 // (passed as initial* props); lock them read-only so the admin cannot alter the
@@ -301,13 +337,18 @@ const submitAction = async () => {
     isSubmitting.value = true;
 
     const { valid } = await validate();
+    const trustMissing = trustAdminChosen.value && !trust.value.value;
+    if (trustMissing) {
+        setFieldError("trust", "Please select a trust");
+    }
 
-    if (valid) {
+    if (valid && !trustMissing) {
         const user: IRegisterUserDto = {
             name: lockIdentity.value ? props.initialName : (name.value.value as string),
             organisation: organisation.value.value as string,
             email: lockIdentity.value ? props.initialEmail : (email.value.value as string),
-            roles: [role.value.value as string]
+            roles: [role.value.value as string],
+            ...(trustAdminChosen.value ? { trustId: trust.value.value as string } : {})
         };
 
         try {

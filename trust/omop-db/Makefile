@@ -171,11 +171,12 @@ unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 build_compose = docker compose -f compose.yml
 GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
 OMOP_DB_TAG ?= latest
-# S3 bucket holding the vocab bundle zips under vocab/ (the AI Centre's dev
-# bucket by default; needs AWS credentials for that account). Contributors
-# without bucket access self-serve from OHDSI Athena — see README
-# "The core vocabulary bundle".
-VOCAB_S3_BUCKET ?= flipdev-aicentre
+# S3 bucket holding the vocab bundle zips under vocab/. No default: the bundle
+# is licensed and lives only in a deploy environment's own aicentre bucket, read
+# with that environment's AWS credentials (FLIP#1371 retired the dev-account
+# copy). Contributors without bucket access self-serve from OHDSI Athena — see
+# README "The core vocabulary bundle".
+VOCAB_S3_BUCKET ?=
 
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be
@@ -198,12 +199,12 @@ HF_TRUST_DATA_BASE = https://huggingface.co/datasets/aicentreflip/trust-data/res
 # .env.build carries their ports. For NUM_TRUSTS>2, add an omop-db-trust<N>
 # service and an OMOP_DB_PORT_TRUST_<N> — populate-trust-<N> fails fast otherwise.
 NUM_TRUSTS = 2
-# The dataset's own partition column; `legacy` is still accepted as an alias
-# (FLIP#1100). `modulo` only for a dataset that carries no such column.
+# The dataset's own partition column. `modulo` only for a dataset that carries
+# no such column.
 PARTITION = source_trust
-# CORE_VOCAB=0 skips the licensed core-vocabulary load during populate — used
-# when producing the vocab-free pgdata tarballs published to Hugging Face
-# (constraints must then also be skipped: they reference the vocab tables).
+# CORE_VOCAB=0 skips the licensed core-vocabulary load during populate — for
+# when the licensed bundle is not available (constraints must then also be
+# skipped: they reference the vocab tables).
 CORE_VOCAB = 1
 
 check-build-env:
@@ -248,6 +249,11 @@ fetch-vocab-core:
 	@if [ -d "data/$(VOCAB_CORE_BUNDLE)" ]; then \
 		echo "data/$(VOCAB_CORE_BUNDLE) already present — skipping."; \
 	else \
+		if [ -z "$(VOCAB_S3_BUCKET)" ]; then \
+			echo "❌ VOCAB_S3_BUCKET is not set — name the bucket holding vocab/$(VOCAB_CORE_BUNDLE).zip."; \
+			echo "   Without bucket access, self-serve the bundle from OHDSI Athena — see README."; \
+			exit 1; \
+		fi; \
 		if ! command -v aws > /dev/null 2>&1 || ! aws sts get-caller-identity > /dev/null 2>&1; then \
 			echo "❌ AWS CLI access unavailable (needed for s3://$(VOCAB_S3_BUCKET)/vocab/)."; \
 			echo "   Without bucket access, self-serve the bundle from OHDSI Athena — see README."; \
@@ -325,7 +331,7 @@ populate-trust-%: check-build-env
 		$(MAKE) fetch-vocab-core && \
 		OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) ./files/load_core_vocab.sh data/$(VOCAB_CORE_BUNDLE); \
 	else \
-		echo "⏭️  CORE_VOCAB=0 — skipping licensed core-vocabulary load (vocab-free export flavour)."; \
+		echo "⏭️  CORE_VOCAB=0 — skipping licensed core-vocabulary load (vocab-free)."; \
 	fi
 	OMOP_DB_PORT=$(OMOP_DB_PORT_TRUST_$*) uv run python -m omop_db_tools.load_dicom_vocab \
 		--vocab-dir data/$(VOCAB_DICOM_BUNDLE)

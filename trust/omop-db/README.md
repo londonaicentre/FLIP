@@ -17,11 +17,11 @@ Postgres database containing OMOP-ified data. This directory is both the
 **build source** for the `ghcr.io/londonaicentre/omop-db` image (OMOP CDM 5.4
 schema with the MI-CDM imaging extension — `image_occurrence`,
 `image_feature` — plus read-only role setup; imported from the retired private
-`flip-omop-db` repo, FLIP#834) and the **consumer harness** that downloads
-ready-populated data volumes for the dev trust stacks.
+`flip-omop-db` repo, FLIP#834) and the **seeding tools** that load each trust's
+slice of the published tables into a running database (`make seed-omop`).
 
 **Every published artifact is licence-clean (FLIP#842/#843)**: the image and
-the pgdata tarballs are *vocab-free* — the licensed core vocabulary is
+the published tables are *vocab-free* — the licensed core vocabulary is
 streamed into each running database as a one-time seeding step
 (`files/load_core_vocab.sh`), from a source each environment is licensed to
 use.
@@ -46,7 +46,7 @@ make -C trust up-trust KIT=GSTT    # GSTT only
 make -C trust up-trust KIT=KCH     # KCH only
 ```
 
-The downloaded volumes are **vocab-free** (~11 MB each): after the stack is
+The seeded databases carry **no licensed vocabulary**: after the stack is
 up, load the core vocabulary into each trust database once (idempotent — safe
 to re-run; needs the bundle, see "The core vocabulary bundle" below, and
 `psql` on the host). Unlike the stack commands above, these run from this
@@ -195,10 +195,11 @@ to run the one-time `make load-omop-vocab` seeding of any stack — see
 starts cleanly but returns nothing from cohort queries that join
 `omop.concept`):
 
-1. **FLIP developers (org AWS access)** — `make fetch-vocab-core`: downloads
-   `s3://flipdev-aicentre/vocab/vocab_aicentre_core_20240916.zip` (override
-   the bucket with `VOCAB_S3_BUCKET=`) and unpacks it into `data/` — the same
-   source and technique the private repo used. Each deploy environment reads
+1. **FLIP developers (org AWS access)** — `make fetch-vocab-core VOCAB_S3_BUCKET=<bucket>`:
+   downloads `s3://<bucket>/vocab/vocab_aicentre_core_20240916.zip` and unpacks
+   it into `data/`. There is no default bucket: the AI Centre's copy lives in the
+   deploy environments' own aicentre buckets (the dev-account copy was retired
+   with that account, FLIP#1371), so name one your AWS profile can read. Each deploy environment reads
    from its **own** bucket (`AICENTRE_BUCKET_NAME`; no cross-account access) —
    when staging the zip in an env bucket, upload it with `--sse AES256`: the
    trust EC2 role has no `kms:Decrypt` on the buckets' default KMS keys.
@@ -237,9 +238,7 @@ standing up N trusts is a deterministic split (`src/omop_db_tools/dataset.py`):
   explicit, inspectable, versioned with the dataset, and the per-project DICOM
   sets are keyed on it too (`trust/orthanc/seed_orthanc.py`), so a trust's OMOP
   rows and the studies in its PACS agree by construction. Any trust count the
-  column carries. `legacy` is still accepted as an alias — the mode's old name,
-  from when it existed only to reproduce the two-trust cut frozen in the
-  published Orthanc tarballs.
+  column carries.
 - `modulo`: partition by `person_id % NUM_TRUSTS` — for a dataset that carries
   no partition column, and only then: it ignores whatever the generator decided.
 

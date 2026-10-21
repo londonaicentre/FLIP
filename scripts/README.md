@@ -57,6 +57,26 @@ ports, bind dirs) always survive a re-run.
   ⏳ (pending on an earlier check) and exits non-zero if anything fails, so an operator gets
   concrete diagnostics instead of a cryptic compose or pydantic failure deeper in the stack.
 
+## Site upgrades
+
+- **`site_upgrade.py`** (invoked by `make -C trust upgrade-trust`, and by the AWS/Helm twins —
+  see `AGENTS.md` "Site release upgrades") — the **plan-and-guard-and-pin** phase of a site release
+  upgrade (FLIP#1204). Resolves the target tag against what the hub reports on `/api/health`
+  (defaults to that; `--tag vX.Y.Z` or `--tag sha-<short7>` overrides), says when GitHub lists a newer
+  release (offering to stop and move to it only when the hub already runs it), runs the guards (image tag
+  shape, downgrade → `--force`, release-tag checkout match → `--allow-checkout-drift`, every image
+  actually built at the tag via `docker manifest inspect`, operator confirmation unless `--yes`),
+  and — if everything passes — rewrites `DOCKER_TAG` / `DOCKER_FL_TAG` in the kit's Hub-shared
+  block. The script **stops before any container is touched**; the Makefile then re-includes the
+  updated kit and does the pull / recreate (`_upgrade-trust-apply` on trust; the EC2 twin and
+  `make -C trust/deploy/helm upgrade-trust-k8s` do the same for the other shapes). The operator
+  entry points wrap both phases together — `make upgrade-onprem-trust KIT=<slot>` also runs
+  `onboard-onprem-trust --gate` (the readiness checklist implemented by `onboard_onprem_trust.py`,
+  above) before the plan phase. Exit codes (the Makefile's contract): 0 pinned, 2 no usable target,
+  3 refused downgrade, 4 not confirmed, 5 an image is missing at the target tag, 6 the checkout is
+  not at the target release. Running the script directly rewrites the kit but leaves the containers
+  at the old tag — use the Make targets. Runbook: `docs/source/sys-admin/admin-upgrading-sites.rst`.
+
 ## Status and environment checks
 
 - **`check_local_status.py`** (run directly: `python3 scripts/check_local_status.py`) — verifies
@@ -86,16 +106,23 @@ workflow; the other two are CI-only:
   rewriting `uv.lock` with no warning worth noticing.
 - **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that
   `safe_join` and `validate_bundle_url` (the SSRF and path-traversal guards in front of the
-  server-side bundle fetch) stay byte-identical between the NVFLARE and Flower fl-api services.
+  server-side bundle fetch) stay byte-identical between the FLARE and Flower fl-api services.
   They're intentionally separate copies (different Docker build contexts, uv projects, and
   images), so a fix applied to one and not the other would silently leave the second vulnerable.
 - **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
-  files kept as byte-identical copies of another file have not drifted. It now holds only the
-  Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared between the two
-  evaluation apps); the Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
+  files kept as byte-identical copies of another file have not drifted. It holds two families of
+  hand-listed pairs: the Ark+ FLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
+  between the two evaluation apps) and the EHR risk-prediction cross-backend pair
+  (`feature_engineering.py`, `models.py`, `query.sql`, with the FLARE copy as the reference).
+  The Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
   `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
   can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
   must be resynced by hand when its reference changes.
+- **`pr_paths_changed.py`** (CI: `pr_paths_changed.yml`, called by every gated service-test
+  workflow) — implements the PR path gate: reads a service workflow's `paths:` filter, fetches the
+  PR's changed files, and outputs `run=true` when the filter matches so the workflow's jobs
+  gate on it. A PR into `main` always runs everything. `scripts/tests/test_pr_paths_changed.py`
+  pins the gate against drift.
 - **`utils.sh`** — shared shell helpers (colour-coded `log_info` / `log_success` / etc.) sourced
   only by the two secret-scanning scripts (`scan-secrets.sh`, `setup-secret-scanning.sh`); the
   drift guards above are self-contained. Not run directly.
@@ -103,7 +130,7 @@ workflow; the other two are CI-only:
 ## fl_round_metrics/
 
 Tooling for extracting and comparing per-round FL timings (not model metrics) from either a live
-platform run (CloudWatch logs) or a local NVFLARE simulator workspace. See
+platform run (CloudWatch logs) or a local FLARE simulator workspace. See
 [`fl_round_metrics/README.md`](fl_round_metrics/README.md) for the tools and the
 `make round-metrics` / `make reproduce-overhead` wrapper in the arkplus fine-tuning tutorial.
 

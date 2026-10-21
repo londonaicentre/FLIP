@@ -41,7 +41,6 @@ from omop_db_tools.config import get_settings
 from omop_db_tools.dataset import (
     CANONICAL_TABLES,
     DEFAULT_PROJECTS,
-    LEGACY_MODE_ALIAS,
     OPTIONAL_TABLES,
     PARTITION_MODES,
     split_for_trust,
@@ -187,7 +186,7 @@ def load_project(
         project (str): Project name.
         num_trusts (int): Total number of trusts being stood up.
         trust_index (int): 1-based index of this trust.
-        partition (str): A ``PARTITION_MODES`` entry (or the legacy alias).
+        partition (str): A ``PARTITION_MODES`` entry.
         clean (str): ``"projects"`` removes this project's existing rows first;
             ``"all"`` assumes ``clean_tables`` already ran and skips the scoped clean.
     """
@@ -219,11 +218,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--num-trusts", type=int, default=2, help="Total number of trusts being stood up.")
     parser.add_argument(
         "--partition",
-        choices=PARTITION_MODES + [LEGACY_MODE_ALIAS],
+        choices=PARTITION_MODES,
         default="source_trust",
         help="Split mode: 'source_trust' partitions by the dataset's own column, which the per-project DICOM "
-        "sets are keyed on too ('legacy' is an accepted alias); 'modulo' partitions person_id %% num-trusts "
-        "for a dataset that carries no such column.",
+        "sets are keyed on too; 'modulo' partitions person_id %% num-trusts for a dataset that carries no such column.",
     )
     parser.add_argument(
         "--clean",

@@ -70,7 +70,7 @@ spec:
       {{- end }}
       containers:
         - name: postgres
-          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          image: "{{ .Values.omopDb.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.omopDb.image.pin "global" .Values.global.image.tag "own" .Values.omopDb.image.tag) }}"
           imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
           ports:
             - name: postgres
@@ -80,6 +80,11 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-omop-db
           env:
+{{- with .Values.omopDb.persistence.pgdataSubdir }}
+            # A fresh cloud disk has lost+found at its root, which initdb refuses (FLIP#1390).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/{{ . }}
+{{- end }}
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:

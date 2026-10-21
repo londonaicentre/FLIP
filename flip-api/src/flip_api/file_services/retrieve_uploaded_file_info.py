@@ -57,9 +57,7 @@ def _filter_files_by_access(
         if access_cache[file.model_id]:
             accessible.append(file)
         else:
-            logger.warning(
-                f"User {user_id} denied access to file {file.id} (model {file.model_id})."
-            )
+            logger.warning(f"User {user_id} denied access to file {file.id} (model {file.model_id}).")
     return accessible
 
 

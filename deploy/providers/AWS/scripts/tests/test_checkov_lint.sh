@@ -89,6 +89,7 @@ if [[ "${MOCK_SCAN_RC:-0}" -ne 0 ]]; then
     echo "Passed checks: 112, Failed checks: 1, Skipped checks: 14"
     exit "${MOCK_SCAN_RC}"
 fi
+if env | grep -q '^TF_VAR_'; then echo "TF_VAR_LEAK"; fi
 echo "Passed checks: 113, Failed checks: 0, Skipped checks: 14"
 exit 0
 MOCK_CHECKOV
@@ -215,6 +216,18 @@ check_refuses "refuses: nothing tripped" "canary fixture did not fail CKV_AWS_35
 run_case "real-scan failure propagates" MOCK_SCAN_RC=1
 check_refuses "canary passed first" "Canary OK"
 check_refuses "run is red on the scan's findings" "Failed checks: 1"
+
+# TF_VAR_* never reach checkov: it resolves variables from them, the AWS Makefile exports them,
+# and CI sets none.
+run_case "TF_VAR_* are cleared before checkov runs" TF_VAR_FL_SERVER_PORT= TF_VAR_bucket=x
+check_passes "the scan still runs" "Passed checks: 113"
+if [[ "${LAST_OUT}" != *TF_VAR_LEAK* ]]; then
+    echo "   ✅ checkov saw no TF_VAR_*"
+    PASS=$((PASS + 1))
+else
+    echo "   ❌ checkov saw TF_VAR_*"
+    FAIL=$((FAIL + 1))
+fi
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

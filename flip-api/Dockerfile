@@ -12,6 +12,13 @@
 
 FROM python:3.12-slim-bookworm AS development
 
+# Build identity (FLIP#1204): CI passes the release tag (v<X.Y.Z>) or the sha-<short7>
+# tag it is publishing; /api/health reports it so a trust site can pick the release the
+# hub runs. Empty for a local build, where /api/health falls back to pyproject's version.
+ARG FLIP_RELEASE=""
+ENV FLIP_RELEASE=${FLIP_RELEASE}
+LABEL org.opencontainers.image.version=${FLIP_RELEASE}
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client

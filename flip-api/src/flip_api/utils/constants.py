@@ -53,3 +53,5 @@ VIEWER_EMAIL = "triayalex@gmail.com"
 # overridable so operators can point the demo at their own accounts.
 DEMO_RESEARCHER_EMAIL = os.environ.get("DEMO_RESEARCHER_EMAIL", "flip-demo-researcher@example.com")
 DEMO_ADMIN_EMAIL = os.environ.get("DEMO_ADMIN_EMAIL", "flip-demo-admin@example.com")
+# Seeded as a Researcher; the recorder makes it a Trust Admin only for its approval segment.
+DEMO_TRUST_ADMIN_EMAIL = os.environ.get("DEMO_TRUST_ADMIN_EMAIL", "flip-demo-trust-admin@example.com")

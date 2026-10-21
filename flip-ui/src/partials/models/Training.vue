@@ -24,8 +24,8 @@
     >
         <AiCard class="flex flex-col flex-1 min-h-0 overflow-hidden">
             <!-- Which files this model needs depends on the FL backend, so with the job types
-                 unknown there is nothing honest to list. Say so instead of falling through to the
-                 "upload the required files" copy, which would imply we know what they are. -->
+                 unknown there is nothing honest to list. Say so instead of a "Required files" row,
+                 which would imply we know what they are. -->
             <AiAlert
                 v-if="pending && jobTypesError"
                 variant="error"
@@ -41,45 +41,15 @@
                     Retrying&hellip;
                 </template>
             </AiAlert>
-            <template v-else-if="pending && !allFilesUploaded">
-                <AiAlert
-                    variant="info"
-                    :close="false"
-                    :rounded="false"
-                    :bordered="false"
-                >
-                    <template v-if="missingFiles.length">
-                        For <template v-if="flBackendLabel">
-                            <strong><code>{{ flBackendLabel }}</code></strong> and
-                        </template>job type <strong><code>{{ jobType }}</code></strong>, required files are:
-                        <template v-for="(f, i) in requiredFiles" :key="f">
-                            <code>{{ f }}</code><template v-if="i < requiredFiles.length - 1">
-                                ,
-                            </template>
-                        </template>.
-                    </template>
-                    <template v-else>
-                        All required model files must be uploaded before starting training.
-                    </template>
-                </AiAlert>
-                <AiAlert
-                    v-if="missingFiles.length"
-                    variant="warning"
-                    :close="false"
-                    :rounded="false"
-                    :bordered="false"
-                >
-                    Missing:
-                    <template v-for="(f, i) in missingFiles" :key="f">
-                        <code>{{ f }}</code><template v-if="i < missingFiles.length - 1">
-                            ,
-                        </template>
-                    </template>
-                </AiAlert>
-            </template>
 
             <div class="flex flex-col flex-1 pt-4 overflow-y-auto">
-                <TrainingOptions :errors="errors" :disabled="!pending" />
+                <TrainingOptions
+                    :errors="errors"
+                    :disabled="!pending"
+                    :fl-backend-label="flBackendLabel"
+                    :required-files="jobTypesError ? [] : requiredFileStates"
+                    :run-resources="pending ? null : runResources"
+                />
             </div>
         </AiCard>
     </Form>
@@ -127,12 +97,13 @@
 import { Form } from "vee-validate";
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
-import { array, lazy, object, string } from "yup";
+import { array, lazy, number, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
-import { getStatusEnumValue, IInitTraining, initialiseTraining,
-    JobType,
+import { FileInfo, IRequiredFile } from "@/interfaces/model/types";
+import { getStatusEnumValue, IInitTraining, IJobResources, initialiseTraining,
+    MAX_GPUS_PER_SITE,
     ModelStatus,
     ModelStatusEnum } from "@/services/model-service";
 import { Snackbar } from "@/utils/snackbar";
@@ -145,10 +116,8 @@ import TrainingOptions from "./TrainingOptions.vue";
 interface ITrainingProps {
     canTrain: boolean;
     status: ModelStatus;
-    allFilesUploaded: boolean;
     requiredFiles: string[];
-    uploadedFileNames: string[];
-    jobType: JobType;
+    uploadedFiles: Pick<FileInfo, "name" | "status">[];
     flBackendLabel?: string;
     // True when the job-types map could not be loaded: `requiredFiles` is empty because it is
     // unknown, not because nothing is required.
@@ -156,6 +125,8 @@ interface ITrainingProps {
     jobTypesLoading?: boolean;
     // Ids of the trusts a dispatched run went to; empty before dispatch.
     runTrusts?: string[];
+    // The GPU override a dispatched run was given; null when it kept the job's own request.
+    runResources?: IJobResources | null;
     // Which stage tab is showing: "prepare" owns the run options (locked once the
     // model is dispatched); "run" owns the metrics and the activity feed.
     view: ModelTab;
@@ -165,19 +136,18 @@ const props = withDefaults(defineProps<ITrainingProps>(), {
     flBackendLabel: undefined,
     jobTypesError: false,
     jobTypesLoading: false,
-    runTrusts: () => []
+    runTrusts: () => [],
+    runResources: null
 });
 
 const emits = defineEmits(["started", "retryJobTypes"]);
 
 const route = useRoute();
 
-/**
- * Computes the list of files that are still missing (required but not uploaded).
- */
-const missingFiles = computed(() => {
-    return props.requiredFiles.filter(f => !props.uploadedFileNames.includes(f));
-});
+const requiredFileStates = computed((): IRequiredFile[] => props.requiredFiles.map(name => ({
+    name,
+    status: props.uploadedFiles.find(f => f.name === name)?.status
+})));
 
 const schema = object().shape({
     enriched: string().required("Please confirm data enrichment."),
@@ -189,7 +159,20 @@ const schema = object().shape({
                 .min(1, "You must select a minimum of one trust for training.")
                 .required("You must select a minimum of one trust for training.")
             :
-            string().required("You must select a minimum of one trust for training.")))
+            string().required("You must select a minimum of one trust for training."))),
+    // Only checked once the researcher overrides the job's own GPU request (FLIP#70). The caps are the
+    // hub's sanity limits, not a trust's capacity, which the FL server's scheduler decides.
+    gpu_override: string().nullable(),
+    num_gpus: number().when("gpu_override", {
+        is: (on: unknown) => Boolean(on),
+        then: (field) => field
+            .typeError("Enter a number of GPUs.")
+            .integer("The number of GPUs must be a whole number.")
+            .min(0, "The number of GPUs cannot be negative.")
+            .max(MAX_GPUS_PER_SITE, `Ask for at most ${MAX_GPUS_PER_SITE} GPUs per trust.`)
+            .required("Enter a number of GPUs."),
+        otherwise: (field) => field.strip()
+    })
 });
 
 const formSubmitting = ref(false);
@@ -259,7 +242,13 @@ const initialValues = computed(() => (pending.value
     ? undefined
     : {
         enriched: "true",
-        trust_ids: props.runTrusts
+        trust_ids: props.runTrusts,
+        ...(props.runResources
+            ? {
+                gpu_override: "true",
+                num_gpus: props.runResources.num_gpus
+            }
+            : {})
     }));
 
 const initTraining = async (formData: unknown): Promise<void> => {
@@ -273,11 +262,18 @@ const initTraining = async (formData: unknown): Promise<void> => {
 
     formSubmitting.value = true;
 
-    const { trust_ids } = formData as IInitTraining;
+    const { trust_ids, gpu_override, num_gpus } = formData as IInitTraining & {
+        gpu_override?: string;
+        num_gpus?: number;
+    };
 
     // If it is only one trust, add to an array
     const arr: string[] = [];
     const requestData: IInitTraining = { trust_ids: arr.concat(trust_ids) };
+    // Without the override the job's own meta.json resource_spec, or the platform default, applies.
+    if (gpu_override) {
+        requestData.resources = { num_gpus: Number(num_gpus) };
+    }
 
     try {
         await initialiseTraining(

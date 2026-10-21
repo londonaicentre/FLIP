@@ -77,7 +77,8 @@ describe("create model", () => {
 
     it("displays validation messages when name and description are too long", () => {
         cy.getBySel("model-name")
-            .type("Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean m");
+            .type("Lorem ipsum dolor sit amet, consectetuer adipiscing elit. Aenean commodo ligula eget dolor. Aenean m")
+            .blur();
         cy.contains("Model name must not be longer than 75 characters.")
             .should("be.visible");
 

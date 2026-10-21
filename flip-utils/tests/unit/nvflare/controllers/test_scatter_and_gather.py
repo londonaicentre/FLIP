@@ -10,11 +10,11 @@
 # limitations under the License.
 #
 
-# FLIP's ScatterAndGather is a thin subclass of NVFLARE's stock ScatterAndGather; these tests cover
+# FLIP's ScatterAndGather is a thin subclass of FLARE's stock ScatterAndGather; these tests cover
 # only the FLIP-specific overrides (model_id + snapshot default, hub relays for failed and accepted
 # client results, the data-kind mismatch report, the zero-acceptance abort, metrics relay, and the
 # ABORTED event). Stock's own behaviour (round loop, arg validation, component wiring,
-# memory_gc_rounds) is exercised by NVFLARE's own tests, not here.
+# memory_gc_rounds) is exercised by FLARE's own tests, not here.
 
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +36,7 @@ _VALID_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
 
 
 def _ctx():
-    # NVFLARE's logging path validates get_peer_context() is an FLContext or None.
+    # FLARE's logging path validates get_peer_context() is an FLContext or None.
     ctx = MagicMock()
     ctx.get_peer_context.return_value = None
     return ctx
@@ -101,9 +101,7 @@ class TestAcceptTrainResult:
         aggregator.accept = MagicMock(return_value=True)
         controller.aggregator = aggregator
 
-        result = DXO(
-            data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}
-        ).to_shareable()
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"head.w": 0.25}, meta={"origin": "client"}).to_shareable()
         result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
 
         accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
@@ -157,7 +155,7 @@ class TestAcceptTrainResult:
         assert "fl-client" in relayed
 
     def test_full_weights_update_reports_actionable_mismatch(self):
-        """A trainer sending params_type="FULL" (NVFLARE's default when omitted) produces WEIGHTS,
+        """A trainer sending params_type="FULL" (FLARE's default when omitted) produces WEIGHTS,
         which the WEIGHT_DIFF-expecting aggregator rejects with one server-log line. FLIP relays
         an actionable message to the hub naming the params_type='DIFF' fix."""
         controller = self._controller()
@@ -403,7 +401,7 @@ class TestHandleEvent:
 class TestFedJobSerialisation:
     """FedJob/recipe serialisation must capture stock's __init__ args, not just model_id.
 
-    NVFLARE's ``get_component_init_parameters`` walks a component's base classes to inherit their
+    FLARE's ``get_component_init_parameters`` walks a component's base classes to inherit their
     __init__ params ONLY when the subclass __init__ declares BOTH ``*args`` and ``**kwargs``. A
     ``**kwargs``-only subclass silently drops the stock args (persistor_id, aggregator_id, …), so a
     recipe's ScatterAndGather ends up with no persistor -> an empty round-0 global model -> the
@@ -554,9 +552,7 @@ class TestClientResultTelemetry:
         result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
         result.set_header("exception", "boom")
 
-        with patch.object(
-            NVFlareScatterAndGather, "_accept_train_result", return_value=False
-        ):
+        with patch.object(NVFlareScatterAndGather, "_accept_train_result", return_value=False):
             controller._accept_train_result(client_name="Trust_1", result=result, fl_ctx=_ctx())
 
         controller.flip.send_event.assert_not_called()

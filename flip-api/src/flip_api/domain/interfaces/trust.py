@@ -16,6 +16,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from flip_api.domain.schemas.private import ServiceHealthEntry
+from flip_api.domain.schemas.status import DecisionMaker, ProjectStatus, TrustApprovalStatus
 from flip_api.domain.schemas.users import CognitoUser
 
 # Interfaces
@@ -114,6 +115,22 @@ class ICreateImagingProject(BaseModel):
     dicom_to_nifti: bool = True
 
 
+class IPersistCohort(BaseModel):
+    """Payload of the approval-time PERSIST_COHORT task (FLIP#857).
+
+    Carries everything the trust needs to freeze the approved cohort: the query of record
+    and the hub project id both in the clear (for the trust's own logging/keying) and
+    encrypted (what the trust forwards to data-access-api, whose routes take the encrypted
+    form — mirroring the cohort-query task).
+    """
+
+    project_id: UUID  # This is the central hub project ID
+    trust_id: UUID
+    encrypted_project_id: str
+    query: str
+    query_id: UUID | None = None
+
+
 class ICreatedImagingUser(BaseModel):
     """Represents a user created on XNAT. Used to be called IImageUser in the old repo.
 
@@ -165,3 +182,35 @@ class ISesProjectAccessTemplateData(BaseModel):
     project_name: str
     project_id: UUID
     username: str
+
+
+class ITrustCohortCount(BaseModel):
+    """A trust's latest cohort-query answer for a project, as its Trust Admin sees it (FLIP#1258)."""
+
+    record_count: int | None = Field(default=None, alias="recordCount")
+    # True when the trust withheld a below-threshold count (reported as 0).
+    suppressed: bool = False
+    error: str | None = None
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ITrustDecision(BaseModel):
+    """A project staged at a trust, with that trust's decision on it — one row of the My Trust page (FLIP#1258)."""
+
+    project_id: UUID = Field(alias="projectId")
+    project_name: str = Field(alias="projectName")
+    description: str
+    owner_name: str | None = Field(default=None, alias="ownerName")
+    project_status: ProjectStatus = Field(alias="projectStatus")
+    has_imaging: bool = Field(alias="hasImaging")
+    staged_at: str | None = Field(default=None, alias="stagedAt")
+    query: str | None = None
+    # None when the trust never answered the latest cohort query (or the project has none).
+    cohort: ITrustCohortCount | None = None
+    status: TrustApprovalStatus
+    decided_by_name: str | None = Field(default=None, alias="decidedByName")
+    decided_at: str | None = Field(default=None, alias="decidedAt")
+    decided_as: DecisionMaker | None = Field(default=None, alias="decidedAs")
+
+    model_config = ConfigDict(populate_by_name=True)

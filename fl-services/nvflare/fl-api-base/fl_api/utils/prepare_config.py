@@ -21,13 +21,15 @@ from fl_api.utils.constants import (
     CONFIG_FED_CLIENT,
     CONFIG_FED_SERVER,
     ENVIRONMENT,
+    FLIP_MODEL_ID,
     GLOBAL_ROUNDS,
     LOCAL_ROUNDS,
     META,
 )
 from fl_api.utils.io_utils import read_config, write_config
+from fl_api.utils.job_resources import JobMeta, nvflare_resource_spec
 from fl_api.utils.logger import logger
-from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, TrainingRound
+from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, JobResources, TrainingRound
 
 
 # TODO Validation of config.json could be used to avoid some of the logic implemented here.
@@ -141,6 +143,32 @@ def configure_config(
     return config_json
 
 
+def configure_flip_model_id(job_dir: Path, model_id: str) -> Path:
+    """
+    Writes the hub's model id into the app's config.json as ``FLIP_MODEL_ID``.
+
+    FLIP's components on the FL server report to the hub per model and resolve the id from here
+    (``flip.nvflare.runtime.get_flip_model_id``), the way the Flower fl-api writes ``flip-model-id``
+    into the app's config.toml. It used to travel in meta.json ``custom_props``; meta.json is now the
+    job's own file (FLIP#70). A value the researcher's config.json already holds is replaced.
+
+    Args:
+        job_dir (Path): path to the app folder.
+        model_id (str): the hub's model id.
+
+    Returns:
+        Path: path to the config file that was updated.
+    """
+    config_json = job_dir / "custom" / CONFIG
+    config = read_config(config_json)
+    if config.get(FLIP_MODEL_ID) not in (None, model_id):
+        logger.warning(f"Replacing {FLIP_MODEL_ID}={config[FLIP_MODEL_ID]!r} in {config_json}: FLIP sets it")
+    config[FLIP_MODEL_ID] = model_id
+    write_config(config, config_json)
+    logger.info(f"Wrote {FLIP_MODEL_ID} into {config_json}")
+    return config_json
+
+
 def _inject_keep_only_vars_filter(config: dict, include_regex: str) -> None:
     """Prepend a KeepOnlyVars filter to the ``train`` task_result_filters (client-side).
 
@@ -175,13 +203,13 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
 
     Wired as a SINGLE filter chain over ``["train", "validate"]`` so ONE component instance handles
     both tasks: the frozen backbone the client reconstructs against is the round-0 broadcast cached
-    during training, and NVFLARE builds a fresh filter instance per chain occurrence — so that cache
+    during training, and FLARE builds a fresh filter instance per chain occurrence — so that cache
     is only visible during validation when the same instance serves both tasks. Prepended so it runs
     before any other incoming task_data_filter. Injected alongside the KeepOnlyVars result filter —
     together the matched client-side ends of the frozen-backbone round-trip. Mutates ``config`` in
     place.
 
-    NVFLARE rejects a job in which the same task appears in more than one task_data_filters chain
+    FLARE rejects a job in which the same task appears in more than one task_data_filters chain
     (``FedJsonConfigurator._build_filter_table`` raises "multiple data filter chains defined for
     task ..."), so any pre-existing chain covering ``train`` or ``validate`` is FOLDED INTO the
     injected chain rather than left alongside it: its filters keep their relative order after the
@@ -193,7 +221,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
 
     Raises:
         ValueError: if an existing task_data_filters chain covers ``train`` or ``validate`` together
-            with other tasks — unmergeable, and NVFLARE would reject the overlap at job parse time.
+            with other tasks — unmergeable, and FLARE would reject the overlap at job parse time.
     """
     reconstruct_filter = {
         "id": "reconstruct_full_model",
@@ -208,7 +236,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
         raise ValueError(
             "AGGREGATE_ONLY_REGEX requires a single client task_data_filters chain over ['train', 'validate'], "
             f"but the app config has a chain over {unmergeable[0].get('tasks')} — folding it in would apply its "
-            "filters to train/validate only, and NVFLARE rejects a task covered by two chains. Restrict the "
+            "filters to train/validate only, and FLARE rejects a task covered by two chains. Restrict the "
             "chain to train/validate tasks or unset AGGREGATE_ONLY_REGEX."
         )
     merged_filters = [reconstruct_filter]
@@ -216,7 +244,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
         for existing in block.get("filters", []):
             if str(existing.get("path", "")).startswith("flip.nvflare.components.ReconstructFullModel"):
                 # Already wired (e.g. recipe-baked); superseded by the instance injected above — keeping
-                # both would double-reconstruct and NVFLARE would build a second, cache-less instance.
+                # both would double-reconstruct and FLARE would build a second, cache-less instance.
                 logger.info(f"Dropping pre-existing {existing.get('path')} filter superseded by injected chain")
                 continue
             merged_filters.append(existing)
@@ -261,7 +289,7 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
     from the ``["train"]`` TrimBroadcastVars chain); both filters are stateless, so a separate
     server-side instance per task is fine. Mutates ``config`` in place.
 
-    Detection is by membership (any chain covering ``validate``), not exact match — NVFLARE rejects a
+    Detection is by membership (any chain covering ``validate``), not exact match — FLARE rejects a
     task covered by two chains, so appending a second validate-covering chain would fail the job at
     parse time. But unlike the round-gated TrimBroadcastVars (which no-ops on tasks without a round
     header), this filter trims UNCONDITIONALLY, so it must not be appended into a chain that also
@@ -286,7 +314,7 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
             raise ValueError(
                 "AGGREGATE_ONLY_REGEX requires a dedicated ['validate'] server task_data_filters chain, but the "
                 f"app config has a chain over {tasks} — TrimEvalBroadcastVars trims unconditionally, so it cannot "
-                "share a chain with other tasks, and NVFLARE rejects a task covered by two chains. Split validate "
+                "share a chain with other tasks, and FLARE rejects a task covered by two chains. Split validate "
                 "into its own chain or unset AGGREGATE_ONLY_REGEX."
             )
         block.setdefault("filters", []).append(trim_filter)
@@ -331,7 +359,7 @@ def configure_client(
     aggregate_only_regex: str | None = None,
 ) -> Path:
     """
-    Populates config_fed_client.json, necessary to modulate the client controllers in NVFLARE jobs, with the project_id
+    Populates config_fed_client.json, necessary to modulate the client controllers in FLARE jobs, with the project_id
     and cohort_query.
 
     Args:
@@ -397,7 +425,7 @@ def configure_server(
         job_dir (Path): directory where the job is stored (includes the application name)
         app_name (str): application name
         global_rounds (int): number of global rounds
-        trusts (List[str]): list of trusts that will be part of the job
+        trusts (list[str]): list of trusts that will be part of the job
         ignore_result_error (bool): whether to ignore result errors
         aggregator (str): name of the aggregator to be used
         aggregation_weights (dict): aggregation weights to be used in the job (per trust)
@@ -422,7 +450,6 @@ def configure_server(
         {
             "model_id": "...",
             "global_rounds": 10,
-            "min_clients": 2,
             "workflows": [
                 {
                     "id": "scatter_and_gather",
@@ -455,7 +482,6 @@ def configure_server(
     # Add server configuration variables that are needed to run the job
     config["model_id"] = app_name
     config["global_rounds"] = global_rounds
-    config["min_clients"] = len(trusts)
 
     for workflow in config["workflows"]:
         if "args" in workflow and "participating_clients" in workflow["args"]:
@@ -463,20 +489,20 @@ def configure_server(
         if "args" in workflow and "ignore_result_error" in workflow["args"]:
             workflow["args"]["ignore_result_error"] = ignore_result_error
         # Recipe-generated templates (standard) carry LITERAL num_rounds/min_clients
-        # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}" /
-        # "{min_clients}" placeholders, so the top-level keys set above never reach the workflow.
+        # baked in by FedJob serialisation instead of the executor templates' "{global_rounds}"
+        # placeholder, so the top-level key set above never reaches the workflow.
         # Override them directly or every deployed client_api job silently runs the template
         # defaults: 3 rounds no matter what GLOBAL_ROUNDS asks for, and min_clients=1 — which lets
         # ScatterAndGather close every round on the first (fastest) trust's update, silently
         # dropping all slower trusts' contributions (observed live: a 2-trust 20-round job
         # aggregated 20/20 updates from one trust and 0 from the other).
-        if "args" in workflow and "num_rounds" in workflow["args"] and not isinstance(
-            workflow["args"]["num_rounds"], str
+        if (
+            "args" in workflow
+            and "num_rounds" in workflow["args"]
+            and not isinstance(workflow["args"]["num_rounds"], str)
         ):
             workflow["args"]["num_rounds"] = global_rounds
-        if "args" in workflow and "min_clients" in workflow["args"] and not isinstance(
-            workflow["args"]["min_clients"], str
-        ):
+        if "args" in workflow and "min_clients" in workflow["args"]:
             workflow["args"]["min_clients"] = len(trusts)
 
     for component in config["components"]:
@@ -507,62 +533,40 @@ def configure_server(
     return config_file
 
 
-def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
+def configure_meta(job_dir: Path, app_name: str, trusts: list[str], job_meta: JobMeta, resources: JobResources) -> Path:
     """
-    Creates a meta.json file, which is part of the NVFLARE application.
+    Writes the job's meta.json: what the job declared, with the parts that name the run's sites written from the run.
+
+    The researcher's meta.json (or the template's) has already been checked and reduced to what FLIP keeps
+    (``job_resources.parse_job_meta``). FLIP writes ``name``, ``deploy_map``, ``min_clients`` and
+    ``mandatory_clients``, and the ``resource_spec`` with the GPU count that won (FLIP#70).
 
     Args:
         job_dir (Path): job directory
-        app_name (str): name of this specific application, under which the config and custom folders will be saved.
-        trusts (List[str]): list of trusts that are part of this training (site names)
+        app_name (str): the job's name in FLARE, the hub's model id.
+        trusts (list[str]): list of trusts that are part of this training (site names)
+        job_meta (JobMeta): what the job's own meta.json declared: its portable resources and ``custom_props``.
+        resources (JobResources): the GPU count, already resolved from the submission override, the job's
+            meta.json and the fl-api default (``job_resources.resolve_job_resources``).
 
     Returns:
-        Path: path to the meta file that was created.
+        Path: path to the meta file that was written.
     """
-    # Resources required to perform this job at each site
-    # See https://nvflare.readthedocs.io/en/2.4/real_world_fl/job.html#job
-    # TODO Currently this is set from the global config, but we should allow per-job overrides in the future.
-    # See https://github.com/londonaicentre/FLIP/issues/70
-    num_gpus = get_settings().JOB_RESOURCE_SPEC_NUM_GPUS
-    mem_per_gpu_in_gib = get_settings().JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
-    print(f"Job configured to use {num_gpus=} with {mem_per_gpu_in_gib=}.")
+    # What the job needs at each site. FLARE's scheduler holds the job until every site's resource
+    # manager can provide it; the request is never lowered to fit a site.
+    # FLARE 2.9 resolves the portable block per site in nvflare/utils/job_launcher_utils.py.
+    resource_spec = nvflare_resource_spec(resources, job_meta.resources)
+    logger.info(f"Job resource_spec: {resource_spec or 'nothing requested'}")
 
-    # Resource spec should be omitted by default so that 0 gpu jobs get picked up.
-    # Resource spec is only needed in envs with configured gpus
-    # e.g.
-    # {
-    #     "resource_spec": {
-    #         "Trust_1": { "num_of_gpus": 1, "mem_per_gpu_in_GiB": 1 },
-    #         "Trust_2": { "num_of_gpus": 1, "mem_per_gpu_in_GiB": 1 }
-    #     }
-    # }
-    if num_gpus > 0:
-        # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
-        # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
-        # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
-        resource_spec = {
-            trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts
-        }
-    else:
-        resource_spec = {}
-
-    # Create the meta.json file.
-    #
-    # ``custom_props`` is NVFLARE's officially-sanctioned channel for job-scoped metadata
-    # (``JobMetaKey.CUSTOM_PROPS``; surfaced to components via ``FLContextKey.JOB_META``). We
-    # publish the FLIP ``model_id`` (== ``app_name``) here so recipe-built job types whose
-    # component configs carry no ``model_id`` (e.g. ``standard``, built before the UUID is
-    # known) can resolve it lazily at runtime via ``flip.nvflare.runtime.get_flip_model_id``.
-    # Legacy job types still receive ``model_id`` through their component args and ignore this
-    # key, so populating it unconditionally is safe and keeps both paths consistent.
-    meta_config = {
+    meta_config: dict = {
         "name": app_name,
         "resource_spec": resource_spec,
         "deploy_map": {"app": ["server"] + trusts},
         "min_clients": len(trusts),
         "mandatory_clients": trusts,
-        "custom_props": {"model_id": app_name},
     }
+    if job_meta.custom_props:
+        meta_config["custom_props"] = job_meta.custom_props
     logger.debug(f"Meta config to be written: {meta_config}")
 
     meta_path = job_dir / META
@@ -575,7 +579,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
 
 def configure_environment(job_dir: Path) -> Path:
     """
-    Configures the environment.json file, which is part of the NVFLARE application. This file is used to set environment
+    Configures the environment.json file, which is part of the FLARE application. This file is used to set environment
     variables for the job.
 
     Inside the config folder, you can have an optional environment.json which defines the EnvironmentKey variables.
@@ -603,7 +607,7 @@ def validate_config(config: dict) -> IOverridableConfig:
     Validate the provided configuration dictionary.
 
     Args:
-        config (IOverridableConfig): The configuration dictionary to validate.
+        config (dict): The configuration dictionary to validate.
 
     Returns:
         IOverridableConfig: The validated configuration dictionary.

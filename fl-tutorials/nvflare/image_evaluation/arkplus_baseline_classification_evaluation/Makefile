@@ -15,7 +15,7 @@ APP_DIR := $(CURDIR)
 # flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
 # image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai. The
 # checkpoint-preprocessing target instead uses the tutorial-local `uv run` (this dir's pyproject.toml:
-# torch + timm, no NVFLARE), matching the legacy tutorial.
+# torch + timm, no FLARE), matching the legacy tutorial.
 FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
@@ -41,6 +41,16 @@ override SITE1_IMAGES_DIR := $(call abspath_app,$(SITE1_IMAGES_DIR))
 override SITE1_DATAFRAME  := $(call abspath_app,$(SITE1_DATAFRAME))
 override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
+
+# --- Local-run knobs ---
+# Simulator-only cap on the hold-out rows each simulated site scores (a deterministic, class-balanced
+# subset; see cap_dataframe in app_files/data_utils.py). The default makes a plain `make sim` a quick
+# smoke test; `make sim MAX_SAMPLES=0` (or empty) scores the full ~470 studies per site. Only the
+# LOCAL_DEV dataframe path reads it — a deployed job's cohort comes from the trust and is never capped.
+MAX_SAMPLES ?= 128
+
+# Simulator workspace root, matching job.py's default.
+WORKSPACE ?= /tmp/nvflare/arkplus_baseline_eval
 
 .PHONY: run export sim download-raw-checkpoint prepare-checkpoint clean
 
@@ -87,7 +97,7 @@ prepare-checkpoint:
 	fi
 
 # --- Export job config (no GPU needed) ---
-# Builds a complete NVFLARE job under ./fl_job/flip_evaluation/ including meta.json, app/config/, and
+# Builds a complete FLARE job under ./fl_job/flip_evaluation/ including meta.json, app/config/, and
 # app/custom/ (bundled flip/ package + staged app_files/ incl. the arkplus_pretrained_weights.pt checkpoint).
 export: prepare-checkpoint
 	$(UV_RUN) python job.py \
@@ -96,16 +106,19 @@ export: prepare-checkpoint
 		--n_clients 2
 
 # --- SimEnv local simulation (requires GPU + data + checkpoint) ---
-# Runs the job under the NVFLARE simulator. site-1/site-2 score distinct hold-out sets: the evaluator
+# Runs the job under the FLARE simulator. site-1/site-2 score distinct hold-out sets: the evaluator
 # reads SITE{1,2}_* by flare.get_site_name() (see app_files/data_utils.py). DEV_*/SITE{1,2}_* are already
 # resolved to absolute paths above so the simulator's client workers (which run from the workspace dir,
 # not here) find the LOCAL_DEV dataset. FLIP-specific values come from FLIP_PROJECT_ID / FLIP_QUERY.
 sim:
+	@echo "Running evaluation with: max_samples=$(or $(MAX_SAMPLES),0) (0 = full dataset)"
+	MAX_SAMPLES="$(MAX_SAMPLES)" \
 	DEV_IMAGES_DIR="$(DEV_IMAGES_DIR)" DEV_DATAFRAME="$(DEV_DATAFRAME)" \
 	SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
 	SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" SITE2_DATAFRAME="$(SITE2_DATAFRAME)" \
 	$(UV_RUN) python job.py \
-		--n_clients 2
+		--n_clients 2 \
+		--workspace $(WORKSPACE)
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes

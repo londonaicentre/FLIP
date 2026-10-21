@@ -70,11 +70,14 @@ Also on the hub:
   `/app/server-checkpoints` on **both** fl-api (writer) and fl-server (reader), with
   `SERVER_CHECKPOINT_ROOT` set — large checkpoints are staged server-side, never bundled into the
   client app (FLIP#695). Applies to eval `checkpoint`s **and** training `SERVER_CHECKPOINT`s.
-- **Per-job GPU resource spec** in `.env.stag`: `JOB_RESOURCE_SPEC_NUM_GPUS=1`,
-  `JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=7`, so NVFLARE schedules the job onto a GPU.
+- **GPU request:** nothing to set on the hub. Each Ark+ tutorial declares its own in
+  `app_files/meta.json`, `{"resource_spec": {"@default": {"num_of_gpus": 1}}}`, uploaded with the
+  other files, and FLARE's scheduler holds the job until every trust can provide it (FLIP#70).
+  Leave the hub-wide `JOB_RESOURCE_SPEC_NUM_GPUS` at 0: it is the request for jobs that declare none,
+  so setting it to 1 keeps *every* job off a CPU-only trust.
 
 **Trusts — both run on the GPU desktop, not the trust EC2:**
-- **One CUDA GPU per trust**, ≥ ~8 GiB VRAM (the job requests 7 GiB/GPU), for `swin_large_384`
+- **One CUDA GPU per trust**, ≥ ~8 GiB VRAM, for `swin_large_384`
   @ 768 px + the 759 MiB model. The compose GPU overlay reserves a host GPU per fl-client. The
   trust EC2 (`t3.xlarge`) is **GPU-less** — the sole reason these experiments run the trusts on the
   desktop instead.
@@ -103,8 +106,8 @@ make deploy-ui                          # ship the UI (S3 + CloudFront)
 ```
 
 Image tags come from `.env.stag`: `DOCKER_TAG` (flip-api / flip-ui) and `DOCKER_FL_TAG`
-(fl-api / fl-server / fl-client). GPU jobs need `JOB_RESOURCE_SPEC_NUM_GPUS`/
-`JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB` in `.env.stag` (1 / 7 for Ark+).
+(fl-api / fl-server / fl-client). The GPU request travels with each tutorial's `app_files/meta.json`,
+not `.env.stag`.
 
 **FL-task memory (important for Ark+):** the fl-api stages the 759 MiB checkpoint and the
 fl-server torch-loads it, so `ecs_tasks.tf` sizes `fl-api-net-1` at **4 GiB** and
@@ -221,16 +224,15 @@ DB_HOST=localhost \
   --query-file     "$TUT/image_evaluation/arkplus_baseline_classification_evaluation/query.sql" \
   --project-name "Ark+ Baseline Eval" \
   --model-name   "Ark+ Baseline Eval" \
-  --no-dicom-to-nifti \
   --training-start-timeout 1200
 ```
 
 Key flags (all optional, sensible defaults):
 
 - `--project-name` / `--model-name` — name each experiment distinctly (reused per run).
-- `--no-dicom-to-nifti` — the Ark+ apps read DICOMs directly (`ResourceType.ALL`); disable the
-  XNAT dcm2niix conversion. **Set at project creation; immutable afterwards** (the edit-project
-  form shows it read-only).
+- `--[no-]dicom-to-nifti` — the project's XNAT dcm2niix conversion. The Ark+ apps read DICOMs
+  directly (`ResourceType.ALL`), so the smoke creates their projects with it off by default.
+  **Set at project creation; immutable afterwards** (the edit-project form shows it read-only).
 - `--project-id <UUID>` — reuse an already-approved project to **skip cohort submission + the
   image pull** (printed as `project_id=…` on the first run); great for iterating on training/eval
   code without re-pulling ~6 min of DICOM per backend.
@@ -341,7 +343,7 @@ Training completed cleanly to `RESULTS_UPLOADED` on the deployed image (`acfbd28
 growth from re-broadcasting the ~759 MiB backbone every round). Two platform fixes made this run
 possible, exercised together for the first time here:
 
-- **Memory (Level 1).** FLIP's `ScatterAndGather` controller is now a thin subclass of NVFLARE's
+- **Memory (Level 1).** FLIP's `ScatterAndGather` controller is now a thin subclass of FLARE's
   stock controller, inheriting `memory_gc_rounds` allocator-aware cleanup (`gc.collect` + glibc
   `malloc_trim`) — bounding server RSS across rounds instead of leaking ~1.3 GiB/round.
 - **Broadcast (Level 2).** After round 0 the frozen backbone doesn't change, so it isn't
@@ -358,7 +360,7 @@ which is what actually demonstrates the finetune improved the model.
 > cross-site validation surfaced a **third** memory issue not seen on staging: broadcasting the full
 > ~759 MiB model to the clients OOM-crashed the fl-server (the slow BDMS/Thailand link kept the
 > full-model copies resident for minutes, pushing `MemoryUtilized` to ~97 % of the 8 GiB task).
-> Because the crash landed *before* NVFLARE's `END_RUN`, results never persisted and the model
+> Because the crash landed *before* FLARE's `END_RUN`, results never persisted and the model
 > orphaned at `TRAINING_STARTED` (net wedged `BUSY`). Fixed by switching finetune eval to
 > **`GlobalModelEval`** (only the aggregated global model is broadcast; the `submit_model` all-to-all
 > is dropped) — peak memory fell to ~75 % and the run completed cleanly. See the cross-site-val OOM

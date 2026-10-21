@@ -52,114 +52,34 @@
                             class="w-screen max-w-[410px] flex flex-col h-full bg-white dark:bg-dark-surface
                             border-l border-gray-200 dark:border-dark-border shadow-2xl dark:ring-1 dark:ring-white/20"
                         >
-                            <template v-if="displayTrust">
-                                <!-- Header -->
-                                <div class="px-[22px] pt-[22px] pb-[18px] border-b border-gray-200 dark:border-dark-border">
-                                    <div class="flex items-start justify-between gap-3">
-                                        <div class="min-w-0">
-                                            <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
-                                                Trust detail
-                                            </p>
-                                            <DialogTitle
-                                                class="font-heading font-semibold text-[19px] mt-1 text-gray-900 dark:text-gray-100 truncate"
-                                            >
-                                                {{ displayTrust.name }}
-                                            </DialogTitle>
-                                            <p class="font-mono text-xs text-gray-600 dark:text-gray-300 mt-0.5 truncate">
-                                                {{ codeAndRegion }}
-                                            </p>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            data-test="drawer-close"
-                                            class="shrink-0 opacity-70 hover:opacity-100 transition rounded
-                                            text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1
-                                            focus:ring-primary-400"
-                                            tabindex="0"
-                                            @click="emit('close')"
-                                        >
-                                            <span class="sr-only">Close</span>
-                                            <icon-ph-x class="w-5 h-5" />
-                                        </button>
-                                    </div>
-                                    <div class="flex items-center gap-3 mt-[14px]">
-                                        <span
-                                            class="inline-block px-2 py-0.5 rounded text-xs font-medium"
-                                            :class="PILL_CLASSES[state]"
-                                        >
-                                            {{ STATE_LABELS[state] }}
-                                        </span>
-                                        <span
-                                            data-test="drawer-heartbeat"
-                                            class="font-mono text-xs"
-                                            :class="state === 'offline'
-                                                ? 'text-red-600 dark:text-red-400'
-                                                : 'text-gray-600 dark:text-gray-300'"
-                                        >
-                                            heartbeat {{ heartbeatText(displayTrust.last_heartbeat) }}
-                                        </span>
-                                    </div>
-                                </div>
-
-                                <!-- Issue banner -->
-                                <div v-if="state !== 'online'" class="px-[14px] pt-[14px]">
-                                    <div
-                                        data-test="drawer-banner"
-                                        class="flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[12.5px] font-semibold"
-                                        :class="state === 'offline'
-                                            ? 'bg-red-500/[0.08] border-red-500/25 text-red-800 dark:text-red-300'
-                                            : 'bg-amber-500/10 border-amber-500/30 text-amber-800 dark:text-amber-300'"
+                            <TrustDetailCard
+                                v-if="displayTrust"
+                                class="flex-1"
+                                :trust="displayTrust"
+                                :hub-version="hubVersion"
+                            >
+                                <template #title="{ trustName }">
+                                    <DialogTitle
+                                        class="font-heading font-semibold text-[19px] mt-1 text-gray-900 dark:text-gray-100 truncate"
                                     >
-                                        <span aria-hidden="true">⚠</span>
-                                        <span>{{ bannerText }}</span>
-                                    </div>
-                                </div>
-
-                                <!-- Container list -->
-                                <div class="flex-1 overflow-y-auto px-[22px] pb-[22px] pt-2">
-                                    <p class="text-[11px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300 pt-4 pb-1">
-                                        Containers · {{ services.length }}
-                                    </p>
-                                    <div
-                                        v-for="svc in services"
-                                        :key="svc.key"
-                                        data-test="container-row"
-                                        :data-service="svc.key"
-                                        class="flex items-start gap-3 py-[13px] border-t border-gray-200 dark:border-dark-border"
+                                        {{ trustName }}
+                                    </DialogTitle>
+                                </template>
+                                <template #actions>
+                                    <button
+                                        type="button"
+                                        data-test="drawer-close"
+                                        class="shrink-0 opacity-70 hover:opacity-100 transition rounded
+                                        text-gray-600 dark:text-gray-300 focus:outline-none focus:ring-1
+                                        focus:ring-primary-400"
+                                        tabindex="0"
+                                        @click="emit('close')"
                                     >
-                                        <component
-                                            :is="SERVICE_ICONS[svc.key]"
-                                            class="w-[22px] h-[22px] mt-0.5 shrink-0"
-                                            :class="ICON_TINT[svc.status]"
-                                        />
-                                        <div class="flex-1 min-w-0">
-                                            <div class="flex items-center justify-between gap-2">
-                                                <span class="font-mono text-[13px] font-semibold text-gray-900 dark:text-gray-100 truncate">
-                                                    {{ svc.label }}
-                                                </span>
-                                                <span
-                                                    data-test="container-chip"
-                                                    class="shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap"
-                                                    :class="CHIP_CLASSES[svc.status]"
-                                                >
-                                                    {{ CHIP_LABELS[svc.status] }}
-                                                </span>
-                                            </div>
-                                            <p class="text-[11.5px] text-gray-600 dark:text-gray-300 mt-0.5">
-                                                {{ svc.role }}
-                                            </p>
-                                            <p data-test="container-meta" class="font-mono text-[11px] text-gray-500 dark:text-gray-300 mt-1.5">
-                                                <span>{{ svc.version ?? "—" }}</span>
-                                                <span class="mx-2 text-gray-300 dark:text-gray-600">·</span>
-                                                <span
-                                                    class="font-semibold"
-                                                    :class="svc.status === 'degraded' ? 'text-amber-700 dark:text-amber-400' : ''"
-                                                >{{ svc.response_ms !== null ? `${svc.response_ms} ms` : "—" }}</span>
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </template>
+                                        <span class="sr-only">Close</span>
+                                        <icon-ph-x class="w-5 h-5" />
+                                    </button>
+                                </template>
+                            </TrustDetailCard>
                         </div>
                     </TransitionChild>
                 </div>
@@ -170,26 +90,11 @@
 
 <script setup lang="ts">
 import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessui/vue";
-import { computed, type FunctionalComponent, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
-import { ServiceStatus } from "@/services/trust-service";
-import { heartbeatText,
-    IDerivedTrust,
-    isFailing,
-    PILL_CLASSES,
-    ServiceKey,
-    STATE_LABELS } from "@/utils/connection-health";
-// MDI, not Phosphor: XNAT wanted mdi:radiology-box-outline (the one medical-imaging
-// glyph across the sets in use — Phosphor has no radiology icon, and ph:images read
-// as a generic photo gallery). MDI ships no duotone style, so the whole row moved to
-// MDI's outline variants rather than leaving one flat icon in a duotone lineup.
-import IconCube from "~icons/mdi/cube-outline";
-import IconDatabase from "~icons/mdi/database-outline";
-import IconLayers from "~icons/mdi/layers-outline";
-import IconPowerPlug from "~icons/mdi/power-plug-outline";
-import IconRadiology from "~icons/mdi/radiology-box-outline";
-import IconServerNetwork from "~icons/mdi/server-network-outline";
+import TrustDetailCard from "@/partials/connection/TrustDetailCard.vue";
+import { IDerivedTrust } from "@/utils/connection-health";
 
 // The page passes a row whose health was derived once for this refresh. Re-deriving
 // here would take a second Date.now() and could land the drawer on the other side
@@ -197,39 +102,13 @@ import IconServerNetwork from "~icons/mdi/server-network-outline";
 const props = defineProps<{
     trust: IDerivedTrust | null;
     show: boolean;
+    // The release the hub runs (FLIP#1204), from the page's hub-health poll; null until known
+    // or on a hub built before it reported one. Only FLIP-built containers are compared
+    // against it, and only when both sides carry an image tag — see TrustDetailCard.
+    hubVersion?: string | null;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
-
-const CHIP_LABELS: Record<ServiceStatus, string> = {
-    healthy: "Healthy",
-    degraded: "Degraded",
-    down: "Down",
-    unknown: "No data"
-};
-const CHIP_CLASSES: Record<ServiceStatus, string> = {
-    healthy: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-100",
-    degraded: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    down: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-    unknown: "bg-gray-100 text-gray-600 dark:bg-gray-800/60 dark:text-gray-300"
-};
-const ICON_TINT: Record<ServiceStatus, string> = {
-    healthy: "text-emerald-600",
-    degraded: "text-amber-500",
-    down: "text-red-500",
-    unknown: "text-gray-400 dark:text-gray-300"
-};
-
-// MDI outline glyph per registry key (design handoff icon table). Keyed by
-// ServiceKey so adding a registry service without an icon fails to compile.
-const SERVICE_ICONS: Record<ServiceKey, FunctionalComponent> = {
-    "trust-api": IconPowerPlug,
-    "data-access-api": IconLayers,
-    "imaging-api": IconCube,
-    omop: IconDatabase,
-    xnat: IconRadiology,
-    dicom: IconServerNetwork
-};
 
 // The page nulls `trust` in the same tick it flips `show` off; keep the last
 // non-null trust so the 250ms slide-out renders content, not an empty shell.
@@ -242,19 +121,4 @@ watch(
     { immediate: true }
 );
 const displayTrust = computed(() => props.trust ?? lastTrust.value);
-
-const codeAndRegion = computed(() =>
-    [displayTrust.value?.code, displayTrust.value?.region].filter(Boolean).join(" · "));
-
-const services = computed(() => displayTrust.value?._services ?? []);
-const state = computed(() => displayTrust.value?._state ?? "offline");
-
-const bannerText = computed(() => {
-    if (state.value === "offline") {
-        return "Core trust-api is unreachable — no data can be collected from this Trust.";
-    }
-    const affected = services.value.filter(isFailing).length;
-
-    return `${affected} ${affected === 1 ? "container" : "containers"} affecting service.`;
-});
 </script>

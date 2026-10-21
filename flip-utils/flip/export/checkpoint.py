@@ -14,7 +14,7 @@
 
 FLIP produces two on-disk checkpoint shapes, and both are handled here:
 
-* **NVFLARE persistence format** — a dict with a ``model`` key holding the state dict, alongside
+* **FLARE persistence format** — a dict with a ``model`` key holding the state dict, alongside
   optional ``train_conf`` and ``meta_props``. This is what ``PTFileModelPersistor`` writes, so it
   is the shape of the aggregated ``FL_global_model.pt`` and ``best_FL_global_model.pt``.
 * **Bare state dict** — parameter names at the top level, as carried by user-uploaded evaluation
@@ -50,7 +50,7 @@ class CheckpointFacts:
 
     Attributes:
         path (Path): Where the checkpoint was read from.
-        is_persistence_format (bool): True when the NVFLARE persistence format was detected.
+        is_persistence_format (bool): True when the FLARE persistence format was detected.
         num_entries (int): Number of entries in the state dict.
         num_elements (int): Total number of tensor elements.
         dtype_histogram (dict[str, int]): Count of entries per dtype.
@@ -164,7 +164,7 @@ def load_app_model(app_dir: Path) -> nn.Module:
         raise FileNotFoundError(f"No models.py in {app_dir} — the FLIP app contract requires one.")
 
     # The app directory goes on sys.path because application modules import each other flatly
-    # (``from models import get_model``), exactly as the NVFLARE executors load them at runtime.
+    # (``from models import get_model``), exactly as the FLARE executors load them at runtime.
     sys.path.insert(0, str(app_dir))
     spec = importlib.util.spec_from_file_location("models", models_path)
     if spec is None or spec.loader is None:

@@ -42,12 +42,13 @@ the commented dev form):
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
-that `scripts/distribute_trust_kits.py` and `scripts/sync_trust_kit.py`
-match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
-`flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
+that `scripts/trust_kit_lib.py` defines once (`SENTINEL`); `distribute_trust_kits.py` and
+`sync_trust_kit.py` both write through its `write_kit`. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
+`flip-api/src/flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
-`FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_REGISTRY`,
-`DOCKER_FL_TAG`, `DOCKER_FL_REGISTRY`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`).
+`FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_FL_TAG`,
+`NLB_SUBDOMAIN`, `FL_SERVER_PORT`, `FL_EDGE_PORT`). No registry: a deployed trust pulls from `ghcr.io/londonaicentre/`
+whatever an older kit says, as an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
 `UPLOADED_FEDERATED_DATA_BUCKET` is hub-only (fl-server uploads aggregated
 results to S3); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
 `deploy/fl_backend.mk` (trust/Makefile includes it).
@@ -71,8 +72,7 @@ workstation in two commands (prod AWS creds required):
    — scaffolds `trust/.env.<CODE>.production` from the base template
    (`trust/.env.example`).
 2. `make register-trust KIT=<CODE> PROD=true` — registers on the prod hub and
-   fills BOTH the Kit credentials AND the Hub-shared block in one step
-   (replaces the old "paste 5 UI lines + separate `sync-trust-kit`").
+   fills BOTH the Kit credentials AND the Hub-shared block in one step.
 
 Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true`
 tarballs the populated kit file as-is + the operator's slice of the FL
@@ -97,13 +97,25 @@ GHCR login from `~/.docker/config.json`.
 | `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/README.md` | Compose file matrix, the `--project-directory` rule these files depend on, and the external networks they join |
 | `deploy/helm/` | The same trust stack as Helm chart `flip-trust` for Kubernetes (chart, Makefile, `sync_k8s_kit.py`, tests) |
-| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host (Docker, `/opt/flip` dirs, uid rules) for the compose stack; on-prem twin of `deploy/providers/AWS/site.yml`. Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/onprem.yml` | Ansible play that provisions a site-owned Ubuntu host for the compose stack by composing `deploy/ansible/roles/` (the same roles `deploy/providers/AWS/site.yml` composes for the EC2 trust: packages, Docker with no docker-group grant, `/opt/flip` dirs with the uid rules, pre-created FL kit tree, observability config; no data play — the stores are seeded at `up-trust`). Driven by `make -C deploy/providers/AWS provision-local-trust`, which needs the hub env file the AWS Makefile parses at load — the known exception to "providers = Terraform only" |
+| `deploy/ansible/roles/` | The trust-host roles themselves, one per concern, with a README of what each varies by host type. `flip_fl_kit/tasks/s3.yml` carries the FLIP#965 kit-staging guards that `deploy/providers/AWS/tests/test_trust_kit_staging.py` pins |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (pulls repo-built services from GHCR by default via `pull_policy: always`; `BUILD=true` rebuilds from the `build:` block instead) |
 | `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
 | `deploy/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
 | `.env.<CODE>.<env>` | Per-trust kit file, e.g. `.env.GSTT.development`, `.env.<CODE>.production` (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: per-trust dev examples `.env.GSTT.development.example` / `.env.KCH.development.example`; the generic scaffold base `.env.example`, consumed by `make new-trust`. Same kit-file schema everywhere — `make -C trust up-trust KIT=<CODE> PROD=<env>` is the only dispatch |
+
+On Kubernetes the trust's per-trust keys reach the cluster twice: `patch-kit-secrets`
+patches them into the chart Secret (field manager `kubectl-patch`) and the chart templates
+the same keys from the generated `values-secrets.yaml`. Helm 4 applies server-side, so the
+two must agree or `helm upgrade` is refused with `conflict with "kubectl-patch"`, a
+refusal that protects the live credentials. `sync_k8s_kit.align_values_secrets` keeps them
+in step; never pass `--force-conflicts` or `--take-ownership` to work around it, and never
+server-side-apply a subset of that Secret (it prunes the keys it does not list).
+`PROD` → kit-file token comes only from `deploy/env_mode.mk`: the chart Makefile injects it
+as `KIT_ENV` / `--env` into the preflight script and `sync_k8s_kit.py`, which refuse a `PROD`
+without it instead of keeping their own map (`lza` → `.lza-prod`, `lza-stag` → `.lza-stag`).
 
 ## Commands (from `trust/`)
 
@@ -112,7 +124,9 @@ make up                        # Start the shipped dev trust stacks (GSTT + KCH)
 make down                      # Stop all trusts
 make up-trust KIT=GSTT         # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=GSTT       # Stop one trust stack
-make restart-trust KIT=GSTT    # Restart one trust stack
+make onboard-onprem-trust KIT=<CODE> PROD=<env>  # Read-only readiness check using this Makefile's resolved KIT_FILE; root on-prem wrappers default PROD=true
+make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
+make upgrade-trust KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
 make up-trust KIT=<CODE> PROD=true  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
 make debug                     # Trust-1 in debug mode
@@ -132,17 +146,20 @@ make unseed KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911  # 
 make seed KIT=GSTT SOURCE_TRUST=1  # Override the OMOP partition; defaults to the FL kit slot, which is a convention, not an invariant (see README "Which partition a trust is seeded with")
 make publish-trust-data VERSION=<tag> [OMOP_CSV=… DICOM=… CARD=… DELETE=…]  # ONE commit on aicentreflip/trust-data + ONE tag; then bump trust/.data_version (the single pin, OMOP + Orthanc). DELETE= retires a file from main (earlier tags keep it)
 make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck over seed_trust.sh, and the seed-marker contract harness (tests/test_seed_marker_contract.sh)
+make check-governance KIT=GSTT   # Validate the trust's governance document — both halves, on the host's Python (no project sync), starts nothing
+make reload-governance KIT=GSTT  # Re-apply an edited governance document to a LIVE trust: recreates data-access-api (+ on FLARE fl-governance-init and the fl-clients), then checks the service logs the document's digest; touches no data
+make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch, in imaging-api's container; report only without LAUNCH (deploy/helm/TROUBLESHOOTING.md §2.3e)
 ```
 
 ## Environment
 
-- All runtime config comes from the kit file (`trust/.env.<KIT>`); no hub `.env.*` is included by `trust/Makefile` or `trust/xnat/Makefile`. `PROD` still selects the compose-file suffix (development / production) but no longer drives an env-file include.
+- In production all runtime config comes from the kit file (`trust/.env.<KIT>`): neither `trust/Makefile` nor `trust/xnat/Makefile` includes a hub `.env.*`. In dev, `trust/Makefile` also `-include`s `../$(MAIN_ENV_FILE)` for the Hub-shared values (see *Kit file structure*). `PROD` also selects the compose-file suffix (development / production).
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
-- `DEBUG` is no longer inherited from a hub env file. `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
-- Site-enforced FL privacy policy (NVFLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's NVFLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy (previous behavior). Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
-- The two shipped dev trusts (GSTT, KCH) have separate ports, networks, and data dirs. Their FL kit *slots* are still named `Trust_1` / `Trust_2` — those are the pre-provisioned FL participant-kit identities (cert CN for NVFLARE, supernode number for Flower), assigned to a trust by the hub at registration. A trust (GSTT) claims a slot (Trust_1); they are different things.
-- Local trust uses `trust-local` project name to avoid port collisions
+- `DEBUG`: `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
+- Site-enforced FL privacy policy (FLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's FLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy. Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
+- Trust governance document (FLIP#1259): one optional TOML file per trust (`trust/governance.<CODE>.toml`, gitignored; worked example `trust/governance.example.toml`), named by `ACCESS_POLICY_FILE` in the kit as a **host** path relative to `trust/` (the bind-mount source; there is no inline form). `[disclosure]`/`[access]` are data-access-api's: `min_cohort_size` may raise `COHORT_QUERY_THRESHOLD`, never lower it; rules are decided order-independently (any matching deny denies, else the strictest matching permit, else — for an action the document mentions — deny); project ids must be UUIDs and `effect` is required. `cohort.dataframe` is the FL client's own training fetch, so denying it stops FL for that project. `[fl_privacy.nvflare]` is the FLARE site policy above as an **alternative** to `FL_SITE_PRIVACY_*` — both set is a FATAL; `[fl_privacy.flower]` is refused (nothing enforces it, FLIP#852) and `check-governance` fails a site privacy section on a Flower trust. The fl-client never mounts the document: the one-shot `fl-governance-init` service (Compose; `governance-extract` init container on Helm) runs `site_policy --extract` into the client's kit `local/` dir, and every `--no-deps` start of the clients must name it. data-access-api logs one `[governance] … sha256=…` line at startup, which `reload-governance` checks. Validate and apply to a live trust with `make -C trust check-governance` then `make -C trust reload-governance` — **never** `up-trust`/`restart-trust`, which are first-install verbs that can wipe XNAT and re-seed the data volumes. Remotely driven trusts (DOCKER_HOST / DOCKER_CONTEXT at ssh:// or tcp://, i.e. EC2) refuse a document. On Kubernetes `sync-kit` validates and embeds it as `governance.document` (`trust/deploy/helm/README.md`).
+- The two shipped dev trusts (GSTT, KCH) have separate ports, networks, and data dirs. Their FL kit *slots* are still named `Trust_1` / `Trust_2` — those are the pre-provisioned FL participant-kit identities (cert CN for FLARE, supernode number for Flower), assigned to a trust by the hub at registration. A trust (GSTT) claims a slot (Trust_1); they are different things.
 
 ## XNAT and PACS Environment Variables
 
@@ -159,8 +176,12 @@ make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck 
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
   did (FLIP#822/#862). `configure-xnat.sh` updates an existing registration in place when the host or
-  port drift, and imaging-api reads the PACS id from XNAT at runtime rather than assuming 1 —
-  `configure-xnat.sh` keeps exactly one registration, so it is the sole one XNAT reports.
+  port drift, keeps exactly one registration and flags it `defaultQueryRetrievePacs` (a re-run
+  restores that flag, and `queryable`, on a registration that lacks them). imaging-api has
+  no PACS id setting: its C-FINDs send no `pacsId`, so DQR queries that default PACS itself, and each
+  import — DQR's import does not default — reads the default PACS's id from
+  `GET /xapi/pacs?queryable=true`, failing (rather than guessing an id) when none or more than one is
+  flagged.
 - `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` — whether the PACS supports relational queries / extended
   negotiation (default `true`). A capability of the PACS rather than a preference: one that does not
   support it rejects the association outright. Validated as literally `true` or `false` before it
@@ -168,7 +189,10 @@ make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck 
 - `PACS_AVAILABILITY_DAYS` / `_START` / `_END` / `PACS_THREADS` / `PACS_UTILIZATION_PERCENT` /
   `DQR_MAX_PACS_REQUEST_ATTEMPTS` / `DQR_RETRY_WAIT_SECONDS` — the retrieval throttle. A production
   PACS may refuse further associations after a certain volume, so the window and thread count are
-  agreed with the trust's PACS manager. Defaults are all week, all day, one thread.
+  agreed with the trust's PACS manager. Defaults are all week, all day, one thread. The kit owns
+  the schedule: `configure-xnat.sh` converges DQR's onto it on every run, so a change made in XNAT's
+  UI is reverted (FLIP#1455), and a window that crosses midnight is refused (FLIP#1465). Detail in
+  [`trust/xnat/README.md`](xnat/README.md#pacs-configuration).
 
 ## Trust-internal Service Authentication
 
@@ -180,16 +204,18 @@ make test-trust-data-tools  # Three things: publisher pytest + ruff, shellcheck 
 
 **Generating keys.** The key is minted by `register_trust` (`make register-trusts`), which writes `TRUST_INTERNAL_SERVICE_KEY` into the trust's kit file. Re-register to rotate.
 
+**Cohort-admin gate (write routes, FLIP#857).** The trust-internal key does not distinguish callers, and fl-client legitimately holds it (it reads the frozen cohort via `flip.get_dataframe` and pulls imaging). That is safe for the read routes, but data-access-api's cohort-**defining** writes — `POST /cohort/snapshot` (freeze the approved membership everyone then trains on; a membership already frozen is never replaced) and `POST /cohort/snapshot/delete` — must not be reachable by researcher training code. They therefore carry a **second** router-level gate on top of the trust-internal key: `authenticate_cohort_admin`, proof of possessing `AES_KEY_BASE64`. trust-api (the caller) and data-access-api (the checker) hold that key, as does imaging-api, which never calls these routes; fl-client deliberately does not (it is not in fl-client's compose env). The proof is the **SHA-256 of the key**, not the key itself, so it never travels the wire or lands in a log; receivers compare it with `hmac.compare_digest`. A caller with a valid trust-internal key but no proof gets **403** (authenticated, not authorised); the dependency order (trust-internal first) means a caller with neither still gets 401 first. No new secret is minted or distributed — the gate reuses the existing AES-key possession boundary, so kit files, `register_trust`, and compose are unchanged. Header name: `COHORT_ADMIN_KEY_HEADER` (default `X-Cohort-Admin-Key`), configured on both trust-api and data-access-api.
+
 **Per-service code.** The auth check lives in each receiving service's `utils/internal_auth.py`:
 
 - `trust/imaging-api/imaging_api/utils/internal_auth.py` — applied at the router level on every imaging-api router except `/health`.
-- `trust/data-access-api/data_access_api/utils/internal_auth.py` — applied at the router level on `/cohort` (covers `/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`).
+- `trust/data-access-api/data_access_api/utils/internal_auth.py` — `authenticate_internal_service` gates the read router (`/cohort` statistics, `/cohort/dataframe`, `/cohort/accession-ids`); the write router (`/cohort/snapshot`, `/cohort/snapshot/delete`) additionally requires `authenticate_cohort_admin` (the AES-possession proof above).
 
 The senders construct the header inline at call sites:
 
-- `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
+- `trust-api/trust_api/services/task_handlers.py::trust_internal_headers()` — used on outbound imaging-api and data-access-api calls; `cohort_admin_headers()` in the same module layers the cohort-admin proof on top for the snapshot write.
 - `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
-- The `flip` Python package — lives at [`flip-utils/flip/`](../flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
+- The `flip` Python package — lives at [`flip-utils/flip/`](../flip-utils/flip/) in this mono-repo, consumed by both the FLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `fl-tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
 
 ## Trust data: seeding and versioning
 
@@ -197,7 +223,7 @@ The senders construct the header inline at call sites:
 Orthanc on empty, pre-created volumes and then runs `make -C trust ensure-seeded`, which loads
 `PROJECTS` (default `cxr_project`: one list drives both halves, so it holds only projects the
 dataset publishes a DICOM set for as well as tables — spleen and brain_mri regenerate theirs
-locally since #1221) from the published canonical tables at the pinned
+locally) from the published canonical tables at the pinned
 `trust/.data_version`: OMOP rows via `omop_db_tools.import_tables` (the DICOM vocabulary first,
 skipped if present) and DICOMs via `trust/orthanc/seed_orthanc.py`, both selected by the same
 `source_trust` column, so a trust's OMOP rows and the studies in its PACS agree by construction. Each
@@ -211,7 +237,13 @@ posts ~2 GB of DICOM per trust through Orthanc's REST API (minutes); the OMOP ha
 omop-db image's init scripts need `DATA_ACCESS_POSTGRES_PASSWORD` in the container env (compose
 passes it) to create the read-only role on that first start. Adding a dataset means publishing its
 `omop-csv/<project>/` tables and `dicom/<project>.tar.gz` (`trust/orthanc/publish_dicom.py` verifies
-both agree before packaging). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
+both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studies, one center per
+`source_trust` — ZGT → 1, PCNN → 2, RUMC → 3 waiting for a third trust — in
+`fl-tutorials/datasets/prostate/`) publishes both halves but is not in the default `PROJECTS`: seed it
+with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a project via
+`upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
+`make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
+`flower/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
 path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
 
 **One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each

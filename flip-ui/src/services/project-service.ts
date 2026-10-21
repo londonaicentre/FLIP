@@ -19,12 +19,23 @@ import type { IProjectUser } from "@/services/user-service";
 
 export type { IProjectUser };
 
+// A trust's decision on a staged project. Every trust starts PENDING when the project is staged.
+export type TrustApprovalStatus = "PENDING" | "APPROVED" | "DECLINED";
+
 export interface IProjectTrust {
     name: string;
     id: string;
     code?: string | null;
-    approved: boolean;
-    approvedAt?: string | null;
+    status: TrustApprovalStatus;
+    // Who made the current decision (user id + display name) and when. All null while PENDING;
+    // the decider is also null on approvals recorded before decisions were attributed (FLIP#1318).
+    decidedBy?: string | null;
+    decidedByName?: string | null;
+    decidedAt?: string | null;
+    // HUB or SITE: whether the hub admin or the trust's own Trust Admin decided (FLIP#1258).
+    decidedAs?: "HUB" | "SITE" | null;
+    // True when the trust has a Trust Admin, so only they decide it.
+    hasTrustAdmin?: boolean;
 }
 
 export interface IProjectQuery {
@@ -127,6 +138,29 @@ export interface IImagingProjectStatus {
     lastSeenAt?: string | null,
 }
 
+// Where one approved trust's approval-time cohort freeze stands, as the hub knows it (FLIP#857).
+// "frozen" confirms a frozen membership. "pending" and "failed" cover a trust never frozen —
+// training there is refused — and a frozen trust being re-checked, which keeps serving meanwhile.
+export type CohortSnapshotState = "frozen" | "pending" | "failed";
+
+// One approved trust's cohort freeze (FLIP#857) — aggregates only. The count fields are the
+// approval-time facts, present once the trust has reported a snapshot: the frozen membership
+// bounds who the project trains on there (it can shrink, never grow; their records are read live). A rowCount differing
+// from approvedRecordCount means the live cohort drifted between submission and approval;
+// hasAccessions=false marks a cohort with no imaging to pull. error is a category-only reason:
+// why a "failed" trust is not frozen, or, on a "frozen" one, that its last re-check failed.
+export interface ICohortSnapshot {
+    trustId: string,
+    trustName: string,
+    status: CohortSnapshotState,
+    error: string | null,
+    rowCount: number | null,
+    approvedRecordCount: number | null,
+    hasAccessions: boolean | null,
+    snapshotAt: string | null,
+    queryId: string | null,
+}
+
 export async function getProject(url: string): Promise<IProject> {
     const response = await _http.get<IProject>(url);
 
@@ -159,8 +193,32 @@ export async function unstageProject(url: string): Promise<void> {
     await _http.post<never>(url);
 }
 
-export async function approveProject(url: string, trusts: string[]): Promise<void> {
-    await _http.post<never>(url, { trusts: trusts });
+export interface ITrustDecisions {
+    approved: string[];
+    declined: string[];
+}
+
+export interface IImagingDispatchResult {
+    trust: string;
+    success: boolean;
+    message: string;
+}
+
+export interface IApproveProjectResponse {
+    // APPROVED once every trust has a decision and at least one approved; otherwise the project stays STAGED.
+    projectStatus: ProjectStatus;
+    // Present once the project is APPROVED: whether imaging started at every approved trust, and per trust.
+    successful?: boolean;
+    details?: IImagingDispatchResult[];
+}
+
+export async function approveProject(url: string, decisions: ITrustDecisions): Promise<IApproveProjectResponse> {
+    const response = await _http.post<IApproveProjectResponse>(url, {
+        trusts: decisions.approved,
+        declined: decisions.declined
+    });
+
+    return response.data;
 }
 
 export async function deleteProject(url: string): Promise<void> {
@@ -169,6 +227,12 @@ export async function deleteProject(url: string): Promise<void> {
 
 export async function getImagingProjectsStatus(url: string): Promise<IImagingProjectStatus[]> {
     const response = await _http.get<IImagingProjectStatus[]>(url);
+
+    return response.data;
+}
+
+export async function getCohortSnapshots(url: string): Promise<ICohortSnapshot[]> {
+    const response = await _http.get<ICohortSnapshot[]>(url);
 
     return response.data;
 }

@@ -16,11 +16,12 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 
-from flip import FLIP
+from flip import FLIP, FLIPBase
 from flip.constants import FlipEvents, FlipProps, ModelStatus
 from flip.exceptions import ResultsUploadError
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
+from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 from flip.nvflare.runtime import get_flip_model_id
 from flip.schemas import FLLogEvent
 
@@ -36,7 +37,7 @@ class ServerEventHandler(FLComponent):
             from job metadata via ``get_flip_model_id`` on first status update.
         validation_json_generator_id (str, optional): Component ID for the validation JSON generator.
         persist_and_cleanup_id (str, optional): Component ID for the persist-and-cleanup component.
-        flip (FLIP, optional): FLIP client instance.
+        flip (FLIPBase, optional): FLIP client instance.
     """
 
     def __init__(
@@ -44,16 +45,16 @@ class ServerEventHandler(FLComponent):
         model_id: str = "",
         validation_json_generator_id: str = "json_generator",
         persist_and_cleanup_id: str = "persist_and_cleanup",
-        flip: FLIP = FLIP(),
-    ):
+        flip: FLIPBase = FLIP(),
+    ) -> None:
         super(ServerEventHandler, self).__init__()
 
         self._model_id_fallback = model_id
         self._model_id: str | None = None
         self.validation_json_generator_id = validation_json_generator_id
-        self.validation_json_generator = None
+        self.validation_json_generator: ValidationJsonGenerator | None = None
         self.persist_and_cleanup_id = persist_and_cleanup_id
-        self.persist_and_cleanup = None
+        self.persist_and_cleanup: PersistToS3AndCleanup | None = None
         self.flip = flip
 
         self.fatal_error = False
@@ -72,19 +73,19 @@ class ServerEventHandler(FLComponent):
             self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
         return self._model_id
 
-    def _update_status(self, fl_ctx: FLContext, status: ModelStatus | None) -> None:
+    def _update_status(self, fl_ctx: FLContext, status: ModelStatus) -> None:
         """Resolve model ID lazily and update training status.
 
         Args:
             fl_ctx (FLContext): The FL context for the current job.
-            status (ModelStatus | None): The new model status to set.
+            status (ModelStatus): The new model status to set.
         """
         self.flip.update_status(self._resolve_model_id(fl_ctx), status)
 
     def _relay_round_event(self, fl_ctx: FLContext, event: FLLogEvent) -> None:
         """Relay a stock round boundary to the hub as a typed fact.
 
-        Facts only — display text is composed hub-side. NVFLARE's
+        Facts only — display text is composed hub-side. FLARE's
         ``CURRENT_ROUND`` prop is 0-based; the wire contract is 1-based.
         ``ROUND_AGGREGATED`` counts come from the sticky props seeded here at
         round start ("0 of m") and overwritten by the FLIP ScatterAndGather
@@ -155,6 +156,30 @@ class ServerEventHandler(FLComponent):
         generator = self.validation_json_generator
         return isinstance(generator, EvaluationJsonGenerator) and generator.all_tasks_failed()
 
+    def _forward_evaluation_metrics(self, fl_ctx: FLContext, generator: EvaluationJsonGenerator) -> None:
+        """Send each client's final evaluation metrics to the Central Hub (FLIP#1526).
+
+        Evaluators return their aggregate metrics in the validate reply instead of streaming them, so
+        the server forwards them here, the way Flower's ``FlipFedAvg`` forwards each reply's metrics.
+        They are a single point, recorded at round 0. A failure is logged and never stops END_RUN.
+        """
+        try:
+            model_id = self._resolve_model_id(fl_ctx)
+            hub_metrics = generator.hub_metrics()
+        except Exception:
+            self.log_exception(fl_ctx, "Could not collect evaluation metrics for the hub", fire_event=False)
+            return
+
+        for client_name, labels in hub_metrics.items():
+            for label, value in labels.items():
+                try:
+                    # send_metrics validates its payload before its own try block, so guard here.
+                    self.flip.send_metrics(
+                        client_name=client_name, model_id=model_id, label=label, value=value, global_round=0
+                    )
+                except Exception:
+                    self.log_exception(fl_ctx, f"Failed to forward evaluation metric {label}", fire_event=False)
+
     def _terminal_status(self, default: ModelStatus) -> ModelStatus:
         """Resolve the run's terminal status, most salient cause first.
 
@@ -181,8 +206,17 @@ class ServerEventHandler(FLComponent):
 
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         self.__set_dependencies(fl_ctx)
+        validation_json_generator = self.validation_json_generator
+        persist_and_cleanup = self.persist_and_cleanup
+        if validation_json_generator is None or persist_and_cleanup is None:
+            # __set_dependencies has already raised the system panic for the missing component.
+            # END_RUN must still make the failed terminal state visible to the hub.
+            if event_type == EventType.END_RUN:
+                self.final_status = ModelStatus.ERROR
+                self._update_status(fl_ctx, self.final_status)
+            return
 
-        self.validation_json_generator.handle_evaluation_events(event_type, fl_ctx)
+        validation_json_generator.handle_evaluation_events(event_type, fl_ctx)
 
         if event_type == EventType.FATAL_SYSTEM_ERROR:
             self.log_error(fl_ctx, "Fatal system error event received")
@@ -233,14 +267,19 @@ class ServerEventHandler(FLComponent):
             try:
                 # The results are uploaded even when the evaluation wholly failed: the zip carries
                 # the error_log.txt and evaluation_failures.json that explain why.
-                self.persist_and_cleanup.execute(fl_ctx)
-                self.final_status = self._terminal_status(ModelStatus.RESULTS_UPLOADED)
+                persist_and_cleanup.execute(fl_ctx)
+                final_status = self._terminal_status(ModelStatus.RESULTS_UPLOADED)
             except ResultsUploadError:
-                self.final_status = self._terminal_status(ModelStatus.RESULTS_UPLOAD_FAILED)
+                final_status = self._terminal_status(ModelStatus.RESULTS_UPLOAD_FAILED)
             except Exception:
-                self.final_status = ModelStatus.ERROR
+                final_status = ModelStatus.ERROR
 
-            self._update_status(fl_ctx, self.final_status)
+            # After the upload, so a slow hub delays only the plots, and before the terminal status.
+            if isinstance(validation_json_generator, EvaluationJsonGenerator):
+                self._forward_evaluation_metrics(fl_ctx, validation_json_generator)
+
+            self.final_status = final_status
+            self._update_status(fl_ctx, final_status)
 
     def __set_dependencies(self, fl_ctx: FLContext) -> None:
         if self.validation_json_generator is None:

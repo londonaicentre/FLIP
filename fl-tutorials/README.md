@@ -21,7 +21,7 @@ the model-file contract, run an application locally, or provide the inputs to th
 | Backend | Examples |
 | --- | --- |
 | [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, EHR risk prediction (tabular/OMOP-only), and template tests |
-| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, EHR risk prediction (tabular/OMOP-only) |
+| [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, prostate zonal segmentation (PI-CAI, nnU-Net-planned), EHR risk prediction (tabular/OMOP-only) |
 
 The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower explicitly with
 `FL_BACKEND=flower`.
@@ -35,23 +35,28 @@ make -C fl-tutorials list-tutorials
 make -C fl-tutorials list-tutorials FL_BACKEND=flower
 ```
 
-For the NVFLARE X-ray example:
+For the FLARE X-ray example:
 
 ```bash
-make build-fl                     # once: the simulator runs on the local flare-fl-base image
 make -C fl-tutorials download-xray-data
-make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification                    # FLARE simulator
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower  # Flower simulator
 ```
 
-`make build-fl` is a genuine prerequisite for the NVFLARE tutorials, not an optimisation: they run on the locally
-built `flare-fl-base` image and fail without it. The spleen examples take `download-spleen-data` in place of
+`run-tutorial` runs the simulator on both backends, in the `flip-utils` environment with its `full` extra (the
+package set the FL images install), so it needs no FL image; the images are exercised by `make e2e_smoke` against
+the dev stack. The spleen examples take `download-spleen-data` in place of
 `download-xray-data`; the EHR risk-prediction example (the tabular/OMOP-only one — no imaging, CPU is enough)
-takes `download-synthea-data`.
+takes `download-synthea-data`. The prostate example is Flower-only and takes `prepare-prostate-local-data
+NUM_CASES=12` for the simulator; see its [README](flower/3d_prostate_segmentation/README.md) for the full
+PI-CAI setup and the nnU-Net plan.
 
-The simulator requires Docker, and GPU-backed examples require the NVIDIA Container Toolkit. Dataset tooling is
+GPU-backed examples need a CUDA GPU on the host. Dataset tooling is
 shared across backends in [`datasets/`](datasets/) and downloads land in the shared gitignored `data/` root, so
 one download serves both backends; generated runs stay in gitignored per-backend output directories. Run
-`make -C fl-tutorials run-all-tutorials` only when you intentionally want the full, heavyweight suite.
+`make -C fl-tutorials run-all-tutorials` only when you intentionally want the full, heavyweight suite — it is also
+the pre-release gate, run for both backends before a release is published: see
+[*Pre-release checklist*](../CONTRIBUTING.md#pre-release-checklist).
 
 ## Check the sources without a GPU
 
@@ -68,6 +73,9 @@ make -C fl-tutorials lint              # ruff only
 It pins what each app's preprocessing chain actually feeds its model against the raw DICOM `PixelData` — see
 [`tests/README.md`](tests/README.md) for what it does and does not cover, and for why the suites run in
 different environments.
+
+It does not run the tutorials themselves: real training is what `run-all-tutorials` covers, on a GPU host, for both
+backends before a release is published. The record of that run is the *Release checks* section of the release notes.
 
 For network provisioning and standalone service operation, use the
 [`fl-services/nvflare/`](../fl-services/nvflare/README.md) or

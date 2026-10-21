@@ -20,7 +20,7 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants, DefaultCheckpointFileName
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
-from flip import FLIP
+from flip import FLIP, FLIPBase
 from flip.constants import FlipConstants, FlipEvents, PTConstants
 from flip.nvflare.runtime import get_flip_model_id
 
@@ -30,7 +30,7 @@ class PersistToS3AndCleanup(FLComponent):
         self,
         model_id: str = "",
         persistor_id: str = AppConstants.DEFAULT_PERSISTOR_ID,
-        flip: FLIP = FLIP(),
+        flip: FLIPBase = FLIP(),
     ) -> None:
         """The component that is executed post training and is a part of the FLIP training model
 
@@ -41,7 +41,7 @@ class PersistToS3AndCleanup(FLComponent):
             model_id (str, optional): ID of the model that the training is being performed under. When empty,
                 the model ID is resolved lazily from job metadata via ``get_flip_model_id`` on first use.
             persistor_id (str, optional): ID of the persistor component. Defaults to "persistor".
-            flip (FLIP, optional): FLIP client used for status updates and exception reporting to the hub.
+            flip (FLIPBase, optional): FLIP client used for status updates and exception reporting to the hub.
                 Defaults to ``FLIP()``.
 
         Raises:
@@ -128,6 +128,9 @@ class PersistToS3AndCleanup(FLComponent):
         run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_job_id())
 
         try:
+            # Resolved before app_server is removed below: the model id lives in its custom/config.json (FLIP#70).
+            model_id = self._resolve_model_id(fl_ctx)
+
             self.log_info(fl_ctx, "Attempting to upload the final aggregated model to the s3 bucket...")
 
             app_server_path = os.path.join(run_dir, "app_server")
@@ -185,7 +188,7 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Removing cross-site-eval model artefacts before upload: {cross_val_models_dir}")
                 shutil.rmtree(cross_val_models_dir)
 
-            self.flip.upload_results_to_s3(run_dir, self._resolve_model_id(fl_ctx))
+            self.flip.upload_results_to_s3(run_dir, model_id)
 
         except Exception as e:
             self.log_error(fl_ctx, "Upload to the s3 bucket failed. Attempting to cleanup")

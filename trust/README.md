@@ -104,19 +104,86 @@ COHORT_QUERY_THRESHOLD=10
 
 This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
 
-#### Site-enforced FL privacy policy (optional, NVFLARE only)
+#### Site-enforced FL privacy policy (optional, FLARE only)
 
 The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
 `FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
-renders these into the client's NVFLARE `local/privacy.json` at container start, so THIS trust's
+renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
 (site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
 only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
 `make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
 just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
 this env, leaving the rest of each trust stack up); the fl-client log then shows
-`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`
 ("Site-enforced privacy policy").
+
+#### Trust governance policy (optional)
+
+The two controls above are the trust's runtime access policy, and both are single settings compiled
+into the services. A trust that wants to state them together — or to vary a rule by project — can
+write a governance document instead and point `ACCESS_POLICY_FILE` at it from the kit file. Start
+from [`governance.example.toml`](governance.example.toml), which is a worked example of every
+section.
+
+One file, three sections, each read by the service that enforces it:
+
+| Section | Read by | Replaces |
+|---|---|---|
+| `[disclosure]` | data-access-api | `COHORT_QUERY_THRESHOLD` (may raise it, never lower it) |
+| `[access]` | data-access-api | nothing — new: permit/deny rules over project + operation |
+| `[fl_privacy.nvflare]` | FLARE fl-client | `FL_SITE_PRIVACY_*` — an alternative to them, not an override: set the filter in one place, since both set stops the client |
+
+The document is **optional and additive**. Unset means the platform defaults apply and behaviour is
+exactly as before — the two variables above stay the only controls, so no existing trust has to
+change anything. Nothing here can weaken a trust's posture: `min_cohort_size` may only raise the
+threshold, and an action no rule mentions keeps its existing behaviour (which is what lets a trust
+adopt one rule without enumerating everything).
+
+Rules are decided the same way whatever their order: for an action the document mentions, any
+matching `deny` denies; otherwise the strictest matching `permit` permits; otherwise the request is
+denied. So a deny list needs a permit for everyone else (the example shows one). Mind what the
+actions gate: `cohort.dataframe` is the FL client's own training-data fetch, so denying it for a
+project stops that project's federated training at this trust; `cohort.accession_ids` decides whose
+imaging is pulled into XNAT, and only real accessions from `omop.image_occurrence` are ever returned.
+A `cohort.dataframe` deny does not by itself stop a caller holding the trust-internal key from
+learning about that project's subjects: it can still send predicate queries to
+`/cohort/accession-ids` and compare the accession sets that clear the floor. To close a project off
+entirely, deny `cohort.accession_ids` for it too.
+
+Validation is strict and fails closed. An unknown key, a misspelt action, a project id that is not a
+UUID, a rule with no `effect`, an empty file, or a threshold below the kit's floor stops the service
+at startup rather than being ignored — a silently-dropped access rule is worse than no rule, because
+the operator believes it is in force. `check-governance` runs both halves through the loaders the
+services themselves use (data-access-api's for `[disclosure]`/`[access]`, the fl-client's own
+site-policy module for `[fl_privacy.nvflare]`) on the host's own Python, installing nothing. It also
+fails a site privacy section on a Flower trust, where nothing enforces it yet (FLIP#852), and a
+filter set in both the document and `FL_SITE_PRIVACY_*`. Validate, then apply:
+
+```sh
+make -C trust check-governance KIT=<CODE>
+make -C trust reload-governance KIT=<CODE>
+```
+
+`reload-governance` is how an edit is applied: it recreates data-access-api and, on FLARE, the
+fl-clients (with the step that extracts their section), and touches no data. It then waits for
+data-access-api's `[governance] policy ACTIVE … sha256=…` startup line and checks the digest is the
+document's, so an image too old to read the document fails the reload instead of passing it. **Do
+not apply a policy change with `up-trust` or `restart-trust`**: both are first-install verbs, and on
+a live trust either can destroy data — `up-trust`'s XNAT step runs `xnat-reset`, wiping the XNAT
+archive and database, and its seeding step can replace the data volumes. Recreating the fl-clients
+does interrupt any job they are running, so apply between runs.
+
+The document is mounted read-only into data-access-api — a service can never rewrite its own policy —
+and is operator-owned: the hub cannot set, read, or override it. The fl-client never mounts it:
+researcher code runs there, so a one-shot `fl-governance-init` step writes only the
+`[fl_privacy]` section into the client's kit `local/` directory. On Kubernetes, `sync-kit` embeds the
+document from the kit's `ACCESS_POLICY_FILE` as the chart's `governance.document` (see
+[deploy/helm/README.md](deploy/helm/README.md)). A remotely driven trust (the EC2 path, over an ssh
+`DOCKER_CONTEXT`) cannot use a document: Compose would resolve the path on the workstation, so those
+targets refuse one. A denied request is answered with the same fixed refusal as a below-threshold
+cohort, so a caller cannot use it to probe the trust's configuration; the rule id that caused the
+denial goes to the trust's own log.
 
 ### 3. Start the trust against the hub
 
@@ -282,6 +349,13 @@ If you are operating a trust on a host that does not have the hub's
 `.env.<env>` file (e.g. an on-prem deployment or a third-party trust), you
 need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 
+The root `onboard-onprem-trust`, `up-onprem-trust` and `upgrade-onprem-trust`
+wrappers default to production. Their readiness checklist checks the same file
+as deployment: `trust/.env.<KIT>.<env>` when present, otherwise `trust/.env.<KIT>`.
+Its heading and fix hints name that selected path, so a suffixed kit needs no
+unsuffixed copy. Pass the same `PROD` value to the checklist and deployment when
+joining stag or an LZA environment.
+
 ### One-time setup
 
 1. The hub admin scaffolds and registers your kit
@@ -317,17 +391,55 @@ need only your trust's kit file (`trust/.env.<CODE>.<env>`).
    `ORTHANC_STORAGE_DIR` at real data therefore gets the mock projects loaded
    alongside it on first bring-up; there is no switch to turn the seed off yet.
 
+   `up-trust` is the **first-install** verb on every path, on-prem included: its
+   XNAT step runs `xnat-reset`, which wipes the XNAT archive and database, and its
+   `ensure-seeded` step re-seeds the listed projects whenever the seed markers
+   differ from the kit (a `.data_version` bump or changed `PROJECTS`). A real
+   on-prem operator runs `up-trust` **once**; every later move to a release goes
+   through `upgrade-trust` (below), never `up-trust` or `restart-trust`.
+
+### Upgrading to a release (FLIP#1204)
+
+```bash
+git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
+sudo -E make upgrade-onprem-trust KIT=<slot>              # → the release the hub runs
+sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z   # → a named release
+```
+
+Runs the readiness checklist, resolves the target (the hub's `/api/health`
+`version`, or `TAG=`), refuses a release tag unless this checkout is at it
+(`ALLOW_CHECKOUT_DRIFT=1` overrides — testing a branch), asks you to confirm
+`site <current> → target <release>`,
+writes the tag into your kit's Hub-shared block, pulls, recreates what changed,
+and upgrades XNAT in place (database dump first, no reset); it never runs
+`ensure-seeded`, so the OMOP / Orthanc stores are left as they are. Before the kit is touched
+it asks the registry for every image at the target and refuses a tag any of them was
+never built at (each `sha-` build is path-filtered; a release tag builds them all —
+for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
+`ORTHANC_TAG` / `XNAT_TAG` in the kit do the same for the data services).
+`FORCE=1` allows a downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
+Kubernetes and EC2 variants, rollback — is
+`docs/source/sys-admin/admin-upgrading-sites.rst`.
+
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 
 When the hub admin rotates a shared value (AES key, FL backend, image tag),
 they will run `make sync-trust-kit KIT=<CODE> PROD=true` on their side. That
 produces an updated kit file with the new Hub-shared block; credentials are
 preserved. The updated file is transmitted to you using the same out-of-band
-channel. Replace your local copy and restart the stack:
+channel. Replace **only the Hub-shared block** in your local copy (your
+Host-local profile and Trust-local credentials stay yours), then re-apply:
 
 ```bash
-make -C trust restart-trust KIT=<CODE> PROD=true
+sudo -E make upgrade-onprem-trust KIT=<slot> YES=1
 ```
+
+That recreates only the containers whose configuration changed and leaves the
+data alone. `restart-trust` would also work for the API containers but re-runs
+`up-trust`'s XNAT reset — don't. A stale block is what the checklist's
+*Hub-shared block current* row detects: trust-api compares its AES key with the
+hub's on every heartbeat and reports the mismatch on its `/health`, so a rotated
+key shows up there before it shows up as every task failing to decrypt.
 
 ## Integration tests (cohort-query end-to-end)
 

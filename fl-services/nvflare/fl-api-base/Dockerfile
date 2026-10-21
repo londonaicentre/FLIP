@@ -12,6 +12,13 @@
 
 FROM python:3.12-slim-bookworm AS development
 
+# Build identity: CI passes the release tag (v<X.Y.Z>) or the sha-<short7> tag it is
+# publishing; /health reports it. Empty for a local build, where /health falls back to
+# pyproject's version.
+ARG FLIP_RELEASE=""
+ENV FLIP_RELEASE=${FLIP_RELEASE}
+LABEL org.opencontainers.image.version=${FLIP_RELEASE}
+
 RUN apt-get update && apt-get install -y gettext-base \
     && rm -rf /var/lib/apt/lists/*
 

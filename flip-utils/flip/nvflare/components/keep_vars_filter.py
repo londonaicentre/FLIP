@@ -21,7 +21,7 @@ from nvflare.apis.shareable import Shareable
 class KeepOnlyVars(DXOFilter):
     """Keep ONLY the weights whose key matches ``include_vars`` (regex); drop the rest.
 
-    The include-only inverse of NVFLARE's ``ExcludeVars`` (which is exclude-only). Used as a
+    The include-only inverse of FLARE's ``ExcludeVars`` (which is exclude-only). Used as a
     client-side ``task_result_filter`` to shrink a per-round update to just the trainable
     parameters: a frozen-backbone fine-tune sends only its head (~KB) instead of the full model
     (~759 MiB), which fixes the large-payload client→server ``SubmitUpdate`` timeout (FLIP#684).
@@ -34,7 +34,7 @@ class KeepOnlyVars(DXOFilter):
     global value and a head-only update lands correctly.
     """
 
-    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None):
+    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None) -> None:
         """
         Args:
             include_vars: regex; only weight keys whose name matches (``re.search``) are kept.
@@ -47,24 +47,27 @@ class KeepOnlyVars(DXOFilter):
             supported_data_kinds=[DataKind.WEIGHTS, DataKind.WEIGHT_DIFF],
             data_kinds_to_filter=data_kinds,
         )
-        # Stored under the exact constructor-param name so NVFLARE's FedJob/Recipe export round-trips it:
+        # Stored under the exact constructor-param name so FLARE's FedJob/Recipe export round-trips it:
         # FedJob serialises a component's args by matching instance attributes to __init__ param names, so
         # without this the recipe-exported config would drop include_vars and the filter would silently
         # become a no-op. (The deploy-time fl-server injection writes args.include_vars explicitly, so only
         # the recipe/export path depended on this.)
         self.include_vars = include_vars
-        self.skip = not (isinstance(include_vars, str) and include_vars)
-        self.pattern = re.compile(include_vars) if not self.skip else None
+        self.pattern: re.Pattern[str] | None = (
+            re.compile(include_vars) if isinstance(include_vars, str) and include_vars else None
+        )
+        self.skip = self.pattern is None
 
     def process_dxo(self, dxo: DXO, shareable: Shareable, fl_ctx: FLContext) -> DXO | None:
-        if self.skip:
+        pattern = self.pattern
+        if pattern is None:
             return None
 
         weights = dxo.data
         var_names = list(weights.keys())  # copy: we mutate `weights` below
         kept = 0
         for var_name in var_names:
-            if self.pattern.search(var_name):
+            if pattern.search(var_name):
                 kept += 1
             else:
                 weights.pop(var_name, None)
@@ -74,13 +77,12 @@ class KeepOnlyVars(DXOFilter):
             # warn loudly rather than silently submit an empty update.
             self.log_warning(
                 fl_ctx,
-                f"KeepOnlyVars: regex {self.pattern.pattern!r} matched no keys; "
-                f"dropped ALL {len(var_names)} variable(s).",
+                f"KeepOnlyVars: regex {pattern.pattern!r} matched no keys; dropped ALL {len(var_names)} variable(s).",
             )
         else:
             self.log_info(
                 fl_ctx,
-                f"KeepOnlyVars: kept {kept} of {len(var_names)} variable(s) matching {self.pattern.pattern!r}.",
+                f"KeepOnlyVars: kept {kept} of {len(var_names)} variable(s) matching {pattern.pattern!r}.",
             )
 
         dxo.data = weights

@@ -86,7 +86,7 @@ describe("FLNetsCard", () => {
         expect(wrapper.exists()).toBe(true);
     });
 
-    it("renders nvflare backend as 'NVFlare' next to the NET title", () => {
+    it("renders nvflare backend as 'FLARE' next to the NET title", () => {
         mockSwrvData.value = [
             {
                 name: "net-1",
@@ -98,7 +98,7 @@ describe("FLNetsCard", () => {
         const titles = wrapper.findAll("h3");
         const net1Title = titles.find(h => h.text().includes("net-1"));
         expect(net1Title).toBeDefined();
-        expect(net1Title!.text()).toContain("(NVFlare)");
+        expect(net1Title!.text()).toContain("(FLARE)");
     });
 
     it("renders flower backend as 'Flower' next to the NET title", () => {
@@ -348,5 +348,77 @@ describe("FLNetsCard", () => {
         // signal lives in the per-client icons and the card heading instead.
         expect(wrapper.findAll(".from-red-500").length).toBe(0);
         expect(wrapper.findAll(".blur-md").length).toBe(0);
+    });
+
+    describe("platform health heading", () => {
+        const heading = (wrapper: ReturnType<typeof mountFLNetsCard>) => wrapper.find("h3").text();
+
+        it("reads Healthy when every net is online and every client is online", () => {
+            mockSwrvData.value = [
+                {
+                    name: "net-1",
+                    fl_backend: "nvflare",
+                    online: true,
+                    clients: [{
+                        name: "Trust_1",
+                        online: true,
+                        status: "no_jobs"
+                    }]
+                }
+            ];
+            const wrapper = mountFLNetsCard();
+            expect(heading(wrapper)).toContain("Healthy");
+            expect(heading(wrapper)).not.toContain("Unhealthy");
+        });
+
+        it("reads Unhealthy when the hub reports a net offline, even though it lists no clients", () => {
+            // An offline net arrives as online=false with clients=[]; an every() over an empty
+            // client list is vacuously true, which used to render a down net as Healthy.
+            mockSwrvData.value = [
+                {
+                    name: "net-1",
+                    fl_backend: "nvflare",
+                    online: true,
+                    clients: [{
+                        name: "Trust_1",
+                        online: true,
+                        status: "no_jobs"
+                    }]
+                },
+                {
+                    name: "net-2",
+                    fl_backend: "nvflare",
+                    online: false,
+                    clients: []
+                }
+            ];
+            const wrapper = mountFLNetsCard();
+            expect(heading(wrapper)).toContain("Unhealthy");
+        });
+    });
+
+    it("explains an offline net in its own box instead of rendering it empty", () => {
+        mockSwrvData.value = [
+            {
+                name: "net-1",
+                fl_backend: "nvflare",
+                online: true,
+                clients: [{
+                    name: "Trust_1",
+                    online: true,
+                    status: "no_jobs"
+                }]
+            },
+            {
+                name: "net-2",
+                fl_backend: "nvflare",
+                online: false,
+                clients: []
+            }
+        ];
+        const wrapper = mountFLNetsCard();
+        const offline = wrapper.findAll("[data-test='net-offline']");
+        expect(offline.length).toBe(1);
+        expect(offline[0].text()).toContain("net-2 is offline");
     });
 });

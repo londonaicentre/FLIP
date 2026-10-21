@@ -11,10 +11,10 @@
     limitations under the License.
 -->
 
-# Baseline Ark+ Chest X-ray Evaluation (NVFLARE Client API) — FLIP tutorial
+# Baseline Ark+ Chest X-ray Evaluation (FLARE Client API) — FLIP tutorial
 
 FLIP tutorial for federated evaluation of a single zero-shot Ark+ foundation model on chest X-ray
-classification, using the **NVFLARE Client API**. The hold-out data at each site is scored against the
+classification, using the **FLARE Client API**. The hold-out data at each site is scored against the
 model and per-lesion AUROC is reported.
 
 This tutorial replaces the previous executor-based implementation (`class FLIP_EVALUATOR(Executor)` +
@@ -140,12 +140,18 @@ package set the `flare-fl-base` FL image installs) so a local run matches the de
 ```bash
 make download-raw-checkpoint   # once: fetch the raw Ark6 checkpoint into models/
 
-# Export the complete NVFLARE job for review or Docker deployment (no GPU needed)
+# Export the complete FLARE job for review or Docker deployment (no GPU needed)
 make export                    # prepares the checkpoint, then writes ./fl_job/flip_evaluation/
 
 # SimEnv local simulation (requires GPU + data + checkpoint)
 make run                       # prepares the checkpoint (if needed), then runs the simulator via `make sim`
 ```
+
+`make run`/`make sim` score a deterministic, class-balanced subset of `MAX_SAMPLES` (default `128`)
+hold-out studies per simulated site (`cap_dataframe` in `app_files/data_utils.py`), so a plain run is a
+quick smoke test; `make run MAX_SAMPLES=0` (or empty) scores the full ~470 studies per site. The cap is
+simulator-only: only the `LOCAL_DEV` dataframe path reads it, and a deployed job scores whatever cohort
+the trust's data-access-api returns. `WORKSPACE` overrides the simulator workspace root.
 
 Useful targets: `make prepare-checkpoint` (convert the raw checkpoint only), `make clean` (removes `./fl_job`).
 
@@ -162,12 +168,14 @@ Useful targets: `make prepare-checkpoint` (convert the raw checkpoint only), `ma
 ## Output metrics
 
 The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collected by the server into
-`evaluation_results.json` keyed by site then model:
+`evaluation_results.json` keyed by site, then the server's validate task (`SRV_<model>`). The FL server also
+sends them to the hub, where they show on the model page per trust as `AUROC_<LESION>`; a NaN AUROC (one class
+only) is left out:
 
 ```json
 {
     "site-1": {
-        "arkplus_pretrained": {
+        "SRV_arkplus_pretrained": {
             "auroc_Effusion": 0.998,
             "auroc_Consolidation": 0.989,
             "auroc_Infiltration": 0.863,

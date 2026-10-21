@@ -18,11 +18,15 @@ on:
   pull_request:
     paths:
       - "trust/deploy/ansible/**"
+      # test_roles_contract.py holds flip_observability_config's file list to this tree.
+      - "trust/observability/**"
       - ".github/workflows/test_local_trust_playbook.yml"
   push:
     branches: [develop, main]
     paths:
       - "trust/deploy/ansible/**"
+      # test_roles_contract.py holds flip_observability_config's file list to this tree.
+      - "trust/observability/**"
       - ".github/workflows/test_local_trust_playbook.yml"
   workflow_dispatch:
 

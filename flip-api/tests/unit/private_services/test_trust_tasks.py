@@ -16,6 +16,7 @@ Identity comes from ``Depends(authenticate_trust)``, which returns the resolved
 ``Trust`` row. Routes are key-only (no ``{trust_name}`` segment).
 """
 
+import hashlib
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -273,6 +274,48 @@ def test_heartbeat_updates_timestamp_and_returns_identity(mock_auth, mock_trust)
     app.dependency_overrides.pop(get_session, None)
 
 
+def test_heartbeat_reply_names_the_hub_build_and_its_key(mock_auth, mock_trust, monkeypatch):
+    """The reply carries what a site needs to know it is current (FLIP#1204): the hub's
+    build (the release a `make upgrade-onprem-trust` should default to) and a fingerprint
+    of the hub's AES key, so a trust re-keyed under a stale kit learns it from its own
+    /health rather than from every task failing to decrypt."""
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+    monkeypatch.setenv("FLIP_RELEASE", "v9.9.9")
+    key = b"\x01" * 32
+    expected_fingerprint = hashlib.sha256(key).hexdigest()[:12]
+
+    with patch("flip_api.utils.encryption.get_aes_key", return_value=key):
+        response = client.post("/api/trust/heartbeat")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["hub_version"] == "v9.9.9"
+    assert data["aes_key_fingerprint"] == expected_fingerprint
+    assert len(data["aes_key_fingerprint"]) == 12
+
+    app.dependency_overrides.pop(get_session, None)
+
+
+def test_heartbeat_survives_an_unloadable_hub_key(mock_auth, mock_trust, caplog):
+    """Liveness must not depend on the key: an unreadable key already fails every task, and failing
+    the heartbeat too would show every trust Offline. The reply goes out without a fingerprint."""
+    mock_db = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    with patch("flip_api.utils.encryption.get_aes_key", side_effect=ValueError("AES key must be 32 bytes")):
+        response = client.post("/api/trust/heartbeat")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["aes_key_fingerprint"] is None
+    assert data["trust_id"] == str(mock_trust.id)
+    assert mock_trust.last_heartbeat is not None
+    assert any("fingerprint the AES key" in r.message for r in caplog.records)
+
+    app.dependency_overrides.pop(get_session, None)
+
+
 def _snapshot_body():
     """A valid heartbeat body as sent by a collector-enabled trust-api."""
     return {
@@ -440,6 +483,48 @@ def test_email_failure_does_not_fail_task_submission(mock_send_emails, trust_id,
     assert response.status_code == 200
     assert mock_task.status == TaskStatus.COMPLETED
     assert mock_db.commit.called
+    app.dependency_overrides.pop(get_session, None)
+
+
+@pytest.mark.parametrize(
+    ("task_type", "expected_handler"),
+    [(TaskType.PERSIST_COHORT, "snapshot"), (TaskType.CREATE_IMAGING, "imaging")],
+)
+@patch("flip_api.private_services.trust_tasks.handle_snapshot_task_completed")
+@patch("flip_api.private_services.trust_tasks.handle_imaging_task_completed")
+def test_completed_result_is_post_processed_by_its_own_type_handler(
+    mock_imaging, mock_snapshot, task_type, expected_handler, trust_id, task_id, mock_auth
+):
+    """A PERSIST_COHORT result records the cohort snapshot; CREATE_IMAGING still goes to the imaging handler."""
+    mock_task = _mock_task_owned_by(trust_id, task_id, task_type)
+    mock_db = MagicMock()
+    mock_db.exec.return_value.first.return_value = mock_task
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post(f"/api/tasks/{task_id}/result", json={"success": True, "result": '{"row_count": 3}'})
+
+    assert response.status_code == 200
+    handlers = {"snapshot": mock_snapshot, "imaging": mock_imaging}
+    called = handlers.pop(expected_handler)
+    (not_called,) = handlers.values()
+    called.assert_called_once_with(mock_task, mock_db)
+    not_called.assert_not_called()
+    assert mock_task.needs_post_processing is False
+    app.dependency_overrides.pop(get_session, None)
+
+
+@patch("flip_api.private_services.trust_tasks.handle_snapshot_task_completed")
+def test_failed_persist_cohort_result_is_not_post_processed(mock_snapshot, trust_id, task_id, mock_auth):
+    mock_task = _mock_task_owned_by(trust_id, task_id, TaskType.PERSIST_COHORT)
+    mock_db = MagicMock()
+    mock_db.exec.return_value.first.return_value = mock_task
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.post(f"/api/tasks/{task_id}/result", json={"success": False, "result": '{"error": "x"}'})
+
+    assert response.status_code == 200
+    mock_snapshot.assert_not_called()
+    assert mock_task.status == TaskStatus.FAILED
     app.dependency_overrides.pop(get_session, None)
 
 

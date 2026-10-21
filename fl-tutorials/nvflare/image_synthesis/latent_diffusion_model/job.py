@@ -41,7 +41,7 @@ Frozen-autoencoder specifics, driven by ``app_files/config.json``:
   the update flattens ``PercentilePrivacy``'s (global) percentile cutoff to zero, silently turning
   the DP sparsification into a no-op.
 
-Both modes go through NVFLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
+Both modes go through FLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
 from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
 exports-or-runs accordingly — so there is no separate ``--export`` branch here.
 
@@ -125,7 +125,7 @@ def main() -> None:
         default="/tmp/nvflare/latent_diffusion_model",
         help="SimEnv workspace root",
     )
-    # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them
+    # NOTE: ``--export``/``--export-dir`` are handled by FLARE's ``Recipe.execute`` (it strips them
     # from ``sys.argv`` before this parser runs), so they are intentionally not declared here.
     args = parser.parse_args()
 

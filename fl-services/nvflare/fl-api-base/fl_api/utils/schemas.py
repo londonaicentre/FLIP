@@ -13,9 +13,29 @@
 import time
 from enum import Enum, IntEnum, StrEnum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from fl_api.utils.logger import logger
+
+# Sanity cap on a job's GPU count, for fast feedback on a typo. It is not a capacity check:
+# whether a site can provide the request is decided by FLARE's scheduler and the site's
+# GPUResourceManager, never here (FLIP#70).
+MAX_GPUS_PER_SITE = 8
+
+
+class JobResources(BaseModel):
+    """The GPUs a job needs at each participating site (FLIP#70).
+
+    The hub contract's backend-neutral shape, used for the researcher's override at submission and for
+    the fl-api default. The FLARE adapter writes the count into ``meta.json`` ``resource_spec`` as the
+    portable ``@default`` ``num_of_gpus``. The same count applies to every selected site. It is never
+    lowered to fit a site: a site that cannot provide it holds the job in FLARE's scheduler, which
+    says why.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_gpus: StrictInt = Field(ge=0, le=MAX_GPUS_PER_SITE)
 
 
 class UploadAppRequest(BaseModel):
@@ -27,15 +47,18 @@ class UploadAppRequest(BaseModel):
     cohort_query: str
     trusts: list[str]
     bundle_urls: list[str]
+    # Set when the researcher overrode the job's GPU count at submission (FLIP#70). None leaves the
+    # job's meta.json resource_spec, or the fl-api default, in force.
+    resources: JobResources | None = None
 
 
 class ServerInfoModel(BaseModel):
     """Pydantic model for server status information. Based on FLARE ServerInfo class.
 
-    ``start_time`` is optional because NVFLARE's own ``ServerInfo`` treats it as optional: the
+    ``start_time`` is optional because FLARE's own ``ServerInfo`` treats it as optional: the
     admin ``check_status`` meta is read with a bare ``get``, so a stopped or restarting server
     reports no start time, and upstream's ``__str__`` prints "unknown" for it. Since
-    ``FLIP_Session.get_system_info`` substitutes this model for NVFLARE's type on paths NVFLARE
+    ``FLIP_Session.get_system_info`` substitutes this model for FLARE's type on paths FLARE
     itself calls, a required float here would raise ``ValidationError`` exactly where upstream
     carries on — including inside ``restart`` and the client-shutdown waits.
     """
@@ -52,7 +75,7 @@ class ClientInfoModel(BaseModel):
     """Pydantic model for client status information. Extends FLARE ClientInfo class to include client status.
 
     ``last_connect_time`` is optional for the same reason as ``ServerInfoModel.start_time``: a
-    registered client that has never connected reports none, and NVFLARE's own
+    registered client that has never connected reports none, and FLARE's own
     ``_wait_for_clients_restart`` has an explicit ``if previous_time is None: continue`` branch —
     upstream proof that ``None`` is an expected value on this field, not an error.
     """
@@ -119,7 +142,7 @@ class TrainingRound(IntEnum):
 class TargetType(StrEnum):
     """System target for admin operations (restart/shutdown), used as a FastAPI path param.
 
-    NVFLARE 2.8.0 removed the deprecated ``nvflare.fuel.hci.client.fl_admin_api`` tree, which
+    FLARE 2.8.0 removed the deprecated ``nvflare.fuel.hci.client.fl_admin_api`` tree, which
     previously exported ``TargetType`` as a ``(str, Enum)``. Its successor,
     ``nvflare.fuel.flare_api.api_spec.TargetType``, is a plain class (bare string class-attrs) that
     FastAPI rejects as a path-param annotation. We therefore re-declare it locally as a ``StrEnum``,
@@ -172,7 +195,7 @@ class JobMetadata(BaseModel):
     status: JobStatus
 
 
-# NVFLARE RunStatus (nvflare/apis/job_def.py) -> normalized contract status.
+# FLARE RunStatus (nvflare/apis/job_def.py) -> normalized contract status.
 _NVFLARE_STATUS_MAP: dict[str, JobStatus] = {
     "SUBMITTED": JobStatus.PENDING,
     "APPROVED": JobStatus.PENDING,
@@ -189,7 +212,7 @@ _NVFLARE_STATUS_MAP: dict[str, JobStatus] = {
 
 
 def normalize_status(native_status: str) -> JobStatus:
-    """Map an NVFLARE ``RunStatus`` string to the normalized ``JobStatus`` contract value.
+    """Map a FLARE ``RunStatus`` string to the normalized ``JobStatus`` contract value.
 
     Args:
         native_status (str): The raw status string from ``session.list_jobs()``.
@@ -200,6 +223,6 @@ def normalize_status(native_status: str) -> JobStatus:
     """
     normalized = _NVFLARE_STATUS_MAP.get(native_status.strip().upper())
     if normalized is None:
-        logger.warning("Unmapped NVFLARE job status %r; treating as FAILED.", native_status)
+        logger.warning("Unmapped FLARE job status %r; treating as FAILED.", native_status)
         return JobStatus.FAILED
     return normalized

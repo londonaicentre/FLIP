@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE Client API script for the FLIP latent diffusion tutorial.
+"""FLARE Client API script for the FLIP latent diffusion tutorial.
 
 Trains a ``DiffusionModelUNet`` inside a **frozen** autoencoder's latent space, on 3-D brain MRI, as
 an ordinary single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
@@ -53,6 +53,7 @@ from pathlib import Path
 
 import numpy as np
 import nvflare.client as flare
+import pandas as pd
 import torch
 from flip import FLIP
 from flip.constants import ResourceType
@@ -85,7 +86,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
     (which can contain spaces) is plumbed via the top-level ``query`` key in
     ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator mode this is
     ignored by ``flip.get_dataframe``.
@@ -408,11 +409,12 @@ class LatentDiffusionTrainer:
     across global rounds.
     """
 
-    def __init__(self, config: dict, project_id: str, query: str):
+    def __init__(self, config: dict, project_id: str, query: str) -> None:
         self.config = config
         self.project_id = project_id
 
         self.params_diffusion = {"lr": config["LR_START"], "epochs": config.get("LOCAL_ROUNDS", 5)}
+        self.num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
 
         # Model creation
         self.model = get_model()
@@ -454,7 +456,7 @@ class LatentDiffusionTrainer:
         self._train_dataset = Dataset(self.train_items, transform=get_brain_mri_transforms())
         self._val_dataset = Dataset(self.val_items, transform=get_brain_mri_transforms(is_validation=True))
 
-    def build_datalist(self, dataframe) -> tuple[list, list]:
+    def build_datalist(self, dataframe: pd.DataFrame) -> tuple[list[dict], list[dict]]:
         """Fetch each accession's NIfTI series and split into train/validation lists.
 
         One study yields one sample per configured modality — four, unless ``MODALITIES`` narrows
@@ -516,12 +518,14 @@ class LatentDiffusionTrainer:
         )
 
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
-        train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
+        train_loader = DataLoader(
+            self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
+        )
+        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
         return train_loader, val_loader
 
     def val_loader(self, batch_size: int) -> DataLoader:
-        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
+        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights, strict=False)

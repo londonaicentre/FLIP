@@ -106,7 +106,6 @@
 
 <script setup lang="ts">
 import { useDark } from "@vueuse/core";
-import { signOut as amplifySignOut } from "aws-amplify/auth";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 
@@ -141,14 +140,15 @@ const footerLinks = [
 
 // Leave the current auth flow and land on /auth/login, whatever the
 // current state is. A soft Vue Router push is not safe here: after a
-// failed MFA attempt Amplify can leave in-memory state (and Pinia can
-// leave `signInStep`) that the router guard or Login.vue's onBeforeMount
-// will use to bounce the user straight back to the challenge page. A
-// hard navigation (window.location.assign) tears the whole SPA down and
-// brings it back up against the freshly-cleared localStorage, so there
-// is nothing left to resurrect.
+// failed MFA attempt the provider SDK can leave in-memory state (and Pinia
+// can leave `signInStep`) that the router guard or Login.vue's
+// onBeforeMount will use to bounce the user straight back to the challenge
+// page. A hard navigation (window.location.assign) tears the whole SPA
+// down and brings it back up against the freshly-cleared localStorage, so
+// there is nothing left to resurrect. The provider sign-out is not awaited
+// (it can hang on a challenge-only session); see store `abandonSignIn`.
 const backToLogin = (): void => {
-    amplifySignOut().catch(() => { /* no-op: nothing to sign out of is fine */ });
+    authStore.abandonSignIn();
     authStore.$reset();
     localStorage.clear();
     leaveToLogin();

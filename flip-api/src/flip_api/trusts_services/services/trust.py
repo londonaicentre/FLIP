@@ -31,10 +31,7 @@ def get_trusts(session: Session, ids: list[UUID] | None = None) -> list[ITrust]:
         ids (list[UUID] | None): A list of Trust IDs to filter by. If None, all Trusts are returned.
 
     Returns:
-        list[ITrust]: A list of Trust objects.
-
-    Raises:
-        ValueError: If no Trusts are found or if the database response is empty.
+        list[ITrust]: A list of Trust objects; empty when no Trust matches (a hub with none registered).
     """
     logger.debug("Attempting to get the list of trusts...")
 
@@ -46,9 +43,6 @@ def get_trusts(session: Session, ids: list[UUID] | None = None) -> list[ITrust]:
         statement = select(Trust)
 
     result = session.exec(statement).all()
-
-    if not result:
-        raise ValueError("No database response returned")
 
     logger.info(f"Number of trusts: {len(result)}")
 

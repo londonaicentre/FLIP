@@ -11,7 +11,7 @@
 
 """Client-API trainer for the Ark+ fine-tuning chest X-ray tutorial.
 
-This is the NVFLARE Client-API counterpart of the legacy ``FLIP_TRAINER(Executor)``. The FL transport
+This is the FLARE Client-API counterpart of the legacy ``FLIP_TRAINER(Executor)``. The FL transport
 is restructured onto the canonical ``flare.init()`` / ``flare.is_running()`` round loop (receive the
 global model, train locally, send back a ``DIFF``), while the Ark+ fine-tuning compute — head-only
 fine-tuning with a frozen backbone, an EMA teacher/student consistency loss, AMP, and per-lesion
@@ -76,7 +76,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args,
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args,
     so the SQL query (which can contain spaces) is plumbed via the top-level
     ``query`` key in ``config/config_fed_client.json`` rather than as a CLI flag.
     In dev/simulator mode this is ignored by ``flip.get_dataframe``.
@@ -104,11 +104,9 @@ def build_lesion_dict(config: dict) -> LesionDict:
     return LesionDict(items=[Lesion(id=int(k), lesion=v) for k, v in lesions.items()])
 
 
-def _autocast(state: ArkTrainState):
+def _autocast(state: ArkTrainState) -> torch.autocast:
     """AMP autocast context — mirrors the legacy trainer so training/validation math is identical."""
-    if hasattr(torch, "amp"):
-        return torch.amp.autocast(device_type="cuda", dtype=state.amp_dtype, enabled=state.amp_enabled)
-    return torch.cuda.amp.autocast(dtype=state.amp_dtype, enabled=state.amp_enabled)
+    return torch.amp.autocast(device_type="cuda", dtype=state.amp_dtype, enabled=state.amp_enabled)
 
 
 def _setup_teacher_model(
@@ -416,10 +414,7 @@ def main() -> None:
     logger.info(f"Trainable params: {trainable:,} / {total:,} (backbone frozen)")
 
     consistency_loss = torch.nn.MSELoss()
-    try:
-        amp_scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
-    except TypeError:
-        amp_scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
+    amp_scaler = torch.amp.GradScaler("cuda", enabled=amp_enabled)
     teacher_model, use_teacher_student, ema_mode = _setup_teacher_model(
         model, device, use_teacher_student, ema_mode, teacher_momentum, consistency_weight
     )
@@ -428,7 +423,7 @@ def main() -> None:
     gamma_lr = (lr_end / lr_start) ** (1 / epochs)
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
-        lr_lambda=lambda epoch: max(gamma_lr ** epoch, lr_floor / lr_start),
+        lr_lambda=lambda epoch: max(gamma_lr**epoch, lr_floor / lr_start),
     )
 
     if amp_enabled:

@@ -132,10 +132,17 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     # (Queries.id, project_id, name, query, created, UserProfile.name, queried_trust_ids)
     # `queried_trust_ids` is the persisted dispatched set — drives PerTrustResponse visibility.
     trust_never_responded = uuid.uuid4()
-    queries_call.all.return_value = [(
-        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None,
-        [trust_a, trust_b, trust_never_responded],
-    )]
+    queries_call.all.return_value = [
+        (
+            query_id,
+            project_id,
+            "Q",
+            "SELECT 1",
+            datetime.utcnow(),
+            None,
+            [trust_a, trust_b, trust_never_responded],
+        )
+    ]
     pair_rows_call = MagicMock()
     # (query_id, trust_id, data) — trust_b errored, trust_a succeeded, the
     # never-responded one has no QueryResult row.
@@ -146,6 +153,7 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     pending_rows_call = MagicMock()
     # (query_id, trust_id, status) — never-responded trust's task is PENDING.
     from flip_api.domain.schemas.status import TaskStatus
+
     pending_rows_call.all.return_value = [(query_id, trust_never_responded, TaskStatus.PENDING)]
     stats_call = MagicMock()
     stats_call.all.return_value = []
@@ -270,9 +278,21 @@ def test_get_projects_paginated_orm_reads_total_cohort_from_query_stats(user_id)
     projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
     count_call = MagicMock(one_or_none=MagicMock(return_value=1))
     trusts_call = MagicMock(all=MagicMock(return_value=[]))
-    queries_call = MagicMock(all=MagicMock(return_value=[(
-        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None, [],
-    )]))
+    queries_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (
+                    query_id,
+                    project_id,
+                    "Q",
+                    "SELECT 1",
+                    datetime.utcnow(),
+                    None,
+                    [],
+                )
+            ]
+        )
+    )
     pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
     pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
     stats_call = MagicMock(all=MagicMock(return_value=[(query_id, '{"TotalCount": 42}')]))
@@ -321,17 +341,33 @@ def test_get_projects_paginated_orm_skips_malformed_query_stats_json(user_id):
     projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
     count_call = MagicMock(one_or_none=MagicMock(return_value=1))
     trusts_call = MagicMock(all=MagicMock(return_value=[]))
-    queries_call = MagicMock(all=MagicMock(return_value=[(
-        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None, [],
-    )]))
+    queries_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (
+                    query_id,
+                    project_id,
+                    "Q",
+                    "SELECT 1",
+                    datetime.utcnow(),
+                    None,
+                    [],
+                )
+            ]
+        )
+    )
     pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
     pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
     # Malformed JSON + a row with empty stats string + a row with a valid payload.
-    stats_call = MagicMock(all=MagicMock(return_value=[
-        (query_id, "not-a-json-blob"),
-        (query_id, ""),
-        (None, '{"record_count": 99}'),  # None query_id → skipped by the guard
-    ]))
+    stats_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (query_id, "not-a-json-blob"),
+                (query_id, ""),
+                (None, '{"record_count": 99}'),  # None query_id → skipped by the guard
+            ]
+        )
+    )
     stage_audit_call = MagicMock(all=MagicMock(return_value=[]))
     user_counts_call = MagicMock(all=MagicMock(return_value=[]))
     session.exec.side_effect = [
@@ -417,11 +453,15 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
     queries_call = MagicMock(all=MagicMock(return_value=[]))
     # Rows arrive sorted desc by audit_date — the helper's "in latest" check
     # must keep only the first (newer) one, plus a None row is dropped.
-    stage_audit_call = MagicMock(all=MagicMock(return_value=[
-        (project_id, newer),
-        (project_id, older),
-        (None, datetime.utcnow()),
-    ]))
+    stage_audit_call = MagicMock(
+        all=MagicMock(
+            return_value=[
+                (project_id, newer),
+                (project_id, older),
+                (None, datetime.utcnow()),
+            ]
+        )
+    )
     user_counts_call = MagicMock(all=MagicMock(return_value=[]))
     session.exec.side_effect = [
         projects_call,

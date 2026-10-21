@@ -109,3 +109,41 @@ resource "aws_ssm_parameter" "fl_kit_slot_names" {
   type        = "String"
   value       = var.FL_KIT_SLOT_NAMES
 }
+
+# The EC2 keypair's public key, for the Terraform CI workflows (FLIP#962,
+# FLIP#1199). Both aws_key_pair resources read their key with file() from
+# ~/.ssh/host-aws.pub, and public_key is ForceNew — a runner without that file
+# would plan a replacement of both keypairs that ripples into
+# aws_instance.ec2_instance. So each workflow reads this parameter and writes
+# the file before Terraform runs.
+#
+# Declared here rather than published by a make target so the whole CI
+# bootstrap is code. The loop is stable: CI reads the parameter, writes the
+# file, the keypair reads the file, and this resource writes the same bytes
+# back — no diff. On a fresh account it is created by the first laptop apply,
+# which the bootstrap needs anyway; CI cannot run before it exists.
+#
+# overwrite = true adopts the parameter the retired `make seed-ci-keypair-param`
+# already created in the self-contained accounts. Without it, the first apply
+# there fails with ParameterAlreadyExists — and CI applies stag on every merge
+# to develop. The value it writes is the one CI has just read from it, so
+# adoption changes nothing.
+#
+# The precondition keeps the check that make target used to make: CI can only
+# supply ONE file, so the two keypairs must hold the same key, or CI would
+# silently plan a replacement of whichever one differs.
+resource "aws_ssm_parameter" "ci_host_aws_public_key" {
+  # checkov:skip=CKV2_AWS_34:a PUBLIC key, non-secret by definition — SecureString adds KMS coupling for no confidentiality gain
+  name        = "${local.ssm_prefix}/ci/host_aws_public_key"
+  description = "EC2 keypair public key, read by the Terraform CI workflows (FLIP#962)"
+  type        = "String"
+  value       = aws_key_pair.host_key.public_key
+  overwrite   = true
+
+  lifecycle {
+    precondition {
+      condition     = aws_key_pair.flip_keypair.public_key == aws_key_pair.host_key.public_key
+      error_message = "aws_key_pair.flip_keypair and aws_key_pair.host_key hold different public keys. Both are read from ~/.ssh/host-aws.pub and CI can only supply one file, so reconcile them from a laptop before enabling Terraform CI."
+    }
+  }
+}

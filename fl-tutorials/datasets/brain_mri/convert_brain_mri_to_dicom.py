@@ -14,8 +14,9 @@
 Each MSD case is a 240×240×155×4 NIfTI: the four co-registered channels ``dataset.json`` declares. A
 hospital PACS holds them as four series of one study, which is what a trust's Orthanc receives here:
 one ``StudyInstanceUID`` and ``FrameOfReferenceUID``, ``SeriesNumber`` 1–4 in channel order, and
-``SeriesDescription`` = ``ProtocolName`` = the channel label, so that after an XNAT pull dcm2niix's
-default filename carries it (``input_FLAIR_<datetime>_1.nii.gz``) and an app can pick a channel by name.
+``SeriesDescription`` = ``ProtocolName`` = the channel label. XNAT's anonymisation script removes both
+(with the dates and times), so after a pull dcm2niix names every channel ``input_000000_<n>.nii.gz``
+and an app picks a channel by ``SeriesNumber``, the scan id XNAT files it under.
 
 The output is ``<out-dir>/<AccessionNumber>/<SOPInstanceUID>.dcm``, every instance of the study directly
 under its accession — the layout ``trust/orthanc/seed_orthanc.py`` seeds from and ``publish_dicom.py``

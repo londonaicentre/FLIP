@@ -24,7 +24,7 @@
         <AiSkeleton class="w-full h-8" />
         <AiSkeleton class="w-full h-8" />
     </div>
-    <div class="grid items-center grid-cols-1 gap-8 mt-8 lg:grid-cols-2">
+    <div class="grid items-center gap-8 mt-8 grid-cols-[repeat(auto-fill,minmax(min(100%,420px),1fr))]">
         <div>
             <div class="flex items-start">
                 <AiSkeleton class="h-8 w-80" />

@@ -67,7 +67,7 @@ class ProdSettings(_Common):
     # Hub-local shared volume where the FL API stages a de-bundled evaluation
     # checkpoint (keyed by <model_id>/<checkpoint>) for the fl-server to read from
     # disk. Mirrors the Flower backend's /app/src shared mount: the checkpoint is
-    # never bundled into the NVFLARE app, so it is never deployed to clients. The
+    # never bundled into the FLARE app, so it is never deployed to clients. The
     # fl-server mounts this path; clients do not.
     SERVER_CHECKPOINT_ROOT: str = "/app/server-checkpoints"
 
@@ -113,10 +113,34 @@ def get_flip_constants() -> DevSettings | ProdSettings:
     return _flip_constants_instance
 
 
-# For backward compatibility, provide FlipConstants as a property-like access
-# Users should migrate to get_flip_constants() for better lazy loading
 class _FlipConstantsProxy:
-    """Proxy to provide lazy loading via attribute access."""
+    """Proxy to provide lazy loading via attribute access.
+
+    The annotations below declare, for the type checker, every setting the proxy forwards — the
+    union of the ``DevSettings`` and ``ProdSettings`` fields — so ``FlipConstants.<NAME>`` carries
+    the field's type instead of ``object``. At runtime only the active environment's fields
+    resolve (``getattr`` raises ``AttributeError`` for the other environment's), which is why
+    call sites keep environment-specific settings behind a ``LOCAL_DEV`` check. The unit tests
+    pin these annotations to the settings fields so the two cannot drift apart.
+    """
+
+    # _Common
+    LOCAL_DEV: bool
+    # DevSettings
+    DEV_DATAFRAME: str
+    DEV_IMAGES_DIR: str
+    # ProdSettings
+    FLIP_API_INTERNAL_URL: HttpUrl
+    INTERNAL_SERVICE_KEY_HEADER: str
+    INTERNAL_SERVICE_KEY: str
+    SERVER_CHECKPOINT_ROOT: str
+    DATA_ACCESS_API_URL: HttpUrl
+    IMAGING_API_URL: HttpUrl
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str
+    TRUST_INTERNAL_SERVICE_KEY: str
+    IMAGES_DIR: str
+    NET_ID: str
+    UPLOADED_FEDERATED_DATA_BUCKET: str
 
     def __getattribute__(self, name: str) -> object:
         if name.startswith("_"):
@@ -124,7 +148,7 @@ class _FlipConstantsProxy:
         return getattr(get_flip_constants(), name)
 
 
-FlipConstants = _FlipConstantsProxy()  # type: ignore[assignment]
+FlipConstants = _FlipConstantsProxy()
 
 
 class ResourceType(StrEnum):
@@ -153,7 +177,7 @@ class FlipEvents:
     """Event names used in FLIP workflows.
 
     Note: This is a class with class attributes rather than an Enum
-    because NVFLARE events are string constants.
+    because FLARE events are string constants.
     """
 
     # Common events (all job types)
@@ -171,7 +195,7 @@ class FlipEvents:
 class FlipProps:
     """fl_ctx property names FLIP components use to share round telemetry.
 
-    Set (sticky, so they survive across NVFLARE contexts) by the FLIP
+    Set (sticky, so they survive across FLARE contexts) by the FLIP
     ScatterAndGather controller as client results are accepted; read by
     ServerEventHandler when relaying ROUND_DONE to the hub as a
     ROUND_AGGREGATED event.
@@ -215,3 +239,6 @@ class FlipMetaKey(StrEnum):
     # EvaluationModelLocator so Client-API evaluators can attribute each validate task's weights —
     # the stock MODEL_OWNER header does not survive the Client-API FLModel conversion.
     EVAL_MODEL_NAME = "flip_eval_model_name"
+    # Results an evaluator returns for evaluation_results.json only, beside the FLModel.metrics the hub
+    # plots: EvaluationJsonGenerator merges them back into the reply's entry (FLIP#1526).
+    SUPPLEMENTARY_RESULTS = "flip_supplementary_results"

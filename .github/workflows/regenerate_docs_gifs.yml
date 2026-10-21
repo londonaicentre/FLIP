@@ -9,13 +9,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Re-record the documentation GIFs whenever the UI changes on develop, then open
-# a PR back to develop with the regenerated assets. Functional CI
-# (test_flip_ui.yml) is untouched — video stays off there so the 6-shard PR
-# pipeline isn't slowed down.
+# Re-record the documentation GIFs whenever the UI changes on develop and publish
+# the recording as one commit on main of the public Hugging Face dataset
+# aicentreflip/docs-gifs (FLIP#1236). The GIFs never enter git, and nothing comes
+# back to it: every docs build without a set of its own fetches the newest
+# recording, and release.yml tags the one each release ships (FLIP#1547;
+# docs/scripts/fetch_docs_gifs.py, called from docs/source/conf.py).
 #
-# See flip-ui/test/cypress/docs/ for the demo specs and
-# flip-ui/scripts/videos-to-gifs.sh for the ffmpeg conversion.
+# Two jobs on purpose. `record` runs Cypress + ffmpeg with no secrets and a read-only
+# token, and mints the version before recording so its timestamp is the recording
+# instant the manifest's `recorded_at` claims; `publish` reads HF_TOKEN from the
+# `flip` environment in exactly one step, and only on develop — the environment is
+# the shared CI one (no deployment-branch policy), so the ref gate, not the
+# environment, is what keeps a branch dispatch from publishing to main.
+#
+# Functional CI (test_flip_ui.yml) is untouched — video stays off there so the
+# 6-shard PR pipeline isn't slowed down. See flip-ui/test/cypress/docs/ for the demo
+# specs and flip-ui/scripts/videos-to-gifs.sh for the ffmpeg conversion.
 
 name: Regenerate docs GIFs
 
@@ -31,20 +41,31 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+
+env:
+  GIFS_DIR: docs/source/assets/generated/gifs
+  DATASET: aicentreflip/docs-gifs
 
 jobs:
-  regenerate:
-    # Skip on forks: their GitHub Actions token cannot create pull requests, so
-    # running this job there would only produce a spurious workflow failure.
+  record:
+    # Skip on forks: they hold no HF_TOKEN, so the run would only produce a spurious failure.
     if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+    # A newer develop push supersedes a recording still in flight.
+    concurrency:
+      group: docs-gifs-record
+      cancel-in-progress: true
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     env:
       VITE_LOCAL: "false"
       VITE_E2E: "true"
       CENTRAL_HUB_API_URL: "http://localhost:8080"
+      AUTH_BACKEND: "cognito"
       AWS_COGNITO_USER_POOL_ID: "eu-west-2_DUMMY1234"
       AWS_COGNITO_APP_CLIENT_ID: "dummyclientid1234567890ab"
       AWS_REGION: "eu-west-2"
@@ -52,6 +73,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+
+      - name: Mint the version
+        id: version
+        # YYYYMMDDTHHMMSSZ-<sha7>: the instant this recording starts and the commit it
+        # records, unique per second and source commit, sortable. Minted here rather
+        # than in `publish` so it is the recording time, not the publish time.
+        run: echo "version=$(date -u +%Y%m%dT%H%M%SZ)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Set Node.js version
         uses: actions/setup-node@v5
@@ -67,15 +95,16 @@ jobs:
         # `.env.e2e`, not `.env.development` — see flip-ui/README.md → Testing.
         working-directory: ./flip-ui
         run: |
-          cat > .env.e2e <<'EOF'
+          cat > .env.e2e <<'ENV'
           VITE_LOCAL=false
           VITE_E2E=true
           CENTRAL_HUB_API_URL=http://localhost:8080
+          AUTH_BACKEND=cognito
           AWS_COGNITO_USER_POOL_ID=eu-west-2_DUMMY1234
           AWS_COGNITO_APP_CLIENT_ID=dummyclientid1234567890ab
           AWS_REGION=eu-west-2
           BLACKLISTED_MODEL_FILES=flip.py,server_app.py
-          EOF
+          ENV
 
       - name: Record docs demo specs
         uses: cypress-io/github-action@v7
@@ -91,29 +120,66 @@ jobs:
         working-directory: ./flip-ui
         run: bash scripts/videos-to-gifs.sh
 
-      - name: Open PR with regenerated GIFs
-        uses: peter-evans/create-pull-request@v8
+      - name: Hand the GIFs to the publish job
+        uses: actions/upload-artifact@v6
         with:
-          branch: bot/regenerate-docs-gifs
-          base: develop
-          add-paths: |
-            docs/source/assets/admin/*.gif
-            docs/source/assets/flip/*.gif
-          commit-message: |
-            docs: regenerate documentation GIFs
+          name: docs-gifs
+          path: ${{ env.GIFS_DIR }}
+          if-no-files-found: error
+          retention-days: 3
 
-            Auto-regenerated from develop by .github/workflows/regenerate_docs_gifs.yml.
+  publish:
+    needs: record
+    # Only develop publishes: a workflow_dispatch from a branch still records (useful
+    # for previewing a recording, as the run's artifact), but must not put that branch's
+    # UI in front of every docs build.
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The `flip` environment is where the CI secrets live; HF_TOKEN is read from it
+    # by the publish step alone. It is the shared CI environment, so it adds no
+    # isolation of its own — the ref gate above is the control.
+    environment: flip
+    permissions:
+      contents: read
+    # A publish in flight completes; a later one queues behind it, so main's newest
+    # commit is always the newest recording.
+    concurrency:
+      group: docs-gifs-publish
+      cancel-in-progress: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
 
-            Signed-off-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-          title: "docs: regenerate documentation GIFs"
-          body: |
-            Auto-regenerated from `develop` @ ${{ github.sha }} by `.github/workflows/regenerate_docs_gifs.yml`.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ./docs/.python-version
 
-            **Heads-up:** re-recording is nondeterministic (Cypress frame timing
-            plus the animated demo cursor), so this PR shows *every* GIF as changed
-            even where the UI didn't. Review the rendered GIFs under
-            `docs/source/assets/admin/` and `docs/source/assets/flip/` and merge
-            only if the genuinely-changed clips look right — otherwise close it.
-            This branch is reused, so later develop merges refresh this same PR.
-          signoff: true
-          delete-branch: true
+      - name: Install uv
+        run: pip install uv
+
+      - name: Fetch the recorded GIFs
+        uses: actions/download-artifact@v8
+        with:
+          name: docs-gifs
+          path: ${{ env.GIFS_DIR }}
+
+      - name: Publish to the dataset
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          VERSION: ${{ needs.record.outputs.version }}
+        run: |
+          uv run docs/scripts/publish_docs_gifs.py \
+            --repo "$DATASET" \
+            --branch main \
+            --version "$VERSION" \
+            --source-commit "$GITHUB_SHA" \
+            --workflow-run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --gifs-dir "$GIFS_DIR" \
+            --card docs/scripts/docs_gifs_card.md
+
+      - name: Verify the recording resolves anonymously
+        # No token in this step's environment (and the fetcher reads none): this is
+        # exactly what a ReadTheDocs or contributor build will do next.
+        run: uv run docs/scripts/fetch_docs_gifs.py --repo "$DATASET" --revision main --dest "$RUNNER_TEMP/verify"

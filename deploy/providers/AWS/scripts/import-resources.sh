@@ -221,5 +221,5 @@ else
 fi
 
 echo ""
-log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed externally via scripts/create-backend.sh"
+log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed by the Terraform-CI bootstrap (modules/terraform_ci_bootstrap), not this root"
 log_success "Persistent resources imported!"

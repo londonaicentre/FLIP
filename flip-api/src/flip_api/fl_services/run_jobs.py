@@ -37,9 +37,6 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
     are unrecoverable unless cleaned up here. This prevents a single crash
     from permanently starving a net of new training jobs.
     """
-    # Raw column names: SQLModel `alias=` on the FLScheduler model only affects
-    # Pydantic API serialisation, not the SQLAlchemy column name — the actual
-    # DB column is `job_id` (the field name), not the `jobid` alias.
     stmt = text(
         """
         UPDATE fl_scheduler
@@ -92,39 +89,47 @@ def run_jobs_core(db: Session) -> None:
         job = check_for_queued_jobs(scheduler.id, db)
 
         if not job or not job.id:
-            logger.info({
-                "message": "No jobs waiting, will check again soon... 🔃",
-                "net": scheduler.netId,
-            })
+            logger.info(
+                {
+                    "message": "No jobs waiting, will check again soon... 🔃",
+                    "net": scheduler.netId,
+                }
+            )
             return
 
         # The pickup just advanced every remaining queued model one place.
         log_queue_positions(db)
 
         # Step 3: Prepare and start training
-        logger.info({
-            "message": "About to prepare & start training... 📦",
-            "net": scheduler.netId,
-            "job": job.id,
-            "model": job.model_id,
-        })
+        logger.info(
+            {
+                "message": "About to prepare & start training... 📦",
+                "net": scheduler.netId,
+                "job": job.id,
+                "model": job.model_id,
+            }
+        )
 
         started = prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
         if started:
-            logger.info({
-                "message": "Training started successfully! 🚀",
-                "net": scheduler.netId,
-                "job": job.id,
-                "model": job.model_id,
-            })
+            logger.info(
+                {
+                    "message": "Training started successfully! 🚀",
+                    "net": scheduler.netId,
+                    "job": job.id,
+                    "model": job.model_id,
+                }
+            )
         else:
-            logger.info({
-                "message": "Job aborted before submission; net released. 🛑",
-                "net": scheduler.netId,
-                "job": job.id,
-                "model": job.model_id,
-            })
+            logger.info(
+                {
+                    "message": "Job aborted before submission; net released. 🛑",
+                    "net": scheduler.netId,
+                    "job": job.id,
+                    "model": job.model_id,
+                }
+            )
         return
 
     except Exception as e:

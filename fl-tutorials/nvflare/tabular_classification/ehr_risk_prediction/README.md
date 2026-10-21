@@ -1,8 +1,8 @@
-# EHR Risk Prediction — FLIP tutorial (NVFLARE)
+# EHR Risk Prediction — FLIP tutorial (FLARE)
 
 Federated training of a small **multi-layer perceptron (MLP)** that predicts **type-2-diabetes
 (T2DM) onset** from OMOP tabular features — patient demographics plus pre-diagnosis condition and
-visit history. It runs on the **NVFLARE Client API** (`nvflare.client`): the whole job is defined in
+visit history. It runs on the **FLARE Client API** (`nvflare.client`): the whole job is defined in
 Python via `FlipFedAvgRecipe`, with no hand-written JSON configs.
 
 This is FLIP's first **tabular / EHR-only** example. Where the imaging tutorials pull DICOM into
@@ -48,7 +48,7 @@ There are **two** data paths, because there are two ways to run the tutorial:
 
 ### 1. Local simulation — a derived CSV
 
-For `make run-tutorial` (the NVFLARE simulator), the cohort is a local CSV:
+For `make run-tutorial` (the FLARE simulator), the cohort is a local CSV:
 
 ```bash
 make -C fl-tutorials download-synthea-data
@@ -144,7 +144,7 @@ narrower 16-unit layer or a single epoch/round plateaus markedly lower.
 
 ### Export the job config (no GPU, no data needed)
 
-Produces a complete NVFLARE job directory under `./fl_job/flip_fedavg/`:
+Produces a complete FLARE job directory under `./fl_job/flip_fedavg/`:
 
 ```bash
 make export

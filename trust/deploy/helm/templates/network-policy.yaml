@@ -83,7 +83,7 @@ hardest to diagnose — queries succeed, retrievals silently time out with nothi
 side. Both directions now fail equally loudly, at render, naming the values to set.
 */ -}}
 {{- if not $ingressOk }}
-{{- fail (printf "pacs.host is %s but networkPolicies.allowedIngressCIDRsWithPorts has no entry on port %v. After XNAT issues C-MOVE the PACS opens a new association back to XNAT to C-STORE the studies; without that allowance it is dropped, so queries succeed and retrievals silently time out. Add the PACS CIDRs on port %v, and make the receiver reachable from outside the cluster with xnat.web.service.type: NodePort plus xnat.web.dicomNodePort. Note the port here is the pod's containerPort (xnat.web.dicomPort, default 8104) and not dicomNodePort: a NetworkPolicy matches the port the pod listens on, after the node has undone the NodePort translation." .Values.pacs.host $dicomPort $dicomPort) }}
+{{- fail (printf "pacs.host is %s but networkPolicies.allowedIngressCIDRsWithPorts has no entry on port %v. After XNAT issues C-MOVE the PACS opens a new association back to XNAT to C-STORE the studies; without that allowance it is dropped, so queries succeed and retrievals silently time out. Add the PACS CIDRs on port %v, and make the receiver reachable from outside the cluster with xnat.web.dicomService.type: NodePort plus xnat.web.dicomNodePort, or LoadBalancer. Note the port here is the pod's containerPort (xnat.web.dicomPort, default 8104) and not dicomNodePort: a NetworkPolicy matches the port the pod listens on, after the node has undone the NodePort/LB translation." .Values.pacs.host $dicomPort $dicomPort) }}
 {{- end }}
 {{- /*
 The NetworkPolicy admits the C-STORE leg only as far as the pod; the packet still needs a route from
@@ -147,11 +147,31 @@ metadata:
 spec:
   podSelector: {}
   egress:
+{{- /* AWS IMDS (169.254.169.254, EC2 metadata / node IAM role) is opened for one consumer: the
+     omop-db vocab-load Job reaching S3 through the node instance role (it is rendered, and
+     carries no mounted credentials; the chart has no IRSA path). This policy selects every pod,
+     so while that Job is rendered IMDS is reachable namespace-wide, fl-client included; scoping
+     it to the Job needs its own policy with a pod selector. Otherwise (kind, AKS — FLIP#1390)
+     the metadata endpoint, an SSRF/credential-theft target, is excluded from the any-destination
+     ports rule below as well, since IMDS listens on port 80. */}}
+{{- $vocab := .Values.omopDb.vocabLoad }}
+{{- $imds := and .Values.omopDb.enabled $vocab.enabled $vocab.s3Bucket (not $vocab.hostAwsMount.enabled) }}
     # Allow configured egress ports (defaults include DNS/HTTP/HTTPS)
     - ports:
 {{- range .Values.networkPolicies.allowedEgressPorts }}
         - port: {{ .port }}
           protocol: {{ .protocol }}
+{{- end }}
+{{- if not $imds }}
+      # Anywhere but the instance-metadata endpoint, plus every pod in the cluster: some CNIs
+      # (Cilium) read a 0.0.0.0/0 ipBlock as outside-the-cluster only, so in-cluster peers such
+      # as kube-dns need their own selector.
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+        - namespaceSelector: {}
 {{- end }}
     # Allow intra-namespace egress (all ports)
     - to:
@@ -179,16 +199,12 @@ spec:
           protocol: {{ default "TCP" .protocol }}
 {{- end }}
 {{- end }}
-    # Allow AWS IMDS (EC2 metadata / node IAM role).
-    # NOT for the fl-client any more: it holds no AWS credentials and its kit is staged
-    # onto the node before deploy. Still load-bearing for the omop-db vocab-load Job, the
-    # chart's only AWS-bearing Job now that the snapshot init Jobs are gone (the trust-seed
-    # Job fetches the mock data anonymously): the chart has no IRSA path, and its AWS env
-    # is gated on omopDb.vocabLoad.hostAwsMount.enabled which defaults false — so by
-    # default it reaches S3 through the node instance role. See NETWORK-POLICY.md.
+    # AWS IMDS for the vocab-load Job on a node role (see above; NETWORK-POLICY.md).
+{{- if $imds }}
     - to:
         - ipBlock:
             cidr: 169.254.169.254/32
+{{- end }}
   policyTypes:
     - Egress
 {{- end }}

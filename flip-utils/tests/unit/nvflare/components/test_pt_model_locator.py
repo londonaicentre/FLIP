@@ -382,7 +382,7 @@ def _persist_one_round(model: torch.nn.Module, fl_ctx: MagicMock) -> dict[str, n
 class TestRunDirCheckpointGuardedLoad:
     """The run-directory loader unpickles with ``weights_only=True`` and still serves the global model (FLIP#1245).
 
-    ``FL_global_model.pt`` is written by NVFLARE's ``PTFileModelPersistor`` (FLIP's
+    ``FL_global_model.pt`` is written by FLARE's ``PTFileModelPersistor`` (FLIP's
     ``InitialCheckpointPTModelPersistor`` inherits the save path unchanged): ``save_model_file`` pickles
     ``PTModelPersistenceFormatManager.to_persistence_dict()`` — an ``OrderedDict`` whose ``model`` entry is
     an ``OrderedDict`` of tensors (``torch.as_tensor`` over the aggregated numpy weights) beside the plain

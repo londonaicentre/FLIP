@@ -18,10 +18,20 @@ comma-separated, empty -> default) plus the lowercase/leading-dot
 normalisation the suffix matching relies on.
 """
 
+import logging
+
 import pytest
 from pydantic import ValidationError
 
 from flip_api.config import DevSettings, ProdSettings, Settings
+
+# What a ProdSettings needs beyond the env file the suite runs with.
+_PROD_REQUIRED = {
+    "AWS_SES_ADMIN_EMAIL_ADDRESS": "admin@example.com",
+    "AWS_SES_SENDER_EMAIL_ADDRESS": "sender@example.com",
+    "AWS_COGNITO_USER_POOL_ID": "eu-west-2_TESTPOOL",
+    "AWS_COGNITO_APP_CLIENT_ID": "test-app-client-id",
+}
 
 
 def test_allowed_extensions_default():
@@ -94,29 +104,35 @@ def test_suffix_list_passes_through_unexpected_types_for_pydantic_to_reject():
 
 
 def test_email_backend_defaults_per_environment_class():
-    """Dev logs, prod sends, and prod cannot be narrowed any wider (#919).
+    """Dev logs, prod sends, and neither can choose otherwise (#919).
 
     Asserted on the fields rather than instances, for the same reason as
-    ``test_dev_ses_addresses_are_optional_with_defaults`` below: a developer
-    may set ``EMAIL_BACKEND=ses`` in their own ``.env.development`` (the
-    config comment invites exactly that), which an instance would pick up.
+    ``test_dev_ses_addresses_are_optional_with_defaults`` below: a developer's
+    own ``.env.development`` may carry stale lines an instance would pick up.
 
     Note the base default is *not* a safety net for a misconfigured deploy —
     an unset ``ENV`` resolves to ``DevSettings`` and therefore ``console``.
-    It exists so the field is declared for ``ProdSettings`` to narrow.
+    It exists so the field is declared for the subclasses to pin.
     """
     assert Settings.model_fields["EMAIL_BACKEND"].default == "ses"
     assert DevSettings.model_fields["EMAIL_BACKEND"].default == "console"
     assert ProdSettings.model_fields["EMAIL_BACKEND"].default == "ses"
 
 
+def test_ses_email_backend_is_rejected_in_development():
+    """The dev stack reaches no AWS service: SES is a boot-time validation error there, not an opt-in."""
+    with pytest.raises(ValidationError) as exc_info:
+        DevSettings(EMAIL_BACKEND="ses")
+    assert "EMAIL_BACKEND" in str(exc_info.value)
+
+
 def test_email_backend_empty_string_falls_back_to_the_per_class_default():
     """Same env-file empty-string trap as the scan ints, resolved per class.
 
-    Not hypothetical: ``.env.development.example`` carries a commented
-    ``# EMAIL_BACKEND=ses`` line, and the root Makefile's unanchored
-    ``sed 's/=.*//'`` exports the bare name from it, so a copied example
-    hands flip-api an empty ``EMAIL_BACKEND``.
+    Not hypothetical: a stale developer ``.env.development`` may still carry a
+    commented ``# EMAIL_BACKEND=`` line, and the root Makefile's unanchored
+    ``sed 's/=.*//'`` exports the bare name from it, so the file hands flip-api
+    an empty ``EMAIL_BACKEND``.
     """
     assert Settings(EMAIL_BACKEND="").EMAIL_BACKEND == "ses"
     assert DevSettings(EMAIL_BACKEND="").EMAIL_BACKEND == "console"
@@ -169,11 +185,7 @@ def test_production_settings_resolve_to_the_ses_backend(monkeypatch):
     """
     monkeypatch.delenv("EMAIL_BACKEND", raising=False)
 
-    settings = ProdSettings(
-        ENV="production",
-        AWS_SES_ADMIN_EMAIL_ADDRESS="admin@example.com",
-        AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
-    )
+    settings = ProdSettings(ENV="production", **_PROD_REQUIRED)
 
     assert settings.EMAIL_BACKEND == "ses"
 
@@ -208,6 +220,35 @@ def test_dev_ses_addresses_tolerate_empty_strings():
     assert blanked.AWS_SES_SENDER_EMAIL_ADDRESS == "flip-no-reply@example.com"
 
 
+@pytest.mark.parametrize("raw", ["true", "TRUE", "1", "yes", "On", "True ", " true", "\ttrue\n"])
+def test_enforce_mfa_on_spellings_enable_mfa(raw):
+    assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is True
+
+
+@pytest.mark.parametrize("raw", ["false", "FALSE", "0", "no", "Off", " false "])
+def test_enforce_mfa_off_spellings_disable_mfa(raw):
+    assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is False
+
+
+@pytest.mark.parametrize("raw", ["ture", "enabled", "2", "disable", "t r u e"])
+def test_enforce_mfa_unrecognised_value_keeps_mfa_on_and_warns(raw, caplog):
+    """Fail closed: a typo must never be the thing that switches the MFA gate off."""
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        assert Settings(ENFORCE_MFA=raw).ENFORCE_MFA is True
+
+    assert "ENFORCE_MFA" in caplog.text
+    assert repr(raw) in caplog.text
+
+
+@pytest.mark.parametrize("blank", ["", "   ", None], ids=["empty", "whitespace", "none"])
+def test_enforce_mfa_blank_keeps_the_secure_default(blank, caplog):
+    """CI env injection can hand over an empty string; that must not switch MFA off, nor warn."""
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        assert Settings(ENFORCE_MFA=blank).ENFORCE_MFA is True
+
+    assert "ENFORCE_MFA" not in caplog.text
+
+
 @pytest.mark.parametrize("blank", [",,,", " , ", " ", ",", "[]"])
 def test_suffix_list_separator_only_values_fall_back_to_default(blank):
     """A value that normalises to nothing must not yield an empty list.
@@ -221,3 +262,143 @@ def test_suffix_list_separator_only_values_fall_back_to_default(blank):
 
     assert settings.ALLOWED_MODEL_FILE_EXTENSIONS == Settings().ALLOWED_MODEL_FILE_EXTENSIONS
     assert settings.PICKLESCAN_FILE_SUFFIXES == Settings().PICKLESCAN_FILE_SUFFIXES
+
+
+# --- AUTH_BACKEND: the identity-provider seam (#919) -------------------------------------
+
+
+def test_auth_backend_defaults_per_environment_class():
+    """The base selects no provider (so it demands no coordinates); each environment class picks one.
+
+    Asserted on the fields, not instances, because a developer's own
+    ``.env.development`` may already pin ``AUTH_BACKEND``.
+    """
+    assert Settings.model_fields["AUTH_BACKEND"].default is None
+    assert DevSettings.model_fields["AUTH_BACKEND"].default == "keycloak"
+    assert ProdSettings.model_fields["AUTH_BACKEND"].default == "cognito"
+
+
+def test_auth_backend_empty_string_falls_back_to_the_per_class_default():
+    """The commented ``# AUTH_BACKEND=`` line in the env example arrives as an empty string."""
+    assert Settings(AUTH_BACKEND="").AUTH_BACKEND is None
+    assert DevSettings(AUTH_BACKEND="").AUTH_BACKEND == DevSettings.model_fields["AUTH_BACKEND"].default
+
+
+def test_keycloak_backend_is_rejected_in_production():
+    """The local identity provider must be impossible to enable in production (#919)."""
+    with pytest.raises(ValidationError) as exc_info:
+        ProdSettings(AUTH_BACKEND="keycloak", **_PROD_REQUIRED)
+    assert "AUTH_BACKEND" in str(exc_info.value)
+
+
+def test_keycloak_backend_requires_its_urls_and_admin_secret():
+    """A keycloak backend with no Keycloak coordinates fails at boot, naming every missing field."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(AUTH_BACKEND="keycloak")
+    message = str(exc_info.value)
+    assert "KEYCLOAK_URL" in message
+    assert "KEYCLOAK_PUBLIC_URL" in message
+    assert "KEYCLOAK_ADMIN_CLIENT_SECRET" in message
+
+
+def test_dev_settings_carry_working_keycloak_defaults():
+    """Dev needs no Keycloak lines in its env file: the defaults match the compose service."""
+    settings = DevSettings(AUTH_BACKEND="keycloak")
+    assert settings.KEYCLOAK_URL == "http://keycloak:8080"
+    assert settings.KEYCLOAK_PUBLIC_URL == "http://localhost:8180"
+    assert settings.KEYCLOAK_REALM == "flip"
+    assert settings.KEYCLOAK_CLIENT_ID == "flip-ui"
+    assert settings.KEYCLOAK_AUDIENCE == "flip-api"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_ID == "flip-api-admin"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None
+
+
+def test_keycloak_settings_tolerate_empty_strings():
+    """Commented ``# KEYCLOAK_*`` lines in the env example export bare names — fall back per class."""
+    settings = DevSettings(
+        AUTH_BACKEND="keycloak",
+        KEYCLOAK_URL="",
+        KEYCLOAK_PUBLIC_URL="",
+        KEYCLOAK_REALM="",
+        KEYCLOAK_CLIENT_ID="",
+        KEYCLOAK_AUDIENCE="",
+        KEYCLOAK_ADMIN_CLIENT_ID="",
+        KEYCLOAK_ADMIN_CLIENT_SECRET="",
+    )
+    assert settings.KEYCLOAK_URL == "http://keycloak:8080"
+    assert settings.KEYCLOAK_REALM == "flip"
+    assert settings.KEYCLOAK_ADMIN_CLIENT_SECRET is not None
+
+
+@pytest.mark.parametrize(
+    ("raw", "enforced"),
+    [("false", False), (" Off ", False), ("true", True), ("", True), ("ture", True)],
+)
+def test_keycloak_backend_parses_enforce_mfa_fail_closed(raw, enforced, caplog):
+    """The Keycloak backend takes ENFORCE_MFA through the same fail-closed parser as Cognito.
+
+    Only an explicit "off" spelling opens the gate. Anything else keeps it on, a typo included, and the
+    Keycloak-specific warning then says why browser sign-in will lock out.
+    """
+    with caplog.at_level(logging.WARNING, logger="uvicorn"):
+        settings = DevSettings(AUTH_BACKEND="keycloak", ENFORCE_MFA=raw)
+
+    assert settings.ENFORCE_MFA is enforced
+    assert ("cannot complete TOTP over the password grant" in caplog.text) is enforced
+
+
+# --- the Cognito ids: required by the cognito backend only ---------------------------------
+
+
+def test_the_base_settings_build_without_cognito_ids():
+    """``config.py`` builds a bare ``Settings()`` to read ``ENV`` before choosing a class; a fresh env has no ids."""
+    settings = Settings(AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
+    assert settings.AWS_COGNITO_USER_POOL_ID is None
+    assert settings.AWS_COGNITO_APP_CLIENT_ID is None
+
+
+def test_keycloak_development_needs_no_cognito_ids():
+    """The example env file comments the ids out; the Makefile exports the bare names as empty strings."""
+    settings = DevSettings(AUTH_BACKEND="keycloak", AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
+    assert settings.AWS_COGNITO_USER_POOL_ID is None
+
+
+def test_cognito_backend_is_rejected_in_development():
+    """Development is Keycloak only: the AWS provider is a boot-time validation error there, ids or no ids."""
+    with pytest.raises(ValidationError) as exc_info:
+        DevSettings(AUTH_BACKEND="cognito", AWS_COGNITO_USER_POOL_ID="pool", AWS_COGNITO_APP_CLIENT_ID="client")
+    assert "AUTH_BACKEND" in str(exc_info.value)
+
+
+def test_cognito_backend_requires_both_ids():
+    """An empty id is a missing id: without this the hub boots and fails at the first sign-in instead."""
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(AUTH_BACKEND="cognito", AWS_COGNITO_USER_POOL_ID="", AWS_COGNITO_APP_CLIENT_ID="")
+    message = str(exc_info.value)
+    assert "AWS_COGNITO_USER_POOL_ID" in message
+    assert "AWS_COGNITO_APP_CLIENT_ID" in message
+
+
+def test_production_requires_the_cognito_ids():
+    """Production is Cognito-only, so a deploy without the pool ids fails at boot, naming them."""
+    blanked = {**_PROD_REQUIRED, "AWS_COGNITO_USER_POOL_ID": "", "AWS_COGNITO_APP_CLIENT_ID": ""}
+    with pytest.raises(ValidationError) as exc_info:
+        ProdSettings(ENV="production", **blanked)
+    assert "AWS_COGNITO_USER_POOL_ID" in str(exc_info.value)
+
+
+def test_s3_public_endpoint_defaults_to_the_compose_object_store():
+    """Development signs browser-bound URLs for the RustFS container's published port with no configuration (#1291).
+
+    Asserted on the field, not an instance, for the reason ``test_dev_ses_addresses_are_optional_with_defaults``
+    gives. The base declares it ``None`` — one endpoint for every audience, production's shape — and only
+    ``DevSettings`` sets it.
+    """
+    assert DevSettings.model_fields["S3_PUBLIC_ENDPOINT_URL"].default == "http://localhost:9000"
+    assert Settings.model_fields["S3_PUBLIC_ENDPOINT_URL"].default is None
+
+
+def test_s3_public_endpoint_tolerates_an_empty_string():
+    """The env-file trap of ``coerce_empty_email_backend``, for the public endpoint (#1291)."""
+    assert DevSettings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL == "http://localhost:9000"
+    assert Settings(S3_PUBLIC_ENDPOINT_URL="").S3_PUBLIC_ENDPOINT_URL is None

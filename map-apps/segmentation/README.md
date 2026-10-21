@@ -47,7 +47,7 @@ spleen bundle — same architecture — uses `a_max=164`.
 
 See [`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/export/`](../../fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/export)
 for a worked pair of bundle configs, and the
-[packaging guide](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for how to
+[packaging guide](../../docs/source/working-with-flip-apps/wrap-model-for-deployment.rst) for how to
 transcribe transforms from a training application.
 
 ## If you are targeting deepcOS, this template is not finished
@@ -66,7 +66,7 @@ stops. Adding it means counting foreground voxels and scaling by the volume's sp
 emitting it alongside the SEG. Small, but genuinely new — do not assume it falls out of the
 existing pipeline.
 
-See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for
+See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/wrap-model-for-deployment.rst) for
 what else a submission requires.
 
 ## Verifying

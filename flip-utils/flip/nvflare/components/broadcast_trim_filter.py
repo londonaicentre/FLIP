@@ -37,7 +37,7 @@ class TrimBroadcastVars(DXOFilter):
     server aliases the retained global model — popping would corrupt the server's own weights.
     """
 
-    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None):
+    def __init__(self, include_vars: str | None = None, data_kinds: list[str] | None = None) -> None:
         """
         Args:
             include_vars: regex; only weight keys whose name matches (``re.search``) stay in the
@@ -50,7 +50,7 @@ class TrimBroadcastVars(DXOFilter):
             supported_data_kinds=[DataKind.WEIGHTS, DataKind.WEIGHT_DIFF],
             data_kinds_to_filter=data_kinds,
         )
-        # Stored under the exact constructor-param name so NVFLARE's FedJob/Recipe export round-trips it:
+        # Stored under the exact constructor-param name so FLARE's FedJob/Recipe export round-trips it:
         # FedJob serialises a component's args by matching instance attributes to __init__ param names, so
         # without this the recipe-exported config would drop include_vars and the filter would silently
         # become a no-op. (The deploy-time fl-server injection writes args.include_vars explicitly, so only

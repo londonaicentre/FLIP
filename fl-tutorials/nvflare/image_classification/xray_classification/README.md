@@ -1,11 +1,11 @@
 # X-Ray Classification — FLIP tutorial
 
 This tutorial trains a DenseNet-121 classifier of X-Ray pathologies (Effusion, Edema) using the
-**NVFLARE Client API** (`nvflare.client`). The job is defined entirely in Python via
+**FLARE Client API** (`nvflare.client`). The job is defined entirely in Python via
 `FlipFedAvgRecipe` — no hand-written JSON configs required.
 
 It replaced the retired Executor-API tutorial of the same name (removed along with the other
-legacy-syntax NVFLARE tutorials); unlike that legacy flow there is no separate `validator.py` —
+legacy-syntax FLARE tutorials); unlike that legacy flow there is no separate `validator.py` —
 validation runs server-side via cross-site model evaluation.
 
 ## Data requirements
@@ -19,6 +19,7 @@ the dataframe must contain a column for each of those values.
 - Key `-1` is reserved for the "Normality" label. A positive value overrides every other label to 0.
 - `value_to_numerical` maps the 0/1 classes to their dataframe representation (`"Yes"` / `"No"`).
 - Images must be DICOM (`.dcm`), 2D grayscale, stored in folders named by accession ID.
+- The app reads DICOM only, so create its project with **DICOM to NIfTI** off: conversion would produce NIfTI nothing reads.
 
 Class imbalance can produce NaN metrics; use approximately N=300 samples per site.
 
@@ -77,7 +78,7 @@ runtime via `load_query()`.
 
 ### Export (primary — no GPU needed)
 
-Produces a complete NVFLARE job directory under `./fl_job/flip_fedavg/` including:
+Produces a complete FLARE job directory under `./fl_job/flip_fedavg/` including:
 - `meta.json` with `custom_props.model_id` (dev UUID for local use)
 - `app/config/config_fed_server.json` and `config_fed_client.json`
 - `app/custom/` with the bundled `flip/` package and all user app files staged alongside it
@@ -100,7 +101,7 @@ uv run --project ../../../../flip-utils --extra full python job.py --export --ex
 
 ### SimEnv (requires GPU + data)
 
-Runs the job under the NVFLARE simulator with a local GPU. First download the reference dataset:
+Runs the job under the FLARE simulator with a local GPU. First download the reference dataset:
 
 ```bash
 make -C fl-tutorials download-xray-data   # pulls aicentreflip/flip-fl-base-test-data
@@ -133,7 +134,7 @@ uv run --project ../../../../flip-utils --extra full python job.py --n_clients 3
 
 ### Running against the FLIP stack
 
-The standalone NVFLARE submit path (`make -C fl-services/nvflare submit`) is **not wired** (it is
+The standalone FLARE submit path (`make -C fl-services/nvflare submit`) is **not wired** (it is
 admin-API based, unlike Flower's HTTP submit) — run locally via the simulator instead. To exercise
 the full platform path, upload the app files through the FLIP UI (or `make e2e_smoke`), where the
 FL API bundles the template and applies `config.json`'s `GLOBAL_ROUNDS` at submit time.

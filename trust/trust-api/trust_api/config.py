@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     TRUST_INTERNAL_SERVICE_KEY: str = ""
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
 
+    # Cohort-write authorisation (FLIP#857). data-access-api's snapshot create/delete routes
+    # require proof of possessing AES_KEY_BASE64 in addition to the trust-internal key. trust-api
+    # sends the SHA-256 of the key in this header when it forwards an approval-time snapshot
+    # request; fl-client cannot (it holds no AES key), which is what keeps researcher code from
+    # rewriting or deleting a project's frozen cohort. Header name must match data-access-api's
+    # COHORT_ADMIN_KEY_HEADER.
+    COHORT_ADMIN_KEY_HEADER: str = "X-Cohort-Admin-Key"
+
     # Polling configuration
     POLL_INTERVAL_SECONDS: int = 5  # How often to poll the hub for tasks (seconds)
 
@@ -81,6 +89,11 @@ class Settings(BaseSettings):
     XNAT_URL: str = "http://xnat-web:8080"
     OMOP_DB_HOST: str = "omop-db"
     OMOP_DB_PORT: int = 5432
+    # The fl-client image tag this deployment configured (compose: DOCKER_FL_TAG; the K8s
+    # chart: the tag flip-trust.imageTag resolves for the fl-client — its pin, else
+    # global.image.tag, else flClient.image.tag). The fl-client has no health endpoint, so this is how its
+    # build reaches the hub's Connection Status (FLIP#1204). Empty = not reported.
+    FL_CLIENT_IMAGE_TAG: str = ""
 
 
 # Eager load once (for app use)

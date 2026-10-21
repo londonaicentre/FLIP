@@ -42,6 +42,8 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
+# ...but the XNAT artifact roster (trust/xnat/README.md "Plugins") is source.
+!trust/xnat/artifacts.manifest
 *.spec
 
 # Installer logs
@@ -348,16 +350,16 @@ trust/.env.*
 !trust/.env.*.example
 !trust/.env.example
 
-# NVFLARE participant-kit trees synced from the hub's S3 bucket
+# FLARE participant-kit trees synced from the hub's S3 bucket
 # (s3://<aicentre-bucket>/fl-flare-participant-kits/<date>/net-1/services/<slot>/).
 # Contains client.key / client.crt — never commit.
 trust/fl_participant_kits/
 
-# Per-trust NVFLARE startup kits unpacked on a trust host (e.g. trust/fl-kit-gstt/net-1/
+# Per-trust FLARE startup kits unpacked on a trust host (e.g. trust/fl-kit-gstt/net-1/
 # services/Trust_1/). Same client.key / client.crt content — never commit.
 trust/fl-kit-*/
 
-# NVFLARE provisioning workspace left on a host by legacy in-deploy provisioning
+# FLARE provisioning workspace left on a host by legacy in-deploy provisioning
 # (deploy/workspace/net-*/ with state/cert.json + startup kits). Provisioning now
 # lives under fl-services/<backend>/provision/ (ignored further down this file) — never commit.
 deploy/workspace/
@@ -392,7 +394,6 @@ deploy/providers/AWS/REFACTORING.md
 
 # Email template preview files (generated locally for testing)
 deploy/providers/AWS/email_previews/
-deploy/providers/AWS/dev/.terraform.lock.hcl
 
 .claude/scheduled_tasks.lock
 pi-session-*.html
@@ -406,7 +407,7 @@ fl-services/nvflare/provision/workspace-prod/
 .test_data/
 .test_runs/
 
-# NVFLARE provisioned secrets — NEVER commit to version control
+# FLARE provisioned secrets — NEVER commit to version control
 **/signature.json
 **/fed_client.json
 **/fed_server.json
@@ -427,6 +428,10 @@ CONTEXT.md
 
 # Federated learning runtime directories (at repo root)
 jobs/
+# The dev object store's data (FLIP#1291): one directory per bucket, host-owned; a second
+# instance gets its own (`<instance>-object-store/`).
+object-store/
+*-object-store/
 
 trust/orthanc/orthanc-storage/
 
@@ -439,7 +444,7 @@ fl-services/nvflare/provision/workspace-prod/
 .test_data/
 .test_runs/
 
-# NVFLARE provisioned secrets — NEVER commit to version control
+# FLARE provisioned secrets — NEVER commit to version control
 **/signature.json
 **/fed_client.json
 **/fed_server.json
@@ -466,6 +471,7 @@ flip-utils/dist/
 # - the dataset tooling's uv.lock (intentionally not pinned to a strict lockfile)
 fl-tutorials/data/
 fl-tutorials/datasets/spleen/uv.lock
+fl-tutorials/datasets/prostate/uv.lock
 fl-tutorials/datasets/cxr/uv.lock
 fl-tutorials/datasets/synthea/uv.lock
 fl-tutorials/datasets/brain_mri/uv.lock
@@ -503,3 +509,6 @@ flip-utils/**/*.ts
 # Unanchored on purpose: the generator's --output-dir defaults to the current
 # directory, so the file lands wherever it is run from, not only in the chart dir.
 **/values-secrets.yaml
+
+# Galaxy roles (namespace.role) installed beside the shared trust-host roles (FLIP#1213)
+trust/deploy/ansible/roles/*.*/

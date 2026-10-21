@@ -4,12 +4,12 @@ Federated training of a small **multi-layer perceptron (MLP)** that predicts **t
 (T2DM) onset** from OMOP tabular features — patient demographics plus pre-diagnosis condition and
 visit history — on the **Flower** backend (`ClientApp` / `ServerApp`).
 
-This is the Flower twin of the NVFLARE
+This is the Flower twin of the FLARE
 [`ehr_risk_prediction`](../../nvflare/tabular_classification/ehr_risk_prediction) tutorial, and
 FLIP's first **tabular / EHR-only** example. The whole cohort arrives through `flip.get_dataframe`
 (arbitrary SQL over each trust's OMOP CDM database); **no imaging is fetched** — no Orthanc, no XNAT,
 no PACS pull, no data-enrichment step — and **CPU is enough** to train it. The data model, features,
-label, preprocessing and network are identical to the NVFLARE tutorial; see
+label, preprocessing and network are identical to the FLARE tutorial; see
 [its README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md) for the full
 treatment of those. This page focuses on the **Flower-specific mechanics** and how to run it.
 
@@ -23,12 +23,12 @@ app/
   server_app.py          # ServerApp: FedAvg loop + best-model save + results upload (from the standard template)
   strategy.py            # FedAvgWithClientMetrics (from the standard template)
   task.py                # single-epoch train/validate helpers
-  feature_engineering.py # shared byte-identical with the NVFLARE copy
-  models.py              # shared byte-identical with the NVFLARE copy — the MLP factory
+  feature_engineering.py # shared byte-identical with the FLARE copy
+  models.py              # shared byte-identical with the FLARE copy — the MLP factory
   config.json            # per-tutorial hyperparameters read at runtime
-  config.toml            # Flower run-config overrides applied by fl-api at submit
+  config.toml            # Flower run-config overrides applied by fl-api on a platform submit
 pyproject.toml           # flwr app definition + run-config defaults (incl. DP knobs)
-query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
+query.sql                # the OMOP cohort query (identical to the FLARE copy)
 ```
 
 `server_app.py` and `strategy.py` are copied byte-for-byte from the
@@ -44,12 +44,14 @@ query.sql                # the OMOP cohort query (identical to the NVFLARE copy)
   reads this at runtime. It is the only per-tutorial knob that rides through the FLIP upload flow,
   because the deployed bundle's `pyproject.toml` comes from the base template, not from here.
 - **`app/config.toml`** — Flower run-config overrides that fl-api-flower feeds to
-  `flwr run --run-config` at submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
+  `flwr run --run-config` on a platform submit: `num-server-rounds = 5` and `best-model-metric = "test_auroc"`.
+  A tutorial run (`run-tutorial`, or `make submit` on `fl-services/flower`) uses `pyproject.toml`'s values instead (FLIP#1432).
 
-> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — Flower
-> runtime-installs an app's declared deps and prepends them to `sys.path`, so declaring it would
-> shadow the in-image `/opt/flip-utils` copy the platform actually runs (FLIP#767). Pick up a
-> flip-utils change with `make build-fl FL_BACKEND=flower`.
+> `flip-utils` is deliberately **not** declared as a dependency in `pyproject.toml` — a local
+> `flwr run` still runtime-installs an app's declared deps and prepends them to `sys.path`, so
+> declaring it would pull a PyPI release over the flip-utils the run should use (FLIP#767). On the
+> platform nothing installs at run time (FLIP#1418) and the app imports the FL image's copy; pick
+> up a flip-utils change on the compose stacks with `make build-fl FL_BACKEND=flower`.
 
 ## The model and cohort
 
@@ -59,7 +61,7 @@ and condition counts), labelled with the first T2DM diagnosis (SNOMED `44054006`
 (median imputation + z-scoring) is fitted on each site's **local training split only**, so no fitted
 state crosses a trust boundary. Full details, including the feature table and the honest caveats of
 this teaching cohort, are in the
-[NVFLARE README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md#features-and-label).
+[FLARE README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md#features-and-label).
 
 ## Metrics and best-model selection
 
@@ -101,7 +103,7 @@ Override per run without editing the app: `flwr run . --run-config "dp-enabled=f
 
 ## Data
 
-Same Synthea-in-OMOP source as the NVFLARE tutorial (AWS Open Data Registry, anonymous HTTPS, ~5 MB,
+Same Synthea-in-OMOP source as the FLARE tutorial (AWS Open Data Registry, anonymous HTTPS, ~5 MB,
 fetched at run time, never committed).
 
 - **Local run** derives the CSV both SuperNodes mount:
@@ -120,25 +122,15 @@ fetched at run time, never committed).
 
 ## How to run
 
-### Local run (standalone Flower stack)
+### Local run (the flwr simulator)
 
-Brings up the standalone Flower compose stack (SuperLink + 2 SuperNodes + fl-api), submits the job,
-polls to completion and tears down — no imaging, CPU only:
+No SuperLink container, no SuperNodes, no fl-api, no Docker — `flwr` starts a local SuperLink of
+its own. No imaging, CPU only. Every site reads the same CSV and each `ClientApp` slices out its own
+`person_id`-modulo partition, so the run is genuinely federated off one file:
 
 ```bash
 make -C fl-tutorials download-synthea-data FL_BACKEND=flower           # once
 make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
-```
-
-Both SuperNodes read the same mounted CSV; each `ClientApp` slices out its own `person_id`-modulo
-partition, so the run is genuinely federated off one file.
-
-For the fast inner loop, the same app runs on the `flwr` simulator — no SuperLink container, no
-SuperNodes, no fl-api, no Docker; `flwr` starts a local SuperLink of its own — with the same
-partitioning:
-
-```bash
-make -C fl-tutorials sim-tutorial TUTORIAL=ehr_risk_prediction FL_BACKEND=flower
 ```
 
 ### On the platform (or `make e2e_smoke`)

@@ -1,0 +1,53 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# `ruff check` and `ruff format --check` over every tracked Python file, each against its nearest
+# ruff config. The service workflows lint only their own trees and only a few check formatting,
+# so this is the one run that reaches everything (deploy/providers/AWS, scripts/, trust/deploy/,
+# .github/tests/, docs/, fl-apps/, …). The files come from `git ls-files` rather
+# than ruff's own discovery, which skips anything gitignored; --force-exclude keeps a config's
+# deliberate excludes (flip-api's generated Alembic revisions).
+# No path filter: the run takes seconds, and a filtered gate is how files fell through before.
+# .github/tests/workflows/test_lint_python.py pins this shape.
+name: Python lint and format (ruff)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: ruff check + format (every tracked Python file)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff==0.14.7
+
+      - name: ruff check
+        run: git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff check --force-exclude --no-fix --output-format=github
+
+      # Runs even when the lint step failed, so one push reports both.
+      - name: ruff format --check
+        if: ${{ !cancelled() }}
+        run: git ls-files -z -- '*.py' '*.pyi' | xargs -0 ruff format --check --force-exclude

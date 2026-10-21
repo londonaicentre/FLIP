@@ -1,0 +1,64 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Release tag guard
+description: |
+  Refuse to publish release images for a stable v<X.Y.Z> tag whose commit is not on main.
+
+  Every image workflow builds at refs/tags/v*.*.* (FLIP#1204) — dispatched by release.yml for a
+  real release, triggered by the push for a hand-pushed one — so the twelve image workflows
+  publish one :v<X.Y.Z> per release. A tag push is not gated by branch protection: anyone with
+  write access can push a v* tag at any commit, and without this step that would publish
+  release-looking images, pinnable by a site, from code that was never released. Releases are
+  cut on main by release.yml; this step makes the image builds hold the same line.
+
+  Pre-release tags (v<X.Y.Z>-rc.N and other -<suffix> forms) are exempt: that is the
+  release-candidate path, where an admin tags a release PR head to build every image for
+  staging before the merge to main produces the stable tag. Who may create v* tags is left to
+  write access (there is no tag ruleset — GitHub cannot exempt the built-in Actions app from
+  one); this step only decides what a stable one must point at.
+
+  Ancestry is asked of the API (compare main...<sha>), not the clone: actions/checkout is a
+  depth-1 checkout, and a shallow clone cannot answer merge-base questions.
+
+runs:
+  using: composite
+  steps:
+    - name: Refuse a stable release tag that is not on main
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        TAG_REF: ${{ github.ref }}
+        TAG_NAME: ${{ github.ref_name }}
+        TAG_SHA: ${{ github.sha }}
+      run: |
+        case "$TAG_REF" in
+          refs/tags/v*) ;;
+          *) echo "not a release-tag push ($TAG_REF) — nothing to guard"; exit 0 ;;
+        esac
+        if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "::notice::$TAG_NAME is a pre-release tag — the release-candidate path; not required to be on main"
+          exit 0
+        fi
+        # compare/<base>...<head>: "behind" or "identical" means <head> is an ancestor of <base>.
+        status="$(gh api "repos/$GH_REPO/compare/main...$TAG_SHA" --jq '.status')" || {
+          echo "::error::could not compare $TAG_SHA against main (API error) — refusing to publish rather than guess"
+          exit 1
+        }
+        case "$status" in
+          behind|identical)
+            echo "✓ $TAG_NAME ($TAG_SHA) is on main — publishing release images" ;;
+          *)
+            echo "::error::$TAG_NAME points at $TAG_SHA, which is not on main (compare status: $status)."
+            echo "::error::Releases are cut on main by release.yml; a stable v tag elsewhere would publish release-looking images from unreleased code. For a release candidate use v<X.Y.Z>-rc.N."
+            exit 1 ;;
+        esac

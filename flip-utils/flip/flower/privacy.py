@@ -12,11 +12,11 @@
 
 """Client-side differential privacy for FLIP's Flower apps.
 
-FLIP's NVFLARE apps privatise every training result before it leaves the client, via the
+FLIP's FLARE apps privatise every training result before it leaves the client, via the
 ``PercentilePrivacy`` result filter wired into ``config_fed_client.json``. This module is the
 Flower counterpart: a ``Mod`` that clips the local update to a fixed L2 norm and adds calibrated
 Gaussian noise **on the SuperNode**, so the fl-server only ever receives a privatised update.
-Unlike the NVFLARE filter — percentile sparsification with no noise — this is a real
+Unlike the FLARE filter — percentile sparsification with no noise — this is a real
 (epsilon, delta) mechanism.
 
 The maths is Flower's own (``compute_clip_model_update`` and ``add_gaussian_noise_inplace`` from
@@ -26,7 +26,7 @@ directly:
 
 * **A config toggle.** Mods are constructed at import time, before ``run_config`` exists, so a bare
   ``LocalDpMod(...)`` bakes its parameters into the module source. Reading them from
-  ``context.run_config`` on each call gives the same ergonomics as the NVFLARE filter's ``off``
+  ``context.run_config`` on each call gives the same ergonomics as the FLARE filter's ``off``
   flag: DP-on and DP-off runs use an identical app, with no component added or removed.
 * **Integer buffers are passed through untouched.** Flower's ``clip_inputs_inplace`` scales each
   array in place by a float, which raises ``UFuncTypeError`` on an integer array the moment
@@ -35,7 +35,7 @@ directly:
   carries its own. Those counters are step counts rather than learned parameters, so only the
   floating-point arrays are clipped and noised.
 
-Usage — training only, mirroring the scope of the NVFLARE filter::
+Usage — training only, mirroring the scope of the FLARE filter::
 
     from flip.flower.privacy import flip_local_dp_mod
 
@@ -90,7 +90,7 @@ class LocalDpConfig:
 
     Attributes:
         enabled (bool): Whether to privatise the update at all. False makes the mod a pass-through,
-            mirroring the ``off`` flag on FLIP's NVFLARE ``PercentilePrivacy`` filter. Defaults to
+            mirroring the ``off`` flag on FLIP's FLARE ``PercentilePrivacy`` filter. Defaults to
             True — DP is on by default.
         clipping_norm (float): L2 norm the update is clipped to before noise is added. Defaults
             to 1.0.
@@ -185,7 +185,7 @@ def flip_local_dp_mod(msg: Message, context: Context, call_next: ClientAppCallab
     """
     # ``@app.train(mods=[...])`` already scopes this to training, but the guard makes the scope
     # structural for an app that instead registers the mod on the whole ClientApp: only training
-    # results are privatised, matching the NVFLARE filter's "train" task scope. Note that a query
+    # results are privatised, matching the FLARE filter's "train" task scope. Note that a query
     # reply CAN carry an ArrayRecord — an app that serves the model over query must not rely on
     # this mod to privatise it. Message types are "<category>" or "<category>.<action>", so
     # compare the category alone.

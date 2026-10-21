@@ -22,10 +22,10 @@ from flip.schemas import split_x_label
 
 
 class FlipAnalyticsBridge(FLComponent):
-    """Translates NVFLARE analytics events fired by Client API scripts into
+    """Translates FLARE analytics events fired by Client API scripts into
     FLIP's ``FlipEvents.SEND_RESULT`` federated events.
 
-    Trainer scripts written against the NVFLARE Client API publish metrics
+    Trainer scripts written against the FLARE Client API publish metrics
     through ``SummaryWriter`` / ``flare.log``. The ``ClientAPIExecutor`` (in-process mode)
     forwards those records onto the client process as ``ANALYTIC_EVENT_TYPE``
     events. This widget rewraps each record as a ``DataKind.METRICS`` DXO and
@@ -52,7 +52,7 @@ class FlipAnalyticsBridge(FLComponent):
         if analytic is None or analytic.value is None:
             return
 
-        # The NVFLARE Client API (SummaryWriter.add_scalar) exposes a tag, value, and step but no x-axis
+        # The FLARE Client API (SummaryWriter.add_scalar) exposes a tag, value, and step but no x-axis
         # label slot, so the x-label rides inside the tag as "<label>[@<x_label>]" (e.g.
         # "TRAIN_LOSS@epoch") — the same grammar Flower metric keys use. `step` becomes the x-coordinate
         # ('x_value'); the metric's provenance global round is stamped server-side (FLIP#148).

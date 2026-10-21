@@ -47,7 +47,7 @@ download-checkpoints:
 run: download-checkpoints sim
 
 # --- Export job config (no GPU needed) ---
-# Builds a complete NVFLARE job under ./fl_job/flip_evaluation/ including meta.json, app/config/, and
+# Builds a complete FLARE job under ./fl_job/flip_evaluation/ including meta.json, app/config/, and
 # app/custom/ (bundled flip/ package + staged app_files/ incl. the model.pt checkpoint).
 export: download-checkpoints
 	$(UV_RUN) python job.py \
@@ -56,7 +56,7 @@ export: download-checkpoints
 		--n_clients 2
 
 # --- SimEnv local simulation (requires GPU + data + checkpoint) ---
-# Runs the job under the NVFLARE simulator. Requires a GPU and the reference dataset
+# Runs the job under the FLARE simulator. Requires a GPU and the reference dataset
 # (run `make -C fl-tutorials download-spleen-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers

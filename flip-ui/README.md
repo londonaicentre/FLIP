@@ -38,9 +38,9 @@ make up
 
 The UI is accessible over plain HTTP at the port defined by `UI_PORT` in
 [`.env.development.example`](../.env.development.example): `http://localhost:<UI_PORT>`. Only a port the
-dev Cognito client registers as a browser origin works — take one from 44350–44359, since the shipped
-`443` is registered for `https` only and the dev server serves no TLS. See "Browser-usable UI ports" in
-[deploy/providers/AWS/dev/README.md](../deploy/providers/AWS/dev/README.md).
+local Keycloak realm registers as a browser origin works — take one from 44350–44359, since the shipped
+`443` is registered for `https` only and the dev server serves no TLS. See
+[deploy/keycloak/README.md](../deploy/keycloak/README.md).
 
 ### Staging and production (AWS)
 
@@ -114,16 +114,35 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 
 | Variable | Description |
 | --- | --- |
-| `AWS_COGNITO_USER_POOL_ID` | Cognito User Pool ID |
-| `AWS_COGNITO_APP_CLIENT_ID` | Cognito App Client ID |
+| `AUTH_BACKEND` | Identity provider the hub runs: `cognito` (default when unset — stag/prod) or `keycloak` (the dev stack). Must match flip-api's `AUTH_BACKEND`. |
+| `AWS_COGNITO_USER_POOL_ID` | Cognito User Pool ID (required when `AUTH_BACKEND=cognito`) |
+| `AWS_COGNITO_APP_CLIENT_ID` | Cognito App Client ID (required when `AUTH_BACKEND=cognito`) |
 | `AWS_REGION` | AWS region hosting the pool (default `eu-west-2`) |
+| `KEYCLOAK_PUBLIC_URL` | Base URL of Keycloak as the **browser** reaches it, e.g. `http://localhost:8081` (required when `AUTH_BACKEND=keycloak`; emitted as `window.KEYCLOAK_URL`) |
+| `KEYCLOAK_REALM` | Keycloak realm (required when `AUTH_BACKEND=keycloak`) |
+| `KEYCLOAK_CLIENT_ID` | Keycloak public client the UI signs in with (required when `AUTH_BACKEND=keycloak`) |
 | `CENTRAL_HUB_API_URL` | Full base URL of the flip-api backend, including `/api` |
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
 | `VITE_DEMO` | Selects the public Ark+ demo bundle (bypasses Cognito, offline Mirage API). **Never set this in the environment — see warning below**; it is inlined automatically by `npm run build:demo` / `npm run demo` (`--mode demo`). |
 
-Authentication is handled through [AWS Cognito](https://docs.aws.amazon.com/cognito/). A valid Cognito User Pool and
-Client ID are required for a production deployment.
+Authentication sits behind a provider seam ([`src/auth/`](src/auth/), FLIP#919): the store, router guard, axios
+interceptor and auth pages speak only the `AuthProvider` contract in `src/auth/provider.ts`, and `getAuthProvider()`
+picks the implementation once at boot from `window.AUTH_BACKEND`.
+
+- **Cognito** (`src/auth/cognito-provider.ts`, stag/prod) — [AWS Cognito](https://docs.aws.amazon.com/cognito/) through
+  `aws-amplify`, the only file allowed to import it (enforced by the `flip-ui/no-amplify-outside-provider` ESLint block).
+  A valid Cognito User Pool and Client ID are required for a production deployment. Every capability is on: temporary-
+  password change, TOTP challenge and in-app enrolment, code-by-email password reset, admin-triggered reset, global
+  sign-out.
+- **Keycloak** (`src/auth/keycloak-provider.ts`, the dev stack) — the OIDC Resource Owner Password grant against the
+  realm's token endpoint, no SDK and no redirect, so the same username/password form works. Tokens live in
+  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are all off by
+  design: the password grant cannot run Keycloak's required actions (forced password update, TOTP enrolment are
+  browser flows in Keycloak's own UI), and Keycloak answers a wrong password and a missing OTP with the same
+  `invalid_grant`, so an in-app TOTP step cannot be offered honestly. The pages link out to the Keycloak console
+  instead ("Forgot password?" on the login page, the admin "Reset Password" tooltip), and an account with a pending
+  required action gets a "Finish setting up your account in Keycloak" notice with a link.
 
 > **`VITE_LOCAL=true` and `VITE_DEMO=true` must never reach a production build.** Both flags are inlined by Vite at
 > build time and short-circuit the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enable a
@@ -292,15 +311,10 @@ the binary in the image matches the project config.
 
 ### Demo-video recording (live stack)
 
-[`cypress.demo.config.ts`](cypress.demo.config.ts) + [`test/cypress/demo/`](test/cypress/demo) are a separate,
-live-wired harness: unlike the functional and docs suites there is **no request mocking** — the six demo segments
-sign in through real Cognito and drive the running dev stack, so the recording is genuine end-to-end behaviour.
-They are driven one segment at a time by the orchestrator in `flip-api/tests/demo_video.py` (`make demo-video`
-from the repo root), which does the slow platform waits off-camera and finally crops + concatenates the segment
-mp4s via [`scripts/assemble-demo-video.sh`](scripts/assemble-demo-video.sh). The crop constants are shared with
-the docs-GIF pipeline (`scripts/videos-to-gifs.sh`) — keep viewport, `--window-size` and crop in lockstep. All
-recorder outputs under `test/cypress/demo/` (videos, screenshots, downloads, `state.json`, `out/`) are gitignored.
-See [`test/cypress/demo/README.md`](test/cypress/demo/README.md) for the full contract.
+The end-to-end demo video is not recorded with Cypress: `make demo-video` (repo root) drives the live dev stack
+with Playwright from `flip-api/tests/demo_video.py`. Only its final concatenation lives here,
+[`scripts/assemble-demo-video.sh`](scripts/assemble-demo-video.sh). See `flip-api/AGENTS.md` ("Demo Video
+Recorder").
 
 #### CI
 

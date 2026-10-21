@@ -27,6 +27,15 @@ endif
 # overwrite) still maps to staging here.
 ENV_MODE_PROD := $(or $(strip $(PROD)),stag)
 include ../../env_mode.mk
+
+# Goals that need no env file and call no AWS API. When every goal on the command line is one of
+# these, the parse-time env guards below stand aside, so a contributor without the gitignored
+# deploy env files can run them. Any other goal, alone or beside these, keeps every guard (FLIP#1440).
+# `override`, and trusting MAKECMDGOALS only when make set it, keep the switch out of reach of the
+# command line, MAKEFLAGS and the environment: one variable must not turn off the account guard.
+override STATIC_GOALS := lint fmt-check tflint-lint checkov-lint help
+_GOALS_FROM_OUTSIDE := $(or $(findstring environment,$(origin MAKECMDGOALS)),$(findstring command,$(origin MAKECMDGOALS)),$(findstring override,$(origin MAKECMDGOALS)))
+override STATIC_ONLY := $(if $(_GOALS_FROM_OUTSIDE),,$(if $(MAKECMDGOALS),$(if $(filter-out $(STATIC_GOALS),$(MAKECMDGOALS)),,yes)))
 MAIN_ENV_FILE=../../../$(ENV_FILE_NAME)
 
 # The trust node's two deployment shapes live beside the trust compose files, not in
@@ -63,7 +72,6 @@ _AWS_ENV := unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_
 
 # Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
 FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
-$(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
 
 # Logical AWS profile names. Defaults match the short-alias pattern recommended
 # in deploy/providers/AWS/README.md (operators add `[profile prod]` / `[profile stag]`
@@ -77,25 +85,14 @@ STAG_AWS_PROFILE ?= stag
 LZA_AWS_PROFILE ?= lza-prod
 LZA_STAG_AWS_PROFILE ?= lza-stag
 
-# Refuse to operate against an unintended AWS account. Profile name is the safety
-# guard because Make has no easy way to read the account ID without an `aws` call.
-# One knob per environment, looked up by ENV.
+# The AWS profile each environment expects, checked by the account guard in the env guards
+# below. Profile name is the safety guard because Make has no easy way to read the account ID
+# without an `aws` call. One knob per environment, looked up by ENV.
 _AWS_PROFILE_KNOB_production := PROD_AWS_PROFILE
 _AWS_PROFILE_KNOB_stag       := STAG_AWS_PROFILE
 _AWS_PROFILE_KNOB_lza-prod   := LZA_AWS_PROFILE
 _AWS_PROFILE_KNOB_lza-stag   := LZA_STAG_AWS_PROFILE
 EXPECTED_AWS_PROFILE := $($(_AWS_PROFILE_KNOB_$(ENV)))
-ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
-$(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
-endif
-# The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
-# there is no defaultable name for the staging VPC, so require it explicitly rather
-# than letting the data lookup fail with an opaque "no results" in the wrong account.
-ifeq ($(ENV),lza-stag)
-ifeq ($(LZA_VPC_NAME),)
-$(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
-endif
-endif
 
 ## SETTING VARIABLES FOR TERRAFORM
 # The environment class (prod|stag, from env_mode.mk). Used in main.tf to gate
@@ -113,22 +110,23 @@ export TF_VAR_lza_managed_network=$(if $(IS_LZA),true,false)
 # Name tag of the platform-managed VPC; only consulted on the LZA modes. Set
 # LZA_VPC_NAME in the env file to override the variables.tf default
 # (AWSAccelerator-eu-west-2-prod) — optional on PROD=lza if the platform template
-# keeps that name, mandatory on PROD=lza-stag (guard above).
+# keeps that name, mandatory on PROD=lza-stag (the env guards below).
 ifneq ($(LZA_VPC_NAME),)
 export TF_VAR_lza_vpc_name=$(LZA_VPC_NAME)
 endif
 
-# IAM permissions boundary (FLIP#1082): the boundary policy is owned by the ci/
-# root, which exists to fence the GitHub OIDC apply role and is applied only in
-# the accounts whose applies run through that pipeline. The LZA workload accounts
-# are applied by hand under the platform's admin permission set and never receive
-# ci/, so the policy does not exist there and attaching it fails every role
-# update with NoSuchEntity. Detach it on the LZA modes unless the env file says
-# otherwise — variables.tf documents "" as the correct value for an account where
-# ci/ has never been applied. Re-attach (drop this default) the day LZA applies
-# move to CI and ci/ is applied there first.
+# IAM permissions boundary (FLIP#1082, FLIP#1280). The self-contained modes take
+# the variables.tf default, AICentre-FLIPTerraformBoundary, declared by
+# modules/terraform_ci_bootstrap (through ci/ or a platform repository). The LZA
+# modes take the platform's AICentre-WorkloadRoleBoundary instead
+# (londonaicentre/lza#51): the accelerator deploys it to every workload account,
+# and an LZA SCP denies creating a role, or attaching or writing a policy onto
+# one, unless the role carries it. So on LZA it is not a choice — without it every
+# role change is denied, from a laptop or from CI. There the platform instantiates
+# the bootstrap module with its own boundary rather than FLIP's. An env file that
+# sets the variable still wins: `?=` only supplies the default.
 ifneq ($(IS_LZA),)
-export TF_VAR_iam_permissions_boundary_name ?=
+export TF_VAR_iam_permissions_boundary_name ?= AICentre-WorkloadRoleBoundary
 endif
 
 # Kit-file env suffix — the ENV token from env_mode.mk (.production / .stag /
@@ -155,6 +153,30 @@ export TF_VAR_ACCESS_LOGS_BUCKET_NAME=${ACCESS_LOGS_BUCKET_NAME}
 # trust/xnat/Makefile.
 unset_or_placeholder = $(if $(1),$(if $(filter <%>,$(patsubst <%,<%>,$(1))),placeholder,),unset)
 
+export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
+export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
+export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
+export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
+export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
+export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+# ── Fail-fast env guards ────────────────────────────────────────────────────────────────────
+# Parse-time refusals of a deploy env file that cannot work. They stand aside only when every
+# goal is static (STATIC_ONLY, at the top); any other goal keeps all of them.
+ifeq ($(STATIC_ONLY),)
+$(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
+# Refuse to operate against an unintended AWS account (the profile knobs above).
+ifneq ($(AWS_PROFILE),$(EXPECTED_AWS_PROFILE))
+$(error "For $(ENV) deployments, AWS_PROFILE must be set to '$(EXPECTED_AWS_PROFILE)' (override via $(_AWS_PROFILE_KNOB_$(ENV)))")
+endif
+# The variables.tf default VPC name is the PROD template (AWSAccelerator-eu-west-2-prod);
+# there is no defaultable name for the staging VPC, so require it explicitly rather
+# than letting the data lookup fail with an opaque "no results" in the wrong account.
+ifeq ($(ENV),lza-stag)
+ifeq ($(LZA_VPC_NAME),)
+$(error "For LZA staging deployments, LZA_VPC_NAME must be set in .env.lza-stag (the Name tag of the staging platform VPC)")
+endif
+endif
 # Fail fast with a useful message if the per-tenant bucket names are missing
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
@@ -165,13 +187,6 @@ $(if $(call unset_or_placeholder,$(FLIP_APP_BUNDLES_BUCKET_NAME)),$(error 🪶 F
 # AICENTRE_BUCKET_NAME is guarded on the same terms: `variable "AICENTRE_BUCKET_NAME"` has no
 # default, and it also names the bucket the FL participant-kit targets below read and write.
 $(if $(call unset_or_placeholder,$(AICENTRE_BUCKET_NAME)),$(error 🪶 AICENTRE_BUCKET_NAME must be set to a real bucket name in $(MAIN_ENV_FILE)),)
-export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
-export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
-export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
-export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
-export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
-export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # Fail fast with a useful message when these are missing — the variable is
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
@@ -179,23 +194,29 @@ export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 $(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
-# Per-job GPU resource spec forwarded to fl-api on ECS (mirrors compose). Default
-# 0 in variables.tf; set JOB_RESOURCE_SPEC_NUM_GPUS/…_MEM_PER_GPU_IN_GIB in the
-# env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
+endif
+
+# The GPUs fl-api on ECS writes into a job that declares none (mirrors compose).
+# Default 0 in variables.tf, and keep it there: jobs declare their own in their
+# meta.json (FLIP#70), and a non-zero default keeps every job off a CPU-only trust.
 # Export only when set: an unconditional export turns a missing env key into
 # TF_VAR_…="" and Terraform rejects the empty string for a number variable
 # instead of falling back to the variables.tf default.
 ifneq ($(JOB_RESOURCE_SPEC_NUM_GPUS),)
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
 endif
-ifneq ($(JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB),)
-export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
-endif
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
 
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
+# The FL API's own tag (FLIP#1283). Only CI's resolve-image-tags.sh sets it — a
+# release apply pins `v<X.Y.Z>@sha256:…`, and that digest is fl-api's, not
+# fl-server's. Exported only when set so every other caller keeps variables.tf's
+# empty default, which ecs_tasks.tf reads as "same tag as the FL server".
+ifneq ($(DOCKER_FL_API_TAG),)
+export TF_VAR_fl_api_image_tag=${DOCKER_FL_API_TAG}
+endif
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
 # One-shot EFS-provision utility image (default amazon/aws-cli from Docker Hub
 # in variables.tf). The LZA account has no internet egress, so .env.lza-prod
@@ -207,15 +228,10 @@ export TF_VAR_efs_provision_image=${EFS_PROVISION_IMAGE}
 endif
 export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
 export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
-export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
 export TF_VAR_fl_backend=${FL_BACKEND}
 export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
 export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
-export TF_VAR_DB_PORT=${DB_PORT}
-export TF_VAR_UI_PORT=${UI_PORT}
-export TF_VAR_API_PORT=${API_PORT}
-export TF_VAR_FL_API_PORT=${FL_API_PORT}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 # On-prem trust IPs allowed through the FL-server NLB security group. An HCL list
 # literal in the env file (LOCAL_TRUST_PUBLIC_IPS, default []); one ingress rule
@@ -233,7 +249,6 @@ export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 DEPLOY_TRUST_EC2 ?= true
 export TF_VAR_deploy_trust_ec2=$(DEPLOY_TRUST_EC2)
 export TF_VAR_AWS_REGION=${AWS_REGION}
-export TF_VAR_VPC_NAME=${VPC_NAME}
 # DNS availability (FLIP#749): the LZA account has no Route53 hosted zone until
 # the platform-side DNS migration lands, so .env.lza-prod sets MANAGE_DNS=false
 # for the first bring-up (default CloudFront domain, no custom certs/records) and
@@ -241,6 +256,14 @@ export TF_VAR_VPC_NAME=${VPC_NAME}
 # behaviour unchanged.
 MANAGE_DNS ?= true
 export TF_VAR_manage_dns=$(MANAGE_DNS)
+# Handing the public web name to another estate's CloudFront (FLIP#749 change
+# 2b). Separate from MANAGE_DNS on purpose: this account keeps its zone,
+# records and certificate, it just stops claiming the name so the receiving
+# edge's wildcard can win. Being its own switch is what lets the drop happen in
+# a chosen window instead of whenever a release reaches prod. Unset ⇒ false,
+# i.e. this account keeps serving the name — behaviour unchanged.
+RELEASE_WEB_ALIAS ?= false
+export TF_VAR_release_web_alias=$(RELEASE_WEB_ALIAS)
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
@@ -269,6 +292,9 @@ CENTRALHUB_ECS_SERVICES = flip-api fl-api-net-1 fl-server-net-1
 # recorded commit and rollback-centralhub can repoint at the previous revision. The
 # env-file tags (DOCKER_TAG / DOCKER_FL_TAG) remain the bootstrap-only defaults Terraform
 # bakes into a (re)created task-definition family — day-to-day deploys never touch them.
+# Since FLIP#1204 a release also publishes `:v<X.Y.Z>` on every image (built at the release
+# commit, no path filter), so `make deploy-centralhub PROD=true TAG=v<X.Y.Z>` deploys the
+# same tag the trust sites pin — one release identity across hub and sites.
 # Production-grade estates (legacy prod and PROD=lza, FLIP#749) track origin/main;
 # the staging ones (stag and PROD=lza-stag) origin/develop.
 DEPLOY_GIT_REF := $(if $(filter prod,$(ENV_CLASS)),origin/main,origin/develop)
@@ -300,6 +326,15 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 
 prettier: ## Format Terraform files. YAML files are formatted by the prettier pre-commit hook.
 	terraform fmt -recursive
+
+.PHONY: lint fmt-check tflint-lint
+lint: fmt-check tflint-lint checkov-lint ## terraform fmt, TFLint and Checkov, as validate_terraform.yml runs them — no env file or credentials needed (FLIP#1440)
+
+fmt-check: ## terraform fmt -check over this tree (CI's fmt step)
+	terraform fmt -check -recursive
+
+tflint-lint: ## Static tflint lint (terraform recommended preset + AWS ruleset, .tflint.hcl) — no credentials needed
+	bash scripts/tflint_lint.sh
 
 .PHONY: checkov-lint
 checkov-lint: ## Static checkov security lint (IAM policy content + promoted posture checks) over this Terraform tree — no credentials or init needed (FLIP#1052, FLIP#1058)
@@ -358,39 +393,6 @@ init: ## Initialize Terraform configuration
 .PHONY: print-tf-env
 print-tf-env: ## Print the resolved TF_VAR_* environment as KEY=value lines (for CI)
 	@env | grep '^TF_VAR_' | sort
-
-# Publish the EC2 keypair public key to SSM so CI can reproduce it.
-#
-# main.tf reads both aws_key_pair public keys with file(): `flip_keypair` from
-# `${var.flip_keypair}.pub` and `host_key` from `var.ec2_public_key_path` — both
-# resolve to ~/.ssh/host-aws.pub, and neither is behind a `count`. A runner
-# without that file plans a replacement of both keypairs, and because
-# `public_key` is ForceNew that ripples into aws_instance.ec2_instance.
-#
-# The bytes come from *state*, not from the operator's ~/.ssh, so what CI writes
-# is what Terraform already believes — a laptop file that has drifted (a
-# regenerated key, a different machine) would otherwise plan a replacement from
-# CI just as reliably.
-.PHONY: seed-ci-keypair-param
-seed-ci-keypair-param: ## Publish the aws_key_pair public key from state to SSM (for Terraform CI)
-	@set -eu; \
-	echo "🔑 Reading the keypair public key from state..."; \
-	state="$$($(_TF) state pull)"; \
-	host_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="host_key") | .instances[0].attributes.public_key // empty')"; \
-	flip_key="$$(printf '%s' "$$state" | jq -r '.resources[] | select(.type=="aws_key_pair" and .name=="flip_keypair") | .instances[0].attributes.public_key // empty')"; \
-	if [ -z "$$host_key" ]; then \
-		echo "❌ aws_key_pair.host_key is not in state — run 'make plan' first, or check AWS_PROFILE=$(AWS_PROFILE)"; exit 1; \
-	fi; \
-	if [ -n "$$flip_key" ] && [ "$$flip_key" != "$$host_key" ]; then \
-		echo "❌ aws_key_pair.flip_keypair and .host_key hold different public keys."; \
-		echo "   Both are read from ~/.ssh/host-aws.pub, so CI can only supply one file."; \
-		echo "   Reconcile them from a laptop before enabling Terraform CI."; exit 1; \
-	fi; \
-	$(_AWS_ENV) aws ssm put-parameter \
-		--name /flip/ci/host_aws_public_key \
-		--description "EC2 keypair public key, read by the Terraform CI workflows (FLIP#962)" \
-		--type String --overwrite --value "$$host_key" >/dev/null; \
-	echo "✅ Published /flip/ci/host_aws_public_key to the $(AWS_PROFILE) account."
 
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
@@ -485,7 +487,8 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	## review it before it applies. Also targets the flip-api task-role policy so
 	## the first rollout (which adds the ssm:GetParameter read) is self-contained;
 	## a no-op on every later run. Targeted on purpose: never run a full prod
-	## `make apply` for this (AMI drift can force-replace trust EC2s).
+	## `make apply` for this — it also applies whatever else is pending in the
+	## plan, FL task-definition replacements (which kill a running job) included.
 	##
 	## NOT literally one resource: -target applies the target's whole dependency
 	## closure, and the task-role policy references the bucket modules, whose
@@ -510,7 +513,7 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
 
 .PHONY: add-fl-kits
-add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; PROD=stag|true)
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (FLARE; PROD=stag|true)
 	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
 	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
 	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
@@ -691,7 +694,7 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## tag (builds are path-filtered — a merge that didn't touch a service publishes no new
 	## tag for it) aborts with nothing deployed. Non-ghcr.io registries skip the manifest
 	## check (LZA ECR pull-through cache, FLIP#749). The app container is selected BY NAME —
-	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.9
+	## never by index — matching the describe-tasks convention in TROUBLESHOOTING.md §1.8
 	## and staying robust to sidecar/ordering changes; only its image tag is swapped before
 	## registering the new revision. Task-def tags are carried over only when non-empty
 	## (register-task-definition rejects an empty tags array). Pass TAG=sha-<short7> to
@@ -703,8 +706,23 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	## FL job pickup) and wait for any running job to finish; GET /fl/quiesce reports both.
 	## On prod (PROD=true) the reminder also asks for interactive confirmation; stag proceeds
 	## without prompting so scripted staging deploys stay non-interactive.
+	## A release apply pins `repo:v<X.Y.Z>@sha256:…` (FLIP#1283) — the release name is still
+	## there to swap TAG onto, so the digest is stripped and the deploy proceeds; only a
+	## digest-ONLY reference (no tag at all) has nothing to replace and is refused.
 	@set -e; \
 	export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	base_ref() { \
+	  _img="$$1"; _svc="$$2"; _base="$$_img"; \
+	  case "$$_img" in \
+	  *@*) \
+	    _base="$${_img%@*}"; \
+	    case "$$_base" in \
+	    *:*) ;; \
+	    *) echo "❌ $$_svc: digest-only image '$$_img' — cannot swap a tag onto it" >&2; return 1;; \
+	    esac;; \
+	  esac; \
+	  printf '%s' "$$_base"; \
+	}; \
 	echo "⚠️  FL quiesce reminder (FLIP#770): replacing fl-server-net-1 kills any in-flight"; \
 	echo "   training run and strands its model at TRAINING_STARTED with its net stuck BUSY."; \
 	echo "   Before deploying: enable Deployment Mode (Admin → Deployments) — it pauses FL job"; \
@@ -725,9 +743,9 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  sha=$$(git rev-parse $(DEPLOY_GIT_REF)) || { echo "❌ Cannot resolve $(DEPLOY_GIT_REF)"; exit 1; }; \
 	  TAG="sha-$$(printf '%s' "$$sha" | cut -c1-7)"; \
 	fi; \
-	printf '%s' "$$TAG" | grep -Eq '^sha-[0-9a-f]{7}$$' || { \
-	  echo "❌ TAG '$$TAG' is not an immutable sha-<short7> tag (sha- followed by 7 hex chars)."; \
-	  echo "   deploy-centralhub only deploys CI-published sha tags — a mutable tag here would"; \
+	printf '%s' "$$TAG" | grep -Eq '^(sha-[0-9a-f]{7}|v[0-9]+\.[0-9]+\.[0-9]+)$$' || { \
+	  echo "❌ TAG '$$TAG' is not an immutable tag: sha-<short7> (7 hex chars) or a release v<X.Y.Z>."; \
+	  echo "   deploy-centralhub only deploys CI-published immutable tags — a mutable tag here would"; \
 	  echo "   defeat the revision audit trail. Omit TAG= to deploy the tip of $(DEPLOY_GIT_REF)."; \
 	  exit 1; }; \
 	echo "🚀 Deploying Central Hub ECS services in $(ECS_CLUSTER) at $$TAG..."; \
@@ -741,10 +759,8 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  case "$$image" in \
-	  *@*) echo "❌ $$service: digest-pinned image '$$image' — cannot swap a tag onto it"; exit 1;; \
-	  esac; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  base_image=$$(base_ref "$$image" "$$service") || exit 1; \
+	  new_image="$${base_image%:*}:$$TAG"; \
 	  case "$$new_image" in \
 	  ghcr.io/*) \
 	    repo=$${new_image#ghcr.io/}; repo=$${repo%:*}; \
@@ -808,7 +824,8 @@ deploy-centralhub: ## Deploy Central Hub ECS services at the env branch tip (new
 	  image=$$(printf '%s' "$$td_json" | jq -r --arg name "$$service" \
 	    '.taskDefinition.containerDefinitions[] | select(.name == $$name).image'); \
 	  [ -n "$$image" ] || { echo "❌ $$service: no container named '$$service' in $$current_td"; exit 1; }; \
-	  new_image="$${image%:*}:$$TAG"; \
+	  new_image=$$(base_ref "$$image" "$$service") || { warn_mixed; exit 1; }; \
+	  new_image="$${new_image%:*}:$$TAG"; \
 	  jq_prog='.taskDefinition.containerDefinitions |= map(if .name == $$name then .image = $$image else . end)'; \
 	  jq_prog="$$jq_prog | (.taskDefinition | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,"; \
 	  jq_prog="$$jq_prog .compatibilities, .registeredAt, .registeredBy, .deregisteredAt))"; \
@@ -860,8 +877,23 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	## the family — that is the documented bootstrap-tag path; re-run deploy-centralhub
 	## after it. The UI is NOT rolled back — re-run `make deploy-ui` from the matching
 	## commit if the UI must move too.
+	## On FLARE it first empties the fl-server's local/ on EFS and re-syncs the kit
+	## (scripts/reset-fl-server-local.sh, the efs-provision-certs task, a minute or two):
+	## since FLIP#1390 the fl-server writes local/flip__p_resources.json, and an older
+	## fl-server image cannot load it and fails to start. If that step fails nothing is
+	## rolled back. SKIP_FL_LOCAL_RESET=1 skips it, for when the file is already gone or
+	## the revision rolled back to is FLIP#1390 or later (it rewrites the file at start).
 	@set -e; \
 	unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	fl_server="$(firstword $(filter fl-server-net-%,$(CENTRALHUB_ECS_SERVICES)))"; \
+	if [ "$(FL_BACKEND)" = "nvflare" ] && [ -n "$$fl_server" ] && [ "$(SKIP_FL_LOCAL_RESET)" != "1" ]; then \
+	  ./scripts/reset-fl-server-local.sh $(ECS_CLUSTER) "$$fl_server" || { \
+	    echo "   Nothing has been rolled back. An fl-server image older than FLIP#1390 fails to start"; \
+	    echo "   while local/flip__p_resources.json is on EFS. Fix the step above and re-run, or remove"; \
+	    echo "   the file yourself (fl-services/nvflare/fl-server/README.md) and re-run with"; \
+	    echo "   SKIP_FL_LOCAL_RESET=1."; \
+	    exit 1; }; \
+	fi; \
 	echo "⏪ Rolling back Central Hub ECS services in $(ECS_CLUSTER)..."; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
 	  current_td=$$($(_AWS_ENV) aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
@@ -1104,6 +1136,24 @@ deploy-trust: check-trust-ec2-enabled ssh-config update-env stage-fl-kit ## Depl
 	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
 
+# Move the EC2 trust to a release, data intact (FLIP#1204). deploy-trust above is the
+# FIRST-INSTALL verb: its seed-trust-data step (run while the stack is down) re-seeds
+# OMOP/Orthanc on the host and its up-trust-ec2 runs xnat-reset over ssh. This target has none of that —
+# it drives trust/Makefile's upgrade-trust through the same ssh docker context (pull the
+# target tag, recreate what changed, redeploy XNAT without reset, converge its config).
+# TAG defaults to the release the hub runs; FORCE=1 allows a downgrade; YES=1 skips the
+# confirmation. The kit file read is this workstation's trust/.env.<KIT>.<env>, exactly as
+# deploy-trust evaluates compose here against the remote daemon. NUM_AVAILABLE_GPUS=0 pins the
+# fl-client to CPU as up-trust-ec2 does (the t3.xlarge has no GPU): on the command line it beats
+# a template kit's 1, dropping the GPU overlay and reaching compose's env over the --env-file.
+.PHONY: upgrade-trust-ec2
+upgrade-trust-ec2: check-trust-ec2-enabled ssh-config ## Move the EC2 trust to a release tag without re-seeding data (FLIP#1204)
+	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
+	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
+	@echo "⬆️  Upgrading Trust services on EC2 (KIT=$(KIT))..."
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust upgrade-trust KIT=$(KIT) PROD=${PROD} TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT) NUM_AVAILABLE_GPUS=0
+	@echo "✅ Trust upgrade complete!"
+
 .PHONY: provision-local-trust
 provision-local-trust: ## Provision the on-prem (local) trust host: install Docker + deps, stage the FL kit
 	## Run this ON the trust host. Configures the machine via Ansible (local connection) and
@@ -1147,7 +1197,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
-	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
+	  echo "  # Deploy the $(FL_KIT_SLOT) FLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
 	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit):" && \
 	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/transfer" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup/" && \
@@ -1155,7 +1205,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
 	  echo "  # this shell's own user so the container can read/write it:" && \
 	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
-	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
+	  echo "✅ $(FL_KIT_SLOT) FLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
@@ -1259,15 +1309,13 @@ ifneq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 endif
 	@echo ""
 	@echo "🗑️  DESTROYING:"
-	@echo "   • EC2 instances (flip, trust)"
-	@echo "   • RDS database (PostgreSQL)"
-	@echo "   • Security groups"
+	@echo "   • RDS database (PostgreSQL) — no final snapshot"
+	@echo "   • EC2 instances (flip, trust), their key pairs and instance role"
+	@echo "   • Security groups and the ALB"
+	@echo "   • SES email templates"
 ifeq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 	@echo "   • VPC"
 endif
-	@echo "   • ALB/NLB load balancers"
-	@echo "   • IAM roles and policies"
-	@echo "   • CloudWatch logs"
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
@@ -1298,9 +1346,10 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
-	## Does NOT edit the kit file. The admin populates trust/.env.<KIT> first:
-	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into trust/.env.<KIT>.
-	##   2. `make sync-trust-kit KIT=<slot> PROD=true` (from repo root) — fills Hub-shared.
+	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
+	##   1. register-trusts, sync-trust-kit and generate-xnat-credentials with KIT=<CODE>
+	##      PROD=true fill trust/.env.<CODE>.production;
+	##   2. `cp trust/.env.<CODE>.production trust/.env.<slot>` (<slot> = its FL_KIT_SLOT).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one

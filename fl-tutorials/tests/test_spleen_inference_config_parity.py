@@ -151,8 +151,13 @@ def _training_params(transform: mt.MapTransform) -> dict[str, Any]:
         return {"axcodes": transform.ornt_transform.axcodes}
     if isinstance(transform, mt.ScaleIntensityRanged):
         scaler = transform.scaler
-        return {"a_min": scaler.a_min, "a_max": scaler.a_max, "b_min": scaler.b_min, "b_max": scaler.b_max,
-                "clip": scaler.clip}
+        return {
+            "a_min": scaler.a_min,
+            "a_max": scaler.a_max,
+            "b_min": scaler.b_min,
+            "b_max": scaler.b_max,
+            "clip": scaler.clip,
+        }
     if isinstance(transform, mt.CropForegroundd):
         return {"source_key": transform.source_key, "allow_smaller": transform.cropper.allow_smaller}
     if isinstance(transform, mt.Spacingd):

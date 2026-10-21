@@ -133,6 +133,7 @@ name: Access Requests
         title="Enroll User"
         :dialog="showEnrollModal"
         :roles="allRoles?.roles ?? []"
+        :trusts="trusts ?? []"
         :initial-name="selectedRequest?.fullName ?? ''"
         :initial-email="selectedRequest?.email ?? ''"
         @close-modal="showEnrollModal = false"
@@ -160,6 +161,7 @@ import AiSkeleton from "@/components/AiSkeleton/AiSkeleton.vue";
 import RegisterUserModal from "@/partials/users/RegisterUserModal.vue";
 import { routeChange } from "@/router";
 import { getRoles } from "@/services/role-service";
+import { getTrustStatuses } from "@/services/trust-service";
 import { AccessRequestStatus,
     getAccessRequests,
     IAccessRequestRecord,
@@ -206,6 +208,12 @@ const { data: allRoles } = useSWRV(
         shouldRetryOnError: false
     }
 );
+
+// The trusts a Trust Admin can be enrolled for (FLIP#1258).
+const { data: trusts } = useSWRV("/trust", getTrustStatuses, {
+    dedupingInterval: 5_000,
+    shouldRetryOnError: false
+});
 
 const requests = computed<IAccessRequestRecord[]>(() => requestData.value?.data ?? []);
 

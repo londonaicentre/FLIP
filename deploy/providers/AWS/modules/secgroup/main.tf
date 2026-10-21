@@ -16,6 +16,7 @@ resource "aws_security_group" "security_group" {
   name        = var.name
   vpc_id      = var.vpc_id
   description = var.description
+  tags        = var.tags
 
   # Egress is managed ENTIRELY through this inline attribute — never attach an
   # `aws_security_group_rule` with `type = "egress"` to a security group built by

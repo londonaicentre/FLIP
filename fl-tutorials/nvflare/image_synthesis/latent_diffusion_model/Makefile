@@ -24,7 +24,7 @@ UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 # make comment inside the `export` directive and silently un-export every variable listed after it.
 ifneq ("$(wildcard .env.app)","")
 include ./.env.app
-export $(shell sed -e '/^[[:space:]]*#/d' -e 's/=.*//' ./.env.app)
+export $(shell sed -e '/^[[:space:]]*\#/d' -e 's/=.*//' ./.env.app)
 endif
 
 # --- Local-run knobs ---
@@ -114,7 +114,7 @@ export:
 
 # --- SimEnv local simulation (requires GPU + data + checkpoint) ---
 # Runs the job under the NVFLARE simulator. Requires a GPU and the reference
-# dataset (run `make -C fl-tutorials download-xray-data` first).
+# dataset (run `make -C fl-tutorials download-brain-mri-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.

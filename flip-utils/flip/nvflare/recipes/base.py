@@ -11,7 +11,7 @@
 
 """Common base for the FLIP recipes.
 
-Exists for one reason: NVFLARE 2.9.0 renamed ``Recipe.job`` to the private ``Recipe._job``
+Exists for one reason: FLARE 2.9.0 renamed ``Recipe.job`` to the private ``Recipe._job``
 (``nvflare/recipe/spec.py``) with no public alias. ``recipe.job`` is FLIP's own published
 surface — every tutorial's ``job.py`` calls ``stage_app_files(recipe.job)`` — so the rename is
 absorbed here rather than pushed out to tutorial authors, and rather than scattering reads of a
@@ -25,7 +25,7 @@ from nvflare.recipe.spec import Recipe
 class FlipRecipe(Recipe):
     """A :class:`~nvflare.recipe.spec.Recipe` that keeps ``job`` public.
 
-    Subclass this instead of NVFLARE's ``Recipe`` directly. If a future NVFLARE restores a public
+    Subclass this instead of FLARE's ``Recipe`` directly. If a future FLARE restores a public
     ``job``, this property becomes redundant but stays harmless — it returns the same object.
     """
 

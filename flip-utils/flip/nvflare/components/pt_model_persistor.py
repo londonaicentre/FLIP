@@ -12,6 +12,7 @@
 
 import json
 import os
+from typing import Any
 
 import torch
 from nvflare.apis.fl_context import FLContext
@@ -25,7 +26,7 @@ from flip.nvflare.runtime import get_flip_model_id
 class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
     """Persistor that seeds the initial global model from a large backbone checkpoint
     staged **server-side**, so the checkpoint never has to be bundled into the job app
-    (bundling a ~759 MiB file collapses NVFLARE's app-deploy to remote clients).
+    (bundling a ~759 MiB file collapses FLARE's app-deploy to remote clients).
 
     The backbone filename is declared in the job's ``config.json`` under ``SERVER_CHECKPOINT``.
     At load time it is resolved in this order:
@@ -48,7 +49,21 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
     object), so it is a safe drop-in for the shared standard base app.
     """
 
-    def __init__(self, model: torch.nn.Module | None = None, model_id: str = "", **kwargs) -> None:
+    def __init__(
+        self,
+        model: torch.nn.Module | str | dict[str, Any] | None = None,
+        model_id: str = "",
+        **kwargs: Any,
+    ) -> None:
+        """
+        Args:
+            model: As for the stock persistor — a model object, a component id, or the
+                ``{"path": ..., "args": ...}`` component config a recipe passes (FLARE's
+                ComponentBuilder instantiates it before this persistor is built at run time).
+            model_id: FLIP model ID (legacy path); when empty it is resolved lazily from the app's
+                config.json via ``get_flip_model_id``.
+            **kwargs: Passed through to ``PTFileModelPersistor``.
+        """
         super().__init__(model=model, **kwargs)
         self._model_id_arg = model_id
 
@@ -87,8 +102,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
 
         self.log_error(
             fl_ctx,
-            f"SERVER_CHECKPOINT '{checkpoint}' not found at '{bundled_path}' "
-            f"(LOCAL_DEV; shared-volume fetch skipped).",
+            f"SERVER_CHECKPOINT '{checkpoint}' not found at '{bundled_path}' (LOCAL_DEV; shared-volume fetch skipped).",
             fire_event=True,
         )
         return None

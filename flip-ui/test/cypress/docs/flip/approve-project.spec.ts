@@ -24,20 +24,14 @@ describe("docs: approve project", () => {
         cy.intercept("GET", "/projects/" + projectId, { fixture: "project/getStagedProjectOneTrust" }).as("getProject");
         cy.intercept("POST", `/step/project/${projectId}/approve`, {
             statusCode: 200,
-            body: [
-                {
-                    id: "SOMEIDFORKCH",
-                    name: "Kings College Hospital",
-                    endpoint: "localhost"
-                }
-            ]
+            body: { projectStatus: "APPROVED" }
         }).as("approveProject");
 
         cy.visit("/project/" + projectId);
         cy.wait("@getProject");
         cy.demoPause();
 
-        cy.getBySel("trust-staged-0").demoClick();
+        cy.getBySel("trust-approve-0").demoClick();
         cy.demoPause();
 
         cy.getBySel("approve-project-btn").demoClick();

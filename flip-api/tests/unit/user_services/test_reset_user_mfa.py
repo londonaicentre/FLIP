@@ -19,6 +19,8 @@ from fastapi import HTTPException, status
 from flip_api.db.models.user_models import PermissionRef, UsersAudit
 from flip_api.user_services.reset_user_mfa import reset_mfa_for_user
 
+USERNAME = "user@example.com"
+
 
 @pytest.fixture
 def mock_db():
@@ -36,7 +38,7 @@ def token_id():
     return str(uuid.uuid4())
 
 
-def test_permission_denied(mock_request, mock_db, user_id, token_id):
+def test_permission_denied(fake_idp, mock_request, mock_db, user_id, token_id):
     """Caller without CAN_MANAGE_USERS gets 403."""
     with (
         patch("flip_api.user_services.reset_user_mfa.has_permissions") as mock_has_permissions,
@@ -45,59 +47,48 @@ def test_permission_denied(mock_request, mock_db, user_id, token_id):
         mock_has_permissions.return_value = False
 
         with pytest.raises(HTTPException) as exc_info:
-            reset_mfa_for_user(user_id, mock_request, mock_db, token_id)
+            reset_mfa_for_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
         assert f"User with ID: {token_id} was unable to manage users" in exc_info.value.detail
         mock_has_permissions.assert_called_once_with(token_id, [PermissionRef.CAN_MANAGE_USERS], mock_db)
         mock_logger.error.assert_called_once()
+        fake_idp.get_username.assert_not_called()
+        fake_idp.reset_mfa.assert_not_called()
 
 
-def test_user_not_found(mock_request, mock_db, user_id, token_id):
-    """Target user missing from Cognito bubbles get_username's 404 and skips the reset call."""
-    user_pool_id = "test-user-pool-id"
+def test_user_not_found(fake_idp, mock_request, mock_db, user_id, token_id):
+    """Target user missing from the identity provider bubbles get_username's 404 and skips the reset call."""
+    fake_idp.get_username.side_effect = HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"User with ID {user_id} is not registered.",
+    )
 
-    with (
-        patch("flip_api.user_services.reset_user_mfa.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.reset_user_mfa.get_user_pool_id") as mock_get_user_pool_id,
-        patch("flip_api.user_services.reset_user_mfa.get_username") as mock_get_username,
-        patch("flip_api.user_services.reset_user_mfa.reset_user_mfa") as mock_reset_user_mfa,
-    ):
+    with patch("flip_api.user_services.reset_user_mfa.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_user_pool_id.return_value = user_pool_id
-        mock_get_username.side_effect = HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with ID {user_id} is not registered.",
-        )
 
         with pytest.raises(HTTPException) as exc_info:
-            reset_mfa_for_user(user_id, mock_request, mock_db, token_id)
+            reset_mfa_for_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
         assert f"User with ID {user_id} is not registered." in exc_info.value.detail
-        mock_get_username.assert_called_once_with(str(user_id), user_pool_id)
-        mock_reset_user_mfa.assert_not_called()
+        fake_idp.get_username.assert_called_once_with(user_id)
+        fake_idp.reset_mfa.assert_not_called()
+        mock_db.add.assert_not_called()
 
 
-def test_mfa_reset_successfully(mock_request, mock_db, user_id, token_id):
-    """Happy path: Cognito MFA is cleared, an audit row is written, endpoint returns empty dict."""
-    user_pool_id = "test-user-pool-id"
-    username = "user@example.com"
+def test_mfa_reset_successfully(fake_idp, mock_request, mock_db, user_id, token_id):
+    """Happy path: provider-side MFA is cleared, an audit row is written, endpoint returns empty dict."""
+    fake_idp.get_username.return_value = USERNAME
 
-    with (
-        patch("flip_api.user_services.reset_user_mfa.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.reset_user_mfa.get_user_pool_id") as mock_get_user_pool_id,
-        patch("flip_api.user_services.reset_user_mfa.get_username") as mock_get_username,
-        patch("flip_api.user_services.reset_user_mfa.reset_user_mfa") as mock_reset_user_mfa,
-    ):
+    with patch("flip_api.user_services.reset_user_mfa.has_permissions") as mock_has_permissions:
         mock_has_permissions.return_value = True
-        mock_get_user_pool_id.return_value = user_pool_id
-        mock_get_username.return_value = username
 
-        result = reset_mfa_for_user(user_id, mock_request, mock_db, token_id)
+        result = reset_mfa_for_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
 
         assert result == {}
-        mock_reset_user_mfa.assert_called_once_with(username, user_pool_id)
+        fake_idp.get_username.assert_called_once_with(user_id)
+        fake_idp.reset_mfa.assert_called_once_with(USERNAME)
 
         mock_db.add.assert_called_once()
         audit_row = mock_db.add.call_args[0][0]
@@ -109,62 +100,51 @@ def test_mfa_reset_successfully(mock_request, mock_db, user_id, token_id):
         mock_db.commit.assert_called_once()
 
 
-def test_audit_commit_failure_after_cognito_reset_surfaces_500(mock_request, mock_db, user_id, token_id):
-    """Cognito MFA was cleared; the audit-row write then failed.
+def test_audit_commit_failure_after_mfa_reset_surfaces_500(fake_idp, mock_request, mock_db, user_id, token_id):
+    """Provider-side MFA was cleared; the audit-row write then failed.
 
     The user-visible state already changed, so swallowing the error would
     silently lose the audit. Surface 500 with a generic detail and log the
-    Cognito state change at exception level so an operator can reconcile.
+    provider-side state change at exception level so an operator can reconcile.
     """
-    user_pool_id = "test-user-pool-id"
-    username = "user@example.com"
+    fake_idp.get_username.return_value = USERNAME
+    mock_db.commit.side_effect = Exception("DB unavailable")
 
     with (
         patch("flip_api.user_services.reset_user_mfa.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.reset_user_mfa.get_user_pool_id") as mock_get_user_pool_id,
-        patch("flip_api.user_services.reset_user_mfa.get_username") as mock_get_username,
-        patch("flip_api.user_services.reset_user_mfa.reset_user_mfa") as mock_reset_user_mfa,
         patch("flip_api.user_services.reset_user_mfa.logger") as mock_logger,
     ):
         mock_has_permissions.return_value = True
-        mock_get_user_pool_id.return_value = user_pool_id
-        mock_get_username.return_value = username
-        mock_db.commit.side_effect = Exception("DB unavailable")
 
         with pytest.raises(HTTPException) as exc_info:
-            reset_mfa_for_user(user_id, mock_request, mock_db, token_id)
+            reset_mfa_for_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         # User-visible detail does NOT echo SQLAlchemy text.
         assert "DB unavailable" not in exc_info.value.detail
-        # Cognito reset DID happen; the audit-write failure is logged with rich context.
-        mock_reset_user_mfa.assert_called_once_with(username, user_pool_id)
+        # The reset DID happen; the audit-write failure is logged with rich context.
+        fake_idp.reset_mfa.assert_called_once_with(USERNAME)
         mock_db.rollback.assert_called_once()
         mock_logger.exception.assert_called()
 
 
-def test_internal_server_error(mock_request, mock_db, user_id, token_id):
-    """Unexpected errors from Cognito bubble up as HTTP 500."""
-    user_pool_id = "test-user-pool-id"
-    username = "user@example.com"
+def test_internal_server_error(fake_idp, mock_request, mock_db, user_id, token_id):
+    """Unexpected errors from the identity provider bubble up as HTTP 500."""
+    fake_idp.get_username.return_value = USERNAME
+    fake_idp.reset_mfa.side_effect = Exception("boom")
 
     with (
         patch("flip_api.user_services.reset_user_mfa.has_permissions") as mock_has_permissions,
-        patch("flip_api.user_services.reset_user_mfa.get_user_pool_id") as mock_get_user_pool_id,
-        patch("flip_api.user_services.reset_user_mfa.get_username") as mock_get_username,
-        patch("flip_api.user_services.reset_user_mfa.reset_user_mfa") as mock_reset_user_mfa,
         patch("flip_api.user_services.reset_user_mfa.logger") as mock_logger,
     ):
         mock_has_permissions.return_value = True
-        mock_get_user_pool_id.return_value = user_pool_id
-        mock_get_username.return_value = username
-        mock_reset_user_mfa.side_effect = Exception("boom")
 
         with pytest.raises(HTTPException) as exc_info:
-            reset_mfa_for_user(user_id, mock_request, mock_db, token_id)
+            reset_mfa_for_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert exc_info.value.detail == "Failed to reset user MFA"
         # Ensure the raw exception string is NOT leaked to the client.
         assert "boom" not in exc_info.value.detail
         mock_logger.exception.assert_called_once()
+        mock_db.add.assert_not_called()

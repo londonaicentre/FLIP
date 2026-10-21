@@ -35,16 +35,16 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 def ping_pacs_endpoint(headers: XNATAuthHeaders, pacs_id: int | None = None) -> PacsStatus:
     """Pings the imaging provider (PACS) to check if it is reachable.
 
-    Two routes, one handler. Without an id the PACS is resolved from XNAT the same way the import
-    path resolves it — the id XNAT assigns at registration is not knowable in advance, so a caller
-    that only wants to know whether the trust's PACS answers should not have to guess one. A stale
-    cached id (the PACS was re-registered while imaging-api stayed up) is dropped and re-resolved
-    once rather than pinning the probe to a dead registration. The by-id route stays for callers
-    that genuinely mean a specific registration.
+    Two routes, one handler. Without an id the PACS pinged is XNAT's default query/retrieve PACS,
+    read from XNAT on every call exactly as the import path reads it — the id XNAT assigns at
+    registration is not knowable in advance, so a caller that only wants to know whether the trust's
+    PACS answers should not have to guess one, and a PACS re-registered under a new id is pinged at
+    that id on the next call. The by-id route stays for callers that genuinely mean a specific
+    registration.
 
     Args:
         headers (XNATAuthHeaders): XNAT authentication headers.
-        pacs_id (int | None): PACS ID to ping. Resolved from XNAT when omitted.
+        pacs_id (int | None): PACS ID to ping. XNAT's default query/retrieve PACS when omitted.
 
     Returns:
         PacsStatus: Status of the PACS system.

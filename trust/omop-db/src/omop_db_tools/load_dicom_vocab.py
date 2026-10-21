@@ -117,71 +117,77 @@ def dicom_vocabulary_loaded(engine: Engine) -> bool:
 def load_vocabulary_metadata(engine: Engine) -> None:
     """Insert the DICOM VOCABULARY / CONCEPT_CLASS scaffolding concepts (2128000000-2)."""
     print("Ensuring DICOM vocabulary and concept class concepts exist (2128000000-2)...")
-    df_vocab_concept = pd.DataFrame([
-        {
-            "concept_id": 2128000000,
-            "concept_name": "Digital Imaging and Communications in Medicine (DICOM)",
-            "domain_id": "Metadata",
-            "vocabulary_id": "Vocabulary",
-            "concept_class_id": "Vocabulary",
-            "standard_concept": None,
-            "concept_code": "DICOM",
-            "valid_start_date": date(1970, 1, 1),
-            "valid_end_date": date(2099, 12, 31),
-            "invalid_reason": None,
-        },
-        {
-            "concept_id": 2128000001,
-            "concept_name": "DICOM Attributes",
-            "domain_id": "Metadata",
-            "vocabulary_id": "Concept Class",
-            "concept_class_id": "Concept Class",
-            "standard_concept": None,
-            "concept_code": "DICOM",
-            "valid_start_date": date(1970, 1, 1),
-            "valid_end_date": date(2099, 12, 31),
-            "invalid_reason": None,
-        },
-        {
-            "concept_id": 2128000002,
-            "concept_name": "DICOM Value Sets",
-            "domain_id": "Metadata",
-            "vocabulary_id": "Concept Class",
-            "concept_class_id": "Concept Class",
-            "standard_concept": None,
-            "concept_code": "DICOM",
-            "valid_start_date": date(1970, 1, 1),
-            "valid_end_date": date(2099, 12, 31),
-            "invalid_reason": None,
-        },
-    ])
+    df_vocab_concept = pd.DataFrame(
+        [
+            {
+                "concept_id": 2128000000,
+                "concept_name": "Digital Imaging and Communications in Medicine (DICOM)",
+                "domain_id": "Metadata",
+                "vocabulary_id": "Vocabulary",
+                "concept_class_id": "Vocabulary",
+                "standard_concept": None,
+                "concept_code": "DICOM",
+                "valid_start_date": date(1970, 1, 1),
+                "valid_end_date": date(2099, 12, 31),
+                "invalid_reason": None,
+            },
+            {
+                "concept_id": 2128000001,
+                "concept_name": "DICOM Attributes",
+                "domain_id": "Metadata",
+                "vocabulary_id": "Concept Class",
+                "concept_class_id": "Concept Class",
+                "standard_concept": None,
+                "concept_code": "DICOM",
+                "valid_start_date": date(1970, 1, 1),
+                "valid_end_date": date(2099, 12, 31),
+                "invalid_reason": None,
+            },
+            {
+                "concept_id": 2128000002,
+                "concept_name": "DICOM Value Sets",
+                "domain_id": "Metadata",
+                "vocabulary_id": "Concept Class",
+                "concept_class_id": "Concept Class",
+                "standard_concept": None,
+                "concept_code": "DICOM",
+                "valid_start_date": date(1970, 1, 1),
+                "valid_end_date": date(2099, 12, 31),
+                "invalid_reason": None,
+            },
+        ]
+    )
     safe_insert("CONCEPT", df_vocab_concept, engine)
 
     print("Loading DICOM VOCABULARY...")
-    df_vocab = pd.DataFrame([
-        {
-            "vocabulary_id": "DICOM",
-            "vocabulary_name": "Digital Imaging and Communications in Medicine (NEMA)",
-            "vocabulary_reference": "https://www.dicomstandard.org/current",
-            "vocabulary_version": "NEMA Standard PS3",
-            "vocabulary_concept_id": 2128000000,
-        }
-    ])
+    df_vocab = pd.DataFrame(
+        [
+            {
+                "vocabulary_id": "DICOM",
+                "vocabulary_name": "Digital Imaging and Communications in Medicine (NEMA)",
+                "vocabulary_reference": "https://www.dicomstandard.org/current",
+                "vocabulary_version": "NEMA Standard PS3",
+                "vocabulary_concept_id": 2128000000,
+            }
+        ]
+    )
     safe_insert("VOCABULARY", df_vocab, engine)
 
     print("Loading DICOM CONCEPT_CLASS...")
-    df_classes = pd.DataFrame([
-        {
-            "concept_class_id": "DICOM Attributes",
-            "concept_class_name": "DICOM Attributes",
-            "concept_class_concept_id": 2128000001,
-        },
-        {
-            "concept_class_id": "DICOM Value Sets",
-            "concept_class_name": "DICOM Value Sets",
-            "concept_class_concept_id": 2128000002,
-        },
-    ])
+    df_classes = pd.DataFrame(
+        [
+            {
+                "concept_class_id": "DICOM Attributes",
+                "concept_class_name": "DICOM Attributes",
+                "concept_class_concept_id": 2128000001,
+            },
+            {
+                "concept_class_id": "DICOM Value Sets",
+                "concept_class_name": "DICOM Value Sets",
+                "concept_class_concept_id": 2128000002,
+            },
+        ]
+    )
     safe_insert("CONCEPT_CLASS", df_classes, engine)
 
 

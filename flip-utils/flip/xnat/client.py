@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT_SECONDS = 60
 """Per-request timeout. Generous, because label volumes can be tens of megabytes."""
 
+_SCAN_ID_COLUMN = "xnat:imagescandata/id"
+"""The experiment-listing column that joins each image session to its scans, one row per scan."""
+
 
 @dataclass(frozen=True)
 class XnatScan:
@@ -193,7 +196,10 @@ class XnatClient:
         )
 
     def list_scans(self, project_id: str) -> list[XnatScan]:
-        """List every scan in an XNAT project.
+        """List every scan in an XNAT project, in one request.
+
+        The global image-session listing with a scan column returns one row per scan, and an empty scan id
+        for a session without scans. The project-scoped listing would silently leave out DX sessions.
 
         Args:
             project_id (str): The XNAT project id.
@@ -202,26 +208,29 @@ class XnatClient:
             list[XnatScan]: One entry per scan, keyed by accession id (the experiment label).
 
         Raises:
-            XnatError: If any underlying XNAT request fails.
+            XnatError: If the XNAT request fails.
         """
-        experiments = self._get_result_rows(
-            f"/data/projects/{project_id}/experiments",
-            {"columns": "ID,label,subject_ID"},
+        rows = self._get_result_rows(
+            "/data/experiments",
+            {
+                "project": project_id,
+                "xsiType": "xnat:imageSessionData",
+                "columns": f"ID,label,subject_ID,{_SCAN_ID_COLUMN}",
+            },
         )
 
-        scans: list[XnatScan] = []
-        for experiment in experiments:
-            experiment_id = str(experiment.get("ID", ""))
-            for scan in self._get_result_rows(f"/data/experiments/{experiment_id}/scans"):
-                scans.append(
-                    XnatScan(
-                        accession_id=str(experiment.get("label", "")),
-                        subject_id=str(experiment.get("subject_ID", "")),
-                        experiment_id=experiment_id,
-                        scan_id=str(scan.get("ID", "")),
-                    )
-                )
+        scans = [
+            XnatScan(
+                accession_id=str(row.get("label", "")),
+                subject_id=str(row.get("subject_ID", "")),
+                experiment_id=str(row.get("ID", "")),
+                scan_id=str(row[_SCAN_ID_COLUMN]),
+            )
+            for row in rows
+            if row.get(_SCAN_ID_COLUMN)
+        ]
 
+        experiments = {scan.experiment_id for scan in scans}
         logger.info(f"Found {len(scans)} scan(s) across {len(experiments)} experiment(s) in project {project_id}")
         return scans
 
@@ -271,26 +280,21 @@ class XnatClient:
             local_path (Path): The file to upload.
             target_filename (str): Name the file should take in XNAT.
             overwrite (bool): Replace an existing file of that name. Off by default so a re-run
-                never silently rewrites enrichment that is already in place. Enforced by listing
-                the resource first, because XNAT's PUT overwrites unconditionally.
+                never silently rewrites enrichment that is already in place.
 
         Raises:
-            XnatError: If the upload fails, or if the file exists and ``overwrite`` is False.
+            XnatError: If the upload fails, or if XNAT kept an existing file of that name.
         """
-        # A bare PUT replaces an existing file silently — which is what imaging-api's own uploader
-        # assumes, and why it pre-checks with a GET (`services/upload.py::check_file_exists_in_xnat`).
-        # XNAT has no "overwrite" query parameter, so the guarantee this argument makes can only be
-        # kept by asking first. Without this, overwrite=False protected nothing at this level.
-        if not overwrite and target_filename in self.list_resource_files(scan, resource):
-            raise XnatError(f"File already exists on XNAT: {target_filename}")
+        # The PUT is its own existence check: see _kept_existing_file.
+        query = "inbody=true&overwrite=true" if overwrite else "inbody=true"
 
         # Escape the caller-supplied path segments. A "/" would redirect the write to another
-        # resource, and a "?" or "#" would truncate the URL and silently drop inbody=true —
+        # resource, and a "?" or "#" would truncate the URL and silently drop the query —
         # requests splits on those before it quotes anything, and leaves them in its safe set.
         url = (
             f"{self.server}/data/projects/{quote(project_id, safe='')}/subjects/{quote(scan.subject_id, safe='')}/"
             f"experiments/{quote(scan.experiment_id, safe='')}/scans/{quote(scan.scan_id, safe='')}/"
-            f"resources/{quote(resource, safe='')}/files/{quote(target_filename, safe='')}?inbody=true"
+            f"resources/{quote(resource, safe='')}/files/{quote(target_filename, safe='')}?{query}"
         )
 
         try:
@@ -304,11 +308,28 @@ class XnatClient:
         except OSError as err:
             raise XnatError(f"Could not read {local_path}: {err}") from err
 
-        # 409 is kept as a distinct message for the race the pre-check cannot close, and because a
-        # server that does reject duplicates should say so clearly rather than as a bare status.
-        if response.status_code == 409:
-            raise XnatError(f"File already exists on XNAT: {target_filename}")
         if response.status_code not in (200, 201):
             raise XnatError(f"Upload of {local_path} returned {response.status_code}: {response.text}")
+        if _kept_existing_file(response):
+            raise XnatError(f"File already exists on XNAT: {target_filename}")
 
         logger.info(f"Uploaded {local_path.name} as {target_filename} to scan {scan.scan_id} ({scan.accession_id})")
+
+
+def _kept_existing_file(response: requests.Response) -> bool:
+    """Whether XNAT kept an existing file instead of writing the upload.
+
+    Without ``overwrite=true``, XNAT keeps an existing file and still answers 200, naming it under
+    ``duplicates`` in a JSON body that it serves as ``text/html``.
+
+    Args:
+        response (requests.Response): XNAT's response to a file PUT.
+
+    Returns:
+        bool: True if the body lists a duplicate, False for a clean write (an empty or non-JSON body).
+    """
+    try:
+        body = json.loads(response.content)
+    except ValueError:
+        return False
+    return isinstance(body, dict) and bool(body.get("duplicates"))

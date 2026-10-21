@@ -29,6 +29,7 @@
 #   TRUST_DATA_VERSION (the dataset tag) HF_TRUST_DATA_REPO PROJECTS SOURCE_TRUST NUM_TRUSTS
 #   SEED_OMOP / SEED_ORTHANC ("true" to run that half) VOCAB_DICOM_BUNDLE WORK_DIR (scratch)
 #   FORCE_DICOM_VOCAB ("1" to reload the DICOM vocabulary over one that reports itself present)
+#   UV_EXCLUDE_NEWER (the dependency cooldown; default the repository's "3 days")
 set -euo pipefail
 
 WORK_DIR="${WORK_DIR:-/work}"
@@ -47,6 +48,9 @@ SEEDER="${SEEDER:-https://raw.githubusercontent.com/londonaicentre/FLIP/${FLIP_R
 
 mkdir -p "${WORK_DIR}"
 export UV_CACHE_DIR="${WORK_DIR}/uv-cache" UV_LINK_MODE=copy
+# Both installs below resolve with no lock, and uv reads no [tool.uv] for a --with requirement or
+# a fetched script, so the 72-hour cooldown (CONTRIBUTING "Dependency cooldown") is applied here.
+export UV_EXCLUDE_NEWER="${UV_EXCLUDE_NEWER:-3 days}"
 
 tools() { uv run --no-project --with "${TOOLS_SPEC}" "$@"; }
 

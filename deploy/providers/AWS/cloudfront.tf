@@ -17,7 +17,10 @@
 #
 # Users continue to hit the canonical subdomain
 # (stag.flip.aicentre.co.uk / app.flip.aicentre.co.uk); that A-record
-# (aws_route53_record.alb in main.tf) aliases this CloudFront distribution.
+# (aws_route53_record.alb in main.tf) aliases this CloudFront distribution —
+# until RELEASE_WEB_ALIAS hands the name to another estate's edge, after which
+# the record still points here but this distribution no longer answers for the
+# name and serves only *.cloudfront.net. See local.serves_public_name.
 #
 # CloudFront serves the UI static bundle from S3 (default behavior) and
 # forwards /api/* to the (internal) ALB via aws_cloudfront_vpc_origin —
@@ -379,25 +382,55 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
 # drop ALL public access — CloudFront reads it via OAC, exactly like the
 # flip-ui bucket.
 #
-# The bucket is deliberately not Terraform-managed: its lifecycle is manual
-# (bundles are staged by hand per demo release) and it must survive
-# `make destroy`. Terraform manages the access edges only: the
-# public-access block, the OAC-scoped bucket policy, and the CloudFront
-# origin + /ark_demo/assets/* behavior on the main distribution.
-# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty.
+# Two shapes, by estate (FLIP#1199):
+#
+#   * LEGACY (self-contained account) — the bucket is NOT Terraform-managed.
+#     It predates this stack, its lifecycle is manual (bundles are staged by
+#     hand per demo release) and it must survive `make destroy`, so it is
+#     adopted through a `data` lookup and Terraform manages only the access
+#     edges: the public-access block, the OAC-scoped bucket policy, and the
+#     CloudFront origin + /ark_demo/assets/* behavior on the in-account
+#     distribution.
+#
+#   * LZA (platform-managed estate) — there is no bucket to adopt and no
+#     in-account CloudFront to attach an origin to (the workload distribution
+#     is gated off; the web edge lives in the networking account). Terraform
+#     therefore CREATES the bucket through the same `flip_s3_bucket` module as
+#     every other FLIP bucket (`module.flip_demo_assets_bucket`, services.tf)
+#     — versioned, access-logged, prevent_destroy, public access blocked —
+#     and grants `s3:GetObject` on `ark_demo/assets/*` to the edge
+#     distribution via cross-account OAC, exactly as the flip-ui bucket does.
+#     The OAC, the response-headers policies and the cache behaviours are the
+#     edge stack's to declare (aicentre-lza-iac); none of them can be created
+#     in this account, so all five resources below stay legacy-only there.
+#
+# Everything is gated on DEMO_ASSETS_BUCKET_NAME being non-empty in both
+# shapes. Note the asymmetry when it is cleared: on legacy that silently
+# removes four access-edge resources; on LZA it would propose destroying a
+# managed bucket, which `prevent_destroy` turns into a loud apply failure.
+#
+# No live estate runs the legacy shape any more — aws-prod was repointed at
+# LZA prod on 2026-10-06 and the legacy prod account (which held
+# flipprod-demo-assets) was closed the same day. The branch stays because
+# lza_managed_network = false remains the self-contained shape a standalone
+# account gets; collapsing the two onto flip_s3_bucket is a follow-up.
 ############################
 
 locals {
   demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""
+  # The bucket already exists and is adopted, not created: legacy only.
+  demo_assets_external = local.demo_assets_enabled && !var.lza_managed_network
+  # Terraform creates and owns the bucket: LZA only. Consumed by services.tf.
+  demo_assets_managed = local.demo_assets_enabled && var.lza_managed_network
 }
 
 data "aws_s3_bucket" "demo_assets" {
-  count  = local.demo_assets_enabled ? 1 : 0
+  count  = local.demo_assets_external ? 1 : 0
   bucket = var.DEMO_ASSETS_BUCKET_NAME
 }
 
 resource "aws_cloudfront_origin_access_control" "demo_assets" {
-  count                             = local.demo_assets_enabled ? 1 : 0
+  count                             = local.demo_assets_external ? 1 : 0
   name                              = "demo-assets-${var.flip_alb_subdomain}"
   description                       = "OAC for the Ark+ demo assets S3 bucket"
   origin_access_control_origin_type = "s3"
@@ -409,7 +442,7 @@ resource "aws_cloudfront_origin_access_control" "demo_assets" {
 # any more — a leftover public-read policy (how the demo assets were served
 # before this behavior existed) is replaced by aws_s3_bucket_policy below.
 resource "aws_s3_bucket_public_access_block" "demo_assets" {
-  count                   = local.demo_assets_enabled ? 1 : 0
+  count                   = local.demo_assets_external ? 1 : 0
   bucket                  = data.aws_s3_bucket.demo_assets[0].id
   block_public_acls       = true
   block_public_policy     = true
@@ -422,7 +455,7 @@ resource "aws_s3_bucket_public_access_block" "demo_assets" {
 # anything else staged in the bucket stays private. No s3:ListBucket: a
 # missing key returns 403 instead of an XML key listing.
 resource "aws_s3_bucket_policy" "demo_assets" {
-  count  = local.demo_assets_enabled ? 1 : 0
+  count  = local.demo_assets_external ? 1 : 0
   bucket = data.aws_s3_bucket.demo_assets[0].id
 
   policy = jsonencode({
@@ -434,8 +467,12 @@ resource "aws_s3_bucket_policy" "demo_assets" {
       Action    = "s3:GetObject"
       Resource  = "${data.aws_s3_bucket.demo_assets[0].arn}/ark_demo/assets/*"
       Condition = {
+        # Legacy-only resource (see demo_assets_external above), so this is the
+        # in-account distribution unconditionally. The LZA equivalent — the
+        # cross-account grant to the edge distribution — is carried by
+        # module.flip_demo_assets_bucket's own policy in services.tf.
         StringEquals = {
-          "AWS:SourceArn" = var.lza_managed_network ? var.lza_web_edge_distribution_arn : aws_cloudfront_distribution.flip_ui[0].arn
+          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui[0].arn
         }
       }
     }]
@@ -507,7 +544,22 @@ locals {
   # distribution references neither the app buckets' CORS nor Cognito.
   # On LZA the workload distribution is gated off -- the UI origin is the
   # networking account's edge distribution (FLIP#749 WP3).
+  #
+  # Deliberately NOT keyed to local.serves_public_name below: after the alias is
+  # released the browser origin is still the public name, the other estate's
+  # edge just serves it. Keying this to the gate would rewrite the Cognito
+  # callback URLs and the bucket CORS to *.cloudfront.net mid-cutover and break
+  # sign-in, with nothing red in Terraform. Guarded in
+  # tests/test_web_alias_release.py.
   ui_origin = var.manage_dns ? "https://${var.flip_alb_subdomain}" : var.lza_managed_network ? "https://${var.lza_web_edge_domain}" : "https://${aws_cloudfront_distribution.flip_ui[0].domain_name}"
+
+  # Whether THIS account's distribution still answers for the public name.
+  # Alternate domain names are unique across every AWS account and an exact
+  # alias beats a wildcard, so this flag — not DNS — decides who serves the name
+  # while two estates overlap. The viewer certificate follows it rather than
+  # manage_dns: CloudFront permits a custom certificate only alongside an alias.
+  # Runbook: README.md, "Handing the public name over".
+  serves_public_name = var.manage_dns && !var.release_web_alias
 }
 
 # Custom origin-request policy for /api/*. The managed AllViewer policy
@@ -848,7 +900,7 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
 # Do not relax it to match; tests/test_csp_enforcing.py pins the difference.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
-  count   = local.demo_assets_enabled ? 1 : 0
+  count   = local.demo_assets_external ? 1 : 0
   name    = "flip-ui-ark-demo-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo SPA at ${var.flip_alb_subdomain}/ark_demo/"
 
@@ -906,7 +958,7 @@ resource "aws_cloudfront_response_headers_policy" "ark_demo_spa" {
 # rendered as a document on the same origin as the real app.
 resource "aws_cloudfront_response_headers_policy" "ark_demo_assets" {
   # checkov:skip=CKV_AWS_259:HSTS is sent (1y max-age, includeSubDomains); preload deliberately withheld until the domain is submitted to the browser preload list
-  count   = local.demo_assets_enabled ? 1 : 0
+  count   = local.demo_assets_external ? 1 : 0
   name    = "flip-ui-ark-demo-assets-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the public Ark+ demo download bundles at ${var.flip_alb_subdomain}/ark_demo/assets/"
 
@@ -989,8 +1041,10 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # No aliases without DNS (FLIP#749): CloudFront only allows the default
   # viewer cert when no aliases are set, and an alias without a record pointing
   # at it is unreachable anyway. The distribution serves *.cloudfront.net until
-  # MANAGE_DNS flips to true.
-  aliases    = var.manage_dns ? [var.flip_alb_subdomain] : []
+  # MANAGE_DNS flips to true — and gives the name up again when
+  # RELEASE_WEB_ALIAS flips to true, which is how the name moves to another
+  # estate's distribution (see local.serves_public_name).
+  aliases    = local.serves_public_name ? [var.flip_alb_subdomain] : []
   comment    = "flip-ui at ${var.flip_alb_subdomain}"
   web_acl_id = aws_wafv2_web_acl.flip_ui_cloudfront[0].arn
 
@@ -1017,7 +1071,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # Ark+ demo download assets (see the demo-assets section above). Present
   # only when DEMO_ASSETS_BUCKET_NAME is set.
   dynamic "origin" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       domain_name              = data.aws_s3_bucket.demo_assets[0].bucket_regional_domain_name
       origin_id                = "s3-demo-assets"
@@ -1064,7 +1118,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # every demo-assets download would be swallowed by the SPA behavior and
   # served (wrongly) from the flip-ui bucket instead of the assets bucket.
   dynamic "ordered_cache_behavior" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       path_pattern               = "/ark_demo/assets/*"
       target_origin_id           = "s3-demo-assets"
@@ -1084,7 +1138,7 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   # prefix-aware spa_rewrite function for deep-link fallback. Must be
   # listed after "/ark_demo/assets/*" — see the precedence note above.
   dynamic "ordered_cache_behavior" {
-    for_each = local.demo_assets_enabled ? [1] : []
+    for_each = local.demo_assets_external ? [1] : []
     content {
       path_pattern               = "/ark_demo/*"
       target_origin_id           = "s3-flip-ui"
@@ -1114,13 +1168,18 @@ resource "aws_cloudfront_distribution" "flip_ui" {
     prefix          = "standard-logs/"
   }
 
+  # Keyed to local.serves_public_name, not manage_dns: CloudFront permits a
+  # custom viewer certificate only while the distribution carries an alias, so
+  # releasing the alias has to take the certificate with it in the same apply.
+  # The certificate resource itself stays — it is gated on manage_dns and is
+  # what makes putting the alias back a single re-apply rather than a re-issue.
   viewer_certificate {
-    acm_certificate_arn            = var.manage_dns ? aws_acm_certificate_validation.flip_cloudfront[0].certificate_arn : null
-    cloudfront_default_certificate = var.manage_dns ? null : true
-    ssl_support_method             = var.manage_dns ? "sni-only" : null
+    acm_certificate_arn            = local.serves_public_name ? aws_acm_certificate_validation.flip_cloudfront[0].certificate_arn : null
+    cloudfront_default_certificate = local.serves_public_name ? null : true
+    ssl_support_method             = local.serves_public_name ? "sni-only" : null
     # AWS forces TLSv1 while the default *.cloudfront.net certificate is in
     # use; pinning TLSv1.2_2021 there would just plan perpetual drift.
-    minimum_protocol_version = var.manage_dns ? "TLSv1.2_2021" : "TLSv1"
+    minimum_protocol_version = local.serves_public_name ? "TLSv1.2_2021" : "TLSv1"
   }
 
   tags = {

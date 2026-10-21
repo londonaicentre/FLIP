@@ -32,6 +32,9 @@ export interface IFLStatusClients {
 export interface IFLStatus {
     name: string;
     fl_backend?: "nvflare" | "flower";
+    // false when the hub got no status for this net (its FL API or FL server is down) or no
+    // clients are connected; the net then arrives with an empty `clients` list.
+    online?: boolean;
     clients: IFLStatusClients[]
 }
 
