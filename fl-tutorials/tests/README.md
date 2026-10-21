@@ -111,7 +111,8 @@ radiographs while the model was being fed the transpose.
 ## What it runs
 
 The environment is **flip-utils'** (`flip-utils[full]` — monai, pydicom, torch, timm, sklearn),
-which is what the FL images give these apps at runtime. There is deliberately no `pyproject.toml`
+which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib) for
+the image-synthesis tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
 here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml`
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
 shared environment matching the runtime is both cheaper and more faithful.
