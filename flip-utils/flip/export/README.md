@@ -22,7 +22,7 @@ cannot affect a training run and the FL runtime carries no deployment dependenci
 This subpackage requires PyTorch, which ships in the `full` extra rather than the base install
 (`pip install "flip-utils[full]"`); importing `flip.export` without it raises `ModuleNotFoundError`
 with that instruction. Full walkthrough:
-[`docs/source/working-with-flip-apps/package-model-as-map.rst`](../../../docs/source/working-with-flip-apps/package-model-as-map.rst).
+[`docs/source/working-with-flip-apps/wrap-model-for-deployment.rst`](../../../docs/source/working-with-flip-apps/wrap-model-for-deployment.rst).
 Consumer: [`map-apps/`](../../../map-apps/README.md) (the MAP templates a bundle is packaged into).
 
 ## Two bundle forms — a real trade, not a preference
@@ -98,10 +98,10 @@ torchscript` is consumable by both MAP templates; a directory bundle only by `cl
   packaging does not call the Central Hub, so every field is caller-supplied rather than discovered.
 - Checkpoint reading (`flip.export.checkpoint`): `load_checkpoint(path, allow_pickle=False)` loads a
   `.pt` file; `state_dict_from(data)` and `describe_checkpoint(data, path) -> CheckpointFacts`
-  normalise either on-disk shape FLIP produces — NVFLARE's persistence format (a `model` key plus
+  normalise either on-disk shape FLIP produces — FLARE's persistence format (a `model` key plus
   optional `train_conf`/`meta_props`, as `PTFileModelPersistor` writes `FL_global_model.pt` and
   `best_FL_global_model.pt`) or a bare state dict (as carried by user-uploaded evaluation
-  checkpoints) — via NVFLARE's own `PTModelPersistenceFormatManager`, so reading stays faithful to
+  checkpoints) — via FLARE's own `PTModelPersistenceFormatManager`, so reading stays faithful to
   how FLIP itself reads a checkpoint. `load_app_model(app_dir)` instantiates the architecture from
   `models.py::get_model()`; `load_weights_into_app_model(checkpoint, app_dir, allow_pickle=False)`
   loads the checkpoint's weights into it with `strict=True` and returns the model in eval mode —
@@ -110,7 +110,7 @@ torchscript` is consumable by both MAP templates; a directory bundle only by `cl
 
 ## Where checkpoints come from
 
-`export_bundle` reads whatever `PTFileModelPersistor` (NVFLARE) or the equivalent Flower staging
+`export_bundle` reads whatever `PTFileModelPersistor` (FLARE) or the equivalent Flower staging
 path already wrote — this package does not train or produce checkpoints itself, only reads and
 repackages one that FL training already produced and flip-api already staged or uploaded to S3.
 

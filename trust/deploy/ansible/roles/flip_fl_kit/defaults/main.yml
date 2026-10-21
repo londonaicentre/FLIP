@@ -32,11 +32,11 @@ flip_group: ubuntu
 #               (package-onprem-trust-kit.sh), and nothing wipes.
 #   none      — only ensure fl_kit_dir exists (a play that delivers the kit another way).
 
-# precreate: the slot whose NVFLARE service tree is laid down. On-prem hosts
+# precreate: the slot whose FLARE service tree is laid down. On-prem hosts
 # conventionally take Trust_2; a different slot means a different kit file value too.
 fl_kit_precreate_slot: Trust_2
 
-# s3: the slot this host was assigned by the hub at registration. NVFLARE names its
+# s3: the slot this host was assigned by the hub at registration. FLARE names its
 # participant kits after the slot, and the prod compose mounts
 # net-1/services/${FL_KIT_SLOT}/ — so staging must follow trust_num rather than
 # assume the first slot. A cloud trust can hold any slot: the hub allocates from

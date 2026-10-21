@@ -57,7 +57,7 @@ build:
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of
 # this environment's FL kit slot pool, so the kit covers every slot the hub can hand
 # out: a trust staged into slot N fetches keys/supernode_credentials_N, and the
-# NVFLARE-side staging guard now fails loudly when its slot's material is missing.
+# FLARE-side staging guard now fails loudly when its slot's material is missing.
 # Getting it wrong is expensive rather than fiddly — there is no add-a-node path
 # (unlike nvflare's `provision --add_client`), because a re-run regenerates the CA and
 # invalidates every node already holding credentials. FL_KIT_SLOT_NAMES is a JSON

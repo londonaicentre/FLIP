@@ -18,7 +18,7 @@ secures them. A Flower network is a long-running **SuperLink** (server) that sev
 long-running **SuperNode**s (clients) connect to, plus a thin `fl-api` that the Central
 Hub drives. `fl-base` holds the shared base image the others build on.
 
-Unlike NVFLARE (which mints per-participant *startup kits*), Flower provisioning generates
+Unlike FLARE (which mints per-participant *startup kits*), Flower provisioning generates
 **TLS certificates** for secure SuperLink↔SuperNode↔CLI communication and **SuperNode
 authentication key pairs** — the Flower equivalent of the per-trust identity. See the
 upstream how-tos for the underlying mechanics:
@@ -129,7 +129,7 @@ provision/creds/net-<N>/
 How many key pairs: `make provision` mints one per entry in this environment's `FL_KIT_SLOT_NAMES`,
 falling back to 2 where no pool is named (a dev env file). A trust staged into slot *N* fetches
 `keys/supernode_credentials_N`, so a kit that stops short of the pool leaves the later slots unable
-to start — and there is no add-a-node path, unlike NVFLARE's `provision --add_client`: a re-run
+to start — and there is no add-a-node path, unlike FLARE's `provision --add_client`: a re-run
 regenerates the CA and invalidates every node already holding credentials. Override with
 `NUM_SUPERNODES=<n>` (or `FLOWER_NUM_SUPERNODES=<n>` when calling the script directly).
 

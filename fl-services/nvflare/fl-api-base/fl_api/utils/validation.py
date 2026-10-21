@@ -76,12 +76,6 @@ def bundle_url_allowed_origins() -> set[tuple[str, str, int]]:
         set[tuple[str, str, int]]: One ``(scheme, host, port)`` per entry. Empty when the variable is unset or
         holds only separators.
 
-    The pre-#1291 ``BUNDLE_URL_ALLOWED_HOSTS`` (bare hosts, https on 443 implied) is still read, as
-    ``https://<host>`` origins: the rename is a flag day between image and environment, and an ECS deploy
-    that swaps only the image (``deploy-centralhub TAG=…``) or only the environment must not leave the list
-    empty — "any public host" — with nothing but a warning. The deployed environments emit both names for one
-    release; the old one goes in a follow-up.
-
     Raises:
         ValueError: If an entry is not a bare origin (wrong scheme, no host, a path, query, fragment or
             userinfo, or an unparseable port). Each app's startup hook parses the list, so a malformed value
@@ -89,9 +83,7 @@ def bundle_url_allowed_origins() -> set[tuple[str, str, int]]:
     """
     default_ports = {"http": 80, "https": 443}
     origins: set[tuple[str, str, int]] = set()
-    legacy_hosts = [host.strip() for host in os.getenv("BUNDLE_URL_ALLOWED_HOSTS", "").split(",") if host.strip()]
-    entries = [f"https://{host}" for host in legacy_hosts] + os.getenv("BUNDLE_URL_ALLOWED_ORIGINS", "").split(",")
-    for raw in entries:
+    for raw in os.getenv("BUNDLE_URL_ALLOWED_ORIGINS", "").split(","):
         entry = raw.strip()
         if not entry:
             continue

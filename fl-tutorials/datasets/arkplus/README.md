@@ -13,7 +13,7 @@ limitations under the License.
 
 # arkplus
 
-Chest X-ray splits backing the three Ark+ tutorials (NVFLARE), sourced from the HF dataset
+Chest X-ray splits backing the three Ark+ tutorials (FLARE), sourced from the HF dataset
 `aicentreflip/tutorials-arkplus-cxr-classification`: the TRAIN splits (`site1`, `site2`) back
 `arkplus_fine_tuning`; the HOLD-OUT splits (`site1_holdoff`, `site2_holdoff`) back the two
 evaluation tutorials.

@@ -39,14 +39,10 @@ ports, bind dirs) always survive a re-run.
   (`EXPECTED_TRUST_ID` / `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER`) and the Hub-shared block are
   upserted unconditionally, the latter under a sentinel header added once on first write. Writes
   every kit file `0600`.
-- **`distribute_trust_kits.py`** — writes trust kit files from `register_trust`'s JSON output.
-  `--target PATH` mode writes a single kit (object or one-element array) to an explicit path; it
-  is what every caller uses — the dev `register-trust` Makefile pipe
-  (`--target trust/.env.<CODE>.<env>`) and `deploy/providers/AWS/scripts/register-trusts.sh` for
-  stag/prod alike. Array mode (the
-  default without `--target`) reads a JSON array of kits on stdin and writes each to the legacy
-  slot-named `trust/.env.<fl_kit_slot>`, seeding a host-local profile from the matching
-  `.example` on first write; nothing in the repo invokes it any more.
+- **`distribute_trust_kits.py`** — writes a trust kit file from `register_trust`'s JSON output:
+  one kit (object or one-element array) on stdin to the required `--target PATH` — the dev
+  `register-trust` Makefile pipe (`--target trust/.env.<CODE>.<env>`) and
+  `deploy/providers/AWS/scripts/register-trusts.sh` for stag/prod alike.
 - **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> HUB=<env>`) — refreshes only the
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
@@ -108,14 +104,14 @@ workflow; the other two are CI-only:
   rewriting `uv.lock` with no warning worth noticing.
 - **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that
   `safe_join` and `validate_bundle_url` (the SSRF and path-traversal guards in front of the
-  server-side bundle fetch) stay byte-identical between the NVFLARE and Flower fl-api services.
+  server-side bundle fetch) stay byte-identical between the FLARE and Flower fl-api services.
   They're intentionally separate copies (different Docker build contexts, uv projects, and
   images), so a fix applied to one and not the other would silently leave the second vulnerable.
 - **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
   files kept as byte-identical copies of another file have not drifted. It holds two families of
-  hand-listed pairs: the Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
+  hand-listed pairs: the Ark+ FLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
   between the two evaluation apps) and the EHR risk-prediction cross-backend pair
-  (`feature_engineering.py`, `models.py`, `query.sql`, with the NVFLARE copy as the reference).
+  (`feature_engineering.py`, `models.py`, `query.sql`, with the FLARE copy as the reference).
   The Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
   `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
   can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
@@ -132,7 +128,7 @@ workflow; the other two are CI-only:
 ## fl_round_metrics/
 
 Tooling for extracting and comparing per-round FL timings (not model metrics) from either a live
-platform run (CloudWatch logs) or a local NVFLARE simulator workspace. See
+platform run (CloudWatch logs) or a local FLARE simulator workspace. See
 [`fl_round_metrics/README.md`](fl_round_metrics/README.md) for the tools and the
 `make round-metrics` / `make reproduce-overhead` wrapper in the arkplus fine-tuning tutorial.
 

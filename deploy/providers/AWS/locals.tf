@@ -70,11 +70,10 @@ locals {
   flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
   flip_app_bundles_bucket_uri         = "s3://${module.flip_app_bundles_bucket.bucket_id}"
 
-  # Sub-paths under the new three-bucket layout. The legacy single-bucket
+  # Sub-paths under the three-bucket layout. The legacy single-bucket
   # prefixes (`model_files/uploaded`, `uploaded_federated_data`,
-  # `app_destination_bucket`) are re-pointed at the new purpose-built buckets
-  # per the migration mapping in `make migrate-flip-bucket` (see
-  # deploy/providers/AWS/Makefile). Keeping the same local names
+  # `app_destination_bucket`) are re-pointed at the purpose-built buckets
+  # (FLIP#24). Keeping the same local names
   # (`uploaded_federated_data_uri`, …) means the ecs_task_env map below can stay
   # byte-identical with the prior single-bucket layout — only the value behind
   # each local changes.
@@ -111,7 +110,7 @@ locals {
 
   # Env vars per service — the CANONICAL definition of production container
   # config (#936; the compose.prod*.yml files mirror a subset as the
-  # local prod-image harness). fl_server/fl_api are the NVFLARE maps
+  # local prod-image harness). fl_server/fl_api are the FLARE maps
   # (compose.prod.nvflare.yml); fl_server_flower/fl_api_flower are the
   # Flower maps (compose.prod.flower.yml). ecs_tasks.tf selects by
   # var.fl_backend (#566).
@@ -194,19 +193,16 @@ locals {
       # <root>/<model_id>/ for the fl-server to load (FLIP#695). Same path the
       # fl-server reads. Mounted from the fl_checkpoints EFS access point.
       SERVER_CHECKPOINT_ROOT = "/app/server-checkpoints"
-      # GPUs the fl-api writes into an NVFLARE job's meta when the job declares none.
+      # GPUs the fl-api writes into a FLARE job's meta when the job declares none.
       # Requests GPUs on the fl-CLIENTS (trust hosts) — the hub Fargate tasks are
       # CPU-only. Default 0; jobs declare their own in their meta.json (FLIP#70).
       JOB_RESOURCE_SPEC_NUM_GPUS = tostring(var.JOB_RESOURCE_SPEC_NUM_GPUS)
       # The only origin the server-side bundle fetch may download from: the
       # presign origin above (FLIP#905). Empty would mean "any public host".
-      # Both names for one release (FLIP#1291): an fl-api image from before the
-      # rename reads only the old one, one from after reads both, and a deploy
-      # that swaps only the image or only this environment must not leave
-      # either with an empty list. Drop BUNDLE_URL_ALLOWED_HOSTS in the release
-      # after every environment runs a post-#1291 fl-api.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
-      BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
+      # Inert: the fl-api no longer reads it (#1479). Kept so this release plans as moves only;
+      # it goes with the moved/removed cleanup once that has applied on both estates.
+      BUNDLE_URL_ALLOWED_HOSTS = local.s3_regional_endpoint_host
     }
     # Flower SuperLink (compose.prod.flower.yml fl-server-net-1). TLS +
     # SuperNode-auth flags travel as the container command (ecs_tasks.tf), not
@@ -229,14 +225,13 @@ locals {
     # addresses use the Cloud Map name — the provisioned server cert must
     # carry it as a SAN (FLOWER_EXTRA_SERVER_SANS at provision time).
     fl_api_flower = {
-      # Same reload-gating rationale as the NVFLARE map (FLIP#593 pt.1).
+      # Same reload-gating rationale as the FLARE map (FLIP#593 pt.1).
       ENV                         = "production"
       SUPERLINK_ADDRESS           = "${local.service_discovery_names.fl_server}:8000"
       SUPERLINK_HEALTH_ADDRESS    = "${local.service_discovery_names.fl_server}:9097"
       SUPERLINK_ROOT_CERTIFICATES = "/certs/ca.crt"
       FLOWER_SRC_ROOT             = "/app/src"
-      # Same bundle-fetch allow-list as the NVFLARE map (FLIP#905), both names
-      # for one release (FLIP#1291) for the same reason.
+      # Same bundle-fetch allow-list as the FLARE map (FLIP#905), and the same inert old name.
       BUNDLE_URL_ALLOWED_ORIGINS = "https://${local.s3_regional_endpoint_host}"
       BUNDLE_URL_ALLOWED_HOSTS   = local.s3_regional_endpoint_host
     }

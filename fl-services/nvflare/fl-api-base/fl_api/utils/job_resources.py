@@ -12,7 +12,7 @@
 
 """What a job needs at each site, from its own ``meta.json`` (FLIP#70).
 
-NVFLARE splits the question in two. The job states what it needs (``meta.json`` ``resource_spec``),
+FLARE splits the question in two. The job states what it needs (``meta.json`` ``resource_spec``),
 each site's resource manager states what it has (``local/resources.json``, from the kit's
 ``NUM_AVAILABLE_GPUS``), and the server's scheduler holds a job until every site can provide its
 share. FLIP keeps that split: the researcher's ``meta.json`` is the job's statement, as it would be
@@ -21,7 +21,7 @@ never compares a request with a site's capacity, and never lowers one to fit.
 
 What a researcher's ``meta.json`` may hold:
 
-- ``resource_spec``: only NVFLARE's portable ``@default`` block (``num_of_gpus``, ``num_of_cpus``,
+- ``resource_spec``: only FLARE's portable ``@default`` block (``num_of_gpus``, ``num_of_cpus``,
   ``memory``), which applies at every site. A researcher cannot know the trusts' site names, so a
   per-site block is refused.
 - ``custom_props``: kept, except ``model_id``. The app's ``config.json`` carries FLIP's model id
@@ -69,13 +69,13 @@ class ResourceSource(StrEnum):
 
 
 class PortableResources(BaseModel):
-    """NVFLARE's portable ``resource_spec["@default"]`` block, with its validity rules and FLIP's GPU cap."""
+    """FLARE's portable ``resource_spec["@default"]`` block, with its validity rules and FLIP's GPU cap."""
 
     model_config = ConfigDict(extra="forbid")
 
     num_of_gpus: StrictInt | None = Field(default=None, ge=0, le=MAX_GPUS_PER_SITE)
     num_of_cpus: StrictInt | None = Field(default=None, ge=1)
-    # NVFLARE's own pattern (nvflare.utils.job_launcher_utils), e.g. "16Gi".
+    # FLARE's own pattern (nvflare.utils.job_launcher_utils), e.g. "16Gi".
     memory: StrictStr | None = Field(default=None, pattern=r"^[1-9][0-9]*(Mi|Gi|Ti)$")
 
 
@@ -114,7 +114,7 @@ def parse_job_meta(raw: Any) -> JobMeta:
             "job is the trust's choice."
         )
 
-    # None is how NVFLARE spells "nothing" too; an empty list or string is a mistake, not nothing.
+    # None is how FLARE spells "nothing" too; an empty list or string is a mistake, not nothing.
     resource_spec = {} if raw.get("resource_spec") is None else raw["resource_spec"]
     if not isinstance(resource_spec, dict):
         raise ValueError('meta.json resource_spec must be an object such as {"@default": {"num_of_gpus": 1}}')
@@ -185,7 +185,7 @@ def resolve_job_resources(
 def nvflare_resource_spec(resources: JobResources, declared: PortableResources) -> dict[str, dict[str, int | str]]:
     """Write the job's ``meta.json`` ``resource_spec``: one portable ``@default`` block every site reads.
 
-    NVFLARE gives each site's resource manager the ``num_of_gpus`` (``num_of_gpus`` is
+    FLARE gives each site's resource manager the ``num_of_gpus`` (``num_of_gpus`` is
     GPUResourceManager's ``num_gpu_key``), and a Docker or Kubernetes launcher turns all three fields
     into the job's container request. Zero GPUs leaves the count out; a job that asks for nothing
     gets ``{}``, as before.

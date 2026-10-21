@@ -12,9 +12,9 @@
 # limitations under the License.
 #
 
-# Generate an NVFLARE project YAML with N client participants from a base file.
+# Generate a FLARE project YAML with N client participants from a base file.
 #
-# The recommended NVFLARE pattern is to provision more participant kits than you
+# The recommended FLARE pattern is to provision more participant kits than you
 # currently need, so spare slots are always available: re-provisioning to add a
 # client regenerates every existing participant's certs (and can rotate the root
 # CA), forcing a redeploy to every already-onboarded trust. Over-provisioning
@@ -23,7 +23,7 @@
 # The base project YAML declares the server, admin, builders and a single
 # canonical client participant (the template). This script clones that template
 # into Trust_1 .. Trust_N, preserving the template's env-specific fields
-# (connect_to, enable_byoc, resource, ...) and substituting only the name. The
+# (connect_to, enable_byoc, ...) and substituting only the name. The
 # expanded project YAML is written to a (gitignored) output path that
 # provision-network.sh then feeds to `nvflare provision`.
 #

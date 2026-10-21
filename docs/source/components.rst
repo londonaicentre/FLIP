@@ -2,21 +2,19 @@
 FLIP components
 ################
 
+How FLIP is built, one page per component. Start with the :doc:`components/overview`, which maps every component
+to where it runs and how they connect.
+
 .. toctree::
    :maxdepth: 2
 
    components/overview
    components/component-central-hub
    components/component-fl-nets
+   components/component-fl-jobs
+   components/component-fl-privacy
    components/component-trust-apis
    components/component-omop-database
    components/component-xnat
    components/component-pacs
    components/component-logging-stack
-
-.. note::
-
-   Trust-side services can also be deployed on **Kubernetes** via the Helm chart
-   at ``trust/deploy/helm/``. See the
-   `K8s README <https://github.com/londonaicentre/FLIP/blob/develop/trust/deploy/helm/README.md>`_
-   for details.

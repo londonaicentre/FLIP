@@ -1,5 +1,8 @@
-API Reference
-=============
+Python API reference
+====================
+
+Python package references for the hub, trust services and ``flip-utils``. These pages are generated from the
+packages' docstrings.
 
 .. toctree::
    :maxdepth: 1

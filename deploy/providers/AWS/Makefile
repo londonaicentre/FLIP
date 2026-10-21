@@ -295,11 +295,6 @@ tflint-lint: ## Static tflint lint (terraform recommended preset + AWS ruleset, 
 checkov-lint: ## Static checkov security lint (IAM policy content + promoted posture checks) over this Terraform tree — no credentials or init needed (FLIP#1052, FLIP#1058)
 	bash scripts/checkov_lint.sh
 
-.PHONY: create-backend
-create-backend: ## Create Terraform backend S3 bucket - Only run once
-	@echo "🚀 Creating Terraform backend resources..."
-	@TFSTATE_BUCKET_NAME="$(FLIP_TFSTATE_BUCKET_NAME)" TFSTATE_KEY="flip/terraform.tfstate" TFSTATE_REGION="$(AWS_REGION)" ./scripts/create-backend.sh
-
 .PHONY: aws-login
 aws-login: ## Login to AWS SSO (required before terraform operations)
 	@echo "🔐 Logging into AWS SSO..."
@@ -348,60 +343,6 @@ init: ## Initialize Terraform configuration
 .PHONY: print-tf-env
 print-tf-env: ## Print the resolved TF_VAR_* environment as KEY=value lines (for CI)
 	@env | grep '^TF_VAR_' | sort
-
-.PHONY: import-persistent
-import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
-	@unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; bash scripts/import-resources.sh
-
-
-.PHONY: migrate-flip-bucket
-migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the three new buckets (run after `make apply` creates the new buckets)
-	## Source bucket: $${FLIP_BUCKET_NAME} (read from $(MAIN_ENV_FILE))
-	## Destination buckets: $${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}, $${FLIP_FL_RESULTS_BUCKET_NAME}, $${FLIP_APP_BUNDLES_BUCKET_NAME}
-	##
-	## Sequencing: (1) `make apply` provisions the new buckets, (2) this target copies
-	## prefixes into them, (3) `make verify-flip-bucket-migration` parity-checks, (4) redeploy
-	## with the new env vars, (5) smoke-test, (6) after a 24-48h cooldown manually decommission
-	## the old bucket with:
-	##     aws s3 rb s3://$${FLIP_BUCKET_NAME} --force    # only after `make verify-flip-bucket-migration` is green
-	## Note: `terraform state rm` is NOT needed — the `removed { destroy = false }`
-	## blocks in services.tf already forgot the legacy bucket on the last apply.
-	##
-	## Safe to re-run: `aws s3 sync` re-copies any source object whose mtime/size differs
-	## from the destination, and skips matching ones. Per-object failures (KMS grant gaps,
-	## throttling) do NOT cause `aws s3 sync` to exit non-zero — always finish with
-	## `make verify-flip-bucket-migration` before trusting that the migration completed.
-	@if [ -z "$(FLIP_BUCKET_NAME)" ]; then \
-		echo "❌ FLIP_BUCKET_NAME is not set in $(MAIN_ENV_FILE) — nothing to migrate from."; exit 1; \
-	fi
-	@echo "📦 Migrating contents of s3://$(FLIP_BUCKET_NAME) into the three split buckets ..."
-	@echo "  • model file uploads → s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/"
-	@$(_AWS_ENV) aws s3 sync \
-		s3://$(FLIP_BUCKET_NAME)/model_files/uploaded/ \
-		s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/
-	@echo "  • FL results     → s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/"
-	@$(_AWS_ENV) aws s3 sync \
-		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
-		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
-	# The legacy base-application/ prefix is intentionally NOT migrated: the base FL
-	# application templates now ship in the flip-api image, not S3 (FLIP#724).
-	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
-	@$(_AWS_ENV) aws s3 sync \
-		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
-		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/
-	@echo "📦 Sync calls complete. Run \`make verify-flip-bucket-migration\` to confirm parity before decommissioning."
-
-
-.PHONY: verify-flip-bucket-migration
-verify-flip-bucket-migration: ## Parity-check the three migrated prefixes (every src key must exist on dst; extras on dst are fine)
-	## Why this exists: `aws s3 sync` returns exit code 0 even when individual object copies
-	## fail (per-object AccessDenied / throttling / RequestTimeout), so the migrate target's
-	## green banner is not enough to safely decommission the source bucket. The companion
-	## script computes a key-set subset check — every source key must exist on the
-	## destination. Keys present only on destination (e.g. researcher uploads landing on the
-	## new bucket after the env-var cutover) are reported but do not fail.
-	@bash scripts/verify-flip-bucket-migration.sh
-
 
 .PHONY: force-unlock
 force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
@@ -468,7 +409,7 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
 
 .PHONY: add-fl-kits
-add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; HUB=stag|prod)
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (FLARE; HUB=stag|prod)
 	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
 	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
 	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
@@ -814,8 +755,23 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	## the family — that is the documented bootstrap-tag path; re-run deploy-centralhub
 	## after it. The UI is NOT rolled back — re-run `make deploy-ui` from the matching
 	## commit if the UI must move too.
+	## On FLARE it first empties the fl-server's local/ on EFS and re-syncs the kit
+	## (scripts/reset-fl-server-local.sh, the efs-provision-certs task, a minute or two):
+	## since FLIP#1390 the fl-server writes local/flip__p_resources.json, and an older
+	## fl-server image cannot load it and fails to start. If that step fails nothing is
+	## rolled back. SKIP_FL_LOCAL_RESET=1 skips it, for when the file is already gone or
+	## the revision rolled back to is FLIP#1390 or later (it rewrites the file at start).
 	@set -e; \
 	unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN; export AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION); \
+	fl_server="$(firstword $(filter fl-server-net-%,$(CENTRALHUB_ECS_SERVICES)))"; \
+	if [ "$(FL_BACKEND)" = "nvflare" ] && [ -n "$$fl_server" ] && [ "$(SKIP_FL_LOCAL_RESET)" != "1" ]; then \
+	  ./scripts/reset-fl-server-local.sh $(ECS_CLUSTER) "$$fl_server" || { \
+	    echo "   Nothing has been rolled back. An fl-server image older than FLIP#1390 fails to start"; \
+	    echo "   while local/flip__p_resources.json is on EFS. Fix the step above and re-run, or remove"; \
+	    echo "   the file yourself (fl-services/nvflare/fl-server/README.md) and re-run with"; \
+	    echo "   SKIP_FL_LOCAL_RESET=1."; \
+	    exit 1; }; \
+	fi; \
 	echo "⏪ Rolling back Central Hub ECS services in $(ECS_CLUSTER)..."; \
 	for service in $(CENTRALHUB_ECS_SERVICES); do \
 	  current_td=$$($(_AWS_ENV) aws ecs describe-services --cluster $(ECS_CLUSTER) --services $$service \
@@ -1067,7 +1023,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
-	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
+	  echo "  # Deploy the $(FL_KIT_SLOT) FLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
 	  echo "  # \$$FL_KIT_DIR is the kit root from $(KIT_FILE_LABEL) (default /opt/flip/fl-kit):" && \
 	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/transfer" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup/" && \
@@ -1075,7 +1031,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
 	  echo "  # this shell's own user so the container can read/write it:" && \
 	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
-	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
+	  echo "✅ $(FL_KIT_SLOT) FLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
@@ -1128,11 +1084,10 @@ destroy: ## Destroy ephemeral infrastructure (EC2, RDS) - preserves Cognito, Sec
 	@echo "   ✓ The platform's VPC (never this stack's)"
 	@echo ""
 	@echo "🗑️  DESTROYING:"
-	@echo "   • EC2 instances (flip, trust)"
-	@echo "   • RDS database (PostgreSQL)"
+	@echo "   • RDS database (PostgreSQL) — no final snapshot"
+	@echo "   • EC2 instances (flip, trust), their key pairs and instance role"
 	@echo "   • Security groups"
-	@echo "   • IAM roles and policies"
-	@echo "   • CloudWatch logs"
+	@echo "   • SES email templates"
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
@@ -1169,9 +1124,10 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator
-	## Does NOT edit the kit file. The admin populates trust/.env.<KIT>.<env> first:
-	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into it.
-	##   2. `make sync-trust-kit KIT=<CODE> HUB=prod` (from repo root) — fills Hub-shared.
+	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
+	##   1. register-trusts and sync-trust-kit with KIT=<CODE> HUB=prod fill
+	##      trust/.env.<CODE>.prod (register-trusts also mints its XNAT passwords);
+	##   2. run this with KIT=<CODE> HUB=prod (KIT_FILE=<path> packs a kit kept elsewhere).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one
@@ -1196,7 +1152,7 @@ delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; c
 .PHONY: full-deploy
 full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
 	## Step order:
-	## 1. login + init + import: auth, Terraform init, import any pre-existing resources
+	## 1. login + init: auth and Terraform init
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
@@ -1207,7 +1163,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: re-stage the FL kit for the registered slot, seed the trust data with the stack down, bring up cloud Trust container stack and verify
 	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London HUB=$(HUB)
-full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
+full-deploy: github-login aws-login init generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
 .PHONY: full-deploy-hub-only
 full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust runs on-prem (honours HUB)
@@ -1226,4 +1182,4 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	##      (sudo: the provisioned login user is deliberately not in the docker group)
 	## Remember `make deploy-ui HUB=$(HUB)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
-full-deploy-hub-only: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status
+full-deploy-hub-only: github-login aws-login init generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status

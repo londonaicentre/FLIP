@@ -1,33 +1,35 @@
 ################
-Platform Support
+Platform support
 ################
 
-***********
+.. contents:: On this page
+   :local:
+   :depth: 1
+
+**********
 Networking
-***********
+**********
 
-All trust communication is **outbound** — trusts poll the Central Hub for tasks over HTTPS
-(via the ALB), and FL clients connect outbound to the FL server via the NLB. The hub never
-makes inbound connections to trusts, so no inbound firewall rules or port forwarding from the
-internet are
-required on trust hosts. Operator access is via AWS Systems Manager Session Manager
-(SSH-over-SSM); XNAT, Orthanc, and the trust-api Swagger docs are reachable only through SSM
-port forwarding (``make forward-trust``). Orthanc additionally requires HTTP basic auth — log in
-with the trust kit file's ``ORTHANC_USERNAME``/``ORTHANC_PASSWORD``.
+**All trust traffic is outbound.** Trusts poll the Central Hub for tasks over HTTPS (through its load balancer), and
+FL clients connect out to the FL server through the hub's network load balancer (NLB). The hub never connects in to a
+trust, so trust hosts need no inbound firewall rules or port forwarding from the internet.
 
-Trust-to-hub traffic can additionally be carried over a site-to-site VPN between the trust
-network and the Central Hub VPC, provisioned on request rather than by default.
+If a site needs it, trust-to-hub traffic can also run over a site-to-site VPN between the trust network and the
+Central Hub VPC. This is set up on request, not by default.
 
-See :ref:`security` for the rationale behind this design and the wider set of controls it
-sits within. The operational detail — the architecture and the ports to open — follows here.
+.. seealso::
+
+   :ref:`security` explains why FLIP is built this way and the wider controls around it.
 
 .. figure:: ../assets/support/flip_architecture-flip_network_architecture.png
    :align: center
 
    FLIP network architecture.
 
-The ports required for trust-host communication are listed below. Port 22 (SSH) is never
-opened.
+Firewall rules
+==============
+
+Port 22 (SSH) is never opened.
 
 .. list-table:: Firewall Rules
    :header-rows: 1
@@ -50,47 +52,61 @@ opened.
      -
      - configured ``FL_EDGE_PORT`` (else ``FL_SERVER_PORT``)
    * - Operator access to trust host
-     - none (SSM Session Manager)
+     - none (SSM Session Manager on the cloud trust EC2; the site's own access elsewhere)
      -
 
-*****************
-Backup / Restore
-*****************
+The PACS return leg is the one inbound rule. :doc:`../components/component-pacs` explains it.
 
-Types of Data
+Operator access
+===============
+
+On the cloud trust EC2, operators connect through AWS Systems Manager Session Manager (SSH over SSM), and XNAT,
+Orthanc and the trust-api Swagger docs are reachable only through SSM port forwarding. From the repo root on the
+deployment workstation:
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS forward-trust
+
+On-prem and Kubernetes nodes are reached through the site's own access, such as SSH or ``kubectl port-forward``.
+
+Orthanc also asks for a username and password: use ``ORTHANC_USERNAME`` and ``ORTHANC_PASSWORD`` from the trust's
+kit file.
+
+****************
+Backup / restore
+****************
+
+Types of data
 =============
 
-As a system, the FLIP solution handles the following types of data:
+FLIP handles three types of data:
 
-1. Persistent OMOP Common Data Model data, covering demographic, diagnosis and imaging details.
-2. Transient XNAT cached image data, potentially enriched locally with segmentation, labelling, etc., sourced from Trust PACS.
-3. Log files including event logs and other information generated as part of the operation of the system.
+1. **OMOP data** (persistent): the OMOP Common Data Model, covering demographics, diagnoses and imaging details.
+2. **XNAT image data** (a cache): images retrieved from the Trust PACS, possibly enriched locally with segmentations,
+   labels and other annotations.
+3. **Log files**: event logs and other records of the system's operation.
 
-.. note::
+.. important::
 
-   The XNAT cached image data at item 2 **survives deletion of the project it belongs to**. Deleting a project
-   in FLIP is a soft delete of the platform record and does not remove anything from a Trust's XNAT, because
-   the local enrichment (segmentation, labelling, contours, annotations) cannot be re-derived from PACS the way
-   the images themselves can. Removing that data is an explicit administrator action taken at the Trust.
+   **Deleting a project does not delete its XNAT data.** A project delete in FLIP only marks the platform record as
+   deleted. The images could be pulled from PACS again, but local enrichment (segmentations, labels, contours,
+   annotations) could not, so FLIP leaves the data in place. Removing it is an explicit action by an administrator at
+   the Trust.
 
 Backup
 ======
 
-The data partitions for the PostgreSQL (OMOP), XNAT and Loki (log files) instances are all mounted on the dedicated storage array. This is a RAID 6 PNY appliance with high resilience.
-
-Backup scripts will be run daily to backup each data store to a /backups/ directory on the storage appliance. This should be backed up up by the Trust using their specific backup process, ideally overnight.
-
-.. figure:: ../assets/support/flip_architecture-backups.drawio.png
-   :align: center
-
-   FLIP backups.
+FLIP does not run scheduled backups of trust data; a trust backs up its data stores with its own tooling and
+arrangements. :doc:`admin-backup-and-restore` lists where each deployment shape keeps state, what FLIP can recreate
+and what it cannot, and how to restore.
 
 ******
 Access
 ******
 
-Access to FLIP is granted by a FLIP administrator.
-
-Access to FLIP will be reviewed annually, with dormant accounts being removed.
-
-FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has four access profiles: **Admin**, **Researcher**, **Viewer** and **Trust Admin** (a Researcher who also approves or declines projects for one Trust). For full details of permissions assigned to each role, see :ref:`rbac-roles`.
+- A FLIP administrator grants access to FLIP.
+- Access is reviewed every year, and dormant accounts are removed.
+- Access is role-based, managed through the FLIP UI and API. There are four roles: **Admin**, **Researcher**,
+  **Viewer** and **Trust Admin** (a Researcher who also approves or declines projects for one Trust). See
+  :ref:`rbac-roles` for what each can do.

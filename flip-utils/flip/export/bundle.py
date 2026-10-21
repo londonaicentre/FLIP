@@ -37,7 +37,7 @@ chain cannot be derived from a free-form training application, so the app author
 ``inference.json`` and ``metadata.json`` once, at authoring time, and they are read from disk
 here. The one exception is the directory form's ``network_def`` entry, which names the generated
 entry point described in :data:`_NETWORK_MODULE_SOURCE`. See
-``docs/source/working-with-flip-apps/package-model-as-map.rst`` for how to transcribe the configs,
+``docs/source/working-with-flip-apps/wrap-model-for-deployment.rst`` for how to transcribe the configs,
 and why a mismatch is dangerous.
 """
 

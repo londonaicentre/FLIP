@@ -56,12 +56,6 @@ test/cypress/videos/*
 # Cypress docs GIF recording — raw videos (converted to GIFs in docs/source/assets/generated/gifs/, FLIP#1236)
 /test/cypress/videos/docs/
 
-# Demo-video recorder artefacts (cypress.demo.config.ts + flip-api/tests/demo_video.py)
-/test/cypress/demo/videos/
-/test/cypress/demo/screenshots/
-/test/cypress/demo/downloads/
-/test/cypress/demo/out/
-/test/cypress/demo/state.json
 cypress.meta.json
 cypress/logs/
 cypress/videos/*

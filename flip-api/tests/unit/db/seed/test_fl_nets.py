@@ -28,7 +28,7 @@ def mock_session():
 
 @pytest.fixture
 def mock_fl_net():
-    """Create a mock FLNets instance with a backend already set (no backfill needed)."""
+    """Create a mock FLNets row on the Flower backend."""
     net = Mock(spec=FLNets)
     net.name = "existing_net"
     net.endpoint = "http://existing.com"
@@ -128,24 +128,6 @@ def test_seed_fl_nets_with_empty_endpoints(mock_get_settings, mock_session):
 
     mock_session.add.assert_not_called()
     assert result == []
-
-
-@patch("flip_api.db.seed.fl_nets.get_settings")
-def test_seed_fl_nets_backfills_null_backend(mock_get_settings, mock_session):
-    """A pre-existing row with fl_backend=None (created before the column existed) is set from FL_BACKEND."""
-    legacy = Mock(spec=FLNets)
-    legacy.name = "existing_net"
-    legacy.endpoint = "http://existing.com"
-    legacy.fl_backend = None
-    mock_get_settings.return_value = _mock_settings(
-        {"existing_net": "http://existing.com"}, fl_backend=FLBackend.NVFLARE
-    )
-    mock_session.exec.return_value.all.side_effect = [[legacy], [legacy]]
-
-    seed_fl_nets(mock_session)
-
-    assert legacy.fl_backend == FLBackend.NVFLARE
-    mock_session.add.assert_called_once_with(legacy)
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")

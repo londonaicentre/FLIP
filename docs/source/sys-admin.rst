@@ -11,6 +11,7 @@ System administration
    sys-admin/admin-user-roles
    sys-admin/admin-platform-support
    sys-admin/admin-upgrading-sites
+   sys-admin/admin-backup-and-restore
 
 .. seealso::
 
@@ -19,7 +20,5 @@ System administration
 
 .. note::
 
-   For deployments on **Kubernetes**, see the Helm chart at
-   ``trust/deploy/helm/`` and the
-   `K8s README <https://github.com/londonaicentre/FLIP/blob/develop/trust/deploy/helm/README.md>`_
-   for operational notes, troubleshooting, and configuration reference.
+   For deployments on **Kubernetes**, see :ref:`deploy-flip-node-kubernetes` and
+   :ref:`ts-trust-node-kubernetes`.

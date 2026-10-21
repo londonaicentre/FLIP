@@ -11,9 +11,9 @@
     limitations under the License.
 -->
 
-# NVFLARE FL API
+# FLARE FL API
 
-Base FastAPI service for the NVFLARE deployment runtime. It backs the per-net FL API instances
+Base FastAPI service for the FLARE deployment runtime. It backs the per-net FL API instances
 (one `flare-fl-api` container per network).
 
 The FL API wraps the NVIDIA FLARE admin `Session`: we subclass it as `FLIP_Session`
@@ -51,7 +51,7 @@ The Hub drives a net **only** through these endpoints
 | `/upload_app/{model_id}` | POST | Stage a ready-to-launch FLARE app — global/local rounds, bundle URLs, project/cohort, trusts, aggregator, aggregation weights — into the API's upload dir. Writes the `config_fed_{server,client}.json` but does **not** call FLARE. |
 | `/submit_job/{job_folder}` | POST | Submit a previously staged app as a FLARE job (`session.submit_job`). |
 | `/list_jobs` | GET | List FLARE jobs (the Hub filters this to find the job to abort). |
-| `/abort_job/{job_id}` | DELETE | Abort a running job. |
+| `/abort_job/{job_id}` | DELETE | Abort a job, running or still waiting to be scheduled (FLARE marks a waiting one `FINISHED:ABORTED`). |
 | `/check_server_status` | GET | FLARE server status. |
 | `/check_client_status` | GET | Per-client status; `?targets=<name>` (repeatable) to filter, otherwise all clients. |
 

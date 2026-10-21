@@ -18,6 +18,7 @@ import sqlglot
 from fastapi import HTTPException
 from pandas.errors import DatabaseError as PandasDatabaseError
 from psycopg2 import errors as pg_errors
+from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlglot import exp
 
@@ -1187,7 +1188,7 @@ def test_get_sex_distribution_with_person_id(mock_get_records):
     # Mock the response from get_records (sex distribution query result)
     mock_sex_data = pd.DataFrame(
         {
-            "gender_source_value": ["M", "F"],
+            "sex": ["M", "F"],
             "count": [2, 1],
         }
     )
@@ -1213,6 +1214,31 @@ def test_get_sex_distribution_with_person_id(mock_get_records):
     assert call_kwargs["params"] == {"person_ids": [1, 2, 3]}
     # Ensure raw interpolation of IDs into the SQL text is not used
     assert "1, 2, 3" not in query_sql
+
+
+def test_get_sex_distribution_reads_the_gender_concept_before_the_source_value():
+    """The standard concept decides (the Synthea EHR rows carry no source value); the source value covers the rest."""
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("ATTACH DATABASE ':memory:' AS omop")
+        connection.exec_driver_sql(
+            "CREATE TABLE omop.person (person_id INTEGER, gender_concept_id INTEGER, gender_source_value TEXT)"
+        )
+        connection.exec_driver_sql(
+            "INSERT INTO omop.person VALUES (1, 442985, 'M'), (2, 8507, NULL), (3, 8532, ''), (4, 8532, 'M'), "
+            "(5, 0, NULL), (6, 0, 'O')"
+        )
+
+        def run(query, params):
+            return pd.read_sql(query, connection, params=params)
+
+        with patch("data_access_api.services.cohort.get_records", side_effect=run):
+            result = get_sex_distribution(pd.DataFrame({"person_id": [1, 2, 3, 4, 5, 6]}))
+
+    counts = {row["value"]: row["count"] for row in result["results"] if not pd.isna(row["value"])}
+    # "O" has no Gender concept (0), so its source value carries it; only person 5, with neither, is unknown.
+    assert counts == {"M": 2, "F": 2, "O": 1}
+    assert sum(row["count"] for row in result["results"]) == 6
 
 
 # Tests for get_age_distribution
@@ -1641,7 +1667,7 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
     # Mock the sex distribution query result
     mock_sex_data = pd.DataFrame(
         {
-            "gender_source_value": ["M", "F"],
+            "sex": ["M", "F"],
             "count": [18, 12],  # Both >= COHORT_QUERY_THRESHOLD (10)
         }
     )
@@ -1730,7 +1756,7 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
     # Mock sex distribution with low-count category
     mock_sex_data = pd.DataFrame(
         {
-            "gender_source_value": ["M", "F", "U"],
+            "sex": ["M", "F", "U"],
             "count": [20, 12, 8],  # 'U' is below threshold of 10
         }
     )

@@ -4,119 +4,84 @@
 Overview
 ########
 
+This page maps FLIP's components: what runs on the Central Hub, what runs at each Trust, and how the two connect. It
+is for engineers evaluating, deploying or operating FLIP. Each component has its own page with the detail.
+
 ************
 Architecture
 ************
 
-The overall FLIP solution comprises two parts:
+FLIP has two parts:
 
-1. A **cloud-hosted Central Hub** providing researchers with the capability to define machine learning
-   projects, discover appropriate datasets at participating Trusts and federate the testing and training of
-   models across Trusts, culminating in the aggregation of a consensus model.
-2. A **Secure Enclave** (a *FLIP node*) hosted at each individual Trust, designed to permit only requests for
-   training that the Trust itself has fetched from the Central Hub. A set of FLIP microservices runs inside the
-   enclave to serve those requests, alongside the Trust's imaging archive, its :term:`OMOP` database and the GPU
-   compute its FL client trains on — so training and evaluation happen inside the enclave, against the Trust's
-   own data, and only model updates leave.
+1. The **Central Hub**, a cloud-hosted web application. Researchers define projects there, query the Trusts' data
+   for a suitable cohort, start training and download results. The hub also runs the federated learning (FL)
+   servers that combine the Trusts' model updates into one consensus model.
+2. A **FLIP node**, also called the *secure enclave*, at each Trust. It runs inside the Trust's network, next to
+   the Trust's imaging archive, its :term:`OMOP` database and its GPUs. Training and evaluation happen there, on the
+   Trust's own data, and **only model updates leave**.
 
 .. figure:: ../assets/support/flip_architecture-flip_architecture.png
    :align: center
 
    FLIP architecture.
 
-Central Hub
-===========
-
-The Central Hub is a cloud-hosted environment which provides researchers with the capability to identify a
-cohort and initiate requests to train models in a federated setting. Role based access controls ensure that
-users will only be able to access their specific data.
-
-Researchers can define the cohort of data they wish to use for training and testing based on data from the
-available Trusts, view statistics about the available data, tweak and refine their query, and ultimately decide
-on a dataset on which to train and test their model. Following this, the model is distributed, trained and
-tested within the Secure Enclave at each selected Trust before the resultant model is centrally aggregated.
-
-The hub is the only internet-facing part of FLIP. Its services are described on :doc:`component-central-hub`;
-the AWS shape they take on :ref:`deploy-central-hub`.
-
-Secure Enclave
-==============
-
-The Trust component of FLIP runs in a Secure Enclave at each Trust to facilitate the secure training and
-testing of models on the Trust's own GPU hardware. As per security principles, no personally identifying data
-leaves the Secure Enclave.
-
-FLIP implements a microservice-based architecture on the trust side too. Three FastAPI services — the
-``trust-api``, ``imaging-api`` and ``data-access-api`` — run as containers next to XNAT, the OMOP database
-and one FL client per net, either under Docker Compose or from the Kubernetes Helm chart. Nothing on the hub
-dials into a Trust: the ``trust-api`` polls the hub for work over outbound HTTPS and the FL client opens the
-outbound connection to the FL server, so a Trust needs no inbound firewall rule for FLIP itself. The three
-services are described on :doc:`component-trust-apis`.
+**All connections are outbound from the Trust.** The hub never connects in to a Trust: ``trust-api`` polls the hub
+for work over HTTPS, and each FL client opens its own connection to its FL server. A Trust needs no inbound firewall
+rule for FLIP, and the hub is the only internet-facing part of the platform.
 
 **********
 Components
 **********
 
-Each component below has its own page; this section is the map.
+.. list-table::
+   :header-rows: 1
+   :widths: 22 14 64
 
-Central Hub
-===========
+   * - Component
+     - Runs on
+     - What it does
+   * - :doc:`component-central-hub`
+     - Hub
+     - The web UI (``flip-ui``), the central API (``flip-api``) and its PostgreSQL database, object storage for
+       model files and results, and the identity provider users sign in with.
+   * - :doc:`FL nets <component-fl-nets>`
+     - Hub and Trust
+     - Federated learning on :term:`NVIDIA FLARE` or :term:`Flower Framework`. Each net is an FL API and an FL
+       server on the hub plus one FL client at each Trust. The hub's scheduler gives each queued training job to a
+       free net.
+   * - :doc:`Trust APIs <component-trust-apis>`
+     - Trust
+     - ``trust-api`` fetches tasks from the hub and reports results. ``imaging-api`` drives XNAT.
+       ``data-access-api`` runs validated, read-only cohort queries against OMOP and serves cohort data to training.
+   * - :doc:`OMOP database <component-omop-database>`
+     - Trust
+     - The Trust's clinical data in the `OMOP <https://www.ohdsi.org/data-standardization/>`_ Common Data Model,
+       plus the MI-CDM imaging tables that link records to accession numbers. One cohort query runs unchanged at
+       every Trust.
+   * - :doc:`XNAT <component-xnat>`
+     - Trust
+     - Retrieves a project's studies from PACS, removes identifying fields from the image headers, converts them to
+       NIfTI and stores them for training.
+   * - :doc:`PACS <component-pacs>`
+     - Trust
+     - The Trust's own image archive. FLIP never holds a copy of it. In development, a mock Orthanc server stands
+       in for it.
+   * - :doc:`Logging stack <component-logging-stack>`
+     - Trust
+     - Collects the trust services' structured logs into Loki, for viewing in Grafana, without them leaving the
+       Trust.
 
-The web UI (``flip-ui``), the central API (``flip-api``) with its PostgreSQL database, and the hub half of every
-FL net, with an OIDC identity provider for authentication — AWS Cognito on AWS, Keycloak in local
-development — and S3 for model files and results. See :doc:`component-central-hub`
-for the services and :ref:`deploy-central-hub` for how they are laid out on AWS.
-
-FL nets
-=======
-
-The Federated Learning functionality is provided by either :term:`NVIDIA FLARE` or :term:`Flower Framework`,
-deployed as a collection of *nets*: each net is an FL API and FL server on the hub plus one FL client at each
-Trust, and the hub's scheduler assigns queued training jobs to whichever net is free. The page also covers
-job types, required files, training configuration and the privacy filters applied to model updates. See
-:doc:`component-fl-nets`.
-
-Trust APIs
-==========
-
-The three trust-side services: ``trust-api`` fetches tasks from the hub and reports results; ``imaging-api``
-drives XNAT (project creation, retrieval from PACS, conversion, downloads for training); ``data-access-api``
-runs validated cohort queries against OMOP. See :doc:`component-trust-apis`.
-
-OMOP Database
-=============
-
-The `OMOP <https://www.ohdsi.org/data-standardization/>`_ Common Data Model gives every Trust's electronic
-health data the same shape, so one cohort query can run unchanged at each site. FLIP extends it with the
-MI-CDM imaging tables that link records to accession numbers. The OMOP CDM is implemented as a PostgreSQL
-database inside each Trust's enclave. See :doc:`component-omop-database`.
-
-XNAT
-====
-
-:term:`XNAT` stores and controls access to the imaging data retrieved for a project — DICOM series and the
-NIfTI files derived from them — and runs the anonymisation and DICOM-to-NIfTI pipelines on receipt. One XNAT
-instance runs at each Trust. See :doc:`component-xnat`.
-
-PACS
-====
-
-The Trust's own Picture Archiving and Communication System, from which XNAT retrieves the studies belonging to
-an approved cohort by DICOM query/retrieve. FLIP never holds a copy of the PACS; for development a mocked
-Orthanc server stands in for it. See :doc:`component-pacs`.
-
-Logging Stack
-=============
-
-Structured JSON logs from the trust services, collected by Grafana Alloy into Loki and viewed in Grafana, all
-inside the Trust. See :doc:`component-logging-stack`.
-
+******************
 Deployment targets
-==================
+******************
 
-The Central Hub is provisioned on AWS with Terraform/OpenTofu, onto a Landing Zone Accelerator estate —
-:ref:`deploy-central-hub`. A Trust node runs
-as a Docker Compose stack on a host inside the Trust (:doc:`/deploy-flip/deploy-flip-node-on-prem`), inside a
-Trusted Research Environment (:doc:`/deploy-flip/deploy-flip-node-in-tre`), or on Kubernetes via the Helm chart
-at `trust/deploy/helm/ <https://github.com/londonaicentre/FLIP/blob/develop/trust/deploy/helm/README.md>`_.
-The AWS-hosted mock Trusts used for staging are the same Compose stack on an EC2 instance.
+The Central Hub runs on AWS, provisioned with Terraform/OpenTofu, on a Landing Zone Accelerator estate. See
+:ref:`deploy-central-hub`.
+
+A FLIP node runs in one of three ways:
+
+- as a Docker Compose stack on a host inside the Trust: :doc:`/deploy-flip/deploy-flip-node-on-prem`;
+- inside a Trusted Research Environment: :doc:`/deploy-flip/deploy-flip-node-in-tre`;
+- on Kubernetes, from the Helm chart: :ref:`deploy-flip-node-kubernetes`.
+
+The mock Trusts used for staging run the same Compose stack on an EC2 instance.

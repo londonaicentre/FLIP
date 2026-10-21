@@ -655,7 +655,6 @@ def _write_patch(
 
 
 def recreate_image(
-    batch_sz: int,
     logits: torch.Tensor,
     probs: torch.Tensor,
     img_patches: torch.Tensor,
@@ -663,7 +662,7 @@ def recreate_image(
     img_size: list[tuple[int, ...]],
     mask_size: list[tuple[int, ...]],
     coords: list[tuple[list[int], list[int], list[int], list[int]]],
-    patches_per_image: list[int] | None = None,
+    patches_per_image: list[int],
 ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
     """
     Recreate full-size images from patches by assembling them according to their coordinates.
@@ -673,7 +672,6 @@ def recreate_image(
     overlapping patches and boundary conditions for medical image segmentation tasks.
 
     Args:
-        batch_sz (int): Original batch size before patch extraction
         logits (torch.Tensor): Predicted logits from model of shape [N, C, H, W, D]
         probs (torch.Tensor): Predicted probabilities from model of shape [N, C, H, W, D]
         img_patches (torch.Tensor): Tensor containing all image patches
@@ -682,8 +680,7 @@ def recreate_image(
         mask_size (List[Tuple[int, ...]]): Original mask sizes for each item in batch
         coords (List[Tuple[List[int], List[int], List[int], List[int]]]):
             Patch coordinates as (c_coord, h_coord, w_coord, d_coord) for each patch
-        patches_per_image (Optional[List[int]]): Number of patches for each image in batch.
-            If None, assumes uniform distribution (legacy behavior).
+        patches_per_image (List[int]): Number of patches for each image in batch (may differ per image).
 
     Returns:
         Tuple[List[torch.Tensor], List[torch.Tensor], List[torch.Tensor], List[torch.Tensor]]:
@@ -692,25 +689,13 @@ def recreate_image(
             - new_probabilities: List of reconstructed probability tensors
             - new_images: List of reconstructed image tensors
             - new_masks: List of reconstructed mask tensors
-
-    Note:
-        This function handles variable numbers of patches per image when patches_per_image
-        is provided, enabling batch_size > 1 with different patch counts per image.
     """
-    true_batch_sz: int = logits.shape[0]
-
     # Calculate patch indices for each image
-    if patches_per_image is None:
-        # Legacy behavior: assume uniform distribution
-        multiplier: int = true_batch_sz // batch_sz
-        patch_indices = [(i * multiplier, (i + 1) * multiplier) for i in range(batch_sz)]
-    else:
-        # Variable patches per image
-        patch_indices = []
-        start_idx = 0
-        for count in patches_per_image:
-            patch_indices.append((start_idx, start_idx + count))
-            start_idx += count
+    patch_indices = []
+    start_idx = 0
+    for count in patches_per_image:
+        patch_indices.append((start_idx, start_idx + count))
+        start_idx += count
 
     new_images, new_masks, new_logits, new_probabilities = [], [], [], []
     for i, (im_sz, m_sz) in enumerate(zip(img_size, mask_size)):
@@ -890,7 +875,6 @@ def inference_func(
             [(mask.shape[1], *shape[1:]) for shape in mask_shapes] if dual_scan else mask_shapes
         )
         reconstructed_logits, _, _, reconstructed_masks = recreate_image(
-            len(case_names),
             rearrange(logits, "b c d h w -> b c h w d").detach().cpu(),
             rearrange(logits, "b c d h w -> b c h w d").detach().cpu(),
             rearrange(image, "b c d h w -> b c h w d").detach().cpu(),

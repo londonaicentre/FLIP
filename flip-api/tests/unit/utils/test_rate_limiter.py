@@ -14,43 +14,31 @@ import hashlib
 from unittest.mock import MagicMock
 
 from flip_api.config import get_settings
-from flip_api.utils.rate_limiter import _trust_name_key
+from flip_api.utils.rate_limiter import _trust_key
 
 
 # `request.headers` must be a real dict on these mocks: MagicMock's `.get(...)` returns
 # another MagicMock (truthy), which would force every test through the API-key branch
 # and try to hash a non-bytes object.
-class TestTrustNameKey:
+class TestTrustKey:
     def test_hashes_trust_api_key_when_header_present(self):
         """Primary path: rate-limit per-trust by hashing the trust API key header."""
         api_key = "trust-1-secret"  # pragma: allowlist secret
         request = MagicMock()
         request.headers = {get_settings().TRUST_API_KEY_HEADER: api_key}
 
-        result = _trust_name_key(request)
+        result = _trust_key(request)
 
         expected = "trust:" + hashlib.sha256(api_key.encode()).hexdigest()[:16]
         assert result == expected
 
-    def test_returns_trust_name_when_present_in_path_params(self):
-        """Fallback: trust_name path parameter when no API key header."""
+    def test_falls_back_to_client_host_without_api_key(self):
+        """Fallback: client.host when the API key header is absent."""
         request = MagicMock()
         request.headers = {}
-        request.path_params = {"trust_name": "Trust_1"}
-        request.client.host = "192.168.1.1"
-
-        result = _trust_name_key(request)
-
-        assert result == "Trust_1"
-
-    def test_falls_back_to_client_host_when_no_trust_name(self):
-        """Fallback: client.host when neither the API key header nor trust_name is present."""
-        request = MagicMock()
-        request.headers = {}
-        request.path_params = {}
         request.client.host = "10.0.0.42"
 
-        result = _trust_name_key(request)
+        result = _trust_key(request)
 
         assert result == "10.0.0.42"
 
@@ -58,9 +46,8 @@ class TestTrustNameKey:
         """Fallback: 'unknown' sentinel when there's no client and nothing else identifies the caller."""
         request = MagicMock()
         request.headers = {}
-        request.path_params = {}
         request.client = None
 
-        result = _trust_name_key(request)
+        result = _trust_key(request)
 
         assert result == "unknown"

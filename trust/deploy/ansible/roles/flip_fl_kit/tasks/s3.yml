@@ -19,7 +19,7 @@
 # under every tag selection (the play is `tags: always`), and the data roles further
 # down legitimately default trust_num to "1". Only kit staging must have it stated,
 # because there the wrong value fetches another trust's identity.
-- name: ensure trust_num is defined for NVFLARE kit staging
+- name: ensure trust_num is defined for FLARE kit staging
   assert:
     that:
       - trust_num is defined
@@ -32,7 +32,7 @@
       slot puts another trust's FL identity on this host and reports success.
   when: fl_backend == "nvflare"
 
-- name: sync NVFLARE participant kit from S3
+- name: sync FLARE participant kit from S3
   # `aws s3 sync` skips files when source/dest size + mtime "look
   # equivalent", so a freshly regenerated kit can leave stale
   # rootCA.pem / client.crt / fed_client.json in place — the
@@ -106,7 +106,7 @@
       "$dest"
     mkdir -p "$dest/local" "$dest/transfer"
     if [ ! -s "$dest/startup/fed_client.json" ]; then
-      echo "ERROR: NVFLARE kit staging produced no fed_client.json in $dest." >&2
+      echo "ERROR: FLARE kit staging produced no fed_client.json in $dest." >&2
       echo "       Source: {{ trust_s3_source }}" >&2
       echo "       Check FLARE_KIT_DATE matches an S3 prefix, and that the instance role" >&2
       echo "       can kms:Decrypt the bucket CMK." >&2
@@ -129,7 +129,7 @@
   changed_when: "'download:' in trust_sync.stdout or 'copy:' in trust_sync.stdout"
   when: fl_backend == "nvflare"
 
-# Same requirement as the NVFLARE stage above — trust_num selects which SuperNode
+# Same requirement as the FLARE stage above — trust_num selects which SuperNode
 # credential is staged. Bare `{{ trust_num }}` already fails an undefined run, but
 # on a Jinja "undefined variable" error rather than one that says what to pass.
 - name: ensure trust_num is defined for Flower kit staging
@@ -149,7 +149,7 @@
   #
   # 1. trust_s3_source is passed BARE. It already ends in "/", and appending another
   #    gives "net-1//" — a literal empty path segment matching no key, so the sync
-  #    copies nothing, exits 0 and reports ok. The NVFLARE sync above passes it bare
+  #    copies nothing, exits 0 and reports ok. The FLARE sync above passes it bare
   #    for the same reason; keep the two identical.
   # 2. Only this host's own credential is staged. The prefix also holds every other
   #    slot's SuperNode private key and the SuperLink server key, so syncing it whole
@@ -177,13 +177,13 @@
   # first, a sync that copies nothing leaves the host with NO kit, and aws s3 sync
   # exits 0 on an empty source. Assert the result rather than trust the exit code.
   #
-  # See the NVFLARE sync above — same staleness trap. Flower's
+  # See the FLARE sync above — same staleness trap. Flower's
   # mTLS chain (rootCA.pem / server.pem / client.pem) is
   # regenerated whenever the kit date changes; without a wipe
   # `aws s3 sync` can leave a previous rootCA in place and the
   # client fails the TLS handshake to fl-server.
   #
-  # No `|| true` on the wipe, for the reason given in the NVFLARE stage above:
+  # No `|| true` on the wipe, for the reason given in the FLARE stage above:
   # `find -mindepth 1 -delete` exits 0 on an empty directory anyway, so it could
   # only mask a real failure and leave the staleness the wipe exists to remove.
   vars:

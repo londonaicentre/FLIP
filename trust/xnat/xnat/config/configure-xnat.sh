@@ -388,6 +388,18 @@ xnat_curl -X PUT "$XNAT_URL/xapi/anonymize/site/enabled" \
   -H "Content-Type: application/json" \
   -d 'true'
 
+# XNAT names each archived DICOM file from the header as it arrived, before the anonymization
+# script runs, and its default template starts with the original Study Instance UID. The file
+# names reach the FL client, which unpacks the downloads as they are. Name files from values that
+# identify no one: the hash of the SOP Class and Instance UIDs keeps every name in a scan unique,
+# and is no easier to reverse than the script's own hashUID. Duplicates are still detected by SOP
+# Instance UID, which the script hashes the same way every time, so a re-sent study merges.
+echo "Setting the archive's DICOM file names..."
+xnat_curl -X POST "$XNAT_URL/xapi/siteConfig" \
+  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+  -H "Content-Type: application/json" \
+  -d '{"dicomFileNameTemplate": "${SeriesNumber}-${InstanceNumber}-${HashSOPClassUIDWithSOPInstanceUID}", "useSopInstanceUidToUniquelyIdentifyDicom": true}'
+
 # The DICOM SCP receiver is converged onto the kit, not re-created (FLIP#1456): this runs on every
 # redeploy and `helm upgrade`, and a delete-then-POST left no receiver for the C-STORE return leg of a
 # retrieval in flight. FLIP's receiver is kept (the one at XNAT_AETITLE:XNAT_PORT, else the oldest), and:

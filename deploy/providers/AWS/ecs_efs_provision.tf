@@ -19,7 +19,7 @@
 # so we need a bootstrap run that creates the required directory layout.
 
 locals {
-  # NVFLARE participant kits are produced by `nvflare provision` and uploaded
+  # FLARE participant kits are produced by `nvflare provision` and uploaded
   # to the AI Centre bucket - NOT the FLIP bucket. The path mirrors the
   # source-of-truth used by site.yml's central-hub kit sync (lines 168-169).
   # Bucket: aicentre_bucket; layout:

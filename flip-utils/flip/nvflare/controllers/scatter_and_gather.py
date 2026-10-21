@@ -28,7 +28,7 @@ from flip.schemas import FLLogEvent
 
 
 class ScatterAndGather(NVFlareScatterAndGather):
-    """FLIP's FedAvg controller — a thin subclass of NVFLARE's stock ``ScatterAndGather``.
+    """FLIP's FedAvg controller — a thin subclass of FLARE's stock ``ScatterAndGather``.
 
     FLIP previously vendored a full copy of the stock controller, which drifted out of date. This
     subclass inherits stock's round loop verbatim — and with it ``memory_gc_rounds`` allocator-aware
@@ -45,13 +45,13 @@ class ScatterAndGather(NVFlareScatterAndGather):
         ``"exception"`` header when the client attached one, a pointed fallback naming the return
         code and the trust-side logs otherwise) and relays each genuinely accepted result to the
         hub as a ``CLIENT_RESULT_RECEIVED`` fact. Client ``WEIGHT_DIFF`` updates reach the
-        aggregator untouched — stock NVFLARE semantics: the aggregator averages the diffs and
+        aggregator untouched — stock FLARE semantics: the aggregator averages the diffs and
         ``FullModelShareableGenerator`` (or the FedOpt generator) applies the average to the
         global model. This is natively partial-safe for frozen-backbone head-only updates (keys
         absent from the diff keep their global value), which is what the removed DIFF→WEIGHTS
         reconstruction existed to guarantee (FLIP#684) against the legacy templates'
         ``WEIGHTS``-expecting aggregator. A result whose data kind cannot match the aggregator's
-        expectation (e.g. a trainer sending ``params_type="FULL"`` → ``WEIGHTS`` — NVFLARE's
+        expectation (e.g. a trainer sending ``params_type="FULL"`` → ``WEIGHTS`` — FLARE's
         default when ``params_type`` is omitted) is reported to the hub with an actionable
         message instead of stock's server-log-only rejection.
       * :meth:`handle_event` — relays FLIP metrics on ``FlipEvents.SEND_RESULT``, and panics on
@@ -64,7 +64,7 @@ class ScatterAndGather(NVFlareScatterAndGather):
     """
 
     def __init__(self, *args: Any, model_id: str = "", **kwargs: Any) -> None:
-        # ``*args`` is load-bearing, not dead: NVFLARE's FedJob/recipe serialisation
+        # ``*args`` is load-bearing, not dead: FLARE's FedJob/recipe serialisation
         # (``get_component_init_parameters``) only walks a thin subclass's base class to capture
         # stock's __init__ args (persistor_id, aggregator_id, num_rounds, …) when the subclass
         # declares BOTH ``*args`` and ``**kwargs``. With ``**kwargs`` alone, only ``model_id`` is
@@ -138,7 +138,7 @@ class ScatterAndGather(NVFlareScatterAndGather):
         Stock's rejection of a wrong-kind DXO is one ``log_error`` line inside the fl-server
         container ("expected WEIGHT_DIFF but got WEIGHTS") and an INFO "REJECTED" — invisible to
         the researcher, whose local metrics keep streaming while the global model never moves.
-        The overwhelmingly likely cause is a trainer sending ``params_type="FULL"`` (NVFLARE's
+        The overwhelmingly likely cause is a trainer sending ``params_type="FULL"`` (FLARE's
         default when omitted), so name that fix outright. Best-effort: probing failures must
         never block acceptance (the aggregator remains the authority on rejection).
         """
@@ -162,7 +162,7 @@ class ScatterAndGather(NVFlareScatterAndGather):
                     f"{', '.join(sorted(str(k) for k in expected_kinds))} — every such contribution is rejected. "
                     "A FLIP Client-API trainer must send its update as a diff: "
                     "FLModel(params=<local minus global>, params_type='DIFF'). Note params_type='FULL' is "
-                    "NVFLARE's default when params_type is omitted."
+                    "FLARE's default when params_type is omitted."
                 )
                 self.log_error(fl_ctx, message)
                 self.flip.send_handled_exception(
@@ -240,7 +240,7 @@ class ScatterAndGather(NVFlareScatterAndGather):
             dxo = from_shareable(result)
             return int(sum(getattr(arr, "nbytes", 0) for arr in dxo.data.values()))
         except Exception as e:
-            # Distinguishes "my probe broke" (e.g. an NVFLARE shareable-shape
+            # Distinguishes "my probe broke" (e.g. a FLARE shareable-shape
             # change) from a genuinely sizeless result — otherwise sizes
             # vanish silently forever after an upgrade.
             self.log_debug(fl_ctx, f"Could not size the client update: {e}")
@@ -253,7 +253,7 @@ class ScatterAndGather(NVFlareScatterAndGather):
         event's contract is "per accepted result". Best-effort telemetry: any failure here
         is logged and must never block result acceptance. The counts are shared as sticky
         fl_ctx props so ServerEventHandler can attach them to the ROUND_AGGREGATED event on
-        ROUND_DONE. NVFLARE's ``_current_round`` is 0-based; the wire contract is 1-based.
+        ROUND_DONE. FLARE's ``_current_round`` is 0-based; the wire contract is 1-based.
         """
         try:
             if self._current_round is None:

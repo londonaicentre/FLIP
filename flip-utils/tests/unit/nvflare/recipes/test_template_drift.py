@@ -19,7 +19,7 @@ other way) would pass the whole suite while every live client contribution is re
 (see its module docstring) and commit the result whenever a recipe changes.
 
 Comparison is on parsed JSON trees, so it is key-order-insensitive, with one canonicalisation:
-the filter entries' ``tasks`` lists are set-derived inside NVFLARE, so their order follows the
+the filter entries' ``tasks`` lists are set-derived inside FLARE, so their order follows the
 interpreter's hash seed (the reason the drivers pin ``PYTHONHASHSEED=0`` for byte-stable committed
 files) — they are sorted on both sides before comparing. Every other ordering (workflows, filter
 chains) is semantic and compared exactly.

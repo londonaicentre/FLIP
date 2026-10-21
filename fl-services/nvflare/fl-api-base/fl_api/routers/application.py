@@ -34,7 +34,7 @@ def upload_app(model_id: UUID, body: UploadAppRequest, session: FLIP_Session = D
         model_id (UUID): The Central Hub model_id; names the per-model job dir that submit
             later runs from. FastAPI rejects any non-UUID path segment with 422.
         body (UploadAppRequest): The request body containing the application details.
-        session (FLIP_Session): The NVFlare session instance.
+        session (FLIP_Session): The FLARE session instance.
 
     Returns:
         dict[str, Any]: The status of the upload, with the GPU request written into meta.json and its source.
@@ -48,7 +48,7 @@ def get_available_apps_to_upload(session: FLIP_Session = Depends(get_session)) -
     Get list of available apps to upload (list the contents of the upload directory that are directories).
 
     Args:
-        session (FLIP_Session): The NVFlare session instance.
+        session (FLIP_Session): The FLARE session instance.
 
     Returns:
         list[str]: list of available directories to upload.

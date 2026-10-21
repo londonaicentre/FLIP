@@ -28,7 +28,7 @@ class ClientExceptionReporter(Filter):
 
     The model ID is job-scoped data and is therefore resolved exclusively by
     ``get_flip_model_id``, from the app's config.json. The sending client is obtained
-    from NVFLARE's peer context, which is populated before server result filters
+    from FLARE's peer context, which is populated before server result filters
     run.
     """
 

@@ -170,7 +170,7 @@ accuracy = true
 def test_upload_app_injects_min_clients_from_trust_count(trusts, expected, client, upload_dir, mock_requests_get):
     """flip-min-clients carries the participating-trust count into the Flower run config.
 
-    The NVFLARE adapter already does this (``config["min_clients"] = len(trusts)`` in
+    The FLARE adapter already does this (each workflow's ``min_clients = len(trusts)`` in
     prepare_config.configure_server). Without the Flower equivalent the strategy inherits
     flwr's ``min_*_nodes=2`` default, so a single-trust run waits for a second node that
     never arrives, in an unbounded poll loop that never times out.

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Flower round-progress emission — the Flower twin of the NVFLARE round relay.
+"""Flower round-progress emission — the Flower twin of the FLARE round relay.
 
 Emits the typed round facts (``FLLogEvent``) that back the hub's round-aware
 activity feed. Facts only: the hub composes display text at serve time, so

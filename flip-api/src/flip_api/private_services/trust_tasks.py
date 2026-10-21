@@ -55,9 +55,8 @@ def _trust_identity(trust: Trust) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Core handlers (key-only protocol). Each route function below is a thin
-# wrapper that calls one of these so the deprecated `{trust_name}` shims share
-# exactly the same code path.
+# Core handlers. Each route function below is a thin wrapper that calls one
+# of these.
 # ---------------------------------------------------------------------------
 
 
@@ -219,8 +218,8 @@ def _record_heartbeat(trust: Trust, db: Session, heartbeat: TrustHeartbeatInput 
         trust (Trust): The authenticated trust.
         db (Session): Database session.
         heartbeat (TrustHeartbeatInput | None): Optional per-service health snapshot.
-            None for bodyless heartbeats from pre-collector trust-api builds, whose
-            behavior is unchanged.
+            None when the trust-api has no snapshot to send (before its first collection
+            cycle, after a failed one, or on its bodyless retry after a 422).
 
     Returns:
         dict[str, object]: ``{trust_id, trust_name, message, hub_version, aes_key_fingerprint}``.
@@ -257,7 +256,7 @@ def _record_heartbeat(trust: Trust, db: Session, heartbeat: TrustHeartbeatInput 
 
 
 # ---------------------------------------------------------------------------
-# Canonical routes — no `{trust_name}` segment. Identity is the API key.
+# Routes.
 # ---------------------------------------------------------------------------
 
 
@@ -339,13 +338,14 @@ def trust_heartbeat(
 
     Args:
         request (Request): The FastAPI request, used by the rate limiter.
-        body (dict | None): Optional per-service health snapshot; absent on bodyless
-            heartbeats from pre-collector trust-api builds.
+        body (dict | None): Optional per-service health snapshot; absent when the
+            trust-api has no snapshot to send (see ``_record_heartbeat``).
         db (Session): Database session.
         authenticated_trust (Trust): The trust resolved from the API key.
 
     Returns:
-        dict[str, object]: ``{trust_id, trust_name, message}``.
+        dict[str, object]: ``{trust_id, trust_name, message, hub_version, aes_key_fingerprint}``
+        (see ``_record_heartbeat``).
 
     Raises:
         HTTPException: 422 when a body is present but is not a valid snapshot.

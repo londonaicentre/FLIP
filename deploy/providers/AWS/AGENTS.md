@@ -18,7 +18,7 @@
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
 | `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
-| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (NVFLARE kit or Flower creds, by `fl_backend`) |
+| `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
 | `certificate.tf` | ACM certificate for the internal NLB's web listener (`MANAGE_DNS=true`) |
@@ -55,7 +55,7 @@ make init/plan/apply HUB=prod                # BREAK-GLASS ONLY on the LZA estat
 make full-deploy-hub-only HUB=<stag|prod>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + the UI to S3 (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. HUB=prod additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
-make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one
+make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
 make deploy-trust                             # Deploy trust stack to EC2
 make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
 make stage-fl-kit KIT=<CODE>                  # Re-stage the trust's FL participant kit for its REGISTERED slot (runs inside deploy-trust, after register-trusts). ansible-init stages Trust_1 pre-registration because no slot exists yet; this replaces it once one does. The wipe is net-1-wide, so the host ends up holding exactly one slot's kit, and the play asserts the staged fed_client.json names that slot
@@ -67,7 +67,7 @@ make forward-trust                            # SSM port forward all trust UIs
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
 make package-onprem-trust-kit KIT=<CODE> [KIT_FILE=<path>]  # Tarball a filled-in kit (trust/.env.<CODE>.<hub>, or the one at KIT_FILE) + the FL kit slice of its FL_KIT_SLOT for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
-make add-fl-kits N=<n> HUB=<stag|prod>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (NVFLARE; no restart — see README)
+make add-fl-kits N=<n> HUB=<stag|prod>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (FLARE; no restart — see README)
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
@@ -253,7 +253,7 @@ Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of 
 ## Infrastructure
 
 - **Network**: the accelerator-provisioned VPC, looked up by Name tag (`network_lza.tf`) — app subnets for compute, data subnets for RDS; no IGW, no NAT
-- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — NVFLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/8000 Control API (HTTP since flwr 1.37)/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The internal NLB's FL listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
+- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — FLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/8000 Control API (HTTP since flwr 1.37)/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The internal NLB's FL listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
 - **RDS**: PostgreSQL in the data subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **Internal NLB**: static per-subnet IPs; a `:443` web listener for `/api/*` relayed from the networking account's edge, and the FL listener (TCP pass-through)
@@ -276,4 +276,3 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 - Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table)
 - Persistent resources (S3, Secrets, Cognito) preserved during destroy
-- `make import-persistent` to import pre-existing resources

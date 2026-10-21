@@ -23,13 +23,13 @@ pull on the first backend, then reuse the same approved project on the second.
    ```
    Watch the output for the `project_id=<UUID>` printed near the start — **capture it**; you need it for step 3. Wait for completion and report pass/fail. (Tutorial files default to `fl-tutorials/flower/xray_classification/` for this backend.)
 
-2. **Switch the stack to NVFLARE** without disturbing the pulled DICOM (`restart-fl` leaves Orthanc/XNAT untouched):
+2. **Switch the stack to FLARE** without disturbing the pulled DICOM (`restart-fl` leaves Orthanc/XNAT untouched):
    ```
    make restart-fl FL_BACKEND=nvflare DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
    ```
    (Drop `DOCKER_FL_REGISTRY=`/`DOCKER_FL_TAG=dev` if the user is running published images rather than locally-built `:dev` images — ask if unsure.)
 
-3. **Backend 2 — NVFLARE (reuses the project, skips re-pull).** Run in the background:
+3. **Backend 2 — FLARE (reuses the project, skips re-pull).** Run in the background:
    ```
    make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID-from-step-1>"
    ```

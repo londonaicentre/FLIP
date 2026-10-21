@@ -37,9 +37,6 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
     are unrecoverable unless cleaned up here. This prevents a single crash
     from permanently starving a net of new training jobs.
     """
-    # Raw column names: SQLModel `alias=` on the FLScheduler model only affects
-    # Pydantic API serialisation, not the SQLAlchemy column name — the actual
-    # DB column is `job_id` (the field name), not the `jobid` alias.
     stmt = text(
         """
         UPDATE fl_scheduler

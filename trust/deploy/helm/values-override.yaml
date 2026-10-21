@@ -12,7 +12,7 @@ trustApi:
     CENTRAL_HUB_API_URL: "https://stag.flip.aicentre.co.uk/api"
 awsRegion: eu-west-2
 flBackend: nvflare
-uploadedFederatedDataBucket: "s3://${FLIP_BUCKET_NAME}/uploaded_federated_data"
+uploadedFederatedDataBucket: "s3://${FLIP_FL_RESULTS_BUCKET_NAME}/results"
 omopDb:
   # The licensed core vocabulary bundle. Chart default is empty; without this the
   # release still installs, but with NO vocabulary (cohort queries joining

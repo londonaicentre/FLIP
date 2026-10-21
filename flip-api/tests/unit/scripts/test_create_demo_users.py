@@ -24,7 +24,7 @@ import pytest
 
 from flip_api.auth.identity import IdentityProvider, IdentityProviderError, UserAlreadyExistsError
 from flip_api.scripts import create_demo_users
-from flip_api.utils.constants import DEMO_ADMIN_EMAIL, DEMO_RESEARCHER_EMAIL
+from flip_api.utils.constants import DEMO_ADMIN_EMAIL, DEMO_RESEARCHER_EMAIL, DEMO_TRUST_ADMIN_EMAIL
 
 MODULE = "flip_api.scripts.create_demo_users"
 
@@ -40,6 +40,7 @@ def _idp(backend: str = "keycloak") -> MagicMock:
 def passwords(monkeypatch):
     monkeypatch.setenv("DEMO_RESEARCHER_PASSWORD", "Researcher-Pa55!")  # pragma: allowlist secret
     monkeypatch.setenv("DEMO_ADMIN_PASSWORD", "Admin-Pa55!")  # pragma: allowlist secret
+    monkeypatch.setenv("DEMO_TRUST_ADMIN_PASSWORD", "TrustAdmin-Pa55!")  # pragma: allowlist secret
     monkeypatch.delenv("FLIP_INSTANCE", raising=False)
 
 
@@ -112,8 +113,8 @@ def test_ensure_user_on_an_existing_user_only_resets_the_password(capsys):
 # --- main ----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("unset", ["DEMO_RESEARCHER_PASSWORD", "DEMO_ADMIN_PASSWORD"])
-def test_main_refuses_without_both_passwords_and_touches_no_provider(passwords, monkeypatch, capsys, unset):
+@pytest.mark.parametrize("unset", ["DEMO_RESEARCHER_PASSWORD", "DEMO_ADMIN_PASSWORD", "DEMO_TRUST_ADMIN_PASSWORD"])
+def test_main_refuses_without_every_password_and_touches_no_provider(passwords, monkeypatch, capsys, unset):
     monkeypatch.delenv(unset)
     with patch(f"{MODULE}.build_identity_provider") as build:
         assert create_demo_users.main() == 1
@@ -129,13 +130,18 @@ def test_main_writes_nothing_when_the_target_is_not_confirmed(passwords):
     idp.set_password.assert_not_called()
 
 
-def test_main_provisions_both_demo_users_and_names_the_restart(passwords, capsys):
+def test_main_provisions_every_demo_user_and_names_the_restart(passwords, capsys):
     idp = _idp()
     with patch(f"{MODULE}.build_identity_provider", return_value=idp), patch("builtins.input", return_value="yes"):
         assert create_demo_users.main() == 0
-    assert [c.args[0] for c in idp.create_user.call_args_list] == [DEMO_RESEARCHER_EMAIL, DEMO_ADMIN_EMAIL]
+    assert [c.args[0] for c in idp.create_user.call_args_list] == [
+        DEMO_RESEARCHER_EMAIL,
+        DEMO_ADMIN_EMAIL,
+        DEMO_TRUST_ADMIN_EMAIL,
+    ]
     idp.set_password.assert_any_call(DEMO_RESEARCHER_EMAIL, "Researcher-Pa55!")  # pragma: allowlist secret
     idp.set_password.assert_any_call(DEMO_ADMIN_EMAIL, "Admin-Pa55!")  # pragma: allowlist secret
+    idp.set_password.assert_any_call(DEMO_TRUST_ADMIN_EMAIL, "TrustAdmin-Pa55!")  # pragma: allowlist secret
     out = capsys.readouterr().out
     assert "docker compose -p deploy restart flip-api" in out
     # Passwords come from the environment and never go to the terminal.

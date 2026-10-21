@@ -352,16 +352,16 @@ trust/.env.*
 !trust/.env.*.example
 !trust/.env.example
 
-# NVFLARE participant-kit trees synced from the hub's S3 bucket
+# FLARE participant-kit trees synced from the hub's S3 bucket
 # (s3://<aicentre-bucket>/fl-flare-participant-kits/<date>/net-1/services/<slot>/).
 # Contains client.key / client.crt — never commit.
 trust/fl_participant_kits/
 
-# Per-trust NVFLARE startup kits unpacked on a trust host (e.g. trust/fl-kit-gstt/net-1/
+# Per-trust FLARE startup kits unpacked on a trust host (e.g. trust/fl-kit-gstt/net-1/
 # services/Trust_1/). Same client.key / client.crt content — never commit.
 trust/fl-kit-*/
 
-# NVFLARE provisioning workspace left on a host by legacy in-deploy provisioning
+# FLARE provisioning workspace left on a host by legacy in-deploy provisioning
 # (deploy/workspace/net-*/ with state/cert.json + startup kits). Provisioning now
 # lives under fl-services/<backend>/provision/ (ignored further down this file) — never commit.
 deploy/workspace/
@@ -409,7 +409,7 @@ fl-services/nvflare/provision/workspace-prod/
 .test_data/
 .test_runs/
 
-# NVFLARE provisioned secrets — NEVER commit to version control
+# FLARE provisioned secrets — NEVER commit to version control
 **/signature.json
 **/fed_client.json
 **/fed_server.json
@@ -446,7 +446,7 @@ fl-services/nvflare/provision/workspace-prod/
 .test_data/
 .test_runs/
 
-# NVFLARE provisioned secrets — NEVER commit to version control
+# FLARE provisioned secrets — NEVER commit to version control
 **/signature.json
 **/fed_client.json
 **/fed_server.json

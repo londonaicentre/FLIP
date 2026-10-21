@@ -19,7 +19,7 @@ from fl_api.utils.flip_session import FLIP_Session
 
 
 class DummySession(FLIP_Session):
-    """Minimal subclass to simulate an NVFLARE session."""
+    """Minimal subclass to simulate a FLARE session."""
 
     def __init__(self):
         self.name = "dummy"

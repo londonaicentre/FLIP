@@ -36,9 +36,8 @@
 #
 # State migration: the old `aws_s3_bucket.flip_bucket` resource and its
 # sub-resources are dropped from this stack via `removed` blocks at the
-# bottom of this file. The underlying AWS bucket is left in place so its
-# contents can be migrated and verified out-of-band (`make migrate-flip-bucket`)
-# before manual decommission.
+# bottom of this file. The underlying AWS bucket was left in place, migrated
+# out-of-band and then decommissioned by hand (FLIP#24).
 
 module "flip_model_files_uploads_bucket" {
   source      = "./modules/flip_s3_bucket"
@@ -354,9 +353,8 @@ moved {
 # The previous design colocated three tenants under `aws_s3_bucket.flip_bucket`
 # (see the head of this file for the rationale). These `removed` blocks tell
 # Terraform to forget those resources from state without destroying the
-# underlying AWS bucket — the bucket holds production data that is migrated
-# out-of-band via `make migrate-flip-bucket` and then manually decommissioned
-# (`aws s3 rb`) after a cooldown.
+# underlying AWS bucket — the bucket held production data that was migrated
+# out-of-band and then manually decommissioned (`aws s3 rb`) after a cooldown.
 #
 # `lifecycle { destroy = false }` is what makes this safe: without it,
 # `removed` would attempt to delete the AWS resource on the next apply and

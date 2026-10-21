@@ -143,8 +143,8 @@ def test_4_missing_dir_warns() -> None:
 
 
 def test_5_site_privacy_uses_runtime_validator() -> None:
-    """The readiness check accepts a valid NVFLARE percentile policy."""
-    print("▶ valid NVFLARE site privacy policy -> PASS")
+    """The readiness check accepts a valid FLARE percentile policy."""
+    print("▶ valid FLARE site privacy policy -> PASS")
     result = mod.check_site_privacy_policy(
         {"FL_BACKEND": "nvflare", "FL_SITE_PRIVACY_POLICY": "percentile"},
         True,

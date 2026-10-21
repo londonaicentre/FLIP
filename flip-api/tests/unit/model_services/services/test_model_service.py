@@ -215,7 +215,7 @@ def test_resolve_trust_resolves_by_kit_slot():
     """The FL kit slot (the client name) resolves via FLKitSlot.slot_name.
 
     Resolution is uniform across backends and independent of the operator-chosen
-    trust display name (see #538): NVFLARE reports the certificate CN, Flower the
+    trust display name (see #538): FLARE reports the certificate CN, Flower the
     SUPERNODE_NAME (set to FL_KIT_SLOT) — both are the slot, so no backend branch
     (and no get_settings()) is involved.
     """

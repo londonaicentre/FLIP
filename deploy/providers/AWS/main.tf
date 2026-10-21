@@ -308,7 +308,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 # Orthanc and the OMOP DB — none of those services use boto3. The only AWS
 # call from the Trust host is `aws s3 sync` against the AI Centre bucket
 # during Ansible provisioning to fetch the FL participant kit (see the
-# NVFLARE/Flower kit-download tasks in deploy/providers/AWS/site.yml).
+# FLARE/Flower kit-download tasks in deploy/providers/AWS/site.yml).
 # Cognito, SES and the FLIP application bucket are deliberately *not*
 # granted here.
 #
@@ -361,7 +361,7 @@ resource "aws_iam_role_policy" "trust_ec2_s3" {
         # in iam_ecs.tf. Bucket-wide list/read was largely inert before the kms:Decrypt grant
         # below (nothing encrypted could be read at all); granting decrypt completes the
         # capability, so the scope has to be narrowed in the same change. The bucket also holds
-        # every net's kits, the fl-server's own kit, the NVFLARE provisioning CA registry and
+        # every net's kits, the fl-server's own kit, the FLARE provisioning CA registry and
         # the licensed OMOP vocabulary — and this is the host that runs researcher-submitted
         # FL code, so it is the role that least deserves bucket-wide read.
         #
@@ -534,7 +534,7 @@ data "aws_route53_zone" "subdomain" {
 # The internal NLB (fl_ingress_lza.tf) forwards its FL listener here. The name
 # keeps the `-lza` suffix the live states hold (a name change is ForceNew).
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {
-  # Container port per backend (NVFLARE: FL_SERVER_PORT; Flower: SuperLink
+  # Container port per backend (FLARE: FL_SERVER_PORT; Flower: SuperLink
   # Fleet 9092 — see local.fl_server_container_port in ecs_tasks.tf). The
   # NLB LISTENER stays on var.FL_SERVER_PORT for both. Port is ForceNew, so
   # switching backend replaces this TG; the name is keyed by backend and

@@ -214,7 +214,6 @@ REQUIRED_KEYS=(
 # through when present; their absence is not an error, because the Makefile or
 # variables.tf already has a defined fallback.
 OPTIONAL_KEYS=(
-    FLIP_BUCKET_NAME
     JOB_RESOURCE_SPEC_NUM_GPUS
 
     # Not stored in either GitHub environment and not normally in an env file:

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down prepare-artifacts up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
@@ -113,11 +113,11 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/dat
 # runs as it on every path, so it always owns net-N.
 #
 # The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
-# (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
+# (flip.add_resource stages under net-N/upload/, FLARE CleanupImages deletes net-N's
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
-#   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
+#   * FLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
 #     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
@@ -461,7 +461,7 @@ prepare-artifacts:
 # seed markers differ from the kit's PROJECTS / data version, and its up-xnat step runs
 # xnat-reset, which wipes the XNAT archive and database — never run it, or
 # restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
-up-trust: require-xnat-aetitle create-networks
+up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
@@ -497,9 +497,16 @@ up-trust: require-xnat-aetitle create-networks
 # `onboard-onprem-trust` runs the renderer.
 GOVERNANCE_PYTHON = uv run --no-config --no-project --python '>=3.11' python
 SITE_PRIVACY_KIT_ENV = $(foreach v,$(sort $(filter FL_SITE_PRIVACY_%,$(.VARIABLES))),$(v)="$($(v))")
-# NVFLARE's fl-clients read their section through the one-shot fl-governance-init service
+# FLARE's fl-clients read their section through the one-shot fl-governance-init service
 # (compose_trust.*.nvflare.yml). Flower has no such service and nothing that reads the file.
 GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
+
+# Hubless self-test of this host's trust stack (FLIP#1390): a kit that needs no hub, the
+# production stack as slot 1, health/seed/auth/C-STORE/FL-client checks, a report under
+# /opt/flip/selftest, then teardown (SELFTEST_KEEP_UP=1 keeps it up). Run as root on an
+# Azure node by `flip-node selftest <backend>`; needs no AWS and no hub.
+selftest-node:
+	@bash ../scripts/selftest_node.sh "$(FL_BACKEND)"
 
 check-governance:
 	$(require_kit_file)
@@ -515,7 +522,7 @@ else
 	@echo "🔍 Validating the [disclosure]/[access] half (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
 	@ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" \
 	    COHORT_QUERY_THRESHOLD="$(or $(COHORT_QUERY_THRESHOLD),10)" \
-	    PYTHONPATH=data-access-api $(GOVERNANCE_PYTHON) data-access-api/scripts/check_governance.py
+	    PYTHONPATH=data-access-api $(GOVERNANCE_PYTHON) data-access-api/data_access_api/scripts/check_governance.py
 	@echo "🔍 Validating the [fl_privacy] half with the fl-client's own loader (FL_BACKEND=$(FL_BACKEND))..."
 	@tmp=$$(mktemp -d) && trap 'rmdir "$$tmp"' EXIT && \
 	    ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" $(SITE_PRIVACY_KIT_ENV) \
@@ -556,7 +563,7 @@ endef
 # a dev compose's pull_policy: always from swapping the image under the edit, and the net
 # dirs of a live trust already exist (as in _upgrade-trust-apply).
 #
-# Only the services that read the document are recreated: data-access-api, plus on NVFLARE
+# Only the services that read the document are recreated: data-access-api, plus on FLARE
 # fl-governance-init and the fl-clients it extracts for. On Flower nothing else reads it, so
 # its clients — and their running jobs — are left alone. Each reads it at container start.
 #
@@ -568,7 +575,7 @@ endef
 # refuse never reaches them. Then it waits for data-access-api's `[governance]` startup line
 # and compares its digest with the document's: an image that predates governance support
 # prints no such line, and a mismatch means the service is not reading this file — either is
-# a failure, not a ✅. On NVFLARE this interrupts any job the fl-clients are running: apply
+# a failure, not a ✅. On FLARE this interrupts any job the fl-clients are running: apply
 # between runs.
 reload-governance: check-governance
 	$(require_kit_file)
@@ -990,6 +997,14 @@ create-networks-trust-2:
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
+# The loaded kit's own overlay network, whatever slot the hub assigned. create-networks makes
+# only the two dev trusts' (1 and 2); a trust on Trust_3 or above (an on-prem or Azure node,
+# FLIP#1390) otherwise created every container and then failed "network
+# deploy_trust-network-3 not found".
+create-trust-network:
+	@[ -n "$(TRUST_NUM)" ] || { echo "❌ KIT=<CODE> with FL_KIT_SLOT_NUMBER set is required"; exit 1; }
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM); }
+
 # Every network here carries the instance prefix, so an instance owns all of them and
 # removing them is unconditional. (Before the trust networks were prefixed they were
 # shared across instances, and this target had to refuse to delete them — that guard
@@ -997,10 +1012,11 @@ create-networks: create-networks-core create-networks-trust-1 create-networks-tr
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
 	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_fl-net-1 $(INSTANCE_PREFIX)deploy_fl-net-2 2>/dev/null || true
-	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 $(if $(TRUST_NUM),$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)) 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
-recreate-networks: remove-networks create-networks
+# With a KIT on slot 3 or above, its own network comes back too (create-trust-network).
+recreate-networks: remove-networks create-networks $(if $(filter-out 1 2,$(TRUST_NUM)),create-trust-network)
 	@echo "✅ All trust networks recreated with swarm support!"
 
 # First registered dev trust — the default KIT for the debug targets when none

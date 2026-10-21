@@ -40,8 +40,6 @@ services:
       # the one origin to admit. The two lines must move together, or every bundle download 400s.
       # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
       - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
-      # The pre-#1291 name too, for one release: an fl-api image from before the rename reads only this one.
-      - BUNDLE_URL_ALLOWED_HOSTS=s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # Use the internal hostnames and ports for the server since the API is within the same Docker network
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097

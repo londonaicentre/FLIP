@@ -61,7 +61,7 @@ FLAG_SCAN_GLOBS = (
 )
 
 # Every compose file that can run a Flower SuperLink; each SuperLink found in any of them is checked.
-# The NVFLARE composes are left out because they name their own server through the same
+# The FLARE composes are left out because they name their own server through the same
 # DOCKER_FL_SERVER_NAME variable.
 FLOWER_COMPOSE_GLOBS = (
     "deploy/compose*flower*.yml",

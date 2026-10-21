@@ -48,7 +48,7 @@ class FLNets(SQLModel, table=True):
     # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
     # from creation. Mapped like the other enum columns (status, task_type, ...): SQLModel infers a
     # SQLAlchemy Enum column from FLBackend, so the DB persists the member name and reads return a
-    # real FLBackend member. FLBackend is the one column whose member name (NVFLARE) differs from its
+    # real FLBackend member. FLBackend is the one column whose member name (FLARE) differs from its
     # lowercase value (nvflare), so the DB stores the uppercase name while env/JSON/S3 use the value.
     fl_backend: FLBackend = Field(nullable=False)
 
@@ -58,9 +58,9 @@ class FLNets(SQLModel, table=True):
 class FLScheduler(SQLModel, table=True):
     __tablename__ = "fl_scheduler"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    net_id: UUID = Field(foreign_key="fl_nets.id", alias="netid")
+    net_id: UUID = Field(foreign_key="fl_nets.id")
     status: NetStatus = Field(default=NetStatus.AVAILABLE)
-    job_id: UUID | None = Field(default=None, foreign_key="fl_job.id", alias="jobid")
+    job_id: UUID | None = Field(default=None, foreign_key="fl_job.id")
 
     job: Optional["FLJob"] = Relationship(back_populates="scheduler")
     net: Optional["FLNets"] = Relationship(back_populates="schedulers")
@@ -83,7 +83,7 @@ class FLJob(SQLModel, table=True):
     started: datetime | None = Field(default=None)
     completed: datetime | None = Field(default=None)
     # FL-backend-assigned job identifier, treated as an opaque string the hub never parses (it only persists
-    # and equality-matches it). Format varies by backend: a UUID-like string for NVFLARE, a stringified
+    # and equality-matches it). Format varies by backend: a UUID-like string for FLARE, a stringified
     # integer run-id for Flower. NULL until the job is submitted to the backend (see fl_service.submit_job).
     # Distinct from `id` above, which is the hub's own UUID primary key for the job record.
     fl_backend_job_id: str | None = None
@@ -99,7 +99,7 @@ class FLMetrics(SQLModel, table=True):
     __tablename__ = "fl_metrics"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     # The trust this metric is attributed to (its id). fl_client_name is the raw
-    # FL client identity as reported by the FL server (FL kit slot for NVFLARE,
+    # FL client identity as reported by the FL server (FL kit slot for FLARE,
     # SUPERNODE_NAME for Flower), kept for traceability.
     trust: UUID = Field(foreign_key="trust.id")
     fl_client_name: str = Field()

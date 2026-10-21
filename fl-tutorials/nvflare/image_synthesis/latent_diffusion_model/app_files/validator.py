@@ -119,7 +119,7 @@ def validate_ae(
         model (torch.nn.Module): The composite LDM network with the broadcast global weights loaded.
         test_loader (DataLoader): Held-out data loader.
         device (torch.device): Device to run on.
-        writer (SummaryWriter): NVFLARE Client API metrics writer (relayed to FLIP by the
+        writer (SummaryWriter): FLARE Client API metrics writer (relayed to FLIP by the
             analytics bridge).
 
     Returns:
@@ -180,7 +180,7 @@ def validate_dm(
         scheduler (DDPMScheduler): The DDPM noise scheduler.
         config (dict): The user app config (``config.json``).
         device (torch.device): Device to run on.
-        writer (SummaryWriter): NVFLARE Client API metrics writer.
+        writer (SummaryWriter): FLARE Client API metrics writer.
 
     Returns:
         float: Mean noise-prediction MSE over the held-out split.

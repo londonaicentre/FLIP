@@ -35,7 +35,7 @@ def fake_settings(tmp_path):
 
 
 def test_create_fl_session_success(fake_settings):
-    """✅ Should configure NVFlare and return a session."""
+    """✅ Should configure FLARE and return a session."""
     mock_session = MagicMock()
     mock_session.upload_dir = "/tmp/upload"
     mock_session.download_dir = "/tmp/download"

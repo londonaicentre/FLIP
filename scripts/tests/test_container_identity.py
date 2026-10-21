@@ -17,7 +17,7 @@ is what made published FL images unrunnable for any developer whose host uid was
 1000. Each assertion here pins one half of that separation, and each corresponds to a
 failure that actually happened rather than a hypothetical:
 
-- A dev service that mounts the host-provisioned NVFLARE kit must run as the host uid,
+- A dev service that mounts the host-provisioned FLARE kit must run as the host uid,
   or the entrypoint's ``envsubst`` into the bind-mounted ``local/`` fails and the
   container crash-loops. This was missed once already, in the standalone harness
   (``fl-services/nvflare/compose.dev.yml``), which the deploy composes' fix did not
@@ -50,7 +50,7 @@ PROVISIONED_KIT_MARKERS = ("workspace-dev/", "${FL_PROVISIONED_DIR}")
 
 # ...and specifically by the container path they mount it AT, because only some of the
 # kit is written. The entrypoints envsubst their generated config into `local/`, and
-# NVFLARE stages job payloads through `transfer/`; `startup/` holds the certs and is
+# FLARE stages job payloads through `transfer/`; `startup/` holds the certs and is
 # only read. fl-api in the deploy composes mounts just `admin/local` and
 # `admin/startup`, writes neither, and so legitimately runs as the image's own uid —
 # whereas the standalone harness also gives it `admin/transfer`, which it does write.
@@ -163,7 +163,7 @@ def check_kit_mounters_run_as_host_uid(failures: list[str]) -> None:
                 continue
             if svc.user is None:
                 failures.append(
-                    f"{svc.where}: mounts a written part of the provisioned NVFLARE kit but sets no `user:`. "
+                    f"{svc.where}: mounts a written part of the provisioned FLARE kit but sets no `user:`. "
                     f"The kit is written by `make provision` as the host user, so a container "
                     f"running as the image's baked uid cannot write it and the entrypoint "
                     f'crash-loops on `local/`. Add: user: "${{UID:-1000}}:1000" (FLIP#1171).'

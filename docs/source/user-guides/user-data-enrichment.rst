@@ -4,11 +4,18 @@
 Data Enrichment
 ################
 
-.. warning:: Must be logged into FLIP, be assigned to the project, and have access to the :term:`XNAT` instance at each participating Trust. See :ref:`receiving-xnat-credentials`.
+.. admonition:: Before you start
+   :class: note
 
-*Data enrichment* is the stage where a model developer adds whatever their app needs on top of the imaging data FLIP has pulled into each Trust's XNAT. Trust :term:`PACS` supply images only, so anything the app expects alongside them — segmentation masks, ROI annotations, contours — has to be added at this stage.
+   You need to be signed in to FLIP, be a member of the project, and have access to the :term:`XNAT` instance at each
+   participating Trust (see :ref:`receiving-xnat-credentials`).
 
-Enrichment happens **once per project**, inside XNAT. It is independent of which federated learning backend the project uses — both :term:`NVIDIA FLARE` and the :term:`Flower Framework` read the same enriched data.
+*Data enrichment* is where you add whatever your app needs on top of the images FLIP has pulled into each Trust's XNAT
+— segmentation masks, ROI annotations, contours. Trust :term:`PACS` supply images only, so anything else has to be added
+here.
+
+Enrichment happens **once per project**, inside XNAT. Both :term:`NVIDIA FLARE` and the :term:`Flower Framework` read
+the same enriched data, so the FL backend makes no difference.
 
 .. _enrichment-do-i-need-it:
 
@@ -16,7 +23,8 @@ Enrichment happens **once per project**, inside XNAT. It is independent of which
 Do you need it? Where labels come from
 **************************************
 
-Supervised models need a label for every image, but **enrichment is not how most labels arrive**. There are two routes, and choosing the wrong one creates work that was never necessary.
+Supervised models need a label for every image, but **most labels do not arrive through enrichment**. There are two
+routes; picking the wrong one creates work you never needed.
 
 .. list-table::
    :header-rows: 1
@@ -27,22 +35,26 @@ Supervised models need a label for every image, but **enrichment is not how most
      - How the app reads it
    * - **Cohort query (OMOP)**
      - The label already exists as structured clinical data — a lab result (e.g. a COVID PCR result for a chest X-ray), a diagnosis, an observation, or a coded finding from a radiology report.
-     - Project it as a column in the project's cohort query. It arrives in the dataframe returned by ``flip.get_dataframe(...)``, one row per accession, and the app reads it directly.
+     - Select it as a column in the cohort query. It arrives in the dataframe from ``flip.get_dataframe(...)``, one row per accession.
    * - **Data enrichment (XNAT)**
-     - The label does not exist in :term:`OMOP` — typically anything **spatial or image-derived**: segmentation masks, ROI contours, landmark annotations. Also labels created specifically for the project, such as a re-read or expert correction.
-     - Upload it into XNAT beside the image, as described on this page. It is downloaded with the image by ``flip.get_by_accession_number(...)``.
+     - The label is not in :term:`OMOP` — typically anything **spatial or image-derived**: segmentation masks, ROI contours, landmarks. Also labels made for the project, such as a re-read or expert correction.
+     - Upload it into XNAT beside the image, as this page describes. ``flip.get_by_accession_number(...)`` downloads it with the image.
 
-**Prefer the cohort query wherever the data supports it.** A label that is already in OMOP needs no upload, no per-Trust visit, and no re-run when the cohort changes — it is just another column of SQL.
+**Use the cohort query whenever the data allows.** A label in OMOP needs no upload, no per-Trust visit and no re-run
+when the cohort changes — it is just another column of SQL.
 
-The chest X-ray classification tutorial is the worked example of the first route: its ``query.sql`` joins ``image_feature`` to ``observation`` to project ``Effusion``, ``Edema`` and ``Lungs in normal arrangement`` as columns, and the app reads those per row. It performs **no enrichment at all**.
-
-The spleen segmentation tutorials are the worked example of the second: a segmentation mask is a 3D volume, so there is nowhere in OMOP for it to live and it has to be uploaded alongside the image.
+* The **chest X-ray classification** tutorial uses the cohort query: its ``query.sql`` selects ``Effusion``, ``Edema``
+  and ``Lungs in normal arrangement`` as columns. It does **no enrichment**.
+* The **spleen segmentation** tutorials use enrichment: a 3D segmentation mask has no place in OMOP, so it is uploaded
+  beside the image.
 
 .. note::
 
-   The platform cannot tell which route your model needs, which is why it asks you to confirm this stage is complete (see :ref:`confirm-enrichment`) even when nothing needed adding. If your labels come from the cohort query, that confirmation is all this stage requires of you.
+   The platform cannot tell which route your model needs, so it always asks you to confirm this stage is complete
+   (see :ref:`confirm-enrichment`). If your labels come from the cohort query, that confirmation is all you need to do.
 
-A project that *does* need enrichment and skips it will pull its imaging data successfully and then fail at training time with no usable samples.
+A project that needs enrichment and skips it pulls its images successfully, then fails at training time with no usable
+samples.
 
 .. _enrichment-when:
 
@@ -50,12 +62,17 @@ A project that *does* need enrichment and skips it will pull its imaging data su
 When to run it
 **********************
 
-Enrichment must happen **after two earlier steps have finished**:
+Run enrichment only **after both of these have finished** at each Trust:
 
-1. **The image pull.** The project's cohort query has to have run and the matching studies must have been imported into each Trust's XNAT. Until then there are no scans to attach anything to.
-2. **DICOM-to-NIfTI conversion.** FLIP converts each pulled DICOM series into a NIfTI volume named ``input_<something>.nii.gz``. Enrichment files are named after that converted image, so running before conversion completes silently attaches nothing.
+1. **The image pull.** The cohort's studies must be imported into the Trust's XNAT; until then there is nothing to
+   attach files to.
+2. **DICOM-to-NIfTI conversion.** FLIP converts each pulled series into a NIfTI volume named
+   ``input_<something>.nii.gz``. Enrichment files are named after that volume.
 
-Running too early is the single most common mistake, and it does not announce itself — the upload reports that it skipped every scan. If that happens, wait for conversion to finish and run it again.
+.. important::
+
+   Running too early is the most common mistake, and it fails quietly: the upload reports that it skipped every scan.
+   Wait for conversion to finish, then run it again.
 
 .. _enrichment-contract:
 
@@ -63,14 +80,15 @@ Running too early is the single most common mistake, and it does not announce it
 Where enrichment files must go
 *******************************
 
-The FL client downloads imaging data per accession by resource, so an enrichment file is only visible to your app if it sits **in the same scan's resource as the image it belongs to**.
+Your app only sees an enrichment file if it is **in the same scan resource as its image**. For the standard NIfTI
+workflow:
 
-For the standard NIfTI workflow that means:
+- **Resource**: ``NIFTI`` — the resource that holds the converted image. Not a new resource, not a separate assessor.
+- **Filename**: the image's filename with the prefix swapped, so ``input_spleen_2.nii.gz`` pairs with
+  ``label_spleen_2.nii.gz``.
 
-- **Resource**: ``NIFTI`` — the same resource holding the converted image, not a new one and not a separate assessor.
-- **Filename**: the image's own filename with its prefix swapped, i.e. ``input_spleen_2.nii.gz`` pairs with ``label_spleen_2.nii.gz``.
-
-The apps rely on that filename pairing directly. The spleen tutorials, for example, find each label by taking the image path and substituting ``/input_`` with ``/label_``. Deriving the label name *from the image already in XNAT* — rather than assuming it — is what keeps the pair matched whatever the conversion produced.
+Apps find labels by this pairing. The spleen tutorials, for example, replace ``/input_`` with ``/label_`` in the image
+path. Always take the name from the image that is actually in XNAT rather than assuming it.
 
 .. warning:: Do not upload an enrichment file under the image's own name. It will overwrite the imaging data for that scan.
 
@@ -80,16 +98,16 @@ The apps rely on that filename pairing directly. The spleen tutorials, for examp
 Option 1: the XNAT web UI
 *******************************
 
-For a handful of scans, or for enrichment done by hand (drawing a segmentation, correcting an annotation), work directly in XNAT at each Trust:
+For a handful of scans, or for work done by hand (drawing a segmentation, correcting an annotation), use XNAT directly
+at each Trust:
 
-1. Connect to the Trust network and sign in to that Trust's XNAT instance.
-2. Open the project. Its XNAT name will differ per Trust — the FLIP project id is stored in the XNAT project's **secondary ID**, so search on that if the name is not obvious.
-3. Navigate to the subject, then the session, then the scan you want to enrich.
-4. Open the scan's ``NIFTI`` resource and note the existing ``input_*.nii.gz`` filename.
-5. Upload your file into that same resource, named to match (``label_*.nii.gz``).
-6. Repeat for every scan in the cohort, at **every** participating Trust.
-
-Because each Trust holds only its own studies, this has to be done once per Trust.
+1. Connect to the Trust network and sign in to that Trust's XNAT.
+2. Open the project. Its XNAT name differs per Trust; search for the FLIP project ID, which is stored as the XNAT
+   project's **secondary ID**.
+3. Go to the subject, then the session, then the scan.
+4. Open the scan's ``NIFTI`` resource and note the ``input_*.nii.gz`` filename.
+5. Upload your file into the same resource with the matching name (``label_*.nii.gz``).
+6. Repeat for every scan in the cohort, at **every** participating Trust — each Trust holds only its own studies.
 
 .. _enrichment-scripted:
 
@@ -97,15 +115,17 @@ Because each Trust holds only its own studies, this has to be done once per Trus
 Option 2: the ``flip-xnat`` CLI
 **********************************
 
-For a whole cohort, use the upload tool that ships with the ``flip-utils`` package. It resolves the XNAT project from your FLIP project id, derives each target filename from the image already in XNAT, and refuses to overwrite anything unless you ask it to.
+For a whole cohort, use the ``flip-xnat`` upload tool from the ``flip-utils`` package. It finds the XNAT project from
+your FLIP project ID, derives each filename from the image already in XNAT, and never overwrites anything unless you
+ask it to.
 
-Install it on a machine with access to the Trust network:
+**Step 1 — Install the tool** on a machine that can reach the Trust network:
 
-.. code-block:: bash
+.. code-block:: shell
 
    pip install flip-utils
 
-Describe what to upload in a **manifest** — a CSV pairing each accession with a local file:
+**Step 2 — Write a manifest**, a CSV pairing each accession with a local file:
 
 .. code-block:: text
 
@@ -113,11 +133,12 @@ Describe what to upload in a **manifest** — a CSV pairing each accession with 
    FAK60462657,labels/label_spleen_2.nii.gz
    FAK76435891,labels/label_spleen_3.nii.gz
 
-Relative paths resolve against the manifest's own directory. An optional third column, ``target_filename``, overrides the derived name when you need something other than the default prefix swap.
+Relative paths are resolved from the manifest's own folder. An optional third column, ``target_filename``, overrides
+the derived name.
 
-Provide XNAT credentials either as environment variables or as a JSON file:
+**Step 3 — Provide your XNAT credentials**, as environment variables or as a JSON file (``--credentials-file``):
 
-.. code-block:: bash
+.. code-block:: shell
 
    export XNAT_HOST=https://xnat.trust.example
    export XNAT_USER=your-username
@@ -125,23 +146,22 @@ Provide XNAT credentials either as environment variables or as a JSON file:
 
 .. note::
 
-   These are **your own** XNAT login, not a deployment secret. If you administer the Trust and are
-   reading its kit file (``trust/.env.<CODE>.<env>``) or imaging-api's settings, the correspondence
-   is ``XNAT_URL`` → ``XNAT_HOST``, ``XNAT_ADMIN_USER`` → ``XNAT_USER``, ``XNAT_ADMIN_PASSWORD`` →
-   ``XNAT_PASS``. Prefer a personal account where you have one: ``XNAT_SERVICE_USER`` belongs to
-   imaging-api, and enrichment uploads are easier to audit under the person who made them. The
-   names match what the XNAT Container Service injects into jobs, so the same command also runs
-   unchanged as a container job.
+   These are **your own** XNAT login, not a deployment secret. Use a personal account where you have one, so uploads
+   are audited under your name; the ``XNAT_SERVICE_USER`` account belongs to FLIP's imaging service. If you administer
+   the Trust and read values from its kit file (``trust/.env.<CODE>.<env>``), ``XNAT_URL`` maps to ``XNAT_HOST``,
+   ``XNAT_ADMIN_USER`` to ``XNAT_USER`` and ``XNAT_ADMIN_PASSWORD`` to ``XNAT_PASS``. The same variables are set inside
+   XNAT Container Service jobs, so the command also runs unchanged as a container job.
 
-Then check what would happen before changing anything:
+**Step 4 — Do a dry run.** It reports exactly what a real run would do, and is the quickest way to catch an upload that
+is too early or aimed at the wrong place:
 
-.. code-block:: bash
+.. code-block:: shell
 
    flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv --dry-run
 
-A dry run reports exactly what a real run would do, and is the fastest way to catch a mistimed or misaddressed upload. When the counts look right, drop ``--dry-run``:
+**Step 5 — Upload.** When the counts look right, run it again without ``--dry-run``:
 
-.. code-block:: bash
+.. code-block:: shell
 
    flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv
 
@@ -154,45 +174,44 @@ Useful options:
    * - Option
      - Purpose
    * - ``--dry-run``
-     - Resolve and report, upload nothing.
+     - Resolve and report; upload nothing.
    * - ``--credentials-file``
-     - Read ``server`` / ``user`` / ``password`` from a JSON file instead of the environment.
+     - Read ``server`` / ``user`` / ``password`` from a JSON file instead of the environment. Repeat it to cover
+       several Trusts.
    * - ``--project-id``
-     - Address the XNAT project directly, when you already know its XNAT id.
+     - Address the XNAT project directly, if you know its XNAT ID.
    * - ``--resource``
      - Target a resource other than ``NIFTI``.
    * - ``--rename SOURCE:TARGET``
      - Change the prefix swap used to derive filenames (default ``input_:label_``).
    * - ``--overwrite``
-     - Replace enrichment files that are already present. Off by default, so re-running is safe.
+     - Replace enrichment files already present. Off by default, so re-running is safe.
    * - ``--allow-no-op``
-     - Accept a run that resolved no destination at all. Off by default: see the note below. It does
-       not excuse a project that *no* Trust holds — that always fails.
+     - Accept a run that matched no scan at all (see below).
    * - ``--require-full-coverage``
-     - Also fail unless every scan in the project received its enrichment file, and every Trust in
-       the roster resolved the project at all.
+     - Also fail unless every scan in the project got its file and every Trust in the list found the project.
 
-**Enrich every Trust.** Each Trust's XNAT holds only its own studies, so a project is enriched only
-when every participating Trust has been. Repeat ``--credentials-file`` to cover the roster in one
-invocation:
+**Enrich every Trust in one run.** A project is enriched only when every participating Trust has been, so repeat
+``--credentials-file`` once per Trust:
 
-.. code-block:: bash
+.. code-block:: shell
 
    flip-xnat upload --flip-project-id <project-uuid> --manifest manifest.csv \
      --credentials-file gstt.json --credentials-file kch.json
 
-The same manifest goes to every Trust, which is safe and needs no per-Trust splitting: an accession
-exists at exactly one Trust, and the others report it as *skipped (no matching scan)*. A Trust that
-has not pulled the project at all is skipped with a warning rather than failing the run.
+Send the same manifest to every Trust; there is no need to split it. Each accession exists at exactly one Trust, and
+the others report it as *skipped (no matching scan)*. A Trust that has not pulled the project is skipped with a
+warning.
 
 .. note::
 
-   **A run that resolves nothing exits non-zero.** If every scan is skipped — the wrong project, the
-   wrong Trust, or DICOM-to-NIfTI conversion not finished — there is nothing useful to report as
-   success, and an automated pipeline that treated it as success would go on to train with no
-   labels. Pass ``--allow-no-op`` for the legitimately empty case, such as a partial manifest sent
-   to a Trust that holds none of it. One case it does not cover: if *no* Trust in the roster holds
-   the project, the image pull never ran, so the run fails whatever the flags say.
+   **A run that matches nothing exits with an error.** If every scan is skipped — wrong project, wrong Trust, or
+   conversion not finished — the tool fails, so an automated pipeline does not go on to train without labels.
+
+   - Pass ``--allow-no-op`` when an empty run is expected, for example a partial manifest sent to a Trust that holds
+     none of it.
+   - If **no** Trust in the list holds the project at all, the image pull never ran, and the run fails whatever flags
+     you pass.
 
 .. _enrichment-example:
 
@@ -200,24 +219,25 @@ has not pulled the project at all is skipped with a warning rather than failing 
 Worked example: spleen labels
 *******************************
 
-The spleen segmentation tutorials ship a complete, runnable version of this workflow. It downloads the public MSD spleen dataset, pairs each label with the right accession, and uploads them:
+The spleen segmentation tutorials ship a runnable version of this workflow. It downloads the public MSD spleen dataset,
+pairs each label with its accession and uploads them. On the dev stack:
 
-.. code-block:: bash
+.. code-block:: shell
 
    make -C fl-tutorials download-spleen-data NUM_CASES=41
    make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<project-uuid> \
      XNAT_URLS="http://127.0.0.1:8105 http://127.0.0.1:8107" DRY_RUN=1
 
-Drop ``DRY_RUN=1`` to perform the upload. The two URLs are the dev roster's XNATs — GSTT on 8105 and
-KCH on 8107 — and one invocation enriches both. These are the XNAT web ports; 8104 and 8106 are the
-DICOM receiver ports and will not answer a REST call. For per-Trust logins, pass
-``XNAT_CREDENTIALS_FILES`` instead. ``NUM_CASES=41`` matters: the mapping covers 41 accessions, and
-a smaller download silently enriches only part of the cohort, which the command now warns about.
+Remove ``DRY_RUN=1`` to do the upload. Things to know:
 
-There is also a ``TRUST=N`` filter, rarely needed, which keeps only the accessions whose OMOP
-``source_trust`` column is ``N`` (on the dev roster ``1`` is GSTT and ``2`` is KCH). Note this is the
-OMOP data partition and **not** the FL kit slot of the same ``Trust_N`` name, which the hub assigns
-at registration — the two numberings are unrelated.
+- **Both Trusts in one run.** The two URLs are the dev XNATs, GSTT on 8105 and KCH on 8107. These are the XNAT web
+  ports; 8104 and 8106 are DICOM receiver ports and will not answer.
+- **Per-Trust logins**: pass ``XNAT_CREDENTIALS_FILES`` instead of ``XNAT_URLS``.
+- **Download all 41 cases.** The label mapping covers 41 accessions; a smaller download enriches only part of the
+  cohort, and the command warns you.
+- **Optional** ``TRUST=N`` keeps only accessions whose OMOP ``source_trust`` is ``N`` (on the dev stack ``1`` is GSTT,
+  ``2`` is KCH). This numbering is the OMOP data partition, unrelated to the ``Trust_N`` FL kit slot names the hub
+  assigns at registration.
 
 See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
 
@@ -227,11 +247,12 @@ See the tutorial READMEs under ``fl-tutorials/`` for the full walkthrough.
 Confirming enrichment is complete
 **********************************
 
-FLIP will not start training until you confirm this stage is finished. The confirmation is a declaration that the data is ready, not a check the platform can make for you.
+FLIP will not start training until you confirm this stage is finished. The confirmation is your declaration that the
+data is ready; the platform cannot check it for you.
 
-1. Navigate to the project page
-2. On the right-hand side, toggle the button to confirm the dataset has been enriched
-3. Continue to :ref:`training-configuration`
+1. Open the model from the project page.
+2. On the right-hand side, switch on **Dataset enriched**.
+3. Continue to :ref:`initiate-training`.
 
 .. note::
 
@@ -265,6 +286,6 @@ Troubleshooting
    * - Upload exits non-zero with *Nothing was resolved*
      - No scan anywhere matched. Check the project id, check you pointed at the right Trust, and check conversion has finished. Pass ``--allow-no-op`` if an empty run is genuinely expected.
    * - Only some cases uploaded, and the command warned about a truncated dataset
-     - The local label set does not cover the whole mapping. For the spleen tutorial, re-download with ``NUM_CASES=41``; the Flower snapshot ships a fixed 6-case subset, so point ``--labels-dir`` at the NVFLARE download instead.
+     - The local label set does not cover the whole mapping. For the spleen tutorial, re-download with ``NUM_CASES=41``; the Flower snapshot ships a fixed 6-case subset, so point ``--labels-dir`` at the FLARE download instead.
    * - Training still fails after a clean-looking upload at one Trust
      - The other Trusts were never enriched. Repeat ``--credentials-file`` (or ``XNAT_URLS``) so one run covers every Trust in the project.

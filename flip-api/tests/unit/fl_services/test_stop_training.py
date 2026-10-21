@@ -14,7 +14,8 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import HTTPException
+from fastapi.routing import APIRoute
 
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.stop_training import stop_training
@@ -23,14 +24,6 @@ from flip_api.fl_services.stop_training import stop_training
 @pytest.fixture
 def model_id():
     return uuid4()
-
-
-@pytest.fixture
-def fake_request():
-    request = MagicMock(spec=Request)
-    request.scope = {"request_id": "req-123"}
-    request.path_params = {"target": "SERVER", "clients": None}
-    return request
 
 
 @pytest.fixture
@@ -66,33 +59,39 @@ def mock_update_status():
 
 
 def test_stop_training_success(
-    model_id, fake_request, mock_db, mock_can_modify_model, user_id, mock_abort_model_training, mock_update_status
+    model_id, mock_db, mock_can_modify_model, user_id, mock_abort_model_training, mock_update_status
 ):
-    result = stop_training(model_id, fake_request, mock_db, user_id)
+    result = stop_training(model_id, mock_db, user_id)
 
     assert result is None
-    mock_abort_model_training.assert_called_once_with(fake_request, model_id, mock_db)
+    mock_abort_model_training.assert_called_once_with(model_id, mock_db)
     mock_update_status.assert_called_once_with(model_id, ModelStatus.STOPPED, mock_db)
 
 
-def test_stop_training_forbidden(fake_request, model_id, mock_db, mock_can_modify_model, user_id):
+def test_stop_training_forbidden(model_id, mock_db, mock_can_modify_model, user_id):
     mock_can_modify_model.return_value = False
 
     with pytest.raises(HTTPException) as exc_info:
-        stop_training(model_id, fake_request, mock_db, user_id)
+        stop_training(model_id, mock_db, user_id)
 
     assert exc_info.value.status_code == 403
     assert "is not allowed" in exc_info.value.detail
 
 
-def test_stop_training_failure(
-    fake_request, model_id, mock_db, mock_can_modify_model, user_id, mock_abort_model_training
-):
+def test_stop_training_failure(model_id, mock_db, mock_can_modify_model, user_id, mock_abort_model_training):
     mock_abort_model_training.side_effect = Exception("oops")
 
     with pytest.raises(HTTPException) as exc_info:
-        stop_training(model_id, fake_request, mock_db, user_id)
+        stop_training(model_id, mock_db, user_id)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Internal server error"
     assert "oops" not in exc_info.value.detail
+
+
+def test_stop_route_is_registered():
+    """flip-ui and the e2e smoke call POST /api/fl/stop/{model_id}; the route inventory only counts routes."""
+    from flip_api.main import app
+
+    routes = {(r.path, m) for r in app.routes if isinstance(r, APIRoute) for m in r.methods}
+    assert ("/api/fl/stop/{model_id}", "POST") in routes

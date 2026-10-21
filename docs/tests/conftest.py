@@ -44,3 +44,8 @@ def fetcher() -> ModuleType:
 @pytest.fixture(scope="session")
 def publisher() -> ModuleType:
     return load_script("publish_docs_gifs")
+
+
+@pytest.fixture(scope="session")
+def freezer() -> ModuleType:
+    return load_script("freeze_docs_gifs")

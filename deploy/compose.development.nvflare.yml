@@ -33,7 +33,7 @@ services:
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # GPUs written into the meta.json resource_spec of a job that declares none (configure_meta).
-      # Default 0 => empty resource_spec => NVFLARE hides the GPU from the training worker (CPU).
+      # Default 0 => empty resource_spec => FLARE hides the GPU from the training worker (CPU).
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
     ports:
       - "${FL_API_PORT}:8000"
@@ -51,11 +51,11 @@ services:
     cap_add:
       - CHOWN
     volumes:
-      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      # Provisioned FLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/startup:/app/admin/startup
       # Shared with fl-server-net-1: the FL API writes de-bundled eval checkpoints here; the
-      # fl-server reads them from disk. The checkpoint is never bundled into the NVFLARE job,
+      # fl-server reads them from disk. The checkpoint is never bundled into the FLARE job,
       # so it is never deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
     depends_on:
@@ -84,11 +84,11 @@ services:
     cap_add:
       - CHOWN
     volumes:
-      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      # Provisioned FLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/startup:/app/admin/startup
       # Shared with fl-server-net-2: the FL API writes de-bundled eval checkpoints here; the
-      # fl-server reads them from disk. The checkpoint is never bundled into the NVFLARE job,
+      # fl-server reads them from disk. The checkpoint is never bundled into the FLARE job,
       # so it is never deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-2:/app/server-checkpoints
     depends_on:
@@ -100,12 +100,12 @@ services:
   fl-server-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      # Provisioned FLARE secrets (certificates, fed_server.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/transfer:/app/transfer
       # Shared with fl-api-net-1: de-bundled eval checkpoints staged by the FL API are read
-      # from here by the fl-server. The checkpoint is never in the NVFLARE job, so it is never
+      # from here by the fl-server. The checkpoint is never in the FLARE job, so it is never
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
     environment:
@@ -135,11 +135,11 @@ services:
       object-store:
         condition: service_healthy
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned
-    # NVFLARE kit mounted above is owned by whoever ran `make provision`, so only a
+    # FLARE kit mounted above is owned by whoever ran `make provision`, so only a
     # matching uid can read and write it (the 0600 SSO token that once shared this
     # rationale is gone: results go to the dev object store, FLIP#1291). The gid stays
     # the image's so /app and /home/flip — group-writable in fl-base — remain writable for
-    # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
+    # FLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
     # 1000, so this resolves to the baked identity and nothing changes there; prod
     # composes set no `user:` at all and keep running as `flip`.
     user: "${UID:-1000}:1000"
@@ -166,12 +166,12 @@ services:
   fl-server-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      # Provisioned FLARE secrets (certificates, fed_server.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/transfer:/app/transfer
       # Shared with fl-api-net-2: de-bundled eval checkpoints staged by the FL API are read
-      # from here by the fl-server. The checkpoint is never in the NVFLARE job, so it is never
+      # from here by the fl-server. The checkpoint is never in the FLARE job, so it is never
       # deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-2:/app/server-checkpoints
     environment:
@@ -201,11 +201,11 @@ services:
       object-store:
         condition: service_healthy
     # Run as the HOST user's uid, with the image's gid (FLIP#1171). The provisioned
-    # NVFLARE kit mounted above is owned by whoever ran `make provision`, so only a
+    # FLARE kit mounted above is owned by whoever ran `make provision`, so only a
     # matching uid can read and write it (the 0600 SSO token that once shared this
     # rationale is gone: results go to the dev object store, FLIP#1291). The gid stays
     # the image's so /app and /home/flip — group-writable in fl-base — remain writable for
-    # NVFLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
+    # FLARE's job workspace and torch's cache. On EC2/on-prem the host user is uid
     # 1000, so this resolves to the baked identity and nothing changes there; prod
     # composes set no `user:` at all and keep running as `flip`.
     user: "${UID:-1000}:1000"

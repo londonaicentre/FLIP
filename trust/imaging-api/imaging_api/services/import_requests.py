@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""Reads DQR's import queue and history, and XNAT's direct-archive sessions, through XNAT's REST API.
+"""Reads DQR's import queue and history, and XNAT's direct-archive and prearchive sessions, through XNAT's REST API.
 
 - ``GET /xapi/dqr/import/queue`` and ``GET /xapi/dqr/import/history`` (DQR 3.0.0) page through the
   queued and the executed requests, ordered by id. Neither takes a project filter, so each page is
@@ -18,6 +18,9 @@
   user with all-data access, which the service account has as a site Administrator.
 - ``POST /xapi/direct-archive`` (xnat-web 1.10.0) pages through the direct-archive sessions, with a
   ``project`` filter that XNAT ANDs with the projects the caller can read.
+- ``GET /data/prearchive/projects/{project}`` lists the project's prearchive sessions. A session whose
+  direct-archive failed lands there with status ERROR, and ``POST /data/services/archive`` re-archives
+  it (FLIP#1511).
 
 A failed read raises ``XnatFetchError``, never ``NotFoundError``: callers answer it with a 500, and the
 hub reads a 404 from imaging-api as "the XNAT project is missing" (FLIP#1022).
@@ -66,6 +69,23 @@ class DirectArchiveSession(BaseModel):
     name: str | None = None
     folder_name: str | None = Field(default=None, alias="folderName")
     status: str | None = None
+
+
+class PrearchiveSession(BaseModel):
+    """A prearchive session, as ``GET /data/prearchive/projects/{project}`` lists it.
+
+    When a direct-archive fails, XNAT 1.10.0 moves the session here with status ERROR and deletes its
+    direct-archive session, so this listing is the only place the failure is still visible (FLIP#1511).
+    """
+
+    project: str | None = None
+    # The session label (the accession number for a DQR import), as on a direct-archive session.
+    name: str | None = None
+    folder_name: str | None = Field(default=None, alias="folderName")
+    status: str | None = None
+    # The session's prearchive path, which XNAT's archive service takes as ``src``. XNAT 1.10.0 gives it
+    # as ``/prearchive/projects/...``, without the ``/data`` prefix, and both callers rely on that form.
+    url: str | None = None
 
 
 def _send(method: str, url: str, headers: dict[str, str], label: str, **kwargs: Any) -> requests.Response:
@@ -303,3 +323,82 @@ def get_direct_archive_sessions(project_id: str, headers: dict[str, str]) -> lis
     sessions = _project_records(fetch_page, lambda session: session.get("project") == project_id, label)
     logger.info(f"Found {len(sessions)} direct archive sessions for project {project_id}")
     return [DirectArchiveSession.model_validate(session) for session in sessions]
+
+
+def get_prearchive_sessions(project_id: str, headers: dict[str, str]) -> list[PrearchiveSession]:
+    """Lists the project's prearchive sessions (``GET /data/prearchive/projects/{project}``).
+
+    Args:
+        project_id (str): The XNAT project ID.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        list[PrearchiveSession]: The project's prearchive sessions.
+
+    Raises:
+        XnatFetchError: If the sessions cannot be read.
+    """
+    label = "prearchive session"
+    url = xnat_url("data", "prearchive", "projects", project_id, query={"format": "json"})
+    body = _json(_send("GET", url, headers, label), label)
+    try:
+        rows = body["ResultSet"]["Result"]
+    except (KeyError, TypeError) as e:
+        raise XnatFetchError(f"Error: XNAT {label} fetch failed: the response is not a prearchive listing") from e
+
+    # As with the direct-archive filter, a listing that let another project's session through must
+    # not attribute it to this one.
+    sessions = [PrearchiveSession.model_validate(row) for row in rows if row.get("project") == project_id]
+    logger.info(f"Found {len(sessions)} prearchive sessions for project {project_id}")
+    return sessions
+
+
+def archive_prearchive_session(src: str, headers: dict[str, str]) -> bool:
+    """Archives a prearchive session (``POST /data/services/archive``), appending to any archived session.
+
+    Neither the URL nor an error carrying it is logged: ``src`` names the session, i.e. the accession. That
+    is why this bypasses ``_send``, whose error carries the URL.
+
+    Args:
+        src (str): The session's prearchive path, as ``PrearchiveSession.url`` gives it.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        bool: True when XNAT archived it (a 2xx, or the 303 to the archived session it answers with).
+    """
+    url = xnat_url("data", "services", "archive", query={"src": src, "overwrite": "append"})
+    try:
+        response = requests.request("POST", url, headers=headers, timeout=XNAT_REQUEST_TIMEOUT, allow_redirects=False)
+    except requests.RequestException as e:
+        logger.warning(f"XNAT archive request failed in transport ({type(e).__name__})")
+        return False
+    if response.status_code == 303 or 200 <= response.status_code < 300:
+        return True
+    logger.warning(f"XNAT archive request failed: {response.status_code}")
+    return False
+
+
+def delete_prearchive_session(src: str, headers: dict[str, str]) -> bool:
+    """Deletes a prearchive session (``DELETE /data/prearchive/projects/{project}/{timestamp}/{session}``).
+
+    XNAT also clears the study's routing, so a study pulled from the PACS again lands in a fresh session.
+    Neither the URL nor an error carrying it is logged: ``src`` names the session, i.e. the accession. That
+    is why this bypasses ``_send``, whose error carries the URL.
+
+    Args:
+        src (str): The session's prearchive path, as ``PrearchiveSession.url`` gives it.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        bool: True when XNAT deleted it.
+    """
+    url = xnat_url("data", *src.strip("/").split("/"))
+    try:
+        response = requests.request("DELETE", url, headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+    except requests.RequestException as e:
+        logger.warning(f"XNAT prearchive delete failed in transport ({type(e).__name__})")
+        return False
+    if 200 <= response.status_code < 300:
+        return True
+    logger.warning(f"XNAT prearchive delete failed: {response.status_code}")
+    return False

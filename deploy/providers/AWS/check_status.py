@@ -413,14 +413,14 @@ def ping_host(host: str) -> bool:
         return False
 
 
-# ── Deep Smoke Tests (added from EC2-to-ECS migration lessons) ────
+# ── Deep Smoke Tests ────
 
 
 def check_ecs_cluster() -> None:
     """Verify the ECS cluster exists and is ACTIVE.
 
     Detects: missing cluster, cluster in DEPROVISIONING state, or no cluster
-    defined at all (EC2-only deployment with no ECS migration in progress).
+    defined at all.
     """
     print_status("INFO", "Checking ECS cluster...")
     cluster_names = []
@@ -441,7 +441,7 @@ def check_ecs_cluster() -> None:
             pass
 
     if not cluster_names:
-        print_status("INFO", "No ECS clusters found (EC2-only deployment)")
+        print_status("FAIL", "No ECS clusters found — the Central Hub runs on ECS")
         return
 
     success2, output2 = run_aws_command(
@@ -659,7 +659,7 @@ def check_fl_server_clients(net_numbers: list[int]) -> None:
     """Verify the ECS fl-server log shows trust FL clients connected.
 
     Reads ``/ecs/fl-server-net-N`` CloudWatch logs (last 24h) for the
-    ``Re-activate the client`` line NVFLARE emits when a registered client
+    ``Re-activate the client`` line FLARE emits when a registered client
     reconnects. Falls back to ``Client: New`` for first-time registrations.
     """
     print_status("INFO", "Checking FL server clients (CloudWatch /ecs/fl-server-net-N)...")

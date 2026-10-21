@@ -4,11 +4,19 @@
 Central Hub
 ###########
 
-The Central Hub is the cloud-hosted half of FLIP: the web UI researchers and administrators use, the central
-API that owns projects, users, cohort queries and models, the hub side of every FL net, and the managed cloud
-services that hold its state. It is the only internet-facing part of the platform; every Trust reaches it
-outbound, and it holds no clinical data — cohort results arrive as aggregate statistics and training leaves
-behind model weights and metrics, never rows.
+The Central Hub is the cloud-hosted half of FLIP. This page describes its services and how the Trusts and FL
+servers talk to it. It is for engineers deploying, operating or integrating with the hub.
+
+The hub runs:
+
+- the **web UI** that researchers and administrators use;
+- the **central API**, which owns projects, users, cohort queries and models;
+- the **hub side of every FL net**;
+- the managed cloud services that hold the hub's state.
+
+It is the only internet-facing part of the platform, and every Trust connects to it outbound. It holds **no
+clinical data**: cohort results arrive as aggregate statistics, and training leaves behind model weights and
+metrics, never patient rows.
 
 .. contents:: On this page
    :local:
@@ -21,16 +29,14 @@ Services
 flip-ui
 =======
 
-A Vue 3 single-page application (Vite, TypeScript, Pinia). It talks to ``flip-api`` through one Axios client
-whose base URL is injected per environment at ``window.js`` render time, attaching the user's access token
-from the identity provider to every request and signing the user out on a 401. In development it runs as a
-Vite dev server container; in a deployed hub it is static assets in an S3 bucket served through CloudFront —
-there is no UI container there.
+A Vue 3 single-page application. It sends every request to ``flip-api`` with the user's access token and signs
+the user out if the token is rejected. In development it runs as a dev-server container. In a deployed hub it is
+static files in S3 served through CloudFront; there is no UI container.
 
 flip-api
 ========
 
-A FastAPI application serving everything under ``/api``. Its routers map onto the platform's domains:
+A FastAPI application serving everything under ``/api``. Its route groups map onto the platform's domains:
 
 .. list-table::
    :header-rows: 1
@@ -39,79 +45,75 @@ A FastAPI application serving everything under ``/api``. Its routers map onto th
    * - Prefix
      - Purpose
    * - ``/projects``
-     - Project lifecycle: create, edit, stage, approve or decline per Trust, unstage, delete; imaging status and study re-import.
+     - Project lifecycle: create, edit, stage, approve or decline per Trust, unstage, delete; imaging status and
+       the cohort each Trust froze at approval.
    * - ``/cohort``
      - Submit a cohort query to the project's Trusts and read back the aggregated results.
    * - ``/model``, ``/models``
      - Models under a project, their job types, metrics, logs and per-Trust status.
    * - ``/files``
-     - Model-file upload (presigned S3 POST), scan status, listing, download, and federated results download.
+     - Model-file upload (presigned POST), scan status, listing, download, and federated results download.
    * - ``/fl``
      - Training start and stop, net status, and the deployment-mode quiesce report.
    * - ``/users``, ``/roles``, ``/site``
-     - Users, access requests, MFA status and roles; site banner and details.
+     - Users, access requests, MFA status and roles; site banner and deployment mode.
    * - ``/trust``, ``/admin/trusts``
      - Trust roster, connection health and registration; a Trust's project decisions, for its Trust Admin.
    * - ``/step``
-     - Multi-step orchestrations the UI drives in place of the original AWS Step Functions: approve a
-       project and fan imaging creation out to its Trusts, submit a cohort query to them, register a
-       user, and retrieve a model.
-   * - *(unprefixed)*
-     - The endpoints Trusts and FL servers call back on — see `Talking to the Trusts`_ and
-       `Callbacks from the FL server`_.
+     - Multi-step workflows the UI drives: approve a project and start imaging at its Trusts, submit a cohort
+       query to them, register a user, and retrieve a model.
+   * - ``/tasks`` and callbacks
+     - The endpoints Trusts and FL servers call — see `Talking to the Trusts`_ and `Callbacks from the FL server`_.
 
-Interactive API docs (``/api/docs``) are served everywhere except production. The generated module reference
-is under :doc:`API reference </api-reference>`.
+``GET /api/health`` is unauthenticated and reports the hub's release. Interactive API docs (``/api/docs``) are
+served in local development only; staging and production turn them off.
 
 FL nets, hub side
 =================
 
-Each FL net contributes an FL API and an FL server to the hub (``fl-api-net-N``, ``fl-server-net-N``). The
-Central Hub API submits jobs through the FL API; the FL server is what the Trusts' FL clients connect to.
-Both are described on :doc:`component-fl-nets`.
+Each FL net adds an FL API and an FL server to the hub (``fl-api-net-N`` and ``fl-server-net-N``). ``flip-api``
+submits jobs through the FL API; the Trusts' FL clients connect to the FL server. Both are described on
+:doc:`component-fl-nets`.
 
 PostgreSQL
 ==========
 
-The hub's own database: projects, cohort queries and their results, models, jobs, the FL scheduler state,
-the Trust roster (with API-key hashes, never keys), the task queue for Trusts, roles and permissions. Its
-schema is owned by Alembic migrations that run at every start-up (see `Start-up`_).
+The hub's own database. It holds projects, cohort queries and their results, models, jobs, the FL scheduler
+state, the Trust roster, the task queue for Trusts, and roles and permissions. The roster stores **hashes** of
+the Trust API keys, never the keys. Database migrations run at every start-up (see `Start-up`_).
 
 **********
 Deployment
 **********
 
-The hub is provisioned on AWS with Terraform/OpenTofu from one root module, onto a `Landing Zone
+The hub runs on AWS, provisioned with Terraform/OpenTofu from one root module, on a `Landing Zone
 Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_ estate
-whose platform team owns the network and the edge. The architecture diagrams, the resource layout and the
-runbook are on :ref:`deploy-central-hub` and :doc:`/deploy-flip/deploy-central-hub-aws-lza`, and the
-security controls on :ref:`security`.
+whose platform team owns the network and the edge.
+
+.. seealso::
+
+   :ref:`deploy-central-hub` and :doc:`/deploy-flip/deploy-central-hub-aws-lza` have the architecture diagrams,
+   the resource layout and the runbook. Security controls are on :ref:`security`.
 
 ********
 Start-up
 ********
 
-The ``flip-api`` container entrypoint runs, in order, and stops at the first failure rather than serve a
-half-ready hub:
+When the ``flip-api`` container starts, it runs these steps in order and **stops at the first failure** rather
+than serve a half-ready hub:
 
-1. wait for PostgreSQL to accept connections;
-2. ``alembic upgrade head`` — the schema is owned by migrations shipped with the code, so a release whose
-   code expects a column the database does not have refuses to start;
-3. seed the essential data: roles, permissions, role–permission mapping, the well-known users, the FL kit
-   slot pool, the site banner and configuration, the FL nets from ``NET_ENDPOINTS`` and ``FL_BACKEND``, and one
-   scheduler row per net;
-4. start the API server.
-
-When FastAPI starts it populates the browser CORS allowlist from the origins the identity provider registers
-(the Cognito app client's callback URLs; the Keycloak client's redirect URIs in development) and starts the
-background scheduler below.
+1. Wait for PostgreSQL to accept connections.
+2. Apply the database migrations shipped with the code. If a migration fails, the container exits.
+3. Seed the essential data: roles and permissions, the well-known users, the FL kit slot pool, the site banner
+   and configuration, the FL nets (from ``NET_ENDPOINTS`` and ``FL_BACKEND``), and one scheduler entry per net.
+4. Start the API server, which also loads the browser CORS allowlist from the identity provider's registered
+   redirect URLs and starts the background scheduler.
 
 ********************
 Background scheduler
 ********************
 
-An APScheduler ``BackgroundScheduler`` inside ``flip-api`` runs interval jobs; every rate is a setting in
-``flip_api/config.py`` and is expressed in minutes.
+``flip-api`` runs these jobs on a fixed interval. Each interval is a setting, in minutes.
 
 .. list-table::
    :header-rows: 1
@@ -122,109 +124,153 @@ An APScheduler ``BackgroundScheduler`` inside ``flip-api`` runs interval jobs; e
      - What it does
    * - FL job pickup
      - 1
-     - Assigns the oldest queued training job to a free net, bundles and submits it — the loop described
-       under :ref:`flip-fl-nets`. Skipped while deployment mode is on.
+     - Assigns the oldest queued training job to a free net, bundles it and submits it (see
+       :ref:`flip-fl-nets`). Skipped while deployment mode is on.
+   * - FL job watchdog
+     - 1
+     - Fails a running job whose FL server has ended or lost it without reporting a result, and frees its net.
    * - FL API keep-alive
      - 2
-     - Polls each net's server status so the FL API's admin session does not idle out.
+     - Polls each net's server status so the FL API's admin session does not time out.
    * - Imaging re-import
      - 30
      - Asks Trusts to retry studies their PACS did not deliver, up to a per-project cap.
    * - Stale Trust-task recovery
      - 10
-     - Returns tasks a Trust took but never reported (after 30 minutes) to ``PENDING``, failing them after
-       three retries; retries post-processing that failed hub-side.
+     - Returns a task a Trust took but did not report on within 30 minutes to ``PENDING``, and fails it after
+       three retries. Also retries hub-side post-processing that failed.
    * - Malware-scan reconcile
      - 1
      - Re-checks uploads left ``SCANNING`` by a restart mid-scan.
 
-A Trust's online/offline indicator is not a sweep: it is derived on request from the Trust's last heartbeat
-against a 30-second timeout.
+A Trust's online/offline status is not a scheduled job. The hub works it out on each request from the Trust's
+last heartbeat, with a 30-second timeout.
 
 *********************
 Talking to the Trusts
 *********************
 
-The hub never connects to a Trust. Work for a Trust is a row in the hub's task queue, and the Trust's
-``trust-api`` fetches it:
+The hub **never connects to a Trust**. Work for a Trust is queued as a task on the hub, and the Trust's
+``trust-api`` collects it. The Trust calls four endpoints:
 
-- ``GET /api/tasks/pending`` — up to 50 pending tasks for the calling Trust, flipped to ``IN_PROGRESS`` as
-  they are handed out. Task types: ``cohort_query``, ``create_imaging``, ``delete_imaging``,
-  ``get_imaging_status``, ``reimport_studies``, ``update_user_profile``. Payloads are encrypted with the shared
-  ``AES_KEY_BASE64`` on top of TLS.
-- ``POST /api/tasks/{task_id}/result`` — the outcome, which marks the task ``COMPLETED`` or ``FAILED``; a
-  successful ``create_imaging`` result also triggers hub-side post-processing (recording the XNAT project and
-  emailing credentials).
-- ``POST /api/trust/heartbeat`` — every poll cycle, carrying the Trust's own health snapshot when it has one.
-- ``POST /api/cohort/results`` — a cohort query's aggregate statistics, saved per Trust and combined once
-  every Trust has answered.
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
 
-All four are authenticated by the Trust's API key, presented in a header and compared against the hub's
-stored hashes in constant time; the identity **is** the key, so the hub tells the Trust who it thinks it is
-and the Trust refuses to run if that disagrees with its kit. The trust-side half of this exchange is on
+   * - Endpoint
+     - Purpose
+   * - ``GET /api/tasks/pending``
+     - Fetch up to 50 pending tasks for this Trust; each is marked ``IN_PROGRESS`` when handed out.
+   * - ``POST /api/tasks/{task_id}/result``
+     - Report a task's outcome, marking it ``COMPLETED`` or ``FAILED``. A successful ``create_imaging`` result
+       also makes the hub record the XNAT project and email credentials to its users; a successful
+       ``persist_cohort`` result records the cohort the Trust froze at approval.
+   * - ``POST /api/trust/heartbeat``
+     - Sent on every poll, with the Trust's health snapshot when it has one.
+   * - ``POST /api/cohort/results``
+     - A cohort query's aggregate statistics from one Trust. The hub saves them and recomputes the combined
+       statistics each time a Trust answers.
+
+The task types are ``cohort_query``, ``persist_cohort``, ``create_imaging``, ``delete_imaging``,
+``get_imaging_status``, ``reimport_studies`` and ``update_user_profile``. Task payloads are encrypted with the
+shared AES key, on top of TLS.
+
+Every call is authenticated with the Trust's **API key**, which the hub checks against its stored hashes. The key
+is the Trust's identity: the hub tells the Trust which Trust it thinks it is, and the Trust refuses to run if
+that does not match the Trust its kit file expects. The Trust side of this exchange is on
 :doc:`component-trust-apis`.
 
 ****************************
 Callbacks from the FL server
 ****************************
 
-During training the FL server reports to the hub on the researcher's behalf: ``POST /api/model/{id}/logs``,
-``POST /api/model/{id}/metrics`` and ``PUT /api/model/{id}/status/{status}``. These carry the hub's
-**internal service key** rather than a Trust key and travel over the hub-internal URL
-(``FLIP_API_INTERNAL_URL``), never through the public edge, which strips that header. FL clients have no
-such credential; anything a client needs the hub to know goes through the server.
+During training the FL server reports to the hub through three endpoints:
+
+- ``POST /api/model/{id}/logs``
+- ``POST /api/model/{id}/metrics``
+- ``PUT /api/model/{id}/status/{status}``
+
+These calls carry the hub's **internal service key**, not a Trust key. They must use the hub's internal URL
+(``FLIP_API_INTERNAL_URL``), never the public address, because the public edge strips that key's header.
+
+FL clients hold no hub credential. Anything a client needs the hub to know goes through the FL server.
 
 ********************************
 Authentication and authorisation
 ********************************
 
-Users authenticate with an **OIDC identity provider** selected by ``AUTH_BACKEND``: AWS Cognito in staging
-and production (the only value the production settings accept), Keycloak in local development. ``flip-api``
-verifies each access token with one generic verifier and a per-provider rule set: the RS256 signature against
-the provider's JWKS, expiry, issuer, the token type (ID tokens are rejected) and the audience or client id. It
-then — unless ``ENFORCE_MFA`` is switched off for local development — confirms the user has TOTP enrolled, so
-an administrator's MFA reset takes effect immediately rather than at the next token. User administration
-(invite, enable, disable, delete, MFA state) goes through the same provider seam, so a hub on another cloud
-adds a provider module rather than touching the routers. Authorisation is role-based: roles and permissions
-are seeded rows, a user's roles are keyed by their identity-provider subject, and per-resource checks decide
-who may see or change a project, model or cohort query. The matrix is on :ref:`rbac-roles`.
+Users sign in through an **OIDC identity provider**, chosen by ``AUTH_BACKEND``:
 
-Three further keys exist, each for one hop: the per-Trust API key (Trust → hub, above), the hub's internal
-service key (FL server → hub, above) and the per-Trust internal service key that never reaches the hub at
-all — see :ref:`trust-internal-service-authentication`.
+- **AWS Cognito** in staging and production (the only value production accepts);
+- **Keycloak** in local development (the only value development accepts).
+
+``flip-api`` checks every access token's signature, expiry, issuer, token type and audience; ID tokens are
+rejected. It then confirms the user has TOTP (MFA) enrolled, so an administrator's MFA reset takes effect
+immediately. This check is on unless ``ENFORCE_MFA`` is set to ``false``, which local development does because its
+sign-in cannot complete a TOTP challenge. User administration (invite, enable, disable, delete, MFA state) goes
+through the same provider.
+
+Authorisation is **role-based**. A user's roles are tied to their identity-provider account, and per-resource
+checks decide who may see or change a project, model or cohort query. The role matrix is on :ref:`rbac-roles`.
+
+Three other keys each secure one connection:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 30 35
+
+   * - Key
+     - Connection
+     - Where it lives
+   * - Trust API key
+     - Trust → hub
+     - The Trust's kit file; hashed on the hub
+   * - Internal service key
+     - FL server → hub
+     - The hub only
+   * - Trust-internal service key
+     - Between services inside a Trust
+     - The Trust only; never reaches the hub
+
+See :ref:`trust-internal-service-authentication` for the last one.
 
 ***********
 Model files
 ***********
 
-A researcher's upload never passes through the hub. ``flip-api`` checks the extension against the allowed
-set and returns a **presigned S3 POST** policy capped at ``MAX_MODEL_FILE_BYTES``, and the browser uploads
-straight to the ``uploaded/`` staging prefix. The UI then asks the hub to process the file: the record is
-marked ``SCANNING``, pickle-bearing files get a structural picklescan (dangerous globals delete the object and
-mark it ``INFECTED``; a scan that errors or times out fails closed to ``ERROR``), Python files get an advisory
-Bandit pass whose findings are shown but never block, and clean files are promoted to the ``scanned/``
-prefix. Everything downstream — downloads, listings, the FL app bundler — reads ``scanned/`` only, so an
-unscanned file cannot reach a Trust.
+A researcher's upload **never passes through the hub**:
+
+1. ``flip-api`` checks the file extension and returns a presigned upload limited to ``MAX_MODEL_FILE_BYTES``.
+2. The browser uploads straight to a staging area in object storage.
+3. The hub scans the file, which shows as ``SCANNING`` meanwhile:
+
+   - Pickle-based files get a structural scan. A dangerous file is deleted and marked ``INFECTED``. A scan that
+     errors or times out fails closed as ``ERROR``.
+   - Python files get an advisory Bandit scan. Its findings are shown but never block the file.
+
+4. Clean files move to the scanned area.
+
+Downloads, listings and the FL app bundler read only from the scanned area, so **an unscanned file cannot reach
+a Trust**.
 
 *****
 Email
 *****
 
-The application's own emails (access-request notifications, XNAT credentials) go through
-``send_templated_email``, which dispatches on ``EMAIL_BACKEND``: ``ses`` in staging and production,
-``console`` — log the would-be message, with secret-shaped fields redacted — always in development (the only value it accepts there), so a
-local stack needs no SES identity. The identity provider sends its own invitations and password-reset codes
-independently of either: Cognito from the user pool in staging and production, whereas the development
-Keycloak has no mail server, so a newly registered user is given the shared dev password
-(``ADMIN_USER_PASSWORD``) as a temporary one instead, and changes it at first sign-in.
+FLIP's own emails (access-request notifications, XNAT credentials) are sent according to ``EMAIL_BACKEND``:
+
+- ``ses`` in staging and production;
+- ``console`` in development (the only value accepted there). Messages are written to the log with secrets
+  redacted, so a local stack needs no SES setup.
+
+The identity provider sends its own invitations and password-reset codes. In staging and production, Cognito
+sends them. The development Keycloak has no mail server, so a new user gets the shared dev password
+(``ADMIN_USER_PASSWORD``) as a temporary password and changes it at first sign-in.
 
 ***************
 Further reading
 ***************
 
-- `flip-api/README.md <https://github.com/londonaicentre/FLIP/blob/develop/flip-api/README.md>`_ and
-  `flip-ui/README.md <https://github.com/londonaicentre/FLIP/blob/develop/flip-ui/README.md>`_
-- `deploy/providers/AWS/README.md <https://github.com/londonaicentre/FLIP/blob/develop/deploy/providers/AWS/README.md>`_
-  — the Terraform, deploy and rollback runbook behind the deployment pages
+- :gh:`flip-api/README.md` and :gh:`flip-ui/README.md`
+- :gh:`deploy/providers/AWS/README.md` — the Terraform, deploy and rollback runbook behind the deployment pages
 - :ref:`deploy-central-hub` and :ref:`security`
-- Module reference: :doc:`API reference </api-reference>`

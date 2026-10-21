@@ -227,7 +227,7 @@ resource "aws_security_group_rule" "ecs_flip_api_ingress_internal_nlb" {
   security_group_id        = aws_security_group.ecs_flip_api.id
 }
 
-# The NVFLARE admin kit (provisioned from net-1_project_prod.yml) targets the
+# The FLARE admin kit (provisioned from net-1_project_prod.yml) targets the
 # bare host `fl-server-net-1` — a SAN on the server cert alongside the public
 # FQDN. The LZA-managed VPC cannot carry a flip.local DHCP search domain, and Fargate's awsvpc
 # network mode rejects extraHosts — so publish the bare name as a

@@ -33,7 +33,7 @@ from sphinx.util import logging as sphinx_logging
 
 logger = sphinx_logging.getLogger(__name__)
 
-# Treat each API directory as an independent package
+# Treat each application source tree as an independent package for AutoAPI.
 sys.path.insert(0, os.path.abspath("../../flip-api/src"))
 sys.path.insert(0, os.path.abspath("../../trust/data-access-api"))
 sys.path.insert(0, os.path.abspath("../../trust/imaging-api"))
@@ -89,16 +89,59 @@ extensions = [
     "sphinx.ext.todo",
     "sphinx.ext.coverage",
     "sphinx.ext.ifconfig",
+    "sphinx.ext.extlinks",
     "sphinxcontrib.bibtex",
+    "sphinxcontrib.mermaid",
     "sphinx_reredirects",
 ]
 
-# Pages renamed in FLIP#364 keep their old URLs as HTML redirect stubs (target is relative to the old page).
+# :gh:`path` links a repo file at the ref this build is of: the PR commit on a PR preview, the branch or tag
+# ReadTheDocs built otherwise, develop locally.
+if os.environ.get("READTHEDOCS_VERSION_TYPE") == "external":
+    _gh_ref = os.environ.get("READTHEDOCS_GIT_COMMIT_HASH", "develop")
+else:
+    _gh_ref = os.environ.get("READTHEDOCS_GIT_IDENTIFIER", "develop")
+extlinks = {"gh": (f"https://github.com/londonaicentre/FLIP/blob/{_gh_ref}/%s", "%s")}
+
+# Swimlane diagrams (sphinxcontrib-mermaid) in the FLIP design-system colours of _static/style.css.
+mermaid_light_theme = "base"
+mermaid_dark_theme = "base"  # the docs theme has no dark mode, so keep the same colours
+# Natural size, scaled down only to fit a narrow screen (the plugin default is a fixed 500px-high box).
+mermaid_width = "auto"
+mermaid_height = "auto"
+mermaid_init_config = {
+    "startOnLoad": False,
+    # Counter-based SVG ids: time-based ones can collide when several diagrams render in one millisecond.
+    "deterministicIds": True,
+    "themeVariables": {
+        "fontFamily": "Montserrat, system-ui, sans-serif",
+        "fontSize": "14px",
+        "actorBkg": "#F7F3F9",
+        "actorBorder": "#61366E",
+        "actorTextColor": "#61366E",
+        "actorLineColor": "#B88AC6",
+        "signalColor": "#2C3E6B",
+        "signalTextColor": "#333333",
+        "labelBoxBkgColor": "#F7F3F9",
+        "labelBoxBorderColor": "#872B6E",
+        "labelTextColor": "#872B6E",
+        "loopTextColor": "#872B6E",
+        "noteBkgColor": "#F7F3F9",
+        "noteBorderColor": "#B88AC6",
+        "sequenceNumberColor": "#FFFFFF",
+    },
+    "sequence": {"mirrorActors": False, "showSequenceNumbers": True, "useMaxWidth": False},
+}
+
+# Renamed or moved pages keep their old URLs as HTML redirect stubs (target is relative to the old page).
 redirects = {
     "components/architecture-overview": "overview.html",
     "components/component-fl-nodes": "component-fl-nets.html",
     # The self-contained mode's page went with the mode (FLIP#1479).
     "deploy-flip/deploy-central-hub-aws": "deploy-central-hub-aws-lza.html",
+    "user-guides/arkplus-fine-tuning": "../paper/arkplus-fine-tuning.html",
+    "user-guides/reproducing-platform-overhead": "../paper/reproducing-platform-overhead.html",
+    "working-with-flip-apps/package-model-as-map": "wrap-model-for-deployment.html",
 }
 
 autoapi_type = "python"
@@ -109,15 +152,13 @@ autoapi_dirs = [
     "../../trust/data-access-api",
     "../../trust/imaging-api",
     "../../trust/trust-api",
-    # include flip-utils package for API docs
     "../../flip-utils/flip",
 ]
 autoapi_ignore = [
     "*/.venv/*",
     "*/tests/*",
     "*/conftest.py",
-    # Alembic scripts are one-shot upgrade/downgrade pairs, not public API. They also carry no
-    # __init__.py, so AutoAPI would emit each as a revision-hash-named top-level module.
+    # Alembic revisions are migration scripts, not API modules.
     "*/migrations/*",
 ]
 
@@ -218,11 +259,12 @@ def _render_generated_figures(app: Sphinx) -> None:
 
 
 # -- Documentation GIFs ------------------------------------------------------
-# The user-guide GIFs are not tracked in git (FLIP#1236): each Cypress recording is published to the public
-# Hugging Face dataset aicentreflip/docs-gifs as one immutable tag, docs/.gifs_version pins the tag, and the hook
-# below fetches the pinned set into assets/generated/gifs/ (gitignored, wiped by `make clean`) before Sphinx reads
-# the sources — verifying every file against the published manifest, and making no network request at all on a
-# repeat build. Needs outbound HTTPS to huggingface.co (and *.hf.co) and nothing else: the dataset is public.
+# The user-guide GIFs are not tracked in git (FLIP#1236): each Cypress recording from develop is published to the
+# public Hugging Face dataset aicentreflip/docs-gifs, each release tags the one it ships (FLIP#1547), and the hook
+# below fetches the set this build calls for (a release's tag, a PR's own recording, else the newest) into
+# assets/generated/gifs/ (gitignored, wiped by `make clean`) before Sphinx reads the sources, verifying every file
+# against the published manifest. Needs outbound HTTPS to huggingface.co (and *.hf.co) and nothing else: the
+# dataset is public.
 
 DOCS_SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 GIFS_DIR = GENERATED_ASSETS_DIR / "gifs"
@@ -230,13 +272,13 @@ SKIP_GIF_FETCH_ENV = "FLIP_DOCS_SKIP_GIF_FETCH"
 
 
 def _fetch_docs_gifs(app: Sphinx) -> None:
-    """Fetch the pinned docs GIFs before Sphinx reads the sources.
+    """Fetch the docs GIFs before Sphinx reads the sources.
 
-    Fails the build when the pinned version cannot be fetched or verified rather than publishing pages with
-    missing figures. ``FLIP_DOCS_SKIP_GIF_FETCH=1`` opts out — for a text-only build offline, or to preview GIFs
-    recorded locally with ``npm run docs:gifs``, which land in the same directory and would otherwise be restored
-    to the pinned bytes; that prints a warning here and Sphinx's own "image file not readable" warning for every
-    figure it then cannot find, never silently.
+    Fails the build when no set can be fetched or verified rather than publishing pages with missing figures.
+    ``FLIP_DOCS_SKIP_GIF_FETCH=1`` opts out — for a text-only build offline, or to preview GIFs recorded locally
+    with ``npm run docs:gifs``, which land in the same directory and would otherwise be restored to the published
+    bytes; that prints a warning here and Sphinx's own "image file not readable" warning for every figure it then
+    cannot find, never silently.
     """
     if os.environ.get(SKIP_GIF_FETCH_ENV) == "1":
         logger.warning(
@@ -248,16 +290,16 @@ def _fetch_docs_gifs(app: Sphinx) -> None:
     sys.path.insert(0, str(DOCS_SCRIPTS_DIR))
     import fetch_docs_gifs  # noqa: PLC0415  (import deferred: a build tool beside conf.py, not a Sphinx dependency)
 
+    revisions = fetch_docs_gifs.revisions_to_try()
     try:
-        revision = fetch_docs_gifs.resolve_revision()
         report = fetch_docs_gifs.fetch(
-            fetch_docs_gifs.repo_from_env(), revision, GIFS_DIR, log=lambda message: logger.info("%s", message)
+            fetch_docs_gifs.repo_from_env(), revisions, GIFS_DIR, log=lambda message: logger.info("%s", message)
         )
     except fetch_docs_gifs.FetchError as exc:
         raise SphinxError(
-            f"Could not fetch the docs GIFs: {exc}. The revision comes from docs/.gifs_version (or "
-            f"${fetch_docs_gifs.REVISION_ENV}) and the dataset from ${fetch_docs_gifs.REPO_ENV}; behind a proxy, "
-            f"allow huggingface.co and *.hf.co; or set {SKIP_GIF_FETCH_ENV}=1 for a text-only build."
+            f"Could not fetch the docs GIFs: {exc}. Tried {', '.join(revisions)} (${fetch_docs_gifs.REVISION_ENV} "
+            f"picks one) on the dataset ${fetch_docs_gifs.REPO_ENV} names; behind a proxy, allow huggingface.co "
+            f"and *.hf.co; or set {SKIP_GIF_FETCH_ENV}=1 for a text-only build."
         ) from exc
     logger.info("docs GIFs: %s", report.summary())
 

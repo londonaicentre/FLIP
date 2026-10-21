@@ -164,6 +164,9 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
         if isinstance(err, bytes):
             err = err.decode(errors="replace")
         return False, err or str(e)
+    except FileNotFoundError as e:
+        # A tool this host lacks (macOS has no `free`) is a check that cannot run, not a crash.
+        return False, str(e)
 
 
 def kubectl_get_condition(resource_type: str, resource_name: str, condition: str) -> bool:
@@ -1115,9 +1118,9 @@ def main(
                         )
                         if response.get("Contents"):
                             kit_files = [o["Key"] for o in response["Contents"]]
-                            print_status("PASS", f"NVFLARE Trust_1 kit present ({len(kit_files)} files)")
+                            print_status("PASS", f"FLARE Trust_1 kit present ({len(kit_files)} files)")
                         else:
-                            print_status("WARN", "NVFLARE Trust_1 kit not found in MinIO — run kit upload first")
+                            print_status("WARN", "FLARE Trust_1 kit not found in MinIO — run kit upload first")
                     else:
                         print_status("WARN", "MinIO bucket 'fl-kits' not found — create it and upload kits")
                 except Exception as e:
@@ -1210,7 +1213,9 @@ def main(
 
     print_status("INFO", "Checking memory usage...")
     success, mem = run_command(["free"])
-    if success:
+    if not success:
+        print_status("INFO", "Memory check skipped: `free` is not available on this host")
+    else:
         for line in mem.split("\n"):
             if line.startswith("Mem:"):
                 fields = line.split()

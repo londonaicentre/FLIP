@@ -173,7 +173,7 @@ Callers in this repo: trust-api (`/cohort`, and `/cohort/snapshot` when the hub 
 and imaging-api (`/cohort/accession-ids`). The fl-client
 container calls `/cohort/dataframe` indirectly: user training code calls `flip.get_dataframe(...)`
 from the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip)
-(consumed by both NVFLARE and Flower fl-client / fl-server images), and that package reads
+(consumed by both FLARE and Flower fl-client / fl-server images), and that package reads
 `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and adds the header to its HTTP request. Tutorials
 and user-uploaded `client_app.py` / `server_app.py` do not deal with the header directly.
 

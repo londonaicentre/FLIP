@@ -133,13 +133,15 @@ while :; do
     # which is what a Mac still ships (FLIP#1395 fixed the same shape).
     [[ ${#still[@]} -eq 0 ]] && break
     pending=("${still[@]}")
+    # Report every poll, including the last: printed after the deadline check, a slow first poll
+    # skipped it entirely.
+    echo "⏳ waiting on ${#pending[@]}: ${pending[*]}"
 
     if [[ "${SECONDS}" -ge "${deadline}" ]]; then
         echo "::error::timed out after ${BUILD_WAIT_SECONDS}s waiting for ${pending[*]} at ${TAG} — production was NOT re-pinned to ${TAG}"
         manual_apply_hint
         exit 1
     fi
-    echo "⏳ waiting on ${#pending[@]}: ${pending[*]}"
     sleep "${BUILD_POLL_SECONDS}"
 done
 

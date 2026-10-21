@@ -104,18 +104,18 @@ COHORT_QUERY_THRESHOLD=10
 
 This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
 
-#### Site-enforced FL privacy policy (optional, NVFLARE only)
+#### Site-enforced FL privacy policy (optional, FLARE only)
 
 The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (plus optional
 `FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
-renders these into the client's NVFLARE `local/privacy.json` at container start, so THIS trust's
+renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
 (site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
 only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
 `make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
 just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
 this env, leaving the rest of each trust stack up); the fl-client log then shows
-`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`
 ("Site-enforced privacy policy").
 
 #### Trust governance policy (optional)
@@ -132,7 +132,7 @@ One file, three sections, each read by the service that enforces it:
 |---|---|---|
 | `[disclosure]` | data-access-api | `COHORT_QUERY_THRESHOLD` (may raise it, never lower it) |
 | `[access]` | data-access-api | nothing — new: permit/deny rules over project + operation |
-| `[fl_privacy.nvflare]` | NVFLARE fl-client | `FL_SITE_PRIVACY_*` — an alternative to them, not an override: set the filter in one place, since both set stops the client |
+| `[fl_privacy.nvflare]` | FLARE fl-client | `FL_SITE_PRIVACY_*` — an alternative to them, not an override: set the filter in one place, since both set stops the client |
 
 The document is **optional and additive**. Unset means the platform defaults apply and behaviour is
 exactly as before — the two variables above stay the only controls, so no existing trust has to
@@ -165,7 +165,7 @@ make -C trust check-governance KIT=<CODE>
 make -C trust reload-governance KIT=<CODE>
 ```
 
-`reload-governance` is how an edit is applied: it recreates data-access-api and, on NVFLARE, the
+`reload-governance` is how an edit is applied: it recreates data-access-api and, on FLARE, the
 fl-clients (with the step that extracts their section), and touches no data. It then waits for
 data-access-api's `[governance] policy ACTIVE … sha256=…` startup line and checks the digest is the
 document's, so an image too old to read the document fails the reload instead of passing it. **Do

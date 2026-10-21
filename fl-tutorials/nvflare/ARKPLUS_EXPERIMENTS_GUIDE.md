@@ -72,7 +72,7 @@ Also on the hub:
   client app (FLIP#695). Applies to eval `checkpoint`s **and** training `SERVER_CHECKPOINT`s.
 - **GPU request:** nothing to set on the hub. Each Ark+ tutorial declares its own in
   `app_files/meta.json`, `{"resource_spec": {"@default": {"num_of_gpus": 1}}}`, uploaded with the
-  other files, and NVFLARE's scheduler holds the job until every trust can provide it (FLIP#70).
+  other files, and FLARE's scheduler holds the job until every trust can provide it (FLIP#70).
   Leave the hub-wide `JOB_RESOURCE_SPEC_NUM_GPUS` at 0: it is the request for jobs that declare none,
   so setting it to 1 keeps *every* job off a CPU-only trust.
 
@@ -342,7 +342,7 @@ Training completed cleanly to `RESULTS_UPLOADED` on the deployed image (`acfbd28
 growth from re-broadcasting the ~759 MiB backbone every round). Two platform fixes made this run
 possible, exercised together for the first time here:
 
-- **Memory (Level 1).** FLIP's `ScatterAndGather` controller is now a thin subclass of NVFLARE's
+- **Memory (Level 1).** FLIP's `ScatterAndGather` controller is now a thin subclass of FLARE's
   stock controller, inheriting `memory_gc_rounds` allocator-aware cleanup (`gc.collect` + glibc
   `malloc_trim`) — bounding server RSS across rounds instead of leaking ~1.3 GiB/round.
 - **Broadcast (Level 2).** After round 0 the frozen backbone doesn't change, so it isn't
@@ -359,7 +359,7 @@ which is what actually demonstrates the finetune improved the model.
 > cross-site validation surfaced a **third** memory issue not seen on staging: broadcasting the full
 > ~759 MiB model to the clients OOM-crashed the fl-server (the slow BDMS/Thailand link kept the
 > full-model copies resident for minutes, pushing `MemoryUtilized` to ~97 % of the 8 GiB task).
-> Because the crash landed *before* NVFLARE's `END_RUN`, results never persisted and the model
+> Because the crash landed *before* FLARE's `END_RUN`, results never persisted and the model
 > orphaned at `TRAINING_STARTED` (net wedged `BUSY`). Fixed by switching finetune eval to
 > **`GlobalModelEval`** (only the aggregated global model is broadcast; the `submit_model` all-to-all
 > is dropped) — peak memory fell to ~75 % and the run completed cleanly. See the cross-site-val OOM

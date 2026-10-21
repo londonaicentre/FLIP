@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-# NVFLARE Federated Learning Services
+# FLARE Federated Learning Services
 
 This folder contains base code to create NVIDIA FLARE federated learning networks, each containing a set of clients, a server and an API. `fl-api-base` and `fl-base` are base services used by the provisioning command to build upon. `fl-base` can be used to test applications locally, but is a single container that does not constitute a fully working FL network.
 
@@ -81,7 +81,7 @@ are two different things and conflating them was FLIP#1171.
   the **host** user with the image's gid. The host uid is what has to match the bind mounts: the
   provisioned kit is written by whoever ran `make provision` (no dev compose mounts `~/.aws` any more,
   FLIP#1291). The gid stays the image's because `/app` and `/home/flip` are
-  group-writable (see `fl-base/Dockerfile`), which is what keeps NVFLARE's job workspace and torch's cache
+  group-writable (see `fl-base/Dockerfile`), which is what keeps FLARE's job workspace and torch's cache
   writable for a foreign uid. Production sets no `user:` and runs as `flip` unchanged.
 
 Previously the build args carried the developer's own uid, so images worked for whoever built them and
@@ -89,7 +89,7 @@ crash-looped for everyone else — including on every published image, for any d
 Anywhere one of these containers bind-mounts a host path, that path must still be owned by the uid the
 container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
 can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
-silently breaks the container. See `deploy/providers/AWS/TROUBLESHOOTING.md` for the failure mode and
+silently breaks the container. See the [trust troubleshooting page](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-compose.html#ts-compose-images-permission) for the failure mode and
 `deploy/providers/AWS/site.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 
@@ -105,10 +105,9 @@ also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matchin
 service. Development adds nothing back: the image is non-root, and Docker makes a `cap_add` effective only
 for root, so a grant there would sit unused in the bounding set (`CapEff` stays `0`). A `provision/workspace-dev/`
 kit whose ownership doesn't match is not fixed by a capability either — it is fixed by the `user:` override
-above, which runs the container as the host user that already owns the kit. Production adds back `DAC_OVERRIDE` and `FOWNER`, equally inert for the current non-root image
-but retained for legacy root-image compat — a trust pinning a pre-GHSA-8465 `DOCKER_FL_TAG` still runs that
-entrypoint as root, and `cap_drop: ALL` would strip the DAC bypass its unguarded kit writes rely on (see
-[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions) for the full rationale). None of
+above, which runs the container as the host user that already owns the kit. Production adds nothing back
+either: the provisioning Ansible pre-chowns its kit directory to the container's uid (see
+[`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)). None of
 this covers the standalone `fl-services/nvflare/compose.dev.yml` dev harness (`make -C fl-services/nvflare up`),
 which remains unhardened — it runs the same non-root image and kit dirs, so it can be hardened the same way
 whenever someone picks it up.
@@ -243,7 +242,7 @@ aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
 
 > ⚠️ Do **not** add a client by appending it to the project YAML and re-running
 > `make provision*`. Those targets `rm -rf` the workspace first (including `state/`), so
-> NVFLARE mints a fresh root CA and regenerates **every** participant's certs — forcing a
+> FLARE mints a fresh root CA and regenerates **every** participant's certs — forcing a
 > redeploy of every already-onboarded trust. `provision-add-client` preserves `state/`
 > and avoids that.
 >
@@ -295,7 +294,7 @@ Then `make register-trust KIT=<CODE>` (see
 the claimed `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER` into the trust's kit file, and the
 trust-host deploy pulls that kit from the S3 path above.
 
-> Flower caveat: the dynamic path is NVFLARE-only. Flower's per-slot SuperNode key
+> Flower caveat: the dynamic path is FLARE-only. Flower's per-slot SuperNode key
 > labelling reads `TRUST_NAMES` at net startup, so a slot added at runtime isn't usable
 > on a running Flower net until its containers are recreated.
 
@@ -309,7 +308,7 @@ make -C fl-services/nvflare up NET_NUMBER=<N>     # fl-server + fl-api + 2 clien
 make -C fl-services/nvflare down                  # tear it down
 ```
 
-`make -C fl-services/nvflare submit` is **intentionally not wired** for NVFLARE: job submission goes
+`make -C fl-services/nvflare submit` is **intentionally not wired** for FLARE: job submission goes
 through the provisioned FLARE admin API, not a simple HTTP POST (unlike Flower's `submit`). To run a
 job standalone, use the simulator harness instead:
 

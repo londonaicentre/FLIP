@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The published omop-db image and pgdata tarballs are vocab-free (FLIP#842/843):
+# The published omop-db image and the seeded data carry no licensed vocabulary (FLIP#842/843):
 # this Job streams the licensed core vocabulary bundle into the running database
 # after install/upgrade, using the image's own loader.
 #

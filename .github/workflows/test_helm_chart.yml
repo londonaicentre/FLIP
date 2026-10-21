@@ -22,9 +22,14 @@ on:
       # is the premise of the C-STORE smoke's received.log evidence (tests/test_cstore_verdict.py).
       - "trust/xnat/xnat/config/configure-xnat.sh"
       - "trust/xnat/xnat/config/anon_script.das"
+      # The chart's xnat-init ConfigMap carries a copy of it, which
+      # tests/templates/test_container_jobs_quota.py holds equal to the file.
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
       # The procedure the trust-seed hook fetches and runs; tests/test_trust_seed_job.py
       # asserts the Job's env against it.
       - "trust/seed_trust.sh"
+      # The pin trustData.version must match (tests/test_trust_data_pin.py).
+      - "trust/.data_version"
       # The seed tools that same hook installs from that ref and runs (TOOLS_SPEC's
       # `#subdirectory=trust/omop-db`), so a change here can break the kind E2E job.
       - "trust/omop-db/**"
@@ -38,7 +43,10 @@ on:
       - "trust/deploy/helm/**"
       - "trust/xnat/xnat/config/configure-xnat.sh"
       - "trust/xnat/xnat/config/anon_script.das"
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
       - "trust/seed_trust.sh"
+      # The pin trustData.version must match (tests/test_trust_data_pin.py).
+      - "trust/.data_version"
       - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
@@ -594,7 +602,7 @@ jobs:
       # and nothing the chart runs may write to it or hold AWS credentials.
       #
       # The regression this guards (FLIP#999): when the volume was gated on the active
-      # backend's own kitFromS3 flag, the gate read only the NVFLARE one, which defaulted
+      # backend's own kitFromS3 flag, the gate read only the FLARE one, which defaulted
       # to true, so a Flower trust staging its kit on the node rendered an emptyDir and
       # started with empty /certs and /keys — no error at deploy time, just a SuperNode
       # that never registers and logs a repeating "Connection attempt failed",

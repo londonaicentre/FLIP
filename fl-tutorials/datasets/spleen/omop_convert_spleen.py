@@ -11,12 +11,8 @@
 
 """Build the spleen_project OMOP tables from the DICOM metadata table.
 
-Imported from ``londonaicentre/flip-omop-mock-data`` (FLIP#1092). Behaviour is unchanged bar one
-correction — SliceThickness measurements now carry their millimetre unit (FLIP#1098; the imported
-filter compared against a transposed concept id and never matched, so the ``20260729`` export
-published every measurement with ``unit_concept_id`` 0). The round-robin trust split is kept as is:
-MSD Task09_Spleen is single-source, so the two trusts carry no acquisition heterogeneity. Replacing
-that with a real site split is FLIP#1092 follow-up 2.
+Cases are split between the trusts round-robin: MSD Task09_Spleen is single-source, so the two trusts
+carry no acquisition heterogeneity. Replacing that with a real site split is FLIP#1092 follow-up 2.
 """
 
 import os

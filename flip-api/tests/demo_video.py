@@ -11,11 +11,11 @@
 #
 """Records the end-to-end FLIP demo video against the live dev stack.
 
-Drives the six Cypress demo segments (flip-ui/test/cypress/demo/) one at a
-time — each in its own Dockerised Cypress run — and performs the slow
-platform waits (cohort responses, imaging import, FL training) OFF-camera
-between segments, reusing tests/e2e_smoke.py's wait functions. Finally the
-segment mp4s are cropped + concatenated into one walkthrough video by
+Plays the six on-camera segments (tests/demo_segments.py) in one Playwright
+browser, each recorded to its own mp4 (tests/demo_recorder.py), and performs
+the slow platform waits (cohort responses, imaging import, FL training)
+OFF-camera between them, reusing tests/e2e_smoke.py's wait functions. Finally
+the segment mp4s are concatenated into one walkthrough video by
 flip-ui/scripts/assemble-demo-video.sh.
 
 The recording is genuine end to end: real sign-ins through the UI (Keycloak in dev),
@@ -23,9 +23,11 @@ real trust round-trips, real presigned uploads to the object store, real federat
 
 Prerequisites:
     - Full dev stack up (`make up`) with trusts registered and Orthanc seeded.
+    - Playwright's Chromium (`uv run playwright install chromium`) and ffmpeg on PATH.
     - Demo users (optional but recommended): `make demo-users`, then
       restart flip-api so seeding grants their roles. Without them the
-      segments fall back to the well-known admin for both parts.
+      segments fall back to the well-known admin for both parts; without the
+      demo Trust Admin, the admin approves at every trust on camera.
 
 Usage (preferred):
     make demo-video                                   # from the repo root
@@ -45,31 +47,30 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 import requests
+from playwright.sync_api import Browser, sync_playwright
 
+from flip_api.auth.identity.keycloak import password_grant
+from flip_api.config import get_settings
+from flip_api.db.models.user_models import RoleRef
 from flip_api.utils import constants
-from tests import e2e_smoke, xnat_seg_upload
+from tests import demo_segments, e2e_smoke, seed_demo_projects, xnat_seg_upload
+from tests.demo_recorder import take
+from tests.demo_segments import Persona
 from tests.e2e_smoke import SmokeFailure, _get, _log, describe_tutorial
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FLIP_UI_DIR = REPO_ROOT / "flip-ui"
-DEMO_DIR = FLIP_UI_DIR / "test" / "cypress" / "demo"
+ASSEMBLE_SCRIPT = REPO_ROOT / "flip-ui" / "scripts" / "assemble-demo-video.sh"
+# Gitignored. Segment mp4s are kept between runs so a resume can assemble the earlier ones.
+DEMO_DIR = REPO_ROOT / "flip-api" / "demo-video"
 STATE_FILE = DEMO_DIR / "state.json"
-VIDEOS_DIR = DEMO_DIR / "videos"
+SEGMENTS_DIR = DEMO_DIR / "segments"
 OUT_DIR = DEMO_DIR / "out"
-CYPRESS_IMAGE = "cypress/included:15.21.0"
-
-SEGMENTS = [
-    "01-create-project",
-    "02-approve",
-    "03-xnat-ohif",
-    "04-create-model-train",
-    "05-follow-progress",
-    "06-download-results",
-]
 
 # Per-app recording profiles: on-camera names plus the per-backend tutorial locations (mirroring
 # the e2e_smoke Makefile defaults). CLI name flags override the profile values.
@@ -88,7 +89,7 @@ APPS: dict[str, dict[str, Any]] = {
             "nvflare": {
                 "app_dir": "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
                 "query_file": "fl-tutorials/nvflare/image_classification/xray_classification/query.sql",
-                "label": "NVFLARE",
+                "label": "FLARE",
             },
             "flower": {
                 "app_dir": "fl-tutorials/flower/xray_classification/app",
@@ -114,7 +115,7 @@ APPS: dict[str, dict[str, Any]] = {
             "nvflare": {
                 "app_dir": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files",
                 "query_file": "fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql",
-                "label": "NVFLARE",
+                "label": "FLARE",
             },
             "flower": {
                 "app_dir": "fl-tutorials/flower/ehr_risk_prediction/app",
@@ -131,7 +132,7 @@ APPS: dict[str, dict[str, Any]] = {
             "nvflare": {
                 "app_dir": "fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/app_files",
                 "query_file": "fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql",
-                "label": "NVFLARE",
+                "label": "FLARE",
             },
             "flower": {
                 "app_dir": "fl-tutorials/flower/3d_spleen_segmentation/app",
@@ -182,6 +183,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="First segment to record; earlier segments must already have their mp4s for assembly",
     )
     parser.add_argument("--skip-xnat", action="store_true", help="Skip the XNAT/OHIF segment")
+    parser.add_argument(
+        "--keep-workspace",
+        action="store_true",
+        help=(
+            "On a fresh run, keep the demo researcher's workspace as it is, instead of deleting its earlier projects "
+            "and seeding the demo catalogue owned by it"
+        ),
+    )
+    parser.add_argument(
+        "--keep-project",
+        action="append",
+        default=[],
+        metavar="ID",
+        help="On a fresh run, spare this project of the researcher's from the workspace reset (repeatable)",
+    )
+    parser.add_argument("--ui-url", default="http://localhost:44357", help="The dev flip-ui the segments sign in to")
     parser.add_argument(
         "--xnat-url",
         default="http://127.0.0.1:8105",
@@ -238,7 +255,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=3,
         help=(
-            "Browser device-scale factor for the recording: 3 captures the 1280x800 viewport at 3840x2400 "
+            "Browser device-scale factor for the recording: 3 records the 1280x800 viewport at 3840x2400 "
             "(4K-class). Use 1 for fast draft runs. All segments in one assembly must share the same scale."
         ),
     )
@@ -283,6 +300,44 @@ def resolve_ui_credentials() -> tuple[tuple[str, str], tuple[str, str], list[str
     return researcher, admin, fallback_roles
 
 
+def resolve_trust_admin() -> Persona | None:
+    """The demo Trust Admin, or None when DEMO_TRUST_ADMIN_* is unset and the admin approves on camera instead."""
+    email, password = os.environ.get("DEMO_TRUST_ADMIN_EMAIL", ""), os.environ.get("DEMO_TRUST_ADMIN_PASSWORD", "")
+    if not (email and password):
+        _log("⚠️  DEMO_TRUST_ADMIN_EMAIL/PASSWORD not set — the admin approves on camera instead of a Trust Admin")
+        return None
+    return Persona(email, password, role="trust admin")
+
+
+@contextmanager
+def trust_admin_of(
+    client: requests.Session, headers: dict[str, str], persona: Persona, trust: dict[str, Any]
+) -> Iterator[None]:
+    """Make ``persona`` the Trust Admin of ``trust`` while the block runs, then a Researcher again.
+
+    A trust with a Trust Admin is decided only by them, so for as long as the grant stands the admin's
+    approvals there (e2e_smoke, the catalogue seed, other sessions on a shared stack) are refused.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Admin auth headers.
+        persona (Persona): The demo Trust Admin.
+        trust (dict[str, Any]): The trust it administers.
+    """
+    user_id = seed_demo_projects.find_user_id(client, headers, persona.email)
+
+    def set_roles(body: dict[str, Any], what: str) -> None:
+        e2e_smoke._ensure_ok(e2e_smoke._post(client, f"/users/{user_id}/roles", body, headers), what)
+
+    set_roles({"roles": [str(RoleRef.TRUST_ADMIN.value)], "trustId": str(trust["id"])}, "grant Trust Admin")
+    _log(f"🏛️  {persona.email} is Trust Admin of {trust['name']} for segment 2")
+    try:
+        yield
+    finally:
+        set_roles({"roles": [str(RoleRef.RESEARCHER.value)]}, "revoke Trust Admin")
+        _log(f"🏛️  {persona.email} is a Researcher again")
+
+
 def read_state() -> dict[str, str]:
     if STATE_FILE.exists():
         return json.loads(STATE_FILE.read_text())
@@ -294,67 +349,8 @@ def write_state(state: dict[str, str]) -> None:
     STATE_FILE.write_text(json.dumps(state, indent=4))
 
 
-def run_segment(name: str, env: dict[str, str], video_scale: int = 1) -> Path:
-    """Record one demo segment in a Dockerised Cypress run.
-
-    Env values are passed with bare `-e NAME` flags so secrets ride the
-    subprocess environment instead of the docker argv (visible in `ps`).
-
-    Args:
-        name (str): Segment name (spec basename without .spec.ts).
-        env (dict[str, str]): Environment values the spec reads via Cypress.env.
-
-    Returns:
-        Path: The recorded segment mp4.
-    """
-    spec_rel = f"test/cypress/demo/{name}.spec.ts"
-    video = VIDEOS_DIR / f"{name}.spec.ts.mp4"
-    video.unlink(missing_ok=True)
-    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
-
-    child_env = os.environ.copy()
-    cmd = [
-        "docker",
-        "run",
-        "--rm",
-        "--network",
-        "host",
-        "--shm-size=2g",
-        "--user",
-        f"{os.getuid()}:{os.getgid()}",
-        "-v",
-        f"{REPO_ROOT}:/e2e",
-        "-w",
-        "/e2e/flip-ui",
-    ]
-    # Cypress + Chrome need a writable HOME when running as the host user.
-    for key, value in {"HOME": "/tmp/cypress-home", "DEMO_VIDEO_SCALE": str(video_scale), **env}.items():
-        child_env[key] = value
-        cmd += ["-e", key]
-    cmd += [
-        "--entrypoint",
-        "cypress",
-        CYPRESS_IMAGE,
-        "run",
-        "--browser",
-        "chrome",
-        "--config-file",
-        "cypress.demo.config.ts",
-        "--spec",
-        spec_rel,
-    ]
-
-    _log(f"🎬 Recording segment {name} …")
-    result = subprocess.run(cmd, env=child_env)
-    if result.returncode != 0:
-        raise SmokeFailure(
-            f"Segment {name} failed (exit {result.returncode}). "
-            f"See {VIDEOS_DIR / (name + '.spec.ts.mp4')} and {DEMO_DIR / 'screenshots'} for what happened."
-        )
-    if not video.exists():
-        raise SmokeFailure(f"Segment {name} passed but produced no video at {video}")
-    _log(f"  ✅ {video.relative_to(REPO_ROOT)}")
-    return video
+def segment_video(number: int, name: str) -> Path:
+    return SEGMENTS_DIR / f"{number:02d}-{name}.mp4"
 
 
 def _pick_experiment(xnat: requests.Session, xnat_url: str, experiments: list[dict[str, Any]]) -> dict[str, Any]:
@@ -386,17 +382,77 @@ def _pick_experiment(xnat: requests.Session, xnat_url: str, experiments: list[di
     return experiments[0]
 
 
+CONTAINER_DONE_STATUSES = ("Complete", "Failed", "Killed")
+
+
+def clear_xnat_sessions(xnat: requests.Session, xnat_url: str, username: str) -> None:
+    """Sweep the user's XNAT sessions, this one included, just before the take.
+
+    Piles of stale JSESSIONs make XNAT show a sessions-per-IP attention banner and stale-expiry
+    dialogs in the recording. Swept last, so no poll of ours re-opens one before the browser signs in.
+    """
+    try:
+        xnat.delete(f"{xnat_url}/xapi/users/active/{username}", timeout=30)
+        _log("  🧹 cleared existing XNAT sessions for the demo user")
+    except requests.exceptions.RequestException:
+        _log("  ⚠️  could not clear XNAT sessions; continuing")
+
+
+def wait_for_xnat_conversions(
+    xnat: requests.Session,
+    xnat_url: str,
+    xnat_project: str,
+    timeout_s: int = 900,
+    stall_s: int = 90,
+    poll_s: int = 10,
+) -> None:
+    """Block until the project's container jobs (dcm2niix) have drained, so XNAT is responsive on camera.
+
+    The pull threshold is met while XNAT is still converting hundreds of fresh studies, and a page
+    opened then takes ~40 s to load. Returns early, with a warning, when the active count stops
+    moving for ``stall_s`` (a finalize stall never drains) or at ``timeout_s``; the take goes on.
+
+    Args:
+        xnat (requests.Session): Authenticated XNAT session.
+        xnat_url (str): Base URL of the trust's XNAT.
+        xnat_project (str): XNAT project id whose containers to wait on.
+        timeout_s (int): Longest wait in seconds.
+        stall_s (int): How long an unchanged active count counts as stalled.
+        poll_s (int): Seconds between polls.
+    """
+    _log(f"⏳ Waiting for XNAT container jobs in {xnat_project} to drain (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    last_active, last_change = None, time.monotonic()
+    while time.monotonic() < deadline:
+        try:
+            resp = xnat.get(f"{xnat_url}/xapi/projects/{xnat_project}/containers", timeout=60)
+            resp.raise_for_status()
+            active = sum(1 for c in resp.json() if not str(c.get("status", "")).startswith(CONTAINER_DONE_STATUSES))
+        except (requests.exceptions.RequestException, ValueError) as exc:
+            _log(f"  ⚠️  container query error ({type(exc).__name__}); retrying")
+        else:
+            if active == 0:
+                _log("  ✅ no container jobs running")
+                return
+            if active != last_active:
+                _log(f"  📊 {active} container job(s) still running")
+                last_active, last_change = active, time.monotonic()
+            elif time.monotonic() - last_change >= stall_s:
+                _log(f"  ⚠️  {active} container job(s) unchanged for {stall_s}s (stalled?); recording anyway")
+                return
+        time.sleep(poll_s)
+    _log(f"  ⚠️  container jobs still running after {timeout_s}s; recording anyway")
+
+
 def resolve_xnat_ids(
     xnat_url: str, username: str, password: str, flip_project_id: str, timeout_s: int = 600
 ) -> dict[str, str]:
-    """Find the trust-XNAT project mirroring a FLIP project, plus one session.
+    """Find the trust-XNAT project mirroring a FLIP project, plus one session to open in OHIF.
 
     The imaging import creates one XNAT project per FLIP project with
     ``secondary_ID`` set to the FLIP project UUID
-    (trust/imaging-api services/projects.py), so match on that and take the
-    first experiment as the study to open in OHIF. The OHIF viewer URL needs
-    the subject id and experiment label too (the plugin's viewer.js builds
-    ``?subjectId=&projectId=&experimentId=&experimentLabel=``).
+    (trust/imaging-api services/projects.py), so match on that. Once found, waits for the
+    project's conversions to drain, then clears the user's XNAT sessions for the take.
 
     Args:
         xnat_url (str): Base URL of the trust's XNAT (e.g. http://localhost:8105).
@@ -406,7 +462,7 @@ def resolve_xnat_ids(
         timeout_s (int): How long to keep polling for the project/experiments.
 
     Returns:
-        dict[str, str]: project, subject, experiment and label ids for the viewer URL.
+        dict[str, str]: project and experiment ids, and ``has_segmentation`` ("yes" or "").
     """
     _log(f"🔎 Resolving XNAT project for FLIP project {flip_project_id} at {xnat_url}")
     deadline = time.monotonic() + timeout_s
@@ -414,14 +470,6 @@ def resolve_xnat_ids(
     # per-request basic auth would also mint a fresh JSESSION every poll.
     xnat = requests.Session()
     xnat.auth = (username, password)
-    # Sweep the user's accumulated sessions first — piles of stale JSESSIONs
-    # make XNAT show a sessions-per-IP attention banner and stale-expiry
-    # dialogs in the recording.
-    try:
-        xnat.delete(f"{xnat_url}/xapi/users/active/{username}", timeout=30)
-        _log("  🧹 cleared existing XNAT sessions for the demo user")
-    except requests.exceptions.RequestException:
-        _log("  ⚠️  could not clear XNAT sessions; continuing")
     while time.monotonic() < deadline:
         try:
             resp = xnat.get(f"{xnat_url}/data/projects?format=json", timeout=60)
@@ -438,21 +486,15 @@ def resolve_xnat_ids(
                         experiments = exp_resp.json()["ResultSet"]["Result"]
                         if experiments:
                             experiment = _pick_experiment(xnat, xnat_url, experiments)
-                            detail = xnat.get(
-                                f"{xnat_url}/data/experiments/{experiment['ID']}?format=json",
-                                timeout=60,
-                            )
-                            fields = detail.json()["items"][0]["data_fields"] if detail.status_code < 300 else {}
                             resolved = {
                                 "project": xnat_project_id,
-                                "subject": str(fields.get("subject_ID", "")),
                                 "experiment": experiment["ID"],
-                                "label": str(experiment.get("label") or fields.get("label", "")),
                                 "has_segmentation": "yes" if experiment.get("_has_roi_collection") else "",
                             }
-                            if resolved["subject"]:
-                                _log(f"  ✅ XNAT ids: {resolved}")
-                                return resolved
+                            _log(f"  ✅ XNAT ids: {resolved}")
+                            wait_for_xnat_conversions(xnat, xnat_url, xnat_project_id)
+                            clear_xnat_sessions(xnat, xnat_url, username)
+                            return resolved
         except requests.exceptions.RequestException as exc:
             _log(f"  ⚠️  XNAT query error ({type(exc).__name__}); retrying")
         time.sleep(10)
@@ -499,6 +541,72 @@ def app_files_for(app_dir: Path) -> list[str]:
     return names
 
 
+def sign_in_headers(persona: Persona) -> dict[str, str]:
+    """Hub auth headers for ``persona``, through the dev Keycloak's password grant (as the UI signs in).
+
+    Raises:
+        SmokeFailure: When the hub's identity provider is not Keycloak.
+    """
+    settings = get_settings()
+    if settings.AUTH_BACKEND != "keycloak" or not settings.KEYCLOAK_PUBLIC_URL:
+        raise SmokeFailure(f"Signing in as {persona.email} needs the dev Keycloak (AUTH_BACKEND=keycloak)")
+    realm, client_id = settings.KEYCLOAK_REALM, settings.KEYCLOAK_CLIENT_ID
+    tokens = password_grant(settings.KEYCLOAK_PUBLIC_URL, realm, client_id, persona.email, persona.password)
+    return {"scheme": "Bearer", "authorization": "Bearer " + tokens["access_token"]}
+
+
+def reset_researcher_workspace(
+    client: requests.Session,
+    headers: dict[str, str],
+    researcher: Persona,
+    trusts: list[dict[str, Any]],
+    keep: Collection[str] = (),
+) -> int:
+    """Put the demo researcher's workspace in the same state for every take: the catalogue and nothing else.
+
+    The researcher's project list is the opening shot. The demo researcher exists only for the recorder,
+    so every project it owns outside the demo catalogue is left over from an earlier take and is deleted,
+    matched on its own user id so other people's projects, including ones shared with it, stay out of reach.
+    The catalogue (tests.seed_demo_projects) is then seeded as the researcher, signed in with its own login,
+    so the opening shot shows projects it created itself; it is kept across resets, as re-seeding the
+    approved entries restarts their imaging imports. When the researcher fell back to the well-known admin
+    there is no dedicated account, so nothing is touched.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Admin auth headers.
+        researcher (Persona): The researcher the segments sign in as.
+        trusts (list[dict[str, Any]]): Trusts the catalogue is staged/approved at.
+        keep (Collection[str]): Ids of the researcher's projects to spare (``--keep-project``), e.g. one
+            another tool still points at.
+
+    Returns:
+        int: How many projects were deleted.
+
+    Raises:
+        SmokeFailure: When the demo researcher is not a hub user, or a hub call fails.
+    """
+    if researcher.fallback:
+        _log("⚠️  No demo researcher: keeping the workspace (the fallback admin's projects are not the recorder's)")
+        return 0
+    user_id = seed_demo_projects.find_user_id(client, headers, researcher.email)
+    # The owner filter narrows the listing; the id check is what guarantees nobody else's project goes.
+    listed = seed_demo_projects.paged(client, headers, f"/projects?owner={user_id}", "list the researcher's projects")
+    catalogue = {entry["name"] for entry in seed_demo_projects.CATALOGUE}
+    owned = [
+        p
+        for p in listed
+        if str(p.get("ownerId")) == str(user_id) and p.get("name") not in catalogue and str(p["id"]) not in keep
+    ]
+    for project in owned:
+        resp = client.delete(f"{constants.BASE_URL}/projects/{project['id']}", headers=headers, timeout=60)
+        e2e_smoke._ensure_ok(resp, f"delete project {project['id']}")
+    _log(f"🧹 Workspace reset: deleted {len(owned)} earlier project(s) owned by {researcher.email}")
+    owner = seed_demo_projects.Owner(user_id, sign_in_headers(researcher))
+    seed_demo_projects.seed_catalogue(client, headers, trusts, seed_demo_projects.CATALOGUE, owner)
+    return len(owned)
+
+
 def check_reused_project_matches_profile(
     client: requests.Session, headers: dict[str, str], project_id: str, app: str, profile: dict[str, Any]
 ) -> None:
@@ -538,9 +646,8 @@ def check_reused_project_matches_profile(
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     profile = APPS[args.app]
-    # Imaging unless the app says otherwise: only the tabular tutorials opt out, and a
-    # missing value must not silently mean "imaging" (see 01-create-project.spec.ts).
-    has_imaging_env = "true" if profile.get("has_imaging", True) else "false"
+    # Imaging unless the app says otherwise: only the tabular tutorials opt out.
+    has_imaging = bool(profile.get("has_imaging", True))
     tutorial = profile["backends"][args.fl_backend]
     if bool(args.data_enrichment_cwd) != bool(args.data_enrichment_cmd):
         raise SmokeFailure("--data-enrichment-cwd and --data-enrichment-cmd must be provided together")
@@ -558,8 +665,11 @@ def main(argv: list[str] | None = None) -> int:
     model_name = args.model_name or profile["model_name"]
     model_description = args.model_description or profile["model_description"]
 
-    researcher, admin, fallback_roles = resolve_ui_credentials()
-    _log(f"🎭 Researcher part: {researcher[0]} | Admin part: {admin[0]}")
+    researcher_login, admin_login, fallback_roles = resolve_ui_credentials()
+    researcher = Persona(*researcher_login, role="researcher", fallback="researcher" in fallback_roles)
+    admin = Persona(*admin_login, role="admin", fallback="admin" in fallback_roles)
+    trust_admin = resolve_trust_admin()
+    _log(f"🎭 Researcher part: {researcher.email} | Approval: {(trust_admin or admin).email}")
 
     # Hub session for the off-camera waits (same auth as e2e_smoke).
     client = requests.Session()
@@ -572,14 +682,15 @@ def main(argv: list[str] | None = None) -> int:
         raise SmokeFailure("No trusts registered on the hub")
     _log(f"🏥 Demo trusts: {[t.get('code') or t['name'] for t in trusts]}")
 
-    # Fresh start wipes previous segment videos; resumes keep them for assembly.
+    # A fresh start wipes the previous segment videos; a resume keeps them for assembly.
+    SEGMENTS_DIR.mkdir(parents=True, exist_ok=True)
     if args.from_segment == 1:
-        if VIDEOS_DIR.exists():
-            for old in VIDEOS_DIR.glob("*.mp4"):
-                old.unlink()
+        for old in SEGMENTS_DIR.glob("*.mp4"):
+            old.unlink()
         STATE_FILE.unlink(missing_ok=True)
-        if args.project_id:
-            write_state({"projectId": args.project_id})
+        state: dict[str, str] = {}
+        if not args.keep_workspace:
+            reset_researcher_workspace(client, headers, researcher, trusts, keep=args.keep_project)
     else:
         state = read_state()
         if args.project_id:
@@ -590,36 +701,80 @@ def main(argv: list[str] | None = None) -> int:
             raise SmokeFailure("--from-segment > 1 needs --project-id (or an existing state.json)")
         write_state(state)
 
-    # Paths handed to the specs are relative to the Cypress project root
-    # (flip-ui/) inside the container mount.
-    query_rel = os.path.relpath(query_file, FLIP_UI_DIR)
-    app_dir_rel = os.path.relpath(app_dir, FLIP_UI_DIR)
+    with sync_playwright() as playwright:
+        # The real flag, not only the context's device_scale_factor: without it the screencast
+        # hands out CSS-pixel frames and the 4K video is an upscale.
+        browser = playwright.chromium.launch(args=[f"--force-device-scale-factor={args.video_scale}"])
+        try:
+            record_segments(
+                browser,
+                args,
+                client,
+                headers,
+                trusts,
+                state,
+                researcher=researcher,
+                admin=admin,
+                trust_admin=trust_admin,
+                has_imaging=has_imaging,
+                project_name=project_name,
+                project_description=project_description,
+                query_sql=query_file.read_text(),
+                model_name=model_name,
+                model_description=model_description,
+                app_files=[app_dir / name for name in app_files_for(app_dir)],
+                backend_label=tutorial["label"],
+            )
+        finally:
+            browser.close()
 
-    # The specs surface a fallback persona as an on-screen caption during the
-    # sign-in, so the assembled mp4 itself discloses it (see demoFlow.ts).
-    researcher_env = {"DEMO_RESEARCHER_EMAIL": researcher[0], "DEMO_RESEARCHER_PASSWORD": researcher[1]}
-    if "researcher" in fallback_roles:
-        researcher_env["DEMO_CREDENTIALS_FALLBACK"] = "researcher"
+    if args.no_assemble:
+        _log(f"⏭️  --no-assemble: segment mp4s left in {SEGMENTS_DIR}")
+        return 0
+
+    out_path = Path(args.out).resolve() if args.out else (OUT_DIR / f"flip-demo-{args.app}.mp4").resolve()
+    _log("🎞️  Assembling final video …")
+    result = subprocess.run(["bash", str(ASSEMBLE_SCRIPT), str(SEGMENTS_DIR), str(out_path)])
+    if result.returncode != 0:
+        raise SmokeFailure(f"Video assembly failed — segment mp4s are intact in {SEGMENTS_DIR}")
+    _log(f"🎉 Demo video ready: {out_path}")
+    return 0
+
+
+def record_segments(
+    browser: Browser,
+    args: argparse.Namespace,
+    client: requests.Session,
+    headers: dict[str, str],
+    trusts: list[dict[str, Any]],
+    state: dict[str, str],
+    *,
+    researcher: Persona,
+    admin: Persona,
+    trust_admin: Persona | None,
+    has_imaging: bool,
+    project_name: str,
+    project_description: str,
+    query_sql: str,
+    model_name: str,
+    model_description: str,
+    app_files: list[Path],
+    backend_label: str,
+) -> None:
+    """Record the segments from ``--from-segment`` on, with the platform waits between them off camera."""
+    scale = args.video_scale
 
     # ── Segment 1: researcher creates project + cohort query ──────────────
     if args.from_segment <= 1:
-        run_segment(
-            "01-create-project",
-            {
-                **researcher_env,
-                "DEMO_PROJECT_NAME": project_name,
-                "DEMO_PROJECT_DESCRIPTION": project_description,
-                "DEMO_QUERY_FILE": query_rel,
-                "DEMO_HAS_IMAGING": has_imaging_env,
-            },
-            video_scale=args.video_scale,
-        )
-    project_id = read_state().get("projectId", "")
-    if not project_id:
-        raise SmokeFailure("Segment 1 did not record a projectId in state.json")
+        with take(browser, segment_video(1, "create-project"), args.ui_url, scale) as rec:
+            state["projectId"] = demo_segments.create_project(
+                rec, researcher, project_name, project_description, query_sql, has_imaging
+            )
+        write_state(state)
+    project_id = state["projectId"]
     _log(f"🆔 project_id={project_id}")
     if args.project_id or args.from_segment > 1:  # a project this run did not create from the profile
-        check_reused_project_matches_profile(client, headers, project_id, args.app, profile)
+        check_reused_project_matches_profile(client, headers, project_id, args.app, APPS[args.app])
 
     required_trust_ids = {str(t["id"]) for t in trusts}
     required_trust_names = {t["name"] for t in trusts}
@@ -627,26 +782,26 @@ def main(argv: list[str] | None = None) -> int:
         client, headers, project_id, timeout_s=args.cohort_timeout, required_trust_ids=required_trust_ids
     )
 
-    # ── Segment 2: admin checks connection status, stages + approves ──────
-    if args.from_segment <= 2:
-        run_segment(
-            "02-approve",
-            {
-                "DEMO_ADMIN_EMAIL": admin[0],
-                "DEMO_ADMIN_PASSWORD": admin[1],
-                "DEMO_PROJECT_ID": project_id,
-                "DEMO_HAS_IMAGING": has_imaging_env,
-                **({"DEMO_CREDENTIALS_FALLBACK": "admin"} if "admin" in fallback_roles else {}),
-            },
-            video_scale=args.video_scale,
-        )
+    # ── Segment 2: one trust's Trust Admin approves; the rest off camera ──
+    if args.from_segment <= 2 and trust_admin:
+        site, others = trusts[0], trusts[1:]
+        with trust_admin_of(client, headers, trust_admin, site):
+            with take(browser, segment_video(2, "approve"), args.ui_url, scale) as rec:
+                demo_segments.approve_at_trust(rec, trust_admin, project_id, site["name"])
+        if others:
+            body = {"trusts": [t["id"] for t in others]}
+            e2e_smoke._ensure_ok(
+                e2e_smoke._post(client, f"/step/project/{project_id}/approve", body, headers), "approve other trusts"
+            )
+            _log(f"✅ Approved off camera at {[t['name'] for t in others]}")
+    elif args.from_segment <= 2:
+        with take(browser, segment_video(2, "approve"), args.ui_url, scale) as rec:
+            demo_segments.approve(rec, admin, project_id, has_imaging)
 
     # ── Off-camera: the imaging import (the ~6 min wait) ──────────────────
     # A non-imaging study dispatches no CREATE_IMAGING, so no import tasks are ever created and the
-    # wait has nothing to converge on: it sees total == 0 and loops to its timeout rather than
-    # returning. Skip it outright rather than leaning on --image-pull-threshold 0, which only masks
-    # the same absence.
-    if profile.get("has_imaging", True):
+    # wait would loop to its timeout rather than return.
+    if has_imaging:
         e2e_smoke.wait_for_image_pull(
             client,
             headers,
@@ -681,46 +836,30 @@ def main(argv: list[str] | None = None) -> int:
             raise SmokeFailure("publishing DICOM-SEG collections failed — see the log above")
 
     # ── Segment 3: XNAT + OHIF at one trust ───────────────────────────────
-    # A non-imaging study has no XNAT project and never will, so the segment cannot pass:
-    # derive the skip from the app rather than making the operator remember --skip-xnat.
-    records_xnat = not args.skip_xnat and profile.get("has_imaging", True)
-    if records_xnat and args.from_segment <= 3:
+    # A non-imaging study has no XNAT project and never will, so the skip follows the app.
+    if not args.skip_xnat and has_imaging and args.from_segment <= 3:
         xnat_ids = resolve_xnat_ids(args.xnat_url, args.xnat_username, args.xnat_password, project_id)
-        run_segment(
-            "03-xnat-ohif",
-            {
-                "CYPRESS_BASE_URL": args.xnat_url,
-                "DEMO_XNAT_USERNAME": args.xnat_username,
-                "DEMO_XNAT_PASSWORD": args.xnat_password,
-                "DEMO_XNAT_PROJECT_ID": xnat_ids["project"],
-                "DEMO_XNAT_SUBJECT_ID": xnat_ids["subject"],
-                "DEMO_XNAT_EXPERIMENT_ID": xnat_ids["experiment"],
-                "DEMO_XNAT_EXPERIMENT_LABEL": xnat_ids["label"],
-                # Only set when the session really has a collection to import, so the
-                # segment skips the mask beat entirely for classification apps.
-                **({"DEMO_XNAT_SEG_NAME": args.seg_collection_name} if xnat_ids["has_segmentation"] else {}),
-            },
-            video_scale=args.video_scale,
-        )
+        with take(browser, segment_video(3, "xnat-ohif"), args.xnat_url, scale) as rec:
+            demo_segments.xnat_ohif(
+                rec,
+                args.xnat_username,
+                args.xnat_password,
+                xnat_ids["project"],
+                xnat_ids["experiment"],
+                # Only when the session really has a collection, so classification apps skip the mask beat.
+                args.seg_collection_name if xnat_ids["has_segmentation"] else None,
+            )
 
     # ── Segment 4: model + app upload + initiate training ────────────────
     if args.from_segment <= 4:
-        run_segment(
-            "04-create-model-train",
-            {
-                **researcher_env,
-                "DEMO_PROJECT_ID": project_id,
-                "DEMO_MODEL_NAME": model_name,
-                "DEMO_MODEL_DESCRIPTION": model_description,
-                "DEMO_APP_DIR": app_dir_rel,
-                "DEMO_APP_FILES": ",".join(app_files_for(app_dir)),
-                "DEMO_BACKEND_LABEL": tutorial["label"],
-            },
-            video_scale=args.video_scale,
-        )
-    model_id = read_state().get("modelId", "")
+        with take(browser, segment_video(4, "create-model-train"), args.ui_url, scale) as rec:
+            state["modelId"] = demo_segments.create_model_and_train(
+                rec, researcher, project_id, has_imaging, model_name, model_description, app_files, backend_label
+            )
+        write_state(state)
+    model_id = state.get("modelId", "")
     if not model_id:
-        raise SmokeFailure("Segment 4 did not record a modelId in state.json")
+        raise SmokeFailure("--from-segment > 4 needs --model-id (or a state.json from segment 4)")
     _log(f"🆔 model_id={model_id}")
 
     # ── Off-camera: training spins up and produces its first metrics ─────
@@ -728,30 +867,16 @@ def main(argv: list[str] | None = None) -> int:
     wait_for_first_metrics(client, headers, model_id, timeout_s=args.metrics_timeout)
 
     # ── Segment 5: live progress ──────────────────────────────────────────
-    ids_env = {**researcher_env, "DEMO_PROJECT_ID": project_id, "DEMO_MODEL_ID": model_id}
     if args.from_segment <= 5:
-        run_segment("05-follow-progress", ids_env, video_scale=args.video_scale)
+        with take(browser, segment_video(5, "follow-progress"), args.ui_url, scale) as rec:
+            demo_segments.follow_progress(rec, researcher, project_id, model_id)
 
     # ── Off-camera: training runs to completion + results upload ─────────
     e2e_smoke.wait_for_training_finished(client, headers, model_id, timeout_s=args.training_finish_timeout)
 
     # ── Segment 6: download the results ──────────────────────────────────
-    run_segment("06-download-results", ids_env, video_scale=args.video_scale)
-
-    if args.no_assemble:
-        _log("⏭️  --no-assemble: segment mp4s left in " + str(VIDEOS_DIR))
-        return 0
-
-    out_path = Path(args.out).resolve() if args.out else (OUT_DIR / f"flip-demo-{args.app}.mp4").resolve()
-    _log("🎞️  Assembling final video …")
-    result = subprocess.run(
-        ["bash", "scripts/assemble-demo-video.sh", str(VIDEOS_DIR), str(out_path), str(args.video_scale)],
-        cwd=FLIP_UI_DIR,
-    )
-    if result.returncode != 0:
-        raise SmokeFailure("Video assembly failed — segment mp4s are intact in " + str(VIDEOS_DIR))
-    _log(f"🎉 Demo video ready: {out_path}")
-    return 0
+    with take(browser, segment_video(6, "download-results"), args.ui_url, scale) as rec:
+        demo_segments.download_results(rec, researcher, project_id, model_id)
 
 
 if __name__ == "__main__":
