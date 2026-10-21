@@ -232,20 +232,20 @@ run_join() {
     local name="$1" kit="$2" hub="$3" src backend kit_file
     fetch_kit "${name}"
     src="${FLIP_DIR}/kits/${name%.tar.gz}"
-    if [ ! -f "${src}/.env.${kit}" ] || [ ! -d "${src}/fl-kit/net-1" ]; then
-        echo "ERROR: ${name} has no .env.${kit} and fl-kit/; is KIT the code it was packaged for?" >&2
+    if [ ! -f "${src}/.env.${kit}.${hub}" ] || [ ! -d "${src}/fl-kit/net-1" ]; then
+        echo "ERROR: ${name} has no .env.${kit}.${hub} and fl-kit/; is KIT the code it was packaged for?" >&2
         exit 1
     fi
-    backend="$(sed -n 's/^FL_BACKEND=//p' "${src}/.env.${kit}" | tail -1)"
+    backend="$(sed -n 's/^FL_BACKEND=//p' "${src}/.env.${kit}.${hub}" | tail -1)"
     case "${backend}" in
         nvflare | flower) ;;
         *)
-            echo "ERROR: .env.${kit} names no FL_BACKEND (nvflare or flower)." >&2
+            echo "ERROR: .env.${kit}.${hub} names no FL_BACKEND (nvflare or flower)." >&2
             exit 1
             ;;
     esac
     kit_file="${REPO_DIR}/trust/.env.${kit}.${hub}"
-    install -m 0600 "${src}/.env.${kit}" "${kit_file}"
+    install -m 0600 "${src}/.env.${kit}.${hub}" "${kit_file}"
     echo "${kit}" > "${JOINED_MARKER}"
     # The node's own settings go last so they win over the template's (the kit file is make syntax).
     cat >> "${kit_file}" <<NODE

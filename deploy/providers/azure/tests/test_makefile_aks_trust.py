@@ -68,7 +68,7 @@ def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
     assert result.returncode == 0, out + result.stderr
     kit_dir = "build/kits/flip-trust-kit-Trust_3-20261009"
     steps = [
-        f'install -m 0600 "{kit_dir}/.env.Trust_3" "{REPO_ROOT}/trust/.env.Trust_3.stag"',
+        f'install -m 0600 "{kit_dir}/.env.Trust_3.stag" "{REPO_ROOT}/trust/.env.Trust_3.stag"',
         "K8S_PLATFORM_VALUES=%s",
         f"--secrets-file {REPO_ROOT}/trust/deploy/helm/values-secrets.yaml",
         "kubectl --context flipaz-aks create namespace flip-trust",

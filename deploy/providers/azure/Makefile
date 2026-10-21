@@ -312,8 +312,8 @@ aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (T
 	@[ -f "$(TARBALL)" ] && [ -n "$(KIT)" ] && [ -n "$(HUB)" ] || { echo "❌ TARBALL=<kit tarball from the hub admin> KIT=<slot> HUB=<env> are required."; exit 1; }
 	@$(call check_arg,KIT,$(KIT),$(KIT_PATTERN))
 	@rm -rf "$(AKS_KIT_DIR)" && mkdir -p -m 700 "$(AKS_KIT_DIR)" && tar -xzf "$(TARBALL)" -C "$(AKS_KIT_DIR)" --no-same-owner
-	@[ -f "$(AKS_KIT_DIR)/.env.$(KIT)" ] || { echo "❌ $(notdir $(TARBALL)) has no .env.$(KIT); is KIT the slot it was packaged for?"; exit 1; }
-	install -m 0600 "$(AKS_KIT_DIR)/.env.$(KIT)" "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)"
+	@[ -f "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" ] || { echo "❌ $(notdir $(TARBALL)) has no .env.$(KIT).$(ENV); is KIT the slot it was packaged for?"; exit 1; }
+	install -m 0600 "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)"
 	@# The chart's own deploy and upgrade targets read the overlays from the kit file, so a plain
 	@# upgrade-trust-k8s keeps them too (without values-aks.yaml PGDATA and the kit would move).
 	printf 'K8S_PLATFORM_VALUES=%s\n' "$(AKS_VALUES)" >> "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)"

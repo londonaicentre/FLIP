@@ -335,7 +335,7 @@ def test_run_selftest_stops_when_no_kit_was_delivered(tmp_path):
 
 
 def _join_kit(tmp_path: Path, backend: str) -> Path:
-    members = {".env.AZ1": f"TRUST_CODE=AZ1\nFL_BACKEND={backend}\nFL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n"}
+    members = {".env.AZ1.stag": f"TRUST_CODE=AZ1\nFL_BACKEND={backend}\nFL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n"}
     if backend == "nvflare":
         members["fl-kit/net-1/services/Trust_3/startup/fed_client.json"] = "{}"
     else:
