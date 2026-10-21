@@ -16,7 +16,7 @@
 > **Deploys: trust only.** The trust-side container stack as Docker Compose, in [`compose/`](compose/), with
 > its siblings [`helm/`](helm/README.md) (the same stack for Kubernetes), [`ansible/`](ansible/README.md)
 > (prepares a site-owned host for these files), [`terraform/`](terraform/) (trust infrastructure, one root
-> per target: [`azure/`](terraform/azure/README.md)) and [`scripts/`](scripts/) (the trust lifecycle and node
+> per target: [`azure/`](terraform/azure/README.md), [`aws-ec2/`](terraform/aws-ec2/README.md)) and [`scripts/`](scripts/) (the trust lifecycle and node
 > self-test scripts). The Central Hub stack lives in [`deploy/`](../../deploy/README.md); see
 > [where things live](../../deploy/README.md#where-things-live) for the rule behind the layout.
 

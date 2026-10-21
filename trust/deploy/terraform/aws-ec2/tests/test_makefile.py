@@ -23,12 +23,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 KIT = (
-    "FL_BACKEND=nvflare\nFL_KIT_SLOT_NUMBER=3\nFL_EDGE_PORT=8003\nDOCKER_TAG=sha-abc1234\n"
+    "FL_BACKEND=nvflare\nFL_KIT_SLOT_NUMBER=3\nFL_EDGE_PORT=8003\nDOCKER_TAG=sha-abc1234\n"  # pragma: allowlist secret
     "OMOP_POSTGRES_PASSWORD=kit-pw\n"  # pragma: allowlist secret
 )
 HUB_ENV = (
-    "AWS_PROFILE=lza-stag\nAWS_REGION=eu-west-2\nFLIP_TFSTATE_BUCKET_NAME=hub-state\n"
-    "AICENTRE_BUCKET_NAME=hub-kits\nFLARE_KIT_DATE=20260318\nFLOWER_KIT_DATE=20260401\nLZA_VPC_NAME=stag-vpc\n"
+    "AWS_PROFILE=lza-stag\nAWS_REGION=eu-west-2\nFLIP_TFSTATE_BUCKET_NAME=hub-state\n"  # pragma: allowlist secret
+    "AICENTRE_BUCKET_NAME=hub-kits\nFLARE_KIT_DATE=20260318\n"  # pragma: allowlist secret
+    "FLOWER_KIT_DATE=20260401\nLZA_VPC_NAME=stag-vpc\n"  # pragma: allowlist secret
 )
 
 
