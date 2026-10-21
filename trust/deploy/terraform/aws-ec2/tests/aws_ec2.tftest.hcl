@@ -87,6 +87,10 @@ run "host_has_no_public_ip_no_inbound_rule_and_imdsv2_only" {
     error_message = "IMDSv2 only."
   }
   assert {
+    condition     = aws_instance.node.metadata_options[0].http_put_response_hop_limit == 1
+    error_message = "Hop limit 1: containers, the FL client among them, must not reach the instance role's credentials."
+  }
+  assert {
     condition     = aws_instance.node.root_block_device[0].encrypted && aws_instance.node.root_block_device[0].volume_size == 100
     error_message = "The root volume is encrypted and 100 GiB by default."
   }
@@ -122,11 +126,12 @@ run "no_kit_bucket_grants_no_s3_or_kms" {
   }
 }
 
-run "kit_bucket_grants_read_on_the_kit_prefixes" {
+run "kit_bucket_grants_read_on_this_slots_kit_only" {
   command = plan
 
   variables {
     kit_bucket_name = "hub-kits"
+    kit_slot        = 2
     kit_kms_key_arn = "arn:aws:kms:eu-west-2:000000000000:key/mock"
   }
 
@@ -134,6 +139,25 @@ run "kit_bucket_grants_read_on_the_kit_prefixes" {
     condition     = length(aws_iam_role_policy.kit_read) == 1
     error_message = "kit_bucket_name grants the node a read policy."
   }
+  assert {
+    condition = toset(data.aws_iam_policy_document.kit_read[0].statement[1].resources) == toset([
+      "arn:aws:s3:::hub-kits/fl-flare-participant-kits/*/net-*/services/Trust_2/*",
+      "arn:aws:s3:::hub-kits/fl-flower-participant-kits/*/net-*/certificates/ca.crt",
+      "arn:aws:s3:::hub-kits/fl-flower-participant-kits/*/net-*/keys/supernode_credentials_2",
+      "arn:aws:s3:::hub-kits/vocab/*",
+    ])
+    error_message = "GetObject covers this slot's kit and the vocabulary, never another trust's kit or the server's."
+  }
+}
+
+run "kit_bucket_without_a_slot_is_refused" {
+  command = plan
+
+  variables {
+    kit_bucket_name = "hub-kits"
+  }
+
+  expect_failures = [var.kit_slot]
 }
 
 run "permissions_boundary_applies_to_every_role" {

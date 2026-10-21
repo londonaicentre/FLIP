@@ -84,8 +84,10 @@ resource "aws_iam_role_policy_attachment" "node" {
   policy_arn = each.value
 }
 
-# The kit and vocabulary prefixes only, read-only. This host runs researcher-submitted FL code, so
-# it gets the least of any role that touches the bucket.
+# Read-only, and only this node's own kit: its FLARE slot directory, or Flower's CA certificate and
+# its own SuperNode credential, at any kit date and net, plus the vocabulary. This host runs
+# researcher-submitted FL code, and one role per node is what makes slot scoping expressible
+# (FLIP#1164). Listing stays prefix-wide: it reveals object names only.
 data "aws_iam_policy_document" "kit_read" {
   count = var.kit_bucket_name == "" ? 0 : 1
 
@@ -106,8 +108,9 @@ data "aws_iam_policy_document" "kit_read" {
   statement {
     actions = ["s3:GetObject"]
     resources = [
-      "arn:aws:s3:::${var.kit_bucket_name}/fl-flare-participant-kits/*",
-      "arn:aws:s3:::${var.kit_bucket_name}/fl-flower-participant-kits/*",
+      "arn:aws:s3:::${var.kit_bucket_name}/fl-flare-participant-kits/*/net-*/services/Trust_${var.kit_slot}/*",
+      "arn:aws:s3:::${var.kit_bucket_name}/fl-flower-participant-kits/*/net-*/certificates/ca.crt",
+      "arn:aws:s3:::${var.kit_bucket_name}/fl-flower-participant-kits/*/net-*/keys/supernode_credentials_${var.kit_slot}",
       "arn:aws:s3:::${var.kit_bucket_name}/vocab/*",
     ]
   }
@@ -165,12 +168,14 @@ resource "aws_instance" "node" {
     encrypted             = true
   }
 
-  # IMDSv2 only. Hop limit 2, not 1, because the trust stack runs in Docker: a containerised AWS SDK
-  # call reaches IMDS through one extra network hop.
+  # IMDSv2 only, hop limit 1: a container on a bridge network is one hop further and cannot reach
+  # the role's credentials. The FL client runs researcher code, and nothing in a container needs
+  # them: the kit and vocabulary are fetched by the host's AWS CLI, and the CloudWatch and SSM
+  # agents run on the host.
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
-    http_put_response_hop_limit = 2
+    http_put_response_hop_limit = 1
   }
 
   # The SSM parameter moves with every Canonical release, and a new AMI forces replacement, which

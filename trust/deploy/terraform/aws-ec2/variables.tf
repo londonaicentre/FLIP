@@ -74,6 +74,17 @@ variable "kit_bucket_name" {
   default     = ""
 }
 
+variable "kit_slot" {
+  description = "FL kit slot number the hub assigned this trust (FL_KIT_SLOT_NUMBER in its kit file). The S3 read is scoped to this slot's kit; required with kit_bucket_name."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.kit_bucket_name == "" || (var.kit_slot != null && try(var.kit_slot >= 1, false))
+    error_message = "kit_slot (the trust's FL_KIT_SLOT_NUMBER, 1 or more) is required with kit_bucket_name."
+  }
+}
+
 variable "kit_kms_key_arn" {
   description = "KMS key the kit bucket's objects are encrypted with; the node may decrypt through S3 only. Empty grants no KMS access."
   type        = string
