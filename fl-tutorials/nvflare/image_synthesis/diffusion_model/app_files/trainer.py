@@ -54,10 +54,24 @@ from monai.data import DataLoader, Dataset
 from monai.inferers import DiffusionInferer
 from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
-from plot_utils import samples_enabled, save_grid
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import LambdaLR
 from transforms import get_xray_transforms
+
+# plot_utils.py is a local-development helper (dev/): job.py stages it into simulator runs, and it is
+# never uploaded, so on a trust this import fails and debug output is simply off.
+try:
+    from plot_utils import samples_enabled, save_grid
+except ModuleNotFoundError as err:
+    if err.name != "plot_utils":
+        raise
+
+    def samples_enabled(config: dict) -> bool:
+        return False
+
+    def save_grid(*args: object, **kwargs: object) -> None:
+        return None
+
 
 logger = logging.getLogger(__name__)
 

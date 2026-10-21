@@ -91,8 +91,9 @@ that works on both the simulator and the platform.
 
 These files are compatible with `JOB_TYPE=standard` in the base application
 ([`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/)). The required upload set is
-`trainer.py`, `config.json`, `models.py`; `transforms.py`, `latent_utils.py` **and the autoencoder
-checkpoint** are uploaded alongside them.
+`trainer.py`, `config.json`, `models.py`; `transforms.py`, `latent_utils.py`, `modality.py` **and the
+autoencoder pair, `pretrained_autoencoder.pt` and `autoencoder_config.yaml`**, are uploaded alongside
+them.
 
 ## Getting the autoencoder (do this first)
 
@@ -234,7 +235,8 @@ Written only when **all three** hold:
 | `DEBUG_SAMPLES_DIR` set | `make run` / `make sim` only |
 
 At a trust the last two never hold, so **production never writes images, whatever `config.json`
-says**. The check is `samples_enabled()` in `app_files/plot_utils.py`.
+says**. The check is `samples_enabled()` in `dev/plot_utils.py`, and `dev/` is never uploaded: at a
+trust the trainer has no plotting code at all.
 
 - **Where:** `fl-tutorials/data/debug_samples/latent_diffusion_model/` (gitignored). Nothing sends them to the server.
 - **When:** every `VALIDATE_EVERY` epochs, on each round's last epoch, and in the round-end `validate` task. Sampling is a full reverse diffusion (minutes), so keep `VALIDATE_EVERY` well above 1; `0` leaves only the round-end pass.
@@ -251,7 +253,7 @@ InitialCheckpointPTModelPersistor - Loaded backbone ... (missing=494, unexpected
 ### Loss curves
 
 ```bash
-DEBUG_SAMPLES_DIR=../../../data/debug_samples/latent_diffusion_model python app_files/plot_utils.py
+DEBUG_SAMPLES_DIR=../../../data/debug_samples/latent_diffusion_model python dev/plot_utils.py
 ```
 
 Reads the simulator logs and writes `losses_<site>.png` next to the samples. Runs on your machine

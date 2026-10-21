@@ -51,9 +51,23 @@ from monai.data import DataLoader, Dataset
 from monai.losses import PatchAdversarialLoss
 from monai.metrics import compute_ssim_and_cs
 from nvflare.client.tracking import SummaryWriter
-from plot_utils import due_for_plot, save_triplanar
 from torch.amp import GradScaler, autocast
 from transforms import get_brain_mri_transforms
+
+# plot_utils.py is a local-development helper (dev/): job.py stages it into simulator runs, and it is
+# never uploaded, so on a trust this import fails and debug output is simply off.
+try:
+    from plot_utils import due_for_plot, save_triplanar
+except ModuleNotFoundError as err:
+    if err.name != "plot_utils":
+        raise
+
+    def due_for_plot(iteration: int, config: dict) -> bool:
+        return False
+
+    def save_triplanar(*args: object, **kwargs: object) -> None:
+        return None
+
 
 logger = logging.getLogger(__name__)
 

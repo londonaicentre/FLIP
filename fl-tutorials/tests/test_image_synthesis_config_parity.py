@@ -111,8 +111,11 @@ def _load_process_tool(tutorial: Path, module: str) -> ModuleType:
     return loaded
 
 
-def _load_app_module(tutorial: Path, module: str) -> ModuleType:
-    """Import one of a tutorial's ``app_files/*.py`` modules under a unique name.
+def _load_app_module(tutorial: Path, module: str, *, with_dev: bool = True) -> ModuleType:
+    """Import one of a tutorial's ``app_files/*.py`` (or ``dev/*.py``) modules under a unique name.
+
+    ``with_dev`` puts the local-development helpers in ``dev/`` beside the app files, as a simulator
+    run does; without it the import sees only what a trust receives.
 
     Every tutorial ships modules with identical names (``models``, ``transforms``), so they would
     collide in ``sys.modules``; the name is namespaced by tutorial directory, as
@@ -120,8 +123,9 @@ def _load_app_module(tutorial: Path, module: str) -> ModuleType:
     its module-level ``_net = ...`` singleton, which is the point — it builds the real network from
     the real config.
     """
-    path = tutorial / "app_files" / f"{module}.py"
-    module_name = f"fl_tutorials_under_test.image_synthesis.{tutorial.name}.{module}"
+    dirs = [tutorial / "app_files"] + ([tutorial / "dev"] if with_dev else [])
+    path = next((d / f"{module}.py" for d in dirs if (d / f"{module}.py").is_file()), dirs[0] / f"{module}.py")
+    module_name = f"fl_tutorials_under_test.image_synthesis.{tutorial.name}.{module}{'' if with_dev else '_trust'}"
     if module_name in sys.modules:
         return sys.modules[module_name]
 
@@ -141,14 +145,15 @@ def _load_app_module(tutorial: Path, module: str) -> ModuleType:
     # The reverse matters too: a bare sibling name some other test already cached (another tutorial's
     # `transforms`, say) would win over this app dir's file, so any such entry is set aside for the
     # import and put back afterwards.
-    app_dir = str(tutorial / "app_files")
+    search = [str(d) for d in dirs]
     shadowed = {
         sibling.stem: sys.modules.pop(sibling.stem)
-        for sibling in (tutorial / "app_files").glob("*.py")
+        for d in dirs
+        for sibling in d.glob("*.py")
         if sibling.stem in sys.modules
     }
     before = set(sys.modules)
-    sys.path.insert(0, app_dir)
+    sys.path[:0] = search
     try:
         spec.loader.exec_module(loaded)
     except BaseException:
@@ -156,7 +161,8 @@ def _load_app_module(tutorial: Path, module: str) -> ModuleType:
         del sys.modules[module_name]
         raise
     finally:
-        sys.path.remove(app_dir)
+        for entry in search:
+            sys.path.remove(entry)
         for name in set(sys.modules) - before - {module_name}:
             if "." not in name:
                 sys.modules.pop(name, None)
@@ -596,18 +602,43 @@ def test_debug_sample_output_is_gitignored(tutorial: Path) -> None:
     """The debug output directory is gitignored, so a local run cannot stage clinical images."""
     ignored = (tutorial / ".gitignore").read_text().split()
     plot_utils = _load_app_module(tutorial, "plot_utils")
-    assert f"app_files/{plot_utils.DEBUG_DIR_NAME}/" in ignored
+    assert f"dev/{plot_utils.DEBUG_DIR_NAME}/" in ignored
 
 
 def test_plot_utils_helper_is_identical_across_tutorials() -> None:
     """All three copies of ``plot_utils.py`` are byte-identical.
 
-    Duplicated for the same reason ``transforms.py`` is: ``app_files/`` is the per-model upload unit,
-    so a shared module would not survive the bundle. Pin them to each other so a fix to one (or a
-    change to what the images are normalised against) cannot silently apply to only one tutorial.
+    Each tutorial's simulator run stages its own ``dev/`` copy. Pin them to each other so a fix to one
+    (or a change to what the images are normalised against) cannot silently apply to only one tutorial.
     """
-    contents = {t.name: (t / "app_files" / "plot_utils.py").read_bytes() for t in _ALL_TUTORIALS}
+    contents = {t.name: (t / "dev" / "plot_utils.py").read_bytes() for t in _ALL_TUTORIALS}
     assert len(set(contents.values())) == 1, f"plot_utils.py differs between {sorted(contents)}"
+
+
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
+def test_plotting_is_not_an_app_file(tutorial: Path) -> None:
+    """``app_files/`` is what gets uploaded, so plotting code stays out of it, in ``dev/``.
+
+    A trust receives exactly the upload; keeping ``plot_utils.py`` out of ``app_files/`` is what keeps
+    plotting out of production.
+    """
+    assert not (tutorial / "app_files" / "plot_utils.py").exists()
+    assert (tutorial / "dev" / "plot_utils.py").is_file()
+
+
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
+def test_the_trainer_runs_at_a_trust_without_the_plotting_helper(
+    tutorial: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Loaded as a trust loads it, with no ``dev/``, the trainer imports and its debug output is off."""
+    monkeypatch.delitem(sys.modules, "plot_utils", raising=False)
+    trainer = _load_app_module(tutorial, "trainer", with_dev=False)
+    config = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 1}
+    if hasattr(trainer, "samples_enabled"):
+        assert trainer.samples_enabled(config) is False
+    else:
+        assert trainer.due_for_plot(0, config) is False
+    assert "plot_utils" not in sys.modules
 
 
 def test_debug_samples_writes_nothing_when_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -907,7 +938,7 @@ def test_debug_dir_defaults_inside_the_job_and_is_relocatable_by_env(
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
 
     monkeypatch.delenv(plot_utils.DEBUG_DIR_ENV, raising=False)
-    assert plot_utils.debug_dir() == _AUTOENCODER / "app_files" / plot_utils.DEBUG_DIR_NAME
+    assert plot_utils.debug_dir() == _AUTOENCODER / "dev" / plot_utils.DEBUG_DIR_NAME
 
     monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, str(tmp_path / "elsewhere"))
     assert plot_utils.debug_dir() == tmp_path / "elsewhere"
@@ -915,7 +946,7 @@ def test_debug_dir_defaults_inside_the_job_and_is_relocatable_by_env(
 
     # An empty or whitespace-only value is not a path — fall back rather than writing to the cwd.
     monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, "   ")
-    assert plot_utils.debug_dir() == _AUTOENCODER / "app_files" / plot_utils.DEBUG_DIR_NAME
+    assert plot_utils.debug_dir() == _AUTOENCODER / "dev" / plot_utils.DEBUG_DIR_NAME
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)

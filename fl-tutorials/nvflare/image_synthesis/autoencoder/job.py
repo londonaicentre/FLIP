@@ -48,6 +48,8 @@ from pathlib import Path
 # app_files/ must be importable at recipe-construction time so PTFileModelPersistor / PTModelLocator
 # can reference 'models.get_model' correctly.
 _APP_FILES_DIR = Path(__file__).parent / "app_files"
+# Local-development helpers (plot_utils.py): staged into simulator runs, never part of an upload.
+_DEV_FILES_DIR = Path(__file__).parent / "dev"
 if str(_APP_FILES_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_FILES_DIR))
 
@@ -66,6 +68,9 @@ def stage_app_files(job: FedJob) -> None:
     (``recipe.execute``) and ``--export`` — unlike a post-export filesystem copy, which the SimEnv
     path never triggered.
 
+    The ``dev/`` helpers go to the clients as well, so a simulator run can write debug images; they
+    are not app files, and an upload to the platform never includes them.
+
     Args:
         job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).
     """
@@ -73,6 +78,8 @@ def stage_app_files(job: FedJob) -> None:
         if src.is_file():
             job.add_file_to_server(str(src))
             job.add_file_to_clients(str(src))
+    for src in sorted(_DEV_FILES_DIR.glob("*.py")):
+        job.add_file_to_clients(str(src))
 
 
 def main() -> None:

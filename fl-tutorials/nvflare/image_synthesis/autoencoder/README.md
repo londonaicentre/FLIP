@@ -67,7 +67,7 @@ tutorial's benefit. The tumour labels in the cohort are ignored entirely — thi
 These files are compatible with `JOB_TYPE=standard` in the base application
 ([`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/)) — an ordinary single-stage
 FedAvg job with cross-site validation. The required upload set is `trainer.py`, `config.json`,
-`models.py`; `transforms.py`, `modality.py`, `plot_utils.py`, `medicalnet_perceptual.py` and the
+`models.py`; `transforms.py`, `modality.py`, `medicalnet_perceptual.py` and the
 shipped perceptual backbone (`medicalnet_resnet50_23datasets-ff48a622.pth`, produced by
 `make weights`) are uploaded alongside them as extra app
 files.
@@ -178,7 +178,8 @@ Written only when **all three** hold:
 | `DEBUG_SAMPLES_DIR` set | `make run` / `make sim` only |
 
 At a trust the last two never hold, so **production never writes images, whatever `config.json`
-says**. The check is `samples_enabled()` in `app_files/plot_utils.py`.
+says**. The check is `samples_enabled()` in `dev/plot_utils.py`, and `dev/` is never uploaded: at a
+trust the trainer has no plotting code at all.
 
 - **Where:** `fl-tutorials/data/debug_samples/autoencoder/` (gitignored). Nothing sends them to the server.
 - **When:** at iteration 0 and every `DEBUG_PLOT_EVERY` training iterations, after each epoch's validation, and in the round-end `validate` task.
@@ -187,7 +188,7 @@ says**. The check is `samples_enabled()` in `app_files/plot_utils.py`.
 ### Loss curves
 
 ```bash
-DEBUG_SAMPLES_DIR=../../../data/debug_samples/autoencoder python app_files/plot_utils.py
+DEBUG_SAMPLES_DIR=../../../data/debug_samples/autoencoder python dev/plot_utils.py
 ```
 
 Reads the simulator logs and writes `losses_<site>.png` next to the samples. Runs on your machine

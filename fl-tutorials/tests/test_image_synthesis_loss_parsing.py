@@ -69,11 +69,11 @@ NOISE_LINES = (
 
 @pytest.fixture(scope="module")
 def plot_utils():  # noqa: ANN201 - imported from the app dir, so it has no import-time type
-    sys.path.insert(0, str(_AUTOENCODER / "app_files"))
+    sys.path.insert(0, str(_AUTOENCODER / "dev"))
     try:
         import plot_utils as module
     finally:
-        sys.path.remove(str(_AUTOENCODER / "app_files"))
+        sys.path.remove(str(_AUTOENCODER / "dev"))
     return module
 
 
@@ -160,7 +160,7 @@ def test_the_default_workspace_follows_the_tutorial_the_copy_sits_in(tutorial: s
     from the directory the copy sits in. Hard-coding it still looks right from the autoencoder,
     which is why every copy is loaded here and checked against its own tutorial.
     """
-    path = _SYNTHESIS / tutorial / "app_files" / "plot_utils.py"
+    path = _SYNTHESIS / tutorial / "dev" / "plot_utils.py"
     spec = importlib.util.spec_from_file_location(f"_plot_utils_{tutorial}", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
