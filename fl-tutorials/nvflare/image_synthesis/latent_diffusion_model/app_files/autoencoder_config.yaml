@@ -41,5 +41,5 @@ training:
   - T2w
 source:
   checkpoint: FL_global_model_2026-09-25_round0.pt
-  sha256: eb178d6209d55c90a13fa8b3764134e813960104443e65ab0a658024aaff34fa
+  sha256: eb178d6209d55c90a13fa8b3764134e813960104443e65ab0a658024aaff34fa  # pragma: allowlist secret
   autoencoder_tensors: 130

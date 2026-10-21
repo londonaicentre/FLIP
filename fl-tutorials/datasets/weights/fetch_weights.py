@@ -74,12 +74,12 @@ CHECKPOINTS: dict[str, Checkpoint] = {
     # rather than `hf_hub_download` to keep this tool's one download path (and its hash check).
     "medicalnet_resnet10": Checkpoint(
         "https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet10/resolve/main/resnet_10_23dataset.pth",
-        sha256="afa8055f3e47f4a18239495d92a7abc587902c69c31c743de2b2784653b72605",
+        sha256="afa8055f3e47f4a18239495d92a7abc587902c69c31c743de2b2784653b72605",  # pragma: allowlist secret
         stage_as="medicalnet_resnet10_23datasets-afa8055f.pth",
     ),
     "medicalnet_resnet50": Checkpoint(
         "https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50/resolve/main/resnet_50_23dataset.pth",
-        sha256="ff48a62219073fb977fd3f4ddfb8dc1367f0ec156c8d6f6c37e205bd683a246e",
+        sha256="ff48a62219073fb977fd3f4ddfb8dc1367f0ec156c8d6f6c37e205bd683a246e",  # pragma: allowlist secret
         stage_as="medicalnet_resnet50_23datasets-ff48a622.pth",
     ),
 }
