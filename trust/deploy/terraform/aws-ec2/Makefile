@@ -71,7 +71,11 @@ FL_KIT_DATE ?=
 SSM_ENDPOINTS ?= false
 SCHEDULE ?= false
 TRUST_DATA_VERSION := $(shell cat $(REPO_ROOT)/trust/.data_version 2>/dev/null)
+# Exported only when set: an empty one makes the AWS CLI fail with "config profile () could not be
+# found" for credentials exported as AWS_ACCESS_KEY_ID & co.
+ifneq ($(AWS_PROFILE),)
 export AWS_PROFILE
+endif
 
 # The plan's inputs. Destroy needs no real key: the provider parses one, so a discarded public key.
 TF_VARS = -var 'name=$(NAME)' -var 'region=$(REGION)' -var 'subnet_id=$(SUBNET_ID)' \
@@ -86,6 +90,17 @@ define require_kit
 	@[ -f "$(KIT_FILE)" ] || { echo "❌ $(KIT_FILE) not found."; exit 1; }
 	@[[ "$(KIT_SLOT)" =~ ^[0-9]+$$ && "$(FL_PORT)" =~ ^[0-9]+$$ ]] || { \
 		echo "❌ $(notdir $(KIT_FILE)) has no FL_KIT_SLOT_NUMBER / FL_EDGE_PORT yet: register the trust first (make register-trusts KIT=$(KIT) HUB=<env>)."; exit 1; }
+endef
+
+# deploy and upgrade evaluate compose here and drive the node over the ssh docker context, so a
+# relative host path in the kit resolves to this checkout and the node's daemon creates it
+# root-owned: Orthanc then cannot open its database, and XNAT and the image dirs land in /Users/….
+# Unset, each takes its /opt/flip default.
+NODE_DIR_KEYS := ORTHANC_STORAGE_DIR BASE_IMAGES_DOWNLOAD_DIR XNAT_DATA_DIR OMOP_DATA_DIR COHORT_SNAPSHOT_STORAGE_DIR FL_KIT_DIR
+define require_node_dirs
+	@bad="$(strip $(foreach k,$(NODE_DIR_KEYS),$(if $(filter-out /%,$(call kit_get,$(k))),$(k))))"; [ -z "$$bad" ] || { \
+		echo "❌ $(notdir $(KIT_FILE)) sets relative host paths for a remote node: $$bad."; \
+		echo "   Comment them out (each defaults under /opt/flip) or make them absolute."; exit 1; }
 endef
 
 # $(call play,<extra ansible-playbook args>): aws-ec2.yml against this node.
@@ -145,6 +160,9 @@ provision: ## Configure the host (aws-ec2.yml), all but the data plays
 	$(require_kit)
 	@[ -n "$(TRUST_DATA_VERSION)" ] || { echo "❌ trust/.data_version not found."; exit 1; }
 	$(call play,--skip-tags omop-vocab$(,)seed)
+	@# The play puts ubuntu in the docker group; a multiplexed ssh connection opened before it keeps
+	@# the old groups, and deploy's docker context would then be refused by the socket.
+	@ssh -O exit $(NAME) 2>/dev/null || true
 
 stage-kit: ## Stage the FL kit for the trust's registered slot (from KIT_BUCKET, or KIT_SRC=<slot kit dir>)
 	$(require_kit)
@@ -169,8 +187,11 @@ seed: ## Seed OMOP + Orthanc from the canonical dataset, then (with KIT_BUCKET) 
 # has to exist on the host.
 deploy: ## First install: networks, seed with the stack down, then start the trust stack and XNAT
 	$(require_kit)
+	$(require_node_dirs)
 	@docker context inspect $(NAME) >/dev/null 2>&1 || docker context create $(NAME) --docker "host=ssh://$(NAME)"
-	docker --context $(NAME) swarm init 2>/dev/null || echo "   Swarm already initialised"
+	@out=$$(docker --context $(NAME) swarm init 2>&1) || case "$$out" in \
+		*"already part of a swarm"*) echo "   Swarm already initialised";; \
+		*) echo "$$out" >&2; exit 1;; esac
 	DOCKER_CONTEXT=$(NAME) $(MAKE) -C $(REPO_ROOT)/trust create-networks create-trust-network KIT=$(KIT) HUB=$(HUB)
 	DOCKER_CONTEXT=$(NAME) $(MAKE) -C $(REPO_ROOT)/trust down-trust-ec2 KIT=$(KIT) HUB=$(HUB) 2>/dev/null || true
 	$(MAKE) seed KIT=$(KIT) HUB=$(HUB)
@@ -178,6 +199,7 @@ deploy: ## First install: networks, seed with the stack down, then start the tru
 
 upgrade: ## Move the node to a release tag, data in place (TAG=, FL_TAG=, FORCE=1, YES=1)
 	$(require_kit)
+	$(require_node_dirs)
 	@docker context inspect $(NAME) >/dev/null 2>&1 || docker context create $(NAME) --docker "host=ssh://$(NAME)"
 	DOCKER_CONTEXT=$(NAME) $(MAKE) -C $(REPO_ROOT)/trust upgrade-trust KIT=$(KIT) HUB=$(HUB) TAG=$(TAG) FL_TAG=$(FL_TAG) \
 		FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT) NUM_AVAILABLE_GPUS=0

@@ -15,6 +15,7 @@
 hub-admin preset is the only place the hub's values come in, and the first install seeds with the
 stack stopped. `make -n` against a throwaway kit; no AWS, Terraform or Ansible runs."""
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -109,6 +110,41 @@ def test_seed_without_a_kit_bucket_skips_the_vocabulary(kit, tmp_path):
     with_bucket = make("seed", kit, f"HUB_ENV_FILE={hub_env}").stdout
     assert "--skip-tags omop-vocab" not in with_bucket
     assert "-e vocab_s3_bucket=hub-kits" in with_bucket
+
+
+def test_deploy_refuses_relative_host_paths(tmp_path):
+    """A relative path resolves to the operator's checkout over the ssh docker context (21 Oct live run)."""
+    relative = tmp_path / ".env.TEST.stag"
+    relative.write_text(KIT + "ORTHANC_STORAGE_DIR=./orthanc/orthanc-storage-trust1\nXNAT_DATA_DIR=/opt/flip/x\n")
+    for target in ("deploy", "upgrade"):
+        result = make(target, relative, dry=False)
+        assert result.returncode != 0, target
+        assert "relative host paths for a remote node: ORTHANC_STORAGE_DIR." in result.stdout + result.stderr
+
+
+def test_provision_closes_the_shared_ssh_connection(kit):
+    """The play adds ubuntu to the docker group; a connection opened before keeps the old groups."""
+    assert "ssh -O exit flip-stag-test" in make("provision", kit).stdout
+
+
+def test_deploy_only_tolerates_an_existing_swarm(kit):
+    out = make("deploy", kit).stdout
+    assert "already part of a swarm" in out
+    assert "swarm init 2>/dev/null ||" not in out, "a blanket fallback hides an unreachable daemon"
+
+
+def test_an_unset_aws_profile_is_not_exported(kit):
+    """An empty exported AWS_PROFILE makes the AWS CLI fail with "config profile () could not be found"."""
+    probe = "__probe: ; @env | grep -c '^AWS_PROFILE=' || true\n"
+
+    def exported(*extra: str) -> str:
+        cmd = ["make", "-s", "-C", str(ROOT), "-f", "Makefile", "-f", "-", "__probe", "KIT=TEST", "HUB=stag"]
+        env = {k: v for k, v in os.environ.items() if k != "AWS_PROFILE"}
+        out = subprocess.run([*cmd, f"KIT_FILE={kit}", *extra], input=probe, capture_output=True, text=True, env=env)
+        return out.stdout.strip()
+
+    assert exported() == "0"
+    assert exported("AWS_PROFILE=flip-trial") == "1"
 
 
 def test_deploy_seeds_between_stopping_and_starting_the_stack(kit):

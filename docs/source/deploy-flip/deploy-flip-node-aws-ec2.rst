@@ -200,6 +200,21 @@ loads no OMOP vocabulary, so cohort queries use the vocabulary-free form. Check 
 online) and from the trust: ``make shell`` and ``curl -s localhost:<TRUST_API_PORT>/health`` reports
 ``hub_key_match: true``.
 
+Before ``deploy``:
+
+- **Host paths in the kit must be absolute or unset.** A kit scaffolded by ``make new-trust`` carries
+  relative ones (``ORTHANC_STORAGE_DIR=./orthanc/…``, ``BASE_IMAGES_DOWNLOAD_DIR``, ``XNAT_DATA_DIR``); over
+  the ssh docker context they would resolve to your checkout, so ``deploy`` refuses them. Comment them out:
+  each defaults under ``/opt/flip``.
+- **A trust on slot 3 or above** needs ``SOURCE_TRUST=1`` (or 2): the mock dataset has two partitions,
+  and the seed defaults to the slot number.
+- **Credentials from** ``aws login`` are not read by Terraform. Export them first, and again when they
+  expire (about every 15 minutes):
+  ``eval "$(aws configure export-credentials --profile <profile> --format env)"``.
+- **An AWS Free plan account** launches only Free-Tier-eligible instance types: ``t3.xlarge`` fails at
+  ``apply``, after the network is created. ``INSTANCE_TYPE=m7i-flex.large`` (2 vCPU, 8 GiB) runs the x-ray
+  tutorial end to end (checked on 21 Oct 2026, cohort to results, no memory pressure).
+
 ****************************************************
 The hub-VPC preset (not on an LZA estate)
 ****************************************************
