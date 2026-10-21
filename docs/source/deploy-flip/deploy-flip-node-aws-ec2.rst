@@ -22,17 +22,32 @@ For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`; on Azure,
 Architecture
 ************
 
-.. code-block:: text
+The diagrams are generated when this documentation is built, by a script kept next to the Terraform
+(``trust/deploy/terraform/aws-ec2/architecture/``). A test in that tree pins every drawn node to a resource
+in the ``.tf`` files, and every load-bearing resource to a drawn node. Dashed boxes are optional: the own-VPC
+network mode, the SSM endpoints, the stop/start schedule and the S3 kit read.
 
-        Operator's machine                         The node's AWS account
-   ┌──────────────────────────┐          ┌────────────────────────────────────────┐
-   │ make plan / apply        │──AWS API▶│ subnet (no inbound) ── EC2 ── gp3 root  │
-   │ make provision / deploy  │──SSM────▶│   SSH, Ansible, Docker over SSM only    │
-   │ trust/.env.<CODE>.<env>  │          │   egress: site routes, or a NAT gateway │
-   └──────────────────────────┘          └───────────────────┬────────────────────┘
-                                                             │ HTTPS + FL (outbound)
-                                                             ▼
-                                                     the FLIP hub (any account)
+.. figure:: ../assets/generated/trust-node-aws-ec2-network.png
+   :align: center
+   :alt: In the site's AWS account, a VPC (the site's, or one this root creates) holds the node subnet with the
+         EC2 trust node: a host running Docker, the SSM and CloudWatch agents, trust-api and the FL client, and an
+         encrypted gp3 root volume, with no public IP and no inbound rule. Optional SSM interface endpoints sit in
+         the subnet; a NAT gateway with an Elastic IP and an internet gateway exist only in the own-VPC mode.
+         Regional services: the node IAM role, SSM Session Manager, CloudWatch Logs and an optional EventBridge
+         stop/start schedule. An optional kit bucket and KMS key sit in the kit owner's account. Every arrow to
+         the Central Hub, GHCR and Hugging Face leaves the node; the operator reaches it through SSM only.
+
+   The node in its network, the AWS services it uses, and its outbound paths.
+
+.. figure:: ../assets/generated/trust-node-aws-ec2-host.png
+   :align: center
+   :alt: On the node: the trust stack under Docker Compose (trust-api, the FL client, imaging-api,
+         data-access-api, the OMOP database and Orthanc), XNAT as a swarm stack (xnat-web and its database), and
+         the observability stack (Alloy, Loki, Grafana). trust-api polls the hub over HTTPS, the FL client
+         connects to the hub's FL endpoint over mutual-TLS gRPC, and the host pulls images from GHCR and the
+         seed data from Hugging Face.
+
+   The services on the host, and what each connects out to.
 
 The kit file stays on the operator's machine: ``make deploy`` evaluates the trust compose files there
 and drives the node's Docker daemon over an SSH context, so the kit never has to exist on the instance.

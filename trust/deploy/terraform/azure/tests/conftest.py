@@ -15,10 +15,14 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 AZURE_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = AZURE_DIR.parents[3]
+
+# The architecture package (architecture/trust_azure.py) is imported by test_architecture_diagram.py.
+sys.path.insert(0, str(AZURE_DIR))
 
 # $AZ_FAIL names one command ("storage blob", "aks update") that fails; $AZ_ACCOUNT_ID replaces
 # the subscription id `account show` answers; `group exists` is true only for $AZ_EXISTING_RG.

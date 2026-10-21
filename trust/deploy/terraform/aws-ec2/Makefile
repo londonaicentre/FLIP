@@ -178,7 +178,7 @@ test: ## Credential-free checks: terraform test in the root and its module, plus
 	@for d in modules/network .; do \
 		echo "── $$d"; ( cd $$d && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
 	done
-	uv run --no-project --with pytest pytest tests/ -q
+	uv run --no-project --with pytest --with diagrams pytest tests/ -q
 
 lint: ## terraform fmt check and tflint over the root
 	$(TF) fmt -check -recursive

@@ -26,6 +26,7 @@ Runbook: [Deploy a FLIP node on AWS EC2](../../../../docs/source/deploy-flip/dep
 | `modules/network/` | An existing subnet passed through, or a VPC with a NAT gateway |
 | `Makefile` | `init plan apply ssh-config provision deploy upgrade …`; `make help` lists them |
 | `scripts/ssh_config.py` | The `~/.ssh/config` entry that reaches the node over SSM |
+| `architecture/` | The node diagrams, rendered by the docs build; `tests/test_architecture_diagram.py` fails when they drift from the `.tf` files |
 | `tests/` | `terraform test` (mocked provider) and the Makefile / ssh-config pytest: `make test` |
 
 The host is configured by [`../../ansible/aws-ec2.yml`](../../ansible/aws-ec2.yml), whose plays

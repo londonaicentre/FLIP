@@ -273,6 +273,10 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
+      - name: Install graphviz
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+
       - name: Terraform tests and static guards
         working-directory: trust/deploy/terraform/azure
         run: make test
@@ -315,6 +319,10 @@ jobs:
 
       - name: Install uv
         run: pip install uv
+
+      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
+      - name: Install graphviz
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
 
       - name: Terraform tests and Makefile checks
         working-directory: trust/deploy/terraform/aws-ec2

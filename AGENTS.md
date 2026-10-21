@@ -374,6 +374,7 @@ After changes, evaluate if docs need updating:
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
 | Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
 | Central Hub AWS resources (`deploy/providers/AWS/*.tf`) | `deploy/providers/AWS/architecture/central_hub.py` — the drawn-node map; `tests/test_architecture_diagram.py` fails CI when a drawn resource disappears or a load-bearing one is added undrawn. Then `make aws-diagram` for the two README copies; `docs/source/deploy-flip/deploy-central-hub-aws-lza.rst` if the prose changes (the components page is deployment-agnostic) |
+| Trust node Terraform (`trust/deploy/terraform/{aws-ec2,azure}/**/*.tf`) | That tree's `architecture/` script (`trust_ec2.py` / `trust_azure.py`): its `tests/test_architecture_diagram.py` fails when a drawn resource disappears or a load-bearing one is added undrawn. The docs build renders the figures on `deploy-flip-node-aws-ec2.rst` / `deploy-flip-node-azure.rst` |
 | New Make targets | `CONTRIBUTING.md`, this file |
 | User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nets.rst` |
