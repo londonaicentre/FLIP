@@ -233,8 +233,8 @@ Then generate the internal service key (also generated automatically by `make up
 make generate-internal-service-key
 ```
 
-This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
-fl-server-to-hub authentication.
+This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
+(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication.
 
 #### Updating an existing checkout
 
