@@ -167,7 +167,7 @@ DICOM_APPS: tuple[TutorialApp, ...] = (
     TutorialApp(
         app_id="flower_xray_classification",
         backend="flower",
-        module_path="flower/xray_classification/app/transforms.py",
+        module_path="flower/image_classification/xray_classification/app/transforms.py",
     ),
 )
 

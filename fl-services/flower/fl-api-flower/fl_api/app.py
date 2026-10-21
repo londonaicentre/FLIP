@@ -187,7 +187,40 @@ def _validate_tutorial_folder(tutorial_name: str) -> Path:
     # Tutorial submit: pre-baked tutorial folders (e.g. "xray_classification") are
     # submitted by name, not a UUID, so they get a charset/traversal guard instead.
     validate_tutorial_folder_name(tutorial_name)
-    return _resolve_job_dir(tutorial_name)
+    return _resolve_tutorial_dir(tutorial_name)
+
+
+def _resolve_tutorial_dir(tutorial_name: str) -> Path:
+    """Resolve a bare tutorial name under the src root, flat or one category deep.
+
+    The mounted tree is ``fl-tutorials/flower/<category>/<name>/`` (FLIP#1500, the NVFLARE layout),
+    while the submit contract stays the bare name, which the charset guard has already confined to a
+    single path component. A flat ``<src_root>/<name>`` still wins (a flat mount); otherwise exactly
+    one ``<src_root>/<category>/<name>`` must exist. None is a 400, and so is more than one — a name
+    that exists in two categories is a tree problem, not something to pick from.
+    """
+    src_root = _get_src_root()
+    flat = safe_join(src_root, tutorial_name)
+    if flat.is_dir():
+        return flat
+    categories = sorted(p for p in src_root.iterdir() if p.is_dir()) if src_root.is_dir() else []
+    candidates = [
+        candidate
+        for category in categories
+        if (candidate := safe_join(src_root, category.name, tutorial_name)).is_dir()
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job folder path does not exist: {flat} (nor {src_root}/<category>/{tutorial_name})",
+        )
+    found = ", ".join(str(c.relative_to(src_root)) for c in candidates)
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Tutorial name '{tutorial_name}' is ambiguous under {src_root}: {found}",
+    )
 
 
 def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:

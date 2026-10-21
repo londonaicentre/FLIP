@@ -177,6 +177,9 @@ make -C fl-services/flower submit APP=xray_classification   # submit a job to th
 make -C fl-services/flower down
 ```
 
+`APP=` is the tutorial's bare name: the stack mounts `fl-tutorials/flower/` at `/app/src`, and the fl-api
+resolves the name under `/app/src/<category>/<name>` (the tree's layout since #1500) or flat `/app/src/<name>`.
+
 **Fetch the dataset before `up`.** The default `APP=xray_classification` is not self-contained: it
 reads images and a dataframe from the SuperNodes' bind mounts, and `up` only creates *placeholder*
 mounts (`DEV_IMAGES_DIR` defaults to `/tmp/flwr-dev-images`, `DEV_DATAFRAME` to

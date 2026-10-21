@@ -286,7 +286,7 @@ def test_the_guard_sees_every_shipped_app():
     # The apps that motivated FLIP#1206, plus a template per backend — or the guard guards nothing.
     for expected in (
         "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
-        "fl-tutorials/flower/xray_classification/app",
+        "fl-tutorials/flower/image_classification/xray_classification/app",
         "fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/app_files",
         "fl-apps/nvflare/standard",
         "fl-apps/flower/standard",
@@ -300,7 +300,8 @@ def test_every_tutorial_has_a_guarded_app_dir():
     roots += [
         p.parent
         for p in _tracked("fl-tutorials/flower")
-        if p.name == "pyproject.toml" and p.parent.parent.name == "flower"
+        # fl-tutorials/flower/<category>/<name>/pyproject.toml (#1500): three levels below flower/
+        if p.name == "pyproject.toml" and p.parent.parent.parent.name == "flower"
     ]
     assert roots, "no tutorial roots found — has the tutorial layout changed?"
     for root in roots:

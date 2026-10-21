@@ -97,6 +97,11 @@ rules:
     level: MUST
     statement: The twin the manifest names exists on the other backend under the same name
     check: {type: builtin, name: twin_exists}
+  - id: COMMON-31
+    level: MUST
+    statement: A twin pair sits at the same <category>/<name> on both backends (fl-tutorials/<backend>/<category>/<name>/, #1500)
+    why: a reader comparing the two copies finds them at the same relative path, and the category names the job type and modality
+    check: {type: builtin, name: twin_same_category}
   - id: COMMON-16
     level: MUST
     statement: A twin pair's query.sql is pinned byte-identical in scripts/check_tutorial_sync.sh PAIRS

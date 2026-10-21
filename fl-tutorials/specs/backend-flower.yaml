@@ -9,14 +9,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 id: FLWR
-title: Flower tutorials (fl-tutorials/flower/<name>/)
+title: Flower tutorials (fl-tutorials/flower/<category>/<name>/)
 skill: new-tutorial-flower
 applies_when: {backend: flower}
 rules:
   - id: FLWR-01
     level: MUST
-    statement: app/ exists (the discovery marker; it is exactly what the user uploads)
-    enforced_by: fl-tutorials/flower/Makefile $(wildcard */app/.)
+    statement: app/ exists at fl-tutorials/flower/<category>/<name>/ (the discovery marker, two levels deep like NVFLARE; it is exactly what the user uploads)
+    enforced_by: fl-tutorials/flower/Makefile $(wildcard */*/app/.)
     check: {type: file_exists, path: app}
   - id: FLWR-02
     level: MUST
