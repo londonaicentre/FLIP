@@ -112,7 +112,7 @@ def split_for_site(items: list[dict], site_name: str) -> list[dict]:
 
     Local/simulator runs point every client at the same DEV dataset, so without this both sites
     train on identical data; in production each trust's data-access API already scopes the cohort to
-    its own. The NVFLARE simulator names its clients "site-1"/"site-2" — normalise so the split
+    its own. The FLARE simulator names its clients "site-1"/"site-2" — normalise so the split
     actually applies (as arkplus_fine_tuning's data_utils does). Production trust names never match,
     so real runs are returned unsplit.
 
@@ -448,7 +448,7 @@ class LatentDiffusionTrainer:
 
         # Per-site split for local/simulator runs where every client reads the same DEV dataset;
         # in production each trust's data-access API already scopes the cohort to its own data.
-        # The NVFLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
+        # The FLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
         # (as arkplus_fine_tuning's data_utils does). Production trust names never match, so real runs are unsplit.
         self.site_name = flare.get_site_name()
         self.train_items = split_for_site(self.train_items, self.site_name)
@@ -662,7 +662,7 @@ def validate(
         scheduler (DDPMScheduler): The DDPM noise scheduler.
         config (dict): The user app config (``config.json``).
         device (torch.device): Device to run on.
-        writer (SummaryWriter): NVFLARE Client API metrics writer.
+        writer (SummaryWriter): FLARE Client API metrics writer.
 
     Returns:
         float: Mean noise-prediction MSE over the held-out split.

@@ -1,7 +1,7 @@
 # Diffusion Model (pixel space) — FLIP tutorial
 
 This tutorial trains a **`DiffusionModelUNet` that denoises images directly** — diffusion in pixel
-space, with no autoencoder in the loop — on 2-D chest X-rays, using the **NVFLARE Client API**
+space, with no autoencoder in the loop — on 2-D chest X-rays, using the **FLARE Client API**
 (`nvflare.client`). The job is defined entirely in Python via `FlipFedAvgRecipe` — no hand-written
 JSON configs required. The code is entirely based on `MONAI` functions.
 
@@ -154,7 +154,7 @@ whitespace-splitting. The trainer reads the query from `config_fed_client.json` 
 make export
 ```
 
-Writes a complete NVFLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`,
+Writes a complete FLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`,
 `app/custom/`). This is the fastest way to verify the job wiring.
 
 ### Local simulation (requires a GPU + the dataset)

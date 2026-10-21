@@ -1,7 +1,7 @@
 # Latent Diffusion Model — FLIP tutorial
 
 This tutorial trains a **`DiffusionModelUNet` inside a frozen autoencoder's latent space** on **3-D
-brain MRI**, **conditioned on the MR sequence**, using the **NVFLARE Client API** (`nvflare.client`). The job is defined entirely in
+brain MRI**, **conditioned on the MR sequence**, using the **FLARE Client API** (`nvflare.client`). The job is defined entirely in
 Python via `FlipFedAvgRecipe` — no hand-written JSON configs required. The code is entirely based on
 `MONAI` functions.
 
@@ -101,7 +101,7 @@ autoencoder-then-diffusion job, and none of these three tutorials uses it.
 
 The frozen encoder is declared by `SERVER_CHECKPOINT` in `app_files/config.json` and must exist as
 `app_files/pretrained_autoencoder.pt`. A finished [`autoencoder`](../autoencoder/) run does not hand
-you one directly — its checkpoint is an NVFLARE persistor file wrapping the *whole* training network
+you one directly — its checkpoint is an FLARE persistor file wrapping the *whole* training network
 (autoencoder **and** discriminator). `process_tools/extract_autoencoder.py` converts it:
 
 ```bash
@@ -281,7 +281,7 @@ whitespace-splitting. The trainer reads the query from `config_fed_client.json` 
 make export
 ```
 
-Writes a complete NVFLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`,
+Writes a complete FLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`,
 `app/custom/`). This is the fastest way to verify the job wiring, and deliberately does **not**
 require the checkpoint. Worth inspecting in the export:
 

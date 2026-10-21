@@ -1,7 +1,7 @@
 # Autoencoder (VAE) — FLIP tutorial
 
 This tutorial trains a **KL-regularised autoencoder plus a patch discriminator** on **3-D brain
-MRI**, using the **NVFLARE Client API** (`nvflare.client`). The job is defined entirely in Python
+MRI**, using the **FLARE Client API** (`nvflare.client`). The job is defined entirely in Python
 via `FlipFedAvgRecipe` — no hand-written JSON configs required. The code is entirely based on `MONAI`
 functions.
 
@@ -68,7 +68,7 @@ These files are compatible with `JOB_TYPE=standard` in the base application
 ([`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/)) — an ordinary single-stage
 FedAvg job with cross-site validation. The required upload set is `trainer.py`, `config.json`,
 `models.py`; `transforms.py`, `modality.py`, `plot_utils.py`, `medicalnet_perceptual.py` and the
-shipped perceptual backbone (`medicalnet_resnet10_23datasets-afa8055f.pth`, produced by
+shipped perceptual backbone (`medicalnet_resnet50_23datasets-ff48a622.pth`, produced by
 `make weights`) are uploaded alongside them as extra app
 files.
 
@@ -115,7 +115,7 @@ is training disagree about their own dimensionality.
 
 ## Note on the perceptual loss (`make weights`)
 
-The perceptual loss is **MedicalNet ResNet-10**, a 3D network pretrained on 23 medical datasets. It
+The perceptual loss is **MedicalNet ResNet-50**, a 3D network pretrained on 23 medical datasets. It
 needs its weights, and **an FL app must never download at run time**: on a
 platform-managed estate the FL server has no internet route, nor does a trust host behind an NHS
 firewall, so the job would hang; and a run-time fetch bypasses the scanned upload path — the file a
@@ -123,12 +123,13 @@ Trust can inspect before training would not be the file that runs. So the backbo
 the app:
 
 ```bash
-make weights   # → app_files/medicalnet_resnet10_23datasets-afa8055f.pth  (gitignored; `make sim` and `make export` run this for you)
+make weights   # → app_files/medicalnet_resnet50_23datasets-ff48a622.pth  (gitignored; `make sim` and `make export` run this for you)
 ```
 
 That stages the checkpoint from the shared download
-(`make -C fl-tutorials download-weights ARCH=medicalnet_resnet10`, fetched once against a pinned
-sha256) into `app_files/`. It is 57 MB. **Upload it with the other app files** — it is a `.pth`, so
+(`make -C fl-tutorials download-weights ARCH=medicalnet_resnet50`, fetched once against a pinned
+sha256) into `app_files/`. It is 185 MB; ResNet-10 (57 MB) is one constant away, `MEDICALNET_ARCH` in
+`app_files/medicalnet_perceptual.py`. **Upload it with the other app files** — it is a `.pth`, so
 the platform's picklescan gates it like any checkpoint.
 
 **Why this tutorial does not call MONAI's `PerceptualLoss`.** MONAI exposes the same network as
@@ -187,11 +188,11 @@ only, never at a trust.
 
 This tutorial needs `torchvision` at runtime for the 2-D discriminator path; it must be built
 against the **same torch** as the
-`flare-fl-base` image (pinned `torch>=2.11`, cu128, in
+`flare-fl-base` image (pinned `torch>=2.13`, cu130, in
 [`flip-utils/pyproject.toml`](../../../../flip-utils/pyproject.toml)). A base image whose
 `torchvision` predates that pin fails at runtime with
 `RuntimeError: operator torchvision::nms does not exist`. The perceptual network's weights are **not** downloaded at run
-time — see the next section.
+time — see *Note on the perceptual loss* above.
 
 ## FLIP-specific values
 
@@ -208,7 +209,7 @@ whitespace-splitting. The trainer reads the query from `config_fed_client.json` 
 make export
 ```
 
-Writes a complete NVFLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`,
+Writes a complete FLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`,
 `app/custom/`). This is the fastest way to verify the job wiring.
 
 ### Local simulation (requires a GPU + the dataset)
@@ -227,7 +228,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=autoencoder
 
 Knobs: `NUM_ROUNDS` (default 1), `N_CLIENTS` (default 2) — override per invocation
 (`make run NUM_ROUNDS=2`) or in `.env.app`. In simulation the two sites train on different halves of
-the dev dataset (the trainer splits on the NVFLARE site name); in production each trust's cohort is
+the dev dataset (the trainer splits on the FLARE site name); in production each trust's cohort is
 already its own.
 
 ### Clean

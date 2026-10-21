@@ -16,7 +16,7 @@
 # the documented entrypoints keep working:
 #
 #   make -C fl-tutorials download-xray-data
-#   make -C fl-tutorials download-weights ARCH=squeezenet1_1   # a pretrained backbone a tutorial ships (autoencoder)
+#   make -C fl-tutorials download-weights ARCH=medicalnet_resnet50   # a pretrained backbone a tutorial ships (autoencoder)
 #   make -C fl-tutorials download-spleen-data [NUM_CASES=<1-41>]
 #   make -C fl-tutorials download-spleen-checkpoint   # evaluation-tutorial checkpoint only
 #   make -C fl-tutorials download-arkplus-finetuning-data
@@ -85,9 +85,9 @@ download-xray-data:
 # A pretrained network a tutorial ships beside its code (FLIP#1206): downloaded ONCE here, with
 # torch.hub's own sha256-prefix check, into data/weights/<torchvision filename>. Keyed by
 # architecture, not tutorial — a backbone is shared by construction (`weights/fetch_weights.py`
-# lists the known ones). Today: `ARCH=squeezenet1_1`, the autoencoder tutorial's perceptual loss.
+# lists the known ones). Today: `ARCH=medicalnet_resnet50`, the autoencoder tutorial's perceptual loss.
 download-weights:
-	@[ -n "$(ARCH)" ] || (echo "❌  ARCH is required. Usage: make download-weights ARCH=squeezenet1_1"; exit 1)
+	@[ -n "$(ARCH)" ] || (echo "❌  ARCH is required. Usage: make download-weights ARCH=medicalnet_resnet50"; exit 1)
 	@$(WEIGHTS_UV) python weights/fetch_weights.py $(ARCH) --out $(WEIGHTS_DIR)
 
 # One spleen dataset for both backends: the MSD build, honouring NUM_CASES, plus the

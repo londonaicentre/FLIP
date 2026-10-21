@@ -14,7 +14,7 @@
 The latent diffusion job needs the autoencoder as a clean ``.pt`` state dict to declare as
 ``SERVER_CHECKPOINT``. A finished run of the `autoencoder` tutorial does not hand you one directly:
 
-1. NVFLARE's ``PTFileModelPersistor`` saves ``persistence_manager.to_persistence_dict()``, so the
+1. FLARE's ``PTFileModelPersistor`` saves ``persistence_manager.to_persistence_dict()``, so the
    state dict sits under a ``"model"`` key alongside meta/train_conf rather than at the top level.
 2. That state dict covers the whole autoencoder *training* network — both ``autoencoder.*`` and the
    ``discriminator.*`` that adversarially trained it. The latent diffusion network has no
@@ -214,7 +214,7 @@ def extract(src: Path, dst: Path, keep_prefix: str = _KEEP_PREFIX) -> dict[str, 
     """Return the autoencoder-only state dict inside an FL run's checkpoint.
 
     Args:
-        src: The checkpoint produced by an `autoencoder` tutorial run (an NVFLARE persistor file, or
+        src: The checkpoint produced by an `autoencoder` tutorial run (an FLARE persistor file, or
             a plain state dict).
         dst: Where the caller intends to write it. Used only for messages; nothing is written here.
         keep_prefix: State-dict key prefix to retain.
@@ -228,14 +228,14 @@ def extract(src: Path, dst: Path, keep_prefix: str = _KEEP_PREFIX) -> dict[str, 
             ``strict=False``).
     """
     print(f"  Loading {src} ...")
-    # weights_only=False: an NVFLARE persistor checkpoint carries pickled meta/train_conf alongside
+    # weights_only=False: an FLARE persistor checkpoint carries pickled meta/train_conf alongside
     # the tensors. Only ever point this at a checkpoint you produced yourself.
     blob = torch.load(str(src), map_location="cpu", weights_only=False)
 
     if isinstance(blob, dict) and "model" in blob and isinstance(blob["model"], dict):
-        # NVFLARE persistor envelope: {"model": state_dict, "meta": ..., "train_conf": ...}
+        # FLARE persistor envelope: {"model": state_dict, "meta": ..., "train_conf": ...}
         state_dict = blob["model"]
-        print("  Unwrapped NVFLARE persistor envelope (state dict was under the 'model' key).")
+        print("  Unwrapped FLARE persistor envelope (state dict was under the 'model' key).")
     else:
         state_dict = blob
         print("  Treating the file as a plain state dict (no 'model' envelope found).")

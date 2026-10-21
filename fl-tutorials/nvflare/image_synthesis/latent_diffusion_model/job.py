@@ -15,13 +15,13 @@ Trains a diffusion model inside a **frozen, uploaded** autoencoder's latent spac
 single-stage FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
 
 *Export* (``--export --export-dir <path>``):
-    Writes the complete NVFLARE job to ``<path>/flip_fedavg/``, including ``meta.json`` (carrying
+    Writes the complete FLARE job to ``<path>/flip_fedavg/``, including ``meta.json`` (carrying
     ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client configs), and
     ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files). This is the
     primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the NVFLARE simulator. Requires a GPU, the reference dataset
+    Runs a local simulation under the FLARE simulator. Requires a GPU, the reference dataset
     (``make -C fl-tutorials download-brain-mri-data``) and the prepared autoencoder checkpoint
     (``make prepare-checkpoint``). FLIP-specific values are injected via environment variables
     (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL queries contain spaces

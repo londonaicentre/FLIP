@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE Client API script for the FLIP autoencoder (VAE) tutorial.
+"""FLARE Client API script for the FLIP autoencoder (VAE) tutorial.
 
 Trains a KL-regularised autoencoder and its patch discriminator on 3-D brain MRI, as an ordinary
 single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
@@ -188,7 +188,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
     (which can contain spaces) is plumbed via the top-level ``query`` key in
     ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator mode this is
     ignored by ``flip.get_dataframe``.
@@ -214,7 +214,7 @@ def split_for_site(items: list[dict], site_name: str) -> list[dict]:
 
     Local/simulator runs point every client at the same DEV dataset, so without this both sites
     train on identical data; in production each trust's data-access API already scopes the cohort to
-    its own. The NVFLARE simulator names its clients "site-1"/"site-2" — normalise so the split
+    its own. The FLARE simulator names its clients "site-1"/"site-2" — normalise so the split
     actually applies (as arkplus_fine_tuning's data_utils does). Production trust names never match,
     so real runs are returned unsplit.
 
@@ -387,7 +387,7 @@ class AutoencoderTrainer:
 
         # Per-site split for local/simulator runs where every client reads the same DEV dataset;
         # in production each trust's data-access API already scopes the cohort to its own data.
-        # The NVFLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
+        # The FLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
         # (as arkplus_fine_tuning's data_utils does). Production trust names never match, so real runs are unsplit.
         self.site_name = flare.get_site_name()
         self.train_items = split_for_site(self.train_items, self.site_name)
@@ -699,7 +699,7 @@ def validate(
         test_loader (DataLoader): Held-out data loader.
         device (torch.device): Device to run on.
         config (dict): The user app config (``config.json``); read only for the debug-sample flag.
-        writer (SummaryWriter): NVFLARE Client API metrics writer (relayed to FLIP by the
+        writer (SummaryWriter): FLARE Client API metrics writer (relayed to FLIP by the
             analytics bridge).
 
     Returns:

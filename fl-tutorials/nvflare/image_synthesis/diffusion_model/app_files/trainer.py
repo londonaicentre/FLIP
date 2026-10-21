@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE Client API script for the FLIP pixel-space diffusion tutorial.
+"""FLARE Client API script for the FLIP pixel-space diffusion tutorial.
 
 Trains a ``DiffusionModelUNet`` to denoise **images directly**, as an ordinary single-stage FedAvg
 job: one ``train`` task and one ``validate`` task, dispatched on ``flare.is_train()`` /
@@ -81,7 +81,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
     (which can contain spaces) is plumbed via the top-level ``query`` key in
     ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator mode this is
     ignored by ``flip.get_dataframe``.
@@ -558,7 +558,7 @@ def validate(
         scheduler (DDPMScheduler): The DDPM noise scheduler.
         config (dict): The user app config (``config.json``).
         device (torch.device): Device to run on.
-        writer (SummaryWriter): NVFLARE Client API metrics writer.
+        writer (SummaryWriter): FLARE Client API metrics writer.
 
     Returns:
         float: Mean noise-prediction MSE over the held-out split.

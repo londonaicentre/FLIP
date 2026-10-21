@@ -43,13 +43,12 @@ N_CLIENTS ?= 2
 DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/autoencoder
 
 # --- Shipped weights (FLIP#1206) ---
-# The perceptual loss's SqueezeNet backbone, which lpips would otherwise fetch through
-# torch.hub on first use. FL apps never download at run time, so the tutorial ships it: the
-# download is shared (`make -C fl-tutorials download-weights ARCH=medicalnet_resnet50`, hash-checked)
-# and `weights` copies the checkpoint flat into app_files/, which is what gets uploaded with
-# the code and what job.py bundles into every site's custom/ for the simulator and `export`.
-# trainer.py stages it into its torch.hub dir at start-up. Gitignored. The filename must be
-# the one torchvision asks for (trainer.py checks that at run time, and the tests pin it).
+# The perceptual loss's MedicalNet ResNet-50 backbone. FL apps never download at run time, so the
+# tutorial ships it: the download is shared (`make -C fl-tutorials download-weights
+# ARCH=medicalnet_resnet50`, sha256-pinned) and `weights` copies the checkpoint flat into
+# app_files/, which is what gets uploaded with the code and what job.py bundles into every site's
+# custom/ for the simulator and `export`. Gitignored. The filename must be MEDICALNET_CHECKPOINT in
+# app_files/medicalnet_perceptual.py, which checks its hash prefix at load time.
 # This tutorial owns it because this is where the perceptual loss is: the diffusion tutorials
 # score in latent/noise space and construct no PerceptualLoss at all.
 HUB_CHECKPOINT := medicalnet_resnet50_23datasets-ff48a622.pth
@@ -71,7 +70,7 @@ $(SHARED_CHECKPOINT):
 run: sim
 
 # --- Export job config (no GPU needed) ---
-# Builds a complete NVFLARE job under ./fl_job/flip_fedavg/ including meta.json,
+# Builds a complete FLARE job under ./fl_job/flip_fedavg/ including meta.json,
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
 # FLIP-specific values (project_id, query) are injected via environment variables. Both bundling
 # paths (this and sim) need the shipped backbone in app_files/ first — hence `weights`.
@@ -83,8 +82,8 @@ export: weights
 		--num_rounds $(NUM_ROUNDS)
 
 # --- SimEnv local simulation (requires GPU + data) ---
-# Runs the job under the NVFLARE simulator. Requires a GPU and the reference
-# dataset (run `make -C fl-tutorials download-xray-data` first).
+# Runs the job under the FLARE simulator. Requires a GPU and the reference
+# dataset (run `make -C fl-tutorials download-brain-mri-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.

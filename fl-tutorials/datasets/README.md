@@ -33,7 +33,7 @@ make -C fl-tutorials download-arkplus-finetuning-data  # large (~6.3 GB)
 make -C fl-tutorials download-arkplus-eval-data        # (~1.6 GB)
 make -C fl-tutorials download-synthea-data             # EHR tabular dataset (~5 MB, backend-agnostic)
 make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid>   # data enrichment
-make -C fl-tutorials download-weights ARCH=squeezenet1_1   # a pretrained backbone a tutorial ships beside its app
+make -C fl-tutorials download-weights ARCH=medicalnet_resnet50   # a pretrained backbone a tutorial ships beside its app
 make -C fl-tutorials download-brain-mri-data NUM_CASES=10  # MSD Task01 brain MRI, simulator layout (7.6 GB download)
 make -C fl-tutorials download-prostate-data            # PI-CAI (FOLDS="0 1 2 3 4" by default, ~5GB/fold)
 make -C fl-tutorials convert-prostate-to-dicom
@@ -61,7 +61,7 @@ for why the plan is pooled and the measured per-center figures.
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (FLARE) |
 | synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
 | prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |
-| weights | `download.pytorch.org` (torchvision checkpoints, sha256-prefix checked; `weights/fetch_weights.py` lists them) | `weights/<torchvision filename>` (flat, e.g. `squeezenet1_1-b8a52dc0.pth`) | autoencoder via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
+| weights | `download.pytorch.org` and the Hugging Face hub (sha256-checked; `weights/fetch_weights.py` lists them) | `weights/<hash-named filename>` (flat, e.g. `medicalnet_resnet50_23datasets-ff48a622.pth`) | autoencoder via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
 
 One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
 existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.
