@@ -18,6 +18,14 @@ FROM flwr/base:${FLWR_VERSION:-1.38.0-py3.12-ubuntu24.04} AS base
 ARG LOCAL_DEV=false
 WORKDIR /app
 
+# /app is the image user's HOME. The dev compose re-points the SuperLink's uid to the
+# host user's while keeping this image's gid (FLIP#1320), so the home has to be writable
+# through the group as well as the owner: the SuperLink writes ~/.flwr and the ServerApp
+# writes torch's caches under HOME. Group here is the image's own `app` group, so this
+# grants nothing to anyone the owner bit did not already cover, and production, which
+# runs as app:app with no `user:` override, is unaffected.
+RUN chmod 0775 /app
+
 # Install flip-utils from the IN-REPO source (build context = repo root). This
 # replaces two older mechanisms now that flip-utils lives in this monorepo:
 #   * the install of deps from one hard-coded tutorial pyproject.toml (footgun #37), and
