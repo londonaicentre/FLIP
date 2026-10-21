@@ -34,7 +34,9 @@ trainer's source actually implements it.
 from __future__ import annotations
 
 import ast
+import sys
 
+import pytest
 import torch
 from torch import nn
 from tutorial_apps import TUTORIALS_ROOT
@@ -145,3 +147,49 @@ def test_the_discriminator_is_frozen_for_the_generator_pass() -> None:
     )
     freeze, unfreeze = toggles[0][0], toggles[1][0]
     assert freeze < backward < unfreeze, (freeze, backward, unfreeze)
+
+
+@pytest.fixture(scope="module")
+def round_lr_schedule():  # noqa: ANN201 - imported lazily, as test_autoencoder_ssim_metric.py does
+    """The trainer's own per-round schedule, imported the way the app runs it."""
+    sys.path.insert(0, str(TRAINER.parent))
+    try:
+        from trainer import round_lr_schedule as schedule
+    finally:
+        sys.path.remove(str(TRAINER.parent))
+    return schedule
+
+
+def test_every_round_decays_from_lr_g_to_lr_end(round_lr_schedule) -> None:  # noqa: ANN001
+    """However many rounds one trainer has served, each starts at ``LR_G`` and ends at ``LR_END``.
+
+    On a trust one trainer serves the whole job, so a schedule built once kept decaying: round two
+    ended at ``LR_END**2 / LR_G``. The simulator hid it by re-creating the trainer every round.
+    """
+    optimiser = torch.optim.AdamW(nn.Linear(4, 1).parameters(), lr=1e-4)
+    for _ in range(3):
+        scheduler = round_lr_schedule(optimiser, 1e-4, 1e-5, 20)
+        assert optimiser.param_groups[0]["lr"] == pytest.approx(1e-4)
+        for _ in range(20):
+            optimiser.step()
+            scheduler.step()
+        assert optimiser.param_groups[0]["lr"] == pytest.approx(1e-5)
+
+
+def test_the_schedule_is_built_per_round() -> None:
+    """Only ``train`` builds the schedule, so none outlives a round."""
+    tree = ast.parse(TRAINER.read_text())
+    train = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "train")
+    helper = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "round_lr_schedule"
+    )
+    in_train, in_helper = {id(node) for node in ast.walk(train)}, {id(node) for node in ast.walk(helper)}
+    built = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "round_lr_schedule"
+    ]
+    assert built, "train never builds the schedule"
+    assert all(id(call) in in_train for call in built)
+    schedulers = [node for node in ast.walk(tree) if isinstance(node, ast.Attribute) and node.attr.endswith("LR")]
+    assert all(id(node) in in_helper for node in schedulers), [ast.unparse(node) for node in schedulers]

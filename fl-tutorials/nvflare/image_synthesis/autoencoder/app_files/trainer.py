@@ -251,6 +251,22 @@ def batch_accumulation_step(batch_size: int) -> int:
     return 1
 
 
+def round_lr_schedule(
+    optimizer: torch.optim.Optimizer, lr_start: float, lr_end: float, epochs: int
+) -> torch.optim.lr_scheduler.ExponentialLR:
+    """Exponential decay from ``lr_start`` to ``lr_end`` over one round's local epochs.
+
+    Built afresh each round, as the reference MSD recipe decays over its one run. A schedule built
+    once would compound across rounds on a trust, where one trainer serves the whole job: five rounds
+    from 1e-4 to 1e-5 would end at 1e-9. ``lr_end`` equal to ``lr_start`` (the shipped config) is a
+    gamma of exactly 1, so the decay is opt-in by lowering ``LR_END``.
+    """
+    for group in optimizer.param_groups:
+        group["lr"] = lr_start
+    gamma = (lr_end / lr_start) ** (1.0 / max(1, epochs))
+    return torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+
+
 # How often to hand cached CUDA blocks back to the driver. See the training loop for why this is
 # not every iteration.
 CACHE_CLEAR_EVERY = 50
@@ -386,14 +402,6 @@ class AutoencoderTrainer:
             ),
         }
 
-        # Exponential decay from LR_G to LR_END over the local epochs of one round, as the reference
-        # MSD recipe does. With LR_END equal to LR_G the gamma is exactly 1 and the schedule is inert
-        # — which is the shipped configuration, so the decay is opt-in by lowering LR_END.
-        epochs = max(1, self.params_autoencoder["epochs"])
-        lr_end = config.get("LR_END", self.params_autoencoder["lr_g"])
-        gamma = (lr_end / self.params_autoencoder["lr_g"]) ** (1.0 / epochs)
-        self.scheduler_g = torch.optim.lr_scheduler.ExponentialLR(self.optimizers_ae["optimizer_g"], gamma=gamma)
-
         # Data loading
         self.flip = FLIP()
         dataframe = self.flip.get_dataframe(project_id=project_id, query=query)
@@ -514,6 +522,12 @@ class AutoencoderTrainer:
         self.model.autoencoder.train()
         self.model.discriminator.train()
         epochs = self.params_autoencoder["epochs"]
+        scheduler_g = round_lr_schedule(
+            self.optimizers_ae["optimizer_g"],
+            self.params_autoencoder["lr_g"],
+            self.config.get("LR_END", self.params_autoencoder["lr_g"]),
+            epochs,
+        )
         for epoch in range(epochs):
             train_g_loss = 0
             train_d_loss = 0
@@ -680,7 +694,7 @@ class AutoencoderTrainer:
 
             # Send metrics to FLIP. The "@epoch" suffix names the x-axis and `step` (cumulative local
             # epoch) is the coordinate.
-            self.scheduler_g.step()
+            scheduler_g.step()
 
             step = global_round * epochs + epoch + 1
             writer.add_scalar("Train loss (G)@epoch", train_g_loss, global_step=step)
