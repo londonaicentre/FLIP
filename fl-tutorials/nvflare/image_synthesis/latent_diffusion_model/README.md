@@ -6,6 +6,13 @@ autoencoder, on 3-D brain MRI, conditioned on the MR sequence, using the **FLARE
 not trained here: train it first with the [`autoencoder`](../autoencoder/) tutorial. How the three
 image-synthesis tutorials fit together is in the [guide](../README.md).
 
+Adapted from MONAI's 3-D latent diffusion example
+([Project-MONAI/tutorials, `generation/3d_ldm`](https://github.com/Project-MONAI/tutorials/tree/d948baa25946d109556f4304ba999d7c74a97c4d/generation/3d_ldm),
+Apache-2.0; Pinaya *et al.* [2022](https://arxiv.org/abs/2209.07162),
+[2023](https://arxiv.org/abs/2307.15208)). The noise schedule, the latent scaling and MONAI's
+`LatentDiffusionInferer` follow it. We changed the training for FLIP: federated across sites, all four
+MR sequences with sequence conditioning, and an autoencoder that arrives frozen from a separate job.
+
 ## Example outputs from this tutorial
 
 ![Latent diffusion samples, one generated volume per MR sequence (FLAIR, T1w, T1Gd, T2w), in sagittal, coronal and axial views](assets/example_samples.png)

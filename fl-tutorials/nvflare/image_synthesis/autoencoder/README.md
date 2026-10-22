@@ -6,6 +6,13 @@ via `FlipFedAvgRecipe`. The trained autoencoder is the first half of a latent di
 [latent diffusion tutorial](../latent_diffusion_model/README.md) loads it and keeps it frozen. The
 [guide](../README.md) explains how the three image-synthesis tutorials fit together.
 
+Adapted from MONAI's 3-D latent diffusion example
+([Project-MONAI/tutorials, `generation/3d_ldm`](https://github.com/Project-MONAI/tutorials/tree/d948baa25946d109556f4304ba999d7c74a97c4d/generation/3d_ldm),
+Apache-2.0; Pinaya *et al.* [2022](https://arxiv.org/abs/2209.07162),
+[2023](https://arxiv.org/abs/2307.15208)). The autoencoder architecture follows its configuration. We
+changed the training for FLIP: federated across sites, all four MR sequences, whole-brain 2 mm
+geometry, and a MedicalNet perceptual loss that loads uploaded weights instead of downloading them.
+
 ## Example outputs from this tutorial
 
 ![Autoencoder reconstructions: input vs reconstruction in sagittal, coronal and axial views](assets/example_reconstructions.png)
