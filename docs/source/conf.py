@@ -222,16 +222,17 @@ html_static_path = ["_static"]
 
 # -- Generated figures -------------------------------------------------------
 # The architecture diagrams are diagram-as-code kept beside the Terraform they depict, each drift-guarded by that
-# tree's tests: the Central Hub (deploy/providers/AWS/architecture/central_hub.py) and the trust nodes on AWS EC2 and
-# Azure (trust/deploy/terraform/{aws-ec2,azure}/architecture/). They are rendered here at build time into
-# assets/generated/ (gitignored), so the published deployment pages always show the pictures for the commit they
-# document and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
+# tree's tests: the Central Hub (deploy/providers/AWS/architecture/central_hub.py) and the trust nodes on AWS EC2,
+# Amazon EKS and Azure (trust/deploy/terraform/{aws-ec2,aws-eks,azure}/architecture/). They are rendered here at
+# build time into assets/generated/ (gitignored), so the published deployment pages always show the pictures for the
+# commit they document and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
 # build.apt_packages, the docs CI job via apt-get.
 
 AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
 DIAGRAM_SCRIPTS = (
     AWS_PROVIDER_DIR / "architecture" / "central_hub.py",
     REPO_ROOT / "trust" / "deploy" / "terraform" / "aws-ec2" / "architecture" / "trust_ec2.py",
+    REPO_ROOT / "trust" / "deploy" / "terraform" / "aws-eks" / "architecture" / "trust_eks.py",
     REPO_ROOT / "trust" / "deploy" / "terraform" / "azure" / "architecture" / "trust_azure.py",
 )
 GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"

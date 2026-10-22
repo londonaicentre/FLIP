@@ -146,6 +146,7 @@ Follow your platform's page, then come back here for step 6:
 - **Docker Compose host** (on-prem or in a TRE): :doc:`deploy-flip-node-on-prem`
 - **Azure VM**: :doc:`deploy-flip-node-azure`
 - **AWS EC2**: :doc:`deploy-flip-node-aws-ec2`
+- **Amazon EKS**: :doc:`deploy-flip-node-aws-eks`
 - **Kubernetes**: :doc:`deploy-flip-node-kubernetes`
 
 **************************************
