@@ -9,41 +9,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Figures for the image-synthesis tutorials: debug images during training, loss curves after it.
+"""Figures for the image-synthesis tutorials, for local development only.
 
-Two halves that are always read together, so they live together.
+``save_grid`` and ``save_triplanar`` write debug images during a simulator run; run as a script, this
+module plots each site's losses from a simulator workspace. It sits in ``image_synthesis/dev/``,
+which is never uploaded: each tutorial's ``job.py`` stages it into simulator runs, and on a trust the
+trainers' import of it fails and debug output is simply off.
 
-**The training half** writes the pixels themselves. A generative model is the one kind of model
-whose scalars barely tell you whether it is working: an autoencoder's L1 falls steadily while it
-learns to emit a blur, and a diffusion model's MSE on predicted noise is almost uninformative about
-sample quality. ``save_grid`` and ``save_triplanar`` are called from ``trainer.py`` during a run.
+Images are written only when ``config.json`` sets ``SAVE_DEBUG_SAMPLES`` **and** this is a
+Makefile-launched simulator run (see :func:`samples_enabled`), into ``DEBUG_SAMPLES_DIR``. Nothing
+here sends an image anywhere.
 
-**The analysis half** recovers the numbers behind those images from a finished (or running)
-simulator log, and is run by hand on the host — ``python app_files/plot_utils.py``. The pairing is
-the point: a reconstruction that stops improving looks identical whether the model has converged or
-whether the discriminator has started to dominate the generator, and only the scalars tell those
-apart. Conversely a loss curve cannot tell you the model has settled on a plausible silhouette with
-no anatomy inside it, and the tri-planar figures show that at a glance.
+Usage, from a tutorial's directory after ``make run``::
 
-**Nothing here puts an image on the wire.** The files are written beside the running training script
-— i.e. inside that client's own job workspace — and no code path reads them back, adds them to an
-``FLModel``, or hands them to the metrics writer (``SummaryWriter`` could not carry them anyway: the
-Client API's writer exposes only ``add_scalar``/``add_scalars``). An image saved here leaves the site
-only if a human deliberately copies it out, which at a real trust is a disclosure decision governed
-by the same rules as any other data egress, not something a training run can do by itself.
-
-Off by default. Enabled by ``SAVE_DEBUG_SAMPLES`` in ``config.json``, and **only in a local simulator
-run** (see :func:`samples_enabled`): at a trust nothing is written whatever the config says.
-
-The analysis half is **inert at a trust**: it runs only under ``__main__``, reads simulator paths
-that do not exist there, and is never imported by ``trainer.py``. It ships regardless, because this
-module does — worth knowing when reviewing what an app bundle contains.
-
-Usage of the analysis half::
-
-    python app_files/plot_utils.py
-    python app_files/plot_utils.py --workspace /tmp/nvflare/<tutorial>/flip_fedavg
-    python app_files/plot_utils.py --out-dir <dir>       # default: $DEBUG_SAMPLES_DIR
+    python ../dev/plot_utils.py                          # reads /tmp/nvflare/<this tutorial>/flip_fedavg
+    python ../dev/plot_utils.py --workspace <dir> --out-dir <dir>
 """
 
 from __future__ import annotations
@@ -61,11 +41,8 @@ from torchvision.utils import make_grid, save_image
 
 logger = logging.getLogger(__name__)
 
-#: Directory created next to the training script. Gitignored, and never read back by any code path.
-DEBUG_DIR_NAME = "debug_samples"
-
-#: Environment variable set by the tutorial Makefiles' ``sim`` recipe only. It is both where the output
-#: goes and half of the simulator check in :func:`in_simulation`; never a ``config.json`` key.
+#: Set by the tutorial Makefiles' ``sim`` recipe only: where the images go, and half of the simulator
+#: check in :func:`in_simulation`. Never a ``config.json`` key.
 DEBUG_DIR_ENV = "DEBUG_SAMPLES_DIR"
 
 #: How many images to write per grid when ``DEBUG_SAMPLES_MAX`` is absent from the config.
@@ -145,11 +122,7 @@ def plot_every(config: dict) -> int:
     Returns:
         int: The interval. Zero or negative disables the figures while leaving the grids on.
     """
-    try:
-        return int(config.get("DEBUG_PLOT_EVERY", DEFAULT_PLOT_EVERY))
-    except (TypeError, ValueError):
-        logger.warning(f"[DEBUG] DEBUG_PLOT_EVERY is not an integer; falling back to {DEFAULT_PLOT_EVERY}.")
-        return DEFAULT_PLOT_EVERY
+    return int(config.get("DEBUG_PLOT_EVERY", DEFAULT_PLOT_EVERY))
 
 
 def due_for_plot(iteration: int, config: dict) -> bool:
@@ -173,16 +146,8 @@ def due_for_plot(iteration: int, config: dict) -> bool:
 
 
 def debug_dir() -> Path:
-    """Return (creating if needed) the directory debug images are written to.
-
-    ``DEBUG_SAMPLES_DIR``, which the tutorial Makefiles point at
-    ``fl-tutorials/data/debug_samples/<tutorial>/`` — beside the datasets, under the same gitignore,
-    and stable across runs. :func:`samples_enabled` requires it to be set, so in practice every image
-    lands there. The fallback, ``debug_samples/`` beside this script (per client, per run), only
-    applies to a direct call with the variable unset.
-    """
-    override = os.environ.get(DEBUG_DIR_ENV, "").strip()
-    target = Path(override).expanduser().resolve() if override else Path(__file__).parent.resolve() / DEBUG_DIR_NAME
+    """``DEBUG_SAMPLES_DIR``, created if needed; the tutorial Makefiles point it under fl-tutorials/data/."""
+    target = Path(os.environ[DEBUG_DIR_ENV].strip()).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
     return target
 
@@ -391,10 +356,6 @@ def save_triplanar(
 # --------------------------------------------------------------------------------------------
 # Analysis half: loss curves from a simulator log. Host-side only — see the module docstring.
 # --------------------------------------------------------------------------------------------
-
-#: Where ``make sim`` puts this tutorial's simulator workspace. Derived from the directory this file
-#: sits in rather than hard-coded, so the same module is correct in every tutorial that ships it.
-DEFAULT_WORKSPACE = Path("/tmp/nvflare") / Path(__file__).resolve().parent.parent.name / "flip_fedavg"
 
 #: Log lines arrive as ``<timestamp> - <logger> - INFO - <message>``. Splitting the message off is
 #: what stops the timestamp's own colons ("20:10:04") being read as data. A line that does *not*
@@ -613,7 +574,12 @@ def plot_site(site: str, series: dict[str, list[float]], out_dir: Path) -> Path:
 def main() -> None:
     """Plot every site's losses from a simulator workspace. Host-side entry point."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE, help="simulator workspace root")
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=Path("/tmp/nvflare") / Path.cwd().name / "flip_fedavg",
+        help="simulator workspace root (default: this tutorial's, from the current directory)",
+    )
     parser.add_argument("--out-dir", type=Path, default=None, help="defaults to $DEBUG_SAMPLES_DIR, else ./")
     args = parser.parse_args()
 

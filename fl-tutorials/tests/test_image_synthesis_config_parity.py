@@ -125,7 +125,7 @@ def _load_app_module(tutorial: Path, module: str, *, with_dev: bool = True) -> M
     its module-level ``_net = ...`` singleton, which is the point — it builds the real network from
     the real config.
     """
-    dirs = [tutorial / "app_files"] + ([tutorial / "dev"] if with_dev else [])
+    dirs = [tutorial / "app_files"] + ([_SYNTHESIS_ROOT / "dev"] if with_dev else [])
     path = next((d / f"{module}.py" for d in dirs if (d / f"{module}.py").is_file()), dirs[0] / f"{module}.py")
     module_name = f"fl_tutorials_under_test.image_synthesis.{tutorial.name}.{module}{'' if with_dev else '_trust'}"
     if module_name in sys.modules:
@@ -643,32 +643,11 @@ def test_debug_samples_ship_disabled(tutorial: Path) -> None:
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
-def test_debug_sample_output_is_gitignored(tutorial: Path) -> None:
-    """The debug output directory is gitignored, so a local run cannot stage clinical images."""
-    ignored = (tutorial / ".gitignore").read_text().split()
-    plot_utils = _load_app_module(tutorial, "plot_utils")
-    assert f"dev/{plot_utils.DEBUG_DIR_NAME}/" in ignored
-
-
-def test_plot_utils_helper_is_identical_across_tutorials() -> None:
-    """All three copies of ``plot_utils.py`` are byte-identical.
-
-    Each tutorial's simulator run stages its own ``dev/`` copy. Pin them to each other so a fix to one
-    (or a change to what the images are normalised against) cannot silently apply to only one tutorial.
-    """
-    contents = {t.name: (t / "dev" / "plot_utils.py").read_bytes() for t in _ALL_TUTORIALS}
-    assert len(set(contents.values())) == 1, f"plot_utils.py differs between {sorted(contents)}"
-
-
-@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
 def test_plotting_is_not_an_app_file(tutorial: Path) -> None:
-    """``app_files/`` is what gets uploaded, so plotting code stays out of it, in ``dev/``.
-
-    A trust receives exactly the upload; keeping ``plot_utils.py`` out of ``app_files/`` is what keeps
-    plotting out of production.
-    """
+    """``app_files/`` is what gets uploaded, so plotting stays out of it, in the shared ``dev/``."""
     assert not (tutorial / "app_files" / "plot_utils.py").exists()
-    assert (tutorial / "dev" / "plot_utils.py").is_file()
+    assert (_SYNTHESIS_ROOT / "dev" / "plot_utils.py").is_file()
+    assert not (tutorial / "dev" / "plot_utils.py").exists(), f"{tutorial.name} carries its own copy"
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
@@ -789,8 +768,6 @@ def test_triplanar_is_gated_on_the_debug_flag_and_the_interval(tmp_path: Path, m
     # A non-positive interval turns the figures off without disturbing the grids.
     never = {"SAVE_DEBUG_SAMPLES": True, "DEBUG_PLOT_EVERY": 0}
     assert not any(plot_utils.due_for_plot(i, never) for i in range(3))
-    # A junk value falls back rather than raising into a training step.
-    assert plot_utils.plot_every({"DEBUG_PLOT_EVERY": "often"}) == plot_utils.DEFAULT_PLOT_EVERY
 
 
 def test_triplanar_gate_and_file_name_count_the_same_step() -> None:
@@ -970,28 +947,16 @@ def test_foreground_ssim_mask_lines_up_with_the_ssim_map() -> None:
     assert images[centres].shape == ssim_map.shape
 
 
-def test_debug_dir_defaults_inside_the_job_and_is_relocatable_by_env(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Default output stays in the app's own directory; ``DEBUG_SAMPLES_DIR`` moves it.
+def test_debug_output_goes_only_where_debug_samples_dir_says(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``DEBUG_SAMPLES_DIR`` is the only destination, and it is created.
 
-    The default is the production guarantee — a client writes patient-derived images only inside the
-    job workspace the trust agreed to run, never to an operator-chosen path. So the override must be
-    an *environment* variable and not a ``config.json`` key: ``config.json`` is uploaded with the app
-    and read on the trust, where this variable is never set.
+    An environment variable, never a ``config.json`` key: the config travels with the app to the trust,
+    where this variable is never set. There is no fallback directory, so nothing lands in the source tree.
     """
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
-
-    monkeypatch.delenv(plot_utils.DEBUG_DIR_ENV, raising=False)
-    assert plot_utils.debug_dir() == _AUTOENCODER / "dev" / plot_utils.DEBUG_DIR_NAME
-
     monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, str(tmp_path / "elsewhere"))
     assert plot_utils.debug_dir() == tmp_path / "elsewhere"
-    assert (tmp_path / "elsewhere").is_dir(), "the override directory is created, not just returned"
-
-    # An empty or whitespace-only value is not a path — fall back rather than writing to the cwd.
-    monkeypatch.setenv(plot_utils.DEBUG_DIR_ENV, "   ")
-    assert plot_utils.debug_dir() == _AUTOENCODER / "dev" / plot_utils.DEBUG_DIR_NAME
+    assert (tmp_path / "elsewhere").is_dir()
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
@@ -1189,17 +1154,14 @@ def test_the_makefile_prepares_the_checkpoint_the_config_declares() -> None:
 def test_the_sim_workspace_is_named_after_the_tutorial(tutorial: Path) -> None:
     """``job.py``'s simulator workspace default is ``/tmp/nvflare/<tutorial dir>``.
 
-    ``plot_utils.py`` ships byte-identically in all three tutorials, so it cannot carry a per-tutorial
-    path — it derives the workspace from the directory it sits in. An abbreviated workspace name
-    therefore does not fail, it just makes the loss plots come out empty, which reads as "this run
-    logged nothing" rather than "you are looking in the wrong place".
+    The shared ``plot_utils.py`` reads the logs from there by default (run from the tutorial's
+    directory), and the READMEs point at the autoencoder's result under it.
     """
     job_py = (tutorial / "job.py").read_text(encoding="utf-8")
     match = re.search(r'"(/tmp/nvflare/[^"]*)"', job_py)
     assert match, f"{tutorial.name}/job.py declares no simulator workspace default"
     assert match.group(1) == f"/tmp/nvflare/{tutorial.name}", (
-        f"{tutorial.name}/job.py uses workspace {match.group(1)!r}, but plot_utils.py derives "
-        f"'/tmp/nvflare/{tutorial.name}' from the directory name and would find no logs there"
+        f"{tutorial.name}/job.py uses workspace {match.group(1)!r}, not '/tmp/nvflare/{tutorial.name}'"
     )
 
 

@@ -46,7 +46,7 @@ from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
 from transforms import get_brain_mri_transforms
 
-# plot_utils.py is a local-development helper (dev/): job.py stages it into simulator runs, and it is
+# plot_utils.py is a local-development helper (../dev/): job.py stages it into simulator runs, and it is
 # never uploaded, so on a trust this import fails and debug output is simply off.
 try:
     from plot_utils import samples_enabled, save_triplanar

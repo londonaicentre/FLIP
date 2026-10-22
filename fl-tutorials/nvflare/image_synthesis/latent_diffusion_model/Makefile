@@ -17,7 +17,7 @@ APP_DIR := $(CURDIR)
 REPO_ROOT := $(abspath $(APP_DIR)/../../../..)
 FLIP_UTILS := $(REPO_ROOT)/flip-utils
 FL_TUTORIALS := $(REPO_ROOT)/fl-tutorials
-# `diffusion` adds matplotlib for dev/plot_utils.py; no FL image has it.
+# `diffusion` adds matplotlib for ../dev/plot_utils.py; no FL image has it.
 UV_RUN := uv run --project $(FLIP_UTILS) --extra full --group diffusion
 
 # --- Load app-specific env ---

@@ -64,8 +64,9 @@ from pathlib import Path
 # app_files/ must be importable at recipe-construction time so PTFileModelPersistor / PTModelLocator
 # can reference 'models.get_model' correctly.
 _APP_FILES_DIR = Path(__file__).parent / "app_files"
-# Local-development helpers (plot_utils.py): staged into simulator runs, never part of an upload.
-_DEV_FILES_DIR = Path(__file__).parent / "dev"
+# Local-development helpers (plot_utils.py), shared by the image-synthesis tutorials: staged into
+# simulator runs, never part of an upload.
+_DEV_FILES_DIR = Path(__file__).parent.parent / "dev"
 if str(_APP_FILES_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_FILES_DIR))
 

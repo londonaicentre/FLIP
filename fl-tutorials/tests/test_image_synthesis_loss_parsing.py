@@ -34,7 +34,6 @@ ones (the missing space after a comma, the trailing whitespace, the multi-line s
 
 from __future__ import annotations
 
-import importlib.util
 import math
 import sys
 
@@ -42,7 +41,7 @@ import pytest
 from tutorial_apps import TUTORIALS_ROOT
 
 _SYNTHESIS = TUTORIALS_ROOT / "nvflare" / "image_synthesis"
-_AUTOENCODER = _SYNTHESIS / "autoencoder"
+_SHARED_DEV = _SYNTHESIS / "dev"
 
 # Verbatim from /tmp/nvflare/autoencoder/flip_fedavg/site-1/log.txt.
 ITERATION_LINE = (
@@ -69,11 +68,11 @@ NOISE_LINES = (
 
 @pytest.fixture(scope="module")
 def plot_utils():  # noqa: ANN201 - imported from the app dir, so it has no import-time type
-    sys.path.insert(0, str(_AUTOENCODER / "dev"))
+    sys.path.insert(0, str(_SHARED_DEV))
     try:
         import plot_utils as module
     finally:
-        sys.path.remove(str(_AUTOENCODER / "dev"))
+        sys.path.remove(str(_SHARED_DEV))
     return module
 
 
@@ -150,20 +149,3 @@ def test_a_tutorial_logging_only_per_epoch_gets_one_populated_panel(plot_utils, 
     dense, sparse = plot_utils.split_by_cadence(plot_utils.parse_log(_write(tmp_path, text)))
     assert set(dense) == {"Total loss DM"}
     assert sparse == {}
-
-
-@pytest.mark.parametrize("tutorial", ["autoencoder", "diffusion_model", "latent_diffusion_model"])
-def test_the_default_workspace_follows_the_tutorial_the_copy_sits_in(tutorial: str) -> None:
-    """One shared file, three tutorials, three simulator workspaces.
-
-    The module is byte-identical in all three, so the default cannot be a literal — it is derived
-    from the directory the copy sits in. Hard-coding it still looks right from the autoencoder,
-    which is why every copy is loaded here and checked against its own tutorial.
-    """
-    path = _SYNTHESIS / tutorial / "dev" / "plot_utils.py"
-    spec = importlib.util.spec_from_file_location(f"_plot_utils_{tutorial}", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    assert module.DEFAULT_WORKSPACE.parent.name == tutorial
-    assert module.DEFAULT_WORKSPACE.name == "flip_fedavg"
