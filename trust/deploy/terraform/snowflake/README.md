@@ -146,7 +146,7 @@ one.
 
 ```bash
 cp encryption.tf.example encryption.tf          # gitignored
-export TF_ENCRYPTION_PASSPHRASE=...             # from your password manager
+read -rsp "State passphrase: " TF_VAR_state_passphrase; echo; export TF_VAR_state_passphrase
 make init
 ```
 

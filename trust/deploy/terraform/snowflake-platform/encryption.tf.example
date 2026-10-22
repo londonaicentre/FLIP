@@ -14,7 +14,7 @@
 # Copy to encryption.tf (gitignored) and export the passphrase before any `make` target:
 #
 #   cp encryption.tf.example encryption.tf
-#   export TF_ENCRYPTION_PASSPHRASE="$(read from your password manager)"
+#   read -rsp "State passphrase: " TF_VAR_state_passphrase; echo; export TF_VAR_state_passphrase
 #
 # The whole block can instead be supplied through the TF_ENCRYPTION environment variable, which
 # keeps the passphrase out of the working tree entirely:
@@ -23,12 +23,21 @@
 #     method "aes_gcm" "state" { keys = key_provider.pbkdf2.state }
 #     state { method = method.aes_gcm.state }'
 #
-# Either way the passphrase is never a Terraform variable and never reaches state or a plan file.
+# The passphrase is a sensitive variable that exists only in the environment (TF_VAR_*): it is never
+# written to a tfvars file, and the encryption block is evaluated before state is read, so it never
+# reaches state or a plan file. OpenTofu has no environment-reading function; an earlier draft
+# assumed one and the CLI panicked on it.
+
+variable "state_passphrase" {
+  type        = string
+  sensitive   = true
+  description = "OpenTofu state/plan encryption passphrase. Set TF_VAR_state_passphrase; never put it in a tfvars file."
+}
 
 terraform {
   encryption {
     key_provider "pbkdf2" "state" {
-      passphrase = env("TF_ENCRYPTION_PASSPHRASE")
+      passphrase = var.state_passphrase
     }
 
     method "aes_gcm" "state" {
