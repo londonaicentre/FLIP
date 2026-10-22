@@ -608,7 +608,7 @@ def test_subnetwork_spatial_dims_do_not_contradict_the_top_level(tutorial: Path)
 
     ``discriminator`` is the deliberate exception and is skipped: a 2-D patch discriminator scoring
     axial slices of a 3-D reconstruction is the supported thick-slice configuration (see
-    ``slice_volume_for_2d`` and "Porting this tutorial to 3-D" in the autoencoder README), so there
+    ``slice_volume_for_2d`` in the autoencoder trainer), so there
     that mismatch is the feature rather than the bug.
     """
     net_config = _config(tutorial)["net_config"]
@@ -705,9 +705,8 @@ def test_debug_samples_writes_one_png_per_call_when_enabled(tmp_path: Path, monk
 def test_debug_samples_reduces_volumes_to_a_mid_slice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A 5-D batch is tiled as its axial mid-slice rather than failing.
 
-    This is the 3-D port path (see "Porting this tutorial to 3-D" in the autoencoder README):
-    ``make_grid`` cannot tile a volume, so a port that switched ``spatial_dims`` to 3 would otherwise
-    lose its debug images to a swallowed exception at exactly the moment they are most useful.
+    The brain-MRI tutorials are 3-D, and ``make_grid`` cannot tile a volume, so without this they would
+    lose their debug images to a swallowed exception at exactly the moment they are most useful.
     """
     plot_utils = _load_app_module(_AUTOENCODER, "plot_utils")
     _as_simulator(monkeypatch, plot_utils, tmp_path)

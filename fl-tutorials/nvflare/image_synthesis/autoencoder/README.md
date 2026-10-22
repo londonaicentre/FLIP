@@ -1,235 +1,180 @@
-# Autoencoder (VAE) — FLIP tutorial
+# Autoencoder — FLIP tutorial
 
-This tutorial trains a **KL-regularised autoencoder plus a patch discriminator** on **3-D brain
-MRI**, using the **FLARE Client API** (`nvflare.client`). The job is defined entirely in Python
-via `FlipFedAvgRecipe` — no hand-written JSON configs required. The code is entirely based on `MONAI`
-functions.
-
-It is one of three tutorials that between them cover generative image synthesis on FLIP:
-
-| Tutorial | Trains | Operates on | Needs an uploaded model? |
-| --- | --- | --- | --- |
-| **`autoencoder`** (this one) | `AutoencoderKL` + `PatchDiscriminator` | 3-D brain MRI | no |
-| [`diffusion_model`](../diffusion_model/) | `DiffusionModelUNet` | 2-D chest X-rays, in pixel space | no |
-| [`latent_diffusion_model`](../latent_diffusion_model/) | `DiffusionModelUNet` | latents of a frozen autoencoder, 3D brain MRI | **yes** — the autoencoder |
-
-The two that pair up — this one and `latent_diffusion_model` — share the brain-MRI cohort, because
-the second consumes the first's output. `diffusion_model` stays on 2D X-rays on purpose: it is the
-one to read first, and pixel-space diffusion at full 3D resolution is exactly the cost that makes
-the latent approach worth explaining.
-
-Each is an **independent single-stage job**.
-
-Validation reports L1 reconstruction loss and **foreground SSIM** on each site's held-out split.
+This tutorial trains a KL-regularised autoencoder (MONAI `AutoencoderKL`) and a patch discriminator
+on 3-D brain MRI, using the **FLARE Client API** (`nvflare.client`), with the job defined in Python
+via `FlipFedAvgRecipe`. The trained autoencoder is the first half of a latent diffusion model: the
+[latent diffusion tutorial](../latent_diffusion_model/README.md) loads it and keeps it frozen. The
+[guide](../README.md) explains how the three image-synthesis tutorials fit together.
 
 ## Example outputs from this tutorial
 
-![Autoencoder reconstructions: four studies, each shown as input vs reconstruction in sagittal, coronal and axial views](assets/example_reconstructions.png)
+![Autoencoder reconstructions: input vs reconstruction in sagittal, coronal and axial views](assets/example_reconstructions.png)
 
-Four brain-MRI studies from `site-1`, each as input (left) vs reconstruction (right) in the sagittal,
-coronal and axial planes. The reconstructions are slightly smoother than the inputs, as expected from a
-KL autoencoder, but keep the anatomy and the tumour.
-
-## Data
-
-The **brain MRI** cohort — MSD Task01_BrainTumour, the Medical Segmentation Decathlon's cut of BraTS
-(see [`fl-tutorials/datasets/brain_mri/`](../../../datasets/brain_mri/)). Each study is **four
-co-registered MR sequences**: FLAIR, T1w, T1Gd and T2w, arriving as four separate single-channel
-NIfTI volumes. Each volume is resampled to **2 mm voxels** and centre-cropped or padded to a
-**96 × 112 × 80** grid (`voxel_spacing` and `spatial_shape` in `config.json`), the way MONAI's 3-D
-latent diffusion tutorial prepares the same data: every brain keeps its proportions and stays whole.
-Each is then z-scored.
-
-```bash
-make -C fl-tutorials download-brain-mri-msd-raw            # 7.6 GB MSD tar, once
-make -C fl-tutorials download-brain-mri-data NUM_CASES=20  # -> data/brain_mri/
-```
-
-**Every sequence is a training sample.** The autoencoder is deliberately modality-agnostic: one
-autoencoder learns to compress all four, which is what lets `latent_diffusion_model` downstream
-train a single diffusion model that is *told* which sequence to generate. `MODALITIES` in
-`config.json` is the switch:
-
-```json
-"MODALITIES": ["FLAIR", "T1w", "T1Gd", "T2w"]   // all four (shipped)
-"MODALITIES": ["T1w"]                            // single-sequence
-```
-
-Each file's sequence is read from its **filename** (`app_files/modality.py`). The simulator layout
-writes `input_<label>_<case>.nii.gz`, and on the platform dcm2niix names the file from
-`ProtocolName`, which the converter sets to the same label — so one parse works in both places with
-nothing to configure per site. The label is matched as a whole `_`-separated token, not a substring,
-which is what keeps `T1w` from also claiming `T1Gd`.
-
-Nothing in *this* tutorial reads the modality; it is attached to each sample for the diffusion
-tutorial's benefit. The tumour labels in the cohort are ignored entirely — this is unsupervised.
-
+Brain-MRI studies from one site, each shown as input vs reconstruction in the sagittal, coronal and
+axial planes.
 
 ## Compatible job type
 
-These files are compatible with `JOB_TYPE=standard` in the base application
-([`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/)) — an ordinary single-stage
-FedAvg job with cross-site validation. The required upload set is `trainer.py`, `config.json`,
-`models.py`; `transforms.py`, `modality.py`, `medicalnet_perceptual.py` and the
-shipped perceptual backbone (`medicalnet_resnet50_23datasets-ff48a622.pth`, produced by
-`make weights`) are uploaded alongside them as extra app
-files.
+This tutorial is designed for `JOB_TYPE=standard`
+([`fl-apps/nvflare/standard/`](../../../../fl-apps/nvflare/standard/)): an ordinary single-stage
+FedAvg job, after which every site evaluates the final global model.
 
-## Feeding the latent diffusion tutorial
+## Data requirements
 
-A run of this tutorial produces the autoencoder that
-[`latent_diffusion_model`](../latent_diffusion_model/) loads as its **frozen** encoder. That handoff
-rests on one naming contract: the autoencoder lives on a submodule called `autoencoder` in both
-networks, so its parameters are keyed `autoencoder.*` in both state dicts. **Do not rename that
-attribute in `app_files/models.py`** — the checkpoint load on the other side is `strict=False`, so a
-mismatch is silently tolerated and the diffusion model then trains against a randomly-initialised
-encoder rather than yours.
+The **brain MRI** cohort: MSD Task01_BrainTumour, the Medical Segmentation Decathlon's cut of BraTS
+(see [`fl-tutorials/datasets/brain_mri/`](../../../datasets/brain_mri/)). On the platform,
+`query.sql` selects every brain MR study, one row per accession. Each study holds **four
+co-registered MR sequences** (FLAIR, T1w, T1Gd and T2w), each a separate single-channel NIfTI
+volume. The trainer reads NIfTI only, so create the project with **DICOM to NIfTI** on.
 
-The architecture is not kept identical by hand. `process_tools/extract_autoencoder.py`
-in that tutorial takes this run's downloaded result and emits two files — the autoencoder-only
-checkpoint to upload, and an `autoencoder_config.yaml` recording the architecture it was trained with,
-which the latent tutorial builds its frozen encoder from. The architecture is read from
-`models.autoencoder_kwargs` here, so **that function is the single definition of this network's shape**
-and the reason it exists as a named function rather than inline in `__init__`.
+**Every sequence is a training sample.** One autoencoder learns to compress all four, which lets the
+latent diffusion tutorial train a single model that is told which sequence to generate. Each file's
+sequence is read from its name (`app_files/modality.py`), and `MODALITIES` in `config.json` selects
+which sequences train:
 
-
-## 3D or 2D discriminator 
-
-The discriminator can be either 2D or 3D. The reason for a 2D discriminator in a 3D training is that **anisotropy** can make a 2D discriminator more useful for the training. This is gated by  `self.is_volumetric`, which is simply
-`net_config.spatial_dims == 3`:
-
-- **`slice_volume_for_2d(volume, indices)`** folds selected axial slices of a 3-D batch into a 2-D
-  batch, `(B, C, H, W, D) -> (B*len(indices), C, H, W)`. 12 slices are drawn per step
-  (`self.perceptual_slices`). **Both operands of a comparison reuse the same indices** — otherwise
-  the loss compares unrelated anatomy.
-  The perceptual loss does not use this path: MedicalNet takes the volume whole. Slicing would
-  dilute it — a random axial slice of a skull-stripped head is often mostly air, and scores near
-  zero whatever the model did.
-
-**`net_config.spatial_dims` is the one key every network is built from**; the `autoencoder` block
-carries no copy of it.
-
-## Note on the perceptual loss (`make weights`)
-
-The perceptual loss is **MedicalNet ResNet-50**, a 3D network pretrained on 23 medical datasets. It
-needs its weights, and **an FL app must never download at run time**: on a
-platform-managed estate the FL server has no internet route, nor does a trust host behind an NHS
-firewall, so the job would hang; and a run-time fetch bypasses the scanned upload path — the file a
-Trust can inspect before training would not be the file that runs. So the backbone travels *with*
-the app:
-
-```bash
-make weights   # → app_files/medicalnet_resnet50_23datasets-ff48a622.pth  (gitignored; `make sim` and `make export` run this for you)
+```json
+"MODALITIES": ["FLAIR", "T1w", "T1Gd", "T2w"]   // all four (shipped)
+"MODALITIES": ["T1w"]                            // one sequence
 ```
 
-That stages the checkpoint from the shared download
-(`make -C fl-tutorials download-weights ARCH=medicalnet_resnet50`, fetched once against a pinned
-sha256) into `app_files/`. It is 185 MB; ResNet-10 (57 MB) is one constant away, `MEDICALNET_ARCH` in
-`app_files/medicalnet_perceptual.py`. **Upload it with the other app files** — it is a `.pth`, so
-the platform's picklescan gates it like any checkpoint.
+Each volume is resampled to **2 mm voxels** (`voxel_spacing`), centre-cropped or padded to a
+**96 × 112 × 80** grid (`spatial_shape`), then z-scored; training adds a small random affine. The
+split into training and validation (`VAL_SPLIT`) is by accession, so the four sequences of one study
+always land on the same side. The cohort's tumour labels are not used: training is unsupervised.
 
-**Why this tutorial does not call MONAI's `PerceptualLoss`.** MONAI exposes the same network as
-`PerceptualLoss(spatial_dims=3, network_type="medicalnet_resnet10_23datasets")`, but that
-constructor reaches the network twice over: `torch.hub.load` fetches the
-`Project-MONAI/perceptual-models` **repository**, whose `download_model` then pulls the weights from
-Hugging Face. Staging a cache the way a single checkpoint is staged does not help, because what
-torch.hub needs cached is a whole *repository directory*, and the upload path and job bundler are
-flat. So `app_files/medicalnet_perceptual.py` builds the identical architecture from MONAI's own
-`ResNetFeatures` — which takes an architecture *name*, never a URL — and loads the staged file. The
-published state dict lands in it with **zero missing and zero unexpected keys**, asserted at load
-time: a partial load under `strict=False` would leave a randomly-initialised critic still reporting
-plausible, smoothly-falling numbers.
+For a local run, download the data from the repository root:
 
-**Attribution.** MedicalNet is Tencent's: Chen, Ma and Zheng, *Med3D: Transfer Learning for 3D Medical
-Image Analysis*, [arXiv:1904.00625](https://arxiv.org/abs/1904.00625) (2019), code at
-[Tencent/MedicalNet](https://github.com/Tencent/MedicalNet). The weights are released under the MIT
-licence on Hugging Face ([`TencentMedicalNet/MedicalNet-Resnet50`](https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50),
-[`-Resnet10`](https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet10)), which is where
-`make weights` fetches them from (the repository carries no copy). Cite the paper if you publish
-results that use this loss. How the loss reads the network (intensity normalisation, final feature
-map) follows MONAI's `PerceptualLoss` for the same backbones.
+```bash
+make -C fl-tutorials download-brain-mri-msd-raw            # 7.6 GB MSD tar, once
+make -C fl-tutorials download-brain-mri-data NUM_CASES=20  # -> fl-tutorials/data/brain_mri/
+```
 
-Its loss values are on a different scale from a 2-D perceptual backbone's, so retune `W_PERCEPTUAL`
-if you swap the backbone.
+In the simulator the two sites train on different halves of these studies (the trainer splits on
+the FLARE site name); on the platform each trust's cohort is already its own.
 
-### A note on mixed precision
+## The network
 
-The training step runs under `autocast`, and the KL divergence is computed in **float32 regardless**
-(`KLDivergenceLoss`). This is not defensive style — it is a fix for a real crash. The expression
-squares sigma, fp16 tops out at 65504, and early in training sigma genuinely reaches ~2×10⁴ on this
-cohort within about 15 steps. Squaring that overflows to `inf`, and `z_mu**2 + inf - log(inf) - 1` is
-`inf - inf`, i.e. **NaN** — which reaches the weights and surfaces one step later as
-`RuntimeError: NaN in autoencoder reconstruction during train`, pointing at the forward pass rather
-than at the loss that poisoned it.
+`app_files/models.py` builds two networks from `net_config` in `config.json`, trained and aggregated
+together:
+
+- **`AutoencoderKL`**: an encoder of residual blocks at three resolutions (64, 128 and 256
+  channels, two blocks per level, no attention) that maps a 96 × 112 × 80 volume to a
+  **3 × 24 × 28 × 20** latent (3 latent channels), and a mirror-image decoder that maps it back.
+- **`PatchDiscriminator`** (4 layers, 32 base channels), which scores local patches as real or
+  reconstructed. It is 3-D by default; `net_config.discriminator.spatial_dims: 2` makes it score 12
+  randomly chosen axial slices of each volume instead.
+
+The autoencoder submodule must stay named `autoencoder`: the latent diffusion tutorial loads this
+run's `autoencoder.*` weights by that prefix, and a renamed submodule would load nothing.
+
+## The training logic
+
+Each `train` task runs `LOCAL_ROUNDS` epochs on the received model and sends back the weight
+difference. Per batch:
+
+1. **Generator step.** `W_RECONSTRUCTION`·L1 + `W_PERCEPTUAL`·perceptual + `W_KL`·KL +
+   `W_GAN`·adversarial: L1 between input and reconstruction, the MedicalNet perceptual distance
+   (below), the KL divergence of the latent from a unit Gaussian, and the discriminator's verdict.
+2. **Discriminator step.** The discriminator learns to tell real volumes from the (detached)
+   reconstructions, with a least-squares adversarial loss scaled by `W_GAN`.
+
+Both steps run under mixed precision; the KL term is computed in float32, because squaring sigma
+overflows float16. Gradients are accumulated over batches of `BATCH_SIZE` to an effective batch of 8
+volumes per optimiser step, and both networks use AdamW.
+
+The learning rate starts at `LR_START`. Add `LR_END` and `LR_DECAY_EPOCHS` to `config.json` to
+decay it along half a cosine over the job's first `LR_DECAY_EPOCHS` epochs, counted across rounds,
+then hold it at `LR_END`. The other two image-synthesis tutorials use the same rule.
+
+Validation runs on the held-out split after every epoch and reports the L1 loss and **foreground
+SSIM**: the skull-stripped background, about 80 % of the grid, scores close to 1 for any
+reconstruction, so it is excluded. On the `evaluate` task the trainer scores the global model the
+same way and reports SSIM as `val_acc` (and L1 as `val_loss`).
+
+## The perceptual loss (`make weights`)
+
+The perceptual loss compares input and reconstruction in the features of **MedicalNet ResNet-50**, a
+3-D network pretrained on 23 medical datasets: Chen, Ma & Zheng, *Med3D: Transfer Learning for 3D
+Medical Image Analysis*, [arXiv:1904.00625](https://arxiv.org/abs/1904.00625) (2019), with weights
+released by Tencent under the MIT licence
+([`TencentMedicalNet/MedicalNet-Resnet50`](https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50)).
+Cite the paper if you publish results that use this loss.
+
+An FL app never downloads at run time (FLIP#1206): the FL server and a trust host may have no
+internet route, and a downloaded file bypasses the scanned upload path. So the weights ship as an
+uploaded file, staged by:
+
+```bash
+make weights   # -> app_files/medicalnet_resnet50_23datasets-ff48a622.pth (gitignored)
+```
+
+`make export` and `make sim` run it for you. **Upload the file with the other app files.**
+`app_files/medicalnet_perceptual.py` builds the network from MONAI's `ResNetFeatures` and loads that
+file, checking its hash and refusing a partial load.
 
 ## Debugging
 
-### Sample images
-
-Written only when **all three** hold:
-
-| Condition | Set by |
-| --- | --- |
-| `"SAVE_DEBUG_SAMPLES": true` | you, in `config.json` (ships `false`) |
-| `LOCAL_DEV=true` | the simulator (every trust sets `false`) |
-| `DEBUG_SAMPLES_DIR` set | `make run` / `make sim` only |
-
-At a trust the last two never hold, so **production never writes images, whatever `config.json`
-says**. The check is `samples_enabled()` in `../dev/plot_utils.py`, and `dev/` is never uploaded: at a
-trust the trainer has no plotting code at all.
-
-- **Where:** `fl-tutorials/data/debug_samples/autoencoder/` (gitignored). Nothing sends them to the server.
-- **When:** at iteration 0 and every `DEBUG_PLOT_EVERY` training iterations, after each epoch's validation, and in the round-end `validate` task.
-- **What:** tri-planar figures (sagittal, coronal, axial) of input vs reconstruction.
-
-### Loss curves
-
-```bash
-DEBUG_SAMPLES_DIR=../../../data/debug_samples/autoencoder python ../dev/plot_utils.py
-```
-
-Reads the simulator logs and writes `losses_<site>.png` next to the samples. Runs on your machine
-only, never at a trust.
+Sample images (tri-planar input vs reconstruction figures) need `"SAVE_DEBUG_SAMPLES": true` and a
+local simulator run; loss curves come from `python ../dev/plot_utils.py`. Both are described in the
+[guide's debugging section](../README.md#debugging).
 
 ## FLIP-specific values
 
-`FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (set stubs in `.env.app`).
-They are NOT passed as CLI flags because the SQL query contains spaces that don't survive argparse
-whitespace-splitting. The trainer reads the query from `config_fed_client.json` at runtime via
-`load_query()`.
+`FLIP_PROJECT_ID` and `FLIP_QUERY` are read from environment variables (stubs in `.env.app`).
+They are NOT passed as CLI flags because the SQL query contains spaces that don't survive
+argparse whitespace-splitting. The trainer reads the query from `config_fed_client.json` at
+runtime via `load_query()`. `.env.app` ships `FLIP_PROJECT_ID=dev`: LOCAL_DEV ignores the value,
+but the `--project_id {project_id}` task arg needs a non-empty token to substitute.
 
 ## How to run
 
 ### Export (primary — no GPU needed)
 
+Produces a complete FLARE job directory under `./fl_job/flip_fedavg/` including:
+- `meta.json` with `custom_props.model_id` (dev UUID for local use)
+- `app/config/config_fed_server.json` and `config_fed_client.json`
+- `app/custom/` with the bundled `flip/` package and the app files staged alongside it
+
 ```bash
 make export
 ```
 
-Writes a complete FLARE job to `./fl_job/flip_fedavg/` (`meta.json`, `app/config/`,
-`app/custom/`). This is the fastest way to verify the job wiring.
+or equivalently, after `make weights` (the **flip-utils** environment with the `full` extra the
+`flare-fl-base` FL image installs, plus the `diffusion` group for the local plotting helper):
+
+```bash
+uv run --project ../../../../flip-utils --extra full --group diffusion python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
+```
+
+> **Note:** `make run` (invoked by the tutorial runner `run-tutorial`/`run-all-tutorials`)
+> delegates to `make sim`. Use `make export` (no GPU) or `make sim`/`make run` (GPU + data).
 
 ### Local simulation (requires a GPU + the dataset)
 
-```bash
-make -C ../../.. download-brain-mri-msd-raw   # 7.6 GB, once
-make -C ../../.. download-brain-mri-data      # -> data/brain_mri/
-make run                                 # delegates to `make sim`
-```
+With the dataset downloaded (see *Data requirements*), run `make sim` here, or
+`make -C fl-tutorials run-tutorial TUTORIAL=autoencoder` from the repository root. The simulator
+runs one site at a time (a site peaks at about 20 GB of GPU memory) and writes its workspace, final
+global model included, under `/tmp/nvflare/autoencoder/`.
 
-Or via the shared harness:
+### Overriding rounds and clients
 
-```bash
-make -C fl-tutorials run-tutorial TUTORIAL=autoencoder
-```
-
-Knobs: `NUM_ROUNDS` (default 1), `N_CLIENTS` (default 2) — override per invocation
-(`make run NUM_ROUNDS=2`) or in `.env.app`. In simulation the two sites train on different halves of
-the dev dataset (the trainer splits on the FLARE site name); in production each trust's cohort is
-already its own.
-
-### Clean
+`NUM_ROUNDS` (default `1`) and `N_CLIENTS` (default `2`) parameterise both `make export` and
+`make sim`/`make run`, and propagate through the tutorial harness:
 
 ```bash
-make clean
+make sim NUM_ROUNDS=2
+make export NUM_ROUNDS=2 N_CLIENTS=3
+make -C fl-tutorials run-tutorial TUTORIAL=autoencoder NUM_ROUNDS=2
 ```
+
+> **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
+> reads `GLOBAL_ROUNDS` from `config.json` at submit time and overrides whatever `job.py` baked into
+> the exported config — deployed round counts come from `config.json`, never from these flags.
+
+### On the platform
+
+Run `make weights`, then upload through the FLIP UI, as a model with job type `standard`, every file
+in `app_files/` (`trainer.py`, `config.json`, `models.py`, `transforms.py`, `modality.py`,
+`medicalnet_perceptual.py`) **plus** the staged `medicalnet_resnet50_23datasets-ff48a622.pth`. Use
+`query.sql` as the cohort query. The standalone FLARE submit path
+(`make -C fl-services/nvflare submit`) is not wired, so the UI is the way in.
