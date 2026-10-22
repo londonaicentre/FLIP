@@ -33,9 +33,14 @@ variable "terraform_role" {
 }
 
 variable "terraform_warehouse" {
-  description = "Warehouse the provider uses for its own queries. FLIP_<CODE>_WH once the first apply has created it."
+  description = <<-EOT
+    Warehouse the provider's session uses. Leave null (the default): everything this root does is
+    DDL, grants and SHOW commands, which need no warehouse, and the deploy role's own warehouse,
+    FLIP_<CODE>_WH, is created BY this root, so naming it breaks the first plan ("The requested
+    warehouse does not exist or not authorized").
+  EOT
   type        = string
-  default     = "COMPUTE_WH"
+  default     = null
 }
 
 variable "trust_code" {

@@ -18,7 +18,7 @@ account_name      = "MYACCOUNT"
 # The workload root is always applied as the deploy role. The deploy user, the role and the four
 # account privileges it holds are created by ../snowflake-platform.
 terraform_role      = "FLIP_GSTT_DEPLOY"
-terraform_warehouse = "FLIP_GSTT_WH"
+# terraform_warehouse: leave unset; the provider needs no warehouse and FLIP_<CODE>_WH is created by this root
 
 trust_code = "GSTT"
 
