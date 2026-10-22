@@ -20,15 +20,20 @@
 #      an already-registered trust returns a metadata-only kit (no credentials;
 #      the hub stores only the SHA-256 hash), so re-running is safe.
 #   3. Write the kit back into trust/.env.<CODE>.<env> via
-#      scripts/distribute_trust_kits.py (credentials on first registration,
+#      scripts/distribute_trust_kits.py (whatever credentials the kit carries,
 #      hub-shared refreshed every run; operator host-local edits preserved).
-# Delivery to a host is command-driven, NOT done here: `make deploy-trust`
-# pushes the kit to the EC2 host; `make package-onprem-trust-kit` tarballs it
-# for an on-prem operator.
+# Delivery to a host is command-driven, NOT done here: `make upgrade-trust-ec2
+# KIT=<CODE> PROD=<env>` recreates the EC2 host's containers on the new kit;
+# `make package-onprem-trust-kit` tarballs it for an on-prem operator.
+#
+# ROTATE_KEYS=1 (set by `make rotate-trust-keys KIT=<CODE>`) runs the same CLI with
+# `--rotate`: one named trust, keys reissued in place, and the kit MUST come back with
+# credentials or the rotation is a failure.
 #
 # Usage:
 #   KIT=<CODE> register-trusts.sh   # register one kit (trust/.env.<CODE>.<env>)
 #   register-trusts.sh              # register every live trust/.env.*.<env> kit
+#   KIT=<CODE> ROTATE_KEYS=1 register-trusts.sh   # rotate that one trust's keys
 # PROD=true selects .production kits, PROD=lza selects .lza-prod kits and
 # PROD=lza-stag selects .lza-stag kits (FLIP#749); anything else selects .stag.
 
@@ -82,9 +87,9 @@ fi
 
 # Kit-file writing is delegated to scripts/distribute_trust_kits.py (the single
 # in-place-upsert writer shared with the dev path and sync). It seeds the
-# host-local profile from the .example on first write, writes credentials only
-# on a new registration, and upserts metadata + the hub-shared block under the
-# managed sentinel — preserving operator edits on re-runs. The hub-shared key
+# host-local profile from the .example on first write, writes whatever credentials
+# the kit carries (which is what makes rotation work), and upserts metadata + the
+# hub-shared block under the managed sentinel — preserving operator edits on re-runs. The hub-shared key
 # set and sentinel live in scripts/trust_kit_lib.py.
 
 # Register one trust (identified by its CODE-named kit file) via a one-off ECS
@@ -100,7 +105,13 @@ register_one_kit() {
         return 0
     fi
 
-    log_info "Registering trust '$name' (kit $(basename "$kit_file")) via a one-off ECS task..."
+    local verb="registration"
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        verb="rotation"
+        log_info "Rotating keys for trust '$name' (kit $(basename "$kit_file")) via a one-off ECS task..."
+    else
+        log_info "Registering trust '$name' (kit $(basename "$kit_file")) via a one-off ECS task..."
+    fi
     # Mint an ephemeral SSM parameter for the kit handoff (S-1). The ECS
     # task PUTs the kit JSON here as a SecureString; we GET + DELETE it
     # after the task completes. This keeps the plaintext kit out of
@@ -112,8 +123,14 @@ register_one_kit() {
 
     local cmd_args
     cmd_args=(uv run python -m flip_api.scripts.register_trust --name "$name" --out-ssm-parameter "$ssm_param")
-    [ -n "$code" ] && cmd_args+=(--code "$code")
-    [ -n "$region" ] && cmd_args+=(--region "$region")
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        # Rotation reissues the keys of an existing trust in place: same id, same code, same FL kit
+        # slot, only api_key_hash changes. The name identifies it; the code is not needed.
+        cmd_args+=(--rotate)
+    else
+        [ -n "$code" ] && cmd_args+=(--code "$code")
+        [ -n "$region" ] && cmd_args+=(--region "$region")
+    fi
     local overrides
     # `--args -- ` is required: cmd_args contains dash-prefixed values (`-m`, `--name`, ...)
     # and jq scans the whole argv for options regardless of `--args`. The `--` end-of-options
@@ -138,15 +155,16 @@ register_one_kit() {
     task_id="${task_arn##*/}"
     aws_cmd ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task_id"
 
-    # Read the kit from SSM (out-of-band), then delete the parameter. We
-    # ALSO delete the CloudWatch log stream as belt-and-braces: if a future
+    # Read the kit from SSM (out-of-band). The parameter is deleted only once the kit
+    # file has been written: the hub cannot re-emit a kit it has already committed, so
+    # deleting before the write would throw away the only copy of the new credentials.
+    # We ALSO delete the CloudWatch log stream as belt-and-braces: if a future
     # code path or operator runs register_trust without --out-ssm-parameter,
     # or if a logger line accidentally captures a kit field on stderr,
     # this nukes the CloudWatch copy at the earliest opportunity.
     local kit failure_log
     kit="$(aws_cmd ssm get-parameter --name "$ssm_param" --with-decryption \
         --query 'Parameter.Value' --output text 2>/dev/null || true)"
-    aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
 
     # The kit (present / empty / absent) is the failure signal — NOT the task's exit
     # code, which Fargate misreports for one-off tasks (a container exiting 7 has been
@@ -174,26 +192,47 @@ register_one_kit() {
         --log-stream-name "flip-api/flip-api/$task_id" >/dev/null 2>&1 || true
 
     if [ -z "$kit" ] || [ "$kit" = "None" ]; then
-        log_error "Trust '$name': no kit in SSM parameter '$ssm_param' — registration FAILED."
+        log_error "Trust '$name': no kit in SSM parameter '$ssm_param' — $verb FAILED."
         [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
+        aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
         return 1
     fi
     if [ "$(echo "$kit" | jq 'length')" = "0" ]; then
-        log_error "Trust '$name': empty kit array — registration FAILED (see the task's error above)."
+        log_error "Trust '$name': empty kit array — $verb FAILED (see the task's error above)."
         [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
+        aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
         return 1
     fi
     kit="$(echo "$kit" | jq -c '.[0]')"
-    # Detect skip path: kit present but credentials absent (hub stores only hashes).
+    # Credentials present / absent is the shape test. Registration is idempotent, so an
+    # already-registered trust legitimately comes back metadata-only; a rotation that does
+    # the same has not reissued anything and is a failure.
     if ! echo "$kit" | jq -e '.trust_api_key' >/dev/null 2>&1; then
+        if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+            log_error "Kit for '$name' came back without credentials — rotation FAILED."
+            [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
+            aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
+            return 1
+        fi
         log_info "Trust '$name' already registered — refreshing hub-shared block in $(basename "$kit_file")."
     fi
 
     # Write the kit back into its CODE-named file. The target is a
     # .production/.stag kit, so distribute_trust_kits.py writes the hub-shared
-    # block LIVE (the remote operator has no hub .env). Credentials are written
-    # only on first registration; operator host-local edits are preserved.
-    echo "$kit" | uv run --no-config "$REPO_ROOT/scripts/distribute_trust_kits.py" --target "$kit_file"
+    # block LIVE (the remote operator has no hub .env). Whatever credentials the
+    # kit carries are written; operator host-local edits are preserved.
+    #
+    # errexit is disabled inside this function (every call site is `... || failed=1`),
+    # so the writer's status has to be checked by hand: an unchecked failure would log
+    # "Wrote kit" over a kit file that never received the new credentials. The SSM
+    # parameter is left in place on that failure — it is the only remaining copy, and
+    # the message below names it so the operator can recover the kit by hand.
+    if ! echo "$kit" | uv run --no-config "$REPO_ROOT/scripts/distribute_trust_kits.py" --target "$kit_file"; then
+        log_error "Trust '$name': could not write $kit_file — $verb FAILED."
+        log_error "The kit is still in SSM parameter '$ssm_param'; read it with 'aws ssm get-parameter --name $ssm_param --with-decryption', then delete it."
+        return 1
+    fi
+    aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
     log_success "Wrote kit for '$name' → $kit_file"
 }
 
@@ -201,6 +240,12 @@ register_one_kit() {
 # prod kit (trust/.env.*.<suffix>). .example templates are not matched by the
 # glob (they end in .example, not the env suffix).
 failed=0
+if [ "${ROTATE_KEYS:-0}" = "1" ] && [ -z "${KIT:-}" ]; then
+    # Never rotate every trust in one go: each rotation needs its kit delivered to that site
+    # before the old key can be retired, so the loop has to be one operator-chosen trust at a time.
+    log_error "ROTATE_KEYS=1 requires KIT=<CODE> — rotation is one trust at a time."
+    exit 1
+fi
 if [ -n "${KIT:-}" ]; then
     kit_file="$REPO_ROOT/trust/.env.${KIT}.${ENV_SUFFIX}"
     if [ ! -f "$kit_file" ]; then

@@ -217,3 +217,65 @@ def register_trust(
         trust_api_key=api_key,
         trust_internal_service_key=internal_key,
     )
+
+
+def rotate_trust_keys(session: Session, *, name: str) -> RegisteredTrust:
+    """Reissue a trust's api and internal-service keys in place (FLIP#1569).
+
+    The trust row, its id, its code and its FL kit slot assignment are unchanged. Only
+    ``api_key_hash`` moves, in one transaction with a ROTATED audit row, and the new plaintext
+    keys are returned once for the operator to write into the trust's kit file. The hub refuses
+    the old key from the moment this commits, so the trust is offline until its containers are
+    recreated from the new kit.
+
+    Args:
+        session (Session): SQLModel session; the function commits before returning.
+        name (str): Trust display name, as ``register_one_trust`` looks it up.
+
+    Returns:
+        RegisteredTrust: The trust, its FL kit slot, and the new plaintext keys.
+
+    Raises:
+        TrustRegistrationError: No trust of that name is registered, or it has no FL kit slot.
+    """
+    trust = session.exec(select(Trust).where(Trust.name == name.strip())).first()
+    if trust is None:
+        raise TrustRegistrationError(f"No trust named {name!r} is registered.")
+
+    slot = session.exec(select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == trust.id)).first()
+    if slot is None:
+        raise TrustRegistrationError(
+            f"Trust {trust.name!r} has no FL kit slot assigned, so its kit cannot be reissued. "
+            "Reclaiming a slot is a separate operation; do not rotate the api key without one."
+        )
+
+    api_key, api_key_hash = generate_trust_key()
+    # Per-trust and trust-side only: the hub never validates this key, so its hash is discarded.
+    internal_key, _ = generate_trust_key()
+
+    trust.api_key_hash = api_key_hash
+
+    # Same transaction as the hash change: a rolled-back rotation leaves no audit claim behind.
+    audit_trust_action(
+        trust_id=trust.id,
+        trust_name=trust.name,
+        action=TrustAuditAction.ROTATED,
+        user_id=None,
+        session=session,
+    )
+
+    session.add(trust)
+    session.commit()
+    session.refresh(trust)
+
+    # Drop this process's entry; serving workers re-check the live hash on every cache hit.
+    trust_key_cache.invalidate()
+
+    logger.info("Rotated api and internal-service keys for trust %r (id=%s).", trust.name, trust.id)
+
+    return RegisteredTrust(
+        trust=trust,
+        fl_kit_slot=slot,
+        trust_api_key=api_key,
+        trust_internal_service_key=internal_key,
+    )
