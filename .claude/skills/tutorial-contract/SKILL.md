@@ -68,6 +68,7 @@ comments in the copied structural files — each explains a trap that has bitten
 | New tutorial is… | NVFLARE | Flower |
 |------------------|---------|--------|
 | Tabular / OMOP-only, CPU | `tabular_classification/ehr_risk_prediction` (smallest; per-site partitioning) | `ehr_risk_prediction` |
+| Statistics through FedAvg (no training; the model is the result) | `tabular_causal_discovery/biomarker_causal_discovery` | `biomarker_causal_discovery` |
 | 2-D imaging classification | `image_classification/xray_classification` | `xray_classification` |
 | 3-D segmentation (NIfTI via XNAT, labels as enrichment) | `image_segmentation/3d_spleen_segmentation` | `3d_spleen_segmentation`; `3d_prostate_segmentation` for multi-series studies + an nnU-Net plan |
 | Evaluation of an uploaded checkpoint | `image_evaluation/3d_spleen_segmentation_evaluation`; `arkplus_*_evaluation` for several checkpoints | `3d_spleen_segmentation_evaluation` |
@@ -188,6 +189,24 @@ template, required files present, template files byte-identical), `test_flower_m
   with imaging **off** (FLIP#1071 — left on, the hub dispatches `create_imaging` and the run dies at
   the image-pull wait): the e2e target pins `--no-imaging`, the demo profile `has_imaging: False`.
   One dev CSV sliced per site; CPU; figure = feature set + label prevalence.
+- **Statistics through FedAvg.** A parameter-free module whose buffers are the exchanged arrays, so
+  the downloaded model *is* the result and a committed `summarise_results.py` reads it
+  (`biomarker_causal_discovery`: bootstrapped FCI as pooled sufficient statistics). Each site releases
+  **one** statistic per run, never one per bootstrap — reproducible resamples are a system of known
+  weighted sums that inverts to rows (the #1484 review). Floors the config can only raise (a hard row
+  floor, the trust's `COHORT_QUERY_THRESHOLD`, which reaches the FL client, a small-cell rule for discrete
+  columns) and refusals that name neither count nor column, since both backends forward a client's
+  exception text to the hub. The last round consumes and zeroes the statistics, so the job refuses
+  fewer than two rounds. Shape the payload so the NVFLARE percentile filter and Flower's
+  clip-and-noise are no-ops, and say so; the README shows the loop as a Mermaid block and an
+  agreement table in place of a curve.
+- **Access-controlled dataset.** The dataset target is a converter from the licence holder's own
+  download (`convert-adni-cohort ADNI_DIR=`) into the gitignored data root, refusing any output path
+  git tracks; no rows, no synthetic stand-in, tests on invented tables of the same shape, and when the
+  agreement forbids third-party AI tools on the rows, never print a row into a session. The README
+  carries the application steps, the acknowledgement and the agreement's conditions; figures are
+  aggregates. Never seeded on the shared dev trusts: a `load-<cohort>` target for a licence holder's
+  local trusts, the e2e target documented with that prerequisite, and no demo video.
 - **Evaluation.** `evaluator.py` + `FlipEvalRecipe` / the `evaluation` template; the checkpoint is
   staged host-side (`download-checkpoints`, `prepare-checkpoint`) into the upload dir, never fetched
   at run time; the e2e target points `QUERY_FILE` at the training tutorial's query. The demo
