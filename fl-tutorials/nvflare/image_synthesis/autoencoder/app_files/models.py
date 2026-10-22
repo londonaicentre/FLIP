@@ -42,19 +42,19 @@ def autoencoder_kwargs(net_config: Mapping[str, Any]) -> dict[str, Any]:
     checkpoint. Every argument is explicit: ``norm_num_groups`` changes no tensor shape, so a wrong
     default would load a checkpoint cleanly and produce wrong latents.
     """
-    stage_1 = net_config["stage_1"]
+    autoencoder = net_config["autoencoder"]
     return {
         "spatial_dims": net_config["spatial_dims"],
-        "in_channels": stage_1["in_channels"],
-        "out_channels": stage_1["out_channels"],
-        "num_res_blocks": stage_1["num_res_blocks"],
-        "channels": stage_1["channels"],
-        "attention_levels": stage_1["attention_levels"],
-        "latent_channels": stage_1["latent_channels"],
-        "norm_num_groups": stage_1["norm_num_groups"],
-        "norm_eps": stage_1["norm_eps"],
-        "with_encoder_nonlocal_attn": stage_1["with_encoder_nonlocal_attn"],
-        "with_decoder_nonlocal_attn": stage_1["with_decoder_nonlocal_attn"],
+        "in_channels": autoencoder["in_channels"],
+        "out_channels": autoencoder["out_channels"],
+        "num_res_blocks": autoencoder["num_res_blocks"],
+        "channels": autoencoder["channels"],
+        "attention_levels": autoencoder["attention_levels"],
+        "latent_channels": autoencoder["latent_channels"],
+        "norm_num_groups": autoencoder["norm_num_groups"],
+        "norm_eps": autoencoder["norm_eps"],
+        "with_encoder_nonlocal_attn": autoencoder["with_encoder_nonlocal_attn"],
+        "with_decoder_nonlocal_attn": autoencoder["with_decoder_nonlocal_attn"],
     }
 
 

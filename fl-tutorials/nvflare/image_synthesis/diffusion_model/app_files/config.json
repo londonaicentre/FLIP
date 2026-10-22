@@ -19,8 +19,6 @@
         "diffusion_model": {
             "in_channels": 1,
             "out_channels": 1,
-            "with_conditioning": false,
-            "cross_attention_dim": 0,
             "channels": [
                 64,
                 128,

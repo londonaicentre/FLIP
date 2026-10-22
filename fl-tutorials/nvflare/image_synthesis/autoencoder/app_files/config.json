@@ -2,12 +2,10 @@
     "job_type": "standard",
     "GLOBAL_ROUNDS": 3,
     "LOCAL_ROUNDS": 150,
-    "LR_G": 0.0001,
-    "LR_D": 0.0001,
+    "LR_START": 0.0001,
     "VAL_SPLIT": 0.2,
     "BATCH_SIZE": 2,
     "SAVE_DEBUG_SAMPLES": false,
-    "DEBUG_SAMPLES_MAX": 8,
     "DEBUG_PLOT_EVERY": 100,
     "MODALITIES": [
         "FLAIR",
@@ -15,10 +13,10 @@
         "T1Gd",
         "T2w"
     ],
-    "w_reconstruction_loss": 1.0,
-    "w_perceptual_loss": 1.0,
-    "w_gan_loss": 0.1,
-    "w_kl_loss": 1e-08,
+    "W_RECONSTRUCTION": 1.0,
+    "W_PERCEPTUAL": 1.0,
+    "W_KL": 1e-08,
+    "W_GAN": 0.1,
     "spatial_shape": [
         96,
         112,
@@ -31,9 +29,8 @@
     ],
     "net_config": {
         "spatial_dims": 3,
-        "stage_1": {
+        "autoencoder": {
             "in_channels": 1,
-            "spatial_dims": 3,
             "out_channels": 1,
             "num_res_blocks": [
                 2,
@@ -63,6 +60,5 @@
             "in_channels": 1,
             "out_channels": 1
         }
-    },
-    "LR_END": 0.0001
+    }
 }

@@ -48,15 +48,10 @@ class DiffusionModelNetwork(nn.Module):
             spatial_dims=net_config["spatial_dims"],
             in_channels=net_config["diffusion_model"]["in_channels"],
             out_channels=net_config["diffusion_model"]["out_channels"],
-            with_conditioning=net_config["diffusion_model"]["with_conditioning"],
-            cross_attention_dim=None
-            if net_config["diffusion_model"]["cross_attention_dim"] == 0
-            else net_config["diffusion_model"]["cross_attention_dim"],
             channels=net_config["diffusion_model"]["channels"],
             num_res_blocks=net_config["diffusion_model"]["num_res_blocks"],
             attention_levels=net_config["diffusion_model"]["attention_levels"],
-            # Fused SDPA: attention at 64x64 (level 2 of a 256² image) would otherwise materialise a
-            # 4096x4096 map per head (~9 GiB at batch 6); same weights, same result.
+            # Fused scaled-dot-product attention: the same result, without materialising each head's map.
             use_flash_attention=True,
         )
 

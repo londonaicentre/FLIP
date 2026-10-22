@@ -40,7 +40,6 @@ from monai.data import DataLoader, Dataset
 from monai.inferers import DiffusionInferer
 from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
-from torch.optim.lr_scheduler import LambdaLR
 from transforms import get_xray_transforms
 
 # plot_utils.py is a local-development helper (dev/): job.py stages it into simulator runs, and it is
@@ -122,11 +121,11 @@ def grad_clip_norm(config: dict) -> float:
 
 
 def lr_at(epoch: int, config: dict) -> float:
-    """The learning rate at an epoch: half a cosine from ``LR_START`` to ``LR_END``, then held.
+    """The learning rate at an epoch of the job: half a cosine from ``LR_START`` to ``LR_END``, then held.
 
-    The decay spans the first ``LR_DECAY_EPOCHS`` epochs, counted across rounds (one trainer serves
-    the whole job). Without ``LR_END`` or a positive ``LR_DECAY_EPOCHS`` the rate stays at
-    ``LR_START``. Driven through a ``LambdaLR`` because ``CosineAnnealingLR`` would climb back up.
+    The decay spans the job's first ``LR_DECAY_EPOCHS`` epochs, so ``epoch`` counts across rounds
+    (``global_round * LOCAL_ROUNDS + epoch``). Without ``LR_END`` or a positive ``LR_DECAY_EPOCHS`` the
+    rate stays at ``LR_START``.
     """
     start = float(config["LR_START"])
     end = float(config.get("LR_END", start))
@@ -135,6 +134,11 @@ def lr_at(epoch: int, config: dict) -> float:
         return start
     progress = min(epoch, decay_epochs) / decay_epochs
     return end + (start - end) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+def set_learning_rate(optimizer: torch.optim.Optimizer, lr: float) -> None:
+    for group in optimizer.param_groups:
+        group["lr"] = lr
 
 
 def site_data_paths(site_name: str) -> tuple[Path, Path] | None:
@@ -230,8 +234,8 @@ def sample_and_save(
 class DiffusionTrainer:
     """The model, optimiser, schedules and data for pixel-space diffusion training.
 
-    One instance lives for the whole ``flare.is_running()`` loop, so the optimiser state and the
-    learning-rate schedule carry over from round to round.
+    One instance lives for the whole ``flare.is_running()`` loop, so the optimiser state carries over
+    from round to round.
     """
 
     def __init__(self, config: dict, project_id: str, query: str):
@@ -244,8 +248,6 @@ class DiffusionTrainer:
         self.optimizer = torch.optim.Adam(
             self.model.diffusion_model.parameters(), lr=config["LR_START"], weight_decay=1e-6, amsgrad=True
         )
-        # LambdaLR scales the optimiser's initial rate, LR_START; stepped once per epoch.
-        self.lr_scheduler = LambdaLR(self.optimizer, lambda epoch: lr_at(epoch, config) / config["LR_START"])
         self.noise_scheduler = DDPMScheduler(
             num_train_timesteps=1000,
             schedule="scaled_linear_beta",
@@ -342,11 +344,12 @@ class DiffusionTrainer:
         """One ``train`` task: ``LOCAL_ROUNDS`` epochs. Returns the number of optimiser steps."""
         for epoch in range(self.epochs):
             step = global_round * self.epochs + epoch + 1
+            lr = lr_at(step - 1, self.config)
+            set_learning_rate(self.optimizer, lr)
             epoch_loss = self.train_one_epoch()
             logger.info(f"Epoch {epoch + 1} / {self.epochs}: loss {epoch_loss}")
             writer.add_scalar("Total loss DM@epoch", epoch_loss, global_step=step)
-            writer.add_scalar("LR DM@epoch", self.optimizer.param_groups[0]["lr"], global_step=step)
-            self.lr_scheduler.step()
+            writer.add_scalar("LR DM@epoch", lr, global_step=step)
 
             if due_for_validation(epoch, self.epochs, self.config):
                 val_loss = score_split(self.model, self.val_loader, self.inferer, self.noise_scheduler, self.device)

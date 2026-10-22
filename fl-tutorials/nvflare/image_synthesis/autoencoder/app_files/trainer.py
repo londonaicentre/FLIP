@@ -25,6 +25,7 @@ to an effective batch of ``EFFECTIVE_BATCH_SIZE``. Validation reports L1 and for
 import argparse
 import json
 import logging
+import math
 from pathlib import Path
 
 import einops
@@ -170,20 +171,25 @@ def batch_accumulation_step(batch_size: int) -> int:
     return max(1, EFFECTIVE_BATCH_SIZE // batch_size)
 
 
-def round_lr_schedule(
-    optimizer: torch.optim.Optimizer, lr_start: float, lr_end: float, epochs: int
-) -> torch.optim.lr_scheduler.ExponentialLR:
-    """Exponential decay from ``lr_start`` to ``lr_end`` over one round's local epochs.
+def lr_at(epoch: int, config: dict) -> float:
+    """The learning rate at an epoch of the job: half a cosine from ``LR_START`` to ``LR_END``, then held.
 
-    Built afresh each round, as the reference MSD recipe decays over its one run. A schedule built
-    once would compound across rounds on a trust, where one trainer serves the whole job: five rounds
-    from 1e-4 to 1e-5 would end at 1e-9. ``lr_end`` equal to ``lr_start`` (the shipped config) is a
-    gamma of exactly 1, so the decay is opt-in by lowering ``LR_END``.
+    The decay spans the job's first ``LR_DECAY_EPOCHS`` epochs, so ``epoch`` counts across rounds
+    (``global_round * LOCAL_ROUNDS + epoch``). Without ``LR_END`` or a positive ``LR_DECAY_EPOCHS`` the
+    rate stays at ``LR_START``.
     """
+    start = float(config["LR_START"])
+    end = float(config.get("LR_END", start))
+    decay_epochs = int(config.get("LR_DECAY_EPOCHS", 0) or 0)
+    if decay_epochs <= 0:
+        return start
+    progress = min(epoch, decay_epochs) / decay_epochs
+    return end + (start - end) * 0.5 * (1.0 + math.cos(math.pi * progress))
+
+
+def set_learning_rate(optimizer: torch.optim.Optimizer, lr: float) -> None:
     for group in optimizer.param_groups:
-        group["lr"] = lr_start
-    gamma = (lr_end / lr_start) ** (1.0 / max(1, epochs))
-    return torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+        group["lr"] = lr
 
 
 def foreground_ssim(
@@ -260,19 +266,19 @@ class AutoencoderTrainer:
         self.perceptual_loss = load_medicalnet_perceptual(Path(__file__).parent.resolve()).to(self.device)
         self.adversarial_loss = PatchAdversarialLoss(criterion="least_squares")
         self.kl_loss = KLDivergenceLoss()
-        self.w_reconstruction = config["w_reconstruction_loss"]
-        self.w_perceptual = config["w_perceptual_loss"]
-        self.w_kl = config["w_kl_loss"]
-        self.w_gan = config["w_gan_loss"]
+        self.w_reconstruction = config["W_RECONSTRUCTION"]
+        self.w_perceptual = config["W_PERCEPTUAL"]
+        self.w_kl = config["W_KL"]
+        self.w_gan = config["W_GAN"]
         # A 2-D discriminator judges a 3-D volume slice by slice.
         net_config = config["net_config"]
         self.slice_discriminator = net_config["spatial_dims"] == 3 and net_config["discriminator"]["spatial_dims"] == 2
 
         self.optimizer_g = torch.optim.AdamW(
-            self.model.autoencoder.parameters(), lr=config["LR_G"], weight_decay=WEIGHT_DECAY
+            self.model.autoencoder.parameters(), lr=config["LR_START"], weight_decay=WEIGHT_DECAY
         )
         self.optimizer_d = torch.optim.AdamW(
-            self.model.discriminator.parameters(), lr=config["LR_D"], weight_decay=WEIGHT_DECAY
+            self.model.discriminator.parameters(), lr=config["LR_START"], weight_decay=WEIGHT_DECAY
         )
 
         # Data
@@ -431,14 +437,12 @@ class AutoencoderTrainer:
     def train(self, writer: SummaryWriter, global_round: int) -> int:
         """One ``train`` task: ``LOCAL_ROUNDS`` epochs. Returns the number of batches trained on."""
         self.scaler_g, self.scaler_d = GradScaler(), GradScaler()
-        scheduler_g = round_lr_schedule(
-            self.optimizer_g, self.config["LR_G"], self.config.get("LR_END", self.config["LR_G"]), self.epochs
-        )
         for epoch in range(self.epochs):
             step = global_round * self.epochs + epoch + 1
+            for optimizer in (self.optimizer_g, self.optimizer_d):
+                set_learning_rate(optimizer, lr_at(step - 1, self.config))
             losses = self.train_one_epoch(epoch, global_round)
             val_loss, val_ssim, first_batch = validate(self.model, self.val_loader, self.device)
-            scheduler_g.step()
 
             logger.info(
                 f"Epoch {epoch + 1} / {self.epochs};\n "

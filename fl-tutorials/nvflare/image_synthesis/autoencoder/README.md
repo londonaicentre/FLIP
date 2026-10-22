@@ -106,10 +106,8 @@ The discriminator can be either 2D or 3D. The reason for a 2D discriminator in a
   dilute it — a random axial slice of a skull-stripped head is often mostly air, and scores near
   zero whatever the model did.
 
-**`net_config.spatial_dims` is the top-level key, and the one every network is built from.**
-`stage_1` carries a copy that `models.py` does not read; a parity test fails if the two disagree,
-because a config that sets one and not the other looks coherent while the trainer and the network it
-is training disagree about their own dimensionality.
+**`net_config.spatial_dims` is the one key every network is built from**; the `autoencoder` block
+carries no copy of it.
 
 ## Note on the perceptual loss (`make weights`)
 
@@ -151,7 +149,8 @@ licence on Hugging Face ([`TencentMedicalNet/MedicalNet-Resnet50`](https://huggi
 results that use this loss. How the loss reads the network (intensity normalisation, final feature
 map) follows MONAI's `PerceptualLoss` for the same backbones.
 
-Note that MedicalNet's raw values are 5–9× smaller than the 2-D LPIPS backbone, so adjust `w_perceptual_loss` according to the backbone. 
+Its loss values are on a different scale from a 2-D perceptual backbone's, so retune `W_PERCEPTUAL`
+if you swap the backbone.
 
 ### A note on mixed precision
 

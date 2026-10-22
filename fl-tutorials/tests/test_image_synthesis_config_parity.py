@@ -226,7 +226,7 @@ def test_frozen_autoencoder_config_matches_the_autoencoder_tutorials_network() -
     unloadable means "silently ignored", not "raises". This is the single most valuable assertion in
     this file.
 
-    Compared against ``models.autoencoder_kwargs`` rather than against ``config.json``'s ``stage_1``
+    Compared against ``models.autoencoder_kwargs`` rather than against ``config.json``'s ``autoencoder``
     block, because the kwargs are what reach ``AutoencoderKL``. A config value that never reaches the network
     (``norm_num_groups`` is the dangerous one: it leaves every parameter shape untouched) would
     otherwise go unnoticed.
@@ -245,12 +245,12 @@ def test_frozen_autoencoder_config_matches_the_autoencoder_tutorials_network() -
 def test_the_latent_config_does_not_redeclare_the_autoencoder_architecture() -> None:
     """``config.json`` must not grow a second copy of the architecture back.
 
-    A ``stage_1`` block here would be read by nothing
+    An ``autoencoder`` block here would be read by nothing
     (``models.py`` builds from the YAML) while looking authoritative to the next person editing it.
     """
     net_config = _config(_LATENT_DIFFUSION)["net_config"]
-    assert "stage_1" not in net_config, (
-        "latent_diffusion_model's net_config has a stage_1 block. The frozen autoencoder's "
+    assert "autoencoder" not in net_config, (
+        "latent_diffusion_model's net_config has an autoencoder block. The frozen autoencoder's "
         "architecture belongs in autoencoder_config.yaml, beside the checkpoint it describes."
     )
 
@@ -600,7 +600,7 @@ def test_subnetwork_spatial_dims_do_not_contradict_the_top_level(tutorial: Path)
     """Any ``spatial_dims`` repeated inside a ``net_config`` sub-block equals the top-level one.
 
     ``models.py`` builds every network from ``net_config["spatial_dims"]``, so the copies carried
-    inside ``stage_1`` (and in a 3-D port, ``diffusion_model``) steer nothing — which is exactly why
+    inside ``autoencoder`` or ``diffusion_model`` would steer nothing — which is exactly why
     they are dangerous. They read like the authoritative value, so a 2-D/3-D switch that edits one and
     not the other produces a config that looks coherent, builds a network of the top-level
     dimensionality, and leaves anything keyed off the sub-block disagreeing with the model it was
@@ -1102,9 +1102,9 @@ def _tiny_run(tmp_path: Path, channels: list[int], norm_num_groups: int = 2) -> 
     from monai.networks.nets import AutoencoderKL
 
     architecture = {**_tiny_autoencoder_architecture(), "channels": channels, "norm_num_groups": norm_num_groups}
-    stage_1 = {key: value for key, value in architecture.items() if key != "spatial_dims"}
+    block = {key: value for key, value in architecture.items() if key != "spatial_dims"}
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"net_config": {"spatial_dims": 2, "stage_1": stage_1}}))
+    config.write_text(json.dumps({"net_config": {"spatial_dims": 2, "autoencoder": block}}))
     weights = {f"{_AUTOENCODER_PREFIX}{k}": v for k, v in AutoencoderKL(**architecture).state_dict().items()}
     checkpoint = tmp_path / "FL_global_model.pt"
     torch.save({"model": {**weights, "discriminator.w": torch.zeros(1)}, "meta": {}}, checkpoint)
@@ -1386,21 +1386,35 @@ def test_in_loop_and_round_boundary_validation_share_one_scorer_and_sampler(tuto
 
 
 def test_the_optimisation_helpers_are_identical_across_the_diffusion_tutorials() -> None:
-    """``grad_clip_norm`` and ``lr_at`` are the same source in both trainers.
+    """``grad_clip_norm`` is the same source in both diffusion trainers.
 
-    Both are hand-duplicated (``app_files/`` is the upload unit), so pin them to each other: a decay
-    tweak made in one tutorial alone would make the two runs incomparable without anything saying so.
+    Hand-duplicated (``app_files/`` is the upload unit), so pinned: a tweak made in one tutorial alone
+    would make the two runs incomparable without anything saying so.
     """
-    for name in ("grad_clip_norm", "lr_at"):
-        sources = {}
-        for tutorial in _DIFFUSION_TUTORIALS:
-            tree = ast.parse((tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8"))
-            function = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name)
-            sources[tutorial.name] = ast.unparse(function)
-        assert len(set(sources.values())) == 1, f"{name} differs between {sorted(sources)}"
+    sources = {tutorial.name: _function_source(tutorial, "grad_clip_norm") for tutorial in _DIFFUSION_TUTORIALS}
+    assert len(set(sources.values())) == 1, f"grad_clip_norm differs between {sorted(sources)}"
 
 
-@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+def _function_source(tutorial: Path, name: str) -> str:
+    tree = ast.parse((tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8"))
+    return ast.unparse(next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == name))
+
+
+@pytest.mark.parametrize("name", ["lr_at", "set_learning_rate"])
+def test_one_learning_rate_rule_in_every_trainer(name: str) -> None:
+    """All three trainers share one learning-rate rule, and each sets it from the job-wide epoch.
+
+    Counting the epoch from ``global_round`` rather than from a scheduler's own step count keeps the
+    rule the same whether one trainer serves the whole job (a trust) or is rebuilt each round (the
+    autoencoder's simulator run).
+    """
+    sources = {tutorial.name: _function_source(tutorial, name) for tutorial in _ALL_TUTORIALS}
+    assert len(set(sources.values())) == 1, f"{name} differs between {sorted(sources)}"
+    for tutorial in _ALL_TUTORIALS:
+        assert "lr_at(step - 1, self.config)" in _function_source(tutorial, "train"), tutorial.name
+
+
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
 def test_the_lr_decays_by_cosine_from_start_to_end_and_then_holds(tutorial: Path) -> None:
     """``LR_START`` at epoch 0, the midpoint half-way, ``LR_END`` from ``LR_DECAY_EPOCHS`` on — never back up.
 
@@ -1417,7 +1431,7 @@ def test_the_lr_decays_by_cosine_from_start_to_end_and_then_holds(tutorial: Path
     assert all(a >= b for a, b in zip(rates, rates[1:])), "the LR must never increase"
 
 
-@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
+@pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
 def test_the_lr_stays_at_start_without_an_end_or_a_decay_length(tutorial: Path) -> None:
     """No ``LR_END``, or ``LR_DECAY_EPOCHS`` absent / non-positive, keeps the rate at ``LR_START``."""
     trainer = _trainer(tutorial)
@@ -1443,8 +1457,8 @@ def test_gradient_clipping_defaults_on(tutorial: Path) -> None:
 
 
 @pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
-def test_gradients_are_clipped_before_each_step_and_the_lr_is_stepped(tutorial: Path) -> None:
-    """Every optimiser step follows a clip, and ``train`` steps the learning-rate schedule."""
+def test_gradients_are_clipped_before_each_step(tutorial: Path) -> None:
+    """Every optimiser step follows a clip."""
     tree = ast.parse((tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8"))
     functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
     calls = {
@@ -1454,7 +1468,6 @@ def test_gradients_are_clipped_before_each_step_and_the_lr_is_stepped(tutorial: 
     }
     assert "clip_grad_norm_" in calls, f"{tutorial.name}: the training loop does not clip"
     assert calls["clip_grad_norm_"] < calls["step"], f"{tutorial.name}: steps before clipping"
-    assert "self.lr_scheduler.step()" in ast.unparse(functions["train"]), f"{tutorial.name}: the LR is never stepped"
 
 
 def test_generated_volumes_are_plotted_tri_planar_not_as_a_mid_slice_grid() -> None:
