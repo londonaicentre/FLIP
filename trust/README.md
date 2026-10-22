@@ -115,7 +115,7 @@ only, the previous behavior). Invalid values stop the fl-client at startup — f
 `make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
 just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
 this env, leaving the rest of each trust stack up); the fl-client log then shows
-`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-nets.rst`
+`[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`
 ("Site-enforced privacy policy").
 
 #### Trust governance policy (optional)

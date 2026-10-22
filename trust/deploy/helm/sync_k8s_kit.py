@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml>=6.0.3"]
+#
+# [tool.uv]
+# exclude-newer = "3 days"
+# ///
 #
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -358,8 +365,9 @@ def _slot_pattern(secret_key: str) -> re.Pattern[str]:
 def _yaml() -> ModuleType:
     """PyYAML, imported on use — the realign is verified by parsing, not by more regex.
 
-    The rest of this script is stdlib-only and runs under a bare ``python3``. This one step
-    needs a real parser: the only trustworthy statement about a hand-edited file is what
+    The Makefile runs this script with ``uv run``, which installs PyYAML from the inline metadata
+    at the top; a bare ``python3`` without it reaches the refusal below. This one step needs a
+    real parser: the only trustworthy statement about a hand-edited file is what
     ``yaml.safe_load`` makes of it, because that is what Helm reads. Without it we cannot
     tell whether the file we are about to write says what we meant, so we refuse rather than
     write an unverified credentials file.
@@ -683,7 +691,28 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     return entries
 
 
-def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None) -> str:
+# The bucket trust/.env.example scaffolded every kit with until it shipped the key commented out
+# (#881): the dev account's, which no other environment can read. A kit outside development still
+# carrying it was never filled in.
+SCAFFOLD_VOCAB_BUCKET = "flipdev-aicentre"
+
+
+def is_scaffold_bucket(kit: dict[str, str], env: str) -> bool:
+    """Whether the kit still names the dev scaffolding bucket outside development (#881).
+
+    Args:
+        kit: The parsed kit file.
+        env: The kit's environment token (development, stag, lza-stag, ...).
+
+    Returns:
+        True when the vocab load would read a bucket this environment cannot.
+    """
+    return kit.get("AICENTRE_BUCKET_NAME", "").strip() == SCAFFOLD_VOCAB_BUCKET and env != "development"
+
+
+def render_override(
+    kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None, vocab_load: bool = True
+) -> str:
     """Render the Helm values override (no secrets) from kit settings.
 
     Args:
@@ -781,7 +810,14 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # has NO vocabulary (cohort queries joining omop.concept return nothing).
     # Each environment reads its OWN bucket (no cross-account read), which is
     # exactly what AICENTRE_BUCKET_NAME carries.
-    if kit_bucket:
+    # The mock-data partition the seed hook loads (trustData.seed.sourceTrust). The chart falls back
+    # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
+    # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
+    source_trust = kit.get("SOURCE_TRUST", "").strip()
+    if source_trust:
+        lines += ["trustData:", "  seed:", f'    sourceTrust: "{source_trust}"', ""]
+
+    if kit_bucket and vocab_load:
         lines += [
             "omopDb:",
             "  vocabLoad:",
@@ -903,6 +939,7 @@ def main(
     apply_secret: bool,
     write_override: bool = True,
     release_name: str | None = None,
+    vocab_load: bool = True,
 ) -> None:
     release_name = release_name or derive_release_name(secret_name)
     repo_root = REPO_ROOT
@@ -983,7 +1020,14 @@ def main(
         output_dir.mkdir(parents=True, exist_ok=True)
         override_path = output_dir / rel_override
         try:
-            override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust")
+            scaffold = vocab_load and is_scaffold_bucket(kit, env)
+            if scaffold:
+                print("⚠️  Skipping the S3 vocabulary load: AICENTRE_BUCKET_NAME is still the dev scaffolding")
+                print(f"   default ({SCAFFOLD_VOCAB_BUCKET}), which {env} cannot read (#881). Set this environment's")
+                print("   bucket in the kit, or load the vocabulary another way (load-omop-vocab).")
+            override = render_override(
+                kit, code, aws_region, trust_dir=repo_root / "trust", vocab_load=vocab_load and not scaffold
+            )
         except GovernanceDocumentError as e:
             print(f"❌ {e}")
             print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
@@ -1051,6 +1095,12 @@ if __name__ == "__main__":
         action="store_false",
         help="Only patch the Kubernetes Secret; do not overwrite the values override file",
     )
+    parser.add_argument(
+        "--no-vocab-load",
+        dest="vocab_load",
+        action="store_false",
+        help="Never turn on the omop-db S3 vocab-load hook (a cluster with no route to AWS, e.g. AKS)",
+    )
     args = parser.parse_args()
     if args.kube_context:
         KUBECTL += ["--context", args.kube_context]
@@ -1083,4 +1133,5 @@ if __name__ == "__main__":
         apply_secret=args.apply_secret,
         write_override=args.write_override,
         release_name=args.release_name,
+        vocab_load=args.vocab_load,
     )

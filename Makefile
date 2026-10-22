@@ -572,7 +572,7 @@ demo-video:
 	$(MAKE) -C flip-api demo_video $(if $(DEMO_ARGS),DEMO_ARGS="$(DEMO_ARGS)")
 
 # Provision the demo Cognito users the recorder signs in as (passwords from
-# DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD env vars, never committed).
+# DEMO_RESEARCHER_PASSWORD / DEMO_ADMIN_PASSWORD / DEMO_TRUST_ADMIN_PASSWORD env vars, never committed).
 demo-users:
 	$(MAKE) -C flip-api create_demo_users
 

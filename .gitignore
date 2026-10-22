@@ -459,6 +459,7 @@ flip-utils/dist/
 .claude/*
 !.claude/commands/
 !.claude/hooks/
+!.claude/skills/
 !.claude/settings.json
 # Worktrees default to .claude/worktrees/ inside the repo — keep them out of
 # version control (covered by .claude/* above, listed explicitly for clarity).

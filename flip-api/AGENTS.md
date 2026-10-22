@@ -200,6 +200,17 @@ when `.env.development` makes it the configured backend). The module also import
 none (IAM DB auth). Run it through the root target so `PROD` selects the env file:
 `FLIP_E2E_BASE_URL=https://<edge>/api FLIP_E2E_TOKEN=… FLIP_E2E_REFRESH_TOKEN=… POSTGRES_PASSWORD=x make e2e_smoke_ehr PROD=lza-stag FL_BACKEND=nvflare EXTRA_ARGS="--trusts <CODE>"`.
 
+**A trust without the OMOP vocabulary (FLIP#1390).** A Helm trust deployed with `NO_VOCAB_LOAD=1` (the AKS path)
+holds the x-ray data but only a sliver of `omop.concept`, so the x-ray tutorial's `query.sql` — which names the
+Yes/No answers, the modality and the anatomy through concept joins — returns no rows and staging fails with
+"returned no cohort records". `make e2e_smoke` with `PROD` unset runs the sibling `query_novocab.sql` instead: the same
+studies and findings, with the two answer concepts named inline (`fl-tutorials/tests/test_xray_no_vocab_query.py`
+runs both against one synthetic OMOP database and fails if they disagree). A test-trust switch only; an explicit
+`QUERY_FILE` still wins, and the spleen and EHR variants pin their own queries. With `PROD` set (a deployed hub)
+such a trust needs it passed by hand:
+`QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql` (Flower:
+`fl-tutorials/flower/xray_classification/query_novocab.sql`).
+
 **Tabular-only projects (no imaging stage — FLIP#1071).** A project created with "Includes imaging data"
 off (`has_imaging=false`, creation-time and immutable like `dicom_to_nifti`) is approved without the
 CREATE_IMAGING fan-out: no XNAT project, no accession-ids call, no pull, and `GET /projects/{id}/image/status`
@@ -271,8 +282,11 @@ download) against the **live dev stack** and assembles one mp4. Local dev tool, 
 the slow platform waits (cohort responses, ~6 min imaging import, FL training) **off-camera** between them, reusing
 `tests/e2e_smoke.py`'s wait functions. Prerequisites: stack up, Playwright's browser (`uv run playwright install
 chromium`), ffmpeg on PATH, and ideally the demo users (created in the dev Keycloak realm) — `make demo-users` (reads
-`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed) then restart flip-api so seeding grants
-their roles; without them the recorder falls back to the well-known admin for both parts, and says so on camera.
+`DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` / `DEMO_TRUST_ADMIN_PASSWORD` from env, never committed) then
+restart flip-api so seeding grants their roles; without them the recorder falls back to the well-known admin for both
+parts, and says so on camera. Segment 2 is the demo Trust Admin approving on **My Trust** for the first trust; the
+recorder grants it Trust Admin there only for that segment (while it holds it, the hub admin cannot approve at that
+trust) and approves the other trusts off camera. Without `DEMO_TRUST_ADMIN_*` the admin approves at every trust.
 
 How a segment is recorded (`tests/demo_recorder.py`): each is a fresh browser context, signed in and loaded off camera,
 then recorded through Chromium's screencast from `rec.start()`; every frame is written with its timestamp and encoded to

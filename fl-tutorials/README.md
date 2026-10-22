@@ -77,6 +77,19 @@ different environments.
 It does not run the tutorials themselves: real training is what `run-all-tutorials` covers, on a GPU host, for both
 backends before a release is published. The record of that run is the *Release checks* section of the release notes.
 
+## Adding or changing a tutorial
+
+The tutorial contract — the file set per backend, the files that must stay byte-identical to the `fl-apps`
+templates, the hand-maintained lists a tutorial has to be added to, and the README shape (task figure, reference
+training curve, references, demo video) — is written down once, as the `tutorial-contract` project skill in
+[`.claude/skills/tutorial-contract/`](../.claude/skills/tutorial-contract/SKILL.md) with its two references
+(`readme-shape.md`, `registration-checklist.md`); it reads as plain Markdown without Claude Code. Two commands drive it:
+`/new-tutorial` (shape questions, copy the nearest tutorial, registrations, verify) and `/audit-tutorial <name>` (guards,
+GPU-free export, registrations, the README checklist). The guards stay the source of truth: `make -C fl-tutorials test`
+runs them, including `tests/test_tutorial_catalogue.py` (a twin pair's cohort query pinned in the sync script, `fl_job/`
+ignored, Flower identity from the context, the cohort query's shape). See
+[#1444](https://github.com/londonaicentre/FLIP/issues/1444).
+
 For network provisioning and standalone service operation, use the
 [`fl-services/nvflare/`](../fl-services/nvflare/README.md) or
 [`fl-services/flower/`](../fl-services/flower/README.md) guide. For the files a user uploads through FLIP, see

@@ -44,9 +44,6 @@ participants:
     # listening_host: site-1-lh
 #    docker_comm_port: 8006
     enable_byoc: true
-    resource:
-      num_of_gpus: 1
-      mem_per_gpu_in_GiB: 16
   - name: admin@nvidia.com
     type: admin
     org: AICentre

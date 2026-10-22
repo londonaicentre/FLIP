@@ -1,43 +1,89 @@
 .. _rbac-roles:
 
-###########
-User Roles
-###########
+##########
+User roles
+##########
+
+FLIP has four roles. In the Admin Area each user gets **one role**: choosing a new role replaces the one they hold
+rather than adding to it. There is no need to stack roles, because ``admin`` already includes everything a
+``researcher`` can do.
 
 .. note::
 
-   The Admin Area assigns **one role per user** — ``admin``, ``researcher``, ``viewer`` or ``trust admin`` — and re-assigning a role replaces the one held rather than adding to it. The ``admin`` role already includes every ``researcher`` capability, so administrators do not need additional role grants to perform researcher actions. Where a user does hold more than one role, their effective permissions are the union of the permissions each role grants.
+   If a user does hold more than one role, their permissions are the union of what each role grants.
+
+.. contents:: On this page
+   :local:
+   :depth: 1
+
+*****
+Roles
+*****
 
 .. list-table::
-   :widths: 5 90
    :header-rows: 1
+   :widths: 18 82
 
    * - Role
-     - Description
+     - What it allows
    * - ``admin``
-     - Grants all platform permissions including; project approval at every trust that has no Trust Admin, unstaging projects, deleting any project, managing deployments (deployment mode), managing the site banner, user management, accessing the admin panel, and all ``researcher`` capabilities.
+     - Everything a ``researcher`` can do, plus: the admin panel, user management, deployment mode, the site banner,
+       unstaging projects, deleting any project, and approving projects at every trust that has no Trust Admin.
    * - ``researcher``
-     - Allows a user to create and manage FLIP projects.
-
-       - **On projects they own:** Researchers can edit project details, stage projects for approval on specified trusts, create cohort queries, create models, upload files required for those models, and initiate model training.
-       - **On projects they have been added to as a member (via a** ``ProjectUserAccess`` **record) but do not own:** Researchers may contribute their own models — creating models, uploading files for those models, and initiating training — but they cannot edit, stage, or delete the project itself, nor modify models created by other Researchers.
+     - Creating FLIP projects and working on them. What they can do depends on whether they own the project or are a
+       member of it (see below).
    * - ``viewer``
-     - Provides read-only access to assigned projects. Viewers can view project details, cohort query results, model metrics and training results, and download model results. Viewers cannot create or edit projects, run or save cohort queries, create or edit models, upload model files, or initiate training.
+     - Read-only access to the projects they have been added to.
    * - ``trust admin``
-     - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the role is assigned (see :ref:`assigning-a-trust-admin`).
+     - Everything a ``researcher`` can do, plus approving or declining projects for **one trust**, chosen when the
+       role is assigned (see :ref:`assigning-a-trust-admin`).
 
-       - **Who decides a trust:** while a trust has at least one Trust Admin, only its Trust Admins approve or decline projects staged at it — an ``admin`` no longer can. A trust with no Trust Admin is decided by an ``admin``, as before.
-       - **Seeing what they decide:** a Trust Admin can view any project staged at their trust — its details, cohort query and results, the list of its models and imaging status — even one they are not a member of. They cannot edit, stage or delete it or add models to it; the models' own pages (metrics, logs, results) stay with the project's members; and they see nothing of projects staged only at other trusts.
-       - Decisions are made from the **My Trust** page (see :ref:`trust-admin-guide`).
+Researchers
+===========
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Project
+     - What a researcher can do
+   * - One they **own**
+     - Edit the project, stage it for approval at chosen trusts, create cohort queries, create models, upload the
+       models' files and start training.
+   * - One they are a **member** of
+     - Contribute their own models: create them, upload their files and start training. They cannot edit, stage or
+       delete the project, or change other researchers' models.
+
+Viewers
+=======
+
+Viewers can see project details, cohort query results, model metrics and training results, and download model
+results. They cannot create or edit projects, run or save cohort queries, create or edit models, upload model files
+or start training.
+
+Viewers hold no permissions of their own. Their access comes from **project membership**: being added to a project by
+its owner or an admin.
+
+Trust Admins
+============
+
+- **Who decides a trust.** While a trust has at least one Trust Admin, only its Trust Admins approve or decline
+  projects staged at it; an ``admin`` no longer can. A trust with no Trust Admin is decided by an ``admin``.
+- **What they can see.** A Trust Admin can view any project staged at their trust, even one they are not a member of:
+  its details, cohort query and results, its list of models and its imaging status. They cannot edit, stage or delete
+  it, or add models to it. The models' own pages (metrics, logs, results) stay with the project's members.
+- **Where their authority stops.** The approval right applies at their one trust only. They see nothing of projects
+  staged only at other trusts and have no say over them.
+- **Where they decide.** On the **My Trust** page (see :ref:`trust-admin-guide`).
+
+Every change to who is a trust's Trust Admin is written to that trust's audit log.
 
 ***********
 Permissions
 ***********
 
-The following table summarises the permissions assigned to each role:
-
 .. list-table::
-   :widths: 40 10 10 10 10
+   :widths: 40 15 15 15 15
    :header-rows: 1
 
    * - Permission
@@ -85,37 +131,34 @@ The following table summarises the permissions assigned to each role:
      - No
      - No
      - No
-   * - Create projects; manage projects they own (edit, stage, delete, train); contribute models and train on projects they are a member of
+   * - Create projects; manage projects they own (edit, stage, delete, train); contribute models and train on projects
+       they are a member of
      - Yes
      - Yes
      - No
      - Yes
-   * - Manage all projects (bypasses the per-project ownership/membership check)
+   * - Manage all projects, whoever owns them
      - Yes
      - No
      - No
      - No
 
-.. note::
-
-   Viewers have no explicit permissions. Their read-only access to projects is granted through project user access records (i.e., being added to a project by its owner or an admin).
-
-.. note::
-
-   A Trust Admin is stored as two grants: the platform-wide ``researcher`` role, and the Trust Admin role held **at one trust**. The trust grant confers nothing anywhere else, so a Trust Admin of one trust has no say over another trust's projects. Each change to who is a trust's Trust Admin is written to that trust's audit log.
-
-.. note::
-
-   ``ProjectUserAccess`` membership grants different write capabilities depending on the user's role: a Researcher member may contribute their own models on the project, while a Viewer member retains read-only access. Project-level writes (editing, staging, or deleting the project itself) remain restricted to the project owner and admins regardless of membership.
+Project membership gives different rights by role: a Researcher member can contribute models, a Viewer member can
+only read. Editing, staging or deleting the project itself stays with the owner and admins, whatever the membership.
 
 .. warning::
 
-   Project ownership is not revoked by a role change. A user who created a project keeps project-level write access to it (editing, staging, deleting, and submitting cohort queries) even after being demoted to Viewer — ownership, not the current role, is the authority for owned projects. Demotion still removes the user's ability to create new projects or write to projects they do not own. To fully revoke a former owner's access to a project they own, transfer ownership to another user or delete the project.
+   **A role change does not remove project ownership.** A user who created a project keeps write access to it
+   (editing, staging, deleting, submitting cohort queries) even after being demoted to Viewer. Demotion only stops
+   them creating new projects or writing to projects they do not own.
 
+   To fully remove a former owner's access, transfer the project to another user or delete it.
+
+*************************
 Who can see whose profile
--------------------------
+*************************
 
-User profile visibility follows *Manage users*, not project ownership:
+Profile visibility follows the *Manage users* permission, not project ownership.
 
 .. list-table::
    :header-rows: 1
@@ -138,26 +181,15 @@ User profile visibility follows *Manage users*, not project ownership:
      - Yes
      - No
 
-Only *Manage users* grants the full profile of another user. Every authenticated user can read their
-own profile regardless of role.
+Researchers need to look up an email address when adding someone to a project. The lookup returns only the user's ID,
+email address and whether the account is enabled, never their name or organisation. Without *Manage users*, nobody
+can list the users.
 
-Researchers additionally need to resolve an email address when adding someone to a project, so they
-may check whether an address is registered. That check returns only the user's ID, email address and
-enabled flag — never their name or organisation — and users cannot be *listed* without *Manage
-users*: no endpoint will hand a Researcher the roster.
+The lookup follows the *Create projects* permission, not ownership. An owner demoted to Viewer keeps write access to
+their projects but can no longer add members, because Viewers are not shown the add-member form.
 
 .. warning::
 
-   The address check is not yet bounded per caller, so users can still be *enumerated* even though
-   they cannot be listed. A Researcher who guesses addresses — an NHS address space is fairly
-   predictable — learns which of them hold accounts, one address per request, and nothing caps how
-   many they may try. What the check discloses stays narrow (ID, email address, enabled flag); how
-   often it may be asked does not. Rate-limiting it per authenticated caller is tracked in
-   `FLIP#961 <https://github.com/londonaicentre/FLIP/issues/961>`_.
-
-.. note::
-
-   Unlike project-level writes, this capability follows the *Create projects* permission rather than
-   project ownership. A project owner who has been demoted to Viewer keeps their existing project
-   write access (see the ownership warning further up the page) but loses the ability to look up new
-   members, because the add-member form is not shown to Viewers.
+   **Accounts can still be enumerated.** The address lookup is not rate-limited per user. A Researcher who guesses
+   addresses (NHS addresses are fairly predictable) can learn which ones have accounts, one address per request,
+   with no cap on attempts. Each answer reveals only the ID, address and enabled flag.

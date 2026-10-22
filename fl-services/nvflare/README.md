@@ -89,7 +89,7 @@ crash-looped for everyone else — including on every published image, for any d
 Anywhere one of these containers bind-mounts a host path, that path must still be owned by the uid the
 container runs as, or the entrypoint fails (loudly, since the entrypoint scripts exit non-zero when they
 can't write their generated config). Letting Docker auto-create the bind source leaves it root-owned and
-silently breaks the container. See `deploy/providers/AWS/TROUBLESHOOTING.md` for the failure mode and
+silently breaks the container. See the [trust troubleshooting page](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-compose.html#ts-compose-images-permission) for the failure mode and
 `deploy/providers/AWS/site.yml` / `trust/deploy/ansible/onprem.yml` for how the provisioning
 Ansible pre-creates these paths with the right owner.
 

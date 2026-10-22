@@ -32,7 +32,7 @@ The imaging-api handles the imaging data lifecycle for federated learning studie
 2. **DICOM import** — queries the PACS with accession numbers and queues image retrieval into XNAT, all through XNAT's DQR REST API (XNAT talks to Orthanc over DIMSE; imaging-api itself never contacts Orthanc)
 3. **Data download** — packages and transfers XNAT datasets for FL training
 4. **Upload** — stores result files back into XNAT experiments
-5. **Retrieval status** — monitors import progress through XNAT's REST API (DQR's import queue and history, and XNAT's direct-archive sessions)
+5. **Retrieval status** — monitors import progress through XNAT's REST API (DQR's import queue and history, and XNAT's direct-archive and prearchive sessions)
 
 ## Deployment
 
@@ -186,13 +186,17 @@ query: SELECT * FROM omop.image_occurrence
 
 Each cohort accession gets one status, the first that applies: `successful` when it is an experiment in
 the project; `failed` when DQR executed its request and the request `FAILED`, or its direct-archive
-session is in `ERROR`; `processing` for any other executed request or direct-archive session (DQR's
+or prearchive session is in `ERROR` (XNAT moves a failed direct-archive into the prearchive and deletes
+its row, FLIP#1511); `processing` for any other executed request or direct-archive session (DQR's
 `RECEIVED` means the study was transferred, not archived); `queued` while its request waits in DQR's
 queue; `queue_failed` when none of these exists.
 
 The DQR records come from XNAT's REST API, not its database (`services/import_requests.py`): DQR's
 `GET /xapi/dqr/import/queue` and `/import/history`, which take no project filter, so they are read with
-`all=true` and kept by `xnatProject`, and `POST /xapi/direct-archive` with a `project` filter. When every
+`all=true` and kept by `xnatProject`, `POST /xapi/direct-archive` with a `project` filter, and
+`GET /data/prearchive/projects/{project}`. A retry re-archives a prearchive `ERROR` session
+(`POST /data/services/archive?overwrite=append`) and pulls from the PACS again only what that does not
+recover, deleting its stale prearchive session first. When every
 accession is already an experiment they are not read at all. A failed read is a 500, never the 404 the
 hub reads as "the XNAT project is missing" (FLIP#1022).
 

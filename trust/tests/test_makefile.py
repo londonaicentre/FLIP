@@ -105,7 +105,7 @@ class Governance(unittest.TestCase):
         run stdlib-only modules. Both halves now run as files on a bare interpreter."""
         out = dry_run("check-governance", kit=GOVERNED_KIT)
         assert out.count("--no-project") == 2, out
-        assert "data-access-api/scripts/check_governance.py" in out, out
+        assert "data-access-api/data_access_api/scripts/check_governance.py" in out, out
         assert "flip-utils/flip/nvflare/site_policy.py --check --fl-backend nvflare" in out, out
         assert "cd ../flip-utils" not in out, out
         assert "cd data-access-api" not in out, out

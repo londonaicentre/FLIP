@@ -75,3 +75,14 @@ def test_xnat_init_deletes_the_previous_init_job_before_applying_it():
     assert "--selector app.kubernetes.io/component=xnat-init" in delete
     assert "--ignore-not-found" in delete
     assert out.index(" delete job ") < out.index(" apply -n ") < out.index(" wait job"), out
+
+
+def test_sync_k8s_kit_runs_with_the_dependencies_it_declares():
+    """A host python3 without PyYAML stopped every sync-kit and upgrade-trust-k8s after the Secret
+    patch: the values-secrets realign refuses to write a file it cannot parse. uv installs it."""
+    makefile = (CHART_DIR / "Makefile").read_text()
+    script = (CHART_DIR / "sync_k8s_kit.py").read_text()
+
+    assert "python3 $(CHART_DIR)/sync_k8s_kit.py" not in makefile
+    assert makefile.count("uv run --no-config $(CHART_DIR)/sync_k8s_kit.py") == 3
+    assert '# dependencies = ["pyyaml>=6.0.3"]' in script
