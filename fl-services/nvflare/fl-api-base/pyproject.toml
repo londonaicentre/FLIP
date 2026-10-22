@@ -12,7 +12,7 @@
 
 [project]
 name = "flip-fl-api"
-version = "0.12.0"
+version = "0.13.1"
 description = "Wrapper API for FLARE FL Admin API."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -36,12 +36,17 @@ dev = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Emergency cooldown override (CONTRIBUTING.md, "Emergency override"): admit the critical-advisory fix
+# certifi 2026.10.19 before the 3-day cooldown does. Each cutoff is that release's upload time, so
+# nothing newer gets in, and it also freezes the package: remove it after 2026-10-23T15:13Z (#1618).
+exclude-newer-package = { certifi = "2026-10-20T02:25:00Z" }
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     # GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3, GHSA-494j-54xm-rwp3; prior hardening: CVE-2026-47265,
     # CVE-2026-34993, CVE-2026-34525/16/15/14/13/12, CVE-2026-22815, CVE-2026-21860.
     "aiohttp>=3.14.4",
     "anyio>=4.14.2",             # CVE-2026-63374, CVE-2026-64847
+    "certifi>=2026.10.19",       # GHSA-6q48-6c7w-9gw2
     "cryptography>=50.0.0",      # CVE-2026-26007, CVE-2026-39892, CVE-2026-34073
     "idna>=3.15",                # CVE-2026-45409
     "protobuf>=6.33.5",          # CVE-2026-0994, CVE-2025-4565

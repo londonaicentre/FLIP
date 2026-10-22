@@ -496,5 +496,31 @@ class HubProjectOwnerGuard(unittest.TestCase):
                 assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
 
 
+class E2eSmokeQuery(unittest.TestCase):
+    """`make e2e_smoke` picks the x-ray query from PROD: a trust without the OMOP vocabulary (FLIP#1390)
+    gets the vocabulary-free copy. dry_run always passes PROD=true, so the dev-stack cases override it."""
+
+    def query_file(self, *extra: str) -> str:
+        out = dry_run("e2e_smoke", *extra, subdir=".")
+        match = re.search(r'--query-file "([^"]+)"', out)
+        assert match, out
+        return match[1]
+
+    def test_the_canonical_query_stays_the_default(self):
+        for backend in ("nvflare", "flower"):
+            assert self.query_file(f"FL_BACKEND={backend}").endswith("/query.sql"), backend
+
+    def test_a_dev_stack_picks_the_sibling_query_on_both_backends(self):
+        for backend in ("nvflare", "flower"):
+            path = self.query_file(f"FL_BACKEND={backend}", "PROD=")
+            assert path.endswith("/query_novocab.sql"), (backend, path)
+            # The scratch copy holds Makefiles only; the file must exist where the path points in the repo.
+            rel = path.split("/fl-tutorials/", 1)[1]
+            assert (REPO / "fl-tutorials" / rel).is_file(), (backend, rel)
+
+    def test_an_explicit_query_file_still_wins(self):
+        assert self.query_file("PROD=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
+
+
 if __name__ == "__main__":
     main()

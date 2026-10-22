@@ -198,8 +198,18 @@ than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock`
 For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
 
 - **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
-  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
-  the exception is visible in the pull request and `uv lock --check` still passes.
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock --upgrade-package <package>`.
+  The entry is committed, so the exception is visible in the pull request and `uv lock --check` still passes. To
+  keep the exception narrow:
+  - Set the timestamp just after the fixed release's upload time on PyPI, not to "now", so no later, uncooled release
+    can get in.
+  - Add a `constraint-dependencies` floor at the fixed version, so the fix stays in place once the override is gone.
+  - Open an issue to remove the entry when the 72 hours are up. A fixed timestamp freezes the package at that date
+    until someone removes it.
+  - Carry the floor into any install that does not read `[tool.uv]`, such as the `pip install` in
+    `fl-services/flower/fl-base/Dockerfile`.
+
+  The certifi and uv fixes in #1612 (removed in #1618) are a worked example.
 - **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
   command.
 
@@ -475,6 +485,16 @@ removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AW
 deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
 against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
 
+### Azure trust node checks (Terraform)
+
+`deploy/providers/azure` (FLIP#1390) carries its own credential-free checks: `make -C deploy/providers/azure test`
+runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
+`make -C deploy/providers/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
+checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
+subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
+always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS.
+
 ### Secret scanning (detect-secrets)
 
 Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.
@@ -671,6 +691,16 @@ make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
 # 2 inconclusive (arrival-time-only evidence while received.log exists and stayed silent);
 # the Make target turns 2 into a loud warning rather than a failure.
 make -C trust/deploy/helm smoke-cstore
+
+# On a managed node pool (AKS, FLIP#1390): put the slot's FL kit in a Secret for
+# flClient.kit.source=secret, and layer values-aks.yaml with PLATFORM_VALUES= (or the kit
+# file's K8S_PLATFORM_VALUES, which every deploy and upgrade of that KIT then applies)
+make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+
+# The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
+# health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client
+# steady; writes a JSON + markdown report under build/selftest/ and needs no hub
+make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
 ```
 
 `make -C trust/deploy/helm deploy` (and `deploy-trust-k8s`) take `HELM_TIMEOUT` (default

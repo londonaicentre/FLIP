@@ -22,6 +22,9 @@ on:
       # is the premise of the C-STORE smoke's received.log evidence (tests/test_cstore_verdict.py).
       - "trust/xnat/xnat/config/configure-xnat.sh"
       - "trust/xnat/xnat/config/anon_script.das"
+      # The chart's xnat-init ConfigMap carries a copy of it, which
+      # tests/templates/test_container_jobs_quota.py holds equal to the file.
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
       # The procedure the trust-seed hook fetches and runs; tests/test_trust_seed_job.py
       # asserts the Job's env against it.
       - "trust/seed_trust.sh"
@@ -40,6 +43,7 @@ on:
       - "trust/deploy/helm/**"
       - "trust/xnat/xnat/config/configure-xnat.sh"
       - "trust/xnat/xnat/config/anon_script.das"
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
       - "trust/seed_trust.sh"
       # The pin trustData.version must match (tests/test_trust_data_pin.py).
       - "trust/.data_version"
