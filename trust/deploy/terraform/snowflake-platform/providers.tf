@@ -35,15 +35,12 @@ provider "snowflake" {
   warehouse         = var.platform_warehouse
   authenticator     = var.authenticator
 
-  # Resources still marked preview in the 2.x provider. Listed explicitly so an upgrade that
+  # Resources still preview in provider 2.22 (network_rule, password/session policy and the
+  # account session policy attachment were promoted to stable and are not listed). Listed explicitly so an upgrade that
   # promotes or renames one fails loudly here rather than silently changing behaviour.
   preview_features_enabled = [
-    "snowflake_network_rule_resource",
     "snowflake_external_access_integration_resource",
-    "snowflake_password_policy_resource",
-    "snowflake_session_policy_resource",
     "snowflake_account_password_policy_attachment_resource",
-    "snowflake_account_session_policy_attachment_resource",
     "snowflake_network_policy_attachment_resource",
   ]
 }

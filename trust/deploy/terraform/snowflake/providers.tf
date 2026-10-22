@@ -26,11 +26,7 @@ provider "snowflake" {
   role              = var.terraform_role
   warehouse         = var.terraform_warehouse
 
-  # Resources still marked preview in the 2.x provider. Listed explicitly so an upgrade that
-  # promotes or renames one fails loudly here rather than silently changing behaviour.
-  preview_features_enabled = [
-    "snowflake_stage_internal_resource",
-    "snowflake_compute_pool_resource",
-    "snowflake_image_repository_resource",
-  ]
+  # Every resource this root uses is stable as of provider 2.22 (stage_internal, compute_pool and
+  # image_repository were promoted), so no preview feature is enabled. A new preview resource must
+  # be listed here explicitly.
 }
