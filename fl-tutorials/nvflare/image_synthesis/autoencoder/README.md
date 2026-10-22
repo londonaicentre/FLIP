@@ -102,11 +102,6 @@ The discriminator can be either 2D or 3D. The reason for a 2D discriminator in a
   batch, `(B, C, H, W, D) -> (B*len(indices), C, H, W)`. 12 slices are drawn per step
   (`self.perceptual_slices`). **Both operands of a comparison reuse the same indices** — otherwise
   the loss compares unrelated anatomy.
-- **`detect_axial_anisotropy(path)`** reports whether a volume is thick-slice. It is *not* called by
-  the shipped loader, deliberately: the chain resamples to isotropic 2 mm voxels, so the answer would
-  always be no, and asking on the raw geometry instead (240×240×155, a ratio of 1.55) would log
-  "found axial anisotropy" about data that is about to be made isotropic. It is there for a cohort
-  that is genuinely thick-slice and resampled to a grid that keeps it that way.
   The perceptual loss does not use this path: MedicalNet takes the volume whole. Slicing would
   dilute it — a random axial slice of a skull-stripped head is often mostly air, and scores near
   zero whatever the model did.

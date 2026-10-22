@@ -22,9 +22,7 @@ operates on a 3-channel latent.
 """
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from monai.networks.nets import DiffusionModelUNet
 from torch import nn
@@ -61,12 +59,6 @@ class DiffusionModelNetwork(nn.Module):
             # 4096x4096 map per head (~9 GiB at batch 6); same weights, same result.
             use_flash_attention=True,
         )
-
-    def forward_dm(self, x):
-        return self.diffusion_model(x)
-
-    def load_diffusion_model_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        self.diffusion_model.load_state_dict(state_dict, strict=strict)
 
 
 _net = DiffusionModelNetwork()

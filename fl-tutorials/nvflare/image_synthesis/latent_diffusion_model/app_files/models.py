@@ -135,18 +135,6 @@ class LatentDiffusionModelNetwork(nn.Module):
             attention_levels=net_config["diffusion_model"]["attention_levels"],
         )
 
-    def forward_ae(self, x):
-        return self.autoencoder(x)
-
-    def forward_dm(self, x):
-        return self.diffusion_model(x)
-
-    def load_autoencoder_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        self.autoencoder.load_state_dict(state_dict, strict=strict)
-
-    def load_diffusion_model_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        self.diffusion_model.load_state_dict(state_dict, strict=strict)
-
 
 _net = LatentDiffusionModelNetwork()
 

@@ -94,18 +94,6 @@ class AutoencoderNetwork(nn.Module):
             num_layers_d=net_config["discriminator"]["num_layers_d"],
         )
 
-    def forward_ae(self, x):
-        return self.autoencoder(x)
-
-    def discriminate(self, x):
-        return self.discriminator(x)
-
-    def load_autoencoder_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        self.autoencoder.load_state_dict(state_dict, strict=strict)
-
-    def load_discriminator_dict(self, state_dict: Mapping[str, Any], strict: bool = True):
-        self.discriminator.load_state_dict(state_dict, strict=strict)
-
 
 _net = AutoencoderNetwork()
 

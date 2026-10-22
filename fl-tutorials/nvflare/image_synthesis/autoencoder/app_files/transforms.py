@@ -29,9 +29,6 @@ def load_config() -> dict:
 SPATIAL_SHAPE = list(load_config()["spatial_shape"])
 VOXEL_SPACING = list(load_config()["voxel_spacing"])
 
-#: Non-image keys carried through the chain; ``modality_index`` is the latent diffusion condition.
-MODALITY_KEYS = ("modality", "modality_index")
-
 
 def get_brain_mri_transforms(is_validation: bool = False) -> mt.Compose:
     """Return the MONAI transforms used for brain-MRI training/validation.

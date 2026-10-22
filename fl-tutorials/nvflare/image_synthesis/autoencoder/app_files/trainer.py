@@ -38,7 +38,6 @@ import logging
 from pathlib import Path
 
 import einops
-import nibabel as nib
 import numpy as np
 import nvflare.client as flare
 import torch
@@ -140,35 +139,6 @@ class KLDivergenceLoss:
 # ---------------------------------------------------------------------------
 # 3-D helpers for input 3D images
 # ---------------------------------------------------------------------------
-
-
-def detect_axial_anisotropy(image_path: str, threshold: float = 1.5) -> bool:
-    """Whether a NIfTI volume is thick-slice, i.e. much coarser through-plane than in-plane.
-
-    Anisotropy decides how a 3-D autoencoder should be scored: on thick-slice data a 3-D perceptual
-    loss compares voxels that are not comparable, so the 2-D sliced form is the better signal (see
-    :meth:`AutoencoderTrainer.reset_perceptual_to_anisotropic`).
-
-    Not called by the shipped brain-MRI loader, on purpose. ``transforms.py`` resamples every volume
-    to isotropic 2 mm voxels, so by the time a tensor reaches a loss there is no through-plane
-    axis to be coarse: the answer would always be False, and asking on the *raw* geometry instead
-    (240x240x155, a ratio of 1.55) would log "found axial anisotropy" about data that is about to be
-    made isotropic. Kept, and worth calling on the first readable volume, for a cohort that is
-    genuinely thick-slice and resampled to a grid that preserves that.
-
-    Args:
-        image_path (str): Path to a NIfTI volume.
-        threshold (float): In-plane to out-plane ratio above which the volume counts as anisotropic.
-
-    Returns:
-        bool: True when the volume is thick-slice.
-    """
-    volume = np.asarray(nib.load(str(image_path)).dataobj)
-    in_plane_to_out_plane = volume.shape[0] / volume.shape[-1]
-    if in_plane_to_out_plane > threshold:
-        logger.info(f"Found axial anisotropy (in-plane to out-plane ratio is {in_plane_to_out_plane}).")
-        return True
-    return False
 
 
 def slice_volume_for_2d(volume: torch.Tensor, slice_indices: np.ndarray) -> torch.Tensor:
@@ -379,7 +349,6 @@ class AutoencoderTrainer:
 
         # 3-D only tu suppport 2D adversarial / perceptual losses.
         self.perceptual_slices = 12
-        self.axial_anisotropy: bool | None = None
         # Reads the SAME key models.py builds the networks from (the top-level one), not the copy
         # inside stage_1: nothing constructs a network from that copy, so gating on it lets a 3-D
         # port flip one and not the other and get a 3-D network with the slicing paths switched off.
@@ -480,19 +449,6 @@ class AutoencoderTrainer:
             [item for accession in val_accessions for item in by_accession[accession]],
         )
 
-    def reset_perceptual_to_anisotropic(self):
-        """Swap the perceptual loss for its 2-D form when 3-D data turns out to be thick-slice.
-
-        3-D only, and not called by the shipped 2-D pipeline: a 3-D port's loader should call this once
-        :func:`detect_axial_anisotropy` returns True (setting ``self.axial_anisotropy`` first). The
-        weight is raised alongside the swap because this network reports much smaller values.
-        """
-        if self.axial_anisotropy:
-            # The perceptual loss stays 3-D regardless: MedicalNet has no 2-D counterpart we can
-            # ship offline, and anisotropic spacing degrades its features rather than breaking
-            # them. Only the discriminator falls back to scoring slices.
-            logger.info("Axial anisotropy detected; the 2-D discriminator scores slices, perceptual stays 3-D.")
-
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
         train_loader = DataLoader(
             self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
@@ -557,17 +513,11 @@ class AutoencoderTrainer:
                     l1_loss = self.weights_ae["w_reconstruction_loss"] * self.losses_ae["reconstruction_loss"](
                         reconstruction.float(), images.float()
                     )
-                    # A 2-D perceptual loss on 3-D data scores slices; a 2-D image is passed straight in.
-                    if self.is_volumetric and self.losses_ae["perceptual_loss"].spatial_dims == 2:
-                        p_loss = self.losses_ae["perceptual_loss"](
-                            slice_volume_for_2d(reconstruction, slice_indices).float(),
-                            slice_volume_for_2d(images, slice_indices).float(),
-                        )
-                    else:
-                        p_loss = self.losses_ae["perceptual_loss"](reconstruction.float(), images.float())
-                    p_loss = self.weights_ae["w_perceptual_loss"] * p_loss
+                    p_loss = self.weights_ae["w_perceptual_loss"] * self.losses_ae["perceptual_loss"](
+                        reconstruction.float(), images.float()
+                    )
 
-                    # Likewise for a 2-D discriminator judging a 3-D reconstruction.
+                    # A 2-D discriminator judges a 3-D reconstruction slice by slice.
                     if self.is_volumetric and self.config["net_config"]["discriminator"]["spatial_dims"] == 2:
                         logits_fake = self.model.discriminator(
                             slice_volume_for_2d(reconstruction, slice_indices).contiguous().float()
@@ -586,10 +536,6 @@ class AutoencoderTrainer:
 
                     # Loss generator
                     train_g_loss_ = l1_loss + kl_loss + p_loss + gan_loss
-                    # print(
-                    #    f"KL: {kl_loss.item()}, l1: {l1_loss.item()}, "
-                    #    f"perceptual: {p_loss.item()}, gan: {gan_loss.item()}"
-                    # )
 
                 scaler_g.scale(train_g_loss_ / accumulation_step).backward()
                 self.model.discriminator.requires_grad_(True)

@@ -600,8 +600,6 @@ class LatentDiffusionTrainer:
         scaler = GradScaler()
 
         # Basic training
-        train_loss = []
-        val_loss = []
         epochs = self.params_diffusion["epochs"]
         for epoch in range(epochs):
             self.model.diffusion_model.train()
@@ -653,10 +651,7 @@ class LatentDiffusionTrainer:
                 train_loss_epoch += loss.item()
                 logger.debug(f"Batch loss {loss.item()}")
 
-            train_loss.append(train_loss_epoch / max(1, len(train_loader)))
-
-            # This epoch's loss, not np.mean(train_loss): a running mean over the round flattens and lags.
-            epoch_loss = train_loss[-1]
+            epoch_loss = train_loss_epoch / max(1, len(train_loader))
             step = global_round * epochs + epoch + 1
             logger.info(f"Epoch {epoch + 1} / {epochs};\n Total loss DM: {epoch_loss}")
             writer.add_scalar("Total loss DM@epoch", epoch_loss, global_step=step)
@@ -677,7 +672,6 @@ class LatentDiffusionTrainer:
                     self.config,
                     self.device,
                 )
-                val_loss.append(epoch_val_loss)
                 logger.info(f"Validation DM: {epoch_val_loss}")
                 writer.add_scalar("Validation loss DM@epoch", epoch_val_loss, global_step=step)
                 sample_and_save(
