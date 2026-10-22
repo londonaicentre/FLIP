@@ -196,7 +196,7 @@ demo-video profile, since a recording would show ADNI-derived values.
 | `ALPHA` | `0.05` | CI-test significance level |
 | `CI_TEST` | `fisherz` | voting mode only (`kci`, `fastkci`, `rcit`, …); pooled mode is Fisher-z by construction |
 | `VOTE_RATIO` | `0.5` | voting mode: keep an edge if at least this share of sites kept it (≥, as in FedPC's MATLAB release, whose default is 0.3; the paper's text says "more than") |
-| `LOG_TRANSFORM` | the four plasma markers | fixed, site-independent log of the right-skewed markers; the centralised analysis applied a data-fitted Yeo-Johnson to every column with skew above 1, and a fitted λ cannot be shared without exchanging it — a departure in both the transform and, possibly, the column set (see Honest caveats) |
+| `LOG_TRANSFORM` | the four plasma markers | fixed, site-independent log of the right-skewed markers; the centralised analysis applied a data-fitted Yeo-Johnson to every column with skew above 1 — the same four markers plus intracranial volume and ADAS-Cog13 — and a fitted λ cannot be shared without exchanging it, so this is a departure in the transform and, for those two columns, in whether one is applied at all (see Honest caveats) |
 | `SCALE` | volumes, age, education, ADAS | fixed divisors so second moments are O(1) — see "Privacy" for why this is load-bearing |
 | `KNOWLEDGE.EXOGENOUS` | age, sex, education, APOE4 | nothing may cause these |
 | `KNOWLEDGE.SINKS` | ADAS-Cog13 | may cause nothing |
@@ -417,10 +417,13 @@ installs.
 - The reference run reproduces the centralised analysis's graph from the same 560 participants,
   so agreement between the two is a check of the federation machinery, not independent evidence
   about Alzheimer's disease.
-- `LOG_TRANSFORM` logs the four plasma markers; the centralised run Yeo-Johnson-transformed every
-  column whose skew exceeded 1, which its `preprocessing.csv` records. If that set includes a
-  column not logged here (ADAS-Cog13, education or a volume), part of the difference on the weaker
-  edges is the transform, not the federation.
+- `LOG_TRANSFORM` logs the four plasma markers. The centralised run (both presets, per its
+  `preprocessing.csv`) Yeo-Johnson-transformed every column whose skew exceeded 1: those four plus
+  intracranial volume and ADAS-Cog13, the latter just over the threshold; hippocampal volume, age and
+  education stayed linear in both. So two columns are transformed there and left linear here, and the
+  transform itself differs (a fitted Yeo-Johnson versus a log), which is part of the difference on the
+  weaker edges in the table above, not the federation. ADAS-Cog13 can be 0, which is why it is not
+  simply logged; a fixed `log1p` would be the faithful next step, with the reference numbers re-run.
 - The release floors and refusals are app code (see Privacy): they bind a researcher's config, not a
   researcher who edits the code, and a job stopped after round 1 still uploads the pooled statistics
   until the platform refuses to persist them.
