@@ -20,8 +20,10 @@
 # Routine work does NOT come here: trust/deploy/terraform/snowflake is the workload root, applied
 # as FLIP_<CODE>_DEPLOY_USER with key-pair auth. The two roots keep separate state.
 #
-# Credentials come from the environment only (SNOWFLAKE_USER, SNOWFLAKE_PASSWORD, SNOWFLAKE_PASSCODE
-# for username_password_mfa, or SNOWFLAKE_AUTHENTICATOR=externalbrowser), never from a variable.
+# Credentials come from the environment only, never from a variable. The default identity is the
+# just-in-time operator FLIP_PLATFORM_OPERATOR (key pair, no role while idle): `make jit-grant`
+# prints the SQL an MFA-protected admin runs in Snowsight before an apply, `make jit-revoke` the SQL
+# that takes the role away again. `make apply` prints the revoke when it finishes, success or not.
 
 SHELL := /bin/bash
 
@@ -59,8 +61,9 @@ define break_glass_warning
 	@echo "#  account grants, the egress integration, account network/password/session     #"
 	@echo "#  policies, the EVENT_TABLE parameter and the resource monitor.                #"
 	@echo "#                                                                               #"
-	@echo "#  It is applied RARELY, by a PERSON user with MFA holding ACCOUNTADMIN or      #"
-	@echo "#  SECURITYADMIN. It is never run from CI and never run on a schedule.          #"
+	@echo "#  It is applied RARELY, by an identity an MFA-protected admin has just granted #"
+	@echo "#  ACCOUNTADMIN (make jit-grant). Never from CI, never on a schedule. Revoke the  #"
+	@echo "#  role as soon as the apply ends (make jit-revoke).                            #"
 	@echo "#                                                                               #"
 	@echo "#  Routine deploys belong in ../snowflake (the workload root), applied as       #"
 	@echo "#  FLIP_<CODE>_DEPLOY_USER with key-pair auth. If you are not deliberately      #"
@@ -71,7 +74,18 @@ define break_glass_warning
 		[ "$$answer" = "BREAK GLASS" ] || { echo "Aborted."; exit 1; }
 endef
 
-.PHONY: help init plan apply destroy output lint fmt validate test
+OPERATOR ?= FLIP_PLATFORM_OPERATOR
+PLATFORM_ROLE ?= ACCOUNTADMIN
+
+define jit_revoke_sql
+	@echo ""
+	@echo "⚠  Now revoke the break-glass role. In Snowsight, as your MFA-protected admin:"
+	@echo "     REVOKE ROLE $(PLATFORM_ROLE) FROM USER $(OPERATOR);"
+	@echo "     SHOW GRANTS TO USER $(OPERATOR);   -- expect no rows"
+	@echo ""
+endef
+
+.PHONY: help init plan apply destroy output lint fmt validate test jit-grant jit-revoke
 
 help: ## Show this help message
 	@echo "FLIP Snowflake PLATFORM (break-glass) infrastructure:"
@@ -92,13 +106,26 @@ apply: ## Warn loudly, confirm twice, show the saved plan, then apply it
 	$(TF) show $(PLAN_FILE)
 	@read -r -p "Apply this plan to the account's security objects? Type yes to continue: " answer; \
 		[ "$$answer" = "yes" ] || { echo "Aborted."; exit 1; }
-	$(TF) apply $(PLAN_FILE)
+	$(TF) apply $(PLAN_FILE); status=$$?; \
+		echo ""; echo "⚠  Now revoke the break-glass role. In Snowsight, as your MFA-protected admin:"; \
+		echo "     REVOKE ROLE $(PLATFORM_ROLE) FROM USER $(OPERATOR);"; \
+		echo "     SHOW GRANTS TO USER $(OPERATOR);   -- expect no rows"; echo ""; exit $$status
 
 destroy: ## Destroy the account's FLIP security objects (asks twice)
 	$(require_tf)
 	$(require_tfvars)
 	$(break_glass_warning)
-	$(TF) destroy -var-file="$(TFVARS)"
+	$(TF) destroy -var-file="$(TFVARS)"; status=$$?; \
+		echo ""; echo "⚠  Now revoke: REVOKE ROLE $(PLATFORM_ROLE) FROM USER $(OPERATOR);"; exit $$status
+
+jit-grant: ## Print the SQL that grants the operator the platform role for one apply (run it in Snowsight)
+	@echo "-- In Snowsight, signed in as your MFA-protected admin, immediately before make plan/apply:"
+	@echo "USE ROLE ACCOUNTADMIN;"
+	@echo "GRANT ROLE $(PLATFORM_ROLE) TO USER $(OPERATOR);"
+	@echo "-- and afterwards: make jit-revoke"
+
+jit-revoke: ## Print the SQL that takes the platform role away again
+	$(jit_revoke_sql)
 
 output: ## Print the names this tier created, as JSON
 	$(require_tf)

@@ -21,12 +21,12 @@
 #
 #   export SNOWFLAKE_ORGANIZATION_NAME=...   # or organization_name in the tfvars file
 #   export SNOWFLAKE_ACCOUNT_NAME=...
-#   export SNOWFLAKE_USER=jane.doe
-#   export SNOWFLAKE_PASSWORD=...            # read from the password manager, never typed into a file
-#   export SNOWFLAKE_PASSCODE=...            # the current TOTP code, when authenticator is username_password_mfa
+#   export SNOWFLAKE_USER=FLIP_PLATFORM_OPERATOR            # SNOWFLAKE_JWT (default): the just-in-time operator
+#   export SNOWFLAKE_PRIVATE_KEY_PATH=~/.snowflake/flip_platform_operator.p8
+#   export SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=...             # read -rs, never typed into a file
 #
-# `externalbrowser` is the alternative for an account federated to an IdP, and needs no password in
-# the environment at all. Nothing here accepts a credential as a Terraform variable: a password or
+# USERNAMEPASSWORDMFA (SNOWFLAKE_PASSWORD + the TOTP code in SNOWFLAKE_PASSCODE) suits an admin
+# enrolled with an authenticator app; EXTERNALBROWSER suits an account federated to an IdP. Nothing here accepts a credential as a Terraform variable: a password or
 # a passcode in a variable would land in state and in every plan file.
 provider "snowflake" {
   organization_name = var.organization_name

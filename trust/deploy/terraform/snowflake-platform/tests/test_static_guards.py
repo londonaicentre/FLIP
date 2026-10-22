@@ -166,7 +166,7 @@ def test_the_break_glass_operator_uses_mfa():
     block = hcl_block(source("variables.tf"), 'variable "authenticator"')
     assert "USERNAMEPASSWORDMFA" in block
     assert "EXTERNALBROWSER" in block
-    assert 'default     = "USERNAMEPASSWORDMFA"' in block, "MFA is the default, not an opt-in"
+    assert 'default     = "SNOWFLAKE_JWT"' in block, "the just-in-time key-pair operator is the default"
     provider = hcl_block(source("providers.tf"), 'provider "snowflake"')
     assert "authenticator     = var.authenticator" in provider
 
@@ -348,3 +348,19 @@ def test_no_dash_typography_in_prose():
         text = path.read_text()
         assert "\u2014" not in text, f"{path.name} uses an em dash"
         assert "\u2013" not in text, f"{path.name} uses an en dash"
+
+
+def test_the_operator_identity_is_never_managed_by_this_root() -> None:
+    """The just-in-time operator is the identity this root runs AS. If the root could create,
+    alter or grant to it, an apply could keep its own privilege or lock the operator out. It is
+    created once by hand and granted its role only by an MFA-protected admin in Snowsight."""
+    for path in sorted(ROOT_DIR.glob("*.tf")):
+        code = "\n".join(line for line in path.read_text().splitlines() if not line.lstrip().startswith("#"))
+        assert "FLIP_PLATFORM_OPERATOR" not in code, path.name
+
+
+def test_apply_and_destroy_always_print_the_revoke() -> None:
+    makefile = (ROOT_DIR / "Makefile").read_text()
+    for target in ("apply:", "destroy:"):
+        body = makefile.split(target, 1)[1].split("\n\n", 1)[0]
+        assert "REVOKE ROLE" in body, f"{target} must remind the operator to revoke the role"

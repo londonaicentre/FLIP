@@ -40,17 +40,20 @@ variable "platform_warehouse" {
 
 variable "authenticator" {
   description = <<-EOT
-    How the break-glass PERSON user authenticates. USERNAMEPASSWORDMFA pairs SNOWFLAKE_PASSWORD
-    with the TOTP code in SNOWFLAKE_PASSCODE; EXTERNALBROWSER delegates to the account's IdP and
-    needs no password in the environment. Both read every credential from the environment: this
-    root accepts none as a variable.
+    How the break-glass identity authenticates. SNOWFLAKE_JWT (the default) is the just-in-time
+    operator: a key-pair SERVICE user that holds no role while idle and is granted the platform role
+    by an MFA-protected admin in Snowsight only for the length of an apply (README "Break-glass
+    operator"); it works with any MFA method, passkeys included. USERNAMEPASSWORDMFA pairs
+    SNOWFLAKE_PASSWORD with the TOTP code in SNOWFLAKE_PASSCODE for an admin enrolled with an
+    authenticator app; EXTERNALBROWSER delegates to the account's IdP. Every credential comes from
+    the environment: this root accepts none as a variable.
   EOT
   type        = string
-  default     = "USERNAMEPASSWORDMFA"
+  default     = "SNOWFLAKE_JWT"
 
   validation {
-    condition     = contains(["USERNAMEPASSWORDMFA", "EXTERNALBROWSER"], var.authenticator)
-    error_message = "the break-glass tier is applied by a person user with MFA: USERNAMEPASSWORDMFA or EXTERNALBROWSER."
+    condition     = contains(["SNOWFLAKE_JWT", "USERNAMEPASSWORDMFA", "EXTERNALBROWSER"], var.authenticator)
+    error_message = "authenticator must be SNOWFLAKE_JWT (just-in-time operator), USERNAMEPASSWORDMFA or EXTERNALBROWSER."
   }
 }
 

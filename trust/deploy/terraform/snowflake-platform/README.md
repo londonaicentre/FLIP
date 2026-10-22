@@ -97,15 +97,60 @@ granted `USAGE` on the database and schema and `SELECT` on the event table.
 Every credential comes from the environment. Nothing here accepts one as a Terraform variable: a
 password or a passcode in a variable would land in state and in every plan file.
 
+### Break-glass operator (just-in-time, the default)
+
+The default identity is `FLIP_PLATFORM_OPERATOR`, a key-pair `SERVICE` user that **holds no role
+while idle**. An admin signed in to Snowsight with MFA (any method, passkeys included) grants it the
+platform role immediately before an apply and revokes it straight after, so every privileged
+session is gated by a human MFA login and leaves a GRANT/REVOKE pair in the account's audit trail.
+This is the pattern for a passkey-only admin, where Terraform cannot complete the MFA itself.
+
+One-off setup, as `ACCOUNTADMIN` in Snowsight (the key pair is generated on the operator machine,
+encrypted, exactly like the deploy user's):
+
+```sql
+USE ROLE ACCOUNTADMIN;
+CREATE USER FLIP_PLATFORM_OPERATOR TYPE = SERVICE
+  RSA_PUBLIC_KEY = '<public key body>'
+  COMMENT = 'FLIP break-glass operator: no role while idle; granted ACCOUNTADMIN only for an apply';
+-- Only from the operator machine. A user-level policy overrides the account policy for this user.
+-- The rule lives in a small ACCOUNTADMIN-owned database that neither root manages, so no apply
+-- can widen or drop the operator's own fence.
+CREATE DATABASE IF NOT EXISTS FLIP_SECURITY COMMENT = 'Hand-managed break-glass objects; not in any Terraform root';
+CREATE SCHEMA IF NOT EXISTS FLIP_SECURITY.NETWORK;
+CREATE NETWORK RULE FLIP_SECURITY.NETWORK.OPERATOR_IPS MODE = INGRESS TYPE = IPV4 VALUE_LIST = ('<ip>/32');
+CREATE NETWORK POLICY FLIP_PLATFORM_OPERATOR_POLICY ALLOWED_NETWORK_RULE_LIST = ('FLIP_SECURITY.NETWORK.OPERATOR_IPS');
+ALTER USER FLIP_PLATFORM_OPERATOR SET NETWORK_POLICY = FLIP_PLATFORM_OPERATOR_POLICY;
+```
+
+This root never creates, alters or grants to the operator or `FLIP_SECURITY`; a static guard
+enforces the first, because an identity that manages itself can keep its own privilege.
+
+Each apply:
+
+```bash
+make jit-grant          # prints: GRANT ROLE ACCOUNTADMIN TO USER FLIP_PLATFORM_OPERATOR; run it in Snowsight
+export SNOWFLAKE_USER=FLIP_PLATFORM_OPERATOR
+export SNOWFLAKE_PRIVATE_KEY_PATH=~/.snowflake/flip_platform_operator.p8
+read -rsp 'Operator key passphrase: ' SNOWFLAKE_PRIVATE_KEY_PASSPHRASE; echo; export SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
+make plan && make apply # apply prints the REVOKE when it ends, success or failure
+make jit-revoke         # the same REVOKE, if you need it again; then SHOW GRANTS TO USER ... is empty
+```
+
+Audit: `SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY` and `QUERY_HISTORY` filtered on
+`FLIP_PLATFORM_OPERATOR`, and `GRANTS_TO_USERS` for the grant windows.
+
+### Other authenticators
+
 ```bash
 export SNOWFLAKE_USER=jane.doe            # a PERSON user with MFA
 export SNOWFLAKE_PASSWORD=...             # read from your password manager, never typed into a file
 export SNOWFLAKE_PASSCODE=...             # the current TOTP code
 ```
 
-`authenticator = "USERNAMEPASSWORDMFA"` (the default) pairs the password with that passcode.
-`authenticator = "EXTERNALBROWSER"` delegates to the account's IdP and needs no password in the
-environment at all; use it wherever the account is federated.
+`authenticator = "USERNAMEPASSWORDMFA"` pairs the password with that passcode, for an admin
+enrolled with an authenticator app. `authenticator = "EXTERNALBROWSER"` delegates to the account's
+IdP and needs no password in the environment at all; use it wherever the account is federated.
 
 `platform_role` has **no default**: the operator names it in their gitignored tfvars file, so no
 privileged role name is committed.
