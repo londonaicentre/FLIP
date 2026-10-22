@@ -1249,6 +1249,26 @@ def test_autoencoder_validation_stops_on_a_nan_rather_than_averaging_around_it()
         trainer.validate(model, [{"image": torch.rand(1, 1, 8, 8, 8)}], torch.device("cpu"))
 
 
+def test_a_nan_loss_is_reported_by_name_when_the_other_losses_are_meta_tensors() -> None:
+    """A non-finite loss stops the run with a report that names it.
+
+    The losses are 0-d ``MetaTensor`` scalars (computed from the loader's ``MetaTensor`` images), and
+    masking one to find its finite range made MONAI call ``len()`` on it. The report itself then raised
+    a ``TypeError``, which hid which loss had gone non-finite.
+    """
+    from monai.data import MetaTensor
+
+    trainer = _trainer(_AUTOENCODER)
+    images = MetaTensor(torch.full((2, 1, 4, 4, 4), 0.5))
+    images.is_batch = True  # as the DataLoader collates them
+    losses = {
+        "l1": torch.nn.functional.l1_loss(images.float() * 0.5, images.float()),
+        "kl": torch.nn.functional.l1_loss(images.float() * float("nan"), images.float()),
+    }
+    with pytest.raises(RuntimeError, match=r"Non-finite kl during the generator loss[\s\S]*l1: .*finite range \[0\.25"):
+        trainer.require_finite(losses, "the generator loss")
+
+
 def test_the_latent_inferer_is_built_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """Training and validation share one inferer, so one latent scale factor.
 

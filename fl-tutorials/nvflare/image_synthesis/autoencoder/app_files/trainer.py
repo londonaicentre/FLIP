@@ -79,6 +79,8 @@ SSIM_KERNEL_SIGMA = 1.5
 
 def describe(name: str, tensor: torch.Tensor) -> str:
     """One-line summary of a tensor's finiteness and range, for a failure report."""
+    # A plain flat copy: masking a 0-d MetaTensor loss sends MONAI's batch handling into len(), which raises.
+    tensor = tensor.detach().reshape(-1).as_subclass(torch.Tensor)
     finite = torch.isfinite(tensor)
     n_nan = int(torch.isnan(tensor).sum())
     n_inf = int(torch.isinf(tensor).sum())
