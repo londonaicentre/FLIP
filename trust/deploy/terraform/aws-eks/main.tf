@@ -242,7 +242,7 @@ resource "aws_efs_file_system" "xnat" {
 
 resource "aws_security_group" "efs" {
   name        = "${var.name}-efs"
-  description = "NFS to the XNAT archive from the cluster's nodes"
+  description = "NFS to the XNAT archive from the cluster nodes"
   vpc_id      = aws_eks_cluster.this.vpc_config[0].vpc_id
 }
 
