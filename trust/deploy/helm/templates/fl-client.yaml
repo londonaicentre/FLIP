@@ -59,6 +59,12 @@ metadata:
     flip/network: {{ .Values.flClient.netId }}
 spec:
   replicas: 1
+  {{- if and .Values.sharedImagesPvc.enabled (eq .Values.sharedImagesPvc.accessMode "ReadWriteOnce") }}
+  # Shares a ReadWriteOnce volume with imaging-api: a surge pod scheduled elsewhere would wait on it
+  # forever, and one on the same node may find no CPU left, so the old pod goes first.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
@@ -70,6 +76,7 @@ spec:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: fl-client
         flip/network: {{ .Values.flClient.netId }}
+        flip/shared-images: "true"
       {{- $governed := and .Values.governance.document (eq .Values.flBackend "nvflare") }}
       {{- $kitFromSecret := eq .Values.flClient.kit.source "secret" }}
       {{- if or .Values.flClient.gpu.enabled $governed }}
