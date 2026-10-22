@@ -353,6 +353,11 @@ spec:
             - name: ACCESS_POLICY_FILE
               value: /app/governance/governance.fl_privacy.toml
             {{- end }}
+            # The trust's disclosure floor, the same value data-access-api enforces, so an app that
+            # releases site-level statistics rather than weights (the causal-discovery tutorial) can
+            # refuse below it too.
+            - name: COHORT_QUERY_THRESHOLD
+              value: {{ .Values.dataAccessApi.cohortQueryThreshold | quote }}
             {{- if eq .Values.flBackend "nvflare" }}
             - name: LOG_LEVEL
               value: {{ .Values.logLevel | quote }}

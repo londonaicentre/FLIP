@@ -25,7 +25,7 @@ directory basename, the same on both backends) and optionally one backend; defau
    full job config without a GPU or data.
 2. **Registrations.** Read, do not assume: the Flower `sim-tutorial.sh` `case` entry (+ `RUN_CONFIG`
    for evaluation); `DICOM_APPS` for a 2-D DICOM app; `scripts/check_tutorial_sync.sh` for files
-   shared with the twin (the cohort query at least); `docs/source/components/component-fl-nets.rst`,
+   shared with the twin (the cohort query at least); `docs/source/components/component-fl-jobs.rst`,
    `fl-tutorials/README.md`, both `AGENTS.md`; the `e2e_smoke_<name>` target and the demo recorder's
    `APPS` profile when the cohort is seeded on the dev trusts (`references/registration-checklist.md`
    is the full list).
