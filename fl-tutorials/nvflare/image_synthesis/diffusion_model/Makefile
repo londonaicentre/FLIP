@@ -80,20 +80,9 @@ export:
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # SITE{1,2}_* and DEV_* paths are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
-# GLOBAL_ROUNDS in app_files/config.json is a PRODUCTION setting: the FL API reads it at submit time.
-# A local run's round count is NUM_ROUNDS, which this target passes as --num_rounds. Keeping the two
-# separate is deliberate and tree-wide (arkplus_fine_tuning runs 3 rounds locally against 50 in
-# production), but the split is invisible exactly where it bites, because LOCAL_ROUNDS in that same
-# file *is* read locally — the trainer reads it directly. So raising GLOBAL_ROUNDS appears to do
-# nothing while its neighbour works, and the only clue is a "num_rounds=1" that never names the key
-# you edited. Say it outright whenever the two disagree.
+# A local run does NUM_ROUNDS rounds; GLOBAL_ROUNDS in config.json is what the platform runs.
 sim:
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
-	@global_rounds=$$(python3 -c "import json;print(json.load(open('app_files/config.json')).get('GLOBAL_ROUNDS',''))" 2>/dev/null); \
-	if [ -n "$$global_rounds" ] && [ "$$global_rounds" != "$(NUM_ROUNDS)" ]; then \
-		echo "⚠️  config.json GLOBAL_ROUNDS=$$global_rounds is a production setting and is IGNORED here."; \
-		echo "    This run does $(NUM_ROUNDS) round(s). To match it locally: make run NUM_ROUNDS=$$global_rounds"; \
-	fi
 	@if [ "$(DATASET)" = arkplus ] && [ ! -f "$(SITE1_DATAFRAME)" ]; then \
 		echo "Ark+ data not found at $(SITE1_DATAFRAME)."; \
 		echo "Run: make -C $(FL_TUTORIALS) download-arkplus-finetuning-data"; \

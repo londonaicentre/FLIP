@@ -43,6 +43,10 @@ def get_xray_transforms(is_validation: bool = False) -> mt.Compose:
         mt.Compose: Composed transform pipeline keyed on "image".
     """
     transforms = [
+        # A pinned reader: auto-detection picks ITKReader whenever itk is installed, which changes the
+        # axis order, and MONAI's default swap_ij=True transposes the radiograph, which no rotation or
+        # flip undoes (a "fix" mirrors it, silently swapping left and right). swap_ij=False keeps
+        # DICOM's (row, column) order; fl-tutorials/tests/ pins this for every app on this path.
         mt.LoadImaged(keys=["image"], reader="PydicomReader", swap_ij=False),
         mt.Lambdad(keys=["image"], func=to_grayscale),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),

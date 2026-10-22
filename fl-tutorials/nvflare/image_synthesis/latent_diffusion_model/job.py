@@ -29,17 +29,12 @@ single-stage FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execut
 
 Frozen-autoencoder specifics, driven by ``app_files/config.json``:
 
-* ``SERVER_CHECKPOINT`` — the autoencoder-only checkpoint is seeded into the round-0 global model
-  server-side by ``InitialCheckpointPTModelPersistor`` (wired into ``FlipFedAvgRecipe``). It is
-  staged to the **server** custom dir only (see :func:`stage_app_files`), so clients build a bare
-  architecture and receive the autoencoder at round 0 — they never need the file.
-* ``AGGREGATE_ONLY_REGEX`` — passed to the recipe so it wires the diffusion-model-only filters
-  (``KeepOnlyVars`` client-side return, ``TrimBroadcastVars`` server-side broadcast after round 0,
-  ``ReconstructFullModel`` client-side rebuild). This reproduces locally what the fl-server injects
-  from the same config key at deploy, so ``make run``/``make sim`` exercises the full frozen-encoder
-  round-trip. It is **not merely an optimisation**: leaving the frozen autoencoder's zero diffs in
-  the update flattens ``PercentilePrivacy``'s (global) percentile cutoff to zero, silently turning
-  the DP sparsification into a no-op.
+* ``SERVER_CHECKPOINT``: the autoencoder checkpoint is staged to the server only and loaded into the
+  round-0 global model by ``InitialCheckpointPTModelPersistor``; clients receive it in the broadcast.
+* ``AGGREGATE_ONLY_REGEX``: the recipe wires ``KeepOnlyVars`` (clients return only the diffusion
+  model), ``TrimBroadcastVars`` (the server broadcasts only it after round 0) and
+  ``ReconstructFullModel`` (each client rebuilds the full model from its round-0 copy), as the
+  fl-server does from the same key on the platform.
 
 Both modes go through FLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
 from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
@@ -83,26 +78,10 @@ _CHECKPOINT_NAME = "pretrained_autoencoder.pt"
 def stage_app_files(job: FedJob) -> None:
     """Bundle every file in ``app_files/`` into the job's ``custom/`` directories.
 
-    Everything is added to both the server and the clients EXCEPT the autoencoder checkpoint
-    (``pretrained_autoencoder.pt``), which is added to the **server** only.
-    ``InitialCheckpointPTModelPersistor`` loads it into the round-0 global model and
-    ``ScatterAndGather`` broadcasts that model to every client, so clients build only a bare
-    architecture and receive the frozen autoencoder at round 0 — they never need the file.
-    ``FedJob.add_file_to_{server,clients}`` registers the files with the job's file sources, so they
-    are bundled for both the SimEnv run (``recipe.execute``) and ``--export``.
-
-    Note where the server-only guarantee actually lives. This export produces a **single shared**
-    ``app/`` directory (``deploy_map: {"app": ["@ALL"]}``), so locally the distinction has no
-    observable effect — the checkpoint sits in that one ``custom/`` dir, which is exactly what the
-    persistor's ``<app>/custom/<checkpoint>`` resolution step wants for a simulator run. In
-    production the checkpoint never enters the job bundle at all: flip-api's bundler diverts any
-    file named by ``SERVER_CHECKPOINT`` to ``<bucket>/server_checkpoints/``, and the FL API stages it
-    to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/`` on a hub-local volume that no client can read. The
-    exclusion here expresses the same intent for the local path and matches ``arkplus_fine_tuning``,
-    which behaves identically.
-
-    The ``dev/`` helpers go to the clients as well, so a simulator run can write debug images; they
-    are not app files, and an upload to the platform never includes them.
+    Everything goes to the server and the clients except the autoencoder checkpoint, which goes to the
+    server only: clients receive the autoencoder in the round-0 broadcast. On the platform the
+    checkpoint never enters the job bundle (flip-api diverts the file ``SERVER_CHECKPOINT`` names to a
+    hub-only location). The shared ``dev/`` helpers go to the clients too, for local debug images.
 
     Args:
         job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).

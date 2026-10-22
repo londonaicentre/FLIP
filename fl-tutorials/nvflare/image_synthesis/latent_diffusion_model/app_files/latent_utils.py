@@ -21,6 +21,7 @@ This tutorial is a `standard` job, whose required upload set is
 
 import hashlib
 import logging
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -51,20 +52,9 @@ def autoencoder_fingerprint(state_dict: Mapping[str, Any]) -> str:
 
 
 def derive_new_latent_shape(input_shape: list, num_downsamplings: int) -> list:
-    """
-    For diffusion model, adjusts the stage 1 latent space so that the latent space input to the
-    diffusion model can be downsampled as many times as needed without errors due to odd dimensions.
-    """
-    output_shape = []
-    for shape_el in input_shape:
-        new_shape = shape_el
-        remainder_0 = shape_el % 2**num_downsamplings
-        while remainder_0 != 0:
-            new_shape += 1
-            remainder_0 = new_shape % 2**num_downsamplings
-
-        output_shape.append(new_shape)
-    return [int(i) for i in output_shape]
+    """Round each latent dimension up to a multiple of ``2**num_downsamplings``, so the UNet can halve it that often."""
+    factor = 2**num_downsamplings
+    return [math.ceil(size / factor) * factor for size in input_shape]
 
 
 def latent_shapes(model: torch.nn.Module, spatial_shape: list) -> tuple[list, list]:

@@ -21,8 +21,8 @@ FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
     This is the primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the FLARE simulator. Requires a GPU and the reference dataset
-    (``make -C fl-tutorials download-xray-data``). FLIP-specific values are injected via
+    Runs a local simulation under the FLARE simulator. Requires a GPU and the Ark+ X-rays
+    (``make -C fl-tutorials download-arkplus-finetuning-data``). FLIP-specific values are injected via
     environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL
     queries contain spaces that don't survive argparse whitespace-splitting.
 

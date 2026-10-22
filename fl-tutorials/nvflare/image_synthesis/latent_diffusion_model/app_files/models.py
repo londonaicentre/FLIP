@@ -9,32 +9,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Latent diffusion network for the FLIP latent diffusion tutorial.
+"""Latent diffusion network for the FLIP latent diffusion tutorial: a frozen autoencoder and the UNet that is trained.
 
-Composes a **frozen** autoencoder with the diffusion model that is actually trained. The
-autoencoder compresses images into a latent space; the ``DiffusionModelUNet`` denoises within that
-space, so its ``in_channels``/``out_channels`` are the autoencoder's ``latent_channels`` (3 here),
-not the image channel count.
-
-Two things about this network exist because the autoencoder is supplied rather than trained:
-
-* **There is no discriminator.** It only ever served the autoencoder's adversarial training, which
-  happens in the separate `autoencoder` tutorial. The checkpoint uploaded here is therefore
-  autoencoder-only.
-* **The submodule must be named ``autoencoder``**, matching the `autoencoder` tutorial's network, so
-  the uploaded checkpoint's ``autoencoder.*`` keys land on it. ``InitialCheckpointPTModelPersistor``
-  loads with ``strict=False``, so a name or shape mismatch is *silently tolerated* — the diffusion
-  model would then train against a randomly-initialised encoder while reporting plausible losses.
-* **The autoencoder's architecture is not in ``config.json``.** It comes from
-  ``autoencoder_config.yaml``, written next to the checkpoint by
-  ``process_tools/extract_autoencoder.py`` and verified against that checkpoint's own tensors.
-  A second copy of the block here could drift from the first, and disagreeing costs you nothing at
-  load time and everything afterwards. Some of it cannot even be recovered from the weights —
-  ``norm_num_groups`` changes how GroupNorm computes without changing a parameter shape, so the
-  wrong value loads cleanly under ``strict=True`` and only corrupts the latents.
-
-The trained submodule is ``diffusion_model``, which is what ``AGGREGATE_ONLY_REGEX`` in
-``config.json`` selects for per-round aggregation.
+The UNet denoises in the autoencoder's latent space, so its in and out channels are the autoencoder's
+``latent_channels``. The autoencoder is built from ``autoencoder_config.yaml``, which
+``process_tools/extract_autoencoder.py`` writes beside its checkpoint, not from ``config.json``. Its
+submodule is named ``autoencoder`` so the checkpoint's ``autoencoder.*`` keys land on it. There is no
+discriminator: that only served the autoencoder's own training. ``AGGREGATE_ONLY_REGEX`` selects
+``diffusion_model`` for aggregation.
 """
 
 import json
