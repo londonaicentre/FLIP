@@ -118,7 +118,7 @@ apart:
 | File | What it is | Where it goes |
 |---|---|---|
 | `app_files/pretrained_autoencoder.pt` | the weights | server only (`SERVER_CHECKPOINT`) |
-| `app_files/autoencoder_config.yaml` | the architecture those weights belong to | every client, in the app bundle |
+| `app_files/autoencoder_config.yaml` | the architecture those weights belong to, and their fingerprint | every client, in the app bundle |
 
 The YAML is what `models.py` builds the frozen autoencoder from, which is why the architecture is
 **not** duplicated in this tutorial's `config.json`. Clients need it precisely because they *don't*
@@ -128,10 +128,9 @@ so they have to know its shape up front.
 Dropping `discriminator.*` is about file size and a clean load log rather than correctness — the
 persistor loads `strict=False`, so leftover keys would merely be reported as unexpected.
 
-Re-running `prepare-checkpoint` when both files already exist **verifies** them instead of skipping:
-it instantiates the recorded architecture and compares it to the checkpoint's own tensors, key by key
-and shape by shape, so a checkpoint from a differently-shaped autoencoder is caught here instead of
-being silently declined at load time.
+Before writing either file, the extracted weights are loaded strictly into the recorded architecture,
+so a checkpoint from another network fails here. The YAML also records a fingerprint of the weights:
+each client recomputes it on the autoencoder it receives and refuses to train on any other.
 
 **The checkpoint is the only thing you upload as a model file.** There is no diffusion-model checkpoint to provide,
 empty or otherwise: the server builds the full network from `models.py` — autoencoder plus a freshly
@@ -141,21 +140,20 @@ weights are never updated here.
 
 ### Checking that the autoencoder weights loaded
 
-If the autoencoder weights don't load, training still runs and the losses still look normal, but
-the diffusion model is learning from a randomly initialised encoder. The server loads the checkpoint
-with `strict=False`, so two mistakes can cause this without any error:
+The server loads the checkpoint with `strict=False`, so it cannot tell you when the autoencoder
+weights did not load. Two mistakes leave the diffusion model training against a randomly initialised
+encoder:
 
 1. **Renaming the `autoencoder` submodule** in either tutorial's `models.py`. The weights are saved
    under `autoencoder.*`, so with a different name none of them match.
 2. **Using a `pretrained_autoencoder.pt` and an `autoencoder_config.yaml` from different runs.**
-   Most mismatches change a tensor shape and fail with an error, but some settings, such as
-   `norm_num_groups`, don't, so the wrong config loads without complaint. Always generate the two
-   files together with `make prepare-checkpoint`.
+   Always generate the two files together with `make prepare-checkpoint`.
 
-To confirm the weights loaded, find `Loaded backbone into initial global model from …` in the server
-log. `missing` should only count the diffusion model's tensors, which aren't in the checkpoint: 496
-with the shipped config. The autoencoder adds another 130, so a number above 496 means some of its
-weights were not loaded.
+The trainer catches both before training: it stops with "The autoencoder this client received is not
+the one autoencoder_config.yaml describes". To see why, find `Loaded backbone into initial global model
+from …` in the server log. `missing` should only count the diffusion model's tensors, which aren't in
+the checkpoint: 496 with the shipped config. The autoencoder adds another 130, so a number above 496
+means some of its weights were not loaded.
 
 ## How the frozen autoencoder reaches the clients
 

@@ -57,7 +57,7 @@ import pandas as pd
 import torch
 from flip import FLIP
 from flip.constants import ResourceType
-from latent_utils import build_inferer
+from latent_utils import autoencoder_fingerprint, build_inferer
 from modality import modality_of, one_hot_condition
 from models import get_model
 from monai.data import DataLoader, Dataset
@@ -170,6 +170,25 @@ def freeze_autoencoder(model: torch.nn.Module) -> None:
     """
     model.autoencoder.requires_grad_(False)
     model.autoencoder.eval()
+
+
+def verify_autoencoder(model: torch.nn.Module) -> None:
+    """Refuse to go on unless the autoencoder that arrived is the one ``autoencoder_config.yaml`` describes.
+
+    The server's load of ``SERVER_CHECKPOINT`` cannot fail: a checkpoint it cannot find is only
+    logged, and one whose keys do not match (a renamed ``autoencoder`` submodule, another network's
+    file) loads under ``strict=False`` as nothing. Either way the round-0 broadcast carries a randomly
+    initialised encoder and training reports plausible losses. The YAML records the fingerprint of the
+    extracted weights, so compare it with what this client actually holds.
+    """
+    received = autoencoder_fingerprint(model.autoencoder.state_dict())
+    if received != model.autoencoder_sha256:
+        raise RuntimeError(
+            "The autoencoder this client received is not the one autoencoder_config.yaml describes "
+            f"(weights fingerprint {received[:12]}…, expected {model.autoencoder_sha256[:12]}…). Look in the "
+            "server log for 'SERVER_CHECKPOINT ... not found' or a 'Loaded backbone' line with unexpected keys, "
+            "and prepare pretrained_autoencoder.pt and autoencoder_config.yaml together (make prepare-checkpoint)."
+        )
 
 
 def validate_every(config: dict) -> int:
@@ -548,6 +567,7 @@ class LatentDiffusionTrainer:
         # The broadcast carries the autoencoder at round 0; re-assert the freeze afterwards so a
         # load can never quietly re-enable grads or training mode on it.
         freeze_autoencoder(self.model)
+        verify_autoencoder(self.model)
 
     def train(self, writer: SummaryWriter, global_round: int) -> int:
         """One ``train`` round: local diffusion-model epochs. Returns the iteration count."""
@@ -761,6 +781,7 @@ def main() -> None:
         elif flare.is_evaluate():
             trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()}, strict=False)
             freeze_autoencoder(trainer.model)
+            verify_autoencoder(trainer.model)
             test_loader = trainer.val_loader(config["BATCH_SIZE"])
             val_loss = validate(
                 trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer

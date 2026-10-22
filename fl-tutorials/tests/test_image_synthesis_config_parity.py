@@ -1049,62 +1049,6 @@ def _tensors_for(architecture: dict) -> dict:
     return {f"{_AUTOENCODER_PREFIX}{key}": value for key, value in AutoencoderKL(**architecture).state_dict().items()}
 
 
-def test_checkpoint_verification_accepts_the_architecture_that_built_it() -> None:
-    """The happy path, so the rejection test below cannot pass by rejecting everything."""
-    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
-    architecture = _tiny_autoencoder_architecture()
-    extract.verify_against_checkpoint(architecture, _tensors_for(architecture))
-
-
-def test_checkpoint_verification_refuses_a_differently_shaped_checkpoint() -> None:
-    """A checkpoint from another autoencoder is refused at extraction time, not tolerated at load.
-
-    This is the check that turns the worst failure mode into a stopped command: without it a stale
-    ``pretrained_autoencoder.pt`` from another run sits in ``app_files``, the persistor's
-    ``strict=False`` load quietly matches nothing, and the job trains a diffusion model against noise.
-    """
-    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
-    architecture = _tiny_autoencoder_architecture()
-    other = {**architecture, "channels": [8, 16]}
-    with pytest.raises(ValueError, match="does not describe this checkpoint"):
-        extract.verify_against_checkpoint(architecture, _tensors_for(other))
-
-
-def test_checkpoint_verification_cannot_see_norm_num_groups() -> None:
-    """Pins the blind spot that justifies recording the architecture instead of inferring it.
-
-    ``norm_num_groups`` repartitions every GroupNorm without moving a single parameter, so no
-    comparison against a finished checkpoint can recover it — this test asserts the verification
-    stays silent, which is *why* the value has to be written down by the tutorial that trained the
-    weights. If MONAI ever makes this visible in the state dict, this test fails and the guarantee in
-    ``extract_autoencoder``'s docstring can be strengthened.
-    """
-    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
-    architecture = _tiny_autoencoder_architecture()
-    regrouped = {**architecture, "norm_num_groups": 4}
-    extract.verify_against_checkpoint(architecture, _tensors_for(regrouped))
-
-
-def test_extraction_records_the_architecture_the_run_was_trained_with(tmp_path: Path) -> None:
-    """The recorded architecture comes from the run's ``config.json``, not the checkout's.
-
-    A platform run trains with the ``config.json`` uploaded beside it. Recording the checkout's
-    instead would describe a network the weights were not trained with, and for ``norm_num_groups``
-    no check downstream could tell (see the test above).
-    """
-    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
-    config = _config(_AUTOENCODER)
-    config["net_config"]["stage_1"]["norm_num_groups"] = 16
-    run_config = tmp_path / "config.json"
-    run_config.write_text(json.dumps(config))
-
-    shipped, _ = extract.describe_autoencoder()
-    trained, _ = extract.describe_autoencoder(config_path=run_config)
-
-    assert shipped["norm_num_groups"] == 32
-    assert trained["norm_num_groups"] == 16
-
-
 def test_the_latent_network_refuses_to_guess_a_missing_autoencoder_config(tmp_path: Path) -> None:
     """No YAML means stop, not fall back on a default.
 
@@ -1112,16 +1056,95 @@ def test_the_latent_network_refuses_to_guess_a_missing_autoencoder_config(tmp_pa
     """
     models = _load_app_module(_LATENT_DIFFUSION, "models")
     with pytest.raises(FileNotFoundError, match="prepare-checkpoint"):
-        models.load_autoencoder_config(tmp_path / "autoencoder_config.yaml")
+        models.read_autoencoder_document(tmp_path / "autoencoder_config.yaml")
 
 
-def test_the_latent_network_refuses_a_config_schema_it_does_not_know(tmp_path: Path) -> None:
-    """A future layout is refused rather than partially understood."""
-    models = _load_app_module(_LATENT_DIFFUSION, "models")
-    path = tmp_path / "autoencoder_config.yaml"
-    path.write_text(yaml.safe_dump({"schema_version": 99, "autoencoder": _tiny_autoencoder_architecture()}))
-    with pytest.raises(ValueError, match="schema_version"):
-        models.load_autoencoder_config(path)
+def _fresh_autoencoder(seed: int) -> torch.nn.Module:
+    """A tiny ``AutoencoderKL``; two seeds give the same architecture with different weights."""
+    from monai.networks.nets import AutoencoderKL
+
+    torch.manual_seed(seed)
+    return AutoencoderKL(**_tiny_autoencoder_architecture())
+
+
+def test_the_weights_fingerprint_ignores_the_prefix_and_sees_every_value() -> None:
+    """Prefixed (extracted checkpoint) and bare (submodule) state dicts hash alike; one value changes it."""
+    latent_utils = _load_app_module(_LATENT_DIFFUSION, "latent_utils")
+    bare = _fresh_autoencoder(0).state_dict()
+    prefixed = {f"{_AUTOENCODER_PREFIX}{key}": value for key, value in bare.items()}
+    assert latent_utils.autoencoder_fingerprint(bare) == latent_utils.autoencoder_fingerprint(prefixed)
+
+    nudged = {key: value.clone() for key, value in bare.items()}
+    first = next(iter(nudged))
+    nudged[first].view(-1)[0] += 1e-3
+    assert latent_utils.autoencoder_fingerprint(nudged) != latent_utils.autoencoder_fingerprint(bare)
+
+
+def test_the_trainer_refuses_an_autoencoder_other_than_the_recorded_one() -> None:
+    """The client-side check the server's ``strict=False`` load cannot make.
+
+    A ``SERVER_CHECKPOINT`` the server could not find, or whose keys matched nothing, still yields a
+    round-0 broadcast — of a randomly-initialised autoencoder. Same architecture, other weights: only
+    the fingerprint tells them apart.
+    """
+    trainer = _trainer(_LATENT_DIFFUSION)
+    latent_utils = _load_app_module(_LATENT_DIFFUSION, "latent_utils")
+    recorded = _fresh_autoencoder(0)
+    expected = latent_utils.autoencoder_fingerprint(recorded.state_dict())
+
+    trainer.verify_autoencoder(SimpleNamespace(autoencoder=recorded, autoencoder_sha256=expected))
+    with pytest.raises(RuntimeError, match="not the one autoencoder_config.yaml describes"):
+        trainer.verify_autoencoder(SimpleNamespace(autoencoder=_fresh_autoencoder(1), autoencoder_sha256=expected))
+
+
+def _tiny_run(tmp_path: Path, channels: list[int], norm_num_groups: int = 2) -> tuple[Path, Path]:
+    """An `autoencoder` run's checkpoint (FLARE envelope, discriminator included) and its config.json."""
+    from monai.networks.nets import AutoencoderKL
+
+    architecture = {**_tiny_autoencoder_architecture(), "channels": channels, "norm_num_groups": norm_num_groups}
+    stage_1 = {key: value for key, value in architecture.items() if key != "spatial_dims"}
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"net_config": {"spatial_dims": 2, "stage_1": stage_1}}))
+    weights = {f"{_AUTOENCODER_PREFIX}{k}": v for k, v in AutoencoderKL(**architecture).state_dict().items()}
+    checkpoint = tmp_path / "FL_global_model.pt"
+    torch.save({"model": {**weights, "discriminator.w": torch.zeros(1)}, "meta": {}}, checkpoint)
+    return checkpoint, config
+
+
+def test_extraction_writes_the_run_architecture_and_its_fingerprint(tmp_path: Path) -> None:
+    """The YAML records the architecture the run was trained with and the fingerprint the trainer checks.
+
+    The architecture comes from the run's own ``config.json``: ``norm_num_groups`` changes no tensor
+    shape, so the weights could not reveal a wrong value.
+    """
+    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
+    latent_utils = _load_app_module(_LATENT_DIFFUSION, "latent_utils")
+    checkpoint, config = _tiny_run(tmp_path, channels=[4, 8], norm_num_groups=4)
+    dst = tmp_path / "out" / "pretrained_autoencoder.pt"
+
+    extract.main(["--src", str(checkpoint), "--dst", str(dst), "--autoencoder-config", str(config)])
+
+    tensors = torch.load(dst, weights_only=True)
+    assert all(key.startswith(_AUTOENCODER_PREFIX) for key in tensors), "the discriminator was not dropped"
+    text = (dst.parent / "autoencoder_config.yaml").read_text()
+    document = yaml.safe_load(text)
+    assert document["autoencoder"]["norm_num_groups"] == 4
+    assert document["autoencoder_sha256"] == latent_utils.autoencoder_fingerprint(tensors)
+    assert text.splitlines()[-1].startswith("autoencoder_sha256")
+    assert text.rstrip().endswith("# pragma: allowlist secret"), "detect-secrets would flag the fingerprint"
+
+
+def test_extraction_refuses_weights_the_architecture_cannot_hold(tmp_path: Path) -> None:
+    """A checkpoint from another network fails at extraction and writes nothing."""
+    extract = _load_process_tool(_LATENT_DIFFUSION, "extract_autoencoder")
+    checkpoint, _ = _tiny_run(tmp_path, channels=[8, 16])
+    (tmp_path / "other").mkdir()
+    _, config = _tiny_run(tmp_path / "other", channels=[4, 8])
+    dst = tmp_path / "out" / "pretrained_autoencoder.pt"
+
+    with pytest.raises(RuntimeError, match="size mismatch"):
+        extract.main(["--src", str(checkpoint), "--dst", str(dst), "--autoencoder-config", str(config)])
+    assert not dst.exists()
 
 
 def test_the_latent_network_refuses_channels_that_are_not_the_autoencoders_latents() -> None:
@@ -1150,41 +1173,16 @@ def test_the_latent_network_refuses_a_dimensionality_the_autoencoder_was_not_bui
         models.check_latent_geometry(net_config, architecture)
 
 
-def test_the_architecture_config_key_names_the_file_that_ships() -> None:
-    """``AUTOENCODER_CONFIG`` names a YAML that is actually in ``app_files``.
+def test_the_makefile_prepares_the_checkpoint_the_config_declares() -> None:
+    """``prepare-checkpoint`` writes the file ``SERVER_CHECKPOINT`` names.
 
-    The weights filename has ``SERVER_CHECKPOINT``; this is its counterpart for the architecture, so
-    the pair can be renamed together without touching code. Unlike the checkpoint, a wrong name here
-    fails loudly at import — but it fails on every client mid-deploy, which is a slow way to find out.
-    """
-    declared = _config(_LATENT_DIFFUSION)["AUTOENCODER_CONFIG"]
-    shipped = _LATENT_DIFFUSION / "app_files" / declared
-    assert shipped.is_file(), (
-        f"config.json declares AUTOENCODER_CONFIG={declared!r} but no such file ships in app_files/"
-    )
-
-
-def test_the_makefile_prepares_the_filenames_the_config_declares() -> None:
-    """``prepare-checkpoint`` writes the two names ``config.json`` asks for.
-
-    The Makefile decides where the artifacts land; ``config.json`` decides where the job looks for
-    them. Drift means `make prepare-checkpoint` reports success having written a checkpoint the
-    persistor will never open, and the run proceeds on a randomly-initialised encoder.
+    Drift means `make prepare-checkpoint` reports success having written a checkpoint the persistor
+    never opens, and the run starts on a randomly initialised encoder.
     """
     makefile = (_LATENT_DIFFUSION / "Makefile").read_text(encoding="utf-8")
-    config = _config(_LATENT_DIFFUSION)
-    for variable, key in (("PROCESSED_CHECKPOINT", "SERVER_CHECKPOINT"), ("PROCESSED_CONFIG", "AUTOENCODER_CONFIG")):
-        match = re.search(rf"^{variable} \?= (\S+)$", makefile, re.MULTILINE)
-        assert match, f"{variable} is not defined in latent_diffusion_model/Makefile"
-        assert Path(match.group(1)).name == config[key], (
-            f"Makefile's {variable} is {match.group(1)!r} but config.json's {key} is {config[key]!r}"
-        )
-
-
-def test_the_latent_network_reads_the_configured_architecture_filename() -> None:
-    """``models.py`` honours ``AUTOENCODER_CONFIG`` rather than its own hardcoded default."""
-    models = _load_app_module(_LATENT_DIFFUSION, "models")
-    assert models.autoencoder_config_name() == _config(_LATENT_DIFFUSION)["AUTOENCODER_CONFIG"]
+    match = re.search(r"^PROCESSED_CHECKPOINT \?= (\S+)$", makefile, re.MULTILINE)
+    assert match, "PROCESSED_CHECKPOINT is not defined in latent_diffusion_model/Makefile"
+    assert Path(match.group(1)).name == _config(_LATENT_DIFFUSION)["SERVER_CHECKPOINT"]
 
 
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)

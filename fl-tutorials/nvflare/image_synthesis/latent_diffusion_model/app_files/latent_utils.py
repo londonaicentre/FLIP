@@ -19,7 +19,10 @@ This tutorial is a `standard` job, whose required upload set is
 ``trainer.py``/``config.json``/``models.py``; this module is uploaded beside them.
 """
 
+import hashlib
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 import torch
 from monai.inferers import LatentDiffusionInferer
@@ -27,6 +30,24 @@ from monai.networks.schedulers import DDPMScheduler
 from torch.amp import autocast
 
 logger = logging.getLogger(__name__)
+
+_AUTOENCODER_PREFIX = "autoencoder."
+
+
+def autoencoder_fingerprint(state_dict: Mapping[str, Any]) -> str:
+    """SHA-256 over an autoencoder's weights: each tensor's name, dtype, shape and bytes, by name.
+
+    Keys may carry the ``autoencoder.`` prefix (an extracted checkpoint) or not (the submodule's own
+    ``state_dict()``); both spellings hash alike. ``extract_autoencoder.py`` records it in
+    ``autoencoder_config.yaml`` and the trainer recomputes it on the weights it actually received.
+    """
+    tensors = {key.removeprefix(_AUTOENCODER_PREFIX): torch.as_tensor(value) for key, value in state_dict.items()}
+    digest = hashlib.sha256()
+    for name in sorted(tensors):
+        tensor = tensors[name].detach().cpu().contiguous()
+        digest.update(f"{name}|{tensor.dtype}|{tuple(tensor.shape)}|".encode())
+        digest.update(tensor.reshape(-1).view(torch.uint8).numpy().tobytes())
+    return digest.hexdigest()
 
 
 def derive_new_latent_shape(input_shape: list, num_downsamplings: int) -> list:

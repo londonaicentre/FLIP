@@ -1,7 +1,6 @@
 {
     "job_type": "standard",
     "SERVER_CHECKPOINT": "pretrained_autoencoder.pt",
-    "AUTOENCODER_CONFIG": "autoencoder_config.yaml",
     "AGGREGATE_ONLY_REGEX": "^diffusion_model\\.",
     "GLOBAL_ROUNDS": 2,
     "LOCAL_ROUNDS": 3,

@@ -46,17 +46,9 @@ import yaml
 from monai.networks.nets import AutoencoderKL, DiffusionModelUNet
 from torch import nn
 
-# Written beside the checkpoint by process_tools/extract_autoencoder.py, then staged here. Unlike the
-# checkpoint — which SERVER_CHECKPOINT keeps server-side — this must reach every client, because
-# clients build the bare architecture and receive the weights in the round-0 broadcast.
-#
-# The name is declared in config.json under AUTOENCODER_CONFIG, mirroring SERVER_CHECKPOINT for the
-# weights, so the pair can be renamed together without editing code. This constant is only the
-# fallback for a config that predates the key.
-DEFAULT_AUTOENCODER_CONFIG_NAME = "autoencoder_config.yaml"
-
-# The layout this module knows how to read. extract_autoencoder.py writes it.
-_SUPPORTED_SCHEMA_VERSION = 1
+# Written beside the checkpoint by process_tools/extract_autoencoder.py. Unlike the checkpoint, which
+# stays on the FL server, it reaches every client: they build the bare autoencoder from it.
+AUTOENCODER_CONFIG = Path(__file__).parent / "autoencoder_config.yaml"
 
 
 def load_net_config():
@@ -69,49 +61,22 @@ def load_net_config():
     return net_config
 
 
-def autoencoder_config_name() -> str:
-    """The architecture file's name, from ``config.json``'s ``AUTOENCODER_CONFIG``."""
-    config_path = Path(__file__).parent / "config.json"
-    with open(config_path, "r") as f:
-        return json.load(f).get("AUTOENCODER_CONFIG") or DEFAULT_AUTOENCODER_CONFIG_NAME
-
-
-def load_autoencoder_config(path: Path | None = None) -> dict[str, Any]:
-    """Read the frozen autoencoder's architecture from the YAML that accompanies the checkpoint.
-
-    Args:
-        path: The YAML to read. Defaults to the file ``config.json`` names, beside this one.
-
-    Returns:
-        The ``AutoencoderKL`` keyword arguments the checkpoint was trained with.
+def read_autoencoder_document(path: Path = AUTOENCODER_CONFIG) -> dict[str, Any]:
+    """Read ``autoencoder_config.yaml``: the ``autoencoder`` architecture and its ``autoencoder_sha256``.
 
     Raises:
-        FileNotFoundError: if the file is absent. This is deliberately fatal rather than defaulted:
-            a guessed architecture loads the checkpoint as noise without raising, which is the exact
-            failure this file exists to prevent.
-        ValueError: if the schema version is one this module does not understand.
+        FileNotFoundError: if it is absent. Deliberately fatal: a guessed architecture would load the
+            checkpoint as noise without raising.
     """
-    config_path = path or Path(__file__).parent / autoencoder_config_name()
-    if not config_path.is_file():
+    if not path.is_file():
         raise FileNotFoundError(
-            f"No {config_path.name} at {config_path}. This job trains a diffusion model inside "
-            "a frozen autoencoder's latent space, so it needs to know that autoencoder's "
-            "architecture; it is not duplicated in config.json on purpose. Produce it together with "
-            "the checkpoint:\n"
-            "    make prepare-checkpoint RAW_CHECKPOINT=<an `autoencoder` run's .pt>"
+            f"No {path.name} at {path}. This job needs the frozen autoencoder's architecture, which "
+            "comes with its checkpoint:\n    make prepare-checkpoint RAW_CHECKPOINT=<an `autoencoder` run's .pt>"
         )
-    with open(config_path) as handle:
+    with open(path) as handle:
         document = yaml.safe_load(handle)
-
-    version = document.get("schema_version")
-    if version != _SUPPORTED_SCHEMA_VERSION:
-        raise ValueError(
-            f"{config_path} declares schema_version {version!r}, but this models.py reads "
-            f"{_SUPPORTED_SCHEMA_VERSION}. Regenerate it with process_tools/extract_autoencoder.py."
-        )
-    architecture = document["autoencoder"]
-    print(f"Loaded frozen autoencoder architecture from {config_path.name}: {architecture}")
-    return architecture
+    print(f"Loaded frozen autoencoder architecture from {path.name}: {document['autoencoder']}")
+    return document
 
 
 def check_latent_geometry(net_config: Mapping[str, Any], architecture: Mapping[str, Any]) -> None:
@@ -148,11 +113,14 @@ class LatentDiffusionModelNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         net_config = load_net_config()
-        architecture = load_autoencoder_config()
+        document = read_autoencoder_document()
+        architecture = document["autoencoder"]
         check_latent_geometry(net_config, architecture)
         # Built from the checkpoint's own config, so every argument matches the weights that arrive
         # in the round-0 broadcast — including the ones no later check could recover.
         self.autoencoder = AutoencoderKL(**architecture)
+        # The fingerprint of those weights; the trainer checks what actually arrived against it.
+        self.autoencoder_sha256 = document["autoencoder_sha256"]
 
         self.diffusion_model = DiffusionModelUNet(
             spatial_dims=net_config["spatial_dims"],

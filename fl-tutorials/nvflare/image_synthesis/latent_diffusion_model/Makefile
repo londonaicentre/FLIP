@@ -44,12 +44,10 @@ N_CLIENTS ?= 2
 DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/latent_diffusion_model
 
 # --- Frozen autoencoder checkpoint ---
-# Must match config.json's SERVER_CHECKPOINT and job.py's _CHECKPOINT_NAME.
+# Must match config.json's SERVER_CHECKPOINT and job.py's _CHECKPOINT_NAME. extract_autoencoder.py
+# writes autoencoder_config.yaml beside it: the architecture clients build and the weights'
+# fingerprint the trainer checks. The two files are one artifact; prepare them together.
 PROCESSED_CHECKPOINT ?= app_files/pretrained_autoencoder.pt
-# The architecture the checkpoint was trained with, written beside it by extract_autoencoder.py and
-# read by app_files/models.py. Unlike the checkpoint this is NOT server-only: clients build the bare
-# autoencoder, so it ships with the app. The two are one artifact — never stage one without the other.
-PROCESSED_CONFIG ?= app_files/autoencoder_config.yaml
 # Point this at a finished `autoencoder` tutorial run's checkpoint (the downloaded FL global model,
 # or the simulator's FL_global_model.pt) to build PROCESSED_CHECKPOINT from it.
 RAW_CHECKPOINT ?=
@@ -65,44 +63,20 @@ RAW_CONFIG ?=
 run: prepare-checkpoint sim
 
 # --- Autoencoder checkpoint preparation ---
-# This job trains only the diffusion model; the autoencoder is supplied, frozen, as a checkpoint at
-# app_files/pretrained_autoencoder.pt plus the architecture that describes it at
-# app_files/autoencoder_config.yaml. InitialCheckpointPTModelPersistor loads the weights
-# (strict=False) into the round-0 global model and broadcasts them, so clients never need that file —
-# but they do need the YAML, to build the bare autoencoder those weights land on.
-#
-# When both are already present this VERIFIES them rather than skipping: it instantiates the recorded
-# architecture and compares it to the checkpoint's tensors. A differently-shaped checkpoint would
-# otherwise be silently declined by the persistor's strict=False load — a randomly-initialised
-# "pretrained" encoder that trains and reports plausible losses.
+# This job trains only the diffusion model. The autoencoder arrives frozen: the checkpoint is loaded on
+# the FL server and broadcast in round 0, and every client builds the bare network from the YAML.
 prepare-checkpoint:
-	@if [ -f "$(PROCESSED_CHECKPOINT)" ] && [ -f "$(PROCESSED_CONFIG)" ]; then \
-		$(UV_RUN) python process_tools/extract_autoencoder.py \
-			--verify-only \
-			--dst "$(PROCESSED_CHECKPOINT)" \
-			--config-out "$(PROCESSED_CONFIG)"; \
-	elif [ -z "$(RAW_CHECKPOINT)" ]; then \
-		echo "❌ Need both $(PROCESSED_CHECKPOINT) and $(PROCESSED_CONFIG), and RAW_CHECKPOINT is not set."; \
-		echo ""; \
-		echo "This tutorial trains a diffusion model inside a FROZEN autoencoder's latent space,"; \
-		echo "so it needs that autoencoder up front. Produce one by running the sibling tutorial:"; \
-		echo ""; \
-		echo "    make -C fl-tutorials run-tutorial TUTORIAL=autoencoder"; \
-		echo ""; \
-		echo "then point RAW_CHECKPOINT at its result and re-run:"; \
-		echo ""; \
-		echo "    make prepare-checkpoint RAW_CHECKPOINT=<path to that run's .pt>"; \
-		echo ""; \
-		exit 1; \
-	else \
-		echo "Extracting the autoencoder from $(RAW_CHECKPOINT) ..."; \
-		$(UV_RUN) python process_tools/extract_autoencoder.py \
-			--src "$(RAW_CHECKPOINT)" \
-			$(if $(RAW_CONFIG),--autoencoder-config "$(RAW_CONFIG)") \
-			--dst "$(PROCESSED_CHECKPOINT)" \
-			--config-out "$(PROCESSED_CONFIG)"; \
-		echo "✅ Wrote $(PROCESSED_CHECKPOINT) and $(PROCESSED_CONFIG)"; \
-	fi
+ifneq ($(RAW_CHECKPOINT),)
+	$(UV_RUN) python process_tools/extract_autoencoder.py --src "$(RAW_CHECKPOINT)" \
+		--dst "$(PROCESSED_CHECKPOINT)" $(if $(RAW_CONFIG),--autoencoder-config "$(RAW_CONFIG)")
+else
+	@test -f "$(PROCESSED_CHECKPOINT)" || { \
+		echo "❌ No $(PROCESSED_CHECKPOINT). This tutorial trains inside a frozen autoencoder's latent space."; \
+		echo "   Train one with the sibling tutorial, then extract it:"; \
+		echo "     make -C fl-tutorials run-tutorial TUTORIAL=autoencoder"; \
+		echo "     make prepare-checkpoint RAW_CHECKPOINT=/tmp/nvflare/autoencoder/flip_fedavg/server/simulate_job/FL_global_model.pt"; \
+		exit 1; }
+endif
 
 # --- Export job config (no GPU needed) ---
 # Builds a complete FLARE job under ./fl_job/flip_fedavg/ including meta.json,
