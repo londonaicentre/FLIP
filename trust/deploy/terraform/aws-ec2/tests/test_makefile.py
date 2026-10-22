@@ -11,9 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Dry-run tests for the aws-ec2 Makefile (FLIP#1528): site targets need the kit file only, the
-hub-admin preset is the only place the hub's values come in, and the first install seeds with the
-stack stopped. `make -n` against a throwaway kit; no AWS, Terraform or Ansible runs."""
+"""Dry-run tests for the aws-ec2 Makefile (FLIP#1528): site targets need the kit file only and the
+first install seeds with the stack stopped. `make -n` against a throwaway kit; no AWS, Terraform or Ansible runs."""
 
 import os
 import re
@@ -26,11 +25,6 @@ ROOT = Path(__file__).resolve().parents[1]
 KIT = (
     "FL_BACKEND=nvflare\nFL_KIT_SLOT_NUMBER=3\nFL_EDGE_PORT=8003\nDOCKER_TAG=sha-abc1234\n"  # pragma: allowlist secret
     "OMOP_POSTGRES_PASSWORD=kit-pw\n"  # pragma: allowlist secret
-)
-HUB_ENV = (
-    "AWS_PROFILE=lza-stag\nAWS_REGION=eu-west-2\nFLIP_TFSTATE_BUCKET_NAME=hub-state\n"  # pragma: allowlist secret
-    "AICENTRE_BUCKET_NAME=hub-kits\nFLARE_KIT_DATE=20260318\n"  # pragma: allowlist secret
-    "FLOWER_KIT_DATE=20260401\nLZA_VPC_NAME=stag-vpc\n"  # pragma: allowlist secret
 )
 
 
@@ -55,22 +49,6 @@ def test_site_plan_reads_no_hub_value(kit):
     assert "kit_slot" not in out, "no kit bucket, no slot-scoped S3 read"
     assert "hub-" not in out
     assert "stag-vpc" not in out
-
-
-def test_hub_preset_passes_the_hubs_values_in(kit, tmp_path):
-    hub_env = tmp_path / ".env.stag"
-    hub_env.write_text(HUB_ENV)
-    preset = [f"HUB_ENV_FILE={hub_env}", "SUBNET_ID=subnet-0hub", "KIT_KMS_KEY_ARN=arn:kms", "BOUNDARY_ARN=arn:b"]
-    out = make("plan", kit, *preset).stdout
-    for var in ("subnet_id=subnet-0hub", "kit_bucket_name=hub-kits", "kit_slot=3", "kit_kms_key_arn=arn:kms"):
-        assert f"-var '{var}'" in out, var
-    assert "bucket=hub-state" in make("init", kit, f"HUB_ENV_FILE={hub_env}").stdout
-
-
-def test_preset_looks_the_hub_subnet_up_by_its_lza_tag():
-    text = (ROOT / "Makefile").read_text()
-    assert "Name=tag:Name,Values=$(call hub_get,LZA_VPC_NAME)-app-*" in text
-    assert "sort(Subnets[].SubnetId)[0]" in text, "the same subnet the hub's own trust EC2 uses"
 
 
 def test_plan_refuses_a_kit_the_hub_has_not_registered(tmp_path):
@@ -111,11 +89,9 @@ def test_stage_kit_needs_a_bucket_or_a_local_dir(kit):
     assert "KIT_SRC=" in result.stdout + result.stderr
 
 
-def test_seed_without_a_kit_bucket_skips_the_vocabulary(kit, tmp_path):
+def test_seed_without_a_kit_bucket_skips_the_vocabulary(kit):
     assert "--tags data --skip-tags omop-vocab" in make("seed", kit).stdout
-    hub_env = tmp_path / ".env.stag"
-    hub_env.write_text(HUB_ENV)
-    with_bucket = make("seed", kit, f"HUB_ENV_FILE={hub_env}").stdout
+    with_bucket = make("seed", kit, "KIT_BUCKET=hub-kits").stdout
     assert "--skip-tags omop-vocab" not in with_bucket
     assert "-e vocab_s3_bucket=hub-kits" in with_bucket
 
@@ -167,7 +143,7 @@ def test_deploy_seeds_between_stopping_and_starting_the_stack(kit):
     assert all("DOCKER_CONTEXT=flip-stag-test" in lines[i] for i in (down, up))
 
 
-def test_no_target_reads_a_hub_env_file_unless_given_one():
+def test_no_target_reads_a_hub_env_file():
     text = (ROOT / "Makefile").read_text()
     assert not re.search(r"^-?include .*MAIN_ENV_FILE", text, re.M)
-    assert re.search(r"^ifneq \(\$\(HUB_ENV_FILE\),\)$", text, re.M), "the preset is opt-in"
+    assert "HUB_ENV_FILE" not in text

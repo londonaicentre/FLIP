@@ -9,7 +9,9 @@ XNAT, Orthanc, OMOP) on one EC2 instance, built from code in ``trust/deploy/terr
 configured by ``trust/deploy/ansible/aws-ec2.yml``. It can go in **any AWS account and VPC**, including
 the site's own: it reads nothing from the hub (no remote state, no hub env file, no hub credentials).
 Its only links to a hub are its **kit** and its **registration**, as for any trust. The instance has no
-public IP and no inbound rule; it is reached through SSM Session Manager only.
+public IP and no inbound rule; it is reached through SSM Session Manager only. The node needs internet
+egress, so it cannot run in the hub's own Landing Zone Accelerator accounts, which have none by design
+(checked on stag on 21 Oct 2026).
 
 For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`; on Azure,
 :doc:`deploy-flip-node-azure`.
@@ -134,8 +136,8 @@ route to the registries needs a mirror.
 **What the instance role may do**: open Session Manager sessions (no ``ssm:GetParameter``, so it cannot
 read parameters in its account), ship logs and metrics to CloudWatch, and, only when ``KIT_BUCKET`` is
 given, read **its own slot's** FL kit and the OMOP vocabulary. IMDS takes v2 tokens with a hop limit of
-1, so a container on the host, the FL client among them, cannot reach the role's credentials. On a
-Landing Zone Accelerator estate pass the required permissions boundary as ``BOUNDARY_ARN``.
+1, so a container on the host, the FL client among them, cannot reach the role's credentials. Where
+the account requires a permissions boundary on new roles, pass it as ``BOUNDARY_ARN``.
 
 ****
 Cost
@@ -214,30 +216,6 @@ Before ``deploy``:
 - **An AWS Free plan account** launches only Free-Tier-eligible instance types: ``t3.xlarge`` fails at
   ``apply``, after the network is created. ``INSTANCE_TYPE=m7i-flex.large`` (2 vCPU, 8 GiB) runs the x-ray
   tutorial end to end (checked on 21 Oct 2026, cohort to results, no memory pressure).
-
-****************************************************
-The hub-VPC preset (not on an LZA estate)
-****************************************************
-
-*Who: hub admin.* ``HUB_ENV_FILE`` places a node in the hub's own VPC, so a mock trust pays for no NAT
-gateway of its own; the trust root itself still reads nothing from the hub.
-
-.. warning::
-
-   **It does not work on a Landing Zone Accelerator estate**, which is where every FLIP hub runs. The
-   workload accounts there have no internet egress by design (VPC endpoints only), so a node in the hub's
-   VPC can reach SSM and S3 but not the image registry, the seed dataset, or the hub's public URL and FL
-   endpoint. Checked on stag on 21 Oct 2026. Run mock trusts off the estate: in an account with internet
-   egress (own-VPC mode), on-prem, Kubernetes or Azure.
-
-.. code-block:: bash
-
-   make init plan apply KIT=$KIT HUB=stag HUB_ENV_FILE=../../../../.env.stag
-
-The preset takes the hub's first app subnet (by its LZA ``Name`` tag, the subnet the hub's own trust EC2
-uses), the kit bucket and its KMS key (``alias/flip-app-key``), the permissions boundary, and the hub's
-state bucket (key ``trust-nodes/<NAME>.tfstate``). The node still reaches the hub through the public FL
-endpoint and the hub URL, exactly as one in another account does.
 
 ******************
 Operate and remove

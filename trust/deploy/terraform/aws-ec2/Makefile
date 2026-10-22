@@ -11,9 +11,7 @@
 #
 # AWS EC2 trust node (FLIP#1528). Site targets need the trust's kit file only (KIT=<CODE> HUB=<env>)
 # and AWS credentials for the account the node goes in; they never read a hub env file, hub state
-# or hub credentials. One target group is hub-admin: given HUB_ENV_FILE=, the preset fills in the
-# hub's own VPC, kit bucket, key, boundary and state bucket (not on an LZA estate: no egress). No target
-# skips Terraform's confirmation: apply and destroy show the plan and ask.
+# or hub credentials. No target skips Terraform's confirmation: apply and destroy show the plan and ask.
 #
 # Order: register the trust on the hub (make register-trusts KIT=<CODE> HUB=<env>), then
 #   init plan apply ssh-config provision deploy      first install
@@ -44,24 +42,6 @@ KIT_SLOT = $(call kit_get,FL_KIT_SLOT_NUMBER)
 FL_PORT = $(call kit_get,FL_EDGE_PORT)
 FL_BACKEND = $(call kit_get,FL_BACKEND)
 lower = $(shell printf '%s' '$(1)' | tr '[:upper:]_' '[:lower:]-')
-
-# ---- hub-admin preset: a node in the hub's own VPC (not on LZA, which has no internet egress) ----
-# The trust root never reads the hub; this only looks the hub's values up and passes them in. The
-# subnet is the one the hub's own trust EC2 uses: the first app subnet of the LZA VPC, by tag.
-ifneq ($(HUB_ENV_FILE),)
-hub_get = $(shell sed -n 's/^$(1)=//p' $(HUB_ENV_FILE) | tail -1)
-AWS_PROFILE ?= $(call hub_get,AWS_PROFILE)
-REGION ?= $(or $(call hub_get,AWS_REGION),eu-west-2)
-STATE_BUCKET ?= $(call hub_get,FLIP_TFSTATE_BUCKET_NAME)
-KIT_BUCKET ?= $(call hub_get,AICENTRE_BUCKET_NAME)
-FL_KIT_DATE ?= $(if $(filter nvflare,$(FL_BACKEND)),$(call hub_get,FLARE_KIT_DATE),$(call hub_get,FLOWER_KIT_DATE))
-_aws = aws --region $(REGION) $(if $(AWS_PROFILE),--profile $(AWS_PROFILE))
-# Looked up once per make run, and only by the targets that use them.
-SUBNET_ID ?= $(eval SUBNET_ID := $$(shell $(_aws) ec2 describe-subnets \
-	--filters 'Name=tag:Name,Values=$(call hub_get,LZA_VPC_NAME)-app-*' --query 'sort(Subnets[].SubnetId)[0]' --output text))$(SUBNET_ID)
-KIT_KMS_KEY_ARN ?= $(eval KIT_KMS_KEY_ARN := $$(shell $(_aws) kms describe-key --key-id alias/flip-app-key --query KeyMetadata.Arn --output text))$(KIT_KMS_KEY_ARN)
-BOUNDARY_ARN ?= $(eval BOUNDARY_ARN := arn:aws:iam::$$(shell $(_aws) sts get-caller-identity --query Account --output text):policy/$(or $(call hub_get,IAM_PERMISSIONS_BOUNDARY_NAME),AICentre-WorkloadRoleBoundary))$(BOUNDARY_ARN)
-endif
 
 NAME ?= $(if $(KIT),flip-$(ENV)-$(call lower,$(KIT)))
 REGION ?= eu-west-2
@@ -120,7 +100,7 @@ define play
 		$(1)
 endef
 
-# Where the FL kit comes from: the hub's bucket (KIT_BUCKET, the preset), a directory on this machine
+# Where the FL kit comes from: a bucket the node may read (KIT_BUCKET), a directory on this machine
 # holding the slot's own kit (KIT_SRC, for a node in another account), or neither: the directory
 # tree is laid down for the slot and the kit is placed by hand.
 KIT_SRC ?=
@@ -131,7 +111,7 @@ KIT_SOURCE_ARGS = $(if $(KIT_BUCKET),-e flip_aicentre_bucket=$(KIT_BUCKET) -e fl
 .PHONY: help init plan apply destroy output ssh-config provision stage-kit seed deploy upgrade shell test lint
 
 help: ## Show this help message
-	@echo "FLIP AWS EC2 trust node (KIT=<CODE> HUB=<env>; hub-admin preset: HUB_ENV_FILE=<hub env file>):"
+	@echo "FLIP AWS EC2 trust node (KIT=<CODE> HUB=<env>):"
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?##"}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
 init: ## Point the root at its state (STATE_BUCKET=, STATE_KEY= default trust-nodes/<NAME>.tfstate)
