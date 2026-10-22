@@ -39,6 +39,7 @@ ROOT_FILES = (
     "policies.tf",
     "observability.tf",
     "cost.tf",
+    "warehouse.tf",
     "grants.tf",
     "outputs.tf",
 )
@@ -46,9 +47,9 @@ ROOT_FILES = (
 # The complete set of account privileges the workload role may hold (epic #1589).
 ALLOWED_ACCOUNT_PRIVILEGES = (
     "CREATE DATABASE",
-    "CREATE WAREHOUSE",
     "CREATE COMPUTE POOL",
     "BIND SERVICE ENDPOINT",
+    "EXECUTE TASK",
 )
 
 # Account privileges that would undo the split. None may appear anywhere in this root.
@@ -99,7 +100,7 @@ def test_the_admin_role_is_retired():
     )
 
 
-def test_the_workload_role_gets_exactly_the_four_account_privileges():
+def test_the_workload_role_gets_exactly_the_allowed_account_privileges():
     block = hcl_block(source("locals.tf"), "locals {")
     listed = re.search(r"deploy_account_privileges = \[(.*?)\]", block, re.S)
     assert listed, "locals.tf must spell out the account privileges the workload role holds"
@@ -292,11 +293,17 @@ def test_a_resource_monitor_caps_warehouse_credits():
     assert "suspend_immediate_trigger = 100" in block
 
 
-def test_the_workload_role_can_attach_the_resource_monitor():
-    header = 'resource "snowflake_grant_privileges_to_account_role" "deploy_resource_monitor"'
-    block = hcl_block(source("grants.tf"), header)
-    assert block, "without MODIFY on the monitor the workload apply would need ACCOUNTADMIN"
-    assert 'privileges        = ["MODIFY"]' in block
+def test_the_warehouse_is_platform_owned_with_the_monitor_attached():
+    """Assigning a resource monitor needs ACCOUNTADMIN, so the warehouse lives here. The deploy role
+    may use and operate it but not MODIFY or own it, so the deploy key cannot detach the monitor."""
+    block = hcl_block(source("warehouse.tf"), 'resource "snowflake_warehouse" "trust"')
+    assert "resource_monitor = snowflake_resource_monitor.trust.name" in block
+    header = 'resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse"'
+    grant = hcl_block(source("warehouse.tf"), header)
+    assert 'privileges        = ["USAGE", "OPERATE", "MONITOR"]' in grant
+    assert "MODIFY" not in grant
+    assert "OWNERSHIP" not in grant
+    assert "deploy_resource_monitor" not in source("grants.tf"), "the deploy role needs no MODIFY on the monitor"
 
 
 # --- account hygiene --------------------------------------------------------------------------------

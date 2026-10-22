@@ -53,7 +53,7 @@ output "stage_names" {
 
 output "warehouse_name" {
   description = "The trust warehouse."
-  value       = snowflake_warehouse.trust.name
+  value       = local.warehouse
 }
 
 output "role_names" {

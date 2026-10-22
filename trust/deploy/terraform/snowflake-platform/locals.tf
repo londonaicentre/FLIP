@@ -48,13 +48,17 @@ locals {
   event_table_fqn = "${local.platform_database}.${local.platform_schemas.obs}.${local.event_table}"
 
   # The account privileges the workload role is allowed to hold, and nothing else. No CREATE ROLE,
-  # no CREATE USER, no CREATE INTEGRATION, no CREATE NETWORK POLICY, no MANAGE GRANTS.
+  # no CREATE USER, no CREATE INTEGRATION, no CREATE NETWORK POLICY, no MANAGE GRANTS, and no
+  # CREATE WAREHOUSE: the warehouse is platform-owned so its resource monitor cannot be shed.
+  # EXECUTE TASK lets the role run the tasks it owns, i.e. the nightly compute-pool suspend.
   deploy_account_privileges = [
     "CREATE DATABASE",
-    "CREATE WAREHOUSE",
     "CREATE COMPUTE POOL",
     "BIND SERVICE ENDPOINT",
+    "EXECUTE TASK",
   ]
+
+  warehouse = "${local.prefix}_WH"
 
   # Egress is a closed list: the hub API on 443 and the FL server endpoints from the kit.
   egress_hosts = var.enable_hub_egress ? concat(

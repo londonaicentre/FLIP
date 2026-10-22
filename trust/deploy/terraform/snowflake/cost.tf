@@ -22,7 +22,7 @@ resource "snowflake_task" "suspend_pools" {
   database  = snowflake_database.trust.name
   schema    = snowflake_schema.trust["app"].name
   name      = local.suspend_task
-  warehouse = snowflake_warehouse.trust.name
+  warehouse = local.warehouse
   started   = true
   comment   = "FLIP ${local.code}: nightly compute-pool suspend. Resource monitors do not cover SPCS."
 

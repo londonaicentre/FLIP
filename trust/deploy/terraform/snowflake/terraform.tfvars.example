@@ -23,9 +23,7 @@ terraform_role      = "FLIP_GSTT_DEPLOY"
 trust_code = "GSTT"
 
 # Cost guards. The credit quota lives in the platform root; this root attaches that monitor.
-warehouse_statement_timeout_secs = 300
 pool_auto_suspend_secs           = 600
-attach_resource_monitor          = true
 suspend_pools_cron               = "0 22 * * *"
 suspend_pools_timezone           = "Europe/London"
 

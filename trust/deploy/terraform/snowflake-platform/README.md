@@ -39,14 +39,14 @@ those objects is in its state file.
 | Identity | person user, MFA | `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
 | Role | `ACCOUNTADMIN` / `SECURITYADMIN` | `FLIP_<CODE>_DEPLOY` |
 | Frequency | rarely, by hand | every deploy |
-| Creates | roles, deploy user, account grants, EAI, account policies, event table, resource monitor | database, schemas, warehouse, compute pools, image repository, stages, nightly task, grants on those objects |
+| Creates | roles, deploy user, account grants, EAI, account policies, event table, resource monitor, the trust warehouse (monitor attached) | database, schemas, compute pools, image repository, stages, nightly task, grants on those objects |
 | State | `terraform-platform.<env>.tfstate` | `terraform.<env>.tfstate` |
 | In CI | static checks only | static checks only |
 
 The **account privileges** `FLIP_<CODE>_DEPLOY` holds are exactly:
 
 ```
-CREATE DATABASE, CREATE WAREHOUSE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT
+CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
 ```
 
 Deliberately absent: `CREATE ROLE`, `CREATE USER`, `CREATE INTEGRATION`, `CREATE NETWORK POLICY`,
@@ -63,8 +63,11 @@ once (`roles.tf`), and from then on a routine apply can say "grant `SELECT` on t
 `FLIP_<CODE>_OMOP_READER`" entirely within its own privileges. Ownership stays with the deploy
 role throughout.
 
-The resource monitor is the one object the workload tier has to touch without owning: attaching a
-monitor to a warehouse needs `MODIFY` on the monitor, which this root grants to the deploy role.
+The trust warehouse lives here, not in the workload root, because assigning a resource monitor to a
+warehouse needs `ACCOUNTADMIN`. This root owns `FLIP_<CODE>_WH` with `FLIP_<CODE>_RM` attached and
+grants the deploy role USAGE, OPERATE and MONITOR (no MODIFY, no OWNERSHIP), so the cost guard is
+out of the deploy key's reach. `EXECUTE TASK` is the deploy role's fourth account privilege so it
+can run the nightly pool-suspend task it owns.
 
 There is **no remote-state data source** between the roots. Both derive every name from
 `trust_code` by the contract in [#1589](https://github.com/londonaicentre/FLIP/issues/1589), so

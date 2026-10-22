@@ -20,8 +20,6 @@ resource "snowflake_database" "trust" {
   drop_public_schema_on_creation = true
 
   data_retention_time_in_days = 1
-  log_level                   = "INFO"
-  trace_level                 = "OFF"
 }
 
 resource "snowflake_schema" "trust" {

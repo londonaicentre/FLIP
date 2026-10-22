@@ -14,8 +14,9 @@
 # Snowflake trust infrastructure, workload tier (FLIP#1581)
 
 The OpenTofu root a FLIP trust node is deployed with: the trust database and its schemas, the
-warehouse, the compute pools, the image repository, the encrypted stages, the nightly pool-suspend
-task, and the grants on those objects to the service, OMOP and observer roles.
+compute pools, the image repository, the encrypted stages, the nightly pool-suspend task, and the
+grants on those objects to the service, OMOP and observer roles. The warehouse is not here: the
+platform tier owns it, with the resource monitor attached (see "Cost guards").
 
 It is the **workload tier** of a two-tier split (epic
 [#1589](https://github.com/londonaicentre/FLIP/issues/1589), decided 2026-10-20). It is applied
@@ -23,7 +24,7 @@ It is the **workload tier** of a two-tier split (epic
 four account privileges and nothing more:
 
 ```
-CREATE DATABASE, CREATE WAREHOUSE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT
+CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
 ```
 
 Everything else about the account, the roles themselves, the deploy user, that account grant, the
@@ -72,8 +73,9 @@ platform root and #1582 derive the same names from the same `trust_code`. With
 
 ## Security posture
 
-- **Least privilege by construction.** This root's role can create a database, a warehouse, a
-  compute pool and bind a service endpoint. It cannot create a role, a user, an integration or a
+- **Least privilege by construction.** This root's role can create a database and a compute pool,
+  bind a service endpoint, and run the tasks it owns (the nightly pool suspend). It uses the trust
+  warehouse (USAGE, OPERATE, MONITOR) but cannot create, modify or own one. It cannot create a role, a user, an integration or a
   network policy, and it has no `MANAGE GRANTS`.
 - **Grants work through ownership.** The deploy role owns every object here, and an owner may
   grant privileges on its own objects without `MANAGE GRANTS`. The platform tier granted the four
@@ -105,10 +107,11 @@ not cover compute pools**. Three independent guards, all on by default:
    variable refuses 0.
 2. A nightly task, `FLIP_<CODE>_SUSPEND_POOLS`, suspends every pool at `suspend_pools_cron`
    (default 22:00 Europe/London), so a forgotten `make up` costs one evening.
-3. `FLIP_<CODE>_RM`, the platform tier's monthly resource monitor, attached to this warehouse when
-   `attach_resource_monitor` is true: notify at 50/75/90 per cent, suspend at 95, suspend
-   immediately at 100. Attaching it uses the `MODIFY` grant the platform tier issues; creating a
-   monitor would need `ACCOUNTADMIN`, which is why it is not created here.
+3. `FLIP_<CODE>_RM`, the platform tier's monthly resource monitor, attached to the trust warehouse:
+   notify at 50/75/90 per cent, suspend at 95, suspend immediately at 100. Assigning a monitor to
+   a warehouse needs `ACCOUNTADMIN`, so the platform tier owns the warehouse and attaches it; the
+   deploy role gets USAGE, OPERATE and MONITOR only, so the deploy key can neither detach the
+   monitor nor recreate the warehouse without it. Apply the platform root first.
 
 ## Prerequisites
 

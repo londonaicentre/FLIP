@@ -53,24 +53,6 @@ variable "trust_code" {
   }
 }
 
-variable "warehouse_statement_timeout_secs" {
-  description = "STATEMENT_TIMEOUT_IN_SECONDS on the trust warehouse: a runaway OMOP query is cancelled rather than billed."
-  type        = number
-  default     = 300
-}
-
-variable "warehouse_auto_suspend_secs" {
-  description = "Seconds of inactivity before the trust warehouse suspends."
-  type        = number
-  default     = 60
-}
-
-variable "attach_resource_monitor" {
-  description = "Attach the platform tier's FLIP_<CODE>_RM to this warehouse. Needs the MODIFY grant the platform root issues; set false only when the platform root has not been applied yet."
-  type        = bool
-  default     = true
-}
-
 variable "pool_instance_family" {
   description = "Instance family of the service compute pool."
   type        = string

@@ -82,16 +82,6 @@ resource "snowflake_grant_privileges_to_account_role" "svc_pools" {
   }
 }
 
-resource "snowflake_grant_privileges_to_account_role" "svc_warehouse" {
-  account_role_name = local.roles.svc
-  privileges        = ["USAGE"]
-
-  on_account_object {
-    object_type = "WAREHOUSE"
-    object_name = snowflake_warehouse.trust.name
-  }
-}
-
 # Secrets. Terraform creates no secret and holds no secret value: `make sync-kit` (#1582) writes
 # them into the APP schema from the kit file, owned by the deploy role. A FUTURE grant covers
 # whatever sync-kit creates, so the privilege is declared here, by object class, without this root
@@ -194,16 +184,6 @@ resource "snowflake_grant_privileges_to_account_role" "omop_loader_seed_stage" {
   }
 }
 
-resource "snowflake_grant_privileges_to_account_role" "omop_loader_warehouse" {
-  account_role_name = local.roles.omop_loader
-  privileges        = ["USAGE"]
-
-  on_account_object {
-    object_type = "WAREHOUSE"
-    object_name = snowflake_warehouse.trust.name
-  }
-}
-
 # --- observer: metadata and the OBS views, no clinical data ---------------------------------------
 # SELECT on the account event table itself is granted by the platform tier, which owns it.
 resource "snowflake_grant_privileges_to_account_role" "observer_database" {
@@ -253,12 +233,3 @@ resource "snowflake_grant_privileges_to_account_role" "observer_pools" {
   }
 }
 
-resource "snowflake_grant_privileges_to_account_role" "observer_warehouse" {
-  account_role_name = local.roles.observer
-  privileges        = ["MONITOR"]
-
-  on_account_object {
-    object_type = "WAREHOUSE"
-    object_name = snowflake_warehouse.trust.name
-  }
-}

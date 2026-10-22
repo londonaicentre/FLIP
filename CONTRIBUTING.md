@@ -469,9 +469,10 @@ FLIP#1589), neither holding hub credentials:
 The platform root creates the account's security objects: the five `FLIP_<CODE>_*` roles and the
 role hierarchy, the deploy `SERVICE` user, the egress integration, the account
 network/password/session policies, the event table and `EVENT_TABLE` parameter, the resource
-monitor, and the single account-level grant in the whole design, exactly `CREATE DATABASE`,
-`CREATE WAREHOUSE`, `CREATE COMPUTE POOL`, `BIND SERVICE ENDPOINT`. The workload root creates the
-trust database and schemas, the warehouse, the compute pools, the image repository, the SSE
+monitor and the trust warehouse it is attached to (assigning a monitor needs `ACCOUNTADMIN`), and
+the single account-level grant in the whole design, exactly `CREATE DATABASE`,
+`CREATE COMPUTE POOL`, `BIND SERVICE ENDPOINT`, `EXECUTE TASK`. The workload root creates the
+trust database and schemas, the compute pools, the image repository, the SSE
 stages, the nightly pool-suspend task and the grants on those objects. `FLIP_<CODE>_ADMIN` is
 retired; the platform README carries the migration for an account bootstrapped with it.
 

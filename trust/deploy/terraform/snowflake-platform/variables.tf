@@ -140,3 +140,15 @@ variable "platform_database_retention_days" {
   type        = number
   default     = 1
 }
+
+variable "warehouse_statement_timeout_secs" {
+  description = "STATEMENT_TIMEOUT_IN_SECONDS on the trust warehouse: a runaway OMOP query is cancelled rather than billed."
+  type        = number
+  default     = 300
+}
+
+variable "warehouse_auto_suspend_secs" {
+  description = "Seconds of inactivity before the trust warehouse suspends."
+  type        = number
+  default     = 60
+}

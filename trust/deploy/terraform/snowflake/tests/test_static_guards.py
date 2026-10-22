@@ -34,7 +34,6 @@ ROOT_FILES = (
     "variables.tf",
     "locals.tf",
     "database.tf",
-    "warehouse.tf",
     "compute_pools.tf",
     "image_repository.tf",
     "stages.tf",
@@ -127,10 +126,11 @@ def test_no_account_level_grant():
         "CREATE WAREHOUSE",
         "CREATE COMPUTE POOL",
         "BIND SERVICE ENDPOINT",
+        "EXECUTE TASK",
     ],
 )
 def test_no_account_privilege_is_named_here(privilege):
-    """Including the four the deploy role does hold: they are granted in the platform root only."""
+    """Including the ones the deploy role does hold: they are granted in the platform root only."""
     for path in TF_FILES:
         assert f'"{privilege}"' not in path.read_text(), f"{path.name} names the account privilege {privilege}"
 
@@ -250,11 +250,11 @@ def test_a_nightly_task_suspends_the_pools():
     assert "started   = true" in block or "started = true" in block
 
 
-def test_the_warehouse_attaches_the_platform_resource_monitor():
-    block = hcl_block(source("warehouse.tf"), 'resource "snowflake_warehouse" "trust"')
-    assert "var.attach_resource_monitor ? local.resource_monitor : null" in block, (
-        "the monitor is created by the platform tier and attached, not created, here"
-    )
+def test_the_workload_root_creates_no_warehouse():
+    """The warehouse is platform-owned with its resource monitor attached (assigning a monitor
+    needs ACCOUNTADMIN); a warehouse this root could create could shed the monitor."""
+    assert not resource_blocks(all_terraform(), "snowflake_warehouse")
+    assert "resource_monitor" not in re.sub(r"#.*", "", all_terraform())
 
 
 # --- account hygiene ------------------------------------------------------------------------------

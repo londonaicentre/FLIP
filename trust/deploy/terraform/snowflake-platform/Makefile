@@ -14,7 +14,7 @@
 # This root creates the account's security objects: the FLIP_<CODE>_* roles and their hierarchy,
 # the deploy SERVICE user, the four account privileges the workload role holds, the egress
 # integration, the account network/password/session policies, the event table and EVENT_TABLE
-# parameter, and the resource monitor. It is applied RARELY, by a PERSON user with MFA holding
+# parameter, the resource monitor and the trust warehouse it is attached to. It is applied RARELY, by a PERSON user with MFA holding
 # ACCOUNTADMIN (or SECURITYADMIN where that is enough), and never from CI.
 #
 # Routine work does NOT come here: trust/deploy/terraform/snowflake is the workload root, applied

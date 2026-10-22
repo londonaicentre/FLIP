@@ -46,7 +46,6 @@ locals {
   job_pool         = "${local.prefix}_JOB_POOL"
   gpu_pool         = "${local.prefix}_GPU_POOL"
   hub_eai          = "${local.prefix}_HUB_EAI"
-  resource_monitor = "${local.prefix}_RM"
   suspend_task     = "${local.prefix}_SUSPEND_POOLS"
   image_repository = "IMAGES"
 

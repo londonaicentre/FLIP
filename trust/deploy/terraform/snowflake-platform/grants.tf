@@ -15,7 +15,7 @@
 # The only account-level grant in either root. Exactly four privileges, listed in locals.tf and
 # pinned by the static guards here and in the workload root:
 #
-#   CREATE DATABASE, CREATE WAREHOUSE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT
+#   CREATE DATABASE, CREATE COMPUTE POOL, BIND SERVICE ENDPOINT, EXECUTE TASK
 #
 # Deliberately absent: CREATE ROLE, CREATE USER, CREATE INTEGRATION, CREATE NETWORK POLICY,
 # MANAGE GRANTS, APPLY <policy>, MONITOR USAGE. A compromised deploy key therefore cannot mint an
@@ -49,18 +49,6 @@ resource "snowflake_grant_privileges_to_account_role" "svc_eai" {
   on_account_object {
     object_type = "INTEGRATION"
     object_name = snowflake_external_access_integration.hub[0].name
-  }
-}
-
-# MODIFY on the resource monitor lets the workload root attach it to the warehouse it creates.
-# Without it, assigning a monitor would need ACCOUNTADMIN on every routine apply.
-resource "snowflake_grant_privileges_to_account_role" "deploy_resource_monitor" {
-  account_role_name = snowflake_account_role.deploy.name
-  privileges        = ["MODIFY"]
-
-  on_account_object {
-    object_type = "RESOURCE MONITOR"
-    object_name = snowflake_resource_monitor.trust.name
   }
 }
 

@@ -49,3 +49,8 @@ output "resource_monitor_name" {
   description = "The resource monitor the workload root attaches to its warehouse."
   value       = snowflake_resource_monitor.trust.name
 }
+
+output "warehouse_name" {
+  description = "The trust warehouse, platform-owned with the resource monitor attached; the deploy role has USAGE/OPERATE/MONITOR."
+  value       = snowflake_warehouse.trust.name
+}
