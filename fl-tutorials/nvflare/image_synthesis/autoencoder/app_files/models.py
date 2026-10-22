@@ -9,19 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Autoencoder network for the FLIP autoencoder (VAE) tutorial.
+"""Autoencoder network for the FLIP autoencoder tutorial: a KL autoencoder and a patch discriminator.
 
-The network pairs a KL-regularised autoencoder with a patch discriminator that adversarially
-sharpens its reconstructions. Both are trained and aggregated together — unlike the latent
-diffusion tutorial, nothing here is frozen.
-
-The submodule holding the autoencoder is deliberately named ``autoencoder``, so its parameters
-are keyed ``autoencoder.*`` in the state dict. That name is a **contract with the latent
-diffusion tutorial**: a run of this tutorial produces the checkpoint that one loads as its frozen
-encoder (via ``SERVER_CHECKPOINT``), and the keys line up only because both networks name the
-submodule identically. See ``process_tools/extract_autoencoder.py`` there. Renaming this
-attribute silently breaks that handoff — the load is ``strict=False``, so a mismatch is tolerated
-rather than raised, and the diffusion model then trains against a randomly-initialised encoder.
+Both are trained and aggregated together. The autoencoder submodule must stay named ``autoencoder``:
+the latent diffusion tutorial loads this run's ``autoencoder.*`` weights by that prefix, and its
+server loads with ``strict=False``, so a renamed submodule would load nothing.
 """
 
 import json
@@ -44,19 +36,11 @@ def load_net_config():
 
 
 def autoencoder_kwargs(net_config: Mapping[str, Any]) -> dict[str, Any]:
-    """The exact keyword arguments this tutorial builds its ``AutoencoderKL`` with.
+    """The keyword arguments this tutorial builds its ``AutoencoderKL`` with: the one definition.
 
-    This is the sole definition of the autoencoder's architecture, and the reason it is a named
-    function rather than inline in ``__init__``: the latent diffusion tutorial's
-    ``process_tools/extract_autoencoder.py`` calls it to record the architecture into the YAML that
-    travels with an extracted checkpoint, so the two tutorials cannot disagree about what a set of
-    weights means.
-
-    Every argument is passed explicitly, including the ones that happen to equal MONAI's defaults.
-    ``norm_num_groups`` is why that matters: it changes how GroupNorm computes without changing a
-    single parameter *shape*, so a network built with one value loads a checkpoint trained with
-    another under ``strict=True`` and reports nothing. The only symptom is silently wrong latents.
-    Leaving it to the default meant ``config.json`` could name a value that steered nothing.
+    The latent diffusion tutorial's ``extract_autoencoder.py`` records them beside an extracted
+    checkpoint. Every argument is explicit: ``norm_num_groups`` changes no tensor shape, so a wrong
+    default would load a checkpoint cleanly and produce wrong latents.
     """
     stage_1 = net_config["stage_1"]
     return {

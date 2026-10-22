@@ -9,27 +9,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FLARE Client API script for the FLIP autoencoder (VAE) tutorial.
+"""FLARE Client API script for the FLIP autoencoder tutorial.
 
-Trains a KL-regularised autoencoder and its patch discriminator on 3-D brain MRI, as an ordinary
-single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
-``flare.is_train()`` / ``flare.is_evaluate()``.
+Trains a KL-regularised autoencoder (MONAI's ``AutoencoderKL``) and a patch discriminator on 3-D brain
+MRI, as an ordinary FedAvg job. On a ``train`` task the client trains the received model for
+``LOCAL_ROUNDS`` epochs and sends back the weight difference; on an ``evaluate`` task it scores the
+aggregated model on its held-out split.
 
-Data loading fetches each accession's NIfTI series and reads them through ``transforms.py``. A brain
-MRI study is four co-registered sequences (FLAIR, T1w, T1Gd, T2w), and **every one of them is a
-training sample here**: the autoencoder is deliberately modality-agnostic, so that one autoencoder
-compresses all four and the latent diffusion tutorial downstream can condition on which is which.
-``MODALITIES`` in ``config.json`` is the switch — leave all four listed to train across sequences,
-or set it to ``["T1w"]`` for the single-sequence form. Nothing here reads the conditioning label; it
-is attached to each sample (see ``modality.py``) for the diffusion tutorial's benefit.
-
-Because the samples within one study are four views of one brain, the train/validation split is by
-**accession**, not by file. Splitting by file would put a subject's T1w in training and their T2w in
-validation, and the reported SSIM would then be measuring memorisation.
-
-A standalone job, so an autoencoder can be trained, scored and re-used on its own. The run's
-aggregated weights are what the latent diffusion tutorial consumes as its frozen encoder — see that
-tutorial's ``process_tools/extract_autoencoder.py``.
+Every MR sequence in ``MODALITIES`` is a training sample, so one autoencoder serves all of them; the
+latent diffusion tutorial reuses it, frozen. The generator loss is L1 + perceptual (MedicalNet, see
+``medicalnet_perceptual.py``) + KL + adversarial, under mixed precision, with gradients accumulated
+to an effective batch of ``EFFECTIVE_BATCH_SIZE``. Validation reports L1 and foreground SSIM.
 """
 
 import argparse
@@ -70,12 +60,20 @@ except ModuleNotFoundError as err:
 
 logger = logging.getLogger(__name__)
 
+#: Gradients are accumulated up to this many samples per optimiser step.
+EFFECTIVE_BATCH_SIZE = 8
 
-# The perceptual loss is MedicalNet ResNet-50, a 3-D network, staged offline by
-# `medicalnet_perceptual` — see that module for why MONAI's own `PerceptualLoss(...)` constructor
-# cannot be used here (it builds its backbone through `torch.hub.load`, and FL apps never download
-# at run time, FLIP#1206). Being genuinely 3-D, it scores the whole volume rather than sampled
-# slices, so the 2-D slicing below applies only to the discriminator.
+#: AdamW weight decay for both networks.
+WEIGHT_DECAY = 1e-5
+
+#: Axial slices a 2-D discriminator scores per training step.
+DISCRIMINATOR_SLICES = 12
+
+#: Batches between releases of cached CUDA memory, against fragmentation; every batch would stall.
+CACHE_CLEAR_EVERY = 50
+
+SSIM_KERNEL_SIZE = 11
+SSIM_KERNEL_SIGMA = 1.5
 
 
 def describe(name: str, tensor: torch.Tensor) -> str:
@@ -92,14 +90,7 @@ def describe(name: str, tensor: torch.Tensor) -> str:
 
 
 def require_finite(tensors: dict, context: str) -> None:
-    """Raise a report naming every non-finite tensor, rather than a bare "found NaN".
-
-    The run is still fatal — a site that trains on a poisoned tensor is worse than one that stops,
-    and silently zeroing the offending loss hides exactly the instability worth seeing. What this
-    adds is the *evidence*: which tensor went bad, whether it was NaN or inf, and the ranges of the
-    others at the same step. A bare "NaN in reconstruction" cannot distinguish a diverging latent
-    from an overflowing loss, and those want opposite fixes.
-    """
+    """Stop the run if any tensor is not finite, reporting which ones and the ranges of all of them."""
     bad = [name for name, tensor in tensors.items() if not bool(torch.isfinite(tensor).all())]
     if not bad:
         return
@@ -108,59 +99,26 @@ def require_finite(tensors: dict, context: str) -> None:
 
 
 class KLDivergenceLoss:
-    """
-    Expects z_mu (B, *latent_shape) and z_sigma (B, *latent_shape).
-    Returns per-batch mean KL (averaged over batch).
+    """KL divergence of the latent from a unit Gaussian, summed over the latent, averaged over the batch.
 
-    Computed in float32 even when the caller is inside ``autocast``. The autoencoder hands back
-    fp16 tensors there, and this expression squares them: fp16 tops out at 65504, so any sigma
-    above ~256 overflows to ``inf`` — and ``z_mu**2 + inf - log(inf) - 1`` is ``inf - inf``, i.e.
-    **NaN**. That NaN reaches the weights and the next forward produces a NaN reconstruction, which
-    the training loop can only report as "NaN in autoencoder reconstruction" a step after the real
-    event. Early in training sigma genuinely does reach that range (observed above 2e4 on 3-D brain
-    MRI within ~15 steps), so this is a live failure, not a theoretical one. The cast costs one
-    copy of the latent, which is small next to the volumes themselves.
+    Computed in float32 even inside ``autocast``: squaring an fp16 sigma overflows above ~256, which
+    happens early in training on this cohort, and turns the loss into NaN.
     """
 
-    def __call__(
-        self,
-        z_mu: torch.Tensor,
-        z_sigma: torch.Tensor,
-    ) -> torch.Tensor:
-        # We remove spatial notion
-        z_mu_m = z_mu.float().flatten(start_dim=2)
-        z_sigma_m = z_sigma.float().flatten(start_dim=2)
-        kl_loss = 0.5 * torch.sum(z_mu_m.pow(2) + z_sigma_m.pow(2) - torch.log(z_sigma_m.pow(2)) - 1, dim=[-1])
-        kl_loss = torch.sum(kl_loss) / kl_loss.shape[0]
-
-        return kl_loss
-
-
-# ---------------------------------------------------------------------------
-# 3-D helpers for input 3D images
-# ---------------------------------------------------------------------------
+    def __call__(self, z_mu: torch.Tensor, z_sigma: torch.Tensor) -> torch.Tensor:
+        z_mu = z_mu.float().flatten(start_dim=2)
+        z_sigma = z_sigma.float().flatten(start_dim=2)
+        kl_loss = 0.5 * torch.sum(z_mu.pow(2) + z_sigma.pow(2) - torch.log(z_sigma.pow(2)) - 1, dim=[-1])
+        return torch.sum(kl_loss) / kl_loss.shape[0]
 
 
 def slice_volume_for_2d(volume: torch.Tensor, slice_indices: np.ndarray) -> torch.Tensor:
-    """Fold selected axial slices of a 3-D batch into a 2-D batch.
+    """Fold chosen axial slices of a 3-D batch into a 2-D batch, ``(B, C, H, W, D) -> (B*n, C, H, W)``.
 
-    ``(B, C, H, W, D) -> (B*len(slice_indices), C, H, W)``, so a 2-D perceptual loss or a 2-D
-    discriminator can score a 3-D reconstruction slice by slice. Both operands of a comparison must be
-    sliced with the SAME indices, or the loss compares unrelated anatomy.
-
-    Args:
-        volume (torch.Tensor): A 3-D batch, channel-first.
-        slice_indices (np.ndarray): Indices along the last (through-plane) axis.
-
-    Returns:
-        torch.Tensor: The selected slices as a 2-D batch.
+    Lets a 2-D discriminator score a 3-D volume. Slice both operands of a comparison with the same
+    indices.
     """
     return einops.rearrange(volume[..., slice_indices], "b c h w d -> (b d) c h w")
-
-
-# ---------------------------------------------------------------------------
-# Utils
-# ---------------------------------------------------------------------------
 
 
 def parse_args() -> argparse.Namespace:
@@ -194,31 +152,22 @@ def load_config() -> dict:
 
 
 def split_for_site(items: list[dict], site_name: str) -> list[dict]:
-    """Give each simulated site half the cohort, splitting on accession rather than on items.
+    """In the simulator, give "site-1" and "site-2" half the shared cohort each; on a trust, all of it.
 
-    Local/simulator runs point every client at the same DEV dataset, so without this both sites
-    train on identical data; in production each trust's data-access API already scopes the cohort to
-    its own. The FLARE simulator names its clients "site-1"/"site-2" — normalise so the split
-    actually applies (as arkplus_fine_tuning's data_utils does). Production trust names never match,
-    so real runs are returned unsplit.
-
-    Splitting on the *accession* keeps a study's sequences together: halving the item list would cut
-    through the middle of a study and give one site a brain's T1w and the other its T2w.
+    Split by accession, so the four sequences of one study stay on one site.
     """
-    normalised = site_name.replace("-", "")
-    if normalised not in ("site1", "site2"):
+    site = site_name.replace("-", "")
+    if site not in ("site1", "site2"):
         return items
     accessions = list(dict.fromkeys(item["accession_id"] for item in items))
     half = len(accessions) // 2
-    mine = set(accessions[:half] if normalised == "site1" else accessions[half:])
+    mine = set(accessions[:half] if site == "site1" else accessions[half:])
     return [item for item in items if item["accession_id"] in mine]
 
 
 def batch_accumulation_step(batch_size: int) -> int:
-    """Accumulate gradients up to an effective batch of 8 when the configured batch is smaller."""
-    if batch_size < 8:
-        return 8 // batch_size
-    return 1
+    """Batches to accumulate per optimiser step, reaching ``EFFECTIVE_BATCH_SIZE`` samples."""
+    return max(1, EFFECTIVE_BATCH_SIZE // batch_size)
 
 
 def round_lr_schedule(
@@ -237,60 +186,26 @@ def round_lr_schedule(
     return torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
 
 
-# How often to hand cached CUDA blocks back to the driver. See the training loop for why this is
-# not every iteration.
-CACHE_CLEAR_EVERY = 50
-
-SSIM_KERNEL_SIZE = 11
-SSIM_KERNEL_SIGMA = 1.5
-
-
 def foreground_ssim(
     reconstruction: torch.Tensor,
     images: torch.Tensor,
     kernel_size: int = SSIM_KERNEL_SIZE,
     kernel_sigma: float = SSIM_KERNEL_SIGMA,
 ) -> float:
-    """Mean SSIM between a reconstruction and its input, over the **foreground only**.
+    """Mean SSIM between a reconstruction and its input, over the brain only.
 
-    Background is excluded because it would otherwise decide the score. These volumes are
-    skull-stripped, so everything outside the brain is one constant value — roughly 80% of the
-    grid. Both the input and any reconstruction are near that constant there, SSIM is ~1 over all
-    of it, and the reported number ends up measuring how much air the volume contains rather than
-    how well the brain came back. The unmasked metric on this cohort reads ~0.72 after one round,
-    when the reconstructions are visibly blobs.
-
-    ``data_range`` is derived per volume rather than assumed. It sets SSIM's two stability
-    constants (``c1 = (k1 * data_range)^2``, likewise ``c2``), so a wrong value silently rescales
-    the whole metric. ``NormalizeIntensityd`` z-scores each volume, giving a span nearer 5.5 (not 1),
-    and each volume gets its own because each is z-scored independently. The callers correspondingly
-    pass the reconstruction **unclamped**: clamping to [0, 1] would flatten every voxel above 1, some
-    15% of the volume and all of the bright anatomy, to a constant. With ``data_range=1`` and a clamp,
-    a *perfect* reconstruction scores 0.26 rather than 1.0.
-
-    Two details make the mask exact rather than approximate:
-
-    * ``compute_ssim_and_cs`` returns the **full SSIM map**, not a scalar, so it can be masked at all
-      — but it is a *valid* convolution, so the map is ``kernel_size - 1`` smaller per spatial axis
-      (96 -> 86 on the first). The mask is therefore cropped by ``(kernel_size - 1) // 2`` on each side, which
-      lines each map voxel up with the window centred on it.
-    * It returns ``(ssim, contrast_sensitivity)`` **in that order**. Taking the second element gives
-      contrast sensitivity — one factor of SSIM, not SSIM — which reads higher and moves less.
-
-    Args:
-        reconstruction (torch.Tensor): Reconstructed batch, channel-first, on the inputs' own
-            intensity scale — do not clamp or renormalise it before passing it in.
-        images (torch.Tensor): The input batch it is compared against, channel-first.
-        kernel_size (int): Gaussian window size per spatial axis.
-        kernel_sigma (float): Gaussian window sigma per spatial axis.
+    The skull-stripped background is about 80% of the grid and scores ~1 for any reconstruction, so
+    it is masked out: the background is each input volume's minimum, since the chain z-scores the
+    zeros to a negative constant. ``data_range`` is taken per volume from the input, so pass the
+    reconstruction on the same z-scored scale, unclamped. ``compute_ssim_and_cs`` returns the full SSIM
+    map, ``kernel_size - 1`` smaller per axis, hence the cropped mask; its first output is SSIM, the
+    second contrast sensitivity.
 
     Returns:
         float: Mean SSIM over foreground voxels, or NaN if the batch is entirely background.
     """
     spatial_dims = len(images.shape[2:])
     per_volume = tuple(range(1, images.ndim))
-    # Shape (B, 1, ..., 1), which broadcasts against the SSIM map so each volume is scored on its
-    # own range. Taken from the target, per convention: the reference defines the dynamic range.
     data_range = images.amax(dim=per_volume, keepdim=True) - images.amin(dim=per_volume, keepdim=True)
     ssim_map, _ = compute_ssim_and_cs(
         reconstruction,
@@ -303,10 +218,6 @@ def foreground_ssim(
 
     trim = (kernel_size - 1) // 2
     centres = (slice(None), slice(None)) + tuple(slice(trim, size - trim) for size in images.shape[2:])
-    # The background is the volume's minimum, not zero: the transform chain z-scores each volume,
-    # which maps the skull-stripped zeros to a negative constant. An affine map is monotonic, so the
-    # originally-zero background is still exactly the minimum. (Measured against the pre-transform
-    # mask on the shipped cohort: identical bar one voxel in 884,736, a float32 tie.)
     background = images.amin(dim=per_volume, keepdim=True)
     foreground = images[centres] > background
     if not bool(foreground.any()):
@@ -315,100 +226,86 @@ def foreground_ssim(
     return ssim_map[foreground].mean().item()
 
 
-class AutoencoderTrainer:
-    """Holds the model, losses, optimizers, and data for autoencoder training.
+def validate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float, dict]:
+    """Score the autoencoder on a held-out split, under the same autocast as training.
 
-    One instance lives for the whole ``flare.is_running()`` loop, so the optimizer state persists
-    across global rounds.
+    Returns:
+        tuple[float, float, dict]: The mean L1 loss and mean foreground SSIM (see
+        :func:`foreground_ssim`) over the split, and its first batch for the debug plots.
     """
+    model.autoencoder.eval()
+    l1_loss, ssim, first_batch = 0.0, 0.0, {}
+    for batch in loader:
+        images = batch["image"].to(device)
+        with torch.no_grad(), autocast(enabled=True, device_type=device.type):
+            reconstruction, _, _ = model.autoencoder(images)
+        require_finite({"reconstruction": reconstruction}, "validation")
+        if not first_batch:
+            first_batch = {"input": images, "reconstruction": reconstruction}
+        l1_loss += torch.nn.functional.l1_loss(reconstruction.float(), images.float()).item()
+        ssim += foreground_ssim(reconstruction.float(), images.float())
+    return l1_loss / max(1, len(loader)), ssim / max(1, len(loader)), first_batch
+
+
+class AutoencoderTrainer:
+    """The networks, losses, optimisers and data for autoencoder training."""
 
     def __init__(self, config: dict, project_id: str, query: str):
         self.config = config
         self.project_id = project_id
-        working_dir = Path(__file__).parent.resolve()
+        self.epochs = config["LOCAL_ROUNDS"]
 
-        # Training parameters for the autoencoder
-        self.params_autoencoder = {
-            "lr_g": config["LR_G"],
-            "lr_d": config["LR_D"],
-            "epochs": config.get("LOCAL_ROUNDS", 5),
-        }
-        self.num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
-
-        # Model creation
         self.model = get_model()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.perceptual_loss = load_medicalnet_perceptual(Path(__file__).parent.resolve()).to(self.device)
+        self.adversarial_loss = PatchAdversarialLoss(criterion="least_squares")
+        self.kl_loss = KLDivergenceLoss()
+        self.w_reconstruction = config["w_reconstruction_loss"]
+        self.w_perceptual = config["w_perceptual_loss"]
+        self.w_kl = config["w_kl_loss"]
+        self.w_gan = config["w_gan_loss"]
+        # A 2-D discriminator judges a 3-D volume slice by slice.
+        net_config = config["net_config"]
+        self.slice_discriminator = net_config["spatial_dims"] == 3 and net_config["discriminator"]["spatial_dims"] == 2
 
-        # Losses, optimizers etc.
-        self.losses_ae = {
-            "reconstruction_loss": torch.nn.L1Loss(),
-            "kld_loss": KLDivergenceLoss(),
-            "gan_loss": PatchAdversarialLoss(criterion="least_squares"),
-            "perceptual_loss": load_medicalnet_perceptual(working_dir),
-        }
+        self.optimizer_g = torch.optim.AdamW(
+            self.model.autoencoder.parameters(), lr=config["LR_G"], weight_decay=WEIGHT_DECAY
+        )
+        self.optimizer_d = torch.optim.AdamW(
+            self.model.discriminator.parameters(), lr=config["LR_D"], weight_decay=WEIGHT_DECAY
+        )
 
-        # 3-D only tu suppport 2D adversarial / perceptual losses.
-        self.perceptual_slices = 12
-        # Reads the SAME key models.py builds the networks from (the top-level one), not the copy
-        # inside stage_1: nothing constructs a network from that copy, so gating on it lets a 3-D
-        # port flip one and not the other and get a 3-D network with the slicing paths switched off.
-        self.is_volumetric = config["net_config"]["spatial_dims"] == 3
-        self.weights_ae = {
-            "w_reconstruction_loss": config["w_reconstruction_loss"],
-            "w_perceptual_loss": config["w_perceptual_loss"],
-            "w_kl_loss": config["w_kl_loss"],
-            "w_gan_loss": config["w_gan_loss"],
-        }
-
-        self.optimizers_ae = {
-            "optimizer_g": torch.optim.AdamW(
-                self.model.autoencoder.parameters(), lr=self.params_autoencoder["lr_g"], weight_decay=1e-5
-            ),
-            "optimizer_d": torch.optim.AdamW(
-                self.model.discriminator.parameters(),
-                lr=self.params_autoencoder["lr_d"],
-                weight_decay=1e-5,
-            ),
-        }
-
-        # Data loading
+        # Data
         self.flip = FLIP()
-        dataframe = self.flip.get_dataframe(project_id=project_id, query=query)
-        self.train_items, self.val_items = self.build_datalist(dataframe)
-
-        # Per-site split for local/simulator runs where every client reads the same DEV dataset;
-        # in production each trust's data-access API already scopes the cohort to its own data.
-        # The FLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
-        # (as arkplus_fine_tuning's data_utils does). Production trust names never match, so real runs are unsplit.
         self.site_name = flare.get_site_name()
-        self.train_items = split_for_site(self.train_items, self.site_name)
+        train_items, val_items = self.build_datalist(self.flip.get_dataframe(project_id=project_id, query=query))
+        train_items = split_for_site(train_items, self.site_name)
+        workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
+        self.train_loader = DataLoader(
+            Dataset(train_items, transform=get_brain_mri_transforms()),
+            batch_size=config["BATCH_SIZE"],
+            shuffle=True,
+            num_workers=workers,
+        )
+        self.val_loader = DataLoader(
+            Dataset(val_items, transform=get_brain_mri_transforms(is_validation=True)),
+            batch_size=config["BATCH_SIZE"],
+            shuffle=False,
+            num_workers=workers,
+        )
 
-        self._train_dataset = Dataset(self.train_items, transform=get_brain_mri_transforms())
-        self._val_dataset = Dataset(self.val_items, transform=get_brain_mri_transforms(is_validation=True))
+    def build_datalist(self, dataframe) -> tuple[list[dict], list[dict]]:
+        """List each accession's volumes, one item per configured MR sequence, and split by accession.
 
-    def build_datalist(self, dataframe) -> tuple[list, list]:
-        """Fetch each accession's NIfTI series and split into train/validation lists.
-
-        One study yields one sample per configured modality — four, unless ``MODALITIES`` narrows
-        the run to fewer. Each sample carries the modality label and its index in ``MODALITIES``
-        alongside the path; ``transforms.py`` passes both through untouched, and the collate turns
-        the index into a batch tensor.
-
-        **The split is by accession.** The four series of one study are four views of the same
-        brain, so a file-wise split would leak a subject across the boundary and make the validation
-        score meaningless. Whole studies go to one side or the other.
+        The four sequences of a study are four views of one brain, so whole studies go to training or
+        to validation, never both.
         """
         modalities = self.config["MODALITIES"]
         by_accession: dict[str, list[dict]] = {}
-
         for accession_id in dataframe["accession_id"]:
             try:
                 accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.NIFTI,
-                    ],
+                    self.project_id, accession_id, resource_type=[ResourceType.NIFTI]
                 )
             except Exception as err:
                 logger.info(f"Could not get image data folder path for {accession_id}: {err}")
@@ -417,8 +314,7 @@ class AutoencoderTrainer:
             items = []
             for image in sorted(accession_folder_path.rglob("input_*.nii.gz")):
                 modality = modality_of(image, modalities)
-                if modality is None:
-                    # A sequence this run excludes, not an error: MODALITIES is the cohort filter.
+                if modality is None:  # a sequence this run leaves out
                     continue
                 items.append(
                     {
@@ -440,7 +336,6 @@ class AutoencoderTrainer:
                 "the data actually carries."
             )
 
-        # Validation / train splits, whole accessions at a time.
         accessions = list(by_accession)
         val_accessions = accessions[: int(self.config["VAL_SPLIT"] * len(accessions))]
         train_accessions = accessions[len(val_accessions) :]
@@ -449,213 +344,122 @@ class AutoencoderTrainer:
             [item for accession in val_accessions for item in by_accession[accession]],
         )
 
-    def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
-        train_loader = DataLoader(
-            self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
-        )
-        return train_loader, self.val_loader(batch_size)
-
-    def val_loader(self, batch_size: int) -> DataLoader:
-        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
-
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights)
+        self.model.to(self.device)
 
-    def train(self, writer: SummaryWriter, global_round: int) -> int:
-        """One ``train`` round: local AE + discriminator epochs. Returns the iteration count."""
-        accumulation_step = batch_accumulation_step(self.config["BATCH_SIZE"])
-        train_loader, val_loader = self.make_loaders(self.config["BATCH_SIZE"])
-        self.model.autoencoder.to(device=self.device)
-        self.model.discriminator.to(device=self.device)
-        self.losses_ae["perceptual_loss"].to(self.device)
+    def discriminator_logits(self, volume: torch.Tensor, slice_indices: np.ndarray) -> torch.Tensor:
+        """The discriminator's patch logits for a volume, slice by slice when it is 2-D."""
+        if self.slice_discriminator:
+            volume = slice_volume_for_2d(volume, slice_indices)
+        return self.model.discriminator(volume.contiguous().float())[-1]
 
-        # Create GradScalers - ensure they don't accumulate state
-        scaler_g = GradScaler(enabled=True)
-        scaler_d = GradScaler(enabled=True)
-
-        # Basic training
+    def train_one_epoch(self, epoch: int, global_round: int) -> dict[str, float]:
+        """One pass over the training split, generator then discriminator per batch; returns mean losses."""
         self.model.autoencoder.train()
         self.model.discriminator.train()
-        epochs = self.params_autoencoder["epochs"]
-        scheduler_g = round_lr_schedule(
-            self.optimizers_ae["optimizer_g"],
-            self.params_autoencoder["lr_g"],
-            self.config.get("LR_END", self.params_autoencoder["lr_g"]),
-            epochs,
-        )
-        for epoch in range(epochs):
-            train_g_loss = 0
-            train_d_loss = 0
-            train_g_l1loss = 0
-            train_g_percloss = 0
-            train_g_ganloss = 0
-            train_g_klloss = 0
+        accumulation_step = batch_accumulation_step(self.config["BATCH_SIZE"])
+        totals = dict.fromkeys(("generator", "discriminator", "l1", "perceptual", "kl", "gan"), 0.0)
+        for ind, batch in enumerate(self.train_loader):
+            images = batch["image"].to(self.device)
+            slice_indices = np.random.randint(0, images.shape[-1], size=DISCRIMINATOR_SLICES)
+            optimizer_step = (ind + 1) % accumulation_step == 0 or ind == len(self.train_loader) - 1
 
-            batch_acc_counter = 0
-            for ind, batch in enumerate(train_loader):
-                images = batch["image"].to(self.device)
+            # Generator: the discriminator is frozen so this backward leaves no gradients on it.
+            self.model.discriminator.requires_grad_(False)
+            with autocast(enabled=True, device_type=self.device.type):
+                reconstruction, z_mu, z_sigma = self.model.autoencoder(images)
+                require_finite(
+                    {"reconstruction": reconstruction, "z_mu": z_mu, "z_sigma": z_sigma},
+                    f"the autoencoder forward pass (epoch {epoch + 1}, iteration {ind})",
+                )
+                losses = {
+                    "l1": self.w_reconstruction * torch.nn.functional.l1_loss(reconstruction.float(), images.float()),
+                    "perceptual": self.w_perceptual * self.perceptual_loss(reconstruction.float(), images.float()),
+                    "kl": self.w_kl * self.kl_loss(z_mu, z_sigma),
+                    "gan": self.w_gan
+                    * self.adversarial_loss(
+                        self.discriminator_logits(reconstruction, slice_indices),
+                        target_is_real=True,
+                        for_discriminator=False,
+                    ),
+                }
+                require_finite(losses, f"the generator loss (epoch {epoch + 1}, iteration {ind})")
+                generator_loss = sum(losses.values())
+            self.scaler_g.scale(generator_loss / accumulation_step).backward()
+            self.model.discriminator.requires_grad_(True)
+            if optimizer_step:
+                self.scaler_g.step(self.optimizer_g)
+                self.scaler_g.update()
+                self.optimizer_g.zero_grad(set_to_none=True)
 
-                # 3-D only: pick the axial slices a 2-D loss/discriminator will score. Both operands of
-                # each comparison below reuse these same indices. Inert for 2-D data.
-                slice_indices = (
-                    np.random.randint(0, images.shape[-1], size=self.perceptual_slices) if self.is_volumetric else None
+            iteration = (global_round * self.epochs + epoch) * len(self.train_loader) + ind
+            if due_for_plot(iteration, self.config):
+                save_triplanar(
+                    {"input": images, "reconstruction": reconstruction},
+                    "triplanar",
+                    self.config,
+                    site_name=self.site_name,
+                    step=iteration,
                 )
 
-                # TRAIN GENERATOR
-                self.model.discriminator.requires_grad_(False)
-                with autocast(enabled=True, device_type=self.device.type):
-                    reconstruction, z_mu, z_sigma = self.model.autoencoder(images)
-                    require_finite(
-                        {"reconstruction": reconstruction, "z_mu": z_mu, "z_sigma": z_sigma},
-                        f"the autoencoder forward pass (epoch {epoch + 1}, iteration {ind})",
-                    )
-                    kl_loss = self.weights_ae["w_kl_loss"] * self.losses_ae["kld_loss"](z_mu, z_sigma)
-                    l1_loss = self.weights_ae["w_reconstruction_loss"] * self.losses_ae["reconstruction_loss"](
-                        reconstruction.float(), images.float()
-                    )
-                    p_loss = self.weights_ae["w_perceptual_loss"] * self.losses_ae["perceptual_loss"](
-                        reconstruction.float(), images.float()
-                    )
-
-                    # A 2-D discriminator judges a 3-D reconstruction slice by slice.
-                    if self.is_volumetric and self.config["net_config"]["discriminator"]["spatial_dims"] == 2:
-                        logits_fake = self.model.discriminator(
-                            slice_volume_for_2d(reconstruction, slice_indices).contiguous().float()
-                        )[-1]
-                    else:
-                        logits_fake = self.model.discriminator(reconstruction.contiguous().float())[-1]
-
-                    gan_loss = self.weights_ae["w_gan_loss"] * self.losses_ae["gan_loss"](
-                        logits_fake, target_is_real=True, for_discriminator=False
-                    )
-
-                    require_finite(
-                        {"l1": l1_loss, "kl": kl_loss, "perceptual": p_loss, "gan": gan_loss},
-                        f"the generator loss (epoch {epoch + 1}, iteration {ind})",
-                    )
-
-                    # Loss generator
-                    train_g_loss_ = l1_loss + kl_loss + p_loss + gan_loss
-
-                scaler_g.scale(train_g_loss_ / accumulation_step).backward()
-                self.model.discriminator.requires_grad_(True)
-
-                batch_acc_counter += 1
-                if batch_acc_counter % accumulation_step == 0 or ind == (len(train_loader) - 1):
-                    scaler_g.step(self.optimizers_ae["optimizer_g"])
-                    scaler_g.update()
-                    self.optimizers_ae["optimizer_g"].zero_grad(set_to_none=True)
-
-                global_step = (global_round * epochs + epoch) * len(train_loader) + ind
-                if due_for_plot(global_step, self.config):
-                    save_triplanar(
-                        {"input": images, "reconstruction": reconstruction},
-                        "triplanar",
-                        self.config,
-                        site_name=self.site_name,
-                        step=global_step,
-                    )
-
-                del z_mu, z_sigma, logits_fake
-
-                # TRAIN DISCRIMINATOR
-                if self.is_volumetric and self.config["net_config"]["discriminator"]["spatial_dims"] == 2:
-                    logits_fake = self.model.discriminator(
-                        slice_volume_for_2d(reconstruction.detach(), slice_indices).contiguous().float()
-                    )[-1]
-                    logits_real = self.model.discriminator(
-                        slice_volume_for_2d(images, slice_indices).contiguous().float()
-                    )[-1]
-                else:
-                    logits_real = self.model.discriminator(images.float())[-1]
-                    logits_fake = self.model.discriminator(reconstruction.detach().contiguous().float())[-1]
-
-                loss_d_fake = self.losses_ae["gan_loss"](logits_fake, target_is_real=False, for_discriminator=True)
-                loss_d_real = self.losses_ae["gan_loss"](logits_real, target_is_real=True, for_discriminator=True)
-                d_loss = self.weights_ae["w_gan_loss"] * (loss_d_fake + loss_d_real) * 0.5
-                scaler_d.scale(d_loss / accumulation_step).backward()
-
-                if batch_acc_counter % accumulation_step == 0 or ind == (len(train_loader) - 1):
-                    scaler_d.step(self.optimizers_ae["optimizer_d"])
-                    scaler_d.update()
-                    self.optimizers_ae["optimizer_d"].zero_grad(set_to_none=True)
-
-                del logits_real, logits_fake, reconstruction
-
-                # Aggregate
-                train_g_loss += train_g_loss_.item()
-                train_g_ganloss += gan_loss.item()
-                train_g_percloss += p_loss.item()
-                train_g_l1loss += l1_loss.item()
-                train_g_klloss += kl_loss.item()
-                train_d_loss += d_loss.item()
-
-                del train_g_loss_, gan_loss, p_loss, l1_loss, kl_loss, d_loss, images
-
-                if torch.cuda.is_available() and ind % CACHE_CLEAR_EVERY == 0:
-                    torch.cuda.empty_cache()
-
-            # Aggregate at the end
-            train_g_loss /= max(1, len(train_loader))
-            train_g_ganloss /= max(1, len(train_loader))
-            train_g_percloss /= max(1, len(train_loader))
-            train_g_l1loss /= max(1, len(train_loader))
-            train_g_klloss /= max(1, len(train_loader))
-            train_d_loss /= max(1, len(train_loader))
-
-            val_loss, val_ssim, debug_batch = validate(self.model, val_loader, self.device)
-            self.model.autoencoder.train()
-
-            logger.info(
-                f"Epoch {epoch + 1} / {epochs};\n "
-                f"Total loss G: {train_g_loss}, GAN: {train_g_ganloss} "
-                f"Perceptual: {train_g_percloss}, L1: {train_g_l1loss} "
-                f"KLD: {train_g_klloss} \n"
-                f"Total loss D: {train_d_loss},Validation loss (L1): {val_loss}, "
-                f"Validation SSIM (foreground): {val_ssim}"
+            # Discriminator: real volumes against the (detached) reconstructions.
+            fake = self.adversarial_loss(
+                self.discriminator_logits(reconstruction.detach(), slice_indices),
+                target_is_real=False,
+                for_discriminator=True,
             )
+            real = self.adversarial_loss(
+                self.discriminator_logits(images, slice_indices), target_is_real=True, for_discriminator=True
+            )
+            discriminator_loss = self.w_gan * (fake + real) * 0.5
+            self.scaler_d.scale(discriminator_loss / accumulation_step).backward()
+            if optimizer_step:
+                self.scaler_d.step(self.optimizer_d)
+                self.scaler_d.update()
+                self.optimizer_d.zero_grad(set_to_none=True)
 
-            # Send metrics to FLIP. The "@epoch" suffix names the x-axis and `step` (cumulative local
-            # epoch) is the coordinate.
+            totals["generator"] += generator_loss.item()
+            totals["discriminator"] += discriminator_loss.item()
+            for name, value in losses.items():
+                totals[name] += value.item()
+            if torch.cuda.is_available() and ind % CACHE_CLEAR_EVERY == 0:
+                torch.cuda.empty_cache()
+
+        return {name: total / max(1, len(self.train_loader)) for name, total in totals.items()}
+
+    def train(self, writer: SummaryWriter, global_round: int) -> int:
+        """One ``train`` task: ``LOCAL_ROUNDS`` epochs. Returns the number of batches trained on."""
+        self.scaler_g, self.scaler_d = GradScaler(), GradScaler()
+        scheduler_g = round_lr_schedule(
+            self.optimizer_g, self.config["LR_G"], self.config.get("LR_END", self.config["LR_G"]), self.epochs
+        )
+        for epoch in range(self.epochs):
+            step = global_round * self.epochs + epoch + 1
+            losses = self.train_one_epoch(epoch, global_round)
+            val_loss, val_ssim, first_batch = validate(self.model, self.val_loader, self.device)
             scheduler_g.step()
 
-            step = global_round * epochs + epoch + 1
-            writer.add_scalar("Train loss (G)@epoch", train_g_loss, global_step=step)
-            writer.add_scalar("Train loss (D)@epoch", train_d_loss, global_step=step)
-            writer.add_scalar("Perceptual loss (G)@epoch", train_g_percloss, global_step=step)
-            writer.add_scalar("KLD loss (G)@epoch", train_g_klloss, global_step=step)
-            writer.add_scalar("Reconstruction loss (G)@epoch", train_g_l1loss, global_step=step)
-            writer.add_scalar("GAN loss (G)@epoch", train_g_ganloss, global_step=step)
+            logger.info(
+                f"Epoch {epoch + 1} / {self.epochs};\n "
+                f"Total loss G: {losses['generator']}, GAN: {losses['gan']} "
+                f"Perceptual: {losses['perceptual']}, L1: {losses['l1']} "
+                f"KLD: {losses['kl']} \n"
+                f"Total loss D: {losses['discriminator']},Validation loss (L1): {val_loss}, "
+                f"Validation SSIM (foreground): {val_ssim}"
+            )
+            # The "@epoch" suffix names the x-axis; `step` counts local epochs across rounds.
+            writer.add_scalar("Train loss (G)@epoch", losses["generator"], global_step=step)
+            writer.add_scalar("Train loss (D)@epoch", losses["discriminator"], global_step=step)
+            writer.add_scalar("Perceptual loss (G)@epoch", losses["perceptual"], global_step=step)
+            writer.add_scalar("KLD loss (G)@epoch", losses["kl"], global_step=step)
+            writer.add_scalar("Reconstruction loss (G)@epoch", losses["l1"], global_step=step)
+            writer.add_scalar("GAN loss (G)@epoch", losses["gan"], global_step=step)
             writer.add_scalar("Validation loss (L1)@epoch", val_loss, global_step=step)
-            # Foreground-only, so it is comparable with the `val_ssim` the validate task reports and
-            # is not dominated by the ~90% of each volume that is background.
             writer.add_scalar("Validation SSIM@epoch", val_ssim, global_step=step)
+            save_triplanar(first_batch, "reconstruction", self.config, site_name=self.site_name, step=step)
 
-            save_triplanar(debug_batch, "reconstruction", self.config, site_name=self.site_name, step=step)
-
-        return epochs * len(train_loader)
-
-
-def validate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float, dict]:
-    """Score the autoencoder on a held-out split, under the same autocast as training.
-
-    Returns:
-        tuple[float, float, dict]: The mean L1 loss and mean foreground SSIM (see
-        :func:`foreground_ssim`) over the split, and its first batch for the debug plots.
-    """
-    model.autoencoder.to(device=device)
-    model.autoencoder.eval()
-    l1_loss, ssim, first_batch = 0.0, 0.0, {}
-    for batch in loader:
-        images = batch["image"].to(device)
-        with torch.no_grad(), autocast(enabled=True, device_type=device.type):
-            reconstruction, _, _ = model.autoencoder(images)
-        require_finite({"reconstruction": reconstruction}, "validation")
-        if not first_batch:
-            first_batch = {"input": images, "reconstruction": reconstruction}
-        l1_loss += torch.nn.functional.l1_loss(reconstruction.float(), images.float()).item()
-        ssim += foreground_ssim(reconstruction.float(), images.float())
-    return l1_loss / max(1, len(loader)), ssim / max(1, len(loader)), first_batch
+        return self.epochs * len(self.train_loader)
 
 
 def to_torch_weights(input_model: flare.FLModel) -> dict[str, torch.Tensor]:
@@ -698,24 +502,21 @@ def main() -> None:
         if input_model is None:
             break
 
-        weights = to_torch_weights(input_model)
         global_round = input_model.current_round or 0
 
         if flare.is_train():
             logger.info(f"[autoencoder trainer] received train task (round {global_round})")
-            trainer.load_weights(weights)
+            trainer.load_weights(to_torch_weights(input_model))
             n_iterations = trainer.train(writer, global_round)
             send_weight_diff(input_model.params, trainer.model, n_iterations)
 
         elif flare.is_evaluate():
-            trainer.load_weights(weights)
-            val_loss, val_ssim, first_batch = validate(
-                trainer.model, trainer.val_loader(config["BATCH_SIZE"]), trainer.device
-            )
+            trainer.load_weights(to_torch_weights(input_model))
+            val_loss, val_ssim, first_batch = validate(trainer.model, trainer.val_loader, trainer.device)
             writer.add_scalar("val_l1_loss", val_loss, global_step=0)
             writer.add_scalar("val_ssim", val_ssim, global_step=0)
-            save_triplanar(first_batch, "reconstruction_aggregated", config, site_name=flare.get_site_name())
-            logger.info(f"Validating the aggregated autoencoder on {flare.get_site_name()}'s data: SSIM {val_ssim}")
+            save_triplanar(first_batch, "reconstruction_aggregated", config, site_name=trainer.site_name)
+            logger.info(f"Validating the aggregated autoencoder on {trainer.site_name}'s data: SSIM {val_ssim}")
             # val_acc lands in the cross-validation results.json via ValidationJsonGenerator.
             flare.send(flare.FLModel(metrics={"val_acc": val_ssim, "val_loss": val_loss}))
 
