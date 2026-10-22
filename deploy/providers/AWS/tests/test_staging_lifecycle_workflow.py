@@ -160,19 +160,13 @@ def test_drift_still_runs_on_main_when_the_staging_probe_is_skipped() -> None:
 
 def test_the_fl_gate_is_released_by_a_measurement_not_a_literal() -> None:
     """The gate's release must come from the describe step, never a hard-coded true."""
-    gate = next(
-        step
-        for step in _jobs(APPLY)["apply"]["steps"]
-        if step.get("name") == "Check the plan for FL impact"
-    )
+    gate = next(step for step in _jobs(APPLY)["apply"]["steps"] if step.get("name") == "Check the plan for FL impact")
     released_by = gate["env"]["FL_SERVICES_STOPPED"]
     assert released_by == "${{ steps.fl_state.outputs.fl_stopped }}", (
         "FL_SERVICES_STOPPED must be the measured ECS state, not a constant: a literal true would "
         f"disable hazard B's gate outright (got {released_by!r})"
     )
-    probe = next(
-        step for step in _jobs(APPLY)["apply"]["steps"] if step.get("id") == "fl_state"
-    )
+    probe = next(step for step in _jobs(APPLY)["apply"]["steps"] if step.get("id") == "fl_state")
     assert probe["if"] == "github.ref_name != 'main'", (
         "the measurement must never run on main: production is not stopped by anything, so a true "
         "there could only come from a bug"

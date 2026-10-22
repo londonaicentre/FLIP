@@ -35,6 +35,9 @@ def job_if(workflow: str, job: str) -> str:
     text = (WORKFLOWS / workflow).read_text()
     block = re.search(rf"^  {job}:\n(?P<body>(?:    [^\n]*\n|\s*\n)*)", text, re.MULTILINE)
     assert block, f"{workflow}: no job '{job}'"
+    folded = re.search(r"^    if: >-\n(?P<expr>(?:      [^\n]*\n)+)", block["body"], re.MULTILINE)
+    if folded:
+        return " ".join(line.strip() for line in folded["expr"].splitlines())
     found = re.search(r"^    if: (?P<expr>[^\n]+)$", block["body"], re.MULTILINE)
     return found["expr"] if found else ""
 
@@ -50,10 +53,17 @@ class TerraformStagPause(unittest.TestCase):
                 assert GUARD in job_if(workflow, job), f"{workflow}:{job} ignores TF_STAG_DISABLED"
 
     def test_production_legs_never_read_the_variable(self) -> None:
-        """apply and drift serve main too; the guard must be OR-ed with the main check, not AND-ed."""
+        """apply and drift serve main too; the guard must be OR-ed with the main check, not AND-ed.
+
+        The jobs may carry further conditions (they wait on the staging start and state jobs), so
+        the guard is checked as the parenthesised OR clause, and it must appear nowhere else.
+        """
+        clause = f"(github.ref_name == 'main' || {GUARD})"
         for workflow, job in (("terraform_apply.yml", "apply"), ("terraform_drift.yml", "drift")):
             with self.subTest(workflow=workflow):
-                assert job_if(workflow, job) == f"github.ref_name == 'main' || {GUARD}"
+                expr = job_if(workflow, job)
+                assert expr == f"github.ref_name == 'main' || {GUARD}" or clause in expr, expr
+                assert expr.count(GUARD) == 1, f"{workflow}:{job} reads the guard outside the main clause"
 
     def test_the_plan_keeps_its_fork_skip(self) -> None:
         assert job_if("terraform_plan.yml", "plan") == (
