@@ -320,6 +320,11 @@ Trusts are registered on the **running hub** with `make register-trusts` (shippe
 carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
 automatically once the hub is up.
 
+`make rotate-trust-keys KIT=<CODE>` reissues an already-registered trust's two keys in place and
+rewrites the same kit file. The trust keeps its id, its code and its FL kit slot. The hub refuses
+the old key as soon as the rotation commits, so the trust is offline until its containers are
+recreated from the new kit.
+
 For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
 that `up-onprem-trust` and `upgrade-onprem-trust` use: `.env.<CODE>.<env>` first,
 then the legacy `.env.<KIT>`, under `trust/`. These root wrappers default to

@@ -219,95 +219,32 @@ def register_trust(
     )
 
 
-class TrustNotFoundError(TrustRegistrationError):
-    """No trust matched the given name or code."""
-
-
-class AmbiguousTrustCodeError(TrustRegistrationError):
-    """More than one trust carries the given code, so the target is not unambiguously identified."""
-
-
-class MissingKitSlotError(TrustRegistrationError):
-    """The trust exists but no FL kit slot is assigned to it, so a kit cannot be reissued."""
-
-
-def resolve_trust(session: Session, name: str | None = None, code: str | None = None) -> Trust:
-    """Look up one trust by display name or by code.
-
-    Args:
-        session (Session): SQLModel session.
-        name (str | None): Trust display name. Wins when both are given.
-        code (str | None): Short trust code. ``trust.code`` carries no unique constraint,
-            so a code that matches more than one row is refused rather than guessed at.
-
-    Returns:
-        Trust: The matched row.
-
-    Raises:
-        TrustNotFoundError: Neither argument matched a trust.
-        AmbiguousTrustCodeError: ``code`` matched more than one trust.
-    """
-    if name:
-        trust = session.exec(select(Trust).where(Trust.name == name.strip())).first()
-        if trust is None:
-            raise TrustNotFoundError(f"No trust named {name!r} is registered.")
-        return trust
-
-    if not code or not code.strip():
-        raise TrustNotFoundError("A trust name or code is required.")
-
-    matches = session.exec(select(Trust).where(Trust.code == code.strip())).all()
-    if not matches:
-        raise TrustNotFoundError(f"No trust with code {code!r} is registered.")
-    if len(matches) > 1:
-        names = ", ".join(sorted(t.name for t in matches))
-        raise AmbiguousTrustCodeError(
-            f"Code {code!r} matches more than one trust ({names}). Pass the trust name instead."
-        )
-    return matches[0]
-
-
-def rotate_trust_keys(
-    session: Session,
-    *,
-    name: str | None = None,
-    code: str | None = None,
-    audit_user_id: UUID | None = None,
-) -> RegisteredTrust:
+def rotate_trust_keys(session: Session, *, name: str) -> RegisteredTrust:
     """Reissue a trust's api and internal-service keys in place (FLIP#1569).
 
-    The operator path for credential rotation. Re-registration cannot do this: it refuses a
-    duplicate name, and the idempotent skip path deliberately emits no credentials because the
-    hub keeps only the api key's SHA-256. Deleting and re-registering instead would drop the
-    trust's tasks, metrics and FL kit slot assignment.
-
-    The trust row, its id, its code and its slot assignment are unchanged. Only
+    The trust row, its id, its code and its FL kit slot assignment are unchanged. Only
     ``api_key_hash`` moves, in one transaction with a ROTATED audit row, and the new plaintext
-    keys are returned once for the operator to write into the trust's kit file. The kit must
-    then reach the site out of band; until the trust restarts with it, the old key keeps
-    authenticating because the hash only changes once this commits, and the hub has no way to
-    revoke a key the trust is still presenting.
+    keys are returned once for the operator to write into the trust's kit file. The hub refuses
+    the old key from the moment this commits, so the trust is offline until its containers are
+    recreated from the new kit.
 
     Args:
-        session (Session): SQLModel session.
-        name (str | None): Trust display name. Wins over ``code`` when both are given.
-        code (str | None): Short trust code.
-        audit_user_id (UUID | None): Cognito sub of an authenticated admin, or ``None`` for the
-            deploy-CLI path (operator IAM, not a FLIP user).
+        session (Session): SQLModel session; the function commits before returning.
+        name (str): Trust display name, as ``register_one_trust`` looks it up.
 
     Returns:
         RegisteredTrust: The trust, its FL kit slot, and the new plaintext keys.
 
     Raises:
-        TrustNotFoundError: No trust matched.
-        AmbiguousTrustCodeError: ``code`` matched more than one trust.
-        MissingKitSlotError: The trust has no FL kit slot, so no kit can be reissued for it.
+        TrustRegistrationError: No trust of that name is registered, or it has no FL kit slot.
     """
-    trust = resolve_trust(session, name=name, code=code)
+    trust = session.exec(select(Trust).where(Trust.name == name.strip())).first()
+    if trust is None:
+        raise TrustRegistrationError(f"No trust named {name!r} is registered.")
 
     slot = session.exec(select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == trust.id)).first()
     if slot is None:
-        raise MissingKitSlotError(
+        raise TrustRegistrationError(
             f"Trust {trust.name!r} has no FL kit slot assigned, so its kit cannot be reissued. "
             "Reclaiming a slot is a separate operation; do not rotate the api key without one."
         )
@@ -323,7 +260,7 @@ def rotate_trust_keys(
         trust_id=trust.id,
         trust_name=trust.name,
         action=TrustAuditAction.ROTATED,
-        user_id=audit_user_id,
+        user_id=None,
         session=session,
     )
 
@@ -331,7 +268,7 @@ def rotate_trust_keys(
     session.commit()
     session.refresh(trust)
 
-    # The old key is still cached in this worker until invalidated; elsewhere the TTL bounds it.
+    # Drop this process's entry; serving workers re-check the live hash on every cache hit.
     trust_key_cache.invalidate()
 
     logger.info("Rotated api and internal-service keys for trust %r (id=%s).", trust.name, trust.id)

@@ -629,24 +629,22 @@ register-trust: _check-compose-project-owner _wait-for-hub
 
 # Reissue one trust's api and internal-service keys in place (FLIP#1569).
 # KIT is the trust CODE, as for register-trust. Unlike registration this changes
-# the accepted hash: the trust keeps authenticating with its current key until it
-# restarts from the new kit, so ship the kit before treating the old key as dead.
+# the accepted hash: the hub refuses the old key as soon as this commits, so the
+# trust stays offline until its containers are recreated from the new kit.
 # Only the two hub keys rotate here; XNAT credentials have their own caveat
-# (Postgres applies XNAT_DATASOURCE_* only on first initdb — see
+# (Postgres applies XNAT_DATASOURCE_* only on first initdb, see
 # generate-xnat-credentials).
 rotate-trust-keys: _check-compose-project-owner _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
 	@kit="trust/.env.$(KIT).$(ENV)"; \
-	  [ -f "$$kit" ] || { echo "❌ $$kit not found — register the trust first."; exit 1; }; \
+	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
 	  name="$$(sed -n 's/^TRUST_NAME=//p' "$$kit" | head -1)"; \
-	  code="$$(sed -n 's/^TRUST_CODE=//p' "$$kit" | head -1)"; \
 	  [ -n "$$name" ] || { echo "❌ TRUST_NAME not set in $$kit"; exit 1; }; \
-	  [ -n "$$code" ] || { echo "❌ TRUST_CODE not set in $$kit"; exit 1; }; \
 	  echo "🔑 Rotating keys for trust '$$name' (KIT=$(KIT))..."; \
-	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.rotate_trust_keys --name "$$name" --code "$$code")" \
-	    || { echo "❌ rotate_trust_keys failed for KIT=$(KIT)"; exit 1; }; \
-	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
-	@echo "⚠️  Kit updated. Deliver it to the site out of band; the old key works until the trust restarts."
+	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust --rotate --name "$$name")" \
+	    || { echo "❌ key rotation failed for KIT=$(KIT)"; exit 1; }; \
+	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"; \
+	  echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit."
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
 # the roster (each is seeded to a live kit + registered). Used by `make up`.

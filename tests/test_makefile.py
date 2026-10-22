@@ -405,6 +405,30 @@ OWNER_GUARDED_TARGETS = {
 COMPOSE_COMMAND = re.compile(r"\b(DEBUG_OVERRIDE_COMPOSE_COMMAND|DOCKER_COMMAND)\b")
 
 
+class RotateTrustKeys(unittest.TestCase):
+    """The dev rotation target drives the register_trust CLI the way its argparse accepts.
+
+    `--name` is the CLI's required argument and `--code` belongs to registration only, so a
+    recipe that passes both (or neither) exits 2 before anything rotates.
+    """
+
+    def recipe(self) -> str:
+        out = dry_run("rotate-trust-keys", subdir=".")
+        line = next((ln for ln in out.splitlines() if "flip_api.scripts.register_trust" in ln), None)
+        assert line is not None, out
+        return line
+
+    def test_it_rotates_by_name_only(self):
+        line = self.recipe()
+        assert "--rotate" in line, line
+        assert "--name" in line, line
+        assert "--code" not in line, line
+
+    def test_it_does_not_call_a_separate_rotation_module(self):
+        """Rotation is a flag on the registration CLI; there is no rotate_trust_keys module."""
+        assert "rotate_trust_keys" not in dry_run("rotate-trust-keys", subdir=".")
+
+
 def compose_targets(makefile: str) -> set[str]:
     """The targets whose recipe runs `$(DOCKER_COMMAND)` or its debug-override twin."""
     targets: set[str] = set()
