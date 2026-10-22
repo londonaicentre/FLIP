@@ -46,7 +46,7 @@ biomarker_causal_discovery/
 ├── pyproject.toml          # flwr app definition for the local simulator only
 ├── query.sql               # the OMOP cohort query (not uploaded; set on the project)
 ├── summarise_results.py    # FL_global_model.pt -> edge-frequency table + PAG figure
-├── docs/                   # the README figures + the script that draws the data one
+├── docs/                   # the README figure (summarise_results.py draws it)
 └── app/                    # <- what you upload
     ├── client_app.py       # the ClientApp: the transport around federated_fci.client_round
     ├── federated_fci.py    # the federation: statistics, voting, FCI orientation, summaries
@@ -102,8 +102,13 @@ model holds only graphs and counts. That is aggregate statistics rather than row
 formal guarantee and visible to the hub and the other sites. The NVFLARE README's "Privacy"
 section says exactly what is and is not protected, why the per-resample design it replaced was
 unsafe, and what a formal guarantee would add. Flower's per-update clip-and-noise mod is not that
-mechanism, which is why it is off rather than tuned. The ClientApp fetches the cohort once per run
-and keeps it in `context.state`, so a trust logs one row-level egress per run, not one per round.
+mechanism, which is why it is off rather than tuned. The upload path does not require `config.toml`,
+and without it the base bundle's `dp-enabled = true` would clip and noise the statistics silently, so
+the ClientApp refuses a run whose run config turns the mod on. Flower forwards a client's exception
+text to the hub, which is why every refusal in `federated_fci` names neither a count nor a column
+nor a statistic; a round that fails after the statistics were released still sends its zeroing
+payload and fails the job on the next task. The ClientApp fetches the cohort once per run and keeps
+it in `context.state`, so a trust logs one row-level egress per run, not one per round.
 
 ## Data
 

@@ -30,6 +30,7 @@ No GPU, no dataset download: the cohort is sampled in-process from a 7-variable 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -424,12 +425,8 @@ def test_every_site_computes_the_same_pag_so_averaging_is_exact(ff, config, two_
     assert np.array_equal(pags[0], pags[1])
 
 
-def test_a_variable_constant_across_the_pooled_cohort_is_refused_not_isolated(ff, config, two_sites):
-    """The parametric bootstrap would draw pure noise for it and the graph would show it unconnected."""
-    b = VARIABLES.index("b_root")
-    sites = {name: matrix.copy() for name, matrix in two_sites.items()}
-    for matrix in sites.values():
-        matrix[:, b] = 1.0  # the same single level at every site clears the small-cell rule
+def _pooled_state(ff, config, sites):
+    """Round 1 of pooled mode for every site, aggregated the way the platform does it."""
     encoded = ff.encode(ff.empty_state(config))
     targets, weights = [], []
     for name, matrix in sites.items():
@@ -440,8 +437,129 @@ def test_a_variable_constant_across_the_pooled_cohort_is_refused_not_isolated(ff
         k: sum(w * t[k].astype(np.float64) for w, t in zip(weights, targets, strict=True)) / sum(weights)
         for k in ff.STATE_KEYS
     }
-    with pytest.raises(ValueError, match="constant across the pooled cohort.*b_root"):
-        ff.client_round(ff.decode(pooled), 1, 2, next(iter(sites.values())), "site-1", config)
+    return ff.decode(pooled)
+
+
+def test_a_variable_constant_at_a_site_is_refused_before_the_release(ff, config, two_sites):
+    """Its moments with every other column would be those columns' plain sums; the name stays in the site log."""
+    b = VARIABLES.index("b_root")
+    matrix = next(iter(two_sites.values())).copy()
+    matrix[:, b] = 1.0  # one level everywhere clears the small-cell rule
+    with pytest.raises(ValueError, match="constant at this site") as err:
+        ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config)
+    assert "b_root" not in str(err.value)
+
+
+def test_a_variable_constant_across_the_pooled_cohort_is_refused_not_isolated(ff, config, two_sites):
+    """The fallback behind the site-side check: a pooled zero variance names no variable to the hub."""
+    pooled = _pooled_state(ff, config, two_sites)
+    b = VARIABLES.index("b_root")
+    pooled["stats_moment"][b, :] = pooled["stats_mean"][b] * pooled["stats_mean"]
+    pooled["stats_moment"][:, b] = pooled["stats_mean"][b] * pooled["stats_mean"]
+    with pytest.raises(ff.RoundFailed, match="constant across the pooled cohort") as err:
+        ff.client_round(pooled, 1, 2, next(iter(two_sites.values())), "site-1", config)
+    assert "b_root" not in str(err.value)
+
+
+# --- what a researcher's config can and cannot do after the release ------------------------
+
+
+def test_round_two_only_config_errors_are_caught_before_the_release(ff, config, two_sites):
+    """ALPHA, MAX_DEPTH, SEED and the knowledge block are first *used* in round 2; a bad value would
+    fail there, after the statistics were released, and leave them in the job's state."""
+    matrix = next(iter(two_sites.values()))
+    for bad in (
+        {"ALPHA": "x"},
+        {"ALPHA": 1.5},
+        {"MAX_DEPTH": 2.5},
+        {"SEED": "later"},
+        {"KNOWLEDGE": {**config["KNOWLEDGE"], "SINKS": ["not_a_column"]}},
+        {"LOG_TRANSFORM": ["not_a_column"]},
+        {"SCALE": {"u_mri": 0}},
+        {"VARIABLES": VARIABLES + ["a_root"]},
+    ):
+        with pytest.raises((ValueError, TypeError)):
+            ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", {**config, **bad})
+
+
+def test_a_failure_after_the_release_still_sends_the_zeroing_payload(ff, config, two_sites, monkeypatch):
+    """RoundFailed carries a target with the statistics zeroed and no graph; the transport sends it,
+    then fails the job on its next task."""
+    pooled = _pooled_state(ff, config, two_sites)
+    assert np.any(pooled["stats_moment"])
+    monkeypatch.setattr(ff, "fci_from_correlation", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(ff.RoundFailed) as err:
+        ff.client_round(pooled, 1, 2, next(iter(two_sites.values())), "site-1", config)
+    failed = err.value
+    assert isinstance(failed.cause, RuntimeError)
+    assert not np.any(failed.target["stats_mean"])
+    assert not np.any(failed.target["stats_moment"])
+    assert not np.any(failed.target["pag"])
+    assert failed.metrics["round_failed"] == 1.0
+    assert failed.weight == len(next(iter(two_sites.values())))
+
+
+def test_a_non_positive_value_in_a_log_column_is_refused_not_dropped(ff, config):
+    """Dropping the row would let the config select rows: two jobs differing by LOG_TRANSFORM
+    would differ by exactly that row's contribution."""
+    frame = sample_scm(100, 7)
+    frame.loc[3, "x_fluid"] = 0.0
+    with pytest.raises(ValueError, match="x_fluid.*non-positive"):
+        ff.prepare_cohort(frame, config)
+
+
+def test_incomplete_rows_make_the_site_refuse(ff, config):
+    frame = sample_scm(100, 8)
+    frame.loc[5, "y_fluid"] = np.nan
+    matrix, person_ids, dropped = ff.prepare_cohort(frame, config)
+    assert (matrix.shape[0], dropped, len(person_ids)) == (99, 1, 99)
+    with pytest.raises(ValueError, match="incomplete for VARIABLES") as err:
+        ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config, person_ids=person_ids, dropped_rows=1)
+    assert "99" not in str(err.value)
+    assert ff.prepare_cohort(sample_scm(100, 8), config)[2] == 0
+
+
+def test_the_floor_counts_persons_not_rows(ff, config):
+    """Several rows per person must not clear the floor with few people."""
+    one = sample_scm(20, 9)
+    frame = pd.concat([one, one, one], ignore_index=True)  # 60 rows, 20 persons
+    matrix, person_ids, dropped = ff.prepare_cohort(frame, config)
+    assert matrix.shape[0] == 60
+    assert len(np.unique(person_ids)) == 20
+    with pytest.raises(ValueError, match="below the site floor"):
+        ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config, person_ids=person_ids)
+    # Without person ids the floor can only count rows — the transports always pass them.
+    ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config)
+
+
+def test_release_checks_run_every_round(ff, config, two_sites):
+    """A site that refused in round 1 is still asked for round 2; it must not report its count there."""
+    pooled = _pooled_state(ff, config, two_sites)
+    small = next(iter(two_sites.values()))[:20]
+    with pytest.raises(ValueError, match="below the site floor"):
+        ff.client_round(pooled, 1, 2, small, "site-1", config)
+    with pytest.raises(ValueError, match="below the site floor"):
+        ff.assert_site_may_release(small, config, site_name="site-1")
+
+
+def test_filter_refusals_carry_no_numbers(ff, config):
+    """The largest second moment and the limit (the row count in disguise) stay in the site log."""
+    unscaled = {**config, "SCALE": {}}
+    matrix = ff.prepare_matrix(sample_scm(300, 2), unscaled)
+    with pytest.raises(ValueError, match="privacy filter") as err:
+        ff.client_round(ff.decode(ff.encode(ff.empty_state(unscaled))), 0, 2, matrix, "site-1", unscaled)
+    assert not re.search(r"\d", str(err.value).replace("site-1", "")), str(err.value)
+
+
+def test_a_site_percentile_above_the_payload_zero_fraction_is_refused(ff, config, two_sites, monkeypatch):
+    """The stock filter zeroes entries below the P-th percentile of |update|; a trust's P above the
+    payload's zero fraction would zero real statistics silently."""
+    policy = type("Policy", (), {"gamma": 0.01, "percentile": 99.9})()
+    monkeypatch.setattr(ff, "resolve_policy", lambda env: (policy, "env"))
+    assert ff.effective_percentile_policy() == (0.01, 99.9)
+    matrix = next(iter(two_sites.values()))
+    with pytest.raises(ValueError, match="percentile"):
+        ff.client_round(ff.empty_state(config), 0, 2, matrix, "site-1", config)
 
 
 # --- summaries and bookkeeping ------------------------------------------------------------

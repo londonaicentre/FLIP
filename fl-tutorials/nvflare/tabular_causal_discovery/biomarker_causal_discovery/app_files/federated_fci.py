@@ -41,7 +41,10 @@ Two federation modes, selected by ``config.json``'s ``FEDERATION``:
     ``VOTE_RATIO`` next round (FedPC's "vote"), and any site's separating set survives (the
     union). The last round orients the voted skeleton with FCI's rules. Works with any local
     CI test (``CI_TEST: "kci"`` included), at the cost of exactness: a vote is not a pooled
-    test, and FedPC's own paper discusses the inconsistent-separating-set problem it creates.
+    test. FedPC itself discards the separating sets after skeleton learning and re-derives one
+    per unshielded triple by a highest-p-value search over client data (its FedOrien step);
+    orienting from the union is this mode's own simplification, and the orientation errors it
+    causes are visible in the README's comparison.
 
 Bootstrapping differs by mode, and the difference is a privacy decision. In pooled mode the
 ``B`` resamples are drawn *after* pooling, from the pooled correlation itself (a parametric
@@ -136,6 +139,9 @@ ENCODING_SCALE = 1e-5
 #: must stay below it once scaled, or the filter silently truncates it — hence ``SCALE`` in
 #: config.json and the check in :func:`assert_within_filter_bounds`.
 PERCENTILE_CLIP = 0.01
+# The stock filter's percentile: entries below the P-th percentile of |update| are zeroed. The payload's
+# zero fraction must stay above the site's P (``assert_within_filter_bounds``).
+PERCENTILE_STOCK = 10.0
 #: No site releases its statistics for fewer complete rows than this, whatever the researcher's
 #: config.json says (``MIN_SITE_ROWS`` there can only raise it). A trust raises it further through
 #: :data:`SITE_FLOOR_VAR` in the FL client's environment. With 11 numbers per row and p + p² = 132
@@ -196,6 +202,67 @@ def federation_mode(config: dict) -> str:
     return mode
 
 
+class RoundFailed(RuntimeError):
+    """A round after the release failed; the site's zeroing payload must still travel.
+
+    Round 2 of pooled mode consumes the pooled statistics and zeroes them. A failure in that round
+    must not leave them in the global state — the model the server persists, uploads and the
+    researcher downloads — so :func:`client_round` raises this instead of the cause: the transport
+    sends ``target`` (statistics zeroed, graphs empty) with ``weight`` and ``metrics``, and raises
+    ``cause`` on its next task so the job still ends in error.
+    """
+
+    def __init__(self, target: dict[str, np.ndarray], weight: int, metrics: dict[str, float], cause: BaseException):
+        super().__init__(str(cause))
+        self.target, self.weight, self.metrics, self.cause = target, weight, metrics, cause
+
+
+def validate_config(config: dict) -> None:
+    """Every key a later round reads, checked before a site releases anything.
+
+    Round 2 of pooled mode is the first to read ``ALPHA``, ``MAX_DEPTH``, ``SEED`` and the
+    background knowledge. A value that only failed there would fail after the statistics were
+    released, and the researcher who wrote the config could then collect the job's state with
+    the statistics still in it. So every key is parsed here, in round 1, before the release.
+    """
+    variables = config.get("VARIABLES")
+    if (
+        not isinstance(variables, list)
+        or len(variables) < 2
+        or len(set(variables)) != len(variables)
+        or not all(isinstance(v, str) for v in variables)
+    ):
+        raise ValueError("VARIABLES must list at least two distinct column names")
+    federation_mode(config)
+    for key, low in (("N_BOOTSTRAPS", 0), ("MAX_DEPTH", -1), ("MIN_SITE_ROWS", 0), ("MIN_CELL_COUNT", 0)):
+        value = config.get(key, low)
+        if int(value) != value or int(value) < low:
+            raise ValueError(f"{key} must be an integer of at least {low}, got {value!r}")
+    int(config.get("SEED", 0))
+    for key, low, high in (("ALPHA", 0.0, 1.0), ("STABLE_EDGE_PROB", 0.0, 1.0), ("VOTE_RATIO", 0.0, 1.0)):
+        value = float(config.get(key, 0.5))
+        if not low < value <= high or (key == "ALPHA" and value >= 1.0):
+            raise ValueError(f"{key} must lie in ({low}, {high}{']' if key != 'ALPHA' else ')'}, got {value!r}")
+    str(config.get("CI_TEST", "fisherz"))
+    present = set(variables)
+    unknown = [c for c in config.get("LOG_TRANSFORM", []) if c not in present]
+    if unknown:
+        raise ValueError(f"LOG_TRANSFORM names columns not in VARIABLES: {unknown}")
+    scale = config.get("SCALE", {})
+    if not isinstance(scale, dict) or any(float(d) <= 0 for d in scale.values()):
+        raise ValueError("SCALE must map column names to positive divisors")
+    block = config.get("KNOWLEDGE", {})
+    if not isinstance(block, dict):
+        raise ValueError("KNOWLEDGE must be an object")
+    for key in ("EXOGENOUS", "SINKS", "NEVER_CONDITION_ON"):
+        names = block.get(key, [])
+        if not isinstance(names, list) or any(n not in present for n in names):
+            raise ValueError(f"KNOWLEDGE.{key} must list columns from VARIABLES")
+    for pair in block.get("FORBIDDEN", []):
+        if len(pair) != 2 or any(n not in present for n in pair):
+            raise ValueError("KNOWLEDGE.FORBIDDEN must hold [cause, effect] pairs of VARIABLES")
+
+
 def state_shapes(config: dict) -> dict[str, tuple[int, ...]]:
     """Shape of every array in the wire format, from the variable count and bootstrap count.
 
@@ -235,39 +302,64 @@ def as_pags(pag_array: np.ndarray) -> np.ndarray:
     return np.rint(np.asarray(pag_array, dtype=np.float64)).astype(np.int8)
 
 
-def effective_percentile_clip(env: dict | None = None) -> float:
-    """The clip the trust's NVFLARE site policy actually applies: the stock gamma, or a stricter one.
+def effective_percentile_policy(env: dict | None = None) -> tuple[float, float]:
+    """The (clip, percentile) the trust's NVFLARE site policy actually applies.
 
-    A trust may lower ``gamma`` through ``FL_SITE_PRIVACY_GAMMA`` or its governance document, and
-    the stock filter clips silently, so the bound checked below must be the site's, not the default.
+    A trust may lower ``gamma`` or raise ``percentile`` through ``FL_SITE_PRIVACY_*`` or its
+    governance document, and the stock filter clips and zeroes silently, so the bounds checked
+    below must be the site's, not the defaults. The clip is never looser than the stock one.
     """
     if resolve_policy is None:
-        return PERCENTILE_CLIP
+        return PERCENTILE_CLIP, PERCENTILE_STOCK
     try:
         policy, _ = resolve_policy(os.environ if env is None else env)
     except Exception as error:  # a malformed policy stops the container elsewhere; here, stay strict
-        logger.warning("could not resolve the site privacy policy (%s); assuming the stock clip", error)
-        return PERCENTILE_CLIP
-    return PERCENTILE_CLIP if policy is None else min(PERCENTILE_CLIP, float(policy.gamma))
+        logger.warning("could not resolve the site privacy policy (%s); assuming the stock filter", error)
+        return PERCENTILE_CLIP, PERCENTILE_STOCK
+    if policy is None:
+        return PERCENTILE_CLIP, PERCENTILE_STOCK
+    return min(PERCENTILE_CLIP, float(policy.gamma)), float(getattr(policy, "percentile", PERCENTILE_STOCK))
 
 
-def assert_within_filter_bounds(target: dict[str, np.ndarray], weight: int) -> None:
-    """Refuse a payload the platform's percentile-privacy clip would truncate.
+def effective_percentile_clip(env: dict | None = None) -> float:
+    """The clip the trust's NVFLARE site policy actually applies: the stock gamma, or a stricter one."""
+    return effective_percentile_policy(env)[0]
 
-    The filter divides a site's update by its weight and clips at ±:data:`PERCENTILE_CLIP`;
-    an entry beyond that is corrupted silently and the run goes on to report a wrong graph.
-    A variable in its raw units (a volume in mm³) overshoots by orders of magnitude, which is
-    what ``LOG_TRANSFORM`` and ``SCALE`` in config.json exist for; this check turns a forgotten
-    one into an error that names it.
+
+def assert_within_filter_bounds(
+    target: dict[str, np.ndarray], weight: int, received: dict[str, np.ndarray] | None = None
+) -> None:
+    """Refuse a payload the platform's percentile-privacy filter would truncate or zero.
+
+    The filter divides a site's update by its weight, zeroes every entry below the site's
+    percentile of |update| and clips the rest at ±gamma; an entry it touches is corrupted silently
+    and the run goes on to report a wrong graph. A variable in its raw units (a volume in mm³)
+    overshoots the clip by orders of magnitude, which is what ``LOG_TRANSFORM`` and ``SCALE`` in
+    config.json exist for; a site percentile above the payload's zero fraction would zero real
+    entries. Both become an error here. The error names the array and the knob only: the numbers
+    (a site's largest second moment, its row count through the limit) go to the site's own log.
     """
-    limit = effective_percentile_clip() * max(int(weight), 1) / ENCODING_SCALE
-    for key, array in target.items():
+    clip, percentile = effective_percentile_policy()
+    limit = clip * max(int(weight), 1) / ENCODING_SCALE
+    update = {key: (target[key] - received[key]) if received is not None else target[key] for key in target}
+    for key, array in update.items():
         largest = float(np.max(np.abs(array))) if array.size else 0.0
         if largest > limit:
+            logger.info("%s holds %.3g, above the %.3g the site's privacy filter would clip at", key, largest, limit)
             raise ValueError(
-                f"{key} holds a value of {largest:.3g}, above the {limit:.3g} the platform's privacy filter "
-                "would clip at: scale the variable down (config.json SCALE) or log-transform it (LOG_TRANSFORM)"
+                f"{key} holds a value above what the platform's privacy filter would clip at: scale the variable "
+                "down (config.json SCALE) or log-transform it (LOG_TRANSFORM)"
             )
+    zeros = sum(int(np.count_nonzero(array == 0)) for array in update.values())
+    total = sum(array.size for array in update.values())
+    if total and 100.0 * zeros / total < percentile:
+        logger.info(
+            "payload is %.1f%% zeros, below the site's filter percentile of %g", 100.0 * zeros / total, percentile
+        )
+        raise ValueError(
+            "this trust's privacy filter percentile is above the payload's zero fraction and would zero real "
+            "entries; the site policy's percentile has to stay at the platform default for this app"
+        )
 
 
 # --- what a site may release ---------------------------------------------------------------
@@ -312,6 +404,64 @@ def layer_voting_allowed(local_dev: bool) -> bool:
     return bool(local_dev)
 
 
+def assert_site_may_release(
+    matrix: np.ndarray,
+    config: dict,
+    person_ids: np.ndarray | None = None,
+    dropped_rows: int = 0,
+    site_name: str = "",
+) -> None:
+    """The checks a site runs before it releases anything in pooled mode — every round, not once.
+
+    Refusals carry no count and no column name: Flower forwards a client's exception text to the
+    hub, and a below-floor count is exactly what the platform's cohort threshold keeps
+    indistinguishable from empty. Counts and names go to the site's own log.
+
+    * The floor counts **persons** when ``person_ids`` is given (a query with several rows per
+      person would clear a row floor with few people), rows otherwise.
+    * ``dropped_rows`` must be zero: rows incomplete for ``VARIABLES`` are selected by the
+      researcher's column choice, and two jobs differing in one such row differ by that row.
+    * The small-cell rule for discrete columns, and no column constant at this site (its moments
+      with every other column would be that column's plain sums, and the pooled check in round 2
+      comes after the release).
+    """
+    n = int(matrix.shape[0])
+    floor = site_row_floor(config)
+    count = n if person_ids is None else min(n, int(len(np.unique(person_ids))))
+    if count < floor:
+        logger.info(
+            "site %s: %d complete rows of %d persons, below the release floor of %d", site_name, n, count, floor
+        )
+        raise ValueError(
+            f"site {site_name!r} holds too few complete rows to release its statistics (below the site "
+            "floor): a mean and second-moment matrix of that few rows is too close to the rows themselves"
+        )
+    if dropped_rows:
+        logger.info("site %s: %d served rows are incomplete for VARIABLES", site_name, dropped_rows)
+        raise ValueError(
+            f"site {site_name!r} refuses to release its statistics: the served cohort holds rows incomplete for "
+            "VARIABLES, so the statistics would describe a subset the config selected rather than the approved "
+            "cohort — make the cohort query select complete cases"
+        )
+    variables = list(config["VARIABLES"])
+    cells = small_cells(matrix, config)
+    if cells:
+        # Which column, like the count, stays in the site's own log: naming it to the hub would
+        # say which level of a public summary this site holds almost none of.
+        logger.info("site %s: small cells in discrete column(s) %s", site_name, [variables[j] for j in cells])
+        raise ValueError(
+            f"site {site_name!r} refuses to release its statistics: a discrete variable has a level held "
+            "by too few rows, and its moments would publish that cell"
+        )
+    constant = [variables[j] for j in range(matrix.shape[1]) if np.ptp(matrix[:, j]) == 0]
+    if constant:
+        logger.info("site %s: constant column(s) %s", site_name, constant)
+        raise ValueError(
+            f"site {site_name!r} refuses to release its statistics: a variable is constant at this site, so its "
+            "moments with every other variable would be those variables' plain sums"
+        )
+
+
 # --- data ---------------------------------------------------------------------------------
 
 
@@ -326,6 +476,17 @@ def prepare_matrix(dataframe, config: dict) -> np.ndarray:
     Nothing is standardised per site: pooling second moments that each site had standardised
     separately would not give the pooled cohort's correlation.
     """
+    return prepare_cohort(dataframe, config)[0]
+
+
+def prepare_cohort(dataframe, config: dict) -> tuple[np.ndarray, np.ndarray | None, int]:
+    """:func:`prepare_matrix` plus what the release floor needs: the kept rows' ``person_id`` and the drop count.
+
+    Returns ``(matrix, person_ids, dropped_rows)``. ``person_ids`` is ``None`` when the cohort has
+    no such column. Rows incomplete for ``VARIABLES`` are dropped and counted: in pooled mode a
+    site refuses to release when the count is non-zero (see :func:`assert_site_may_release`), so
+    the researcher's column choice cannot select the rows a statistic describes.
+    """
     variables = list(config["VARIABLES"])
     missing = [v for v in variables if v not in dataframe.columns]
     if missing:
@@ -334,17 +495,20 @@ def prepare_matrix(dataframe, config: dict) -> np.ndarray:
     for column in config.get("LOG_TRANSFORM", []):
         index = variables.index(column)
         values = matrix[:, index]
-        if np.all(values[np.isfinite(values)] <= 0):
-            raise ValueError(f"{column} is listed in LOG_TRANSFORM but has no positive values")
-        # A stray non-positive assay value (a below-detection 0, an unmasked missing code) drops that
-        # row with the other non-finite ones below, rather than taking the whole site down.
-        values = np.where(values > 0, values, np.nan)
+        if np.any(values[np.isfinite(values)] <= 0):
+            # Dropping such a row instead would let a config choice select rows: two jobs, with and
+            # without the transform, would differ by exactly the dropped rows' contribution.
+            raise ValueError(
+                f"{column} is listed in LOG_TRANSFORM but holds non-positive values: the cohort query has to "
+                "exclude or mask them (the converter masks non-positive assay values)"
+            )
         matrix[:, index] = np.log(values)
     for column, divisor in config.get("SCALE", {}).items():
         if column in variables:
             matrix[:, variables.index(column)] /= float(divisor)
     keep = np.isfinite(matrix).all(axis=1)
-    return matrix[keep]
+    person_ids = dataframe["person_id"].to_numpy()[keep] if "person_id" in dataframe.columns else None
+    return matrix[keep], person_ids, int((~keep).sum())
 
 
 def partition_for_site(dataframe, site_name: str, num_partitions: int):
@@ -379,7 +543,8 @@ def bootstrap_rows(
     """Row indices of bootstrap ``b`` at this site, redrawn while any column is constant.
 
     A constant column makes every CI test involving it undefined, so such a resample is drawn
-    again from the same stream — the same rule the centralised analysis used.
+    again from the same stream — the constant-column half of the centralised analysis's redraw
+    rule (its rank check guarded the two APOE4 dummies, which this cohort does not carry).
     """
     n = matrix.shape[0]
     if not resample:
@@ -698,7 +863,10 @@ def layer_step(
 
     PC-stable: neighbourhoods come from the skeleton as received, so the result does not depend
     on the order pairs are visited. Returns the site's 0/1 skeleton and the accumulated 0/1
-    separating-set membership (received union ∪ newly found).
+    separating-set membership (received union ∪ newly found). The marks accumulate across layers
+    for every pair, including pairs the vote kept; FedPC's MATLAB release rebuilds its union each
+    layer for the pairs that lost the vote only, and then never orients from it (see the module
+    docstring).
     """
     p = skeleton.shape[0]
     adjacency = skeleton > 0
@@ -801,6 +969,8 @@ def client_round(
     site_name: str,
     config: dict,
     local_dev: bool = False,
+    person_ids: np.ndarray | None = None,
+    dropped_rows: int = 0,
 ) -> tuple[dict[str, np.ndarray], int, dict[str, float]]:
     """What this site sends back in global round ``round_index`` (0-based), and with what weight.
 
@@ -809,11 +979,15 @@ def client_round(
     backend expects), ``weight`` the aggregation weight (its sample size in pooled mode, one
     vote in voting mode), and ``metrics`` the scalars to report for this round. ``local_dev``
     defaults to the deployed (restrictive) answer: a transport that forgets it gets the gates.
+    ``person_ids`` and ``dropped_rows`` come from :func:`prepare_cohort` and feed the release
+    checks (:func:`assert_site_may_release`). Raises :class:`RoundFailed` when a round after
+    the release fails, so the transport can still send the zeroing payload.
     """
+    validate_config(config)
     variables = list(config["VARIABLES"])
     mode = federation_mode(config)
     n = int(matrix.shape[0])
-    # Refusals below carry no count: both backends forward a client's exception text to the hub, and a
+    # Refusals below carry no count: Flower forwards a client's exception text to the hub, and a
     # below-floor count is exactly what the platform's cohort threshold keeps indistinguishable from
     # empty. The count goes to the site's own log only.
     if n < 5:
@@ -836,50 +1010,47 @@ def client_round(
     metrics: dict[str, float] = {"site_rows": float(n)}
 
     if mode == "pooled_statistics":
+        # Every round, not only the releasing one: a site that refused in round 1 is still asked for
+        # round 2 and the evaluation, and must not report its count there either.
+        assert_site_may_release(matrix, config, person_ids, dropped_rows, site_name)
         if round_index == 0:
-            floor = site_row_floor(config)
-            if n < floor:
-                logger.info("site %s: %d complete rows, below the release floor of %d", site_name, n, floor)
-                raise ValueError(
-                    f"site {site_name!r} holds too few complete rows to release its statistics (below the site "
-                    "floor): a mean and second-moment matrix of that few rows is too close to the rows themselves"
-                )
-            cells = small_cells(matrix, config)
-            if cells:
-                # Which column, like the count, stays in the site's own log: naming it to the hub would
-                # say which level of a public summary this site holds almost none of.
-                logger.info("site %s: small cells in discrete column(s) %s", site_name, [variables[j] for j in cells])
-                raise ValueError(
-                    f"site {site_name!r} refuses to release its statistics: a discrete variable has a level held "
-                    "by too few rows, and its moments would publish that cell"
-                )
             target = empty_state(config)
             target["stats_mean"], target["stats_moment"] = site_statistics(matrix)
             target["site_counts"][slot] = n * COUNT_SCALE
-            assert_within_filter_bounds(target, n)
+            assert_within_filter_bounds(target, n, received)
             return target, n, metrics
+        # The pooled statistics have done their job. They do not travel on: the final model the
+        # researcher downloads holds the graphs and the row counts, nothing about the variables.
+        # Zeroed first, so that a failure below still sends the zeroing payload (RoundFailed).
+        target["stats_mean"][:] = 0.0
+        target["stats_moment"][:] = 0.0
         pooled_n, sizes = recover_site_counts(received["site_counts"], weighted_by_size=True)
         metrics["pooled_rows"] = float(pooled_n)
         metrics["sites_seen"] = float(len(sizes))
-        if not np.any(as_pags(received["pag"])):
-            variance = np.diag(received["stats_moment"] - np.outer(received["stats_mean"], received["stats_mean"]))
-            # Relative to the second moment: the statistics made a float32 round trip through the transport.
-            negligible = 1e-5 * np.maximum(np.abs(np.diag(received["stats_moment"])), 1e-300)
-            constant = [variables[j] for j in np.flatnonzero(variance <= negligible)]
-            if constant:
-                # A constant variable has no correlation with anything; the parametric bootstrap would
-                # draw pure noise for it and the graph would show it isolated as if that were a finding.
-                raise ValueError(f"constant across the pooled cohort, so no test can involve it: {', '.join(constant)}")
-            correlations = bootstrap_correlations(received["stats_mean"], received["stats_moment"], pooled_n, config)
-            target["pag"] = np.stack(
-                [fci_from_correlation(correlations[b], pooled_n, variables, config, b) for b in range(b_total)]
-            ).astype(np.float64)
-        # The pooled statistics have done their job. They do not travel on: the final model the
-        # researcher downloads holds the graphs and the row counts, nothing about the variables.
-        target["stats_mean"][:] = 0.0
-        target["stats_moment"][:] = 0.0
-        metrics.update(summary_metrics(target["pag"], variables, stable_prob))
-        assert_within_filter_bounds(target, n)
+        try:
+            if not np.any(as_pags(received["pag"])):
+                variance = np.diag(received["stats_moment"] - np.outer(received["stats_mean"], received["stats_mean"]))
+                # Relative to the second moment: the statistics made a float32 round trip through the transport.
+                negligible = 1e-5 * np.maximum(np.abs(np.diag(received["stats_moment"])), 1e-300)
+                constant = [variables[j] for j in np.flatnonzero(variance <= negligible)]
+                if constant:
+                    # A constant variable has no correlation with anything; the parametric bootstrap would
+                    # draw pure noise for it and the graph would show it isolated as if that were a finding.
+                    # (Each site refuses a column constant at the site before releasing; this is the fallback.)
+                    logger.info("constant across the pooled cohort: %s", constant)
+                    raise ValueError("a variable is constant across the pooled cohort, so no test can involve it")
+                correlations = bootstrap_correlations(
+                    received["stats_mean"], received["stats_moment"], pooled_n, config
+                )
+                target["pag"] = np.stack(
+                    [fci_from_correlation(correlations[b], pooled_n, variables, config, b) for b in range(b_total)]
+                ).astype(np.float64)
+            metrics.update(summary_metrics(target["pag"], variables, stable_prob))
+            assert_within_filter_bounds(target, n, received)
+        except Exception as cause:
+            logger.error("site %s: round %d failed after the release: %s", site_name, round_index + 1, cause)
+            target["pag"][:] = 0.0
+            raise RoundFailed(target, n, {**metrics, "round_failed": 1.0}, cause) from cause
         return target, n, metrics
 
     # layer_voting: rounds 0..L-1 are layers of conditioning-set size 0..L-1, round L orients.

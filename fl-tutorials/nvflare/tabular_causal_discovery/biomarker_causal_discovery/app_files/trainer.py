@@ -29,12 +29,14 @@ import nvflare.client as flare
 import pandas as pd
 from federated_fci import (
     STATE_KEYS,
+    RoundFailed,
+    assert_site_may_release,
     client_round,
     decode,
     encode,
     evaluate_state,
     partition_for_site,
-    prepare_matrix,
+    prepare_cohort,
 )
 from flip import FLIP
 from flip.constants import FlipConstants
@@ -106,27 +108,37 @@ def main() -> None:
     writer = SummaryWriter()
 
     dataframe = resolve_dataframe(site_name, args.project_id, load_query())
-    matrix = prepare_matrix(dataframe, config)
-    logger.info(f"Cohort for {site_name}: {len(dataframe)} persons, {matrix.shape[0]} complete rows")
+    matrix, person_ids, dropped_rows = prepare_cohort(dataframe, config)
+    logger.info(f"Cohort for {site_name}: {len(dataframe)} rows, {matrix.shape[0]} complete, {dropped_rows} dropped")
+    # A round that fails after the statistics were released still sends its zeroing payload
+    # (federated_fci.RoundFailed); the failure is raised on the next task so the job ends in error.
+    pending_error: BaseException | None = None
 
     while flare.is_running():
         input_model = flare.receive()
         if input_model is None:
             break
+        if pending_error is not None:
+            raise pending_error
 
         if flare.is_train():
             received_arrays = {key: np.asarray(input_model.params[key], dtype=np.float32) for key in STATE_KEYS}
             round_index = int(input_model.current_round or 0)
             total_rounds = int(input_model.total_rounds or config.get("GLOBAL_ROUNDS", 2))
-            target, weight, metrics = client_round(
-                decode(received_arrays),
-                round_index,
-                total_rounds,
-                matrix,
-                site_name,
-                config,
-                local_dev=bool(FlipConstants.LOCAL_DEV),
-            )
+            try:
+                target, weight, metrics = client_round(
+                    decode(received_arrays),
+                    round_index,
+                    total_rounds,
+                    matrix,
+                    site_name,
+                    config,
+                    local_dev=bool(FlipConstants.LOCAL_DEV),
+                    person_ids=person_ids,
+                    dropped_rows=dropped_rows,
+                )
+            except RoundFailed as failed:
+                target, weight, metrics, pending_error = failed.target, failed.weight, failed.metrics, failed.cause
             encoded = encode(target)
             # DIFF relative to the received state: the server adds the weighted-mean diff to its
             # global state, so the result is the weighted mean of every site's target.
@@ -143,6 +155,7 @@ def main() -> None:
             )
 
         elif flare.is_evaluate():
+            assert_site_may_release(matrix, config, person_ids, dropped_rows, site_name)
             received = decode({key: np.asarray(input_model.params[key], dtype=np.float32) for key in STATE_KEYS})
             metrics = evaluate_state(received, config)
             for label, value in metrics.items():

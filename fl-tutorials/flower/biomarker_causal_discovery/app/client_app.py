@@ -36,7 +36,16 @@ from flwr.app import Array, ArrayRecord, ConfigRecord, Context, Message, MetricR
 from flwr.clientapp import ClientApp
 from flwr.common import log
 
-from app.federated_fci import STATE_KEYS, client_round, decode, encode, evaluate_state, prepare_matrix
+from app.federated_fci import (
+    STATE_KEYS,
+    RoundFailed,
+    assert_site_may_release,
+    client_round,
+    decode,
+    encode,
+    evaluate_state,
+    prepare_cohort,
+)
 from app.models import get_model
 
 app = ClientApp()
@@ -48,27 +57,58 @@ def _load_config() -> dict:
 
 
 _COHORT_CACHE = "cohort"
+_PENDING_ERROR = "pending_error"
 
 
-def _fetch_matrix(context: Context, config: dict) -> np.ndarray:
+def _fetch_cohort(context: Context, config: dict) -> tuple[np.ndarray, np.ndarray | None, int]:
     """This site's analysis matrix via FLIP, fetched once per run and kept in ``context.state``.
 
     Deployed: the trust's data-access-api serves its own cohort. Under ``LOCAL_DEV`` every
     site reads the same CSV, so ``partition_cohort`` slices out this site's ``person_id``
     partition (a no-op when deployed). Every round and the final evaluation call this; the cache
-    means one row-level cohort egress per run at the trust, not one per round.
+    means one row-level cohort egress per run at the trust, not one per round. Returns what
+    ``federated_fci.prepare_cohort`` does: the matrix, the kept rows' ``person_id`` (or None)
+    and the number of rows dropped as incomplete.
     """
     cached = context.state.get(_COHORT_CACHE)
     if cached is not None:
-        return cached["matrix"].numpy().astype(np.float64)
+        persons = cached["person_ids"].numpy() if "person_ids" in cached else None
+        return cached["matrix"].numpy().astype(np.float64), persons, int(cached["dropped"].numpy()[0])
     project_id = context.run_config.get("flip-project-id", "causal-flower-tutorial")
     query = context.run_config.get("flip-cohort-query", "*")
     log(INFO, f"Fetching FLIP dataframe project_id={project_id}")
     dataframe = partition_cohort(FLIP().get_dataframe(project_id, query), context)
-    matrix = prepare_matrix(dataframe, config)
-    log(INFO, f"Cohort for {client_identity(context)}: {len(dataframe)} persons, {matrix.shape[0]} complete rows")
-    context.state[_COHORT_CACHE] = ArrayRecord({"matrix": Array(np.ascontiguousarray(matrix))})
-    return matrix
+    matrix, person_ids, dropped = prepare_cohort(dataframe, config)
+    log(
+        INFO,
+        f"Cohort for {client_identity(context)}: {len(dataframe)} rows, {matrix.shape[0]} complete, {dropped} dropped",
+    )
+    record = {"matrix": Array(np.ascontiguousarray(matrix)), "dropped": Array(np.asarray([dropped], dtype=np.int64))}
+    if person_ids is not None:
+        record["person_ids"] = Array(np.ascontiguousarray(np.asarray(person_ids, dtype=np.int64)))
+    context.state[_COHORT_CACHE] = ArrayRecord(record)
+    return matrix, person_ids, dropped
+
+
+def _raise_pending_error(context: Context) -> None:
+    """A round that failed after the release sent its zeroing payload first; the job fails on the next task."""
+    pending = context.state.get(_PENDING_ERROR)
+    if pending is not None:
+        raise RuntimeError(str(pending["message"]))
+
+
+def _assert_local_dp_off(context: Context) -> None:
+    """The statistics are not weights: the local-DP mod would clip and noise them into nothing, silently.
+
+    ``config.toml`` sets ``dp-enabled = false``, but the upload path does not require that file,
+    so an upload without it runs the base bundle's ``dp-enabled = true``. Refuse rather than
+    report a graph computed from noise.
+    """
+    if bool(context.run_config.get("dp-enabled", False)):
+        raise ValueError(
+            "dp-enabled is true for this run: the per-update clip-and-noise mod is not a mechanism for pooled "
+            "statistics (see the README's privacy section) — upload app/config.toml, which sets dp-enabled = false"
+        )
 
 
 def _received_arrays(msg: Message) -> dict[str, np.ndarray]:
@@ -90,16 +130,30 @@ def _array_record(encoded: dict[str, np.ndarray]) -> ArrayRecord:
 @app.train(mods=[flip_local_dp_mod])
 def train(msg: Message, context: Context) -> Message:
     """One federated round: statistics, a skeleton vote, or the oriented PAGs (see federated_fci)."""
+    _raise_pending_error(context)
+    _assert_local_dp_off(context)
     config = _load_config()
     client_name = client_identity(context)
     round_index = int(msg.content["config"]["server-round"]) - 1
     total_rounds = int(context.run_config.get("num-server-rounds", config.get("GLOBAL_ROUNDS", 2)))
 
-    matrix = _fetch_matrix(context, config)
+    matrix, person_ids, dropped_rows = _fetch_cohort(context, config)
     received = decode(_received_arrays(msg))
-    target, weight, metrics = client_round(
-        received, round_index, total_rounds, matrix, client_name, config, local_dev=bool(FlipConstants.LOCAL_DEV)
-    )
+    try:
+        target, weight, metrics = client_round(
+            received,
+            round_index,
+            total_rounds,
+            matrix,
+            client_name,
+            config,
+            local_dev=bool(FlipConstants.LOCAL_DEV),
+            person_ids=person_ids,
+            dropped_rows=dropped_rows,
+        )
+    except RoundFailed as failed:
+        target, weight, metrics = failed.target, failed.weight, failed.metrics
+        context.state[_PENDING_ERROR] = ConfigRecord({"message": str(failed.cause)})
     log(INFO, f"Round {round_index + 1}/{total_rounds} at {client_name}: {metrics}")
 
     # "@round" names the x-axis and ".x_<N>" the coordinate — the "<label>[@<x_label>][.x_<V>]"
@@ -121,9 +175,12 @@ def train(msg: Message, context: Context) -> Message:
 @app.evaluate()
 def evaluate(msg: Message, context: Context) -> Message:
     """Report the final state's edge counts (the ".x_0" suffix plots a single point by convention)."""
+    _raise_pending_error(context)
     config = _load_config()
     client_name = client_identity(context)
-    matrix = _fetch_matrix(context, config)
+    matrix, person_ids, dropped_rows = _fetch_cohort(context, config)
+    # A site that may not release reports nothing here either: num-examples below is its exact row count.
+    assert_site_may_release(matrix, config, person_ids, dropped_rows, client_name)
     metrics = evaluate_state(decode(_received_arrays(msg)), config)
     log(INFO, f"Final state at {client_name}: {metrics}")
     record = {**{k: float(v) for k, v in metrics.items()}, **{f"{k}.x_0": float(v) for k, v in metrics.items()}}

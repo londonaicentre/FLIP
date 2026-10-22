@@ -147,7 +147,7 @@ parity test refuses any difference.
 | `.env.app` + `Makefile` | Evaluation tutorials only: `MODEL_CHECKPOINT_URL=…` and a `download-checkpoints` target. Not a discovery marker on Flower. |
 
 `[tool.flwr.app.config]` must hold: `num-server-rounds`; the five `dp-*` keys with `dp-enabled =
-true` (`flip.flower.privacy.LocalDpConfig`); the `flip-model-id` / `flip-project-id` /
+true` (`flip.flower.privacy.LocalDpConfig`; a statistics app sets `false`, §5); the `flip-model-id` / `flip-project-id` /
 `flip-cohort-query` / `flip-job-dir` placeholders fl-api overrides at submit; `flip-min-clients = 2`
 as a TOML int ≥ 2 at line start (`sim-tutorial.sh` seds it for the site count, the min_clients guard
 asserts it, fl-api overrides it — it is a quorum, never a partition count); `best-model-metric` /
@@ -197,9 +197,11 @@ template, required files present, template files byte-identical), `test_flower_m
   floor, the trust's `COHORT_QUERY_THRESHOLD`, which reaches the FL client, a small-cell rule for discrete
   columns) and refusals that name neither count nor column, since both backends forward a client's
   exception text to the hub. The last round consumes and zeroes the statistics, so the job refuses
-  fewer than two rounds. Shape the payload so the NVFLARE percentile filter and Flower's
-  clip-and-noise are no-ops, and say so; the README shows the loop as a Mermaid block and an
-  agreement table in place of a curve.
+  fewer than two rounds. Shape the payload so the NVFLARE percentile filter is a no-op; Flower's
+  clip-and-noise cannot be made one, so switch it off in both `pyproject.toml` and `config.toml`
+  (the exception to §4's `dp-enabled = true`), refuse a run config that turns it back on, and say
+  why. Say in the README which checks are app code and which the trust enforces. The README shows
+  the loop as a Mermaid block and an agreement table in place of a curve.
 - **Access-controlled dataset.** The dataset target is a converter from the licence holder's own
   download (`convert-adni-cohort ADNI_DIR=`) into the gitignored data root, refusing any output path
   git tracks; no rows, no synthetic stand-in, tests on invented tables of the same shape, and when the

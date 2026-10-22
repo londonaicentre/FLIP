@@ -205,6 +205,13 @@ def main(argv: list[str] | None = None) -> int:
     if not np.any(pags):
         raise SystemExit("the model holds no PAGs yet: the run did not reach its orientation round")
     pooled_n, sizes = recover_site_counts(state["site_counts"], federation_mode(config) == "pooled_statistics")
+    residual = max(float(np.max(np.abs(state["stats_mean"]))), float(np.max(np.abs(state["stats_moment"]))))
+    if residual > 1e-6:
+        print(
+            f"WARNING: the statistics buffers are not zero (max |value| {residual:.3g}): this model holds the "
+            "pooled statistics, which a finished pooled_statistics run consumes in round 2 — the job was stopped "
+            "or failed after round 1. Treat the file as sensitive and do not share it."
+        )
     rows = edge_frequencies(pags, variables)
     min_prob = args.min_prob if args.min_prob is not None else float(config.get("STABLE_EDGE_PROB", 0.5))
 

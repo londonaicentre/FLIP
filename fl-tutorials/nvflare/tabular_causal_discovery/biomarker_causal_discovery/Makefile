@@ -58,6 +58,7 @@ sim:
 	SITE1_DATAFRAME="$(abspath $(SITE1_DATAFRAME))" \
 	SITE2_DATAFRAME="$(abspath $(SITE2_DATAFRAME))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
+	DEV_NUM_PARTITIONS="$(N_CLIENTS)" \
 	$(UV_RUN) python job.py \
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS) \
