@@ -124,8 +124,9 @@ Every ClientApp slices its own `person_id`-modulo partition from that `dataframe
 must never be committed, and the Data Use Agreement forbids putting its rows into third-party AI
 tools; the NVFLARE README's section has the detail.
 
-On the platform the cohort is `query.sql` on each trust's OMOP; it is not seeded on the dev trusts
-yet.
+On the platform the cohort is `query.sql` on each trust's OMOP. It is never seeded on the shared dev
+trusts (nothing ADNI-derived can be published there); a licence holder loads their own converted cohort
+into their local dev trusts instead, see "On the platform" below.
 
 ## Expected performance
 
@@ -166,7 +167,8 @@ uv run --project ../../../flip-utils --extra full --group dev python summarise_r
 ### On the platform (or `make e2e_smoke`)
 
 Upload `app/` as a `standard` job with imaging **off** (`has_imaging=false`), paste `query.sql` as
-the cohort query, and keep `num-server-rounds` in `config.toml` at the mode's round count. There is
+the cohort query, and keep `num-server-rounds` in `config.toml` at the mode's round count (2 for
+`pooled_statistics`: a site refuses a one-round pooled job, see the NVFLARE README's Privacy section).
 `make e2e_smoke_causal FL_BACKEND=flower` runs it on a local dev stack once your converted cohort is
 loaded into the two dev trusts (`make -C trust load-adni-cohort …`, NVFLARE README "On the platform")
 and the Flower FL images are built from this tree so they carry causal-learn (`make build-fl
