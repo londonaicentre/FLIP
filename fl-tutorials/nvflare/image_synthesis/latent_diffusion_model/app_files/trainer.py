@@ -11,38 +11,18 @@
 
 """FLARE Client API script for the FLIP latent diffusion tutorial.
 
-Trains a ``DiffusionModelUNet`` inside a **frozen** autoencoder's latent space, on 3-D brain MRI, as
-an ordinary single-stage FedAvg job: one ``train`` task and one ``validate`` task, dispatched on
-``flare.is_train()`` / ``flare.is_evaluate()``.
+Trains a denoising diffusion model (MONAI's ``DiffusionModelUNet``) in the latent space of a frozen
+autoencoder, on 3-D brain MRI, as an ordinary FedAvg job. On a ``train`` task the client trains the
+received model for ``LOCAL_ROUNDS`` epochs and sends back the weight difference; on an ``evaluate``
+task it scores the aggregated model on its held-out split.
 
-**Conditioning.** A brain MRI study is four co-registered sequences (FLAIR, T1w, T1Gd, T2w), and the
-model is told which one it is denoising: the modality is one-hot encoded and fed to the UNet as a
-length-1 cross-attention sequence (``modality.py``). That is what makes one model able to generate a
-T2w *or* a T1Gd volume on demand rather than an average of the four. Two knobs in ``config.json``
-switch the whole thing, and they move together:
+The autoencoder is not trained here. The FL server loads it from the uploaded ``SERVER_CHECKPOINT``
+into the round-0 global model, so it reaches every client in the broadcast; ``AGGREGATE_ONLY_REGEX``
+keeps everything but ``diffusion_model.*`` out of aggregation. Each client checks that the
+autoencoder it received is the one ``autoencoder_config.yaml`` describes, and keeps it frozen.
 
-* ``MODALITIES`` — which sequences enter the cohort at all;
-* ``net_config.diffusion_model.with_conditioning`` / ``cross_attention_dim`` — whether the model is
-  told, and over how many classes.
-
-Conditioned on all four is ``MODALITIES`` of length 4 with ``with_conditioning: true`` and
-``cross_attention_dim: 4``. The unconditional single-sequence form is ``["T1w"]`` with
-``with_conditioning: false`` and ``cross_attention_dim: 0``. Anything else is a mismatch, and the
-parity test in fl-tutorials/tests/ refuses it — an unconditioned model quietly trained on four
-mixed sequences is a plausible-looking way to get blur.
-
-The autoencoder is not trained here. It arrives as an uploaded checkpoint declared by
-``SERVER_CHECKPOINT`` in ``config.json``, which the FL server loads into the round-0 global model and
-broadcasts — so this script never reads the checkpoint file, it simply receives autoencoder weights
-along with the diffusion model's at round 0. Thereafter ``AGGREGATE_ONLY_REGEX`` keeps only
-``diffusion_model.*`` on the wire, and the client rebuilds the full model from its cached round-0
-broadcast.
-
-Because the autoencoder is fixed for the whole run, this script freezes it explicitly
-(``requires_grad_(False)`` + ``eval()``). Leaving it out of the optimizer alone would still
-accumulate unused gradients on its parameters every step, and would run it in ``train()`` mode during
-training but ``eval()`` during validation. Freezing is numerically neutral here (``AutoencoderKL``
-uses GroupNorm and no dropout).
+The UNet is told which MR sequence it is denoising (``MODALITIES``, one-hot through cross-attention;
+see ``modality.py``), so one model can generate any of them. Training runs in full precision.
 """
 
 import argparse
@@ -64,7 +44,6 @@ from monai.data import DataLoader, Dataset
 from monai.inferers import LatentDiffusionInferer
 from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
-from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import LambdaLR
 from transforms import get_brain_mri_transforms
 
@@ -123,52 +102,28 @@ def load_config() -> dict:
 
 
 def split_for_site(items: list[dict], site_name: str) -> list[dict]:
-    """Give each simulated site half the cohort, splitting on accession rather than on items.
+    """In the simulator, give "site-1" and "site-2" half the shared cohort each; on a trust, all of it.
 
-    Local/simulator runs point every client at the same DEV dataset, so without this both sites
-    train on identical data; in production each trust's data-access API already scopes the cohort to
-    its own. The FLARE simulator names its clients "site-1"/"site-2" — normalise so the split
-    actually applies (as arkplus_fine_tuning's data_utils does). Production trust names never match,
-    so real runs are returned unsplit.
-
-    Splitting on the *accession* keeps a study's sequences together: halving the item list would cut
-    through the middle of a study and give one site a brain's T1w and the other its T2w.
+    Split by accession, so the four sequences of one study stay on one site.
     """
-    normalised = site_name.replace("-", "")
-    if normalised not in ("site1", "site2"):
+    site = site_name.replace("-", "")
+    if site not in ("site1", "site2"):
         return items
     accessions = list(dict.fromkeys(item["accession_id"] for item in items))
     half = len(accessions) // 2
-    mine = set(accessions[:half] if normalised == "site1" else accessions[half:])
+    mine = set(accessions[:half] if site == "site1" else accessions[half:])
     return [item for item in items if item["accession_id"] in mine]
 
 
-def batch_accumulation_step(batch_size: int) -> int:
-    """Accumulate gradients up to an effective batch of 8 when the configured batch is smaller."""
-    if batch_size < 8:
-        return 8 // batch_size
-    return 1
-
-
 def batch_condition(batch: dict, config: dict, device: torch.device) -> torch.Tensor | None:
-    """The cross-attention condition for a batch, or None when this run is unconditional.
-
-    Returns None whenever ``with_conditioning`` is off, which is what the inferer expects for an
-    unconditional model — passing a context tensor to a UNet built without cross-attention layers
-    raises rather than being ignored, so the two must be read from the same place.
-    """
+    """The batch's one-hot MR sequence for cross-attention, or None when the model is unconditional."""
     if not config["net_config"]["diffusion_model"]["with_conditioning"]:
         return None
     return one_hot_condition(batch["modality_index"], len(config["MODALITIES"]), device)
 
 
 def freeze_autoencoder(model: torch.nn.Module) -> None:
-    """Freeze the supplied autoencoder: no gradients, always eval mode.
-
-    The autoencoder is fixed for the whole run (it comes from ``SERVER_CHECKPOINT`` and is excluded
-    from aggregation by ``AGGREGATE_ONLY_REGEX``), so there is no reason to build a gradient graph
-    through it or to let its normalisation behave differently between training and validation.
-    """
+    """Freeze the supplied autoencoder: no gradients, and always in eval mode."""
     model.autoencoder.requires_grad_(False)
     model.autoencoder.eval()
 
@@ -176,11 +131,9 @@ def freeze_autoencoder(model: torch.nn.Module) -> None:
 def verify_autoencoder(model: torch.nn.Module) -> None:
     """Refuse to go on unless the autoencoder that arrived is the one ``autoencoder_config.yaml`` describes.
 
-    The server's load of ``SERVER_CHECKPOINT`` cannot fail: a checkpoint it cannot find is only
-    logged, and one whose keys do not match (a renamed ``autoencoder`` submodule, another network's
-    file) loads under ``strict=False`` as nothing. Either way the round-0 broadcast carries a randomly
-    initialised encoder and training reports plausible losses. The YAML records the fingerprint of the
-    extracted weights, so compare it with what this client actually holds.
+    The server loads ``SERVER_CHECKPOINT`` with ``strict=False``: a checkpoint it cannot find, or whose
+    keys match nothing, leaves a randomly initialised encoder in the broadcast, and training would
+    report plausible losses against it. The YAML records the extracted weights' fingerprint.
     """
     received = autoencoder_fingerprint(model.autoencoder.state_dict())
     if received != model.autoencoder_sha256:
@@ -193,50 +146,15 @@ def verify_autoencoder(model: torch.nn.Module) -> None:
 
 
 def validate_every(config: dict) -> int:
-    """Epochs between in-loop validation and sampling, from ``VALIDATE_EVERY`` (default 10).
+    """Epochs between in-loop validation and sampling, from ``VALIDATE_EVERY``; zero or less turns it off.
 
-    Zero or negative turns the in-loop pass off entirely, leaving only the round-boundary ``validate``
-    task.
-
-    **This default deliberately differs from the rest of the tree.** ``xray_classification`` and
-    ``3d_spleen_segmentation`` use the same key and default it to 1, because there the pass is a
-    held-out forward pass and costs seconds. Here it also samples: a full reverse diffusion, every one
-    of the scheduler's timesteps decoded through the autoencoder, which is minutes. At
-    ``LOCAL_ROUNDS: 150`` a cadence of 1 would add hours to every round, so inheriting that default
-    would be inheriting a cost model that does not apply.
-
-    The cadence also fires on the Nth epoch rather than the 0th (``3d_spleen_segmentation`` uses
-    ``epoch % N``, which fires on the first epoch of every round), plus the round's last epoch — see
-    :func:`due_for_validation`.
-
-    Args:
-        config (dict): The parsed ``config.json``.
-
-    Returns:
-        int: The interval in epochs.
+    The default is above 1 because the pass also samples, which runs the full reverse diffusion.
     """
-    try:
-        return int(config.get("VALIDATE_EVERY", DEFAULT_VALIDATE_EVERY))
-    except (TypeError, ValueError):
-        logger.warning(f"VALIDATE_EVERY is not an integer; falling back to {DEFAULT_VALIDATE_EVERY}.")
-        return DEFAULT_VALIDATE_EVERY
+    return int(config.get("VALIDATE_EVERY", DEFAULT_VALIDATE_EVERY))
 
 
 def due_for_validation(epoch: int, epochs: int, config: dict) -> bool:
-    """Whether this 0-based epoch gets an in-loop validation and sample.
-
-    True every ``VALIDATE_EVERY`` epochs **and** always on the round's last epoch, so a round never
-    ends without a fresh score — otherwise a cadence that does not divide ``LOCAL_ROUNDS`` would
-    report nothing for the final stretch, which is the part you most want to see.
-
-    Args:
-        epoch (int): 0-based epoch index within this round.
-        epochs (int): Total epochs in this round.
-        config (dict): The parsed ``config.json``.
-
-    Returns:
-        bool: True when this epoch should validate and sample.
-    """
+    """Whether this 0-based epoch validates: every ``VALIDATE_EVERY`` epochs, and always the last."""
     interval = validate_every(config)
     if interval <= 0:
         return False
@@ -244,41 +162,16 @@ def due_for_validation(epoch: int, epochs: int, config: dict) -> bool:
 
 
 def grad_clip_norm(config: dict) -> float:
-    """Max global gradient norm for the diffusion UNet, from ``GRAD_CLIP_NORM`` (default 1.0).
-
-    Zero or negative turns clipping off. Clipping is applied to the *unscaled* gradients, once per
-    optimizer step (after accumulation), so the threshold means the same whatever ``BATCH_SIZE`` is.
-
-    Args:
-        config (dict): The parsed ``config.json``.
-
-    Returns:
-        float: The max norm; ``<= 0`` means no clipping.
-    """
-    try:
-        return float(config.get("GRAD_CLIP_NORM", DEFAULT_GRAD_CLIP_NORM))
-    except (TypeError, ValueError):
-        logger.warning(f"GRAD_CLIP_NORM is not a number; falling back to {DEFAULT_GRAD_CLIP_NORM}.")
-        return DEFAULT_GRAD_CLIP_NORM
+    """Max global gradient norm, from ``GRAD_CLIP_NORM``; zero or less turns clipping off."""
+    return float(config.get("GRAD_CLIP_NORM", DEFAULT_GRAD_CLIP_NORM))
 
 
 def lr_at(epoch: int, config: dict) -> float:
-    """The diffusion UNet's learning rate at a given epoch: cosine from ``LR_START`` to ``LR_END``.
+    """The learning rate at an epoch: half a cosine from ``LR_START`` to ``LR_END``, then held.
 
-    Over the first ``LR_DECAY_EPOCHS`` epochs the rate follows half a cosine from ``LR_START`` down to
-    ``LR_END``, and holds at ``LR_END`` afterwards (``CosineAnnealingLR`` would climb back up past
-    ``T_max``, which is why this drives a ``LambdaLR``). ``LR_END`` absent, or ``LR_DECAY_EPOCHS``
-    absent or ``<= 0``, keeps the rate at ``LR_START``.
-
-    The epoch counts across rounds: the trainer (and so the scheduler) lives for the whole
-    ``flare.is_running()`` loop, so round 2 continues the decay where round 1 left it.
-
-    Args:
-        epoch (int): Epochs completed so far, across every round of this run.
-        config (dict): The parsed ``config.json``.
-
-    Returns:
-        float: The learning rate for that epoch.
+    The decay spans the first ``LR_DECAY_EPOCHS`` epochs, counted across rounds (one trainer serves
+    the whole job). Without ``LR_END`` or a positive ``LR_DECAY_EPOCHS`` the rate stays at
+    ``LR_START``. Driven through a ``LambdaLR`` because ``CosineAnnealingLR`` would climb back up.
     """
     start = float(config["LR_START"])
     end = float(config.get("LR_END", start))
@@ -289,232 +182,159 @@ def lr_at(epoch: int, config: dict) -> float:
     return end + (start - end) * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+def noise_prediction_loss(
+    model: torch.nn.Module,
+    inferer: LatentDiffusionInferer,
+    scheduler: DDPMScheduler,
+    images: torch.Tensor,
+    condition: torch.Tensor | None,
+    latent_shape: list[int],
+) -> torch.Tensor:
+    """The diffusion objective in latent space: encode, noise at a random timestep, score the predicted noise."""
+    noise = torch.randn([images.shape[0], *latent_shape], device=images.device)
+    timesteps = torch.randint(0, scheduler.num_train_timesteps, (images.shape[0],), device=images.device)
+    noise_pred = inferer(
+        inputs=images,
+        diffusion_model=model.diffusion_model,
+        autoencoder_model=model.autoencoder,
+        noise=noise,
+        timesteps=timesteps,
+        condition=condition,
+        mode="crossattn",
+    )
+    return torch.nn.functional.mse_loss(noise_pred.float(), noise.float())
+
+
 def score_split(
     model: torch.nn.Module,
     loader: DataLoader,
-    inferer,
+    inferer: LatentDiffusionInferer,
     scheduler: DDPMScheduler,
-    ldm_latent_shape: list[int],
+    latent_shape: list[int],
     config: dict,
     device: torch.device,
 ) -> float:
-    """Mean noise-prediction MSE over a loader, with the diffusion model in eval mode.
-
-    Shared by the in-loop pass and the round-boundary ``validate`` task. Takes an already-built
-    ``inferer`` rather than building one, because ``build_inferer`` re-derives the latent scale factor
-    from a batch: rebuilding it per validation would quietly change the normalisation the score is
-    computed under, and a metric whose scale moves between measurements is not a metric.
-
-    Args:
-        model (torch.nn.Module): The composite LDM network.
-        loader (DataLoader): The split to score.
-        inferer: The ``LatentDiffusionInferer`` already built for this round.
-        scheduler (DDPMScheduler): The DDPM noise scheduler.
-        ldm_latent_shape (list[int]): Latent spatial shape the UNet sees.
-        config (dict): The parsed ``config.json``.
-        device (torch.device): Device to run on.
-
-    Returns:
-        float: Mean MSE, or NaN when the loader is empty.
-    """
-    loss_fn = torch.nn.functional.mse_loss
+    """Mean noise-prediction loss over a split, in eval mode; restores the caller's mode afterwards."""
     was_training = model.diffusion_model.training
     model.diffusion_model.eval()
     losses = []
     try:
-        for batch in loader:
-            images = batch["image"].to(device)
-            condition = batch_condition(batch, config, device)
-            with autocast(enabled=False, device_type=device.type):
-                with torch.no_grad():
-                    noise = torch.randn(
-                        [images.shape[0]] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
-                    ).to(device)
-                    timesteps = torch.randint(
-                        0, scheduler.num_train_timesteps, (images.shape[0],), device=device
-                    ).long()
-                    noise_pred = inferer(
-                        inputs=images,
-                        diffusion_model=model.diffusion_model,
-                        autoencoder_model=model.autoencoder,
-                        noise=noise,
-                        timesteps=timesteps,
-                        condition=condition,
-                        mode="crossattn",
-                    )
-                losses.append(loss_fn(noise.float(), noise_pred.float()).item())
+        with torch.no_grad():
+            for batch in loader:
+                images = batch["image"].to(device)
+                condition = batch_condition(batch, config, device)
+                losses.append(noise_prediction_loss(model, inferer, scheduler, images, condition, latent_shape).item())
     finally:
-        # Restore the caller's mode: the in-loop pass runs mid-round and must hand training back a
-        # model in train mode.
-        if was_training:
-            model.diffusion_model.train()
+        model.diffusion_model.train(was_training)
     return float(np.mean(losses)) if losses else float("nan")
 
 
 def sample_and_save(
     model: torch.nn.Module,
-    inferer,
+    inferer: LatentDiffusionInferer,
     scheduler: DDPMScheduler,
-    ldm_latent_shape: list[int],
+    latent_shape: list[int],
     config: dict,
     device: torch.device,
     *,
     step: int | None = None,
 ) -> None:
-    """Draw samples and write one grid. No-op unless samples are enabled.
+    """Generate one volume per MR sequence and save them tri-planar, in local runs only.
 
-    Sampling is the only honest read on a diffusion model: the noise-prediction MSE barely moves
-    between a model that generates brains and one that generates plausible texture. It also exercises
-    the frozen autoencoder's DECODER, which nothing else in this job touches — so a mis-loaded
-    checkpoint (tolerated by ``strict=False``) shows up here and nowhere else.
-
-    Gated on exactly what decides whether the grid is written, and nothing looser: this is a full
-    reverse diffusion, so a broader test buys that cost and then discards the result inside
-    ``save_triplanar``.
-
-    Args:
-        model (torch.nn.Module): The composite LDM network.
-        inferer: The ``LatentDiffusionInferer`` already built for this round.
-        scheduler (DDPMScheduler): The DDPM noise scheduler.
-        ldm_latent_shape (list[int]): Latent spatial shape the UNet sees.
-        config (dict): The parsed ``config.json``.
-        device (torch.device): Device to run on.
-        step (int | None): Epoch/round counter for the filename, so successive grids sort.
+    Samples are the honest read on a diffusion model: the loss barely moves between a model that
+    generates brains and one that generates texture. They also exercise the frozen decoder, which
+    nothing else in this job touches.
     """
     if not samples_enabled(config):
         return
-
     modalities = config["MODALITIES"]
     conditioned = config["net_config"]["diffusion_model"]["with_conditioning"]
-    # Sample ONE volume per modality when conditioned, so the grid answers the question conditioning
-    # exists to answer: do these columns actually differ? A batch of samples all drawn under the same
-    # condition cannot show that. Unconditioned, one sample is the lot.
-    sample_count = len(modalities) if conditioned else 1
-    how = "conditioned" if conditioned else "unconditional"
-    logger.info(f"[DEBUG]: Sampling {sample_count} volume(s) ({how})...")
-
+    count = len(modalities) if conditioned else 1
     was_training = model.diffusion_model.training
     model.diffusion_model.eval()
     try:
-        noise = torch.randn([sample_count] + [model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape).to(
-            device
-        )
-        conditioning = one_hot_condition(torch.arange(sample_count), len(modalities), device) if conditioned else None
         with torch.no_grad():
-            # save_intermediates=False: LatentDiffusionInferer would otherwise retain the whole
-            # denoising trajectory (one decoded tensor per timestep) and the second return value is
-            # discarded.
-            sampled_images = inferer.sample(
-                input_noise=noise,
-                conditioning=conditioning,
+            samples = inferer.sample(
+                input_noise=torch.randn([count, *latent_shape], device=device),
+                conditioning=one_hot_condition(torch.arange(count), len(modalities), device) if conditioned else None,
                 diffusion_model=model.diffusion_model,
+                autoencoder_model=model.autoencoder,
                 scheduler=scheduler,
                 save_intermediates=False,
-                autoencoder_model=model.autoencoder,
-                # No tqdm bar: simulated sites share one terminal and their bars overwrite each other's line.
+                # No progress bar: simulated sites share one terminal and would overwrite each other's.
                 verbose=False,
             )
     finally:
-        if was_training:
-            model.diffusion_model.train()
-
-    logger.info(f"Sampled images shape: {tuple(sampled_images.shape)}")
-
-    # Tri-planar, matching the `autoencoder` tutorial's reconstruction figures — minus the ground-truth
-    # column, because a generated volume has nothing to be compared against. A mid-axial grid can look
-    # like a brain while the model has learnt nothing about through-plane structure; the sagittal and
-    # coronal cuts show that immediately, which for a generative model is the whole question.
-    #
-    # One column per modality, keyed by name, so save_triplanar titles the columns and the figure is
-    # self-describing. The grid it replaces carried no labels, which is why its filename had to spell
-    # out the MODALITIES order and the README had to explain how to read it.
+        model.diffusion_model.train(was_training)
+    # One labelled column per sequence; a generated volume has no ground truth to show beside it.
     volumes = (
-        {modality: sampled_images[index : index + 1] for index, modality in enumerate(modalities)}
+        {modality: samples[index : index + 1] for index, modality in enumerate(modalities)}
         if conditioned
-        else {"sample": sampled_images[:1]}
+        else {"sample": samples[:1]}
     )
     save_triplanar(volumes, "samples", config, site_name=flare.get_site_name(), step=step)
 
 
 class LatentDiffusionTrainer:
-    """Holds the model, loss, optimizer, scheduler, and data for latent diffusion training.
+    """The model, optimiser, schedules and data for latent diffusion training.
 
-    One instance lives for the whole ``flare.is_running()`` loop, so the optimizer state persists
-    across global rounds.
+    One instance lives for the whole ``flare.is_running()`` loop, so the optimiser state and the
+    learning-rate schedule carry over from round to round.
     """
 
     def __init__(self, config: dict, project_id: str, query: str) -> None:
         self.config = config
         self.project_id = project_id
+        self.epochs = config["LOCAL_ROUNDS"]
 
-        self.params_diffusion = {"lr": config["LR_START"], "epochs": config.get("LOCAL_ROUNDS", 5)}
-        self.num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
-
-        # Model creation
         self.model = get_model()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         freeze_autoencoder(self.model)
+        self.optimizer = torch.optim.Adam(
+            self.model.diffusion_model.parameters(), lr=config["LR_START"], weight_decay=1e-6, amsgrad=True
+        )
+        # LambdaLR scales the optimiser's initial rate, LR_START; stepped once per epoch.
+        self.lr_scheduler = LambdaLR(self.optimizer, lambda epoch: lr_at(epoch, config) / config["LR_START"])
+        self.noise_scheduler = DDPMScheduler(
+            num_train_timesteps=1000,
+            schedule="scaled_linear_beta",
+            clip_sample=False,
+            prediction_type="epsilon",
+            beta_start=0.0015,
+            beta_end=0.0195,
+        )
+        self._inferer: tuple[LatentDiffusionInferer, list[int]] | None = None
 
-        self.losses_dm = {"loss": torch.nn.functional.mse_loss}
-        self.optimizers_dm = {
-            "optimizer": torch.optim.Adam(
-                self.model.diffusion_model.parameters(), lr=self.params_diffusion["lr"], weight_decay=1e-6, amsgrad=True
-            ),
-            "scheduler": DDPMScheduler(
-                num_train_timesteps=1000,
-                schedule="scaled_linear_beta",
-                clip_sample=False,
-                prediction_type="epsilon",
-                beta_start=0.0015,
-                beta_end=0.0195,
-            ),
-        }
-        # Cosine decay LR_START -> LR_END over LR_DECAY_EPOCHS epochs, stepped once per epoch (see lr_at).
-        # LambdaLR takes a multiplier on the optimizer's initial rate, which is LR_START.
-        self.lr_scheduler = LambdaLR(
-            self.optimizers_dm["optimizer"], lambda epoch: lr_at(epoch, self.config) / self.params_diffusion["lr"]
+        # Data
+        self.flip = FLIP()
+        train_items, val_items = self.build_datalist(self.flip.get_dataframe(project_id=project_id, query=query))
+        train_items = split_for_site(train_items, flare.get_site_name())
+        workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
+        self.train_loader = DataLoader(
+            Dataset(train_items, transform=get_brain_mri_transforms()),
+            batch_size=config["BATCH_SIZE"],
+            shuffle=True,
+            num_workers=workers,
+        )
+        self.val_loader = DataLoader(
+            Dataset(val_items, transform=get_brain_mri_transforms(is_validation=True)),
+            batch_size=config["BATCH_SIZE"],
+            shuffle=False,
+            num_workers=workers,
         )
 
-        self._inferer: tuple[LatentDiffusionInferer, list] | None = None
-
-        # Data loading
-        self.flip = FLIP()
-        dataframe = self.flip.get_dataframe(project_id=project_id, query=query)
-        self.train_items, self.val_items = self.build_datalist(dataframe)
-
-        # Per-site split for local/simulator runs where every client reads the same DEV dataset;
-        # in production each trust's data-access API already scopes the cohort to its own data.
-        # The FLARE simulator names its clients "site-1"/"site-2"; normalise so the split actually applies
-        # (as arkplus_fine_tuning's data_utils does). Production trust names never match, so real runs are unsplit.
-        self.site_name = flare.get_site_name()
-        self.train_items = split_for_site(self.train_items, self.site_name)
-
-        self._train_dataset = Dataset(self.train_items, transform=get_brain_mri_transforms())
-        self._val_dataset = Dataset(self.val_items, transform=get_brain_mri_transforms(is_validation=True))
-
     def build_datalist(self, dataframe: pd.DataFrame) -> tuple[list[dict], list[dict]]:
-        """Fetch each accession's NIfTI series and split into train/validation lists.
+        """List each accession's volumes, one item per configured MR sequence, and split by accession.
 
-        One study yields one sample per configured modality — four, unless ``MODALITIES`` narrows
-        the run to fewer. Each sample carries the modality label and its index in ``MODALITIES``
-        alongside the path; ``transforms.py`` passes both through untouched, and the collate turns
-        the index into a batch tensor.
-
-        **The split is by accession.** The four series of one study are four views of the same
-        brain, so a file-wise split would leak a subject across the boundary and make the validation
-        score meaningless. Whole studies go to one side or the other.
+        The four sequences of a study are four views of one brain, so whole studies go to training or
+        to validation, never both.
         """
         modalities = self.config["MODALITIES"]
         by_accession: dict[str, list[dict]] = {}
-
         for accession_id in dataframe["accession_id"]:
             try:
                 accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.NIFTI,
-                    ],
+                    self.project_id, accession_id, resource_type=[ResourceType.NIFTI]
                 )
             except Exception as err:
                 logger.info(f"Could not get image data folder path for {accession_id}: {err}")
@@ -523,8 +343,7 @@ class LatentDiffusionTrainer:
             items = []
             for image in sorted(accession_folder_path.rglob("input_*.nii.gz")):
                 modality = modality_of(image, modalities)
-                if modality is None:
-                    # A sequence this run excludes, not an error: MODALITIES is the cohort filter.
+                if modality is None:  # a sequence this run leaves out
                     continue
                 items.append(
                     {
@@ -546,7 +365,6 @@ class LatentDiffusionTrainer:
                 "the data actually carries."
             )
 
-        # Validation / train splits, whole accessions at a time.
         accessions = list(by_accession)
         val_accessions = accessions[: int(self.config["VAL_SPLIT"] * len(accessions))]
         train_accessions = accessions[len(val_accessions) :]
@@ -555,178 +373,82 @@ class LatentDiffusionTrainer:
             [item for accession in val_accessions for item in by_accession[accession]],
         )
 
-    def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
-        train_loader = DataLoader(
-            self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
-        )
-        return train_loader, self.val_loader(batch_size)
-
-    def val_loader(self, batch_size: int) -> DataLoader:
-        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
-
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
+        """Load the global weights, keep the autoencoder frozen, and check it is the expected one."""
         self.model.load_state_dict(state_dict=weights)
-        # The broadcast carries the autoencoder at round 0; re-assert the freeze afterwards so a
-        # load can never quietly re-enable grads or training mode on it.
+        self.model.to(self.device)
         freeze_autoencoder(self.model)
         verify_autoencoder(self.model)
 
-    def get_inferer(self, sample_images: torch.Tensor) -> tuple[LatentDiffusionInferer, list]:
-        """The latent inferer and latent shape, built on first use and then kept.
+    def get_inferer(self) -> tuple[LatentDiffusionInferer, list[int]]:
+        """The latent inferer and the latent shape (channels first), built on first use and then kept.
 
         Built once because its scale factor, when ``LATENT_SCALE_FACTOR`` is null, is derived from a
         batch: rebuilding it each round, or for validation, would train and score at different scales.
         """
         if self._inferer is None:
-            self.model.autoencoder.to(device=self.device)
-            self._inferer = build_inferer(
+            inferer, spatial = build_inferer(
                 self.model,
-                self.optimizers_dm["scheduler"],
+                self.noise_scheduler,
                 self.config["spatial_shape"],
-                sample_images,
+                next(iter(self.train_loader))["image"],
                 self.device,
                 self.config.get("LATENT_SCALE_FACTOR"),
             )
+            self._inferer = inferer, [self.model.autoencoder.latent_channels, *spatial]
         return self._inferer
 
+    def train_one_epoch(self, inferer: LatentDiffusionInferer, latent_shape: list[int]) -> float:
+        """One pass over the training split; returns the mean loss."""
+        self.model.diffusion_model.train()
+        max_norm = grad_clip_norm(self.config)
+        total = 0.0
+        for batch in self.train_loader:
+            self.optimizer.zero_grad(set_to_none=True)
+            images = batch["image"].to(self.device)
+            condition = batch_condition(batch, self.config, self.device)
+            loss = noise_prediction_loss(self.model, inferer, self.noise_scheduler, images, condition, latent_shape)
+            if not torch.isfinite(loss):
+                raise RuntimeError("Non-finite loss during training; stopping this site.")
+            loss.backward()
+            if max_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.diffusion_model.parameters(), max_norm)
+            self.optimizer.step()
+            total += loss.item()
+        return total / max(1, len(self.train_loader))
+
     def train(self, writer: SummaryWriter, global_round: int) -> int:
-        """One ``train`` round: local diffusion-model epochs. Returns the iteration count."""
-        accumulation_step = batch_accumulation_step(self.config["BATCH_SIZE"])
-        train_loader, val_loader = self.make_loaders(self.config["BATCH_SIZE"])
-        self.model.diffusion_model.to(device=self.device)
-        self.model.autoencoder.to(device=self.device)
-
-        inferer, ldm_latent_shape = self.get_inferer(next(iter(train_loader))["image"])
-        scaler = GradScaler()
-
-        # Basic training
-        epochs = self.params_diffusion["epochs"]
-        for epoch in range(epochs):
-            self.model.diffusion_model.train()
-            batch_acc_counter = 0
-            train_loss_epoch = 0
-
-            for batch in train_loader:
-                images = batch["image"].to(self.device)
-                condition = batch_condition(batch, self.config, self.device)
-
-                with autocast(enabled=False, device_type=self.device.type):
-                    noise = torch.randn(
-                        [images.shape[0]] + [self.model.autoencoder.encoder.blocks[-1].out_channels] + ldm_latent_shape
-                    ).to(self.device)
-                    timesteps = torch.randint(
-                        0,
-                        self.optimizers_dm["scheduler"].num_train_timesteps,
-                        (images.shape[0],),
-                        device=self.device,
-                    ).long()
-                    noise_pred = inferer(
-                        inputs=images,
-                        diffusion_model=self.model.diffusion_model,
-                        autoencoder_model=self.model.autoencoder,
-                        noise=noise,
-                        timesteps=timesteps,
-                        condition=condition,
-                        mode="crossattn",
-                    )
-                    loss = self.losses_dm["loss"](noise.float(), noise_pred.float())
-
-                if True in torch.isnan(loss) or True in torch.isnan(noise_pred):
-                    logger.error("Found NaN on training loss; stopping training on site.")
-                    raise RuntimeError("NaN loss during train")
-
-                scaler.scale(loss).backward()
-                batch_acc_counter += 1
-                if batch_acc_counter == accumulation_step:
-                    max_norm = grad_clip_norm(self.config)
-                    if max_norm > 0:
-                        # Unscale first so the norm is measured on the real gradients, not the
-                        # GradScaler-inflated ones; scaler.step then knows not to unscale again.
-                        scaler.unscale_(self.optimizers_dm["optimizer"])
-                        torch.nn.utils.clip_grad_norm_(self.model.diffusion_model.parameters(), max_norm)
-                    scaler.step(self.optimizers_dm["optimizer"])
-                    scaler.update()
-                    batch_acc_counter = 0
-                    self.optimizers_dm["optimizer"].zero_grad(set_to_none=True)
-                train_loss_epoch += loss.item()
-                logger.debug(f"Batch loss {loss.item()}")
-
-            epoch_loss = train_loss_epoch / max(1, len(train_loader))
-            step = global_round * epochs + epoch + 1
-            logger.info(f"Epoch {epoch + 1} / {epochs};\n Total loss DM: {epoch_loss}")
+        """One ``train`` task: ``LOCAL_ROUNDS`` epochs. Returns the number of optimiser steps."""
+        inferer, latent_shape = self.get_inferer()
+        for epoch in range(self.epochs):
+            step = global_round * self.epochs + epoch + 1
+            epoch_loss = self.train_one_epoch(inferer, latent_shape)
+            logger.info(f"Epoch {epoch + 1} / {self.epochs}: loss {epoch_loss}")
             writer.add_scalar("Total loss DM@epoch", epoch_loss, global_step=step)
-            writer.add_scalar("LR DM@epoch", self.optimizers_dm["optimizer"].param_groups[0]["lr"], global_step=step)
-            # Per epoch, after the epoch's last optimizer step. ``lr_scheduler`` is not in
-            # ``optimizers_dm`` because that dict's "scheduler" is the DDPM noise scheduler.
+            writer.add_scalar("LR DM@epoch", self.optimizer.param_groups[0]["lr"], global_step=step)
             self.lr_scheduler.step()
 
-            # Validation and sampling every VALIDATE_EVERY epochs (and on the last): sampling is a
-            # full reverse diffusion, too costly to run every epoch.
-            if due_for_validation(epoch, epochs, self.config):
-                epoch_val_loss = score_split(
-                    self.model,
-                    val_loader,
-                    inferer,
-                    self.optimizers_dm["scheduler"],
-                    ldm_latent_shape,
-                    self.config,
-                    self.device,
+            if due_for_validation(epoch, self.epochs, self.config):
+                val_loss = score_split(
+                    self.model, self.val_loader, inferer, self.noise_scheduler, latent_shape, self.config, self.device
                 )
-                logger.info(f"Validation DM: {epoch_val_loss}")
-                writer.add_scalar("Validation loss DM@epoch", epoch_val_loss, global_step=step)
+                logger.info(f"Validation loss: {val_loss}")
+                writer.add_scalar("Validation loss DM@epoch", val_loss, global_step=step)
                 sample_and_save(
-                    self.model,
-                    inferer,
-                    self.optimizers_dm["scheduler"],
-                    ldm_latent_shape,
-                    self.config,
-                    self.device,
-                    step=step,
+                    self.model, inferer, self.noise_scheduler, latent_shape, self.config, self.device, step=step
                 )
 
-        return epochs * len(train_loader)
+        return self.epochs * len(self.train_loader)
 
-
-def validate(
-    model: torch.nn.Module,
-    test_loader: DataLoader,
-    inferer: LatentDiffusionInferer,
-    ldm_latent_shape: list,
-    scheduler: DDPMScheduler,
-    config: dict,
-    device: torch.device,
-    writer: SummaryWriter,
-) -> float:
-    """Score the aggregated diffusion model on the local held-out split.
-
-    Args:
-        model (torch.nn.Module): The composite LDM network with the broadcast global weights loaded.
-        test_loader (DataLoader): Held-out data loader.
-        inferer (LatentDiffusionInferer): The trainer's inferer, so scoring uses training's scale factor.
-        ldm_latent_shape (list): The latent shape the inferer was built for.
-        scheduler (DDPMScheduler): The DDPM noise scheduler.
-        config (dict): The user app config (``config.json``).
-        device (torch.device): Device to run on.
-        writer (SummaryWriter): FLARE Client API metrics writer.
-
-    Returns:
-        float: Mean noise-prediction MSE over the held-out split.
-    """
-    model.diffusion_model.to(device=device)
-    model.autoencoder.to(device=device)
-
-    model.diffusion_model.eval()
-    model.autoencoder.eval()
-
-    # Same two helpers the in-loop pass uses, so the round-boundary score and the mid-round scores are
-    # computed identically.
-    mean_val_loss = score_split(model, test_loader, inferer, scheduler, ldm_latent_shape, config, device)
-    sample_and_save(model, inferer, scheduler, ldm_latent_shape, config, device)
-
-    logger.info(f"Validation DM: {mean_val_loss}")
-    writer.add_scalar("Total loss DM (val)", mean_val_loss, global_step=0)
-
-    return mean_val_loss
+    def validate(self, writer: SummaryWriter) -> float:
+        """One ``evaluate`` task: score the aggregated model on this site's held-out split, and sample."""
+        inferer, latent_shape = self.get_inferer()
+        val_loss = score_split(
+            self.model, self.val_loader, inferer, self.noise_scheduler, latent_shape, self.config, self.device
+        )
+        sample_and_save(self.model, inferer, self.noise_scheduler, latent_shape, self.config, self.device)
+        writer.add_scalar("Total loss DM (val)", val_loss, global_step=0)
+        return val_loss
 
 
 def to_torch_weights(input_model: flare.FLModel) -> dict[str, torch.Tensor]:
@@ -737,10 +459,8 @@ def send_weight_diff(original_params: dict, model: torch.nn.Module, n_iterations
     """Send the weight diff for a completed training round.
 
     Built one tensor at a time to avoid holding a second full copy of the model in RAM (mirrors
-    ``flip.utils.get_model_weights_diff``). The diff covers the whole composite model, but the
-    ``KeepOnlyVars`` result filter (wired from ``AGGREGATE_ONLY_REGEX``) drops everything outside
-    ``diffusion_model.*`` before it goes on the wire — which also keeps the frozen autoencoder's
-    zero diffs out of the DP filter's percentile cutoff, where they would otherwise flatten it.
+    ``flip.utils.get_model_weights_diff``). It covers the whole model; the ``KeepOnlyVars`` filter that
+    ``AGGREGATE_ONLY_REGEX`` wires drops everything but ``diffusion_model.*`` before it is sent.
     """
     diff = {}
     for k, v in model.state_dict().items():
@@ -772,29 +492,17 @@ def main() -> None:
         if input_model is None:
             break
 
-        weights = to_torch_weights(input_model)
         global_round = input_model.current_round or 0
 
         if flare.is_train():
             logger.info(f"[LDM trainer] received train task (round {global_round})")
-            trainer.load_weights(weights)
+            trainer.load_weights(to_torch_weights(input_model))
             n_iterations = trainer.train(writer, global_round)
             send_weight_diff(input_model.params, trainer.model, n_iterations)
 
         elif flare.is_evaluate():
-            trainer.load_weights(weights)
-            test_loader = trainer.val_loader(config["BATCH_SIZE"])
-            inferer, ldm_latent_shape = trainer.get_inferer(next(iter(test_loader))["image"])
-            val_loss = validate(
-                trainer.model,
-                test_loader,
-                inferer,
-                ldm_latent_shape,
-                trainer.optimizers_dm["scheduler"],
-                config,
-                trainer.device,
-                writer,
-            )
+            trainer.load_weights(to_torch_weights(input_model))
+            val_loss = trainer.validate(writer)
             logger.info(f"Validating the aggregated diffusion model on {flare.get_site_name()}'s data: {val_loss}")
             flare.send(flare.FLModel(metrics={"val_loss": val_loss}))
 

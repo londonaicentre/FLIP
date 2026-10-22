@@ -100,8 +100,7 @@ The rate follows a cosine decay from `LR_START` to `LR_END` over `LR_DECAY_EPOCH
 across rounds, and then stays at `LR_END`. `LR_END` or `LR_DECAY_EPOCHS` absent (or the latter `0`)
 keeps the rate at `LR_START`. The current rate is logged as `LR DM@epoch`.
 
-Gradients are clipped to `GRAD_CLIP_NORM` once per optimizer step, after they have been unscaled;
-`0` turns clipping off. See the latent tutorial's README for why both are there.
+Gradients are clipped to `GRAD_CLIP_NORM` before each optimizer step; `0` turns clipping off. See the latent tutorial's README for why both are there.
 
 ## Debugging
 

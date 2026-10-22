@@ -219,8 +219,8 @@ Why decay at all: the noise-prediction loss flattens within a few dozen epochs, 
 `1e-4` the weights keep moving. With only a few dozen studies per site, that is enough to knock out
 one modality's conditioning between two sample grids, even while the loss stays flat.
 
-`GRAD_CLIP_NORM` caps the global gradient norm of the diffusion UNet once per optimizer step, after
-gradient accumulation and after the GradScaler has been unscaled. `0` turns clipping off.
+`GRAD_CLIP_NORM` caps the global gradient norm of the diffusion UNet before each optimizer step. `0`
+turns clipping off.
 
 ## Debugging
 

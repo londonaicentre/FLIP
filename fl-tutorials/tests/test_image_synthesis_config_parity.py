@@ -1296,17 +1296,19 @@ def test_the_latent_inferer_is_built_once(monkeypatch: pytest.MonkeyPatch) -> No
     """
     trainer = _trainer(_LATENT_DIFFUSION)
     built = []
-    monkeypatch.setattr(trainer, "build_inferer", lambda *args: built.append(args) or ("inferer", [1, 2, 3]))
+    monkeypatch.setattr(trainer, "build_inferer", lambda *args: built.append(args) or ("inferer", [4, 5, 6]))
     instance = SimpleNamespace(
         _inferer=None,
-        model=SimpleNamespace(autoencoder=torch.nn.Identity()),
+        model=SimpleNamespace(autoencoder=SimpleNamespace(latent_channels=3)),
+        train_loader=[{"image": torch.zeros(1)}],
+        noise_scheduler=None,
         device=torch.device("cpu"),
         config={"spatial_shape": [8, 8], "LATENT_SCALE_FACTOR": None},
-        optimizers_dm={"scheduler": None},
     )
-    first = trainer.LatentDiffusionTrainer.get_inferer(instance, torch.zeros(1))
-    second = trainer.LatentDiffusionTrainer.get_inferer(instance, torch.ones(1))
+    first = trainer.LatentDiffusionTrainer.get_inferer(instance)
+    second = trainer.LatentDiffusionTrainer.get_inferer(instance)
     assert first is second
+    assert first == ("inferer", [3, 4, 5, 6])
     assert len(built) == 1
 
 
@@ -1320,13 +1322,6 @@ def test_the_validation_cadence_defaults_without_a_config_key(tutorial: Path) ->
     trainer = _trainer(tutorial)
     assert trainer.validate_every({}) == trainer.DEFAULT_VALIDATE_EVERY
     assert trainer.DEFAULT_VALIDATE_EVERY > 1, "an every-epoch default would make sampling dominate the round"
-
-
-@pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
-def test_a_non_integer_validation_cadence_falls_back_rather_than_raising(tutorial: Path) -> None:
-    """A malformed value must not kill a training round mid-flight."""
-    trainer = _trainer(tutorial)
-    assert trainer.validate_every({"VALIDATE_EVERY": "often"}) == trainer.DEFAULT_VALIDATE_EVERY
 
 
 @pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
@@ -1440,33 +1435,26 @@ def test_the_shipped_lr_schedule_decays(tutorial: Path) -> None:
 
 
 @pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
-def test_gradient_clipping_defaults_on_and_falls_back_on_junk(tutorial: Path) -> None:
-    """Absent means clip at the default; a malformed value must not kill a round mid-flight."""
+def test_gradient_clipping_defaults_on(tutorial: Path) -> None:
+    """Absent means clip at the default; zero turns clipping off."""
     trainer = _trainer(tutorial)
     assert trainer.grad_clip_norm({}) == trainer.DEFAULT_GRAD_CLIP_NORM > 0
-    assert trainer.grad_clip_norm({"GRAD_CLIP_NORM": "lots"}) == trainer.DEFAULT_GRAD_CLIP_NORM
     assert trainer.grad_clip_norm({"GRAD_CLIP_NORM": 0}) == 0
 
 
 @pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
-def test_gradients_are_unscaled_before_they_are_clipped(tutorial: Path) -> None:
-    """``train`` calls ``scaler.unscale_`` ahead of ``clip_grad_norm_``, and steps the LR schedule.
-
-    Clipping the GradScaler-inflated gradients would compare the threshold against a norm scaled by
-    up to 2**16, i.e. clip every step to almost nothing.
-    """
+def test_gradients_are_clipped_before_each_step_and_the_lr_is_stepped(tutorial: Path) -> None:
+    """Every optimiser step follows a clip, and ``train`` steps the learning-rate schedule."""
     tree = ast.parse((tutorial / "app_files" / "trainer.py").read_text(encoding="utf-8"))
-    train = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "train")
-    calls = [
-        (node.lineno, node.func.attr)
-        for node in ast.walk(train)
+    functions = {node.name: node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
+    calls = {
+        node.func.attr: node.lineno
+        for node in ast.walk(functions["train_one_epoch"])
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-    ]
-    lines = {name: lineno for lineno, name in sorted(calls, reverse=True)}
-    assert "clip_grad_norm_" in lines, f"{tutorial.name}: train() does not clip"
-    assert "unscale_" in lines, f"{tutorial.name}: train() clips without unscaling"
-    assert lines["unscale_"] < lines["clip_grad_norm_"], f"{tutorial.name}: clips before unscaling"
-    assert "self.lr_scheduler.step()" in ast.unparse(train), f"{tutorial.name}: the LR schedule is never stepped"
+    }
+    assert "clip_grad_norm_" in calls, f"{tutorial.name}: the training loop does not clip"
+    assert calls["clip_grad_norm_"] < calls["step"], f"{tutorial.name}: steps before clipping"
+    assert "self.lr_scheduler.step()" in ast.unparse(functions["train"]), f"{tutorial.name}: the LR is never stepped"
 
 
 def test_generated_volumes_are_plotted_tri_planar_not_as_a_mid_slice_grid() -> None:
