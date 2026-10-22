@@ -20,7 +20,7 @@ account_name      = "MYACCOUNT"
 platform_role      = "ACCOUNTADMIN"
 platform_warehouse = "COMPUTE_WH"
 
-# SNOWFLAKE_JWT (default): the just-in-time operator, key pair from SNOWFLAKE_PRIVATE_KEY_PATH.
+# SNOWFLAKE_JWT (default): the just-in-time operator, key pair from SNOWFLAKE_PRIVATE_KEY (PEM contents) + SNOWFLAKE_PRIVATE_KEY_PASSPHRASE.
 # USERNAMEPASSWORDMFA reads SNOWFLAKE_PASSWORD and the current TOTP code from SNOWFLAKE_PASSCODE.
 # EXTERNALBROWSER delegates to the account's IdP and needs no password in the environment.
 authenticator = "SNOWFLAKE_JWT"

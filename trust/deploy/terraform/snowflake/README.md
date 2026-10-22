@@ -122,7 +122,7 @@ not cover compute pools**. Three independent guards, all on by default:
   ```bash
   export SNOWFLAKE_USER=FLIP_GSTT_DEPLOY_USER
   export SNOWFLAKE_AUTHENTICATOR=SNOWFLAKE_JWT
-  export SNOWFLAKE_PRIVATE_KEY_PATH=~/.snowflake/flip_gstt_deploy.p8
+  export SNOWFLAKE_PRIVATE_KEY="$(cat ~/.snowflake/flip_gstt_deploy.p8)"   # the encrypted PEM itself; the provider has no *_PATH variable
   ```
 
   `~/.snowflake/connections.toml` works too. The provider block in `providers.tf` sets only the

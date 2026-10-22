@@ -24,7 +24,7 @@
 # The SPCS service specs and their lifecycle targets live in trust/deploy/snowflake (FLIP#1582),
 # and the kit file is the only coupling to a hub. No hub state, no hub credentials.
 #
-# Credentials come from the environment (SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY_PATH,
+# Credentials come from the environment (SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY (PEM contents),
 # SNOWFLAKE_AUTHENTICATOR=SNOWFLAKE_JWT) or ~/.snowflake/connections.toml, never from a variable.
 # No target skips the confirmation prompt: apply and destroy both ask.
 

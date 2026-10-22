@@ -131,7 +131,7 @@ Each apply:
 ```bash
 make jit-grant          # prints: GRANT ROLE ACCOUNTADMIN TO USER FLIP_PLATFORM_OPERATOR; run it in Snowsight
 export SNOWFLAKE_USER=FLIP_PLATFORM_OPERATOR
-export SNOWFLAKE_PRIVATE_KEY_PATH=~/.snowflake/flip_platform_operator.p8
+export SNOWFLAKE_PRIVATE_KEY="$(cat ~/.snowflake/flip_platform_operator.p8)"   # the encrypted PEM itself; the provider has no *_PATH variable
 read -rsp 'Operator key passphrase: ' SNOWFLAKE_PRIVATE_KEY_PASSPHRASE; echo; export SNOWFLAKE_PRIVATE_KEY_PASSPHRASE
 make plan && make apply # apply prints the REVOKE when it ends, success or failure
 make jit-revoke         # the same REVOKE, if you need it again; then SHOW GRANTS TO USER ... is empty

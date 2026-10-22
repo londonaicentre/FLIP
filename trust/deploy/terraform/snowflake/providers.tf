@@ -17,7 +17,7 @@
 # objects live in ../snowflake-platform and are out of this root's reach.
 #
 # No credential is ever written here or into a variable: the provider reads the deploy identity
-# from the environment (SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY_PATH,
+# from the environment (SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY (PEM contents),
 # SNOWFLAKE_AUTHENTICATOR=SNOWFLAKE_JWT) or from ~/.snowflake/connections.toml. A private key in a
 # Terraform variable would land in state and in every plan output.
 provider "snowflake" {

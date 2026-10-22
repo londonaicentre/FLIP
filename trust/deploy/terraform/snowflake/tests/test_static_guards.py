@@ -21,6 +21,7 @@ and no secret value or password field in Terraform.
 from __future__ import annotations
 
 import re
+import subprocess
 
 import pytest
 from conftest import PLATFORM_DIR, SNOWFLAKE_DIR, TF_FILES, all_terraform, source
@@ -263,7 +264,12 @@ def test_no_account_identifier_is_committed():
     for name in ("organization_name", "account_name"):
         block = hcl_block(source("variables.tf"), f'variable "{name}"')
         assert "default" not in block, f"{name} must be supplied at apply time, never defaulted"
-    assert not list(SNOWFLAKE_DIR.glob("*.tfvars")), "a real tfvars file must never be tracked"
+    # Git, not the disk: an operator's own gitignored terraform.<env>.tfvars is exactly what the
+    # README asks for, and must not fail the suite on their machine.
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "*.tfvars"], cwd=SNOWFLAKE_DIR, capture_output=True, text=True, check=True
+    ).stdout.split()
+    assert not tracked, f"a real tfvars file must never be tracked: {tracked}"
 
 
 def test_gitignore_hides_state_tfvars_and_the_encryption_block():
