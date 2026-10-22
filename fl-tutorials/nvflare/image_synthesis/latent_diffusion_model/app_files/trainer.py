@@ -61,6 +61,7 @@ from latent_utils import autoencoder_fingerprint, build_inferer
 from modality import modality_of, one_hot_condition
 from models import get_model
 from monai.data import DataLoader, Dataset
+from monai.inferers import LatentDiffusionInferer
 from monai.networks.schedulers import DDPMScheduler
 from nvflare.client.tracking import SummaryWriter
 from torch.amp import GradScaler, autocast
@@ -474,6 +475,8 @@ class LatentDiffusionTrainer:
             self.optimizers_dm["optimizer"], lambda epoch: lr_at(epoch, self.config) / self.params_diffusion["lr"]
         )
 
+        self._inferer: tuple[LatentDiffusionInferer, list] | None = None
+
         # Data loading
         self.flip = FLIP()
         dataframe = self.flip.get_dataframe(project_id=project_id, query=query)
@@ -556,18 +559,35 @@ class LatentDiffusionTrainer:
         train_loader = DataLoader(
             self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
         )
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
-        return train_loader, val_loader
+        return train_loader, self.val_loader(batch_size)
 
     def val_loader(self, batch_size: int) -> DataLoader:
         return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
-        self.model.load_state_dict(state_dict=weights, strict=False)
+        self.model.load_state_dict(state_dict=weights)
         # The broadcast carries the autoencoder at round 0; re-assert the freeze afterwards so a
         # load can never quietly re-enable grads or training mode on it.
         freeze_autoencoder(self.model)
         verify_autoencoder(self.model)
+
+    def get_inferer(self, sample_images: torch.Tensor) -> tuple[LatentDiffusionInferer, list]:
+        """The latent inferer and latent shape, built on first use and then kept.
+
+        Built once because its scale factor, when ``LATENT_SCALE_FACTOR`` is null, is derived from a
+        batch: rebuilding it each round, or for validation, would train and score at different scales.
+        """
+        if self._inferer is None:
+            self.model.autoencoder.to(device=self.device)
+            self._inferer = build_inferer(
+                self.model,
+                self.optimizers_dm["scheduler"],
+                self.config["spatial_shape"],
+                sample_images,
+                self.device,
+                self.config.get("LATENT_SCALE_FACTOR"),
+            )
+        return self._inferer
 
     def train(self, writer: SummaryWriter, global_round: int) -> int:
         """One ``train`` round: local diffusion-model epochs. Returns the iteration count."""
@@ -576,14 +596,7 @@ class LatentDiffusionTrainer:
         self.model.diffusion_model.to(device=self.device)
         self.model.autoencoder.to(device=self.device)
 
-        inferer, ldm_latent_shape = build_inferer(
-            self.model,
-            self.optimizers_dm["scheduler"],
-            self.config["spatial_shape"],
-            next(iter(train_loader))["image"],
-            self.device,
-            self.config.get("LATENT_SCALE_FACTOR"),
-        )
+        inferer, ldm_latent_shape = self.get_inferer(next(iter(train_loader))["image"])
         scaler = GradScaler()
 
         # Basic training
@@ -683,6 +696,8 @@ class LatentDiffusionTrainer:
 def validate(
     model: torch.nn.Module,
     test_loader: DataLoader,
+    inferer: LatentDiffusionInferer,
+    ldm_latent_shape: list,
     scheduler: DDPMScheduler,
     config: dict,
     device: torch.device,
@@ -693,6 +708,8 @@ def validate(
     Args:
         model (torch.nn.Module): The composite LDM network with the broadcast global weights loaded.
         test_loader (DataLoader): Held-out data loader.
+        inferer (LatentDiffusionInferer): The trainer's inferer, so scoring uses training's scale factor.
+        ldm_latent_shape (list): The latent shape the inferer was built for.
         scheduler (DDPMScheduler): The DDPM noise scheduler.
         config (dict): The user app config (``config.json``).
         device (torch.device): Device to run on.
@@ -703,14 +720,6 @@ def validate(
     """
     model.diffusion_model.to(device=device)
     model.autoencoder.to(device=device)
-    inferer, ldm_latent_shape = build_inferer(
-        model,
-        scheduler,
-        config["spatial_shape"],
-        next(iter(test_loader))["image"],
-        device,
-        config.get("LATENT_SCALE_FACTOR"),
-    )
 
     model.diffusion_model.eval()
     model.autoencoder.eval()
@@ -779,12 +788,18 @@ def main() -> None:
             send_weight_diff(input_model.params, trainer.model, n_iterations)
 
         elif flare.is_evaluate():
-            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()}, strict=False)
-            freeze_autoencoder(trainer.model)
-            verify_autoencoder(trainer.model)
+            trainer.load_weights(weights)
             test_loader = trainer.val_loader(config["BATCH_SIZE"])
+            inferer, ldm_latent_shape = trainer.get_inferer(next(iter(test_loader))["image"])
             val_loss = validate(
-                trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer
+                trainer.model,
+                test_loader,
+                inferer,
+                ldm_latent_shape,
+                trainer.optimizers_dm["scheduler"],
+                config,
+                trainer.device,
+                writer,
             )
             logger.info(f"Validating the aggregated diffusion model on {flare.get_site_name()}'s data: {val_loss}")
             flare.send(flare.FLModel(metrics={"val_loss": val_loss}))

@@ -450,14 +450,13 @@ class DiffusionTrainer:
         train_loader = DataLoader(
             self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
         )
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
-        return train_loader, val_loader
+        return train_loader, self.val_loader(batch_size)
 
     def val_loader(self, batch_size: int) -> DataLoader:
         return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
-        self.model.load_state_dict(state_dict=weights, strict=False)
+        self.model.load_state_dict(state_dict=weights)
 
     def train(self, writer: SummaryWriter, global_round: int) -> int:
         """One ``train`` round: local diffusion-model epochs. Returns the iteration count."""
@@ -642,7 +641,7 @@ def main() -> None:
             send_weight_diff(input_model.params, trainer.model, n_iterations)
 
         elif flare.is_evaluate():
-            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()})
+            trainer.load_weights(weights)
             test_loader = trainer.val_loader(config["BATCH_SIZE"])
             val_loss = validate(
                 trainer.model, test_loader, trainer.optimizers_dm["scheduler"], config, trainer.device, writer

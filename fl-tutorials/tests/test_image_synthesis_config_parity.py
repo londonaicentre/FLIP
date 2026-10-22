@@ -1271,6 +1271,45 @@ def _trainer(tutorial: Path) -> ModuleType:
     return _load_app_module(tutorial, "trainer")
 
 
+def test_autoencoder_validation_stops_on_a_nan_rather_than_averaging_around_it() -> None:
+    """A NaN reconstruction in validation stops the run, as it does in training.
+
+    The per-epoch validation used to ``break`` on one and still divide by every batch, reporting a
+    mean of the batches before it as if it were the whole split.
+    """
+    trainer = _trainer(_AUTOENCODER)
+
+    class NanAutoencoder(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+            return torch.full_like(x, float("nan")), x, x
+
+    model = SimpleNamespace(autoencoder=NanAutoencoder())
+    with pytest.raises(RuntimeError, match="Non-finite reconstruction during validation"):
+        trainer.validate(model, [{"image": torch.rand(1, 1, 8, 8, 8)}], torch.device("cpu"))
+
+
+def test_the_latent_inferer_is_built_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Training and validation share one inferer, so one latent scale factor.
+
+    With ``LATENT_SCALE_FACTOR`` null the factor is derived from whichever batch builds the inferer;
+    building it per round and again for validation trained and scored at different scales.
+    """
+    trainer = _trainer(_LATENT_DIFFUSION)
+    built = []
+    monkeypatch.setattr(trainer, "build_inferer", lambda *args: built.append(args) or ("inferer", [1, 2, 3]))
+    instance = SimpleNamespace(
+        _inferer=None,
+        model=SimpleNamespace(autoencoder=torch.nn.Identity()),
+        device=torch.device("cpu"),
+        config={"spatial_shape": [8, 8], "LATENT_SCALE_FACTOR": None},
+        optimizers_dm={"scheduler": None},
+    )
+    first = trainer.LatentDiffusionTrainer.get_inferer(instance, torch.zeros(1))
+    second = trainer.LatentDiffusionTrainer.get_inferer(instance, torch.ones(1))
+    assert first is second
+    assert len(built) == 1
+
+
 @pytest.mark.parametrize("tutorial", _DIFFUSION_TUTORIALS, ids=lambda p: p.name)
 def test_the_validation_cadence_defaults_without_a_config_key(tutorial: Path) -> None:
     """``VALIDATE_EVERY`` absent falls back to the module default rather than validating every epoch.

@@ -204,13 +204,14 @@ value is logged, so you can read the derived numbers off a first run and pin the
 ```json
 "LR_START": 0.0001,
 "LR_END": 0.000001,
-"LR_DECAY_EPOCHS": 200,
+"LR_DECAY_EPOCHS": 6,
 "GRAD_CLIP_NORM": 1.0
 ```
 
 The rate follows half a cosine from `LR_START` down to `LR_END` over the first `LR_DECAY_EPOCHS`
 epochs, then holds at `LR_END`. It is stepped once per epoch, and the epoch count
 runs across rounds: round 2 continues from where round 1 left off rather than restarting the decay.
+The shipped 6 is `GLOBAL_ROUNDS` × `LOCAL_ROUNDS`, so the decay spans the job; change it with them.
 Leave `LR_END` or `LR_DECAY_EPOCHS` out, or set `LR_DECAY_EPOCHS` to `0`, to keep the rate at `LR_START`. The current rate is logged
 as `LR DM@epoch`.
 

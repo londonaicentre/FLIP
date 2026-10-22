@@ -497,14 +497,13 @@ class AutoencoderTrainer:
         train_loader = DataLoader(
             self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
         )
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
-        return train_loader, val_loader
+        return train_loader, self.val_loader(batch_size)
 
     def val_loader(self, batch_size: int) -> DataLoader:
         return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
-        self.model.load_state_dict(state_dict=weights, strict=False)
+        self.model.load_state_dict(state_dict=weights)
 
     def train(self, writer: SummaryWriter, global_round: int) -> int:
         """One ``train`` round: local AE + discriminator epochs. Returns the iteration count."""
@@ -658,29 +657,7 @@ class AutoencoderTrainer:
             train_g_klloss /= max(1, len(train_loader))
             train_d_loss /= max(1, len(train_loader))
 
-            # Validation
-            val_loss = 0
-            val_ssim = 0.0
-            debug_batch: dict[str, torch.Tensor] = {}
-            self.model.autoencoder.eval()
-            for batch in val_loader:
-                images = batch["image"].to(self.device)
-                with autocast(enabled=True, device_type=self.device.type):
-                    with torch.no_grad():
-                        reconstruction, _, _ = self.model.autoencoder(images)
-                    if True in torch.isnan(reconstruction):
-                        break
-                    if not debug_batch:
-                        debug_batch = {"input": images, "reconstruction": reconstruction}
-                    val_loss += (
-                        self.weights_ae["w_reconstruction_loss"]
-                        * self.losses_ae["reconstruction_loss"](reconstruction.float(), images.float()).item()
-                    )
-
-                val_ssim += foreground_ssim(reconstruction.float(), images.float())
-
-            val_loss /= max(1, len(val_loader))
-            val_ssim /= max(1, len(val_loader))
+            val_loss, val_ssim, debug_batch = validate(self.model, val_loader, self.device)
             self.model.autoencoder.train()
 
             logger.info(
@@ -713,59 +690,26 @@ class AutoencoderTrainer:
         return epochs * len(train_loader)
 
 
-def validate(
-    model: torch.nn.Module,
-    test_loader: DataLoader,
-    device: torch.device,
-    writer: SummaryWriter,
-    config: dict,
-) -> tuple[float, float]:
-    """Score the aggregated autoencoder on the local held-out split.
-
-    Args:
-        model (torch.nn.Module): The autoencoder network with the broadcast global weights loaded.
-        test_loader (DataLoader): Held-out data loader.
-        device (torch.device): Device to run on.
-        config (dict): The user app config (``config.json``); read only for the debug-sample flag.
-        writer (SummaryWriter): FLARE Client API metrics writer (relayed to FLIP by the
-            analytics bridge).
+def validate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> tuple[float, float, dict]:
+    """Score the autoencoder on a held-out split, under the same autocast as training.
 
     Returns:
-        tuple[float, float]: ``(l1_test_loss, ssim_test)`` averaged over the held-out split. The
-        SSIM is foreground-only — see :func:`foreground_ssim`.
+        tuple[float, float, dict]: The mean L1 loss and mean foreground SSIM (see
+        :func:`foreground_ssim`) over the split, and its first batch for the debug plots.
     """
-    reconstruction_loss = torch.nn.L1Loss()
     model.autoencoder.to(device=device)
-    model.eval()
-
-    l1_test_loss = 0.0
-    ssim_test = 0.0
-    debug_batch: dict[str, torch.Tensor] = {}
-
-    for batch in test_loader:
+    model.autoencoder.eval()
+    l1_loss, ssim, first_batch = 0.0, 0.0, {}
+    for batch in loader:
         images = batch["image"].to(device)
-
-        with torch.no_grad():
+        with torch.no_grad(), autocast(enabled=True, device_type=device.type):
             reconstruction, _, _ = model.autoencoder(images)
-        if not debug_batch:
-            debug_batch = {"input": images, "reconstruction": reconstruction}
-        reconstruction = reconstruction.detach().cpu().float()
-        images = images.detach().cpu().float()
-
-        ssim_test += foreground_ssim(reconstruction, images)
-        l1_test_loss += reconstruction_loss(reconstruction, images).item()
-
-    l1_test_loss /= max(1, len(test_loader))
-    ssim_test /= max(1, len(test_loader))
-
-    logger.info(f"Validation loss: {l1_test_loss} SSIM: {ssim_test}")
-
-    writer.add_scalar("val_l1_loss", l1_test_loss, global_step=0)
-    writer.add_scalar("val_ssim", ssim_test, global_step=0)
-
-    save_triplanar(debug_batch, "reconstruction_aggregated", config, site_name=flare.get_site_name())
-
-    return l1_test_loss, ssim_test
+        require_finite({"reconstruction": reconstruction}, "validation")
+        if not first_batch:
+            first_batch = {"input": images, "reconstruction": reconstruction}
+        l1_loss += torch.nn.functional.l1_loss(reconstruction.float(), images.float()).item()
+        ssim += foreground_ssim(reconstruction.float(), images.float())
+    return l1_loss / max(1, len(loader)), ssim / max(1, len(loader)), first_batch
 
 
 def to_torch_weights(input_model: flare.FLModel) -> dict[str, torch.Tensor]:
@@ -818,9 +762,13 @@ def main() -> None:
             send_weight_diff(input_model.params, trainer.model, n_iterations)
 
         elif flare.is_evaluate():
-            trainer.model.load_state_dict({k: v.to(trainer.device) for k, v in weights.items()})
-            test_loader = trainer.val_loader(config["BATCH_SIZE"])
-            val_loss, val_ssim = validate(trainer.model, test_loader, trainer.device, writer, config)
+            trainer.load_weights(weights)
+            val_loss, val_ssim, first_batch = validate(
+                trainer.model, trainer.val_loader(config["BATCH_SIZE"]), trainer.device
+            )
+            writer.add_scalar("val_l1_loss", val_loss, global_step=0)
+            writer.add_scalar("val_ssim", val_ssim, global_step=0)
+            save_triplanar(first_batch, "reconstruction_aggregated", config, site_name=flare.get_site_name())
             logger.info(f"Validating the aggregated autoencoder on {flare.get_site_name()}'s data: SSIM {val_ssim}")
             # val_acc lands in the cross-validation results.json via ValidationJsonGenerator.
             flare.send(flare.FLModel(metrics={"val_acc": val_ssim, "val_loss": val_loss}))
