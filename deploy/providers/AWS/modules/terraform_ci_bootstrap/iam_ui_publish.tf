@@ -100,19 +100,6 @@ data "aws_iam_policy_document" "ui_publish" {
     ]
     resources = ["${local.ui_bucket_arn}/ark_demo/*"]
   }
-
-  # Only where the FLIP root owns the distribution. On LZA the networking
-  # account's edge serves the bucket and nothing is invalidated (FLIP#749).
-  dynamic "statement" {
-    for_each = var.ui_distribution_arn == "" ? [] : [var.ui_distribution_arn]
-
-    content {
-      sid       = "InvalidateTheUiDistribution"
-      effect    = "Allow"
-      actions   = ["cloudfront:CreateInvalidation"]
-      resources = [statement.value]
-    }
-  }
 }
 
 resource "aws_iam_role_policy" "ui_publish" {

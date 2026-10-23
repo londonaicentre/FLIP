@@ -856,20 +856,7 @@ def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
         "s3:DeleteObject",
         "s3:GetObject",
         "s3:PutObject",
-        "cloudfront:CreateInvalidation",
     }
-
-
-def test_the_ui_publish_role_invalidates_only_a_named_distribution() -> None:
-    """On LZA there is no workload distribution, so the grant is absent unless an ARN is passed."""
-    dynamic = _block(_module_block('data "aws_iam_policy_document" "ui_publish"'), 'dynamic "statement"')
-    assert _arguments(dynamic)["for_each"] == _normalise(
-        'var.ui_distribution_arn == "" ? [] : [var.ui_distribution_arn]'
-    )
-    content = _arguments(_block(dynamic, "content"))
-    assert content["actions"] == '["cloudfront:CreateInvalidation"]'
-    assert content["resources"] == "[statement.value]"
-    assert _arguments(_module_block('variable "ui_distribution_arn"'))["default"] == '""'
 
 
 def _ci(name: str) -> str:

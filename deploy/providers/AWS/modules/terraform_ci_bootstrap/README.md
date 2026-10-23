@@ -88,9 +88,8 @@ Least privilege, with each grant explained where it is declared:
 - **UI-publish role** ([`iam_ui_publish.tf`](iam_ui_publish.tf), FLIP#1186): created only when `ui_bucket_name` is
   set. Trusts the reusable `publish_ui.yml` at `apply_branch` (a reusable workflow's jobs present the called file as
   `job_workflow_ref`). `s3:ListBucket` on the UI bucket, `Get`/`Put`/`DeleteObject` on its objects, a Deny on writes
-  and deletes under `ark_demo/*`, and `cloudfront:CreateInvalidation` only on `ui_distribution_arn` when one is
-  given (not on LZA). Its ARN, the `ui_publish_role_arn` output, goes in the environment variable
-  `TF_UI_PUBLISH_ROLE_ARN`.
+  and deletes under `ark_demo/*`, and nothing else. Its ARN, the `ui_publish_role_arn` output, goes in the environment
+  variable `TF_UI_PUBLISH_ROLE_ARN`.
 - **Boundary** ([`boundary.tf`](boundary.tf)): allow everything, deny identity management, Organizations and Account.
 
 `tests/test_terraform_ci_bootstrap.py` holds `apply_service_prefixes` equal to the services the FLIP root's resource

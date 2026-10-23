@@ -204,12 +204,6 @@ variable "ui_bucket_name" {
   default     = ""
 }
 
-variable "ui_distribution_arn" {
-  description = "ARN of the CloudFront distribution serving the UI bucket; grants the UI-publish role an invalidation on it. Empty grants none."
-  type        = string
-  default     = ""
-}
-
 variable "ui_publish_workflow_file" {
   description = "Reusable workflow permitted to assume the UI-publish role."
   type        = string

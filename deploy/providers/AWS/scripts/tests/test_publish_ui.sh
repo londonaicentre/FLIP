@@ -16,11 +16,11 @@
 # both run to put a flip-ui build in its bucket (FLIP#1186).
 #
 # Drives the REAL script with `aws` stubbed on PATH (no credentials, no network). The stub records every
-# call, so a test can check the cache-control split, the ark_demo/ exclusion and the invalidation.
+# call, so a test can check the cache-control split and the ark_demo/ exclusion.
 #
 # The invariants under test: hashed bundles are cached for a year and index.html / js/window.js never;
-# --delete never reaches ark_demo/; the entry points are written after the bundles they reference; the
-# invalidation runs only when a distribution is given; a build missing its entry points publishes nothing.
+# --delete never reaches ark_demo/; the entry points are written after the bundles they reference; a build
+# missing its entry points publishes nothing.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_publish_ui.sh
@@ -46,7 +46,7 @@ if [[ -e "${FIXTURE_DIR}/fail-$1-$2" ]]; then
     exit 1
 fi
 case "$1 $2" in
-    "s3 sync" | "s3 cp" | "cloudfront create-invalidation") ;;
+    "s3 sync" | "s3 cp") ;;
     *) echo "unexpected aws call: $*" >&2; exit 1 ;;
 esac
 MOCK_AWS
@@ -120,9 +120,9 @@ call_line() {
 
 echo "==== publish-ui.sh ===="
 
-# 1. THE LZA CASE. No distribution: sync, the two entry points, no invalidation.
+# 1. A complete build: the bundles, then the two entry points.
 fixture
-run_publish "a complete build, no distribution" "${DIST}" flip-ui-bucket
+run_publish "a complete build" "${DIST}" flip-ui-bucket
 expect_rc 0 "succeeds"
 expect_call "s3 sync ${DIST}/ s3://flip-ui-bucket/ --delete --cache-control public, max-age=31536000, immutable" \
     "syncs the bundles with --delete and a one-year immutable cache"
@@ -132,7 +132,6 @@ expect_call "s3 cp ${DIST}/index.html s3://flip-ui-bucket/index.html --cache-con
     "writes index.html uncached, as HTML"
 expect_call "s3 cp ${DIST}/js/window.js s3://flip-ui-bucket/js/window.js --cache-control no-cache, no-store, must-revalidate --content-type application/javascript; charset=utf-8" \
     "writes js/window.js uncached, as JavaScript"
-expect_no_call "cloudfront" "invalidates nothing"
 sync_at="$(call_line "s3 sync")"
 index_at="$(call_line "index.html s3://")"
 if [[ -n "${sync_at}" && -n "${index_at}" && "${sync_at}" -lt "${index_at}" ]]; then
@@ -141,20 +140,7 @@ else
     no "writes index.html after the bundles it references" "calls: ${CALLS}"
 fi
 
-# 2. A self-owned account: the FLIP root's distribution is invalidated after the upload.
-fixture
-run_publish "a complete build and a distribution id" "${DIST}" flip-ui-bucket E2ABCDEF123456
-expect_rc 0 "succeeds"
-expect_call "cloudfront create-invalidation --distribution-id E2ABCDEF123456 --paths /*" \
-    "invalidates every path on that distribution"
-
-# 3. An empty distribution id is the LZA case, as `make deploy-ui` passes it.
-fixture
-run_publish "an empty distribution id" "${DIST}" flip-ui-bucket ""
-expect_rc 0 "succeeds"
-expect_no_call "cloudfront" "invalidates nothing"
-
-# 4. A build without its entry points would leave the bucket serving the previous index.html, or none.
+# 2. A build without its entry points would leave the bucket serving the previous index.html, or none.
 fixture
 rm "${DIST}/index.html"
 run_publish "the build has no index.html" "${DIST}" flip-ui-bucket
@@ -167,15 +153,14 @@ run_publish "the build has no js/window.js" "${DIST}" flip-ui-bucket
 expect_rc 1 "fails"
 expect_no_call "s3" "publishes nothing"
 
-# 5. A failed sync stops before the entry points move to bundles that may not be there.
+# 3. A failed sync stops before the entry points move to bundles that may not be there.
 fixture
 : >"${FIXTURE_DIR}/fail-s3-sync"
-run_publish "the sync fails" "${DIST}" flip-ui-bucket E2ABCDEF123456
+run_publish "the sync fails" "${DIST}" flip-ui-bucket
 expect_rc 1 "fails"
 expect_no_call "s3 cp" "writes no entry point"
-expect_no_call "cloudfront" "invalidates nothing"
 
-# 6. Both positional arguments are required.
+# 4. Both positional arguments are required.
 fixture
 run_publish "no bucket" "${DIST}"
 if [[ "${RC}" -ne 0 ]]; then ok "fails"; else no "fails" "exited 0"; fi

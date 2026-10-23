@@ -87,7 +87,6 @@ module "terraform_ci" {
   tags                           = var.tags
 
   ui_bucket_name           = var.ui_bucket_name
-  ui_distribution_arn      = var.ui_distribution_arn
   ui_publish_workflow_file = var.ui_publish_workflow_file
   ui_publish_role_name     = var.ui_publish_role_name
 

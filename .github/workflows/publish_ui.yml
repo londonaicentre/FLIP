@@ -168,13 +168,11 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       # The bucket is the variable cloudfront.tf creates it from, which is also
-      # the role's scope. UI_DISTRIBUTION_ID is set only where the FLIP root owns
-      # the distribution; on LZA it is empty and nothing is invalidated.
+      # the role's scope.
       - name: Publish
         env:
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
-          UI_DISTRIBUTION_ID: ${{ vars.UI_DISTRIBUTION_ID }}
-        run: deploy/providers/AWS/scripts/publish-ui.sh dist "${FLIP_UI_BUCKET_NAME}" "${UI_DISTRIBUTION_ID}"
+        run: deploy/providers/AWS/scripts/publish-ui.sh dist "${FLIP_UI_BUCKET_NAME}"
 
       # index.html and window.js are no-cache, so the edge serves the new
       # window.js once it has re-fetched it. Reading it back proves the build

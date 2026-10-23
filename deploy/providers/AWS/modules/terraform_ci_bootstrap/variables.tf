@@ -279,17 +279,6 @@ variable "ui_bucket_name" {
   default     = ""
 }
 
-variable "ui_distribution_arn" {
-  description = "ARN of the CloudFront distribution serving the UI bucket, where the FLIP root creates one (not on LZA). Grants the UI-publish role cloudfront:CreateInvalidation on it; empty grants none."
-  type        = string
-  default     = ""
-
-  validation {
-    condition     = var.ui_distribution_arn == "" || can(regex("^arn:aws[a-z-]*:cloudfront::[0-9]{12}:distribution/[A-Z0-9]+$", var.ui_distribution_arn))
-    error_message = "ui_distribution_arn must be empty or a CloudFront distribution ARN."
-  }
-}
-
 variable "ui_publish_workflow_file" {
   description = "Reusable workflow permitted to assume the UI-publish role."
   type        = string

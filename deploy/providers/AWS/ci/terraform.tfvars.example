@@ -34,8 +34,5 @@ apply_branch       = "develop"
 state_bucket_name = "your-org-flip-terraform-state-stag"
 
 # Optional: let CI publish flip-ui after each apply (FLIP#1186). The FLIP root's
-# FLIP_UI_BUCKET_NAME, and the ARN of the CloudFront distribution the root creates
-# for it (terraform output CloudfrontDistributionId). Set the ui_publish_role_arn
-# output as TF_UI_PUBLISH_ROLE_ARN and the distribution id as UI_DISTRIBUTION_ID.
-# ui_bucket_name      = "your-org-flip-ui-stag"
-# ui_distribution_arn = "arn:aws:cloudfront::123456789012:distribution/E2ABCDEF123456"
+# FLIP_UI_BUCKET_NAME. Set the ui_publish_role_arn output as TF_UI_PUBLISH_ROLE_ARN.
+# ui_bucket_name = "your-org-flip-ui-stag"

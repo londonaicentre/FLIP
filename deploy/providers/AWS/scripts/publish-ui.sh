@@ -21,18 +21,17 @@
 #   * --delete removes the previous build, but never ark_demo/, the Ark+ demo published into the same
 #     bucket by `make deploy-ark-demo`.
 #
-# Pass a CloudFront distribution id only where the FLIP root owns one. On LZA the networking account's
-# edge serves the bucket and nothing is invalidated (FLIP#749): the no-cache objects are re-fetched anyway.
+# Nothing is invalidated: the networking account's edge serves the bucket (FLIP#749), and the no-cache
+# objects are re-fetched anyway.
 #
-# Usage: publish-ui.sh <dist dir> <bucket> [cloudfront distribution id]
+# Usage: publish-ui.sh <dist dir> <bucket>
 # The aws CLI is called with the caller's credentials.
 
 set -euo pipefail
 
-usage="Usage: publish-ui.sh <dist dir> <bucket> [cloudfront distribution id]"
+usage="Usage: publish-ui.sh <dist dir> <bucket>"
 dist="${1:?${usage}}"
 bucket="${2:?${usage}}"
-distribution="${3:-}"
 
 fail() {
     echo "❌ $1" >&2
@@ -56,10 +55,4 @@ aws s3 cp "${dist}/js/window.js" "s3://${bucket}/js/window.js" \
     --cache-control "no-cache, no-store, must-revalidate" \
     --content-type "application/javascript; charset=utf-8"
 
-if [[ -n "${distribution}" ]]; then
-    echo "🧹 Invalidating CloudFront distribution ${distribution}..."
-    aws cloudfront create-invalidation --distribution-id "${distribution}" --paths "/*" >/dev/null
-else
-    echo "🧹 No CloudFront distribution given: skipping the invalidation."
-fi
 echo "✅ flip-ui published to s3://${bucket}/."
