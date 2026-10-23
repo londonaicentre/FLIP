@@ -86,19 +86,14 @@ the Trust API keys, never the keys. Database migrations run at every start-up (s
 Deployment
 **********
 
-The hub runs on AWS, provisioned with Terraform/OpenTofu, in one of two modes:
-
-- **self-contained** in a single AWS account;
-- on a `Landing Zone Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_
-  estate, where a platform team owns the network and the edge.
-
-The services on this page are the same in both modes; only where they sit and how traffic reaches them differs.
+The hub runs on AWS, provisioned with Terraform/OpenTofu from one root module, on a `Landing Zone
+Accelerator <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_ estate
+whose platform team owns the network and the edge.
 
 .. seealso::
 
-   :ref:`deploy-central-hub` has the architecture diagrams and runbooks, one page per mode
-   (:doc:`/deploy-flip/deploy-central-hub-aws` and :doc:`/deploy-flip/deploy-central-hub-aws-lza`). Security
-   controls are on :ref:`security`.
+   :ref:`deploy-central-hub` and :doc:`/deploy-flip/deploy-central-hub-aws-lza` have the architecture diagrams,
+   the resource layout and the runbook. Security controls are on :ref:`security`.
 
 ********
 Start-up

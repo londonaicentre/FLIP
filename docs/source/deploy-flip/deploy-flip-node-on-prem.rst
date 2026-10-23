@@ -64,44 +64,6 @@ under ``/opt/flip/fl-kit`` and copies the logging stack's config into place.
    and gets the FL kit in the tarball instead. The :gh:`Ansible README <trust/deploy/ansible/README.md>` has the
    details, including the FL slot the playbook pre-creates (``Trust_2`` by default).
 
-*********************************
-FLIP team: hybrid end-to-end flow
-*********************************
-
-*Who: someone with hub AWS access, working on the trust host.* One wrapper deploys the Central Hub, registers the
-trust (step 2 of the runbook), opens the FL load balancer to the trust's IP (step 6) and provisions the host. It
-needs Python 3.12 or 3.13 and uv, the hub's Terraform outputs (``make init`` and ``make apply`` already run in
-``deploy/providers/AWS``), and a kit created with step 1.
-
-.. warning::
-
-   Use it only for a fresh, single-trust test environment. It also runs ``deploy-trust KIT=<CODE>``, which deploys
-   and seeds the cloud trust EC2 with the same kit, and it sets the FL load balancer's on-prem list to this one IP,
-   dropping any rules for other trusts. To add a trust to a running network, follow :doc:`onboarding-a-trust`.
-
-#. **Deploy the hub and provision the trust.**
-
-   .. code-block:: shell
-
-      make -C deploy/providers/AWS full-deploy-hybrid KIT=<CODE> PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
-
-   Leave out ``LOCAL_TRUST_IP`` to use this machine's own public IP, detected automatically.
-
-#. **Fill in the hub-shared settings and XNAT passwords** (step 3 of the runbook), from the repo root:
-
-   .. code-block:: shell
-
-      make sync-trust-kit KIT=<CODE> PROD=<stag|true>
-      make generate-xnat-credentials KIT=<CODE> PROD=<stag|true>
-
-#. **Start the trust stack,** from the repo root:
-
-   .. code-block:: shell
-
-      sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
-
-Then continue at step 7 of :doc:`onboarding-a-trust`.
-
 ******************************
 Step 1 — Check out the release
 ******************************
@@ -125,9 +87,9 @@ Step 2 — Unpack the kit
 
    mkdir -p $HOME/flip-trust-kit
    tar -C $HOME/flip-trust-kit -xzf flip-trust-kit-<slot>-<date>.tar.gz
-   cp $HOME/flip-trust-kit/.env.<slot> trust/.env.<slot>
+   cp $HOME/flip-trust-kit/.env.<slot>.prod trust/
 
-The tarball holds the kit file ``.env.<slot>`` and an ``fl-kit/`` folder. Keep ``fl-kit/`` exactly as it is: the
+The tarball holds the kit file ``.env.<slot>.prod`` (``.stag`` for the staging hub) and an ``fl-kit/`` folder. Keep ``fl-kit/`` exactly as it is: the
 stack mounts that layout into the FL client.
 
 ***********************************
@@ -136,7 +98,7 @@ Step 3 — Edit the kit for your host
 
 *Who: trust operator*
 
-In ``trust/.env.<slot>``, change only the settings below. Leave the *Hub-shared* and *Kit credentials* blocks alone;
+In ``trust/.env.<slot>.prod``, change only the settings below. Leave the *Hub-shared* and *Kit credentials* blocks alone;
 the admin manages them.
 
 .. list-table::
@@ -186,17 +148,16 @@ Step 4 — Run the readiness checklist and start the stack
    sudo -E make onboard-onprem-trust KIT=<slot>   # readiness checklist
    sudo -E make up-onprem-trust KIT=<slot>        # starts only if every check passes
 
-Both default to production; add ``PROD=stag`` for staging. The checklist prints your public IP, then a ✅ or ❌ for
+Both default to the production hub (``HUB=prod``); add ``HUB=stag`` for staging. The checklist prints a ✅ or ❌ for
 each precondition: the kit file, Docker swarm, the hub-shared settings and credentials being filled in, trust-local
 passwords, ``FL_KIT_DIR`` and the FL kit contents, and GPU capacity. Fix every ❌ row; ``up-onprem-trust`` runs the
 same checks and will not start until they pass.
 
-Send the **Your public IP** value to the FLIP admin for step 6 of :doc:`onboarding-a-trust`, then continue there.
+Then continue at step 6 of :doc:`onboarding-a-trust`.
 
 .. tip::
 
-   The checklist changes nothing, so you can run it at any time, even before the kit is in place, just to read off
-   your public IP.
+   The checklist changes nothing, so you can run it at any time, even before the kit is in place.
 
 .. warning::
 
@@ -218,7 +179,7 @@ Every trust container is named ``trust<N>-<service>-1``, where ``<N>`` is ``FL_K
    * - Trust not polling the hub
      - Is the stack running (``sudo docker ps``)? Look for polling errors in ``sudo docker logs trust<N>-trust-api-1``.
    * - ``Connection timed out`` (FL)
-     - Has the trust's public IP changed? The admin repeats step 6 of :doc:`onboarding-a-trust`.
+     - Is a host or network firewall blocking outbound traffic on the FL port (8002 for production, 8003 for staging)?
    * - Ansible ``Permission denied``
      - Is the SSH key correct? Does the user have ``sudo``? In local-host mode, is ``ANSIBLE_BECOME_PASS`` set?
 

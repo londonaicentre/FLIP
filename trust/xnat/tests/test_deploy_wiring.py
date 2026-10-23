@@ -18,7 +18,7 @@ exported an empty AE title, and the compose file's ``${VAR:-default}`` cancelled
 fail-loud guard. None of those are visible from inside the script.
 
 The AE title also has consumers the script never sees — Orthanc's mocked-modality entry and
-imaging-api, wired in ``trust/deploy/compose_trust.{development,production}.yml`` — and they take
+imaging-api, wired in ``trust/deploy/compose_trust.{development,prod}.yml`` — and they take
 the opposite form (``${VAR:-default}``) on purpose, because they default the value in code and have
 no empty-value check of their own. The tests at the end cover that layer: the two forms are
 reconciled by ``trust/Makefile`` refusing an explicitly-empty value before either stack runs.
@@ -41,7 +41,7 @@ COMPOSE = XNAT_DIR / "docker-compose-stack.yml"
 TRUST_DIR = XNAT_DIR.parent
 INIT_JOB = TRUST_DIR / "deploy" / "helm" / "templates" / "xnat-init-job.yaml"
 # The trust-core compose files: the AE title's consumers outside the XNAT stack.
-TRUST_COMPOSES = [TRUST_DIR / "deploy" / f"compose_trust.{env}.yml" for env in ("development", "production")]
+TRUST_COMPOSES = [TRUST_DIR / "deploy" / f"compose_trust.{env}.yml" for env in ("development", "prod")]
 
 
 def make_vars(*names: str, **overrides: str) -> dict[str, str]:
@@ -246,7 +246,7 @@ def dry_run_trust_up(tmp_path, kit_lines: str, *overrides: str) -> subprocess.Co
             "up-trust",
             "KIT=Probe",
             f"KIT_FILE={kit}",
-            "PROD=",
+            "HUB=",
             "MAIN_ENV_FILE=.env.absent-for-deploy-wiring-test",
             *overrides,
         ],

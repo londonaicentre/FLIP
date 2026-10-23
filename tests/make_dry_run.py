@@ -128,7 +128,7 @@ def run_target(
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy(REPO / rel, dst)
         shutil.copy(REPO / "trust" / "xnat" / ".env", root / "trust" / "xnat" / ".env")
-        (root / "trust" / ".env.SCR.production").write_text(kit)
+        (root / "trust" / ".env.SCR.prod").write_text(kit)
         # scripts/ paths are referenced relative to trust/, so the resolver must exist to
         # be printed; an empty file is enough for -n.
         (root / "scripts").mkdir()
@@ -146,12 +146,12 @@ def run_target(
                 *files,
                 target,
                 "KIT=SCR",
-                "PROD=true",
+                "HUB=prod",
                 *extra,
             ],
             capture_output=True,
             text=True,
-            env={**_without_make_vars(os.environ), "PROD": "true", **(env or {})},
+            env={**_without_make_vars(os.environ), "HUB": "prod", **(env or {})},
             timeout=60,
         )
 

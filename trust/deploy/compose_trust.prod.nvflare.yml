@@ -87,7 +87,7 @@ services:
       # `make up-trust`'s ownership-aware $(ensure_net_dirs) all do this — a
       # Docker- or sudo-created root-owned source dir breaks those writes.
       # Unset BASE_IMAGES_DOWNLOAD_DIR in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}
-      # (see imaging-api in compose_trust.production.yml for the full rationale;
+      # (see imaging-api in compose_trust.prod.yml for the full rationale;
       # mirrors ORTHANC_STORAGE_DIR's default).
       - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}/net-1:/app/data/images/net-1
       # Provisioned FLARE secrets (certificates, fed_client.json).
@@ -134,7 +134,7 @@ services:
       fl-governance-init:
         condition: service_completed_successfully
     shm_size: '8gb'
-    # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
+    # GPU passthrough via compose_trust.prod.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
   # TODO add second FL network when needed
   # fl-client-net-2:
@@ -165,7 +165,7 @@ services:
   #     - FL_SITE_PRIVACY_PERCENTILE=${FL_SITE_PRIVACY_PERCENTILE:-}
   #     - FL_SITE_PRIVACY_GAMMA=${FL_SITE_PRIVACY_GAMMA:-}
   #   shm_size: '8gb'
-  #   # GPU passthrough: add fl-client-net-2 to compose_trust.production.gpu.yml when enabling this net
+  #   # GPU passthrough: add fl-client-net-2 to compose_trust.prod.gpu.yml when enabling this net
 
 
 networks:

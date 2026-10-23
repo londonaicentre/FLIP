@@ -97,7 +97,7 @@ services:
     user: "${UID:-1000}:1000"
     volumes:
       # This net's slice of the images download directory, at the unchanged container
-      # path — see compose_trust.production.nvflare.yml for the least-privilege
+      # path — see compose_trust.prod.nvflare.yml for the least-privilege
       # rationale; `make up-trust` / `up-fl-clients` pre-create the host net dirs.
       # The :? guard keeps an unset var loud — a bare ${VAR}/net-1 would silently
       # mount a root-created /net-1 from the host's filesystem root.

@@ -139,8 +139,8 @@ leaves those keys alone:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> HUB=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. warning::
 
@@ -196,7 +196,7 @@ wait budget. Helm has already applied the new spec by then, so the error names H
 .. code-block:: shell
 
    kubectl get job -n flip-trust -w
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
 If the job is wedged rather than slow, set ``xnat.initJob.enabled: false`` in your values file (``VALUES_FILE``, see
 "Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`), deploy, and run
@@ -244,7 +244,7 @@ duration:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
 If a stalled pod from reason 2 is still stuck, delete it (``kubectl -n flip-trust delete pod <pod>``) so the new one
 can take the volume. Then confirm the pod was replaced and send a test study:
@@ -378,7 +378,7 @@ account for an hour.
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      curl -s -X DELETE -u admin:<admin-pass> \
      "http://localhost:8080/xapi/users/flipServiceAccount?permanently=true"
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. _ts-k8s-dcm2niix-not-registered:
 
@@ -637,7 +637,7 @@ every later upgrade skips it. Force one reload: set ``trustData.seed.forceDicomV
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> VALUES_FILE=<your values file>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> VALUES_FILE=<your values file>
 
 .. important::
 
@@ -708,7 +708,7 @@ trust-api heartbeats fail with 401
 
   .. code-block:: shell
 
-     make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>
+     make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>
 
 - **No heartbeat at all:** check that ``CENTRAL_HUB_API_URL`` is right and that the egress policy lets trust-api
   reach it on 443.
@@ -733,7 +733,7 @@ Other pods in the namespace can reach the FL server address.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 If you manage the values by hand, add the port to ``networkPolicies.allowedEgressPorts``.
 
@@ -769,8 +769,8 @@ silently dropped rule would be worse than none, because the operator would belie
 
 .. code-block:: shell
 
-   make -C trust check-governance KIT=<CODE> PROD=<env>
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust check-governance KIT=<CODE> HUB=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. _ts-k8s-governance-ignored:
 

@@ -75,8 +75,8 @@ Components
 Deployment targets
 ******************
 
-The Central Hub runs on AWS, provisioned with Terraform/OpenTofu, either self-contained in one account or on a
-Landing Zone Accelerator estate. See :ref:`deploy-central-hub`.
+The Central Hub runs on AWS, provisioned with Terraform/OpenTofu, on a Landing Zone Accelerator estate. See
+:ref:`deploy-central-hub`.
 
 A FLIP node runs in one of three ways:
 

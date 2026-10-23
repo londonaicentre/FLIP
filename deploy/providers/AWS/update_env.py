@@ -73,7 +73,6 @@ def main() -> None:
     # Extract values safely
     try:
         db_endpoint = outputs["DbEndpoint"]["value"]
-        db_secret_arn = outputs["DbSecretArn"]["value"]
         cognito_user_pool_id = outputs["CognitoUserPoolId"]["value"]
         cognito_app_client_id = outputs["CognitoAppClientId"]["value"]
     except KeyError as e:
@@ -92,7 +91,6 @@ def main() -> None:
         # (e.g. http://flip-api:8000/api) — it must not cross CloudFront because that strips
         # X-Internal-Service-Key at the edge.
         # Set both values manually in the env file.
-        "POSTGRES_SECRET_ARN": db_secret_arn,
         "AWS_COGNITO_USER_POOL_ID": cognito_user_pool_id,
         "AWS_COGNITO_APP_CLIENT_ID": cognito_app_client_id,
     }

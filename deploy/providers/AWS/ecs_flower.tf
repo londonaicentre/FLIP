@@ -14,7 +14,7 @@
 
 # Flower-only (fl_backend=flower): one-shot task registering the SuperNode
 # public keys with the SuperLink after the FL services come up — the ECS
-# analogue of compose.production.flower.yml's register-supernode-keys-net-1
+# analogue of compose.prod.flower.yml's register-supernode-keys-net-1
 # service. The script (/scripts/register-supernode-keys.sh, baked into the
 # SuperLink image) reads the per-slot keys from EFS, registers each with the
 # SuperLink over the Control API, and maps the resulting node_ids on the fl-api.

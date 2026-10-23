@@ -143,8 +143,6 @@ variable "managed_role_names" {
     "ecs-fl-server-task-role",
     # rds_proxy.tf
     "flip-rds-proxy-role",
-    # security.tf
-    "flip-sg-drift-lambda-role",
     # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
     "ec2-role",
     "trust-ec2-role",
@@ -196,7 +194,7 @@ variable "create_permissions_boundary" {
 
 # The AWS services an apply may call, as IAM service prefixes; each becomes
 # `<prefix>:*` in the apply role's inline policy, limited to this region plus
-# us-east-1 (CloudFront's certificate and WAF live there). The list is the FLIP
+# us-east-1 (CloudFront's control plane lives there). The list is the FLIP
 # root's own, derived from the resource types it declares, and
 # tests/test_terraform_ci_bootstrap.py holds the two equal in both directions: a
 # FLIP change that starts using a new service fails CI until the service is added
@@ -209,15 +207,12 @@ variable "apply_service_prefixes" {
   default = [
     "acm",
     "cloudfront",
-    "cloudwatch",
     "cognito-idp",
     "ec2",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
-    "events",
     "kms",
-    "lambda",
     "logs",
     "rds",
     "route53",
@@ -225,10 +220,7 @@ variable "apply_service_prefixes" {
     "secretsmanager",
     "servicediscovery",
     "ses",
-    "sns",
-    "sqs",
     "ssm",
-    "wafv2",
   ]
 
   validation {

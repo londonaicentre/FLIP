@@ -35,7 +35,7 @@ on:
       - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
-      # The Makefile derives the kit env token from PROD through it.
+      # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
   push:
     branches: [develop, main]
@@ -50,7 +50,7 @@ on:
       - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
-      # The Makefile derives the kit env token from PROD through it.
+      # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
   workflow_dispatch:
 
