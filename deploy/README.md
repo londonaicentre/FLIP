@@ -213,6 +213,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
 | xnat-dcm2niix | `1001:1001` (numeric; no named user in the image) | `USER 1001:1001` in the dcm2niix Dockerfile — xnat-web's uid, so the NIfTIs it writes onto the Container Service's build mount carry the one owner everything else under `xnat-data` has (XNAT reads them back off that mount), and a service the Container Service can hand arbitrary host mounts does not run as root. Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
+| xnat-export-mask | `1001:1001` (numeric) | `USER 1001:1001` in `trust/xnat/export-mask/Dockerfile`, for the same reasons as xnat-dcm2niix. Launched by the Container Service per saved OHIF mask, MONAI Label trusts only. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -288,20 +289,21 @@ container.
 > (config/archive/build/cache/plugins), so `make up`'s XNAT configure step fails on both trusts
 > (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
 > from a branch whose images are not yet published, build the hardened images locally:
-> `make up BUILD=true` covers the compose-built services (including orthanc), and the XNAT stack
-> needs `make -C trust/xnat build DOCKER_REGISTRY= DOCKER_TAG=dev` followed by redeploying the
-> stack with the same `DOCKER_REGISTRY=`/`XNAT_TAG=dev` overrides so `docker stack deploy`
-> resolves the locally built image instead of the GHCR one.
+> `make up BUILD=true` covers the compose-built services (including orthanc and omop-db) and the
+> XNAT stack, which it builds and deploys at the local-only `:dev` tag (or a command-line `XNAT_TAG`) so `docker stack deploy`
+> runs the locally built images instead of the GHCR ones.
 
 ### Docker Socket Isolation (XNAT Container Service)
 
 XNAT's Container Service plugin launches processing containers — currently
 `ghcr.io/londonaicentre/xnat-dcm2niix` (a version-pinned build of dcm2niix; see
 `trust/xnat/dcm2niix/`), which every project created with DICOM→NIfTI conversion enabled
-triggers automatically on scan archive. That GHCR package must be **public** — the Container
-Service pulls it with no credentials, and org packages default to private, so a first publish (or
+triggers automatically on scan archive, and on MONAI Label trusts
+`ghcr.io/londonaicentre/xnat-export-mask` (`trust/xnat/export-mask/`), triggered by every mask
+saved in the OHIF viewer. Those GHCR packages must be **public** — the Container
+Service pulls them with no credentials, and org packages default to private, so a first publish (or
 any package recreate) needs a one-off operator visibility flip; see
-[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-package-must-be-public).
+[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-packages-must-be-public).
 It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
 which is a root-equivalent capability: anything that compromises XNAT can exec into any container
 on the host, start privileged containers, or mount arbitrary host paths.

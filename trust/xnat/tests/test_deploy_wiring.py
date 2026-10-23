@@ -29,6 +29,7 @@ These run make and read the deployment files; they never invoke docker.
 import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -46,9 +47,9 @@ TRUST_COMPOSES = [TRUST_DIR / "deploy" / f"compose_trust.{env}.yml" for env in (
 def make_vars(*names: str, **overrides: str) -> dict[str, str]:
     """Resolves Make variables by evaluating them in a throwaway target.
 
-    ``--eval`` appends the target after the makefiles are read, so the values are the ones a real
-    deploy would use. Only variables are expanded — no recipe from the Makefile itself runs, so
-    this needs neither docker nor a swarm.
+    The probe is read as a second ``-f`` after the Makefile (``--eval`` needs make 3.82), so the
+    values are the ones a real deploy would use. Only variables are expanded — no recipe from the
+    Makefile itself runs, so this needs neither docker nor a swarm.
 
     Args:
         *names: Make variable names to resolve.
@@ -60,13 +61,16 @@ def make_vars(*names: str, **overrides: str) -> dict[str, str]:
     # One recipe line per variable: make splits a recipe on newlines, so a single multi-line echo
     # reaches the shell as several unterminated commands.
     probe = "__probe:\n" + "".join(f"\t@echo '{n}=$({n})'\n" for n in names)
-    result = subprocess.run(
-        ["make", "--eval", probe, "__probe", *(f"{k}={v}" for k, v in overrides.items())],
-        cwd=XNAT_DIR,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    with tempfile.NamedTemporaryFile("w", suffix=".mk") as probe_mk:
+        probe_mk.write(probe)
+        probe_mk.flush()
+        result = subprocess.run(
+            ["make", "-f", "Makefile", "-f", probe_mk.name, "__probe", *(f"{k}={v}" for k, v in overrides.items())],
+            cwd=XNAT_DIR,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
     assert result.returncode == 0, result.stdout + result.stderr
     resolved = {}
     for line in result.stdout.splitlines():
@@ -316,7 +320,9 @@ def run_xnat_reset(tmp_path, **overrides: str) -> subprocess.CompletedProcess:
     test_data_dir_ownership.py: since FLIP#1096 the development branch provisions with
     ``sudo mkdir``/``sudo chown`` and then *verifies* the ownership it asked for, so a no-op
     ``sudo`` leaves the tree uncreated and the recipe fails in the ownership guard rather than
-    on the ports these tests are about. Running unprivileged is also what a developer does.
+    on the ports these tests are about. Running unprivileged is also what a developer does, so the
+    container uid is the caller's own (as in test_data_dir_ownership.py): a chown to 1001 needs
+    root unless the host user happens to be 1001.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -330,6 +336,8 @@ def run_xnat_reset(tmp_path, **overrides: str) -> subprocess.CompletedProcess:
             "xnat-reset",
             "KIT=GSTT",
             f"XNAT_DATA_DIR={tmp_path / 'data'}",
+            f"XNAT_CONTAINER_UID={os.getuid()}",
+            f"XNAT_CONTAINER_GID={os.getgid()}",
             *(f"{k}={v}" for k, v in overrides.items()),
         ],
         cwd=XNAT_DIR,

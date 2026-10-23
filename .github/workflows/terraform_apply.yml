@@ -38,7 +38,7 @@
 # refs/heads/{develop,main}.
 #
 # Release applies (FLIP#1283). release.yml dispatches this workflow on
-# refs/heads/main with `release_tag: v<X.Y.Z>` once the twelve image builds it
+# refs/heads/main with `release_tag: v<X.Y.Z>` once the fourteen image builds it
 # fired at the tag have gone green, and the tag is forwarded to the resolver as
 # RELEASE_TAG. Three consequences worth stating plainly:
 #

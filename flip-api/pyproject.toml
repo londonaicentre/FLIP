@@ -12,7 +12,7 @@
 
 [project]
 name = "flip-api"
-version = "0.13.0"
+version = "0.13.1"
 description = ""
 readme = "README.md"
 authors = [
@@ -129,7 +129,12 @@ exclude = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Emergency cooldown override (CONTRIBUTING.md, "Emergency override"): admit the critical-advisory fix
+# certifi 2026.10.19 before the 3-day cooldown does. Each cutoff is that release's upload time, so
+# nothing newer gets in, and it also freezes the package: remove it after 2026-10-23T15:13Z (#1618).
+exclude-newer-package = { certifi = "2026-10-20T02:25:00Z" }
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847; transitive via httpx, starlette, watchfiles
+    "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
 ]

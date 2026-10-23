@@ -55,6 +55,7 @@ To iterate locally **before pushing**, build them tagged `:dev` from the repo ro
 ```bash
 make build-fl                  # builds flare-fl-{base,server,client,api}:dev (base first, then derived)
 make build-fl LOCAL_DEV=true   # include dev-only deps (e.g. plotting for the diffusion app)
+make build-fl DOCKER_FL_TAG=rc # tag the whole chain :rc instead — on a shared host :dev is daemon-wide
 ```
 
 Then run the stack on those local images instead of GHCR:

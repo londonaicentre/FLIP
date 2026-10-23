@@ -102,7 +102,14 @@ make build
 ```
 
 This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.manifest` (or copies them from
-`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
+`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${XNAT_TAG}`
+(`XNAT_TAG` defaults to `DOCKER_TAG`).
+
+`make up BUILD=true` (from the repo root) runs this build before deploying each trust's stack, at `XNAT_TAG=dev`. The tag
+must be one the registry does not have: the swarm agent re-pulls a tag on every deploy and keeps the local image only
+when that pull fails, so a local `:stag` build would be replaced by the registry's `:stag`. Tags are daemon-wide, so a
+second stack on the same host (a release check) passes its own on the command line, e.g. `XNAT_TAG=rel0130`; an
+`XNAT_TAG` in the kit is a pull pin and is ignored under `BUILD=true`.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
@@ -124,10 +131,16 @@ refuses a stale registration is the one listed there) and re-run `configure-dcm2
 `xnat-init` job on Kubernetes, if the image named there is not the current pin. Both update the
 existing command in place, so its ids, and every project's trigger, survive the move (FLIP#1451).
 
-#### Operator action: the GHCR package must be public
+MONAI Label trusts also run a fifth image, `ghcr.io/londonaicentre/xnat-export-mask` (built from
+[`export-mask/`](export-mask/), published by `docker_build_xnat_export_mask.yml`): the `export_mask`
+command that turns an OHIF DICOM-SEG assessor into NIfTI. Its version tag lives in the Dockerfile's
+`EXPORT_MASK_VERSION`, and `tests/test_export_mask_image_pin.py` holds
+[`xnat/config/export_mask_command.json`](xnat/config/export_mask_command.json) to it.
 
-**After the first publish, and again after any delete-and-recreate of the package, set
-`ghcr.io/londonaicentre/xnat-dcm2niix` to public.** New org packages default to **private**, and
+#### Operator action: the GHCR packages must be public
+
+**After the first publish, and again after any delete-and-recreate of a package, set
+`ghcr.io/londonaicentre/xnat-dcm2niix` (and `xnat-export-mask`) to public.** New org packages default to **private**, and
 `GITHUB_TOKEN` cannot change a package's visibility, so the publish workflow cannot do this for you:
 
 > github.com/orgs/londonaicentre/packages/container/xnat-dcm2niix/settings → Danger Zone →
@@ -342,7 +355,7 @@ The following table lists the plugin versions for the XNAT version `1.10.0` used
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
 | Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
-| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | **Install** — 3.8.0 is the plugin's XNAT 1.10 release; it ships in every deployment mode (Swarm image, dev cache, Helm chart) |
+| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | **Install** — 3.8.0 is the plugin's XNAT 1.10 release; it ships in every deployment mode (Swarm image, dev cache, Helm chart); the optional MONAI Label server registers through it — see [MONAI Label](../README.md#monai-label-optional) |
 
 Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not

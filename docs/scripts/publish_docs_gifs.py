@@ -22,6 +22,7 @@ The dataset holds one copy of every documentation GIF, at an unversioned path::
 
     admin/<name>.gif    one per flip-ui/test/cypress/docs/admin/<name>.spec.ts
     flip/<name>.gif     one per flip-ui/test/cypress/docs/flip/<name>.spec.ts
+    <cat>/<name>.gif    one per line of docs/scripts/live-recorded-gifs.txt (recorded on a live trust)
     manifest.json       version, source_commit, recorded_at, workflow_run, per-file sha256 + bytes
     README.md           the dataset card (docs/scripts/docs_gifs_card.md)
 
@@ -30,10 +31,15 @@ builds fetch the newest, and ``release.yml`` tags the one each release ships (``
 FLIP#1547). A recording made by hand — GIFs CI cannot record, such as ones that need a live trust — goes to the
 branch ``pr-<N>`` of the PR that documents them, which that PR's ReadTheDocs preview fetches.
 
+The GIFs listed in ``docs/scripts/live-recorded-gifs.txt`` are only ever recorded by hand. One missing from
+``--gifs-dir`` is carried forward from the first dataset ref that has it — each ``--carry-from`` (the CI workflow
+passes the merged PR's ``pr-<N>``, so the hand recording that PR previewed reaches ``main``), then the target
+branch, then ``main`` — checked against that ref's manifest.
+
 A recording's version is ``YYYYMMDDTHHMMSSZ-<sha7>``: the UTC instant it started and the commit it was recorded
 from (the CI workflow mints it before Cypress runs, and the manifest's ``recorded_at`` is read back from it).
-Publishing is: add the GIF of every demo spec, delete the branch's GIFs whose spec is gone, add the manifest
-and the card, in one commit.
+Publishing is: add the GIF of every demo spec and live recording, delete the branch's GIFs no longer called for,
+add the manifest and the card, in one commit.
 
 Usage (needs ``hf auth login`` with write access, or ``HF_TOKEN``; the CI publish job passes ``--branch main``,
 ``--version``, ``--source-commit`` and ``--workflow-run`` explicitly)::
@@ -56,7 +62,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi
+from huggingface_hub import CommitOperationAdd, CommitOperationDelete, HfApi, hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError, RevisionNotFoundError
 
 DOCS_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = DOCS_DIR.parent
@@ -64,6 +71,8 @@ DEFAULT_REPO = os.environ.get("FLIP_DOCS_GIFS_REPO", "aicentreflip/docs-gifs")
 DEFAULT_GIFS_DIR = DOCS_DIR / "source" / "assets" / "generated" / "gifs"
 DEFAULT_SPECS_DIR = REPO_ROOT / "flip-ui" / "test" / "cypress" / "docs"
 DEFAULT_CARD = DOCS_DIR / "scripts" / "docs_gifs_card.md"
+DEFAULT_LIVE_LIST = DOCS_DIR / "scripts" / "live-recorded-gifs.txt"
+GIF_PATH_RE = re.compile(r"[a-z-]+/[a-z0-9-]+\.gif")
 MANIFEST_NAME = "manifest.json"
 SPEC_SUFFIX = ".spec.ts"
 # Directories under the specs tree that hold support code rather than recordings.
@@ -78,11 +87,35 @@ BRANCH_RE = re.compile(r"main|pr-\d+")
 Operation = CommitOperationAdd | CommitOperationDelete
 
 
-def expected_gifs(specs_dir: Path) -> list[str]:
-    """``<category>/<name>.gif`` for every ``<category>/<name>.spec.ts`` under the specs tree, sorted.
+def live_gifs(live_list: Path | None) -> list[str]:
+    """The ``<category>/<name>.gif`` lines of the live-recorded list (comments and blanks skipped).
 
     Raises:
-        SystemExit: If a spec is not exactly one directory deep, or there are none.
+        SystemExit: If a line is not a ``<category>/<name>.gif`` path.
+    """
+    if live_list is None or not live_list.is_file():
+        return []
+    paths = []
+    for line in live_list.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if not GIF_PATH_RE.fullmatch(line):
+            raise SystemExit(f"❌ {live_list}: {line!r} is not <category>/<name>.gif (lowercase, hyphens)")
+        paths.append(line)
+    return paths
+
+
+def expected_gifs(specs_dir: Path, live_list: Path | None = None) -> list[str]:
+    """``<category>/<name>.gif`` for every ``<category>/<name>.spec.ts`` under the specs tree, plus every GIF
+    recorded on a live trust (``live_list``), sorted.
+
+    Raises:
+        SystemExit: If a spec is not exactly one directory deep, there are none, or a live-recorded GIF has the
+            same path as a spec's.
+
+    ``live_list`` defaults to docs/scripts/live-recorded-gifs.txt, read at call time; a path that does not
+    exist means none.
     """
     paths = []
     for spec in sorted(specs_dir.rglob(f"*{SPEC_SUFFIX}")):
@@ -95,7 +128,50 @@ def expected_gifs(specs_dir: Path) -> list[str]:
         paths.append(f"{category}/{filename.removesuffix(SPEC_SUFFIX)}.gif")
     if not paths:
         raise SystemExit(f"❌ no <category>/<name>{SPEC_SUFFIX} under {specs_dir}")
-    return paths
+    live = live_gifs(DEFAULT_LIVE_LIST if live_list is None else live_list)
+    clash = sorted(set(paths) & set(live))
+    if clash:
+        raise SystemExit(f"❌ {', '.join(clash)}: both a Cypress spec and a live recording; keep one")
+    return sorted(paths + live)
+
+
+def carry_forward(gifs_dir: Path, live: list[str], repo: str, refs: list[str], download) -> list[str]:
+    """Copy each live-recorded GIF missing from ``gifs_dir`` from the first of ``refs`` that has it; returns those
+    copied.
+
+    A CI publish records only the Cypress GIFs, so without this every publish would drop the live ones.
+    ``download(filename, ref) -> local path`` fetches one file at one dataset ref; each GIF is checked against the
+    sha256 that ref's manifest records, so a carried GIF is byte-for-byte the one already published.
+
+    Raises:
+        SystemExit: If a live GIF is missing locally and no ref has it, or its bytes do not match the manifest.
+    """
+    manifests: dict[str, dict[str, Any]] = {}
+
+    def files_at(ref: str) -> dict[str, Any]:
+        if ref not in manifests:
+            try:
+                manifests[ref] = json.loads(Path(download(MANIFEST_NAME, ref)).read_text()).get("files", {})
+            except (RevisionNotFoundError, EntryNotFoundError):
+                manifests[ref] = {}  # a pr-<N> nobody published, or a ref from before the manifest
+        return manifests[ref]
+
+    missing = [path for path in live if not (gifs_dir / path).is_file()]
+    for path in missing:
+        ref = next((ref for ref in refs if path in files_at(ref)), None)
+        if ref is None:
+            raise SystemExit(
+                f"❌ {path} is on none of {', '.join(refs)} in {repo} — record it on a live trust first "
+                "(docs/scripts/live-recorded-gifs.txt says how)"
+            )
+        source = Path(download(path, ref))
+        if sha256_of(source) != files_at(ref)[path]["sha256"]:
+            raise SystemExit(f"❌ {path} from {repo}@{ref} does not match that ref's manifest")
+        target = gifs_dir / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+        print(f"↪️  carried {path} forward from {ref}")
+    return missing
 
 
 def make_version(source_commit: str, now: datetime) -> str:
@@ -216,6 +292,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gifs-dir", type=Path, default=DEFAULT_GIFS_DIR, help="the <category>/<name>.gif tree")
     parser.add_argument("--specs-dir", type=Path, default=DEFAULT_SPECS_DIR, help="the demo specs defining the set")
     parser.add_argument("--card", type=Path, default=DEFAULT_CARD, help="the dataset card, published as README.md")
+    parser.add_argument(
+        "--live-list", type=Path, default=DEFAULT_LIVE_LIST, help="GIFs recorded on a live trust, not by Cypress"
+    )
+    parser.add_argument(
+        "--carry-from",
+        action="append",
+        default=[],
+        help="a dataset ref to take a missing live-recorded GIF from, before --branch and main (repeatable)",
+    )
     parser.add_argument("--repo", default=DEFAULT_REPO)
     parser.add_argument("--dry-run", action="store_true", help="list the operations; upload nothing")
     parser.add_argument("--allow-any-version", action="store_true", help="publish a --version of another shape")
@@ -241,9 +326,17 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"❌ {version} does not name --source-commit {args.source_commit[:7]}")
     recorded_at = version_timestamp(version) or now.strftime(RECORDED_AT_FORMAT)
 
+    expected = expected_gifs(args.specs_dir, args.live_list)
+    carry_forward(
+        args.gifs_dir,
+        live_gifs(args.live_list),
+        args.repo,
+        list(dict.fromkeys([*args.carry_from, args.branch, "main"])),
+        lambda filename, ref: hf_hub_download(args.repo, filename, repo_type="dataset", revision=ref),
+    )
     manifest = build_manifest(
         args.gifs_dir,
-        expected_gifs(args.specs_dir),
+        expected,
         version=version,
         source_commit=args.source_commit,
         recorded_at=recorded_at,

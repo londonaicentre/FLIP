@@ -13,7 +13,7 @@
 
 [project]
 name = "flip-fl-api-flower"
-version = "0.13.0"
+version = "0.13.1"
 description = "FL API for Flower deployment runtime."
 requires-python = ">=3.12,<3.14"
 dependencies = [
@@ -40,14 +40,21 @@ dev = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Emergency cooldown override (CONTRIBUTING.md, "Emergency override"): admit the critical-advisory fixes
+# certifi 2026.10.19 and uv 0.13.4 before the 3-day cooldown does. Each cutoff is that release's upload time, so
+# nothing newer gets in, and it also freezes the package: remove it after 2026-10-23T15:13Z (#1618).
+exclude-newer-package = { certifi = "2026-10-20T02:25:00Z", uv = "2026-10-20T15:13:00Z" }
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847, CVE-2026-63349; transitive via httpx, starlette, watchfiles
+    "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
 ]
 # flwr pins cryptography<47.0.0 even in its latest release (GHSA-537c-gmf6-5ccf
 # needs >=48.0.1); override past that ceiling since flwr only uses cryptography
 # for TLS cert loading in secure aggregation, a stable surface across majors.
-override-dependencies = ["cryptography>=50.0.0"]
+# flwr 1.38 also pins uv<0.12 for its per-run app install, which FLIP does not use (#1418); override it so
+# uv>=0.13.4 (GHSA-hq85-5cpj-mr62, the same compromised CA root as certifi) can be installed.
+override-dependencies = ["cryptography>=50.0.0", "uv>=0.13.4"]
 
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]

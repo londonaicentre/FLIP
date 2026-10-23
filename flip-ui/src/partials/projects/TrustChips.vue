@@ -36,7 +36,7 @@
         <span v-if="remainingTrustCount > 0" class="text-xs text-gray-500 dark:text-gray-300">
             +{{ remainingTrustCount }}
         </span>
-        <span v-if="!sortedTrusts.length" class="text-xs text-gray-400 dark:text-gray-300 italic">
+        <span v-if="!sortedTrusts.length" class="text-sm text-gray-500 dark:text-gray-300 italic">
             No trusts staged
         </span>
     </div>

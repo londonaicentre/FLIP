@@ -37,6 +37,7 @@ To iterate locally **before pushing**, build them tagged `:dev`:
 ```bash
 make -C fl-services/flower build                  # flwr-base first, then superlink/supernode/fl-api
 make -C fl-services/flower build LOCAL_DEV=true   # include dev-only deps
+make -C fl-services/flower build DOCKER_FL_TAG=rc  # tag the whole chain :rc instead — on a shared host :dev is daemon-wide
 make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub stack on local images
 ```
 

@@ -55,8 +55,10 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 # equivalent, forcing the upgrade past flwr's declared ceiling. Safe for the same reason
 # recorded there: flwr only uses cryptography for TLS cert loading in secure aggregation,
 # a stable surface across majors.
-# pip does not apply flip-utils' UV constraints; carry the setuptools security floor here too.
+# pip does not apply flip-utils' UV constraints; carry its security floors here too: setuptools, and certifi
+# and uv (GHSA-6q48-6c7w-9gw2, GHSA-hq85-5cpj-mr62), which flwr/base ships and flwr pins below the uv fix.
 RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" "setuptools>=83.0.0" \
+      "certifi>=2026.10.19" "uv>=0.13.4" \
       --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to

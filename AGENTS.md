@@ -27,11 +27,12 @@ FLIP/
 │   ├── xnat/           # Mocked XNAT medical-imaging archive
 │   ├── observability/  # Grafana + Loki monitoring stack (alloy/grafana/loki)
 │   └── deploy/         # The trust node in its shapes (#1213): compose_trust.*.yml (Compose on a host) plus the two below
-│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. Verify the DICOM path with `make -C trust/deploy/helm status` (compares the running xnat-web pod's plugin jars against `xnat.web.plugins.urls`, and fails one XNAT did not load) and `smoke-cstore` (a real C-STORE through the mocked PACS, then greps the receiver's `dicom.log`) — a C-ECHO never reaches XNAT's importer and passes while every store aborts
+│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled with the default `flClient.kit.source=hostPath`). On a managed node pool (AKS) the kit lives in a Secret instead: `make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir>` (a Flower kit must hold only `ca.crt` and its own credential) and `flClient.kit.source=secret`, which `values-aks.yaml` sets along with Postgres data below `lost+found` and the S3 vocab load off. Platform overlays go in `PLATFORM_VALUES`, or in the kit file's `K8S_PLATFORM_VALUES` so every deploy and upgrade of that trust keeps them. On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. Verify the DICOM path with `make -C trust/deploy/helm status` (compares the running xnat-web pod's plugin jars against `xnat.web.plugins.urls`, and fails one XNAT did not load) and `smoke-cstore` (a real C-STORE through the mocked PACS, then requires the receiver's own evidence that the object landed — a new `received.log` line or prearchive object — and fails on an importer error in `dicom.log` or the xnat-web log; `dicom.log` is XNAT's error log, so its growth never counts as receipt, FLIP#1411) — a C-ECHO never reaches XNAT's importer and passes while every store aborts. `make -C trust/deploy/helm selftest` runs the trust self-test checklist (the VM node self-test's, FLIP#1406) against the deployed release and writes a JSON + markdown report (FLIP#1390)
 │       └── ansible/    # roles/ — ONE set of trust-host roles (base packages, docker, dirs with the uid rules, FL kit by source s3|precreate|none, observability config, S3 vocab) composed by onprem.yml (site-owned host; no data — `make -C trust up-trust` seeds it) and by deploy/providers/AWS/site.yml (EC2; adds inventory/AWS CLI/bastion/CloudWatch and its own seed play, finds the roles via its ansible.cfg). onprem.yml is still driven by `make -C deploy/providers/AWS provision-local-trust` (needs the hub env file — the known exception to "providers = Terraform only")
 ├── deploy/             # Central Hub Docker Compose files (dev/prod, flower/nvflare) + deploy/keycloak/ (the dev identity provider's realm, FLIP#919); FL network provisioning lives under fl-services/<backend>/
 │   └── providers/      # Infrastructure provisioning ONLY (Terraform per cloud); node shapes live under trust/deploy/
-│       └── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       ├── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       └── azure/      # Azure trust node (#1390): bootstrap root (state, budget alert; no outbound IP, the node's network owns its egress), modules/network, vm root whose cloud-init installs flip-node (provisions with trust/deploy/ansible/azure.yml, runs the hubless self-test), and aks root (a one-node AKS cluster for the flip-trust chart, instead of the VM); driven by its own Makefile, the VM over Run Command, AZ_SUBSCRIPTION mandatory
 ├── docs/               # Sphinx documentation (ReadTheDocs)
 └── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
 ```
@@ -111,12 +112,17 @@ make undeploy-trust-k8s    # Remove trust services from Kubernetes
 #### Dev image sourcing: pull-by-default
 
 In development (`PROD` unset), `make up` **pulls** the repo-built services
-(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`, `omop-db`) from GHCR
 rather than building them — they carry `image:` + `pull_policy: always` in the dev
 compose, with local `src/` bind-mounted on top so live reload still runs your
 working copy. Pass `BUILD=true` (e.g. `make up BUILD=true`) to rebuild from source
 instead — required after a dependency (`uv.lock`/`pyproject.toml`) or Dockerfile
-change, since those live in the image layer, not the mounted `src/`.
+change, since those live in the image layer, not the mounted `src/`. It also builds the
+XNAT images (`xnat-web`, `xnat-db`, `xnat-nginx`, via `make -C trust/xnat build`, which fetches
+the WAR and plugins) and deploys them at the unpublished `:dev` tag — the swarm agent re-pulls a
+tag on every deploy and would replace a local `:stag` build with the registry's. Tags are
+daemon-wide, so a second stack on the host (a release check) passes its own: `XNAT_TAG=<tag>` on
+the command line (e.g. `make up BUILD=true XNAT_TAG=rel0130`).
 
 - **Prerequisite:** be logged into GHCR (`docker login ghcr.io`) and have the
   `${DOCKER_TAG}` tag published (dev defaults to `:stag`, the `develop` build).
@@ -155,6 +161,7 @@ make e2e_smoke                                  # defaults track FL_BACKEND (def
 make e2e_smoke FL_BACKEND=flower
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>" # reuse an approved project, skip the ~6 min re-pull
 make e2e_smoke EXTRA_ARGS="--no-imaging"        # tabular-only project (has_imaging=false, FLIP#1071)
+make e2e_smoke EXTRA_ARGS="--trusts <CODE>"  # PROD unset: vocabulary-free query_novocab.sql, so a Helm NO_VOCAB_LOAD=1 trust works
 ```
 
 The spleen and prostate tutorials additionally need a **data-enrichment** step (label upload to XNAT)
@@ -199,6 +206,29 @@ make tflint-lint           # Static tflint lint over deploy/providers/AWS (unuse
 make -C deploy/providers/AWS lint   # Three of validate_terraform.yml's checks over that tree (terraform fmt, TFLint, Checkov); no env file needed (FLIP#1440)
 ```
 
+### Azure trust node (FLIP#1390)
+
+```bash
+make -C deploy/providers/azure help                                   # every target
+make -C deploy/providers/azure bootstrap AZ_SUBSCRIPTION="<name>" STATE_SA=<unique> ALERT_EMAIL=<you>
+make -C deploy/providers/azure init plan apply AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure selftest-kit AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # pack the FL kit HERE, put it in the kit drop
+make -C deploy/providers/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # node fetches that kit and self-tests on it
+make -C deploy/providers/azure kit-upload AZ_SUBSCRIPTION="<name>" TARBALL=<flip-trust-kit-….tar.gz>
+make -C deploy/providers/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<kit> PROD=<env>  # install a hub-registered kit + up-onprem-trust
+make -C deploy/providers/azure destroy AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure aks-init aks-plan aks-apply AZ_SUBSCRIPTION="<name>"  # AKS instead of the VM (refused while the VM exists)
+make -C deploy/providers/azure aks-start AZ_SUBSCRIPTION="<name>"     # start, then admit your current IP to the API server (aks-allow-ip after an IP change; aks-stop, aks-destroy)
+make -C deploy/providers/azure aks-join TARBALL=<kit tarball> KIT=<slot> PROD=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then aks-deploy (the chart with values-aks/-small-node, no vocab load); aks-selftest, aks-clear-jobs
+make -C deploy/providers/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
+make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
+```
+
+`AZ_SUBSCRIPTION` is mandatory and never defaults to the CLI's subscription; no target skips
+Terraform's confirmation. The node receives kits only through the **kit drop** (`modules/kit_drop`: shared
+keys off, firewall = node subnet + operator IP, one-day blob expiry), fetched with its managed identity — never
+provisioned on the node and never in a Run Command parameter. Detail: [`deploy/providers/azure/README.md`](deploy/providers/azure/README.md).
+
 ### Debugging
 
 ```bash
@@ -242,6 +272,11 @@ git tag on `aicentreflip/trust-data`. The seed markers, what re-seeds, and the p
 assembles one mp4 (local dev tool, not run in CI; Playwright segments plus off-camera platform waits).
 Prerequisites, the `DEMO_ARGS` flags and the demo users:
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
+
+`make -C trust/monailabel-demo demo-video KIT=<CODE> XNAT_EXPERIMENT=<session>` records the MONAI Label
+walkthrough on a live trust (Playwright on the trust host: spleen CT segmented in the XNAT OHIF viewer,
+exported, converted by `export_mask`); it fails unless the NIfTI appears. See
+[`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md).
 
 ### Database migrations (flip-api)
 
@@ -288,6 +323,20 @@ make -C trust check-governance KIT=<CODE>   # Validate the trust's governance do
 make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE trust: data-access-api (+ FLARE clients), checks the logged digest
 make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch; report only without LAUNCH (trust/deploy/helm/TROUBLESHOOTING.md §2.3e)
 ```
+
+### Release pipeline (FLIP#1608)
+
+```bash
+make release-prepare TAG=vX.Y.Z [DRY_RUN=1]          # version bumps + make lock + empty Release checks; refuses unlabelled merged PRs
+make release-instance TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=10000] [FORCE=1]  # isolated rel<XYZ> instance, every image built here (release-gates runs it)
+make release-verify TAG=vX.Y.Z                       # the instance runs this commit (tags, working dir, /health, AES key)
+make release-gates TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=…] [GATES=a,b] [CONTINUE=1] [KEEP=1]  # GPU host: unit, integration, tutorials, instance, smokes, teardown -> release-gates/<TAG>/*.json
+make release-record TAG=vX.Y.Z [PR=<n>] [APPLY=1]    # Release checks section of .github/RELEASE_NOTES_TEMPLATE.md from those results
+make release-main-check TAG=vX.Y.Z [PR=<n>] [OWED=<file>]  # read-only: develop->main PR ready? + after-merge checklist (or the gh pr create command)
+```
+
+Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` runs them), tests in
+`scripts/tests/test_release_scripts.py`. The agent procedure on top: `.agents/skills/release/SKILL.md` (`/release`).
 
 ### Site release upgrades (FLIP#1204)
 
@@ -454,7 +503,7 @@ tree by `fl-tutorials/tests/test_flower_platform_parity.py`, run by `fl-tutorial
 `scripts/fl_round_metrics/**`). **Deploy-target tests** — `test_helm_chart.yml`
 (`trust/deploy/helm/**`), `test_local_trust_playbook.yml`
 (`trust/deploy/ansible/**` Ansible). **UI/release/branch hygiene** —
-`lighthouse_flip_ui.yml` (Lighthouse perf audit on `flip-ui/**`, push/PR/manual),
+`lighthouse_flip_ui.yml` (Lighthouse audit of the login page and, signed in through the AWS-free hub, the main pages; on `flip-ui/**`, push/PR/manual),
 `check-version-bump.yml` (blocks a PR to `main` from `develop` that doesn't bump the
 flip-utils version), `check-package-metadata.yml` (validates flip-utils package metadata on
 PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must originate from
@@ -504,8 +553,10 @@ accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS
 `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow
 passes on `develop` or `main`** — they trigger via `workflow_run` and a job-level `if` gates on
 success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
-build still only fires when that service changed. (`orthanc` and `xnat_*` keep their direct push
-trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead. `flip-ui`
+build still only fires when that service changed. (`orthanc`, `xnat_*` and `monailabel` keep their direct push
+trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead, and
+`monailabel` an in-job import smoke after reclaiming runner disk — its image is ~10.4 GB against
+ubuntu-latest's ~14 GB free. `flip-ui`
 is a CI smoke test that never publishes an image — the UI is built by `publish_ui.yml` after each apply,
 or by `make deploy-ui`, and never consumed from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
 hub ECS deploys pin — see
@@ -516,7 +567,7 @@ A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that 
 `:v<X.Y.Z>` (FLIP#1204) — release identity for the sites — and **only** that tag: the `sha-` tags belong to
 the branch build of the same commit and stay immutable (a second push would swap the image under a
 sha-pinned hub, with a different `FLIP_RELEASE` baked in). For a real release `release.yml`
-**dispatches** the twelve builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
+**dispatches** the fourteen builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
 pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
 workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).
 `.github/tests/workflows/test_release.py` pins the dispatch roster to the publishing workflows. Every
