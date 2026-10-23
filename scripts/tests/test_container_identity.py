@@ -58,9 +58,17 @@ KIT_WRITE_TARGETS = ("/app/local", "/app/transfer", "/app/admin/transfer")
 
 DEV_COMPOSE_FILES = (
     "deploy/compose.development.nvflare.yml",
+    "deploy/compose.development.flower.yml",
     "trust/deploy/compose_trust.development.nvflare.yml",
     "fl-services/nvflare/compose.dev.yml",
 )
+
+# Dev services that must not run as root, named rather than inferred: each reads
+# host-provisioned material and shares host-owned bind mounts with flip-api, so a root
+# process in them rewrites the operator's own files as root (FLIP#1320).
+NON_ROOT_DEV_SERVICES = {
+    "deploy/compose.development.flower.yml": ("fl-server-net-1", "fl-server-net-2"),
+}
 
 PROD_COMPOSE_GLOBS = (
     "deploy/compose.production*.yml",
@@ -106,6 +114,18 @@ class Service:
             if len(parts) >= 2 and parts[-1] in KIT_WRITE_TARGETS:
                 return True
         return False
+
+    def group_add_entries(self) -> list[str]:
+        """The inline `group_add: ["a", "b"]` entries, or [] when the key is absent.
+
+        Only the inline-list form is parsed: that is what every compose file here uses,
+        and a block list would need the real YAML load this module deliberately avoids.
+        """
+        for line in self.lines:
+            m = re.match(r"\s{4}group_add:\s*\[(.*)\]\s*$", line)
+            if m:
+                return [e.strip().strip("\"'") for e in m.group(1).split(",") if e.strip()]
+        return []
 
     def env_keys(self) -> set[str]:
         keys = set()
@@ -180,7 +200,9 @@ def check_user_override_names_the_user(failures: list[str]) -> None:
     """Any service overriding `user:` must also set HOME/USER/LOGNAME.
 
     Exempt: `user: "0:0"`. Root has a real /etc/passwd entry, so getpwuid() resolves and
-    HOME is supplied by the image — the Flower dev SuperLink relies on this.
+    HOME is supplied by the image. No dev service should be taking that exemption now
+    (check_dev_fl_services_are_non_root), but the carve-out stays so this guard reports
+    the missing identity env rather than silently passing a root service.
 
     Scoped to the FL composes rather than every compose in the repo: the trust service
     images are still built with the developer's UNAME, so naming a fixed /home/flip for
@@ -203,6 +225,58 @@ def check_user_override_names_the_user(failures: list[str]) -> None:
                     f"HOME falls back to '/' and getpass.getuser() fails partway through "
                     f"`import torch._dynamo`, surfacing as a torch mega-cache assertion "
                     f"nowhere near the cause (FLIP#1171)."
+                )
+
+
+def check_dev_fl_services_are_non_root(failures: list[str]) -> None:
+    """Named dev FL services must run as the host user, with the host gid available.
+
+    The Flower dev SuperLink ran as root so it could read the provisioned 0640 TLS keys
+    (and, before FLIP#1291, refresh the operator's AWS SSO token). Root reads those, but
+    it also rewrites every host-owned file it touches as root:root: the SSO token it
+    refreshed became unreadable to the operator's own `aws` CLI, and the bundle dir it
+    shares with flip-api is open to the same thing. The host uid reads the keys as their
+    owner; `group_add` with the host gid is the second route, for a kit provisioned under
+    a different uid from the one running the stack (FLIP#1320).
+    """
+    for rel, names in NON_ROOT_DEV_SERVICES.items():
+        path = REPO_ROOT / rel
+        if not path.exists():
+            failures.append(f"{rel}: expected compose file is missing")
+            continue
+        services = {svc.name: svc for svc in parse_services(path)}
+        for name in names:
+            svc = services.get(name)
+            if svc is None:
+                failures.append(
+                    f"{rel}:{name}: expected service is missing, so its non-root guard "
+                    f"asserts over nothing. Update NON_ROOT_DEV_SERVICES if it was renamed."
+                )
+                continue
+            if svc.user is None or svc.user.startswith("0:"):
+                failures.append(
+                    f"{svc.where}: runs as root (`user: {svc.user}`). A root container "
+                    f"rewrites host-owned bind mounts as root:root and locks the operator "
+                    f"out of their own files. Use the host uid with the image gid: "
+                    f'user: "${{UID:-1000}}:49999" (FLIP#1320).'
+                )
+            elif not svc.user.startswith("${UID"):
+                failures.append(
+                    f"{svc.where}: `user: {svc.user}` does not follow the host uid, so it "
+                    f"cannot read the host-provisioned 0640 TLS keys as their owner "
+                    f"(FLIP#1320)."
+                )
+            if not svc.group_add_entries():
+                failures.append(
+                    f"{svc.where}: no `group_add:`. The provisioned TLS keys are 0640 and "
+                    f"owner plus group only, so the host gid is the second route to them "
+                    f"when the kit was provisioned under another uid (FLIP#1320)."
+                )
+            elif not any("DOCKER_GID" in entry for entry in svc.group_add_entries()):
+                failures.append(
+                    f"{svc.where}: `group_add: {svc.group_add_entries()}` does not use "
+                    f"${{DOCKER_GID}}. A hard-coded gid is either the wrong group for the "
+                    f"provisioned keys or someone else's group (FLIP#1320)."
                 )
 
 
@@ -246,6 +320,7 @@ def main() -> int:
     try:
         check_kit_mounters_run_as_host_uid(failures)
         check_user_override_names_the_user(failures)
+        check_dev_fl_services_are_non_root(failures)
         check_production_does_not_override_user(failures)
         check_no_uname_runtime_paths(failures)
     except ValueError as exc:
