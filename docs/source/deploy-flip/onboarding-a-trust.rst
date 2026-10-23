@@ -148,6 +148,7 @@ Step 5 — Install on your platform
 Follow your platform's page, then come back here for step 6:
 
 - **Docker Compose host** (on-prem or in a TRE): :doc:`deploy-flip-node-on-prem`
+- **Azure VM**: :doc:`deploy-flip-node-azure`
 - **Kubernetes**: :doc:`deploy-flip-node-kubernetes`
 
 ***********************************************

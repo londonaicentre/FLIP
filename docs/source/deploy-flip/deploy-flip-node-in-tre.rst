@@ -55,10 +55,30 @@ operator. The TRE operator is responsible for:
   FL data, OMOP DB volumes, and observability storage. The
   :gh:`on-prem Ansible playbook <trust/deploy/ansible/onprem.yml>` shows the full list.
 
-**Container image ingestion**
+**Container images**
 
-FLIP container images are published to the GitHub Container Registry
-(``ghcr.io/londonaicentre/*``). TREs typically block direct pulls from public registries,
+FLIP's own images are published to the GitHub Container Registry
+(``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
+from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
+``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.production.yml``
+and ``trust/xnat/docker-compose-stack.yml`` pin.
+
+Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of
+each registry: each serves its image layers from a second host, so allowing the registry name
+alone makes every pull fail.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Registry
+     - Hosts to allow (HTTPS, port 443)
+   * - GHCR
+     - ``ghcr.io`` and ``pkg-containers.githubusercontent.com``
+   * - Docker Hub
+     - ``registry-1.docker.io``, ``auth.docker.io`` and ``production.cloudfront.docker.com``
+
+Otherwise, TREs typically block direct pulls from public registries,
 so images have to come in through the TRE's normal file-ingress process, for example as
 ``docker save`` tarballs loaded with ``docker load``, or through a TRE-internal registry.
 
@@ -71,11 +91,20 @@ so images have to come in through the TRE's normal file-ingress process, for exa
    air-gapped TRE therefore needs site-specific adaptation; agree it with the FLIP team
    before the TRE build starts.
 
+The Compose stack's XNAT image carries its plugins, so the FLIP host downloads none at start.
+(The Kubernetes chart is different: it fetches them from ``xnat.org``, ``api.bitbucket.org``
+and GitHub at every start, see :doc:`deploy-flip-node-azure`.)
+
 **Network policy**
 
 - Allow the outbound connections in :ref:`deploy-trust-node-network`: the Central Hub API
   and the FL server are **separate** hosts, and allowlisting the API host alone is not
   sufficient.
+- If the TRE's firewall filters by hostname only in HTTP rules (Azure Firewall Basic, for
+  example, has no DNS proxy for its network rules), allow the FL Server by its IP address:
+  the hub's FL endpoint has a fixed one.
+- Do not let a TLS-inspecting proxy re-sign traffic to the FL Server: the FL client checks
+  the server's certificate against its kit, and a re-signed connection fails.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**

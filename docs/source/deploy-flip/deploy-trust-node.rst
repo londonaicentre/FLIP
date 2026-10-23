@@ -88,6 +88,10 @@ Choose your platform
      - The trust runs an Ubuntu host (physical or VM) with governed access to its own OMOP database and PACS. The
        common case.
      - :doc:`deploy-flip-node-on-prem`
+   * - **Azure VM**
+     - The trust builds the node from code in its own Azure subscription. It is a Docker Compose host on a VM
+       that configures itself and accepts no inbound connection.
+     - :doc:`deploy-flip-node-azure`
    * - **Kubernetes**
      - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
        limitations first.
@@ -179,5 +183,6 @@ Kubernetes adds a few destinations of its own; see :doc:`deploy-flip-node-kubern
 
    onboarding-a-trust
    deploy-flip-node-on-prem
+   deploy-flip-node-azure
    deploy-flip-node-kubernetes
    deploy-flip-node-in-tre

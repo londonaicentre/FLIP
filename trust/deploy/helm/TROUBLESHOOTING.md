@@ -38,6 +38,10 @@ Moved to the docs: [dcm2niix runs but fails: Unable to find any DICOM images in 
 
 Moved to the docs: [XNAT has 0 'dcm2niix-scan' wrappers on the pinned ...](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-dcm2niix-stale-image).
 
+### 2.3d dcm2niix Jobs Swamp the Node, or Wait for a Slot
+
+Moved to the docs: [dcm2niix jobs swamp the node, or wait for a slot](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-dcm2niix-jobs-cap).
+
 ### 2.3e Scans Archived Without NIfTI (Converting the Backlog)
 
 Moved to the docs: [Some archived scans have no NIfTI](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-nifti-backlog).

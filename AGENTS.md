@@ -27,11 +27,12 @@ FLIP/
 │   ├── xnat/           # Mocked XNAT medical-imaging archive
 │   ├── observability/  # Grafana + Loki monitoring stack (alloy/grafana/loki)
 │   └── deploy/         # The trust node in its shapes (#1213): compose_trust.*.yml (Compose on a host) plus the two below
-│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. Verify the DICOM path with `make -C trust/deploy/helm status` (compares the running xnat-web pod's plugin jars against `xnat.web.plugins.urls`, and fails one XNAT did not load) and `smoke-cstore` (a real C-STORE through the mocked PACS, then greps the receiver's `dicom.log`) — a C-ECHO never reaches XNAT's importer and passes while every store aborts
+│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled with the default `flClient.kit.source=hostPath`). On a managed node pool (AKS) the kit lives in a Secret instead: `make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir>` (a Flower kit must hold only `ca.crt` and its own credential) and `flClient.kit.source=secret`, which `values-aks.yaml` sets along with Postgres data below `lost+found` and the S3 vocab load off. Platform overlays go in `PLATFORM_VALUES`, or in the kit file's `K8S_PLATFORM_VALUES` so every deploy and upgrade of that trust keeps them. On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. Verify the DICOM path with `make -C trust/deploy/helm status` (compares the running xnat-web pod's plugin jars against `xnat.web.plugins.urls`, and fails one XNAT did not load) and `smoke-cstore` (a real C-STORE through the mocked PACS, then requires the receiver's own evidence that the object landed — a new `received.log` line or prearchive object — and fails on an importer error in `dicom.log` or the xnat-web log; `dicom.log` is XNAT's error log, so its growth never counts as receipt, FLIP#1411) — a C-ECHO never reaches XNAT's importer and passes while every store aborts. `make -C trust/deploy/helm selftest` runs the trust self-test checklist (the VM node self-test's, FLIP#1406) against the deployed release and writes a JSON + markdown report (FLIP#1390)
 │       └── ansible/    # roles/ — ONE set of trust-host roles (base packages, docker, dirs with the uid rules, FL kit by source s3|precreate|none, observability config, S3 vocab) composed by onprem.yml (site-owned host; no data — `make -C trust up-trust` seeds it) and by deploy/providers/AWS/site.yml (EC2; adds inventory/AWS CLI/bastion/CloudWatch and its own seed play, finds the roles via its ansible.cfg). onprem.yml is still driven by `make -C deploy/providers/AWS provision-local-trust` (needs the hub env file — the known exception to "providers = Terraform only")
 ├── deploy/             # Central Hub Docker Compose files (dev/prod, flower/nvflare) + deploy/keycloak/ (the dev identity provider's realm, FLIP#919); FL network provisioning lives under fl-services/<backend>/
 │   └── providers/      # Infrastructure provisioning ONLY (Terraform per cloud); node shapes live under trust/deploy/
-│       └── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       ├── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       └── azure/      # Azure trust node (#1390): bootstrap root (state, budget alert; no outbound IP, the node's network owns its egress), modules/network, vm root whose cloud-init installs flip-node (provisions with trust/deploy/ansible/azure.yml, runs the hubless self-test), and aks root (a one-node AKS cluster for the flip-trust chart, instead of the VM); driven by its own Makefile, the VM over Run Command, AZ_SUBSCRIPTION mandatory
 ├── docs/               # Sphinx documentation (ReadTheDocs)
 └── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
 ```
@@ -155,6 +156,7 @@ make e2e_smoke                                  # defaults track FL_BACKEND (def
 make e2e_smoke FL_BACKEND=flower
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>" # reuse an approved project, skip the ~6 min re-pull
 make e2e_smoke EXTRA_ARGS="--no-imaging"        # tabular-only project (has_imaging=false, FLIP#1071)
+make e2e_smoke EXTRA_ARGS="--trusts <CODE>"  # PROD unset: vocabulary-free query_novocab.sql, so a Helm NO_VOCAB_LOAD=1 trust works
 ```
 
 The spleen and prostate tutorials additionally need a **data-enrichment** step (label upload to XNAT)
@@ -198,6 +200,29 @@ make checkov-lint          # Static checkov security lint over deploy/providers/
 make tflint-lint           # Static tflint lint over deploy/providers/AWS (unused declarations, provider constraints, AWS values; credential-free)
 make -C deploy/providers/AWS lint   # Three of validate_terraform.yml's checks over that tree (terraform fmt, TFLint, Checkov); no env file needed (FLIP#1440)
 ```
+
+### Azure trust node (FLIP#1390)
+
+```bash
+make -C deploy/providers/azure help                                   # every target
+make -C deploy/providers/azure bootstrap AZ_SUBSCRIPTION="<name>" STATE_SA=<unique> ALERT_EMAIL=<you>
+make -C deploy/providers/azure init plan apply AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure selftest-kit AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # pack the FL kit HERE, put it in the kit drop
+make -C deploy/providers/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # node fetches that kit and self-tests on it
+make -C deploy/providers/azure kit-upload AZ_SUBSCRIPTION="<name>" TARBALL=<flip-trust-kit-….tar.gz>
+make -C deploy/providers/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<kit> PROD=<env>  # install a hub-registered kit + up-onprem-trust
+make -C deploy/providers/azure destroy AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure aks-init aks-plan aks-apply AZ_SUBSCRIPTION="<name>"  # AKS instead of the VM (refused while the VM exists)
+make -C deploy/providers/azure aks-start AZ_SUBSCRIPTION="<name>"     # start, then admit your current IP to the API server (aks-allow-ip after an IP change; aks-stop, aks-destroy)
+make -C deploy/providers/azure aks-join TARBALL=<kit tarball> KIT=<slot> PROD=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then aks-deploy (the chart with values-aks/-small-node, no vocab load); aks-selftest, aks-clear-jobs
+make -C deploy/providers/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
+make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
+```
+
+`AZ_SUBSCRIPTION` is mandatory and never defaults to the CLI's subscription; no target skips
+Terraform's confirmation. The node receives kits only through the **kit drop** (`modules/kit_drop`: shared
+keys off, firewall = node subnet + operator IP, one-day blob expiry), fetched with its managed identity — never
+provisioned on the node and never in a Run Command parameter. Detail: [`deploy/providers/azure/README.md`](deploy/providers/azure/README.md).
 
 ### Debugging
 

@@ -485,6 +485,16 @@ removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AW
 deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
 against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
 
+### Azure trust node checks (Terraform)
+
+`deploy/providers/azure` (FLIP#1390) carries its own credential-free checks: `make -C deploy/providers/azure test`
+runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
+`make -C deploy/providers/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
+checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
+subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
+always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS.
+
 ### Secret scanning (detect-secrets)
 
 Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.
@@ -681,6 +691,16 @@ make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
 # 2 inconclusive (arrival-time-only evidence while received.log exists and stayed silent);
 # the Make target turns 2 into a loud warning rather than a failure.
 make -C trust/deploy/helm smoke-cstore
+
+# On a managed node pool (AKS, FLIP#1390): put the slot's FL kit in a Secret for
+# flClient.kit.source=secret, and layer values-aks.yaml with PLATFORM_VALUES= (or the kit
+# file's K8S_PLATFORM_VALUES, which every deploy and upgrade of that KIT then applies)
+make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+
+# The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
+# health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client
+# steady; writes a JSON + markdown report under build/selftest/ and needs no hub
+make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
 ```
 
 `make -C trust/deploy/helm deploy` (and `deploy-trust-k8s`) take `HELM_TIMEOUT` (default
@@ -848,6 +868,7 @@ Before opening the release PR from `develop` to `main`:
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file listed under [Versioning](#versioning) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
 - If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, **Site upgrade**, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push. The *Site upgrade* section is the prompt trust operators act on (FLIP#1204): say whether the upgrade is required, the ordering (hub first / sites first / one Deployment-Mode window — a flag-day such as FLIP#1179's cipher change or an FL-framework bump is the latter), and whether a **refreshed kit** is needed because the Hub-shared block changed.
+- Run **`/audit-tutorial <name>` over the catalogue** (Claude Code; the `tutorial-contract` skill under `.claude/skills/` reads as Markdown for a manual pass): the guards, the GPU-free NVFLARE export, the registrations and the README checklist (figure, Expected performance, References, demo video) per tutorial. `make -C fl-tutorials test` already carries the catalogue guard (`tests/test_tutorial_catalogue.py`); the audit is for what a test cannot judge.
 - Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Both run the simulator in the `flip-utils` environment, so no FL image is needed; the FL images are exercised by the smoke test below. Fetch every input first, since a missing one fails its tutorial at once: each dataset (`make -C fl-tutorials download-<dataset>-data`, and `prepare-prostate-local-data NUM_CASES=12` for prostate; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and the Ark+ checkpoint the three Ark+ tutorials load (`make download-raw-checkpoint` in each, or request access through the Ark+ form; it is not in any dataset download).
 - Run the **full-platform smoke test, for both backends, against a running deployment**: `make e2e_smoke`, then `make e2e_smoke FL_BACKEND=flower`. It drives the whole path a user sees — create project, trust approval, training, download results — and is likewise out of CI, being heavy and long-running. [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test) carries the flags, the spleen, prostate and EHR variants, and how to smoke a remote hub.
 - Record both runs in the *Release checks* section of [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md). That section is published with the release, so an unticked box is visible on the PR and on the release page.
