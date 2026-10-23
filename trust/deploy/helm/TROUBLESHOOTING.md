@@ -116,6 +116,15 @@ A failing run that names *no received.log line and no new prearchive object* mea
 association went somewhere that is not this XNAT — check the SCP receiver Orthanc dialled
 (§2.1) before suspecting the plugins.
 
+### 2.8 xnat-db Crash-Loops on Upgrade (no `postgres` role)
+
+Moved to the docs: [xnat-db crash-loops on upgrade: no postgres role](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-xnat-db-roles).
+
+The postStart hook connects as `postgres` or, on a volume first initialised by a chart that rendered
+`POSTGRES_USER`, as the application role itself (FLIP#1658). The behaviour is pinned by
+`tests/test_xnat_db_poststart_roles.py`, which runs the rendered hook body against stubbed psql clients for
+both layouts.
+
 ---
 
 ## 6. Debug Scripts
