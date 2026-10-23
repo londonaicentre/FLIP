@@ -27,8 +27,16 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "scripts"))
 
-from image_workflows import DOCKER_BUILD_WORKFLOWS, GITHUB_DIR, WORKFLOWS, ReleaseTagContract, code_text  # noqa: E402
+from image_workflows import (  # noqa: E402
+    DOCKER_BUILD_WORKFLOWS,
+    GITHUB_DIR,
+    WORKFLOWS,
+    ReleaseTagContract,
+    code_text,
+)
+from pr_paths_changed import glob_to_regex  # noqa: E402
 
 
 class DockerBuildReleaseTags(ReleaseTagContract, unittest.TestCase):
@@ -83,6 +91,65 @@ class FlipReleaseBuildArg(unittest.TestCase):
             with self.subTest(dockerfile=dockerfile):
                 assert 'ARG FLIP_RELEASE=""' in text, dockerfile
                 assert "ENV FLIP_RELEASE=${FLIP_RELEASE}" in text, dockerfile
+
+
+class XnatBuildTriggers(unittest.TestCase):
+    """An image-context edit rebuilds that image; the dcm2niix command is baked into xnat-web."""
+
+    workflows = ("web", "db", "nginx")
+
+    def test_changed_paths_select_the_required_images(self) -> None:
+        cases: tuple[tuple[list[str], set[str]], ...] = (
+            (["trust/xnat/postgres/Dockerfile"], {"db", "web"}),
+            (["trust/xnat/postgres/XNAT.sql"], {"db", "web"}),
+            (["trust/xnat/postgres/guard-xnat-db-passwords.sh"], {"db", "web"}),
+            (["trust/xnat/nginx/custom-nginx.conf"], {"nginx", "web"}),
+            (["trust/xnat/xnat/Dockerfile"], {"web"}),
+            (["trust/xnat/xnat/config/anon_script.das"], {"web"}),
+            (["trust/xnat/.env"], {"web"}),
+            (["trust/xnat/dcm2niix/Dockerfile"], set()),
+            (
+                ["trust/xnat/dcm2niix/Dockerfile", "trust/xnat/xnat/config/dcm2niix_command.json"],
+                {"web"},
+            ),
+            (["flip-api/src/flip_api/main.py"], set()),
+        )
+        for changed_paths, expected in cases:
+            for changed_path in changed_paths:
+                assert (GITHUB_DIR.parent / changed_path).is_file(), changed_path
+            selected = set()
+            for image in self.workflows:
+                text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
+                push = re.search(r"\n  push:\n((?: {4}[^\n]*\n|\n)+)", text)
+                assert push, image
+                paths = re.search(r"\n    paths:\n((?:      - .*\n)+)", "\n" + push[1])
+                assert paths, image
+                patterns = re.findall(r"      - [\"\']([^\"\']+)[\"\']", paths[1])
+                # GitHub evaluates positive/negative path filters in order; any included
+                # changed file starts the workflow. Reuse the service gate's GitHub matcher.
+                for changed_path in changed_paths:
+                    included = False
+                    for pattern in patterns:
+                        if glob_to_regex(pattern.removeprefix("!")).match(changed_path):
+                            included = not pattern.startswith("!")
+                    if included:
+                        selected.add(image)
+            with self.subTest(changed_paths=changed_paths):
+                assert selected == expected, f"selected={selected}, expected={expected}"
+
+    def test_own_workflow_edits_still_trigger_each_build(self) -> None:
+        for image in self.workflows:
+            name = f"docker_build_xnat_{image}.yml"
+            text = code_text(WORKFLOWS / name)
+            with self.subTest(image=image):
+                assert f'      - ".github/workflows/{name}"' in text, image
+
+    def test_push_triggered_builds_do_not_read_workflow_run_context(self) -> None:
+        for image in self.workflows:
+            text = code_text(WORKFLOWS / f"docker_build_xnat_{image}.yml")
+            with self.subTest(image=image):
+                assert "workflow_run" not in text, image
+                assert "GH_WR_" not in text, image
 
 
 if __name__ == "__main__":

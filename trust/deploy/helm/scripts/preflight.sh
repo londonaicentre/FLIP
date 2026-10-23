@@ -32,30 +32,22 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-}"
 kctl() { kubectl ${KUBE_CONTEXT:+--context "$KUBE_CONTEXT"} "$@"; }
 NAMESPACE="${NAMESPACE:-flip-trust}"
 RELEASE_NAME="${RELEASE_NAME:-trust-release}"
-PROD="${PROD:-}"
+HUB="${HUB:-}"
 KIT="${KIT:-}"
 OVERRIDES_FILE="${OVERRIDES_FILE:-}"
 
-# The kit-file env token. `deploy/env_mode.mk` is the single source of truth for what PROD
-# means, and the chart Makefile injects the token it derives as KIT_ENV. Keeping a second
-# copy of that map here is what let the LZA tokens drift out of step in the first place, so
-# there is no second copy: a direct `bash preflight.sh` with PROD set must pass KIT_ENV too,
-# and with PROD unset the mode is development.
-#
-# KIT_ENV, not ENV: `ENV` is the POSIX shell's own startup-file variable, so an operator who
-# exports `ENV=~/.shrc` would have it read as a kit token by a direct `bash preflight.sh`.
-ENV_SUFFIX="${KIT_ENV:-}"
-if [ -z "$ENV_SUFFIX" ]; then
-    if [ -n "$PROD" ]; then
-        printf "  ✖  PROD='%s' is set but KIT_ENV is not.\n" "$PROD"
-        printf "      PROD maps to the kit-file token in deploy/env_mode.mk only, and this script\n"
-        printf "      does not keep a second copy of that map. Run it through the Makefile, which\n"
-        printf "      injects KIT_ENV:  make -C trust/deploy/helm preflight KIT=<KIT> PROD=%s\n" "$PROD"
-        printf "      Or pass the token directly:  KIT_ENV=<token> bash scripts/preflight.sh\n"
-        exit 1
-    fi
-    ENV_SUFFIX="development"
+# The kit-file env token is HUB itself (deploy/env_mode.mk), development when unset. The
+# Makefile also hands in the kit it resolved (KIT_FILE), which may carry an old name.
+# Run directly, nothing else has checked the selector, so refuse what env_mode.mk refuses.
+if [ -n "${PROD:-}" ]; then
+    printf "  ✖  PROD is replaced by HUB (FLIP#1479): unset PROD and pass HUB=prod or HUB=stag.\n" >&2
+    exit 1
 fi
+case "$HUB" in
+    "" | stag | prod) ;;
+    *) printf "  ✖  HUB must be unset, stag or prod — got '%s'.\n" "$HUB" >&2; exit 1 ;;
+esac
+ENV_SUFFIX="${HUB:-development}"
 
 # ── Colour support ─────────────────────────────────────────────────────────────
 if [ -t 1 ]; then
@@ -91,8 +83,8 @@ extract_semver() { grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1; }
 printf "\n${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}\n"
 printf "${BOLD}║  FLIP Kubernetes Deployment — Preflight Checks               ║${NC}\n"
 printf "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}\n"
-printf "  PROD=%s  NAMESPACE=%s  RELEASE=%s\n" \
-    "${PROD:-(unset → development)}" "$NAMESPACE" "$RELEASE_NAME"
+printf "  HUB=%s  NAMESPACE=%s  RELEASE=%s\n" \
+    "${HUB:-(unset → development)}" "$NAMESPACE" "$RELEASE_NAME"
 [ -n "$KIT"            ] && printf "  KIT=%s  (env: %s)\n" "$KIT" "$ENV_SUFFIX"
 [ -n "$OVERRIDES_FILE" ] && printf "  OVERRIDES_FILE=%s\n" "$OVERRIDES_FILE"
 
@@ -169,11 +161,10 @@ else
     # Warn about stale SSO session early. Not for the FL kit — that is staged onto the
     # node beforehand and the cluster holds no credentials — but the OMOP vocab-load
     # Job reads the operator AWS config through a host mount.
-    # Every deployed environment, not just the legacy pair: an LZA site reads its
-    # vocabulary bundle from its own bucket the same way (deploy/env_mode.mk's
-    # DEPLOYED_PROD_VALUES).
-    if [ -n "$PROD" ]; then
-        AWS_PROFILE_CHECK="${AWS_PROFILE:-flipstag}"
+    # Every deployed environment (HUB set) reads its vocabulary bundle this way.
+    if [ -n "$HUB" ]; then
+        # Unset, the profile the vocab-load Job uses by default (omopDb.vocabLoad.awsProfile).
+        AWS_PROFILE_CHECK="${AWS_PROFILE:-default}"
         if ! aws sts get-caller-identity --profile "$AWS_PROFILE_CHECK" >/dev/null 2>&1; then
             warn "AWS SSO session not active for profile '${AWS_PROFILE_CHECK}'"
             hint "Login before deploying: aws sso login --profile ${AWS_PROFILE_CHECK}"
@@ -286,10 +277,10 @@ if [ -f "${CHART_DIR}/values-secrets.yaml" ]; then
     pass "values-secrets.yaml  (will be merged into deploy)"
 else
     warn "values-secrets.yaml not found — XNAT/OMOP/S3 secrets will use chart defaults"
-    hint "Patch secrets after the first deploy: make patch-kit-secrets KIT=<KIT> PROD=${PROD:-(env)}"
+    hint "Patch secrets after the first deploy: make patch-kit-secrets KIT=<KIT> HUB=${HUB:-(env)}"
     hint "Or generate it before deploying (never hand-write it — it is gitignored):"
     hint "  python3 ${CHART_DIR}/scripts/generate_values.py \\"
-    hint "    --env-file ${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX} --output-dir ${CHART_DIR}"
+    hint "    --env-file ${KIT_FILE:-${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX}} --output-dir ${CHART_DIR}"
     hint "Then hand-fill any slot it reports unfilled"
 fi
 
@@ -298,7 +289,7 @@ if [ -n "$OVERRIDES_FILE" ]; then
         pass "OVERRIDES_FILE: ${OVERRIDES_FILE}"
     else
         fail "OVERRIDES_FILE not found: ${OVERRIDES_FILE}"
-        hint "Generate with: make -C trust/deploy/helm sync-kit KIT=<KIT> PROD=${PROD:-(env)}"
+        hint "Generate with: make -C trust/deploy/helm sync-kit KIT=<KIT> HUB=${HUB:-(env)}"
     fi
 fi
 
@@ -308,17 +299,17 @@ fi
 if [ -n "$KIT" ]; then
     section "4. Trust kit  (KIT=${KIT}, env=${ENV_SUFFIX})"
 
-    KIT_FILE="${REPO_ROOT}/trust/.env.${KIT}.${ENV_SUFFIX}"
+    KIT_FILE="${KIT_FILE:-${REPO_ROOT}/trust/.env.${KIT}.${ENV_SUFFIX}}"
     K8S_OVERRIDE="${CHART_DIR}/k8s-trust-${KIT}.yaml"
 
     if [ ! -f "$KIT_FILE" ]; then
         fail "Kit file not found: ${KIT_FILE}"
         hint "Register the trust first (run from the repo root):"
         hint "  make new-trust TRUST_CODE=${KIT} TRUST_NAME=\"<Display Name>\""
-        hint "  make -C deploy/providers/AWS register-trusts KIT=${KIT} PROD=${PROD:-(env)}"
-        hint "  make sync-trust-kit KIT=${KIT} PROD=${PROD:-(env)}"
+        hint "  make -C deploy/providers/AWS register-trusts KIT=${KIT} HUB=${HUB:-(env)}"
+        hint "  make sync-trust-kit KIT=${KIT} HUB=${HUB:-(env)}"
     else
-        pass "Kit file: trust/.env.${KIT}.${ENV_SUFFIX}"
+        pass "Kit file: ${KIT_FILE#"${REPO_ROOT}"/}"
 
         # Required keys must not be empty or still a scaffolding placeholder (<...>)
         REQUIRED_KEYS=("TRUST_API_KEY" "AES_KEY_BASE64" "CENTRAL_HUB_API_URL")
@@ -329,8 +320,8 @@ if [ -n "$KIT" ]; then
             if [ -z "$val" ] || [[ "$val" == "<"*">" ]]; then
                 fail "Kit key ${key} is empty or still a placeholder in ${KIT_FILE##*/}"
                 hint "Fill in real values by running the registration flow:"
-                hint "  make -C deploy/providers/AWS register-trusts KIT=${KIT} PROD=${PROD:-(env)}"
-                hint "  make sync-trust-kit KIT=${KIT} PROD=${PROD:-(env)}"
+                hint "  make -C deploy/providers/AWS register-trusts KIT=${KIT} HUB=${HUB:-(env)}"
+                hint "  make sync-trust-kit KIT=${KIT} HUB=${HUB:-(env)}"
                 ALL_FILLED=false
             fi
         done
@@ -341,7 +332,7 @@ if [ -n "$KIT" ]; then
     if [ ! -f "$K8S_OVERRIDE" ]; then
         warn "Per-trust override not yet generated: k8s-trust-${KIT}.yaml"
         hint "Generate it (and patch cluster secrets) with:"
-        hint "  make -C trust/deploy/helm sync-kit KIT=${KIT} PROD=${PROD:-(env)}"
+        hint "  make -C trust/deploy/helm sync-kit KIT=${KIT} HUB=${HUB:-(env)}"
         hint "Then deploy with OVERRIDES_FILE=k8s-trust-${KIT}.yaml"
     else
         pass "Per-trust override: k8s-trust-${KIT}.yaml"

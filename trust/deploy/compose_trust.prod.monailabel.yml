@@ -10,9 +10,9 @@
 # limitations under the License.
 #
 
-# MONAI Label overlay (production). Applied by trust/Makefile only when the kit sets
+# MONAI Label overlay (prod). Applied by trust/Makefile only when the kit sets
 # MONAI_LABEL=true AND declares NUM_AVAILABLE_GPUS > 0 (see MONAILABEL_OVERRIDE).
-# Image-only like the rest of the production compose — published by
+# Image-only like the rest of the prod compose — published by
 # .github/workflows/docker_build_monailabel.yml.
 #
 # The XNAT OHIF viewer plugin it registers through ships by default in every

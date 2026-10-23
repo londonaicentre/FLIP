@@ -31,9 +31,8 @@ STUB_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
-    "LZA_AWS_PROFILE": "probe",
-    "LZA_STAG_AWS_PROFILE": "probe",
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLOWER_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
@@ -91,7 +90,7 @@ def _rollback(tmp_path: Path, *, reset_exit_code: str = "0", **variables: str) -
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
     env.update(PATH=f"{bin_dir}{os.pathsep}{env['PATH']}", CALLS=str(calls), RESET_EXIT_CODE=reset_exit_code)
-    args = {"PROD": "stag", "MAIN_ENV_FILE": str(env_file), "FL_BACKEND": "nvflare", **variables}
+    args = {"HUB": "stag", "MAIN_ENV_FILE": str(env_file), "FL_BACKEND": "nvflare", **variables}
     result = subprocess.run(
         ["make", "-s", "rollback-centralhub", *(f"{k}={v}" for k, v in args.items())],
         cwd=AWS_DIR,

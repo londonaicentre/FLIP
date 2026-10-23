@@ -43,7 +43,7 @@ services:
       # do this (as does the K8s chart's images-init) — a Docker- or
       # sudo-created root-owned source dir breaks those writes.
       # Unset BASE_IMAGES_DOWNLOAD_DIR in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}
-      # (see imaging-api in compose_trust.production.yml for the full rationale;
+      # (see imaging-api in compose_trust.prod.yml for the full rationale;
       # mirrors ORTHANC_STORAGE_DIR's default).
       - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}/net-1:/app/data/images/net-1
       # Provisioned Flower secrets (certificates, keys).
@@ -93,7 +93,7 @@ services:
       # where fl-base installs flip-utils[full] from /opt/flip-utils (FLIP#767):
       # every package the template app code imports, and no package index needed at run time.
     shm_size: '8gb'
-    # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
+    # GPU passthrough via compose_trust.prod.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
 networks:
   default:

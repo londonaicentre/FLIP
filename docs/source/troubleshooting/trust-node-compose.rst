@@ -20,11 +20,11 @@ Problems on a trust node that runs the Docker Compose stack: an on-prem host
 
 **Where commands run.** ``make -C …`` commands run from the repo root. ``docker`` commands run on the trust host,
 with ``sudo`` on an on-prem host. The AWS-hosted trust is reached with ``ssh flip-trust``, which
-``make -C deploy/providers/AWS ssh-config PROD=<env>`` sets up.
+``make -C deploy/providers/AWS ssh-config HUB=<env>`` sets up.
 
-**Kit and environment.** On an on-prem host the kit file is ``trust/.env.<slot>``, so ``make -C trust …`` commands
-take ``KIT=<slot> PROD=true`` and, when they touch Docker, run with ``sudo -E``. Without ``PROD`` they fall back to
-the development setup. For the AWS-hosted trust they run on the workstation with ``KIT=<CODE> PROD=<env>``.
+**Kit and environment.** On an on-prem host the kit file is ``trust/.env.<slot>.prod``, so ``make -C trust …``
+commands take ``KIT=<slot> HUB=prod`` and, when they touch Docker, run with ``sudo -E``. Without ``HUB`` they fall back
+to the development setup. For the AWS-hosted trust they run on the workstation with ``KIT=<CODE> HUB=<env>``.
 
 **Container names.** A trust's containers are named ``trust<N>-<service>-1`` and its XNAT stack ``xnat<N>``,
 where ``<N>`` is the FL kit slot the hub assigned (``FL_KIT_SLOT_NUMBER`` in the kit file). ``sudo docker ps``
@@ -140,7 +140,7 @@ the EC2. Docker creates that directory empty and Orthanc starts with no studies.
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS deploy-trust KIT=<CODE> PROD=<env>
+      make -C deploy/providers/AWS deploy-trust KIT=<CODE> HUB=<env>
 
 #. Re-trigger the import from the project page.
 
@@ -193,7 +193,7 @@ got the whole one.
 
    .. code-block:: shell
 
-      printf 'include trust/.env.<slot>\nall:\n\t@echo "[$(XNAT_SERVICE_PASSWORD)]"\n' | make -f -
+      printf 'include trust/.env.<slot>.prod\nall:\n\t@echo "[$(XNAT_SERVICE_PASSWORD)]"\n' | make -f -
 
    If the output stops at the first ``#``, this is the cause.
 #. Choose a password of letters, digits and ``-_=+!@`` only, and set it as ``XNAT_SERVICE_PASSWORD`` in the kit
@@ -203,10 +203,10 @@ got the whole one.
 
    .. code-block:: shell
 
-      sudo -E make -C trust/xnat up-xnat KIT=<slot> PROD=true
+      sudo -E make -C trust/xnat up-xnat KIT=<slot> HUB=prod
 
    ``up-xnat`` deletes the XNAT archive and database and configures a new XNAT from the kit. For the AWS-hosted
-   trust, run it from the workstation with ``KIT=<CODE> PROD=<env>`` and ``DOCKER_CONTEXT=flip-trust`` in front, as
+   trust, run it from the workstation with ``KIT=<CODE> HUB=<env>`` and ``DOCKER_CONTEXT=flip-trust`` in front, as
    the deployment does.
 #. Recreate imaging-api so it reads the new value. A plain ``docker restart`` keeps the old environment; see
    "Changing the log level" on :doc:`../components/component-logging-stack` for how to recreate one container.
@@ -248,8 +248,8 @@ or broken are never converted afterwards.
 
 .. code-block:: shell
 
-   sudo -E make -C trust reconvert-nifti KIT=<slot> PROD=true                           # report only
-   sudo -E make -C trust reconvert-nifti KIT=<slot> PROD=true PROJECT="<id>" LAUNCH=1   # convert and follow
+   sudo -E make -C trust reconvert-nifti KIT=<slot> HUB=prod                           # report only
+   sudo -E make -C trust reconvert-nifti KIT=<slot> HUB=prod PROJECT="<id>" LAUNCH=1   # convert and follow
 
 ``WAIT=<minutes>``, ``MAX_ATTEMPTS=<n>`` and ``RELAUNCH_UNFINISHED=1`` tune it. What it selects and its exit codes
 are explained in :ref:`ts-k8s-nifti-backlog`.
@@ -270,8 +270,8 @@ and say why in their logs: the FL client half prints ``[site-privacy] FATAL: <wh
 
 .. code-block:: shell
 
-   make -C trust check-governance KIT=<slot> PROD=true
-   sudo -E make -C trust reload-governance KIT=<slot> PROD=true
+   make -C trust check-governance KIT=<slot> HUB=prod
+   sudo -E make -C trust reload-governance KIT=<slot> HUB=prod
 
 ``reload-governance`` recreates data-access-api (and, on NVIDIA FLARE, the FL clients), so apply it between
 training runs. The usual mistakes are listed in :ref:`ts-k8s-governance`.

@@ -170,7 +170,7 @@ class XnatImageRegistry(unittest.TestCase):
             assert image.startswith("ghcr.io/londonaicentre/xnat-"), image
 
     def test_development_with_an_empty_registry_runs_local_images(self):
-        for image in self._images("PROD=", PROD="", DOCKER_REGISTRY=""):
+        for image in self._images("HUB=", HUB="", DOCKER_REGISTRY=""):
             assert image.startswith("xnat-"), image
 
 

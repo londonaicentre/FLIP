@@ -219,7 +219,8 @@ def test_upload_app_rejects_an_empty_trust_list(client, upload_dir, mock_request
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
-    assert "trust" in response.json()["detail"].lower()
+    assert "trust" in response.json()["refusal"].lower()
+    assert response.json()["refusal"] == response.json()["detail"]
 
     # Nothing was written: the refusal lands before the job dir is created.
     assert not (upload_dir / model_id).exists()
@@ -433,6 +434,7 @@ def test_upload_app_rejects_path_traversal_bundle_url(client, upload_dir):
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_upload_app_rejects_non_https_bundle_url(client, upload_dir):
@@ -448,6 +450,7 @@ def test_upload_app_rejects_non_https_bundle_url(client, upload_dir):
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypatch):
@@ -464,6 +467,7 @@ def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypat
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
@@ -493,6 +497,7 @@ def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_startup_reports_empty_bundle_allow_list(monkeypatch):
