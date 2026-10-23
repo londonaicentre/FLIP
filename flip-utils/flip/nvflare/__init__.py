@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE-specific platform components for federated learning workflows."""
+"""FLARE-specific platform components for federated learning workflows."""

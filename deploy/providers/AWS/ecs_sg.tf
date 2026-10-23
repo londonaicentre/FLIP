@@ -131,8 +131,8 @@ moved {
   to   = aws_security_group_rule.ecs_fl_server_ingress_nlb_grpc[0]
 }
 
-# fl-api (the NVFLARE admin client) connects directly to fl-server on the
-# admin port (same 8002 as the gRPC client port; NVFLARE multiplexes admin
+# fl-api (the FLARE admin client) connects directly to fl-server on the
+# admin port (same 8002 as the gRPC client port; FLARE multiplexes admin
 # and client RPC over a single HTTP/2 stream). It does NOT go through the
 # NLB - that path is reserved for off-VPC FL clients on trusts. Without
 # this rule fl-api startup hangs in `try_connect` until the 20s timeout.

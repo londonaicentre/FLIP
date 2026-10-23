@@ -52,7 +52,7 @@ def parse_best_model_run_config(run_config: Mapping[str, object], *, num_rounds:
         run_config (Mapping[str, object]): The app's run config (``Context.run_config``).
         num_rounds (int): The job's number of federated rounds. With selection enabled and
             fewer than two rounds the best checkpoint can only duplicate the final model,
-            which is logged as a warning (NVFLARE rejects that configuration outright, but
+            which is logged as a warning (FLARE rejects that configuration outright, but
             Flower's round-1 evaluation still feeds the selector, so the artifact contract
             holds — redundantly rather than not at all).
 

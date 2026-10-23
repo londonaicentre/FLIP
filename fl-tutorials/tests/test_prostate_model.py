@@ -441,6 +441,27 @@ def test_average_of_nothing_finite_is_nan_not_zero(prostate_app: dict[str, Modul
     assert meter.avg == pytest.approx(0.5)
 
 
+def test_recreate_image_reassembles_cases_with_uneven_patch_counts(prostate_app: dict[str, ModuleType]) -> None:
+    """Each patch goes back to its own case by ``patches_per_image``; a wrong split mixes cases rather than failing."""
+    case_a = torch.arange(16.0).reshape(1, 4, 2, 2)  # two patches: split along its first spatial axis
+    case_b = 100 + torch.arange(8.0).reshape(1, 2, 2, 2)  # one patch
+    patches = torch.stack([case_a[:, 0:2], case_a[:, 2:4], case_b])
+    coords = [
+        ([0, 1], [0, 2], [0, 2], [0, 2]),
+        ([0, 1], [2, 4], [0, 2], [0, 2]),
+        ([0, 1], [0, 2], [0, 2], [0, 2]),
+    ]
+    sizes = [(1, 4, 2, 2), (1, 2, 2, 2)]
+
+    logits, _, imgs, _ = prostate_app["train_helpers"].recreate_image(
+        patches, patches, patches, patches, sizes, sizes, coords, [2, 1]
+    )
+
+    assert torch.equal(imgs[0], case_a)
+    assert torch.equal(imgs[1], case_b)
+    assert torch.equal(logits[1], case_b)
+
+
 def test_train_seg_refuses_to_step_on_a_non_finite_loss(prostate_app: dict[str, ModuleType]) -> None:
     """A NaN loss should stop training before the weights change."""
     models, task, helpers = prostate_app["models"], prostate_app["task"], prostate_app["train_helpers"]

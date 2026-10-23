@@ -10,7 +10,7 @@
 # limitations under the License.
 
 # Shared dataset tooling for the FL tutorials. One download per dataset, consumed by BOTH
-# backends' harnesses: datasets are backend-agnostic (a tutorial's NVFLARE and Flower twins
+# backends' harnesses: datasets are backend-agnostic (a tutorial's FLARE and Flower twins
 # train on the same data), so their download/derive/enrich tooling lives here, once, instead
 # of duplicated per backend. The fl-tutorials root Makefile forwards these targets here, so
 # the documented entrypoints keep working:
@@ -74,7 +74,7 @@ PROSTATE_UV := uv run --project prostate
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the layout
 # both harnesses read (data/xrays_mini_300/, gitignored). Idempotent — safe to re-run.
-# One canonical CSV name (dataframe.csv): the NVFLARE .env.app files and the Flower
+# One canonical CSV name (dataframe.csv): the FLARE .env.app files and the Flower
 # sim-tutorial.sh all point at it. Script + README live in xrays_mini_300/ (see its README).
 download-xray-data:
 	@uv run --no-project --with huggingface_hub python xrays_mini_300/download_xrays_dataset.py \
@@ -142,7 +142,7 @@ download-arkplus-eval-data:
 # Derive the EHR risk-prediction tutorial's tabular dataset (data/synthea/, gitignored) from three
 # OMOP tables of the public 1k-person Synthea dataset (AWS Open Data Registry, anonymous HTTPS,
 # ~5 MB): one feature row per person plus site1/site2 person_id-modulo splits. Backend-agnostic,
-# no FL_BACKEND variant — the NVFLARE .env.app reads the site splits, the Flower stack mounts
+# no FL_BACKEND variant — the FLARE .env.app reads the site splits, the Flower stack mounts
 # dataframe.csv. Idempotent; the raw tables are cached under data/synthea/.synthea-raw/. Needs
 # only pandas, so it runs outside any project venv. On the platform the same data is loaded into
 # each trust's OMOP with `make -C trust load-synthea-ehr` (see the tutorial README).

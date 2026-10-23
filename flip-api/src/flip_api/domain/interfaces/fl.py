@@ -75,7 +75,7 @@ def _load_job_types_config(fl_backend: FLBackend) -> dict[str, list[str]]:
 
 
 # Sanity cap on a run's GPU count, for fast feedback on a typo; the same value as both fl-apis.
-# It is not a capacity check: the hub never compares a request with a trust's GPUs. On NVFLARE the
+# It is not a capacity check: the hub never compares a request with a trust's GPUs. On FLARE the
 # FL server's scheduler holds the job until every trust can provide it (FLIP#70).
 MAX_GPUS_PER_SITE = 8
 
@@ -83,7 +83,7 @@ MAX_GPUS_PER_SITE = 8
 class IJobResources(BaseModel):
     """The GPUs a training run needs at each participating trust (FLIP#70).
 
-    Backend-neutral: the NVFLARE fl-api writes the count into the job's ``meta.json`` ``resource_spec``,
+    Backend-neutral: the FLARE fl-api writes the count into the job's ``meta.json`` ``resource_spec``,
     the Flower fl-api records it without enforcing it. It applies to every selected trust and is
     never lowered to fit one.
     """
@@ -135,7 +135,7 @@ class IJobMetaData(BaseModel):
     only ``job_id`` + ``status``.
 
     ``job_id`` is the backend-assigned identifier, treated as an opaque string the hub never
-    parses: a UUID-like string for NVFLARE, a stringified integer run-id for Flower. It is
+    parses: a UUID-like string for FLARE, a stringified integer run-id for Flower. It is
     persisted as ``FLJob.fl_backend_job_id``.
     """
 

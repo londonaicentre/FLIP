@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 # Run one Flower tutorial on the flwr SIMULATOR — no SuperLink container, no SuperNodes, no
-# fl-api, no Docker; flwr starts a local SuperLink of its own on 127.0.0.1. The NVFLARE
+# fl-api, no Docker; flwr starts a local SuperLink of its own on 127.0.0.1. The FLARE
 # counterpart is `make sim` in each nvflare tutorial dir; this gives the Flower tutorials the
 # same fast local path.
 #
@@ -23,7 +23,7 @@
 # so nothing in app/ knows which runtime it is in.
 #
 # The container path (the FL images, fl-api submit, SuperNode registration) is
-# `make e2e_smoke FL_BACKEND=flower` on the dev stack, as for NVFLARE (FLIP#1435).
+# `make e2e_smoke FL_BACKEND=flower` on the dev stack, as for FLARE (FLIP#1435).
 #
 # Exit status is the RUN's: 0 only when the SuperLink reports it finished:completed.
 set -euo pipefail

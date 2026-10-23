@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""A shipped meta.json is one the NVFLARE fl-api accepts (FLIP#70).
+"""A shipped meta.json is one the FLARE fl-api accepts (FLIP#70).
 
 The fl-api checks a job's meta.json when training starts, after the researcher has uploaded the
 files and queued the job. This catches a shipped tutorial's or template's mistake in CI instead.

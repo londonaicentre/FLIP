@@ -38,7 +38,7 @@ README for what it does and what its `required_files.json` requires:
 [`nvflare/diffusion_model`](nvflare/diffusion_model/README.md), [`nvflare/fed_opt`](nvflare/fed_opt/README.md),
 [`flower/standard`](flower/standard/README.md), [`flower/evaluation`](flower/evaluation/README.md).
 
-All NVFLARE templates are **Client API** apps (`ClientAPIExecutor`, in-process mode) — the legacy
+All FLARE templates are **Client API** apps (`ClientAPIExecutor`, in-process mode) — the legacy
 Executor-based templates are retired, though the pre-rename `*_client_api` job-type names still
 resolve as aliases for models created before the rename (`flip_api/fl_services/services/fl_service.py`).
 
@@ -73,10 +73,10 @@ into the image) — no S3 involvement (FLIP#724). Bundling a template is a **pos
 a mirror** (FLIP#1008, `flip_api/fl_services/services/fl_service.py::list_local_base_files`): only
 two things ever ship —
 
-- The app folder(s): `app/` on both backends, plus NVFLARE's per-site `app_*/` variants (named in
+- The app folder(s): `app/` on both backends, plus FLARE's per-site `app_*/` variants (named in
   `meta.json`'s `deploy_map`). Inside an app folder, dot-prefixed entries, `__pycache__`,
   `*.pyc`/`*.pyo`, `uv.lock`, and symlinks are dropped too.
-- The backend's single root file: **`meta.json`** for NVFLARE (the job definition NVFLARE deploys),
+- The backend's single root file: **`meta.json`** for FLARE (the job definition FLARE deploys),
   **`pyproject.toml`** for Flower (the FAB definition `[tool.flwr.app.components]` resolves against).
 
 Everything else in the template directory — `recipe.py`, `README.md`, the per-template
@@ -105,14 +105,14 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
 - **Tutorial-to-tutorial pairs still hand-listed.** Two families remain in
   [`scripts/check_tutorial_sync.sh`](../scripts/check_tutorial_sync.sh) (`PAIRS`), run by the
   `fl-apps-check-tutorial-sync.yml` CI workflow on any push/PR touching the paths on either side:
-  - **The Ark+ NVFLARE pair.** The two Ark+ evaluation tutorials share `data_utils.py` and
+  - **The Ark+ FLARE pair.** The two Ark+ evaluation tutorials share `data_utils.py` and
     `arkplus_flat_models.py` with each other; nothing in the tree says so, so the pairing is
     hand-listed. Watched paths include `fl-tutorials/nvflare/image_evaluation/**`. Resync by
     copying the baseline app's file over the multimodel copy.
   - **The EHR risk-prediction cross-backend pair.** The EHR risk-prediction tutorial exists on
     both backends and shares its `feature_engineering.py`, `models.py` and `query.sql` as
     byte-identical copies (same preprocessing/architecture must train on either backend). The
-    NVFLARE copy is the reference; resync by copying it over the Flower copy. Watched paths
+    FLARE copy is the reference; resync by copying it over the Flower copy. Watched paths
     include `fl-tutorials/nvflare/tabular_classification/**` and
     `fl-tutorials/flower/ehr_risk_prediction/**`.
 

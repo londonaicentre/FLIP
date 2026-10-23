@@ -120,7 +120,7 @@ class TrainingLog(BaseModel):
     # emit-on-change dedup (which compares against any stored row).
     event_type: str | None = Field(default=None, max_length=64)
     # 1-based on both backends; every event this endpoint accepts is round-scoped except
-    # the ROUND_LESS_EVENTS, which describe a job NVFLARE has not started yet (the
+    # the ROUND_LESS_EVENTS, which describe a job FLARE has not started yet (the
     # hub-emitted, round-less QUEUE_POSITION is written directly by the FL
     # scheduler and rejected at this boundary). The ceiling is the PG INTEGER max
     # of the fl_logs.global_round column — without it an oversized round passes

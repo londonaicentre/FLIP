@@ -106,14 +106,14 @@ workflow; the other two are CI-only:
   rewriting `uv.lock` with no warning worth noticing.
 - **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that
   `safe_join` and `validate_bundle_url` (the SSRF and path-traversal guards in front of the
-  server-side bundle fetch) stay byte-identical between the NVFLARE and Flower fl-api services.
+  server-side bundle fetch) stay byte-identical between the FLARE and Flower fl-api services.
   They're intentionally separate copies (different Docker build contexts, uv projects, and
   images), so a fix applied to one and not the other would silently leave the second vulnerable.
 - **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
   files kept as byte-identical copies of another file have not drifted. It holds two families of
-  hand-listed pairs: the Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
+  hand-listed pairs: the Ark+ FLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
   between the two evaluation apps) and the EHR risk-prediction cross-backend pair
-  (`feature_engineering.py`, `models.py`, `query.sql`, with the NVFLARE copy as the reference).
+  (`feature_engineering.py`, `models.py`, `query.sql`, with the FLARE copy as the reference).
   The Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
   `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
   can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
@@ -130,7 +130,7 @@ workflow; the other two are CI-only:
 ## fl_round_metrics/
 
 Tooling for extracting and comparing per-round FL timings (not model metrics) from either a live
-platform run (CloudWatch logs) or a local NVFLARE simulator workspace. See
+platform run (CloudWatch logs) or a local FLARE simulator workspace. See
 [`fl_round_metrics/README.md`](fl_round_metrics/README.md) for the tools and the
 `make round-metrics` / `make reproduce-overhead` wrapper in the arkplus fine-tuning tutorial.
 

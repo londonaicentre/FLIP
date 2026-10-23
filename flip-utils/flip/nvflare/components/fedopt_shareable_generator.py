@@ -31,7 +31,7 @@ class FlipFedOptShareableGenerator(PTFedOptModelShareableGenerator):
     ``PTFileModelPersistor`` takes for its ``model`` arg. Two resolution paths cover the two ways
     the component comes to life, and the redundancy is deliberate:
 
-    * **Deployed JSON job**: NVFLARE's ``ComponentBuilder`` resolves the nested dict at config-load
+    * **Deployed JSON job**: FLARE's ``ComponentBuilder`` resolves the nested dict at config-load
       time (it is a valid class config — deliberately *without* ``config_type: "dict"``, unlike the
       optimizer args), so ``handle_event`` already sees a live module.
     * **Direct instantiation** (SimEnv, a live recipe object, unit tests): the dict survives
@@ -62,7 +62,7 @@ class FlipFedOptShareableGenerator(PTFedOptModelShareableGenerator):
         """Resolve a dict-config ``source_model`` into a live model at ``START_RUN``, then defer.
 
         Args:
-            event_type (str): The fired NVFLARE event type.
+            event_type (str): The fired FLARE event type.
             fl_ctx (FLContext): Context provided by the workflow.
         """
         if event_type == EventType.START_RUN and isinstance(self.source_model, dict):

@@ -41,7 +41,7 @@ N_CLIENTS ?= 2
 run: sim
 
 # --- Export job config (no GPU needed) ---
-# Builds a complete NVFLARE job under ./fl_job/flip_fedavg/ including meta.json,
+# Builds a complete FLARE job under ./fl_job/flip_fedavg/ including meta.json,
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
 # FLIP-specific values (project_id, query) are injected via environment variables.
 export:
@@ -52,7 +52,7 @@ export:
 		--num_rounds $(NUM_ROUNDS)
 
 # --- SimEnv local simulation (requires GPU + data) ---
-# Runs the job under the NVFLARE simulator. Requires a GPU and the reference
+# Runs the job under the FLARE simulator. Requires a GPU and the reference
 # dataset (run `make -C fl-tutorials download-spleen-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers

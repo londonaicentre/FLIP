@@ -44,7 +44,7 @@ def _listed(status: FLJobStatus, job_id: str = "run-1") -> list[IJobMetaData]:
 
 @pytest.mark.parametrize("status", [FLJobStatus.RUNNING, FLJobStatus.PENDING])
 def test_a_running_or_waiting_job_is_alive(status):
-    # PENDING covers NVFLARE waiting for resources (#1423), which can last ten scheduler tries.
+    # PENDING covers FLARE waiting for resources (#1423), which can last ten scheduler tries.
     assert why_job_is_dead(_job(), _listed(status), NOW, PREPARE_TIMEOUT) is None
 
 

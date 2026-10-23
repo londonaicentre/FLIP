@@ -81,14 +81,6 @@ class NetStatus(Enum):
     BUSY = "BUSY"
 
 
-class FLTargets(StrEnum):
-    """Targets for FL backend."""
-
-    SERVER = "server"
-    CLIENT = "client"
-    ALL = "all"
-
-
 class FileUploadStatus(Enum):
     """Status of the file upload."""
 

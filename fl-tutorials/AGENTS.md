@@ -6,14 +6,15 @@ built on the templates in `fl-apps/`; the images they run on are built from
 
 | Path | Purpose |
 |------|---------|
-| `nvflare/image_*` | NVFLARE imaging tutorials — all Client-API apps |
-| `nvflare/tabular_classification` | NVFLARE tabular (OMOP-only) EHR risk-prediction tutorial |
+| `nvflare/image_*` | FLARE imaging tutorials — all Client-API apps |
+| `nvflare/tabular_classification` | FLARE tabular (OMOP-only) EHR risk-prediction tutorial |
 | `flower/{xray_classification,3d_spleen_segmentation*,3d_prostate_segmentation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |
 | `flower/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
 | `datasets/` | Shared dataset tooling (download/derive/enrich), one copy for both backends |
 | `datasets/utils/` | The OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, per-project surrogate-key blocks (`omop_ids.py`), and the one verification gate (`verify_omop_tables.py --project <name>`) |
 | `data/` | Gitignored output of the dataset targets |
 | `tests/` | CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering `fl-apps/flower` |
+| `../.claude/skills/tutorial-contract/` | The tutorial contract as a project skill (#1444): what a tutorial is and the questions that settle its shape, the copy-from table, the per-backend file sets and traps, the shapes (imaging / tabular / evaluation / fine-tune), verification and what moves when flip-utils, an `fl-apps` template or a guard changes; `references/readme-shape.md` and `registration-checklist.md` are the two lookups. `/new-tutorial` and `/audit-tutorial` (`.claude/commands/`) drive it. `tests/test_tutorial_catalogue.py` is the catalogue guard (twin query pinned in the sync script, `fl_job/` ignored, Flower identity from the context, cohort-query shape) |
 
 ```bash
 make -C fl-tutorials test   # ruff + both CPU-only pytest suites (tutorial-app + per-dataset;
@@ -23,9 +24,9 @@ make -C fl-tutorials test   # ruff + both CPU-only pytest suites (tutorial-app +
 
 ## Running the tutorials
 
-The NVFLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the `*_client_api`
+The FLARE tutorials live in `fl-tutorials/` and are all **Client-API** apps (the `*_client_api`
 job-type names are accepted aliases for models created under those names). Each tutorial carries a `.env.app` and a `job.py` driving a FLIP recipe;
-`make run` delegates to `make sim`, which runs the NVFLARE simulator (SimEnv) in the flip-utils venv
+`make run` delegates to `make sim`, which runs the FLARE simulator (SimEnv) in the flip-utils venv
 with the `full` ML extra (needs a GPU; per-tutorial `make export` builds the full job config with no
 GPU). From the repo root:
 
@@ -63,7 +64,7 @@ matches a worktree nested under it), so the fix is to stop the named pid (or run
 an `ss` that cannot probe the port counts as taken, never as free. The tabular EHR tutorial maps
 `DEV_DATAFRAME` only (`fl-tutorials/data/synthea/dataframe.csv`, from `download-synthea-data`).
 
-The three NVFLARE Ark+ tutorials (`arkplus_fine_tuning` and the two `arkplus_*_evaluation` apps) cap
+The three FLARE Ark+ tutorials (`arkplus_fine_tuning` and the two `arkplus_*_evaluation` apps) cap
 the dataframe rows each simulated site reads with `MAX_SAMPLES` (Makefile default `128`, a
 deterministic class-balanced subset — `cap_dataframe` in each app's `data_utils.py`), so a plain
 `make sim` is a few-minute smoke; `MAX_SAMPLES=0` runs the full dataset, and `reproduce-overhead`

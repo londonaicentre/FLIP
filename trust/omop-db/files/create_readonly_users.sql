@@ -23,8 +23,8 @@
 -- deployment path. The Compose trust runs it once, from
 -- /docker-entrypoint-initdb.d at first initdb; the Kubernetes trust chart runs
 -- the copy the image ships at /flip/omop/create_readonly_users.sql from its
--- omop-db postStart hook on EVERY pod start, because a PVC restored from a
--- pgdata snapshot skips /docker-entrypoint-initdb.d altogether (FLIP#904). So
+-- omop-db postStart hook on EVERY pod start, because a PVC that already holds a
+-- database skips /docker-entrypoint-initdb.d altogether (FLIP#904). So
 -- everything below must be safe to re-run against a cluster that already holds
 -- the roles, and must converge an existing role on the same grants rather than
 -- skip it — the chart's former inline copy left a role holding pg_read_all_data

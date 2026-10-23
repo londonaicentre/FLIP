@@ -1,0 +1,132 @@
+<!--
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630"
+     role="img" aria-labelledby="jt-title jt-desc" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif">
+  <title id="jt-title">How a job type turns uploaded files into an FL app</title>
+  <desc id="jt-desc">The researcher uploads config.json, trainer.py, models.py and any helper files;
+    the job_type in config.json selects a template in the FLIP Hub. 1: the template (standard,
+    evaluation, diffusion_model or fed_opt on NVFLARE) lists the files it requires from the
+    researcher and provides its own fixed files. 2: if a required file is missing the submission
+    is rejected, naming the missing files, and nothing ships. 3: otherwise the bundled app is the
+    template's fixed files plus the researcher's files under app/custom, where the template's
+    copy wins a name clash, and it is sent to the FL API of the net it runs on.</desc>
+  <defs>
+    <symbol id="jt-lock" viewBox="0 0 12 14">
+      <path d="M3,6 V4 a3,3 0 0 1 6,0 V6" fill="none" stroke="#ffffff" stroke-width="1.6"/>
+      <rect x="1" y="6" width="10" height="7.5" rx="1.5" fill="#ffffff"/>
+    </symbol>
+  </defs>
+  <rect width="1200" height="630" fill="#ffffff"/>
+  <rect x="20" y="60" width="300" height="470" rx="18" fill="none" stroke="#B8BDC6" stroke-width="3" stroke-dasharray="0.1 7" stroke-linecap="round"/>
+  <text x="44" y="98" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="22" font-weight="bold" fill="#2C3E6B">Researcher</text>
+  <text x="44" y="124" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#6B7280" text-anchor="start">UPLOADS</text>
+  <rect x="44" y="134" width="252" height="76" fill="#61366E"/>
+  <text x="56" y="158" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="14" font-weight="bold" fill="#ffffff">config.json</text>
+  <rect x="56" y="170" width="228" height="28" fill="#482852"/>
+  <text x="66" y="189" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#F7F3F9">"job_type": "standard"</text>
+  <rect x="44" y="222" width="252" height="40" fill="#61366E"/>
+  <text x="56" y="246.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="14" fill="#ffffff">trainer.py</text>
+  <rect x="44" y="274" width="252" height="40" fill="#61366E"/>
+  <text x="56" y="298.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="14" fill="#ffffff">models.py</text>
+  <text x="44" y="346" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12" fill="#6B7280" text-anchor="start"><tspan x="44" dy="0">plus any helpers (optional)</tspan></text>
+  <rect x="44" y="356" width="252" height="40" fill="#ffffff" stroke="#61366E" stroke-width="1.5"/>
+  <text x="56" y="380.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="14" fill="#61366E">transforms.py</text>
+  <text x="44" y="436" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" fill="#6B7280" text-anchor="start"><tspan x="44" dy="0">config.json is required for every</tspan><tspan x="44" dy="17.0">job type. Its job_type picks the</tspan><tspan x="44" dy="17.0">template; the template decides</tspan><tspan x="44" dy="17.0">which other files are required.</tspan></text>
+  <rect x="350" y="20" width="830" height="510" rx="18" fill="none" stroke="#C41E6A" stroke-width="3" stroke-dasharray="0.1 7" stroke-linecap="round"/>
+  <text x="374" y="58" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="22"><tspan font-weight="bold" fill="#C41E6A">FLIP Hub</tspan><tspan fill="#872B6E"> (Central Hub API)</tspan></text>
+  <text x="374" y="90" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#6B7280" text-anchor="start">1 · TEMPLATE FOR THE JOB TYPE</text>
+  <rect x="374" y="100" width="290" height="40" fill="#2C3E6B"/>
+  <text x="386" y="124.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="16" fill="#ffffff" font-weight="bold">standard</text>
+  <rect x="374" y="140" width="290" height="216" fill="#F9FAFB" stroke="#D1D5DB"/>
+  <text x="390" y="166" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#61366E" text-anchor="start">REQUIRES IN THE UPLOAD</text>
+  <rect x="390" y="176" width="88" height="28" fill="#ffffff" stroke="#61366E" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="434.0" y="194.5" text-anchor="middle" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#61366E">config.json</text>
+  <rect x="484" y="176" width="82" height="28" fill="#ffffff" stroke="#61366E" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="525.0" y="194.5" text-anchor="middle" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#61366E">trainer.py</text>
+  <rect x="572" y="176" width="76" height="28" fill="#ffffff" stroke="#61366E" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="610.0" y="194.5" text-anchor="middle" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" fill="#61366E">models.py</text>
+  <text x="390" y="232" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#2C3E6B" text-anchor="start">PROVIDES, FIXED</text>
+  <rect x="390" y="242" width="258" height="28" fill="#2C3E6B"/>
+  <use href="#jt-lock" x="400" y="249.0" width="12" height="14"/>
+  <text x="420" y="260.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">meta.json</text>
+  <rect x="390" y="276" width="258" height="28" fill="#2C3E6B"/>
+  <use href="#jt-lock" x="400" y="283.0" width="12" height="14"/>
+  <text x="420" y="294.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">config_fed_server.json</text>
+  <rect x="390" y="310" width="258" height="28" fill="#2C3E6B"/>
+  <use href="#jt-lock" x="400" y="317.0" width="12" height="14"/>
+  <text x="420" y="328.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">config_fed_client.json</text>
+  <text x="374" y="382" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#6B7280" text-anchor="start">OTHER JOB TYPES, SAME SHAPE</text>
+  <rect x="374" y="392" width="290" height="28" fill="#ffffff" stroke="#2C3E6B" stroke-width="1.5"/>
+  <text x="386" y="410.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" fill="#2C3E6B">evaluation</text>
+  <rect x="374" y="426" width="290" height="28" fill="#ffffff" stroke="#2C3E6B" stroke-width="1.5"/>
+  <text x="386" y="444.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" fill="#2C3E6B">diffusion_model</text>
+  <rect x="590" y="432" width="64" height="16" fill="#ffffff" stroke="#8A9BBD" rx="2"/>
+  <text x="622" y="444" text-anchor="middle" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="bold" fill="#5A6B8F">NVFLARE</text>
+  <rect x="374" y="460" width="290" height="28" fill="#ffffff" stroke="#2C3E6B" stroke-width="1.5"/>
+  <text x="386" y="478.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" fill="#2C3E6B">fed_opt</text>
+  <rect x="590" y="466" width="64" height="16" fill="#ffffff" stroke="#8A9BBD" rx="2"/>
+  <text x="622" y="478" text-anchor="middle" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="bold" fill="#5A6B8F">NVFLARE</text>
+  <path d="M296,172 H335 V120 H374" stroke="#3F4252" stroke-width="2" fill="none"/>
+  <circle cx="296" cy="172" r="4" fill="#3F4252"/>
+  <circle cx="374" cy="120" r="4" fill="#3F4252"/>
+  <text x="738" y="214" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#6B7280" text-anchor="middle">2 · CHECK</text>
+  <rect x="692" y="224" width="92" height="56" fill="#23262E"/>
+  <text x="738" y="248" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12" fill="#ffffff" text-anchor="middle"><tspan x="738" dy="0">required</tspan><tspan x="738" dy="16.5">files present?</tspan></text>
+  <path d="M664,252 H692" stroke="#3F4252" stroke-width="2" fill="none"/>
+  <circle cx="664" cy="252" r="4" fill="#3F4252"/>
+  <circle cx="692" cy="252" r="4" fill="#3F4252"/>
+  <path d="M784,252 H814" stroke="#3F4252" stroke-width="2" fill="none"/>
+  <circle cx="784" cy="252" r="4" fill="#3F4252"/>
+  <circle cx="814" cy="252" r="4" fill="#3F4252"/>
+  <text x="799" y="243" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" fill="#2C3E6B" text-anchor="middle">yes</text>
+  <path d="M738,280 V488" stroke="#B3261E" stroke-width="2" fill="none" stroke-dasharray="6 4"/>
+  <circle cx="738" cy="280" r="4" fill="#B3261E"/><circle cx="738" cy="488" r="4" fill="#B3261E"/>
+  <text x="746" y="304" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" fill="#B3261E">no</text>
+  <text x="752" y="484" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12" fill="#B3261E" text-anchor="start"><tspan x="752" dy="0">Rejected, naming the</tspan><tspan x="752" dy="16.5">missing files. Nothing ships.</tspan></text>
+  <text x="814" y="90" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#6B7280" text-anchor="start">3 · BUNDLED APP</text>
+  <rect x="814" y="100" width="344" height="356" fill="#F9FAFB" stroke="#D1D5DB"/>
+  <text x="830" y="126" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#2C3E6B" text-anchor="start">FROM THE TEMPLATE</text>
+  <rect x="830" y="136" width="312" height="28" fill="#2C3E6B"/>
+  <use href="#jt-lock" x="840" y="143.0" width="12" height="14"/>
+  <text x="860" y="154.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">meta.json</text>
+  <rect x="830" y="170" width="312" height="28" fill="#2C3E6B"/>
+  <use href="#jt-lock" x="840" y="177.0" width="12" height="14"/>
+  <text x="860" y="188.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">app/config/config_fed_server.json</text>
+  <rect x="830" y="204" width="312" height="28" fill="#2C3E6B"/>
+  <use href="#jt-lock" x="840" y="211.0" width="12" height="14"/>
+  <text x="860" y="222.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">app/config/config_fed_client.json</text>
+  <text x="830" y="262" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="bold" letter-spacing="0.6" fill="#61366E" text-anchor="start">FROM THE UPLOAD</text>
+  <rect x="830" y="272" width="312" height="28" fill="#61366E"/>
+  <text x="842" y="290.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">app/custom/config.json</text>
+  <rect x="830" y="306" width="312" height="28" fill="#61366E"/>
+  <text x="842" y="324.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">app/custom/trainer.py</text>
+  <rect x="830" y="340" width="312" height="28" fill="#61366E"/>
+  <text x="842" y="358.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#ffffff">app/custom/models.py</text>
+  <rect x="830" y="374" width="312" height="28" fill="#ffffff" stroke="#61366E" stroke-width="1.5"/>
+  <text x="842" y="392.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#61366E">app/custom/transforms.py</text>
+  <text x="830" y="428" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12" fill="#6B7280" text-anchor="start"><tspan x="830" dy="0">Same name as a template file? The</tspan><tspan x="830" dy="16.5">template's copy wins; the upload is skipped.</tspan></text>
+  <path d="M986,456 V476" stroke="#3F4252" stroke-width="2" fill="none"/>
+  <circle cx="986" cy="456" r="4" fill="#3F4252"/>
+  <circle cx="986" cy="476" r="4" fill="#3F4252"/>
+  <rect x="926" y="476" width="120" height="40" fill="#C41E6A"/>
+  <text x="986" y="501" text-anchor="middle" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="15" font-weight="bold" fill="#ffffff">FL API</text>
+  <text x="1056" y="494" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="11.5" fill="#6B7280" text-anchor="start"><tspan x="1056" dy="0">of the net</tspan><tspan x="1056" dy="16.0">it runs on</tspan></text>
+  <rect x="20" y="555" width="14" height="14" fill="#61366E"/>
+  <text x="42" y="566" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" fill="#374151" text-anchor="start"><tspan x="42" dy="0">uploaded files</tspan></text>
+  <rect x="156" y="555" width="14" height="14" fill="#ffffff" stroke="#61366E" stroke-width="1.5" stroke-dasharray="3 2"/>
+  <text x="178" y="566" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" fill="#374151" text-anchor="start"><tspan x="178" dy="0">required by the job type</tspan></text>
+  <rect x="380" y="555" width="14" height="14" fill="#2C3E6B"/>
+  <use href="#jt-lock" x="382" y="556" width="10" height="12"/>
+  <text x="402" y="566" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" fill="#374151" text-anchor="start"><tspan x="402" dy="0">fixed, from the platform template</tspan></text>
+  <text x="20" y="604" font-family="Montserrat, 'Helvetica Neue', Arial, sans-serif" font-size="12.5" fill="#6B7280" text-anchor="start"><tspan x="20" dy="0">Shown for NVFLARE. On Flower you upload client_app.py instead of trainer.py; the template provides server_app.py,</tspan><tspan x="20" dy="17.0">strategy.py and pyproject.toml; uploaded files go in app/; and the job types are standard and evaluation.</tspan></text>
+</svg>

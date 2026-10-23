@@ -15,7 +15,8 @@
 global:
   image:
     # The release this site runs (FLIP#1204): one pin for every FLIP-built image — trust-api,
-    # imaging-api, data-access-api, the fl-client, omop-db, orthanc and the three XNAT images.
+    # imaging-api, data-access-api, the fl-client, omop-db, orthanc, the three XNAT images and
+    # (when enabled) monailabel.
     # `make upgrade-trust-k8s KIT=<CODE> TAG=vX.Y.Z` sets it; `sync-kit` fills it from the kit's
     # DOCKER_TAG. Empty = each service's own image.tag below applies (the mutable `stag`, which
     # moves under a site on every develop merge). Observability images and xnat-dcm2niix carry
@@ -47,7 +48,7 @@ flBackend: "nvflare"
 # ---------------------------------------------------------------------------
 # This trust's own governance document, carried here as the TOML *document itself* (not a
 # path — a path on the deploy host means nothing inside a pod). data-access-api reads its
-# [disclosure] and [access] sections; on NVFLARE the fl-client's governance-extract init
+# [disclosure] and [access] sections; on FLARE the fl-client's governance-extract init
 # container hands the client its [fl_privacy.nvflare] section and nothing else (researcher
 # code runs in the client). Flower reads no site privacy section, so there the document
 # reaches data-access-api only, and a document carrying one is refused by sync-kit.
@@ -70,7 +71,7 @@ flBackend: "nvflare"
 # is NOT kept: the next deploy-trust-k8s / upgrade-trust-k8s passes the -f files without
 # --reuse-values and the policy silently disappears.
 #
-# Rolling: data-access-api rolls on any edit (checksum of the whole document). The NVFLARE
+# Rolling: data-access-api rolls on any edit (checksum of the whole document). The FLARE
 # fl-client rolls only when its [fl_privacy.nvflare] section changes — flPrivacyChecksum —
 # and rolling it interrupts any job it is running, so apply such edits between runs.
 governance:
@@ -84,12 +85,12 @@ governance:
 # trust/.data_version) and every artefact — the canonical OMOP tables omop-csv/<project>/
 # and the DICOM sets dicom/<project>.tar.gz — is fetched at that tag from an unversioned path.
 #
-# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion, and
-# OMOP_DATA_VERSION became TRUST_DATA_VERSION on the env side. Helm ignores unknown keys, so an
-# existing values file pinning the old ones keeps installing and silently stops taking effect —
-# see README "Upgrading: trustData.version replaces the two per-store pins".
+# BREAKING (FLIP#1100): replaced omopDb.initJob.dataVersion and orthanc.initJob.dataVersion.
+# Helm ignores unknown keys, so an existing values file pinning the old ones keeps installing
+# and silently stops taking effect — see README "Upgrading: trustData.version replaces the two
+# per-store pins".
 trustData:
-  version: "20261014"
+  version: "20261019"
   hfRepo: "aicentreflip/trust-data"
   # Seeding (FLIP#1187). The trust-seed post-install/post-upgrade hook loads this trust's slice
   # of `projects` from the dataset into the running omop-db (rows, plus the DICOM vocabulary)
@@ -449,10 +450,10 @@ flClient:
                   - imaging-api
           topologyKey: kubernetes.io/hostname
   # Absolute path ON THE NODE holding this trust's already-provisioned FL participant
-  # kit — the contents of the slot's kit directory (for NVFLARE: local/, startup/,
+  # kit — the contents of the slot's kit directory (for FLARE: local/, startup/,
   # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
   #
-  # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
+  # Required whenever flClient.enabled with kit.source hostPath (the default). The chart deliberately offers no way to fetch
   # the kit itself: a trust never holds FLIP's AWS credentials (see the trust boundary
   # in AGENTS.md — "FL clients intentionally have no Central Hub credentials"), and the
   # kit reaches an operator out-of-band, as trust/README.md describes. The kit is placed
@@ -465,6 +466,14 @@ flClient:
   # path the Compose and Ansible trust deployments use — so keep any override in step
   # with the path the kit was actually staged to, or the pod stays Pending.
   kitHostPath: ""
+  kit:
+    # Where the kit comes from. hostPath: kitHostPath on the node (kind, a single host).
+    # secret: a Kubernetes Secret, laid out by the stage-fl-kit init container into the pod's
+    # own volume — for a managed node pool (AKS), whose nodes are replaced at will (FLIP#1390).
+    # Build the Secret with `make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir>`.
+    source: hostPath
+    # The Secret's name; empty means <release fullname>-fl-kit.
+    secretName: ""
   hostAliases:
     - ip: "13.43.162.56"
       hostnames:
@@ -510,9 +519,14 @@ flClient:
       memory: "32Gi"
       cpu: "16"
   shmSize: 8Gi
+  # gpu.count is also what the NVFLARE client tells its scheduler it can lend: the chart renders the kit's
+  # local/resources.template.json with it at start (0 while gpu.enabled is false). The pod sees GPU 0 only, so on
+  # NVFLARE an enabled GPU requires count 1; use gpu.enabled=false for CPU-only mode.
   gpu:
     enabled: false
     count: 0
+    # GPU memory offered to the NVFLARE scheduler, per GPU; set for the site's hardware.
+    memoryPerGpuInGiB: 7
     operator:
       # Set to true to enable GPU operator validation resources
       enabled: false
@@ -558,6 +572,10 @@ omopDb:
     storageClassName: ""
     size: 10Gi
     accessMode: ReadWriteOnce
+    # Keep Postgres's data in this subdirectory of the volume (e.g. "pgdata"). Needed on a
+    # freshly formatted cloud disk (Azure Disk, EBS), whose lost+found at the root makes initdb
+    # refuse to start. Leave empty on an existing volume: its data is at the root.
+    pgdataSubdir: ""
   resources:
     requests:
       memory: "512Mi"
@@ -587,7 +605,7 @@ omopDb:
       timeoutSeconds: 15
       failureThreshold: 10
   # Streams the licensed core vocabulary into the running database after
-  # install/upgrade (the published image and pgdata tarballs are vocab-free —
+  # install/upgrade (the published image and the seeded data carry no licensed vocabulary —
   # FLIP#842/843).
   #
   # The bundle CANNOT be publicly mirrored (SNOMED CT / LOINC / Read v2 / dm+d
@@ -739,6 +757,10 @@ xnat:
     pin: ""
   initJob:
     enabled: true
+  # How many dcm2niix conversions (BestEffort pods, one Job per archived scan) run at once; the
+  # rest wait for a slot. null removes the cap. Why: README "Container Service jobs" (FLIP#1448).
+  containerService:
+    maxConcurrentJobs: 4
   web:
     enabled: true
     adminUser: "admin"
@@ -763,6 +785,10 @@ xnat:
     # LoadBalancer — the only two options that reach a PACS outside the cluster.
     dicomService:
       type: ClusterIP
+      # Annotations for the DICOM Service, chiefly to choose the load balancer a managed cluster
+      # creates for type LoadBalancer. On AKS keep the receiver off the internet with
+      #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      annotations: {}
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
@@ -845,6 +871,8 @@ xnat:
       storageClassName: ""
       size: 20Gi
       accessMode: ReadWriteOnce
+      # As omopDb.persistence.pgdataSubdir: "pgdata" on a fresh cloud disk, empty on an existing volume.
+      pgdataSubdir: ""
     resources:
       requests:
         memory: "512Mi"
@@ -877,6 +905,62 @@ xnat:
       limits:
         memory: "256Mi"
         cpu: "200m"
+
+# ---------------------------------------------------------------------------
+# MONAI Label — optional AI-assisted annotation in the XNAT OHIF viewer
+# ---------------------------------------------------------------------------
+# Off by default: needs an NVIDIA GPU node and pulls a ~10.4GB image. Mirrors the compose
+# overlay (trust/deploy/compose_trust.*.monailabel.yml); operational caveats — the
+# browser-reachable URL, the unauthenticated API, the stock-viewer quirks — are documented
+# in trust/README.md#monai-label-optional.
+monailabel:
+  enabled: false
+  image:
+    repository: ghcr.io/londonaicentre/monailabel
+    tag: stag
+    pullPolicy: IfNotPresent
+  port: 8030
+  # Radiology models to load. 'all' loads nine, each downloading its own weights; the SAM
+  # tasks (sam_2d/sam_3d) register whenever the sam2 package is importable, independent of
+  # this list.
+  models: "deepedit"
+  # Comma-separated XNAT project allowlist; empty means every project on this trust.
+  projects: ""
+  # REQUIRED when enabled: the URL the clinician's BROWSER uses to reach the service
+  # (e.g. http://<node-ip>:30030). XNAT stores it and hands it to the OHIF viewer — it is
+  # never proxied, so a cluster-internal name will not work.
+  publicUrl: ""
+  # /dev/shm for dataloader workers (emptyDir, medium: Memory).
+  shmSize: 8Gi
+  gpu:
+    enabled: true
+    count: 1
+  # Pin the pod to xnat-web's node so the archive PVC (ReadWriteOnce by default) can be
+  # mounted read-only here too. Set false only on an RWX storage class.
+  coScheduleWithXnat: true
+  service:
+    type: NodePort
+    # Fixed nodePort (30000-32767) so publicUrl stays stable; empty lets the cluster pick.
+    nodePort: 30030
+    # Adds a NetworkPolicy opening the service port on this pod through the namespace's
+    # default-deny ingress — required for browser access when networkPolicies.enabled.
+    allowExternalIngress: true
+  # Sources allowed through that NetworkPolicy, as CIDRs. REQUIRED while the policy renders
+  # (networkPolicies.enabled and allowExternalIngress): left empty, the render fails. The API
+  # behind it is unauthenticated (see authEnable) and holds the XNAT service-account
+  # credentials, so opening it to every source has to be written down — ["0.0.0.0/0"] — not
+  # inherited. Set the subnets your clinicians browse from, e.g. ["10.0.0.0/8"].
+  allowedIngressCIDRs: []
+  # MONAI Label's own auth. Its default is False and its RBAC dependencies are no-ops while
+  # it is, so every /datastore route is open to whoever reaches the port. Enabling it needs
+  # an OAuth realm (MONAI_LABEL_AUTH_REALM_URI et al) that FLIP does not run — so treat
+  # allowedIngressCIDRs, not this, as the control until such a realm exists.
+  authEnable: false
+  persistence:
+    # Pretrained weights (incl. the ~900MB SAM checkpoint).
+    size: 20Gi
+    storageClassName: ""
+  resources: {}
 
 # ---------------------------------------------------------------------------
 # Observability Stack — Loki, Alloy, Grafana

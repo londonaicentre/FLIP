@@ -16,12 +16,14 @@
 workspace reset."""
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import quote
 
 import pytest
 import requests
 
+from flip_api.db.models.user_models import RoleRef
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils import constants
 from tests import demo_recorder, demo_video, seed_demo_projects
@@ -33,7 +35,9 @@ from tests.demo_video import (
     app_files_for,
     check_reused_project_matches_profile,
     reset_researcher_workspace,
+    resolve_trust_admin,
     resolve_ui_credentials,
+    trust_admin_of,
 )
 from tests.e2e_smoke import TUTORIALS, SmokeFailure, describe_tutorial
 
@@ -42,6 +46,8 @@ CREDENTIAL_VARS = [
     "DEMO_RESEARCHER_PASSWORD",
     "DEMO_ADMIN_EMAIL",
     "DEMO_ADMIN_PASSWORD",
+    "DEMO_TRUST_ADMIN_EMAIL",
+    "DEMO_TRUST_ADMIN_PASSWORD",
     "ADMIN_USER_PASSWORD",
 ]
 
@@ -454,3 +460,40 @@ def test_workspace_reset_spares_kept_projects(monkeypatch: pytest.MonkeyPatch) -
 def test_keep_project_is_repeatable() -> None:
     assert demo_video.parse_args([]).keep_project == []
     assert demo_video.parse_args(["--keep-project", "a", "--keep-project", "b"]).keep_project == ["a", "b"]
+
+
+def test_trust_admin_used_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEMO_TRUST_ADMIN_EMAIL", "trust-admin@example.com")
+    monkeypatch.setenv("DEMO_TRUST_ADMIN_PASSWORD", "trust-admin-pw")
+    assert resolve_trust_admin() == Persona("trust-admin@example.com", "trust-admin-pw", role="trust admin")
+
+
+def test_missing_trust_admin_leaves_the_approval_to_the_admin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEMO_TRUST_ADMIN_EMAIL", "trust-admin@example.com")
+    assert resolve_trust_admin() is None
+
+
+@pytest.mark.parametrize("segment_fails", [False, True])
+def test_trust_admin_grant_is_revoked_after_the_segment(monkeypatch: pytest.MonkeyPatch, segment_fails: bool) -> None:
+    """Held past the segment, the grant would refuse every admin approval at that trust on the shared stack."""
+    posts: list[tuple[str, dict]] = []
+
+    def post(client, path, body, headers):
+        posts.append((path, body))
+        response = requests.Response()
+        response.status_code = 200
+        return response
+
+    monkeypatch.setattr(seed_demo_projects, "find_user_id", lambda client, headers, email: RESEARCHER_ID)
+    monkeypatch.setattr(demo_video.e2e_smoke, "_post", post)
+    persona = Persona("trust-admin@example.com", "pw", role="trust admin")
+    trust = {"id": "t1", "name": "GSTT"}
+
+    with pytest.raises(RuntimeError) if segment_fails else nullcontext():
+        with trust_admin_of(requests.Session(), {}, persona, trust):
+            assert posts == [
+                (f"/users/{RESEARCHER_ID}/roles", {"roles": [str(RoleRef.TRUST_ADMIN.value)], "trustId": "t1"})
+            ]
+            if segment_fails:
+                raise RuntimeError("segment failed")
+    assert posts[-1] == (f"/users/{RESEARCHER_ID}/roles", {"roles": [str(RoleRef.RESEARCHER.value)]})

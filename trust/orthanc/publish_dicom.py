@@ -49,7 +49,7 @@ split by ``source_trust`` is reported. Any miss is a non-zero exit before anythi
 
 ``--fill-empty-numbers`` stamps ``AcquisitionNumber`` / ``SeriesNumber`` = 1 on instances where the tag
 is present but empty — the defect in the original spleen output that makes MONAI Deploy's loader drop
-every CT instance (see ``docs/source/working-with-flip-apps/package-model-as-map.rst``). Absent tags
+every CT instance (see ``docs/source/working-with-flip-apps/map-toolchain-reference.rst``). Absent tags
 are left absent (the cxr data), populated ones untouched. Applied at publish time, once, so the
 seeder never has to know.
 """

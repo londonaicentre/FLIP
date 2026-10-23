@@ -84,7 +84,7 @@ class TestTrainingLog:
             TrainingLog(event_type=FLLogEvent.ROUND_AGGREGATED)
 
     def test_the_scheduling_event_is_accepted_without_a_round(self):
-        """NVFLARE has not started the job yet, so its scheduling verdict has no round (FLIP#1390)."""
+        """FLARE has not started the job yet, so its scheduling verdict has no round (FLIP#1390)."""
         payload = TrainingLog(
             fl_client_name="Trust_3",
             event_type=FLLogEvent.JOB_WAITING_FOR_RESOURCES,

@@ -26,7 +26,7 @@ from flip.nvflare.runtime import get_flip_model_id
 class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
     """Persistor that seeds the initial global model from a large backbone checkpoint
     staged **server-side**, so the checkpoint never has to be bundled into the job app
-    (bundling a ~759 MiB file collapses NVFLARE's app-deploy to remote clients).
+    (bundling a ~759 MiB file collapses FLARE's app-deploy to remote clients).
 
     The backbone filename is declared in the job's ``config.json`` under ``SERVER_CHECKPOINT``.
     At load time it is resolved in this order:
@@ -58,7 +58,7 @@ class InitialCheckpointPTModelPersistor(PTFileModelPersistor):
         """
         Args:
             model: As for the stock persistor — a model object, a component id, or the
-                ``{"path": ..., "args": ...}`` component config a recipe passes (NVFLARE's
+                ``{"path": ..., "args": ...}`` component config a recipe passes (FLARE's
                 ComponentBuilder instantiates it before this persistor is built at run time).
             model_id: FLIP model ID (legacy path); when empty it is resolved lazily from the app's
                 config.json via ``get_flip_model_id``.

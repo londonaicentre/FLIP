@@ -139,7 +139,7 @@ class TestTables:
         assert sorted(person.index) == [10000, 10540]
         assert person.loc[10000, "year_of_birth"] == 2019 - 73  # from the patient's first study
         assert person.loc[10540, "year_of_birth"] == 2018 - 65
-        assert set(person["gender_concept_id"]) == {442985}
+        assert set(person["gender_concept_id"]) == {8507}
         assert list(person["trust"]) == ["trust_1", "trust_2"]
 
     def test_one_visit_and_procedure_per_study(self, tables, converter):

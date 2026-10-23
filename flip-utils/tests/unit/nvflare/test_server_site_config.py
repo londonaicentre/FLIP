@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-"""The FL server's FLIP site components, written where NVFLARE's parent process loads them (FLIP#1390)."""
+"""The FL server's FLIP site components, written where FLARE's parent process loads them (FLIP#1390)."""
 
 import importlib
 import json
@@ -44,7 +44,7 @@ def test_it_registers_the_scheduling_reporter_and_every_component_path_imports(t
 
 
 def test_it_merges_into_the_provisioned_config_without_a_conflict(tmp_path):
-    """NVFLARE augments the provisioned resources.json with this file: components append, and any other
+    """FLARE augments the provisioned resources.json with this file: components append, and any other
     key both files set would be a conflict, so the file carries components only."""
     provisioned = {"format_version": 2, "components": [{"id": "job_scheduler", "path": "x.DefaultJobScheduler"}]}
     ours = json.loads(write_server_site_config(tmp_path).read_text())

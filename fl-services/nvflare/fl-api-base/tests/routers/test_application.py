@@ -24,7 +24,7 @@ MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
 
 @pytest.fixture(autouse=True)
 def override_session(client):
-    """Override get_session with a conditional MagicMock that matches NVFLARE behavior."""
+    """Override get_session with a conditional MagicMock that matches FLARE behavior."""
     fake_session = MagicMock()
 
     # --- Application methods ---

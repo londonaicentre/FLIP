@@ -1,8 +1,8 @@
 .. _tre-deployment:
 
-================================
+===========================
 Deploy a FLIP node in a TRE
-================================
+===========================
 
 .. contents:: Table of Contents
    :local:
@@ -23,8 +23,11 @@ FLIP supports two deployment modes for trust-side services:
   governance or infrastructure constraints require data access through a TRE rather than
   direct on-premise compute.
 
-This guide covers the TRE deployment mode. For on-premise deployment, see
-:doc:`deploy-flip-node-on-prem`.
+This guide covers the TRE deployment mode: what the TRE operator provides, how data
+reaches the node, and what may leave the TRE. The node itself **installs as a Docker
+Compose host**: the FLIP admin and the operator follow :doc:`onboarding-a-trust`, with
+step 5 on :doc:`deploy-flip-node-on-prem`. The requirements every node shares are on
+:doc:`deploy-trust-node`.
 
 .. note::
 
@@ -32,7 +35,7 @@ This guide covers the TRE deployment mode. For on-premise deployment, see
    on-premise model remains the recommended approach where Trust infrastructure and
    governance permit it.
 
-TRE Operator Responsibilities
+TRE operator responsibilities
 =============================
 
 Deploying FLIP inside a TRE involves coordination between the FLIP team and the TRE
@@ -47,50 +50,61 @@ operator. The TRE operator is responsible for:
 
 **Compute provisioning**
 
-- Providing a host with Docker Engine, Docker Compose, and Docker Swarm support, plus at
-  least one NVIDIA GPU accessible via the NVIDIA Container Toolkit, on NVIDIA driver 580 or
-  newer (the FL images ship CUDA 13 builds of PyTorch).
-- Creating the writable host paths the FLIP stack expects under ``/opt/flip/`` (for certs,
-  FL data, OMOP DB volumes, and observability storage -- see the Ansible playbook at
-  ``trust/deploy/ansible/onprem.yml``).
+- Providing a host that meets the `Prerequisites`_ below.
+- Creating the writable host paths the FLIP stack expects under ``/opt/flip/``, for certs,
+  FL data, OMOP DB volumes, and observability storage. The
+  :gh:`on-prem Ansible playbook <trust/deploy/ansible/onprem.yml>` shows the full list.
 
-**Container image ingestion**
+**Container images**
 
-FLIP container images are published to the GitHub Container Registry
-(``ghcr.io/londonaicentre/*``). Because TREs typically block direct pulls from public
-registries, images must be ingested through the TRE's normal file-ingress process. A
-common pattern:
+FLIP's own images are published to the GitHub Container Registry
+(``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
+from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
+``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.production.yml``
+and ``trust/xnat/docker-compose-stack.yml`` pin.
 
-1. Outside the TRE, pull and save each image to a tarball on a workstation that has
-   internet access:
+Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of
+each registry: each serves its image layers from a second host, so allowing the registry name
+alone makes every pull fail.
 
-   .. code-block:: shell
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
 
-      docker pull ghcr.io/londonaicentre/trust-api:<tag>
-      docker save ghcr.io/londonaicentre/trust-api:<tag> -o trust-api-<tag>.tar
+   * - Registry
+     - Hosts to allow (HTTPS, port 443)
+   * - GHCR
+     - ``ghcr.io`` and ``pkg-containers.githubusercontent.com``
+   * - Docker Hub
+     - ``registry-1.docker.io``, ``auth.docker.io`` and ``production.cloudfront.docker.com``
 
-2. Submit the tarballs through the TRE's file-ingress airlock.
-3. Inside the TRE, load each image into the local Docker daemon:
+Otherwise, TREs typically block direct pulls from public registries,
+so images have to come in through the TRE's normal file-ingress process, for example as
+``docker save`` tarballs loaded with ``docker load``, or through a TRE-internal registry.
 
-   .. code-block:: shell
+.. important::
 
-      docker load -i trust-api-<tag>.tar
+   The FLIP make targets do not support this today. A production trust always pulls: the
+   production compose files name the ``ghcr.io/londonaicentre`` images directly, the trust
+   Makefile fixes the registry to GHCR and starts the stack with ``--pull always``. Without a
+   route to GHCR, ``up-onprem-trust`` fails even when the images are already loaded. Running FLIP in an
+   air-gapped TRE therefore needs site-specific adaptation; agree it with the FLIP team
+   before the TRE build starts.
 
-.. note::
-
-   Other image distribution approaches may be acceptable depending on the TRE --
-   for example, a TRE-internal Docker registry (e.g. Harbor, GitLab, or a registry
-   mirror) that is pre-populated with the required images and reachable from the
-   FLIP host. Coordinate with the TRE operator to pick the option that best fits
-   local policy.
+The Compose stack's XNAT image carries its plugins, so the FLIP host downloads none at start.
+(The Kubernetes chart is different: it fetches them from ``xnat.org``, ``api.bitbucket.org``
+and GitHub at every start, see :doc:`deploy-flip-node-azure`.)
 
 **Network policy**
 
-- Allow outbound HTTPS (port 443) from the FLIP host to the Central Hub FLIP API endpoint —
-  the ALB (e.g. ``https://app.flip.aicentre.co.uk``).
-- Allow outbound gRPC or HTTP to the FL Server endpoint — a **separate** host fronted by its
-  own load balancer (the NLB), on its configurable port (e.g. ``fl.app.flip.aicentre.co.uk:8002``).
-  Allowlisting the API host alone is not sufficient.
+- Allow the outbound connections in :ref:`deploy-trust-node-network`: the Central Hub API
+  and the FL server are **separate** hosts, and allowlisting the API host alone is not
+  sufficient.
+- If the TRE's firewall filters by hostname only in HTTP rules (Azure Firewall Basic, for
+  example, has no DNS proxy for its network rules), allow the FL Server by its IP address:
+  the hub's FL endpoint has a fixed one.
+- Do not let a TLS-inspecting proxy re-sign traffic to the FL Server: the FL client checks
+  the server's certificate against its kit, and a re-signed connection fails.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**
@@ -98,7 +112,7 @@ common pattern:
 - Operating the TRE's standard output-checking (airlock) process for the aggregate metrics
   that leave the TRE during federated evaluation.
 - Deciding, per project, whether federated training may release model artefacts and on what
-  conditions -- see `What leaves the TRE, and under what policy`_.
+  conditions. See `What leaves the TRE, and under what policy`_.
 
 Architecture
 ============
@@ -123,8 +137,8 @@ policies that block inbound traffic.
 
    FLIP TRE deployment: outbound-only connections from the FLIP node to the Central Hub.
 
-Communication: Outbound-Only Design
-------------------------------------
+Communication: outbound-only design
+-----------------------------------
 
 TREs are "walled garden" environments that block inbound network connections. All
 communication from the FLIP node is initiated from inside the TRE outward to the
@@ -132,9 +146,9 @@ Central Hub. No inbound ports need to be opened on the TRE side.
 
 **FL Server <-> FL Client**
 
-The FL channel uses a client-pull model. The FL client initiates all communication --
-it connects outbound to the FL server, polls for tasks, executes locally, and pushes
-results back. The FL server never initiates inbound connections to client sites:
+The FL channel uses a client-pull model. The FL client initiates all communication: it
+connects outbound to the FL server, polls for tasks, executes locally, and pushes results
+back. The FL server never initiates inbound connections to client sites:
 
 - In NVIDIA FLARE, the FL client sends ``GET_TASK`` requests to the FL server and receives
   tasks in the response, then returns results via ``SUBMIT_RESULT``.
@@ -161,52 +175,16 @@ Central Hub for new instructions:
 - Results (cohort statistics, project status) are pushed outbound from the Trust API to the
   Central Hub.
 
-The polling loop is implemented in ``trust/trust-api/trust_api/services/task_poller.py``.
-Key environment variables (set via ``.env`` or Docker secrets):
+trust-api polls every few seconds (``POLL_INTERVAL_SECONDS``, default 5). The settings it
+polls with, and how the hub authenticates it, are on :ref:`trust-authentication`.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Variable
-     - Description
-   * - ``CENTRAL_HUB_API_URL``
-     - Hub endpoint the Trust API polls for tasks.
-   * - ``EXPECTED_TRUST_ID``
-     - Optional self-check. If set and the hub resolves this host's API key to a
-       different trust *id*, trust-api exits instead of acting as the wrong
-       trust. Kept in the trust's kit file.
-   * - ``TRUST_API_KEY`` / ``TRUST_API_KEY_HEADER``
-     - Per-trust authentication header used on every outbound request.
-   * - ``AES_KEY_BASE64``
-     - Symmetric key shared with the hub; task payloads are AES-256-GCM
-       envelopes (FLIP#1179). A key that differs from the hub's fails every
-       task as ``failed authentication``, and the node must be upgraded in
-       step with the hub across that change (no CBC compatibility).
-   * - ``TRUST_INTERNAL_SERVICE_KEY``
-     - Per-trust shared secret used inside the trust for calls between
-       trust-api / imaging-api / fl-client and imaging-api /
-       data-access-api. Never leaves the trust environment.
-   * - ``POLL_INTERVAL_SECONDS``
-     - Polling period in seconds (default: ``5``).
-
-.. admonition:: Network requirements
-
-   The TRE must whitelist outbound connections to **two separate endpoints** — different
-   hostnames behind different load balancers, so both must be allowlisted:
-
-   - The Central Hub FLIP API — the ALB (HTTPS, port 443; e.g. ``https://app.flip.aicentre.co.uk``)
-   - The FL Server — the NLB (gRPC or HTTP, configurable port; e.g. ``fl.app.flip.aicentre.co.uk:8002``)
-
-   No inbound ports need to be opened on the TRE.
-
-Data Flow
+Data flow
 =========
 
 The key difference between on-premise and TRE deployment is how data enters the FLIP node.
 
-On-Premise Data Flow
----------------------
+On-premise data flow
+--------------------
 
 1. FLIP user submits a cohort query on the Central Hub.
 2. The query is federated to all FLIP nodes.
@@ -217,8 +195,8 @@ On-Premise Data Flow
    enriched.
 6. FL training or evaluation jobs run on the local data.
 
-TRE Data Flow
---------------
+TRE data flow
+-------------
 
 The TRE model splits the workflow into two phases:
 
@@ -250,7 +228,7 @@ Once data is loaded, the FLIP workflow proceeds largely as normal:
 2. The FLIP user runs a cohort query. The ``data-access-api`` queries the OMOP database
    inside the TRE. This selects from the pre-loaded project subset, not the full Trust
    population.
-3. Once the cohort is selected, XNAT pulls DICOMs from the TRE's internal PACS -- using the
+3. Once the cohort is selected, XNAT pulls DICOMs from the TRE's internal PACS, using the
    same C-FIND/C-MOVE pattern it would use against a production PACS.
 4. The FLIP user submits FL training or evaluation jobs.
 
@@ -264,93 +242,69 @@ Once data is loaded, the FLIP workflow proceeds largely as normal:
 Prerequisites
 =============
 
-The TRE must provide the following capabilities:
+The TRE must provide the following capabilities.
 
-Compute
---------
+Compute and software
+--------------------
 
-- **Docker with GPU support**: The FLIP Docker stack requires the
-  `NVIDIA Container Toolkit <https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html>`_
-  for GPU-accelerated FL training and inference.
-
-- **Docker Swarm**: XNAT services are deployed using Docker Swarm mode. The TRE must
-  support ``docker swarm init`` and overlay networking.
-
-- **Sufficient GPU resources**: At minimum, one NVIDIA GPU for inference/evaluation. For FL
-  training, GPU memory requirements depend on the model architecture.
-
-- **NVIDIA driver 580 or newer**: The FL images ship PyTorch built for CUDA 13, which bundles its
-  own CUDA runtime but needs a host driver of at least 580. No CUDA toolkit is needed on the host.
-  Check the "Driver Version" reported by ``nvidia-smi``; on an older driver the FL client cannot
-  initialise the GPU.
-
-Networking
------------
-
-- **Outbound HTTPS** to the Central Hub FLIP API endpoint on AWS
-  (e.g. ``https://app.flip.aicentre.co.uk``).
-
-- **Outbound gRPC or HTTP** to the FL Server endpoint — a separate host fronted by the NLB
-  (e.g. ``fl.app.flip.aicentre.co.uk:8002``).
-  If the TRE's network inspection
-  appliances block HTTP/2 (required for gRPC), most FL frameworks offer HTTP/REST transport
-  fallbacks (e.g. NVIDIA FLARE's HTTP driver, Flower's REST transport) that work over
-  standard HTTP/1.1.
-
-- **No inbound connections required.**
-
-Data
------
-
-- An **OMOP database** (PostgreSQL) pre-populated with the project's anonymised clinical
-  data, in the ``omop`` schema — OMOP CDM 5.4 plus the MI-CDM imaging tables.
-
-- A **PACS instance** (e.g. Orthanc) pre-populated with the project's anonymised DICOM
-  imaging data.
-
-- Consistent pseudonymisation between OMOP records and DICOM data so they can be linked
-  within the TRE. Concretely, the link is the accession number: every imaging row in
-  ``image_occurrence`` carries, in ``accession_id``, the DICOM Accession Number
-  ``(0008,0050)`` of the matching study in the PACS, and pseudonymisation must change both
-  or neither. ``accession_id`` is FLIP's addition to MI-CDM, so the ingest step must create
-  and populate it — see :ref:`omop-accession-id` — with exactly one study's accession number:
-  never empty and never containing ``*``, ``?`` or ``\``, which to a PACS are queries matching
-  many studies, so FLIP drops such rows from the pull (with a warning in the trust's imaging-api
-  log) and the study is never pulled.
-
-Software
----------
+The host must meet the prerequisites of a Docker Compose host
+(:doc:`deploy-flip-node-on-prem`): Docker in swarm mode with overlay networking, and for
+GPU work an NVIDIA driver of 580 or newer with the NVIDIA Container Toolkit. In a TRE you
+typically install these yourself rather than with the Ansible playbook:
 
 - Docker Engine (>= 24.0) with Docker Compose (>= 2.40)
-- NVIDIA driver (>= 580)
-- NVIDIA Container Toolkit
+- NVIDIA driver (>= 580) and the NVIDIA Container Toolkit
 - Python 3.12 or 3.13
 - PostgreSQL client libraries (``postgresql-client``)
 - Make
+
+At minimum, provide one NVIDIA GPU for inference and evaluation. For FL training, GPU
+memory requirements depend on the model architecture.
+
+Networking
+----------
+
+The outbound connections in :ref:`deploy-trust-node-network`, and no inbound ones. If the
+TRE's network inspection appliances block HTTP/2 (required for gRPC), most FL frameworks
+offer HTTP/REST transport fallbacks that work over standard HTTP/1.1 (e.g. NVIDIA FLARE's
+HTTP driver, Flower's REST transport).
+
+Data
+----
+
+- An **OMOP database** (PostgreSQL) pre-populated with the project's anonymised clinical
+  data, in the ``omop`` schema.
+- A **PACS instance** (e.g. Orthanc) pre-populated with the project's anonymised DICOM
+  imaging data.
+- Consistent pseudonymisation between the two, so they can be linked within the TRE. The
+  link is the **accession number**, and pseudonymisation must change it in both or neither.
+
+The schema and accession-number rules are the same as for any node; see "Trust data" on
+:doc:`deploy-trust-node`.
 
 Observability
 -------------
 
 FLIP deploys a log-aggregation stack (Grafana Alloy, Loki, Grafana) alongside the Trust
 APIs. Alloy scrapes container stdout via the Docker socket, Loki stores logs with 30-day
-retention, and Grafana provides a pre-provisioned dashboard. The stack runs entirely
-inside the TRE boundary -- no log data is sent to the Central Hub. See :doc:`/components/component-logging-stack`
-for details on configuration, ports, and persistent volumes.
+retention, and Grafana provides a pre-provisioned dashboard. **The stack runs entirely
+inside the TRE boundary**: no log data is sent to the Central Hub. See
+:doc:`/components/component-logging-stack` for configuration, ports, and persistent volumes.
 
-Use Case 1: Federated Evaluation
-==================================
+Use case 1: federated evaluation
+================================
 
 Federated evaluation is the most TRE-compatible FLIP workflow. A pretrained model is
 distributed from the Central Hub to FLIP nodes for local evaluation, and only **aggregate
 metrics** (AUC, Dice scores, sensitivity, specificity, confusion matrices) are returned.
 
 Why evaluation is TRE-friendly
--------------------------------
+------------------------------
 
 - **Model ingress**: The pretrained model file is sent from the FL server to the FL client
   inside the TRE. TREs routinely handle data ingress.
 
-- **Metrics-only egress**: Only aggregate evaluation metrics leave the TRE -- not model
+- **Metrics-only egress**: Only aggregate evaluation metrics leave the TRE, not model
   weights. These metrics are standard summary statistics that TRE output-checking processes
   (airlocks) are designed to review.
 
@@ -363,7 +317,7 @@ Why evaluation is TRE-friendly
   metrics need reviewing.
 
 Evaluation data flow
----------------------
+--------------------
 
 1. A pretrained model is uploaded to the Central Hub.
 2. The FL server distributes the model to FL clients at each FLIP node (including TRE
@@ -377,15 +331,15 @@ Evaluation data flow
    output-checking policy. Ensure that subgroup analyses on small populations (fewer than
    the TRE's minimum cell count, typically 5-10) are suppressed before egress.
 
-Use Case 2: Federated Training
-================================
+Use case 2: federated training
+==============================
 
 Federated training in a TRE involves iterative exchange of model weights between the FL
 client (inside the TRE) and the FL server (on the Central Hub). This is more complex from
 a governance perspective than evaluation.
 
 Training data flow
--------------------
+------------------
 
 1. The FL server sends the initial global model to all FL clients.
 2. Each FL client trains locally for a number of local rounds.
@@ -395,14 +349,16 @@ Training data flow
 5. Steps 2-4 repeat for the configured number of global rounds until convergence.
 
 What leaves the TRE, and under what policy
--------------------------------------------
+------------------------------------------
 
 The weights sent back at step 3 above are what this section calls a **model update**: a set of
 numbers derived from the local data, not the records themselves. Two things follow, and they
-are what a TRE's output-checking policy has to account for. An output checker cannot read a
-model update and judge whether it is safe to release, the way they can read a table or a chart.
-And a training run produces one update per round -- tens to hundreds of them -- rather than one
-output per project.
+are what a TRE's output-checking policy has to account for:
+
+- An output checker cannot read a model update and judge whether it is safe to release, the
+  way they can read a table or a chart.
+- A training run produces one update per round (tens to hundreds of them) rather than one
+  output per project.
 
 `SATRE v2.0.1 <https://satre-specification.readthedocs.io/en/v2.0.1/specification.html#satre-3-3-07>`_
 addresses this case directly. Requirement **3.3.07** (Mandatory) asks a TRE for a documented
@@ -419,7 +375,7 @@ FLIP's position, which a TRE operator can adopt or adapt:
 
 - **Federated training does release model artefacts**, once per round, and is therefore a
   per-project decision taken by the TRE operator together with the Data Access Committee,
-  against the controls set out below. It is a decision to be made -- neither a blanket
+  against the controls set out below. It is a decision to be made: neither a blanket
   prohibition nor an automatic approval.
 
 The reason the decision needs controls attached is that a model trained on sensitive records
@@ -427,9 +383,9 @@ can retain traces of them. A model update is not equivalent to an aggregate stat
 though it looks like a block of numbers.
 
 Controls applied before anything leaves
-----------------------------------------
+---------------------------------------
 
-This is the answer to the second half of SATRE 3.3.07 -- what technical controls apply before
+This is the answer to the second half of SATRE 3.3.07: what technical controls apply before
 egress is approved. Read the "Who controls it" column closely: some of these are yours to set,
 and one of them does nothing until you turn it on.
 
@@ -443,11 +399,11 @@ and one of them does nothing until you turn it on.
      - Who controls it
    * - Evaluation results
      - Once per job
-     - Aggregate metrics only -- accuracy, Dice scores, sensitivity, specificity, confusion
+     - Aggregate metrics only: accuracy, Dice scores, sensitivity, specificity, confusion
        matrices. Ordinary summary statistics of the kind your output-checking process already
        handles.
      - You, through your existing airlock
-   * - Model updates, NVFLARE backend
+   * - Model updates, FLARE backend
      - Every round
      - Each update is reduced before it leaves the node: a share of the values is discarded
        rather than transmitted. FLIP applies this itself, and the researcher's uploaded code
@@ -461,7 +417,7 @@ and one of them does nothing until you turn it on.
      - Project review, not the platform
    * - Model updates, your own site rule
      - Every round
-     - **The control you own.** On the NVFLARE backend a trust can apply its own reduction to
+     - **The control you own.** On the FLARE backend a trust can apply its own reduction to
        every update leaving its node. It is set in the configuration file the trust holds
        locally, no submitted job can override or weaken it, and a node whose setting is
        invalid refuses to start rather than sending updates unprotected.
@@ -480,7 +436,7 @@ and one of them does nothing until you turn it on.
 .. admonition:: If you permit training, enable your own site control
 
    The "your own site rule" row is the one item on this page that needs an action from you. On
-   the NVFLARE backend, set the following in your node's kit file and restart the FL clients:
+   the FLARE backend, set the following in your node's kit file and restart the FL clients:
 
    .. code-block:: shell
 
@@ -491,12 +447,12 @@ and one of them does nothing until you turn it on.
    :doc:`../components/component-fl-nets` for the parameters and exact semantics.
 
 What these controls do not do
-------------------------------
+-----------------------------
 
 State these alongside the controls when you document your policy. They are the residual risks
 that a project-specific approval accepts, or mitigates by other means.
 
-- **The reduction applied on the NVFLARE backend is not differential privacy.** It lowers how
+- **The reduction applied on the FLARE backend is not differential privacy.** It lowers how
   much any single update reveals, but it adds no calibrated noise, carries no privacy budget,
   and most of each update still leaves the node. Describing it as differential privacy to an
   ethics committee or information governance panel would misstate it. The Flower backend does
@@ -515,14 +471,14 @@ that a project-specific approval accepts, or mitigates by other means.
   accepted control for this class of risk is review of the uploaded code. See :doc:`/security`
   for the full reasoning.
 
-.. admonition:: Approving a training project -- a checklist
+.. admonition:: Approving a training project: a checklist
 
    Where federated training is proposed, agree the following with the FLIP team and record the
    outcome alongside your usual project documentation:
 
-   1. **Confirm evaluation would not answer the question.** If it would, prefer it -- it
+   1. **Confirm evaluation would not answer the question.** If it would, prefer it: it
       releases no model artefact and needs no new policy.
-   2. **Enable your own site control** if your node runs the NVFLARE backend (see above), and
+   2. **Enable your own site control** if your node runs the FLARE backend (see above), and
       note the settings you applied.
    3. **Record the decision**: which controls were applied, what was permitted to leave, and
       who approved it. SATRE 3.3.09 points towards keeping this as a structured,
@@ -534,8 +490,8 @@ that a project-specific approval accepts, or mitigates by other means.
       against a trained model after the fact, which some operators use as supporting evidence
       for a release decision.
 
-Differences from On-Premise Deployment
-========================================
+Differences from on-premise deployment
+======================================
 
 .. list-table::
    :header-rows: 1
@@ -575,8 +531,8 @@ Differences from On-Premise Deployment
      - Trust-managed DGX / GPU servers (NVIDIA driver >= 580)
      - TRE-provided GPU compute with NVIDIA Container Toolkit (NVIDIA driver >= 580)
 
-UK TRE Federation Landscape
-============================
+UK TRE federation landscape
+===========================
 
 Deploying federated learning across TREs is an active area of development in the UK. The
 `DARE UK <https://dareuk.org.uk/>`_
@@ -584,11 +540,13 @@ Deploying federated learning across TREs is an active area of development in the
 (UKRI-funded, launched 2025)
 is developing standardised federation capabilities across UK TREs, including reference
 architecture, semi-automated output checking, and federated analysis. TREvolution introduces
-**Patterns** and **Weaves** -- configurable combinations of analysis type, technology
-services, and egress rules. The first Weave is the **Five Safes TES**, which adopts the
+**Patterns** and **Weaves**: configurable combinations of analysis type, technology
+services, and egress rules. The first Weave is the **Five Safes TES**. It adopts the
 `GA4GH Task Execution Service (TES) <https://ga4gh.github.io/task-execution-schemas/>`_
-standard as the basis for interoperability, enabling TREs to receive and execute standardised
-workflow tasks through a common API. Related projects include
+standard as the basis for interoperability, so TREs can receive and execute standardised
+workflow tasks through a common API.
+
+Related projects include
 `TRE-FX <https://trefx.uk/>`_ (which developed the
 `Five Safes RO-Crate <https://trefx.uk/5s-crate/>`_ packaging format for governance metadata
 around workflow outputs) and
@@ -596,9 +554,9 @@ around workflow outputs) and
 tools, including an ML extension for attack simulation against trained models).
 
 FLIP's TRE deployment model aligns with this direction. As TREvolution matures, its Patterns
-framework could formalise different egress rules for different federated workflows -- for
-example metrics-only for evaluation, against a protected-update rule for training -- building
-on the policy position that SATRE 3.3.07 already establishes.
+framework could formalise different egress rules for different federated workflows (for
+example metrics-only for evaluation, against a protected-update rule for training). That
+would build on the policy position that SATRE 3.3.07 already establishes.
 
 SATRE v2 also added a **Federation** pillar. Its requirement 5.6.01 asks a federation to agree
 one definition of a safe output that every member implements, covering both data moving between
@@ -607,7 +565,7 @@ spanning several TREs, and a useful frame for operators agreeing terms with each
 than only with the platform.
 
 GPU Resource Management
-------------------------
+-----------------------
 
 TRE environments may offer the ability to dynamically provision and release GPU resources
 based on workload requirements. Unlike on-premise deployments where dedicated GPU hardware

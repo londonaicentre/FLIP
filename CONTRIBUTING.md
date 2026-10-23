@@ -42,7 +42,7 @@ When creating issues, please use the appropriate issue template:
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
-the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
+the federated learning code (base library, FL services, and tutorials) for both FLARE and Flower. Both backends
 are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. See the single canonical
 [repository layout](README.md#repository-layout) in the root README and the README within each area for details.
 
@@ -73,6 +73,9 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
+- [Node.js 24 LTS](https://nodejs.org/) (npm **>= 11.10**) for flip-ui work outside Docker (`npm ci`, lint, unit
+  tests): earlier npm ignores `flip-ui/.npmrc`'s `min-release-age` without a word, so installs skip the cooldown
+  (see [Dependency cooldown](#dependency-cooldown-supply-chain-protection)). The stack itself builds flip-ui in Docker.
 - No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
   [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
   downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
@@ -180,9 +183,8 @@ The policy is enforced through native package-manager configuration:
 - **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
   younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
   workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
-  `flip-ui/package.json`'s `engines` field still permits older Node (`^20.19.0 || >=22.12.0`) for compatibility, but
-  installing on one of those silently drops the cooldown rather than failing — so develop against Node 24 locally
-  to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
+  `flip-ui/package.json`'s `engines` field asks for Node >= 24 and npm >= 11.10, so npm warns (`EBADENGINE`) on an
+  older toolchain instead of dropping the cooldown unnoticed — develop against Node 24 locally to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
   enforces `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
   `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
 
@@ -198,8 +200,18 @@ than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock`
 For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
 
 - **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
-  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
-  the exception is visible in the pull request and `uv lock --check` still passes.
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock --upgrade-package <package>`.
+  The entry is committed, so the exception is visible in the pull request and `uv lock --check` still passes. To
+  keep the exception narrow:
+  - Set the timestamp just after the fixed release's upload time on PyPI, not to "now", so no later, uncooled release
+    can get in.
+  - Add a `constraint-dependencies` floor at the fixed version, so the fix stays in place once the override is gone.
+  - Open an issue to remove the entry when the 72 hours are up. A fixed timestamp freezes the package at that date
+    until someone removes it.
+  - Carry the floor into any install that does not read `[tool.uv]`, such as the `pip install` in
+    `fl-services/flower/fl-base/Dockerfile`.
+
+  The certifi and uv fixes in #1612 (removed in #1618) are a worked example.
 - **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
   command.
 
@@ -234,9 +246,9 @@ These changes affect checkouts created before them. None is picked up automatica
 | What changed | What to do |
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
-| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
+| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
-| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on NVFLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
+| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
 
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 
@@ -351,7 +363,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
+- `FL_PROVISIONED_DIR` — path to the FLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): FLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access
@@ -410,7 +422,7 @@ they would only ever fail trying to reach `londonaicentre`-owned resources — s
 `if: github.repository == 'londonaicentre/FLIP'` and shows up as **skipped** (neutral, not a red failure) on fork
 pushes. These are:
 
-- **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
+- **Image publishing** — `Build and Push FLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
   and `trust-*` GHCR build-and-push workflows.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
@@ -475,6 +487,16 @@ removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AW
 deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
 against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
 
+### Azure trust node checks (Terraform)
+
+`deploy/providers/azure` (FLIP#1390) carries its own credential-free checks: `make -C deploy/providers/azure test`
+runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
+`make -C deploy/providers/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
+checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
+subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
+always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS.
+
 ### Secret scanning (detect-secrets)
 
 Two scanners run on every PR. TruffleHog (`--only-verified`) fails only on a credential it can confirm is live.
@@ -530,7 +552,10 @@ make up BUILD=true     # rebuild the repo-built services from local source inste
 Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
 system packages, or a `Dockerfile` — those live in the image layer, so a plain
 `make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
-no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+no GHCR image). `BUILD=true` also builds `omop-db` and the XNAT images (the latter
+deployed at the local-only `:dev` tag, so the swarm cannot swap them for the registry's;
+a second stack on the same host passes its own with `XNAT_TAG=<tag>`).
+Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
 compose with baked images and no bind-mounts.
 
 ## The contribution process
@@ -671,6 +696,16 @@ make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
 # 2 inconclusive (arrival-time-only evidence while received.log exists and stayed silent);
 # the Make target turns 2 into a loud warning rather than a failure.
 make -C trust/deploy/helm smoke-cstore
+
+# On a managed node pool (AKS, FLIP#1390): put the slot's FL kit in a Secret for
+# flClient.kit.source=secret, and layer values-aks.yaml with PLATFORM_VALUES= (or the kit
+# file's K8S_PLATFORM_VALUES, which every deploy and upgrade of that KIT then applies)
+make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+
+# The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
+# health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client
+# steady; writes a JSON + markdown report under build/selftest/ and needs no hub
+make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
 ```
 
 `make -C trust/deploy/helm deploy` (and `deploy-trust-k8s`) take `HELM_TIMEOUT` (default
@@ -788,7 +823,7 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
-`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the twelve image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
+`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the fourteen image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
 
 - **The release job runs as long as the slowest image build** (xnat-web, ~30 min). A red build, or an expired wait budget, fails the release job and names what to re-run; production stays on the sha pin it got from the push apply. Re-running `release.yml` is safe — everything after the tag is keyed on the GitHub Release not existing, so a re-run re-dispatches the builds and re-tries the apply.
 - **Nothing may merge to `main` during the wait.** The release apply runs `main` as it is when the dispatch fires, so a hotfix merged in that window would have the *release's* images applied over its code — a silent production rollback. Both ends refuse it: `release.yml` checks `main`'s HEAD before dispatching, and `terraform_apply.yml` refuses unless `release_tag` resolves to the very commit it has checked out. Recovery is to cut a release from the newer commit, not to re-run the old one.
@@ -833,11 +868,25 @@ The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the 
 
 Before opening the release PR from `develop` to `main`:
 
+The mechanical steps are make targets (FLIP#1608), each a script under [`scripts/release/`](scripts/release/):
+
+| Target | Does |
+|---|---|
+| `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; bumps the root, every changed service and (if changed) flip-utils; `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
+| `make release-instance TAG=… PR=<n>` | An isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. `release-gates` runs it; on its own it is for debugging. |
+| `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
+| `make release-gates TAG=… PR=<n>` | On the GPU host, quickest first: `unit_test`, `integration_test` and both tutorial suites on a quiet host, then the instance, both smokes and teardown; one JSON result per gate under `release-gates/<TAG>/`, and every container's log when a stack gate fails. Run it from a dedicated release worktree: the instance writes `trust/.env.<KIT>.development`, the files a developer's own trusts use, so it refuses a checkout whose kits another stack wrote. |
+| `make release-record TAG=… PR=<n> APPLY=1` | Writes *Release checks* from those results, refusing results from another commit. |
+| `make release-main-check TAG=… [OWED=<file>]` | Read-only. Checks the `develop` → `main` PR is MERGEABLE, its branch-origin and (if flip-utils changed) version-bump checks passed and the notes preview is posted, then prints the after-merge checklist; with no PR yet, prints the `gh pr create` command for it. |
+
+The list below is what they check and do, and what stays manual (the notes' prose, Dependabot fixes, the PRs).
+
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file listed under [Versioning](#versioning) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
 - If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, **Site upgrade**, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push. The *Site upgrade* section is the prompt trust operators act on (FLIP#1204): say whether the upgrade is required, the ordering (hub first / sites first / one Deployment-Mode window — a flag-day such as FLIP#1179's cipher change or an FL-framework bump is the latter), and whether a **refreshed kit** is needed because the Hub-shared block changed.
+- Run **`/audit-tutorial <name>` over the catalogue** (Claude Code; the `tutorial-contract` skill under `.claude/skills/` reads as Markdown for a manual pass): the guards, the GPU-free NVFLARE export, the registrations and the README checklist (figure, Expected performance, References, demo video) per tutorial. `make -C fl-tutorials test` already carries the catalogue guard (`tests/test_tutorial_catalogue.py`); the audit is for what a test cannot judge.
 - Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Both run the simulator in the `flip-utils` environment, so no FL image is needed; the FL images are exercised by the smoke test below. Fetch every input first, since a missing one fails its tutorial at once: each dataset (`make -C fl-tutorials download-<dataset>-data`, and `prepare-prostate-local-data NUM_CASES=12` for prostate; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and the Ark+ checkpoint the three Ark+ tutorials load (`make download-raw-checkpoint` in each, or request access through the Ark+ form; it is not in any dataset download).
 - Run the **full-platform smoke test, for both backends, against a running deployment**: `make e2e_smoke`, then `make e2e_smoke FL_BACKEND=flower`. It drives the whole path a user sees — create project, trust approval, training, download results — and is likewise out of CI, being heavy and long-running. [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test) carries the flags, the spleen, prostate and EHR variants, and how to smoke a remote hub.
 - Record both runs in the *Release checks* section of [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md). That section is published with the release, so an unticked box is visible on the PR and on the release page.
@@ -856,7 +905,7 @@ Before opening the release PR from `develop` to `main`:
    - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
    - `release.yml` then **dispatches** every image workflow — `docker_build_*.yml` and both `fl-docker-build-*.yml` — at the new tag (`gh workflow run <wf> --ref v<X.Y.Z>`), building every image at the release commit, unfiltered, and pushing `:v<X.Y.Z>` (FLIP#1204). This is the tag hub and sites deploy: a release is one identity across the whole stack, not a different `sha-` per service. The image workflows also carry a `push.tags: ['v*.*.*']` trigger, but it cannot serve the real release: the tag is pushed with the workflow's own `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way (only `workflow_dispatch` / `repository_dispatch` are exempt) — the push trigger is what a **hand-pushed** tag uses, i.e. a release candidate. `.github/tests/workflows/test_release.py` holds the dispatch roster to the exact set of publishing workflows, so one added without being listed fails CI.
-1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (twelve workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (fourteen workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
 ### Rolling the release out
 
@@ -982,6 +1031,15 @@ make -C flip-api backfill_cohort_snapshots
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
 
+To record the MONAI Label demo video against a running trust with MONAI Label on (a spleen CT segmented in the XNAT
+OHIF viewer, exported and converted to NIfTI; it doubles as an end-to-end check), run on the trust host:
+
+```bash
+make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=<CT session ID>
+```
+
+See [`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md) for the prerequisites.
+
 ## Building the documentation
 
 The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see
@@ -1006,7 +1064,7 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
 
 ## Documentation GIFs
 
-The animated walkthroughs in the user guides (`docs/source/user-guides/user-common.rst` and
+The animated walkthroughs in the user guides (`docs/source/user-guides/*.rst` and
 `docs/source/sys-admin/admin-project-and-user-management.rst`) are Cypress recordings of the UI against a
 fully mocked backend. **They are not tracked in git** (FLIP#1236 — 65 MB that re-recording rewrote on every
 run was 95% of a clone). Instead:
@@ -1027,11 +1085,11 @@ run was 95% of a clone). Instead:
 - **Each release freezes its GIFs**: `release.yml`'s `docs-gifs` job tags the newest recording the release
   contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
   that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
-- **GIFs CI cannot record** (one that needs a live trust, say) are recorded by hand and published to the
-  dataset branch of the PR that documents them, which that PR's ReadTheDocs preview then shows:
-  `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"` (needs
-  `hf auth login` with write access to the dataset), then rebuild the preview. Only CI writes the dataset's
-  `main`; delete `pr-<N>` once the PR closes.
+- **GIFs CI cannot record** (the MONAI Label walkthrough needs a live trust) are listed in
+  `docs/scripts/live-recorded-gifs.txt` instead of having a spec. Recorded by hand, they go to the dataset
+  branch of the PR that carries them, which that PR's ReadTheDocs preview then shows (see "Publishing by
+  hand"). When that PR merges, the CI publish takes them from its `pr-<N>`; every later CI publish carries
+  them forward unchanged from `main`. Only CI writes the dataset's `main`; delete `pr-<N>` once the PR merges.
 
 ### Adding a new GIF
 
@@ -1052,21 +1110,24 @@ Authoring is two-step, because a PR cannot ship the GIF itself:
 cd flip-ui
 npm run docs:record   # records videos under test/cypress/videos/
 npm run docs:gifs     # ffmpeg → docs/source/assets/generated/gifs/<category>/*.gif (requires ffmpeg on PATH)
-FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the pinned ones
+FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the published ones
 ```
 
-Without the skip flag the build restores the pinned bytes over any file that differs — the pin wins.
+Without the skip flag the build restores the published bytes over any file that differs.
 
 ### Publishing by hand
 
-Rarely needed (the workflow does it), but the same script works from a laptop with an account that can
-write to the dataset:
+Only for GIFs CI cannot record, and only to the dataset branch of your PR (the script refuses `main`). From a
+laptop with an account that can write to the dataset, with the full set under
+`docs/source/assets/generated/gifs/` (fetch the rest with `uv run docs/scripts/fetch_docs_gifs.py`, then add
+yours):
 
 ```bash
 uvx --from 'huggingface_hub>=1.6' hf auth login
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)" --dry-run
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)"   # then pin the printed tag
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)" --dry-run
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"
 ```
 
-`--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION` (e.g. `main`) let a
-build read another dataset or an untagged revision, mirroring `HF_TRUST_DATA_REVISION`.
+Then rebuild the PR's ReadTheDocs preview. `--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` /
+`FLIP_DOCS_GIFS_REVISION` (e.g. `pr-945`, `v0.12.0`) let a build read another dataset or another ref, mirroring
+`HF_TRUST_DATA_REVISION`.

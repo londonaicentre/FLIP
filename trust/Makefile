@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down prepare-artifacts up-trust down-trust restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
@@ -105,6 +105,8 @@ ORTHANC_CMD=make -C ./orthanc
 # mount source for Docker to root-create.
 IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
 
+include ../deploy/portable.mk
+
 # Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
 # compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
 # documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
@@ -115,11 +117,11 @@ IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(PROD),/opt/flip/data/trust
 # runs as it on every path, so it always owns net-N.
 #
 # The GROUP and MODE are backend-aware, because the fl-client writes inside net-N too
-# (flip.add_resource stages under net-N/upload/, NVFLARE CleanupImages deletes net-N's
+# (flip.add_resource stages under net-N/upload/, FLARE CleanupImages deletes net-N's
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
-#   * NVFLARE, any env      — the base dir's own owner:group, 0755. Its client shares
+#   * FLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The production compose adds no
 #     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
@@ -138,14 +140,14 @@ define ensure_net_dirs
 	@base="$(IMAGES_BASE)"; \
 	mkdir -p "$$base/net-1" "$$base/net-2"; \
 	if [ "$(FL_BACKEND)" = "flower" ]; then \
-	  owner="$$(stat -c '%u' "$$base"):$(if $(PROD),49999,$(DOCKER_GID))"; mode=775; \
+	  owner="$$($(call stat_fmt,%u) "$$base"):$(if $(PROD),49999,$(DOCKER_GID))"; mode=775; \
 	else \
-	  owner="$$(stat -c '%u:%g' "$$base")"; mode=755; \
+	  owner="$$($(call stat_fmt,%u:%g) "$$base")"; mode=755; \
 	fi; \
 	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
 	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
 	  for d in "$$base/net-1" "$$base/net-2"; do \
-	    got="$$(stat -c '%u:%g %a' "$$d")"; \
+	    got="$$($(call stat_fmt,%u:%g %a) "$$d")"; \
 	    case "$$got" in "$$owner "*"$$mode") continue;; esac; \
 	    echo "❌  $$d is $$got but must be $$owner $$mode — imaging-api and the $(FL_BACKEND)"; \
 	    echo "    fl-client both write there, so every image download would 500 and training"; \
@@ -167,13 +169,20 @@ endef
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.development.debug.override.yml
+# $(MONAILABEL_OVERRIDE) is load-bearing here even though nothing in the debug override
+# touches monailabel: the debug targets run `up --remove-orphans`, so a compose invocation
+# that omits this overlay sees the running monailabel container as an orphan and DELETES it.
+# GPU_OVERRIDE / TRUST_OVERRIDE only ever modify existing services, which is why omitting
+# them was harmless; MONAILABEL_OVERRIDE is the first overlay here that ADDS one. Defined
+# below at MONAILABEL_OVERRIDE — safe to reference here because this is a recursive (`=`)
+# assignment, expanded when the recipe runs.
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(MONAILABEL_OVERRIDE) -f deploy/compose_trust.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
-# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc)
-# carry `pull_policy: always` in compose_trust.development.yml, so they always
-# pull from GHCR on their own. This flag only adds the global `--pull always`
+# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc,
+# omop-db) carry `pull_policy: always` in compose_trust.development.yml, so they
+# always pull from GHCR on their own. This flag only adds the global `--pull always`
 # that keeps FL images fresh — dropped when DOCKER_FL_REGISTRY is empty (local
 # `:dev` FL images, e.g. flare-fl-client:dev), since docker can't pull an
 # unpublished manifest and `--pull always` would error.
@@ -182,6 +191,7 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-direc
 # `--build` forces the build; `--pull missing` overrides the per-service
 # `pull_policy: always` for this run so the fresh build isn't re-pulled away.
 # Propagated automatically from `make up BUILD=true` at the repo root.
+# up-trust's XNAT step builds and deploys the XNAT images too (trust/xnat/Makefile).
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
@@ -241,6 +251,57 @@ TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-
 GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
 GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
 
+# MONAI Label: AI-assisted annotation for the XNAT OHIF viewer. Off unless the kit (or the
+# command line) sets MONAI_LABEL=true, because it needs an NVIDIA GPU and pulls a large
+# image — a trust that does not want it must be unaffected. Same overlay mechanism as
+# GPU_OVERRIDE above.
+MONAI_LABEL ?= false
+MONAILABEL_OVERRIDE := $(if $(filter true,$(strip $(MONAI_LABEL))),-f deploy/compose_trust.$(__DCKR_SUFFIX).monailabel.yml,)
+
+# The overlay bind-mounts this trust's XNAT archive read-only so MONAI Label reads DICOM
+# off disk instead of pulling every scan over HTTP. XNAT_DATA_DIR comes from the kit but is
+# written relative to trust/xnat/ (that Makefile abspath's it from there), so anchor a
+# relative value at xnat/ — abspath'ing it from trust/ would silently resolve one level
+# too high and mount a non-existent directory. Keeps the default in step with
+# trust/xnat/Makefile's XNAT_DATA_DIR.
+__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM)))
+MONAI_LABEL_XNAT_ARCHIVE_DIR := $(abspath $(if $(filter /%,$(__MONAI_LABEL_XNAT_DIR)),$(__MONAI_LABEL_XNAT_DIR),xnat/$(__MONAI_LABEL_XNAT_DIR)))/xnat-data/archive
+export MONAI_LABEL_XNAT_ARCHIVE_DIR
+
+# A GPU-less host cannot run MONAI Label at all, so that stays a hard refusal. Under PROD
+# it runs from the published ghcr.io/londonaicentre/monailabel image
+# (docker_build_monailabel.yml). The XNAT OHIF viewer plugin it registers through ships by
+# default in every deployment mode (#1243), so there is no plugin trade-off to warn about.
+define require_monailabel_supported
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -z "$(GPU_OVERRIDE)" ]; then \
+		echo "❌ MONAI_LABEL=true needs a GPU, but NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset)"; \
+		echo "   for KIT=$(KIT). Set NUM_AVAILABLE_GPUS>0 in trust/$(KIT_FILE) on a GPU host."; \
+		exit 1; \
+	fi
+endef
+
+# up-trust starts monailabel before up-xnat, whose xnat-reset deletes and recreates the XNAT
+# data dir; the container's bind mount still holds the deleted archive, so it would never see
+# a study. Once XNAT is up, check the archive exists where the overlay mounts it from (a local
+# daemon only: a remote one resolves the path on its own host), then recreate monailabel onto it.
+define rebind_monailabel_archive
+	@host="$${DOCKER_HOST:-}"; \
+	if [ -z "$$host" ]; then \
+	  host=$$(docker context inspect $${DOCKER_CONTEXT:+"$$DOCKER_CONTEXT"} --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true); \
+	fi; \
+	case "$$host" in tcp://localhost[:/]*|tcp://localhost|tcp://127.0.0.1*|tcp://\[::1\]*) host="";; esac; \
+	case "$$host" in ssh://*|tcp://*) ;; *) \
+	  if [ ! -d "$(MONAI_LABEL_XNAT_ARCHIVE_DIR)" ]; then \
+	    echo "❌ MONAI Label mounts the XNAT archive from $(MONAI_LABEL_XNAT_ARCHIVE_DIR),"; \
+	    echo "   which does not exist after up-xnat. Check XNAT_DATA_DIR in $(KIT_FILE_LABEL)."; \
+	    exit 1; \
+	  fi;; \
+	esac
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --force-recreate --no-deps monailabel
+endef
+
+MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — serving $(or $(strip $(MONAI_LABEL_MODELS)),deepedit) at $(or $(strip $(MONAI_LABEL_PUBLIC_URL)),http://localhost:$(or $(strip $(MONAI_LABEL_PORT)),8030)),)
+
 # TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
 # registered name, falling back to the assigned slot then the CODE so a
 # not-yet-migrated kit (no TRUST_NAME) still resolves. nvflare's FL-material
@@ -279,10 +340,10 @@ TRUST_BUILD_VARS = \
 define ensure_data_dirs
 	@omop="$(1)"; pacs="$(2)"; \
 	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; exit 1; }; \
-	if [ "$$(stat -c %u "$$pacs")" != "999" ]; then \
+	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "999" ]; then \
 	  chown 999:999 "$$pacs" 2>/dev/null || \
 	  docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine chown 999:999 /d || { \
-	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$(stat -c '%u:%g' "$$pacs")"; \
+	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
 	    echo "   Fix: sudo chown 999:999 $$pacs"; exit 1; }; \
 	fi
 endef
@@ -298,15 +359,15 @@ define ensure_snapshot_dir
 	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
 	case "$$dir" in \
 	  /*) name="$$(basename "$$dir")"; \
-	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$(stat -c '%u:%g' "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
+	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$($(call stat_fmt,%u:%g) "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
 	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
 	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
 	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
 	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
-	     if [ "$$(stat -c '%u:%g' "$$dir")" != "$$owner" ]; then \
+	     if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
 	       chown "$$owner" "$$dir" 2>/dev/null || \
 	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d || { \
-	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$(stat -c '%u:%g' "$$dir")"; \
+	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
 	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
 	     fi ;; \
 	esac
@@ -427,7 +488,7 @@ define check_slot_not_taken
 endef
 
 build:
-	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) -p $(or $(TRUST_PROJECT),trust) build
 
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
@@ -458,21 +519,24 @@ prepare-artifacts:
 # seed markers differ from the kit's PROJECTS / data version, and its up-xnat step runs
 # xnat-reset, which wipes the XNAT archive and database — never run it, or
 # restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
-up-trust: require-xnat-aetitle create-networks
+up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(require_monailabel_supported)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)
 	@echo "$(GPU_STATUS_MSG)"
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
+	@$(if $(MONAILABEL_OVERRIDE),echo "$(MONAI_LABEL_STATUS_MSG)",:)
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	$(MAKE) ensure-seeded KIT=$(KIT) PROD=$(PROD)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
+	$(if $(MONAILABEL_OVERRIDE),$(rebind_monailabel_archive))
 
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
 # The services fail closed on an invalid policy, so an operator editing rules wants the
@@ -494,9 +558,16 @@ up-trust: require-xnat-aetitle create-networks
 # `onboard-onprem-trust` runs the renderer.
 GOVERNANCE_PYTHON = uv run --no-config --no-project --python '>=3.11' python
 SITE_PRIVACY_KIT_ENV = $(foreach v,$(sort $(filter FL_SITE_PRIVACY_%,$(.VARIABLES))),$(v)="$($(v))")
-# NVFLARE's fl-clients read their section through the one-shot fl-governance-init service
+# FLARE's fl-clients read their section through the one-shot fl-governance-init service
 # (compose_trust.*.nvflare.yml). Flower has no such service and nothing that reads the file.
 GOVERNANCE_INIT = $(if $(filter nvflare,$(FL_BACKEND)),fl-governance-init)
+
+# Hubless self-test of this host's trust stack (FLIP#1390): a kit that needs no hub, the
+# production stack as slot 1, health/seed/auth/C-STORE/FL-client checks, a report under
+# /opt/flip/selftest, then teardown (SELFTEST_KEEP_UP=1 keeps it up). Run as root on an
+# Azure node by `flip-node selftest <backend>`; needs no AWS and no hub.
+selftest-node:
+	@bash ../scripts/selftest_node.sh "$(FL_BACKEND)"
 
 check-governance:
 	$(require_kit_file)
@@ -512,7 +583,7 @@ else
 	@echo "🔍 Validating the [disclosure]/[access] half (KIT=$(KIT), floor COHORT_QUERY_THRESHOLD=$(or $(COHORT_QUERY_THRESHOLD),10))..."
 	@ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" \
 	    COHORT_QUERY_THRESHOLD="$(or $(COHORT_QUERY_THRESHOLD),10)" \
-	    PYTHONPATH=data-access-api $(GOVERNANCE_PYTHON) data-access-api/scripts/check_governance.py
+	    PYTHONPATH=data-access-api $(GOVERNANCE_PYTHON) data-access-api/data_access_api/scripts/check_governance.py
 	@echo "🔍 Validating the [fl_privacy] half with the fl-client's own loader (FL_BACKEND=$(FL_BACKEND))..."
 	@tmp=$$(mktemp -d) && trap 'rmdir "$$tmp"' EXIT && \
 	    ACCESS_POLICY_FILE="$(abspath $(ACCESS_POLICY_FILE))" $(SITE_PRIVACY_KIT_ENV) \
@@ -553,7 +624,7 @@ endef
 # a dev compose's pull_policy: always from swapping the image under the edit, and the net
 # dirs of a live trust already exist (as in _upgrade-trust-apply).
 #
-# Only the services that read the document are recreated: data-access-api, plus on NVFLARE
+# Only the services that read the document are recreated: data-access-api, plus on FLARE
 # fl-governance-init and the fl-clients it extracts for. On Flower nothing else reads it, so
 # its clients — and their running jobs — are left alone. Each reads it at container start.
 #
@@ -565,7 +636,7 @@ endef
 # refuse never reaches them. Then it waits for data-access-api's `[governance]` startup line
 # and compares its digest with the document's: an image that predates governance support
 # prints no such line, and a mismatch means the service is not reading this file — either is
-# a failure, not a ✅. On NVFLARE this interrupts any job the fl-clients are running: apply
+# a failure, not a ✅. On FLARE this interrupts any job the fl-clients are running: apply
 # between runs.
 reload-governance: check-governance
 	$(require_kit_file)
@@ -637,7 +708,7 @@ down-trust:
 	$(require_kit)
 	$(check_slot_not_taken)
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
@@ -680,8 +751,8 @@ _upgrade-trust-apply:
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
 	$(ensure_snapshot_dir)
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
 	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) PROD=$(PROD)
 	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
@@ -713,6 +784,16 @@ up-trust-ec2: require-xnat-aetitle
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
+	@# Refuse rather than silently drop the overlay. require_monailabel_supported is not
+	@# enough here: it keys off GPU_OVERRIDE, which a kit seeded with the template default
+	@# NUM_AVAILABLE_GPUS=1 leaves non-empty even though the t3.xlarge has no GPU. Without
+	@# this the kit says MONAI Label is on, the deploy says nothing, and no server ever runs.
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ]; then \
+		echo "❌ MONAI_LABEL=true is not supported on the EC2 trust path — this instance type"; \
+		echo "   has no GPU (that is why the GPU overlay is omitted above). Set MONAI_LABEL=false"; \
+		echo "   in trust/$(KIT_FILE), or deploy this trust on a GPU host with up-trust."; \
+		exit 1; \
+	fi
 	$(ensure_snapshot_dir)
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
@@ -1001,6 +1082,14 @@ create-networks-trust-2:
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
+# The loaded kit's own overlay network, whatever slot the hub assigned. create-networks makes
+# only the two dev trusts' (1 and 2); a trust on Trust_3 or above (an on-prem or Azure node,
+# FLIP#1390) otherwise created every container and then failed "network
+# deploy_trust-network-3 not found".
+create-trust-network:
+	@[ -n "$(TRUST_NUM)" ] || { echo "❌ KIT=<CODE> with FL_KIT_SLOT_NUMBER set is required"; exit 1; }
+	@{ docker network inspect $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM); }
+
 # Every network here carries the instance prefix, so an instance owns all of them and
 # removing them is unconditional. (Before the trust networks were prefixed they were
 # shared across instances, and this target had to refuse to delete them — that guard
@@ -1008,10 +1097,11 @@ create-networks: create-networks-core create-networks-trust-1 create-networks-tr
 remove-networks:
 	@echo "🗑️  Removing all trust networks..."
 	@docker network rm $(INSTANCE_PREFIX)deploy_central-hub-trust-apis-network $(INSTANCE_PREFIX)deploy_fl-net-1 $(INSTANCE_PREFIX)deploy_fl-net-2 2>/dev/null || true
-	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 2>/dev/null || true
+	@docker network rm $(INSTANCE_PREFIX)deploy_trust-network-1 $(INSTANCE_PREFIX)deploy_trust-network-2 $(if $(TRUST_NUM),$(INSTANCE_PREFIX)deploy_trust-network-$(TRUST_NUM)) 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
 
-recreate-networks: remove-networks create-networks
+# With a KIT on slot 3 or above, its own network comes back too (create-trust-network).
+recreate-networks: remove-networks create-networks $(if $(filter-out 1 2,$(TRUST_NUM)),create-trust-network)
 	@echo "✅ All trust networks recreated with swarm support!"
 
 # First registered dev trust — the default KIT for the debug targets when none

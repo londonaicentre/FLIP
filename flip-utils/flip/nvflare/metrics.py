@@ -134,7 +134,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
 
     # This is the guard that holds against old/foreign client images: a non-finite coordinate would
     # fail TrainingMetrics validation inside send_metrics *before* its try block and propagate out of
-    # NVFLARE's event dispatch, losing the metric with a server traceback. Mirror the Flower leg
+    # FLARE's event dispatch, losing the metric with a server traceback. Mirror the Flower leg
     # (_parse_metric_key): drop it to None so the hub plots the point at the global round.
     if x_value is not None and not (isinstance(x_value, (int, float)) and math.isfinite(x_value)):
         flip.logger.warning(
@@ -154,7 +154,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
             x_label=metrics_data.get("x_label"),
         )
     except Exception:
-        # Never let one bad metric escape into NVFLARE's event dispatch (matches the
+        # Never let one bad metric escape into FLARE's event dispatch (matches the
         # Flower forward loop) — the metric is lost, but the run and the round's
         # remaining metrics carry on.
         flip.logger.exception(f"Failed to forward metric {metrics_data.get('label')} to the hub")

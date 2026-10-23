@@ -1,27 +1,34 @@
 .. _admin-project-and-user-management:
 
 ##########
-FLIP Admin
+FLIP admin
 ##########
 
-.. warning:: User must be assigned the ``admin`` role.
+.. important:: Everything on this page needs the ``admin`` role.
+
+FLIP admins unstage projects, record project approval at trusts that have no Trust Admin, and run the Admin Area:
+users, the site banner and deployment mode.
+
+.. contents:: On this page
+   :local:
+   :depth: 2
 
 ********
 Projects
 ********
 
-FLIP Admins are responsible for un-staging projects and for recording the Project Approval decision at every Trust that has no Trust Admin.
-
-Project Un-staging
+Project un-staging
 ==================
 
-Model developers must *stage* a project for approval in order to progress to training of models against the cohort defined within the project. Once a project has been staged for approval, the project will be locked and no further amendments to the project or cohort query can be made.
+A model developer **stages** a project to ask for approval before training. Staging locks the project: neither the
+project nor its cohort query can be changed.
 
-If a project or a project's model needs to be amended i.e., at the request of a model developer or as an outcome of the approval process, the model developer will need to liaise with a FLIP Admin to un-stage the project and re-enable editing.
+If the project or one of its models needs changing (because the developer asks, or the approval process requires
+it), the developer asks a FLIP admin to **unstage** it. That re-enables editing.
 
-1. Navigate to the project list
-2. Select specific project and navigate to the project page
-3. Click the 'Unstage Project' button
+1. Open the project list.
+2. Open the project.
+3. Click **Unstage Project**.
 
 .. figure:: ../assets/generated/gifs/flip/unstage-project.gif
    :align: center
@@ -29,27 +36,47 @@ If a project or a project's model needs to be amended i.e., at the request of a 
    Un-staging a project.
 
 
-Project Approval
+Project approval
 ================
 
-Once the offline project approval process has been completed, the outcome at each Trust can be recorded: every Trust the project was staged for is approved or declined, each in its own time. FLIP records each decision with who made it, when, and whether it was made by the hub or by the Trust itself, and writes it to the project's audit trail.
+Approval itself happens offline. Once it is done, record the outcome in FLIP for each trust the project was staged
+at. Each trust is approved or declined separately, in its own time. FLIP records who made each decision, when, and
+whether it came from the hub or the trust, in the project's audit trail.
 
-**Who decides a Trust.** A Trust with no Trust Admin is decided by a FLIP Admin, from the project page. A Trust with at least one Trust Admin decides for itself: only its Trust Admins approve or decline for it, from their **My Trust** page (see :ref:`trust-admin-guide`), and on the project page a FLIP Admin sees that Trust's row read-only. Appointing a Trust's first Trust Admin (see :ref:`assigning-a-trust-admin`) hands its decisions to the Trust; removing its last hands them back to the hub.
+**Who decides a trust:**
 
-Approving a project allows the next stage of model training to commence and triggers the image retrieval process at each approved Trust.
+- A trust with **no Trust Admin** is decided by a FLIP admin, on the project page.
+- A trust with **at least one Trust Admin** decides for itself, on its **My Trust** page (see
+  :ref:`trust-admin-guide`). On the project page, a FLIP admin sees that trust's row read-only.
+
+Appointing a trust's first Trust Admin (see :ref:`assigning-a-trust-admin`) hands its decisions to the trust.
+Removing its last Trust Admin hands them back to the hub.
+
+**Approving** a project lets training start and triggers image retrieval at each approved trust.
 
 .. warning::
 
-   The model developer will not be able to initiate training at Trusts that have not approved the project, whether they declined or have not decided yet.
+   Model developers cannot start training at a trust that has not approved the project, whether it declined or has
+   not decided yet.
 
-1. Navigate to the project page
-2. Navigate to the 'Trust Approval' section
-3. For a Trust you decide, click **Approve** or **Decline**
-4. Click the 'Save Trust Decisions' button, which is enabled once at least one decision differs from what is already saved. Only the Trusts you changed are saved.
+To record decisions:
 
-**Trusts decide at their own pace.** The project is approved as soon as one Trust approves it; the others can still approve or decline later. A Trust that approves after the project is approved gets its image retrieval then, and joins the project's existing models, taking part from their next training run. Once the project is approved, a Trust that has approved or declined cannot change its decision. If every Trust is declined, the project stays staged: either change a decision and save again, or un-stage the project so the model developer can amend it and stage it again. The earlier decisions stay in the project's audit trail.
+1. Open the project page.
+2. Go to the **Trust Approval** section.
+3. For each trust you decide, click **Approve** or **Decline**.
+4. Click **Save Trust Decisions**. The button is enabled once a decision differs from what is saved, and only the
+   trusts you changed are saved.
 
-For example, the below shows a project staged at one Trust being approved:
+**Trusts decide at their own pace:**
+
+- The project counts as approved as soon as one trust approves it. Other trusts can still approve or decline later.
+- A trust that approves later gets its image retrieval then. It joins the project's existing models from their next
+  training run.
+- Once the project is approved, a trust that has approved or declined cannot change its decision.
+- If every trust declines, the project stays staged. Either change a decision and save again, or unstage the project
+  so the developer can amend and re-stage it. Earlier decisions stay in the audit trail.
+
+The example below shows a project staged at one trust being approved:
 
 .. figure:: ../assets/generated/gifs/flip/approve-project.gif
    :align: center
@@ -60,75 +87,79 @@ For example, the below shows a project staged at one Trust being approved:
 Admin Area
 **********
 
-The Admin Area enables certain functions, such as user management, configuration of deployment mode and the site banner, etc., available only to users with the ``admin`` role. To access this page, click the 'Admin' button on the left-hand side in the navigation menu.
+The Admin Area holds the functions only admins can use: user management, the site banner and deployment mode. To
+open it, click **Admin** in the left-hand navigation menu.
 
-User Management
+User management
 ===============
 
-The User Management area facilitates:
+From User Management you can:
 
-- Review of access requests submitted from the login page
-- Registration of new users
-- Assignment of a user's role
-- Disabling and re-enabling of user accounts
-- Resetting of user passwords
+- review access requests sent from the login page;
+- register new users;
+- assign a user's role;
+- disable and re-enable accounts;
+- reset passwords and MFA.
 
 .. note::
 
-   The Admin Area assigns **one role per user**: selecting a role replaces the one currently held. See :ref:`rbac-roles` for the available roles and the permissions each grants.
+   Each user has **one role**: selecting a role replaces the one they hold. See :ref:`rbac-roles` for the roles and
+   what each can do.
 
-Access Requests
+Access requests
 ^^^^^^^^^^^^^^^
 
-Prospective users can ask for an account from the login page without holding one (see :ref:`request-access`). Each request records the requester's email address, full name and stated reason, and FLIP emails the platform's administrator address to announce it. The request is stored before that email is attempted, so it survives a mail backend that is unavailable or throttled — the 'Access Requests' queue, not the inbox, is the record to work from.
+Anyone can ask for an account from the login page (see :ref:`request-access`). Each request records the email
+address, full name and stated reason, and FLIP emails the platform's admin address about it.
 
-1. Click 'Access Requests' in the Admin Area's side navigation
-2. Filter by status — 'Pending' (the default), 'Enrolled' or 'Dismissed'
-3. On a pending request, click 'Enroll' to open the registration form pre-filled with the requester's name and email address (you choose the role), or 'Dismiss' to decline it
+.. tip::
 
-Enrolling or dismissing a request records which administrator handled it, and the request is retained under its new status rather than deleted.
+   Work from the **Access Requests** queue, not the inbox. FLIP saves the request before it sends the email, so a
+   request is kept even when the email fails.
 
-Register User
+1. Click **Access Requests** in the Admin Area's side navigation.
+2. Filter by status: **Pending** (the default), **Enrolled** or **Dismissed**.
+3. On a pending request, click **Enroll** or **Dismiss**. **Enroll** opens the registration form with the
+   requester's name and email filled in; you choose the role.
+
+FLIP records which admin handled each request. Handled requests are kept under their new status, not deleted.
+
+Register user
 ^^^^^^^^^^^^^
 
-1. Click the 'Register User' button
-2. Enter the new user's email address and select a single role (``admin``, ``researcher`` or ``viewer``)
-3. Click the 'Register User' button
-4. The user will be emailed a one-time password to use on their :ref:`initial-login`
+1. Click **Register User**.
+2. Enter the new user's email address and select one role (``admin``, ``researcher`` or ``viewer``).
+3. Click **Register User**.
+
+FLIP emails the user a one-time password for their :ref:`initial-login`.
 
 .. figure:: ../assets/generated/gifs/admin/create-user.gif
    :align: center
 
    Registering a new user.
 
-Disable/Enable User
+Disable/enable user
 ^^^^^^^^^^^^^^^^^^^
 
-FLIP does not facilitate the deletion of user accounts, but rather enables accounts to be disabled in order to revoke access (and re-enabled to return access).
+FLIP does not delete user accounts. To revoke access, disable the account; re-enable it to restore access.
 
-1. Select the user from the user list
-2. Click the '...' button
-3. Select the option to 'Disable User'
-
-.. note::
-
-   Disabled accounts may be re-enabled in a similar fashion.
+1. Select the user in the user list.
+2. Click **...**.
+3. Select **Disable User**. Re-enabling works the same way.
 
 .. figure:: ../assets/generated/gifs/admin/user-enable-disable.gif
    :align: center
 
    Enabling a user.
 
-Manage Role
+Manage role
 ^^^^^^^^^^^
 
-.. note::
+You can change a user's role at any time. The new role replaces the old one.
 
-   A user's role may be re-assigned at any time. The radio list assigns a single role, replacing the one currently held.
-
-1. Select the user from the user list
-2. Choose the new role from the radio list (``admin``, ``researcher``, ``viewer`` or ``trust admin``)
-3. Click the 'Save User' button
+1. Select the user in the user list.
+2. Choose the new role (``admin``, ``researcher``, ``viewer`` or ``trust admin``).
+3. Click **Save User**.
 
 .. figure:: ../assets/generated/gifs/admin/role-assignment.gif
    :align: center
@@ -140,30 +171,36 @@ Manage Role
 Assigning a Trust Admin
 ^^^^^^^^^^^^^^^^^^^^^^^
 
-A Trust Admin approves or declines projects for **one** Trust, on that Trust's behalf, and otherwise works as a ``researcher`` (see :ref:`rbac-roles`). Appoint one when a Trust wants to decide on its own projects rather than relay its decisions to the hub.
+A Trust Admin approves or declines projects for **one** trust, on its behalf, and otherwise works as a
+``researcher`` (see :ref:`rbac-roles`). Appoint one when a trust wants to decide on its own projects rather than
+pass its decisions to the hub.
 
-1. Select the user from the user list (or register them first)
-2. Choose ``trust admin`` from the radio list
-3. In the 'Administers' dropdown inside the card, choose the Trust
-4. Click the 'Save User' button, which stays disabled until a Trust is chosen
+1. Select the user in the user list (register them first if needed).
+2. Choose ``trust admin``.
+3. In the **Administers** dropdown inside the card, choose the trust.
+4. Click **Save User**. The button stays disabled until a trust is chosen.
 
-From then on, only that Trust's Trust Admins decide its projects — including any it has not decided yet — and the hub no longer can. To hand a Trust's decisions back to the hub, move its last Trust Admin to another role. Each change is written to the Trust's audit log. A user can administer one Trust; a Trust can have several Trust Admins.
+From then on, only that trust's Trust Admins decide its projects, including any not decided yet; the hub no longer
+can. To hand the trust's decisions back to the hub, move its last Trust Admin to another role.
+
+- A user can administer one trust; a trust can have several Trust Admins.
+- Each change is written to the trust's audit log.
 
 .. figure:: ../assets/generated/gifs/admin/assign-trust-admin.gif
    :align: center
 
    Making a user the Trust Admin of one Trust.
 
-Reset Password
+Reset password
 ^^^^^^^^^^^^^^
 
-.. note::
+.. tip::
 
-  Users are able to reset their password themselves via the :ref:`forgot-password` functionality on the Login page.
+  Users can reset their own password with :ref:`forgot-password` on the login page.
 
-1. Select the user from the user list
-2. Click the '...' button
-3. Click the 'Reset Password' button
+1. Select the user in the user list.
+2. Click **...**.
+3. Click **Reset Password**.
 
 .. figure:: ../assets/generated/gifs/admin/reset-password.gif
    :align: center
@@ -173,13 +210,12 @@ Reset Password
 Reset User MFA
 ^^^^^^^^^^^^^^
 
-.. note::
+Use this when a user has lost their authenticator device. The reset clears their authenticator (TOTP) setting and
+signs them out everywhere. At their next sign-in they are taken to the MFA enrolment page to register a new one.
 
-  Use this when a user has lost their authenticator device and needs to enrol a new one. The reset clears the user's TOTP preference and revokes any active sessions, so on the next sign-in they are routed through the MFA enrolment page to register a new authenticator.
-
-1. Select the user from the user list
-2. Click the '...' button
-3. Click the 'Reset MFA' button and confirm
+1. Select the user in the user list.
+2. Click **...**.
+3. Click **Reset MFA** and confirm.
 
 .. figure:: ../assets/generated/gifs/admin/reset-mfa.gif
    :align: center
@@ -188,42 +224,50 @@ Reset User MFA
 
 .. warning::
 
-  You cannot use this flow to recover **your own** MFA — the Admin Area requires an authenticated session, which you cannot obtain without your authenticator. If you are an administrator who has lost access to your TOTP device, see the "Cognito MFA Administration" section in ``deploy/README.md`` for the AWS CLI self-recovery runbook (local Keycloak stacks: clear the OTP credential in the Keycloak admin console).
+  You cannot reset **your own** MFA this way: the Admin Area needs a signed-in session, and you cannot sign in
+  without your authenticator. Another operator with AWS access follows :ref:`deploy-central-hub-mfa-recovery`. On a local Keycloak stack, clear the OTP credential in the Keycloak
+  admin console instead.
 
-Site Banner
+Site banner
 ===========
 
-.. note::
-
-   The site banner may be enabled or disabled at any time.
-
-The site banner allows:
-
-- A message to be set which is visible to all users of FLIP
-- A link to be provided so that when a user clicks the site banner they will navigate to the specified URL
-
+The site banner shows a message to every FLIP user. It can include a link that users follow by clicking the banner.
+You can turn the banner on or off at any time.
 
 .. figure:: ../assets/generated/gifs/admin/site-banner.gif
    :align: center
 
    Editing the site banner.
 
-Deployment Mode
+.. _deployment-mode:
+
+Deployment mode
 ===============
 
-.. note::
+**Deployment mode** turns off FLIP's core functions while a deployment or maintenance is under way. You can turn it
+on or off at any time. Site banner and user management still work while it is on.
 
-   Deployment Mode can be enabled and disabled at any time, and the Site and User Management functions are still available while Deployment Mode is enabled.
+It also pauses federated training, so the Central Hub can be redeployed without killing a run:
 
-Deployment Mode will disable all core functions of the FLIP Platform, and is intended for use while deployment or maintenance is occurring.
+- The FL scheduler stops picking up queued jobs. Queued jobs are kept and resume, oldest first, when deployment mode
+  is turned off.
+- A training run already under way finishes normally; its results upload and final status are unaffected. Only new
+  jobs are held.
+- Requests to start training are refused with ``503 Service Unavailable``.
 
-Deployment Mode also quiesces federated training so the Central Hub can be redeployed without killing an in-flight run:
+Before a planned hub redeploy, even mid-training:
 
-- The FL scheduler stops picking up queued jobs. Queued jobs are not lost — they stay queued and resume, oldest first, once Deployment Mode is disabled.
-- A training run already in flight is allowed to finish normally (its results upload and final status are unaffected); it is only the start of *new* jobs that is paused.
-- Requests to initiate training are rejected with ``503 Service Unavailable`` while the mode is enabled.
+1. Turn deployment mode on.
+2. Wait for the current run, if any, to finish.
+3. Redeploy the hub.
+4. Turn deployment mode off.
 
-This means Deployment Mode can be enabled at any time — even mid-training — ahead of a planned redeploy: enable it, wait for the current run (if any) to reach a terminal status, redeploy, then disable it. The Central Hub deploy command prints a reminder of this workflow (see ``deploy-centralhub`` in the AWS deployment README), and the ``GET /fl/quiesce`` endpoint reports whether the platform is quiesced (``deployment_mode`` plus ``fl_quiesced``, which is true when no net's scheduler is busy).
+The hub deploy command (``make -C deploy/providers/AWS deploy-centralhub``) prints a reminder of these steps.
+
+.. tip::
+
+   ``GET /fl/quiesce`` on the hub API reports whether it is safe to redeploy: ``deployment_mode``, and
+   ``fl_quiesced``, which is true when no net's scheduler is busy.
 
 .. figure:: ../assets/generated/gifs/admin/deployment-mode.gif
    :align: center

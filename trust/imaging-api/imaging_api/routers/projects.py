@@ -105,11 +105,14 @@ def create_project_endpoint(
     response_model=CreatedProject,
     summary="Create XNAT Project from Central Hub Project information",
 )
-async def create_project_from_central_hub_project(
+def create_project_from_central_hub_project(
     central_hub_project: CentralHubProject, headers: XNATAuthHeaders, background_tasks: BackgroundTasks
 ) -> CreatedProject:
     """
     Creates a new project in XNAT based on Central Hub project information.
+
+    A plain ``def`` so FastAPI runs it in its threadpool: the XNAT calls block, and on the single
+    event loop they would stall every other request, ``/health`` included, while the project is set up.
     Central Hub project information includes the project ID, project name, and users.
 
     A dedicated XNAT project ID will be created, as well as corresponding users.

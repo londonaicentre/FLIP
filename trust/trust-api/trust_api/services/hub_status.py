@@ -23,10 +23,10 @@ The hub embeds two things in every heartbeat reply beside the identity block:
   every task failing to decrypt. The hub's digest is kept as well, so the readiness checklist
   can tell a stale kit from a refreshed kit that trust-api has not been recreated on yet.
 
-Both are optional on the wire — a pre-FLIP#1204 hub sends neither, which is recorded
-as "unknown", never as a mismatch. The status is only as fresh as the last heartbeat the
-hub accepted: a rejected or failed heartbeat forgets it, so a hub that has since rotated
-its key is never reported as a match. The poller records; ``/health`` reports.
+Either may be absent or null (the hub sends a null fingerprint when it cannot load its own
+key) — recorded as "unknown", never as a mismatch. The status is only as fresh as the last
+heartbeat the hub accepted: a rejected or failed heartbeat forgets it, so a hub that has since
+rotated its key is never reported as a match. The poller records; ``/health`` reports.
 """
 
 from trust_api.utils.encryption import aes_key_fingerprint

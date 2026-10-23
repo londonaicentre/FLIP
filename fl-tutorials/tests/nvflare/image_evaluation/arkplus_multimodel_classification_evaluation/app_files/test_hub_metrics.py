@@ -12,7 +12,7 @@
 """The Ark+ multimodel evaluation sends only per-model, per-lesion AUROC to the hub (FLIP#1526).
 
 The evaluator's real replies (``compute_metrics``: AUROC in ``metrics``, the DeLong maps in
-``meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]``) go through NVFLARE's ``FLModel`` conversion into FLIP's
+``meta[FlipMetaKey.SUPPLEMENTARY_RESULTS]``) go through FLARE's ``FLModel`` conversion into FLIP's
 ``EvaluationJsonGenerator``.
 """
 
@@ -53,7 +53,7 @@ def _evaluator():
 
 def _receive(generator: EvaluationJsonGenerator, client: str, owner: str, reply: tuple[dict, dict]) -> None:
     metrics, supplementary = reply
-    # What flare.send() hands the server: NVFLARE copies FLModel.meta into the METRICS DXO's meta.
+    # What flare.send() hands the server: FLARE copies FLModel.meta into the METRICS DXO's meta.
     result = FLModelUtils.to_shareable(
         FLModel(metrics=metrics, meta={FlipMetaKey.SUPPLEMENTARY_RESULTS.value: supplementary})
     )

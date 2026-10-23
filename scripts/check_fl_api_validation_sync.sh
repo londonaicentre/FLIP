@@ -12,7 +12,7 @@
 #
 # Verify that the shared URL/path guards in the two fl-api services have not drifted.
 #
-# `safe_join` and `validate_bundle_url` are byte-identical copies in the NVFLARE and Flower
+# `safe_join` and `validate_bundle_url` are byte-identical copies in the FLARE and Flower
 # fl-api services. They are the only SSRF and path-traversal guards in front of the server-side
 # bundle fetch, so a fix applied to one copy and not the other silently leaves the second service
 # vulnerable -- which is exactly what happened with the numeric-IP bypass in FLIP#893.

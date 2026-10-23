@@ -410,7 +410,7 @@ describe("ModelUpload", () => {
         test("colours the backend chip in the backend's brand colour", async () => {
             const nvflare = mountModelUpload({
                 requiredFiles: required,
-                flBackendLabel: "NVFlare"
+                flBackendLabel: "FLARE"
             });
             const flower = mountModelUpload({
                 requiredFiles: required,

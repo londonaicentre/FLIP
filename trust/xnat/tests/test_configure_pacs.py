@@ -15,6 +15,7 @@ The script is run for real against a stub ``curl`` that records every payload it
 PUT, so these assert what XNAT would actually receive rather than matching strings in the source.
 """
 
+import csv
 import json
 import os
 import re
@@ -22,11 +23,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from pydicom.datadict import tag_for_keyword
 
 from plugin_fixtures import declared_ids, plugins_listing, xnat_home
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "xnat" / "config"
 SCRIPT = CONFIG_DIR / "configure-xnat.sh"
+PS315_TABLE = Path(__file__).parent / "ps315_table_e1_1.csv"
 
 # A miniature XNAT: it keeps the /xapi/pacs and /xapi/dicomscp collections in files and mutates them
 # on POST/PUT/DELETE, so a GET reflects what the script actually did rather than what the test said.
@@ -421,6 +424,17 @@ def payload_for(payloads: str, endpoint: str) -> dict:
         if matches and rest.strip().startswith("{"):
             found = json.loads(rest.strip())
     assert found is not None, f"no payload sent to {endpoint}"
+    return found
+
+
+def site_config_payloads(payloads: str) -> list[dict]:
+    """Every JSON object sent to ``/xapi/siteConfig``, in order: the script sets the site in several calls."""
+    found = []
+    for block in payloads.split("=== "):
+        header, _, rest = block.partition("\n")
+        parts = header.split()
+        if len(parts) == 2 and parts[1].endswith("/xapi/siteConfig") and rest.strip().startswith("{"):
+            found.append(json.loads(rest.strip()))
     return found
 
 
@@ -1095,6 +1109,31 @@ def test_site_wide_anonymization_is_uploaded_and_enabled(tmp_path):
     assert code == 0, output
     assert body_for(payloads, "/xapi/anonymize/site/enabled") == "true"
     assert ("PUT", "http://xnat-web:8080/xapi/anonymize/site") in requests_made(payloads)
+
+
+def test_archived_files_are_not_named_from_identifying_attributes(tmp_path):
+    """XNAT names each archived file from the header as it arrived, before the anonymization script runs.
+
+    A plain variable naming a Table E.1-1 attribute puts its original value in every file name, as the
+    default template did with the Study Instance UID. A ``Hash…With…`` variable carries only a hash of its
+    inputs, and one is needed: names that collide overwrite each other without a warning.
+    """
+    code, payloads, output = run_configure(tmp_path)
+    assert code == 0, output
+    naming = [p for p in site_config_payloads(payloads) if "dicomFileNameTemplate" in p]
+    assert len(naming) == 1, "the file-name template is not set"
+    assert naming[0]["useSopInstanceUidToUniquelyIdentifyDicom"] is True
+
+    variables = re.findall(r"\$\{([A-Za-z0-9]+)\}", naming[0]["dicomFileNameTemplate"])
+    assert any(name.startswith("Hash") for name in variables), "nothing keeps the names unique"
+    with PS315_TABLE.open() as table:
+        rows = csv.DictReader(line for line in table if not line.startswith("#"))
+        digits = [row["tag"].strip("()").replace(",", "") for row in rows]
+    listed = {int(tag, 16) for tag in digits if re.fullmatch(r"[0-9A-Fa-f]{8}", tag)}
+    for name in (name for name in variables if not name.startswith("Hash")):
+        tag = tag_for_keyword(name)
+        assert tag is not None, f"${{{name}}} is not a DICOM keyword"
+        assert tag not in listed, f"${{{name}}} puts the original {name} in every archived file name"
 
 
 def test_dqr_stays_restricted_to_authorised_accounts(tmp_path):

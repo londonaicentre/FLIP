@@ -67,7 +67,7 @@ defence-in-depth (see
 
 It is also the file the Kubernetes trust chart runs, from the copy the image
 ships at `/flip/omop/create_readonly_users.sql`, on **every** omop-db pod start
-(a PVC restored from a pgdata snapshot skips `/docker-entrypoint-initdb.d`, so
+(a PVC that already holds a database skips `/docker-entrypoint-initdb.d`, so
 the chart cannot rely on init — FLIP#904). So it has to stay safe to re-run
 against a cluster that already holds the roles, and converge an existing
 `data_analyst_reader` on the same membership and limits rather than skip it;
@@ -80,17 +80,17 @@ the file.
 The `data_analyst_reader` password is **not baked into the image**: the init
 hook reads `DATA_ACCESS_POSTGRES_PASSWORD` from the container environment at
 *first* init and stores it in the database cluster — i.e. it lives in the
-pgdata volume (and therefore in the published pgdata tarballs, which carry
-whatever value they were initialised with). Two rotation paths:
+pgdata volume. Two rotation paths:
 
 - **Live database** (no rebuild):
   ``ALTER ROLE data_analyst_reader WITH PASSWORD '<new>';`` then update
   `DATA_ACCESS_POSTGRES_PASSWORD` in the trust kit file so data-access-api
   matches.
-- **Fresh volumes**: set the new value in `.env.build` and re-run the build →
-  populate pipeline (see the README). If the resulting volumes are published as
-  new pgdata tarballs, consuming kit files must be updated to the matching
-  password.
+- **Fresh volumes**: set the new value in the trust kit file, remove the trust's
+  OMOP data dir (`OMOP_DATA_DIR`, default `trust/omop-db/volumes/Trust_<N>/db_data`)
+  **and** the `.seeded` marker beside it, and bring the trust up again: first init
+  reads the kit and `ensure-seeded` re-seeds. The standalone build stack
+  (`compose.yml`) reads `.env.build` instead.
 
 ### Accession ID encryption
 

@@ -17,7 +17,7 @@ from nvflare.app_common.widgets.validation_json_generator import (
 
 
 class ValidationJsonGenerator(NVFlareValidationJsonGenerator):
-    """Stock NVFLARE ``ValidationJsonGenerator``, dispatched manually by FLIP's ServerEventHandler.
+    """Stock FLARE ``ValidationJsonGenerator``, dispatched manually by FLIP's ServerEventHandler.
 
     Subclasses ``nvflare.app_common.widgets.validation_json_generator.ValidationJsonGenerator`` so
     the results accumulation (METRICS *and* COLLECTION / T2 leaf handling), numpy-float JSON
@@ -25,7 +25,7 @@ class ValidationJsonGenerator(NVFlareValidationJsonGenerator):
     only the METRICS branch and a plain ``json.dump``). The default ``results_dir`` /
     ``json_file_name`` are identical to stock, so the constructor is inherited unchanged.
 
-    The only FLIP-specific behaviour is dispatch. NVFLARE would auto-handle events through
+    The only FLIP-specific behaviour is dispatch. FLARE would auto-handle events through
     ``handle_event``; FLIP instead routes them through ``ServerEventHandler``, which calls
     ``handle_evaluation_events``. Because this component is still registered (so its
     ``handle_event`` is auto-fired for every event), ``handle_event`` is suppressed here — otherwise

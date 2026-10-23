@@ -21,8 +21,8 @@ side is [`EvaluationStrategy`](app/strategy.py), a thin subclass of
 [`FlipFedAvg`](../../../flip-utils/flip/flower/strategy.py) run with `fraction_train=0.0,
 fraction_evaluate=1.0`; `FedAvg` itself aggregates whatever metrics the clients return (a weighted
 average by `num-examples`), and the subclass adds only a per-client breakdown for the results
-artifact. This is the Flower counterpart of the NVFLARE
-[`evaluation`](../../nvflare/evaluation/README.md) job type, though the two differ in shape: NVFLARE
+artifact. This is the Flower counterpart of the FLARE
+[`evaluation`](../../nvflare/evaluation/README.md) job type, though the two differ in shape: FLARE
 evaluates one or more **server-listed checkpoints** (`config.json['models']`) via a dedicated
 `EvaluationModelLocator`, while this template evaluates the **single checkpoint staged for the
 run** and reports aggregate + per-client metrics natively through `FedAvg`.

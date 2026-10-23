@@ -27,6 +27,7 @@ from flip_api.utils.constants import (
     ADMIN_EMAIL_3,
     DEMO_ADMIN_EMAIL,
     DEMO_RESEARCHER_EMAIL,
+    DEMO_TRUST_ADMIN_EMAIL,
     RESEARCHER_EMAIL,
     VIEWER_EMAIL,
 )
@@ -42,6 +43,7 @@ MAIN_USER_PROFILES = {
     # provider, so stacks that never run the demo are unaffected.
     DEMO_RESEARCHER_EMAIL: ("Demo Researcher", "London AI Centre"),
     DEMO_ADMIN_EMAIL: ("Demo Admin", "London AI Centre"),
+    DEMO_TRUST_ADMIN_EMAIL: ("Demo Trust Admin", "London AI Centre"),
 }
 
 
@@ -194,6 +196,10 @@ def seed_main_users(session: Session) -> None:
     )
     _ensure_user_and_role_resilient(
         idp, DEMO_ADMIN_EMAIL, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[DEMO_ADMIN_EMAIL]
+    )
+    # A Researcher until the recorder makes it a Trust Admin for its approval segment, and again after.
+    _ensure_user_and_role_resilient(
+        idp, DEMO_TRUST_ADMIN_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[DEMO_TRUST_ADMIN_EMAIL]
     )
 
     logger.info("✅ Finished seeding main users.")

@@ -12,7 +12,7 @@
 """``make stage-kit`` must chown the staged kit to the uid of the backend the kit is
 actually for — read from the kit's own shape, not from an ``FL_BACKEND`` nothing in the
 chart Makefile derives (FLIP#1009 review). Before this, an operator following the
-documented quickstart for a Flower trust got the kit chowned to NVFLARE's 1000 and a
+documented quickstart for a Flower trust got the kit chowned to FLARE's 1000 and a
 SuperNode that could not read its own certificates.
 
 The Makefile resolves the backend at parse time, scoped to the ``stage-kit`` goal, so
@@ -89,7 +89,7 @@ def test_mounted_subdirectories_are_created_before_the_chown(request, fixture_na
 
     A subPath missing from the hostPath is created by kubelet as root:root 0700 and the
     non-root fl-client cannot write it, while the pod still reports Running — so the failure
-    only surfaces when NVFLARE writes the trained model into ``transfer/`` at the end of a run,
+    only surfaces when FLARE writes the trained model into ``transfer/`` at the end of a run,
     or when site policy writes ``privacy.json`` into ``local/`` at container start. Neither
     ``aws s3 sync`` nor ``docker cp`` recreates an empty directory, so a sync-assembled kit
     arrives without them. The mkdir has to precede the chown or the created directories keep
@@ -187,7 +187,7 @@ def test_a_kit_with_both_shapes_is_refused_by_name(tmp_path):
     result = make_n_stage_kit(kit)
     assert result.returncode != 0
     assert str(kit) in result.stderr
-    assert "both an NVFLARE shape" in result.stderr
+    assert "both a FLARE shape" in result.stderr
     assert "chown" not in result.stdout
 
 
