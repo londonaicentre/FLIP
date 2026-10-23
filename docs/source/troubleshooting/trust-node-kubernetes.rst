@@ -156,8 +156,8 @@ is ``trust``.
 
    On this layout the application role is also the database superuser, which a current install does not allow.
    The chart leaves the layout alone rather than rewriting roles on a live database at container start;
-   converging it is an operator job (``ALTER DATABASE ... OWNER TO``, then ``REASSIGN OWNED``). Tracked as a
-   follow-up to FLIP#1658.
+   converging it is an operator job (``ALTER DATABASE ... OWNER TO``, then ``REASSIGN OWNED``), tracked as
+   FLIP#1666.
 
 .. seealso::
 
