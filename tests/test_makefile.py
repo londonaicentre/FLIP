@@ -108,6 +108,32 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert_data_safe(out, "upgrade-onprem-trust")
 
 
+class RestartFlFleetProxies(unittest.TestCase):
+    """restart-fl's server step carries Flower's fleet proxies, and drops them on NVFLARE (FLIP#1517).
+
+    On Flower a trust dials ``fl-server-net-<N>`` on ``fl-net-<N>``, which is the proxy's alias
+    there: a switch that restarts the servers alone leaves no trust able to reach the SuperLink.
+    On NVFLARE a proxy left over from a Flower run still answers to that alias and takes a share
+    of the clients' connections, so the step removes orphans as ``up`` and ``down`` do.
+    """
+
+    @staticmethod
+    def _server_step(backend: str) -> str:
+        out = dry_run("restart-fl", f"FL_BACKEND={backend}", "ALLOW_FOREIGN_PROJECT=1", subdir=".")
+        return next(line for line in out.splitlines() if " up " in line and "fl-server-net-1" in line)
+
+    def test_flower_restarts_the_proxies_with_the_servers(self):
+        step = self._server_step("flower")
+        for svc in ("fl-server-net-1", "fl-server-net-2", "fl-fleet-proxy-net-1", "fl-fleet-proxy-net-2"):
+            assert svc in step.split(), step
+        assert "--remove-orphans" in step, step
+
+    def test_nvflare_drops_leftover_proxies(self):
+        step = self._server_step("nvflare")
+        assert "fl-fleet-proxy" not in step, step
+        assert "--remove-orphans" in step, step
+
+
 class CentralHubNetworks(unittest.TestCase):
     def test_the_compose_file_is_still_parsed(self):
         assert "deploy_central-hub-network" in hub_only_networks(), hub_only_networks()
@@ -766,7 +792,8 @@ class BuildFl(unittest.TestCase):
         out = run_target("build-fl", f"FL_BACKEND={backend}", *extra, subdir=".", dry=True, env=env)
         assert out.returncode == 0, out.stdout + out.stderr
         lines = [line for line in out.stdout.splitlines() if "docker compose" in line and " build " in line]
-        assert len(lines) == 2, out.stdout  # fl-base, then the images built FROM it
+        # fl-base, then the images built FROM it; flower also builds its fleet proxy from the secure compose
+        assert len(lines) == {"nvflare": 2, "flower": 3}[backend], out.stdout
         return lines
 
     def test_default_tag_stays_dev(self):

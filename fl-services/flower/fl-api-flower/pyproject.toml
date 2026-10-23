@@ -18,7 +18,7 @@ description = "FL API for Flower deployment runtime."
 requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.115.11",
-    "flwr>=1.38.0",
+    "flwr>=1.40.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.11.0",
     "tomlkit>=0.14.0",
@@ -49,12 +49,9 @@ constraint-dependencies = [
     "anyio>=4.14.2",  # CVE-2026-63374, CVE-2026-64847, CVE-2026-63349; transitive via httpx, starlette, watchfiles
     "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
 ]
-# flwr pins cryptography<47.0.0 even in its latest release (GHSA-537c-gmf6-5ccf
-# needs >=48.0.1); override past that ceiling since flwr only uses cryptography
-# for TLS cert loading in secure aggregation, a stable surface across majors.
-# flwr 1.38 also pins uv<0.12 for its per-run app install, which FLIP does not use (#1418); override it so
+# flwr pins uv<0.13 for its per-run app install, which FLIP does not use (#1418); override it so
 # uv>=0.13.4 (GHSA-hq85-5cpj-mr62, the same compromised CA root as certifi) can be installed.
-override-dependencies = ["cryptography>=50.0.0", "uv>=0.13.4"]
+override-dependencies = ["uv>=0.13.4"]
 
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]

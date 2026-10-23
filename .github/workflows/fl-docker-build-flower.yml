@@ -43,6 +43,9 @@ jobs:
       SERVER_IMAGE: flower-superlink
       CLIENT_IMAGE: flower-supernode
       API_IMAGE: flower-fl-api
+      # The SuperLink's trust-facing listener (FLIP#1517); tagged with the others so a
+      # deploy's FL tag names a proxy built from the same commit.
+      PROXY_IMAGE: flower-fleet-proxy
       BUILD_ARGS: |
         --build-arg UID=1000
         --build-arg GID=1000
@@ -73,6 +76,7 @@ jobs:
           SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${SERVER_IMAGE}:sha-${SHORT_SHA}"
           CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:sha-${SHORT_SHA}"
           API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${API_IMAGE}:sha-${SHORT_SHA}"
+          PROXY_TAGS="${REGISTRY}/${ORG}/${PROXY_IMAGE}:${{ github.sha }},${REGISTRY}/${ORG}/${PROXY_IMAGE}:sha-${SHORT_SHA}"
 
           # A release-tag run publishes :v<X.Y.Z> only — see AGENTS.md "Docker image builds".
           # RELEASE is baked into the FL API image as FLIP_RELEASE so its /health names the build.
@@ -83,6 +87,7 @@ jobs:
             SERVER_TAGS="${REGISTRY}/${ORG}/${SERVER_IMAGE}:${GITHUB_REF_NAME}"
             CLIENT_TAGS="${REGISTRY}/${ORG}/${CLIENT_IMAGE}:${GITHUB_REF_NAME}"
             API_TAGS="${REGISTRY}/${ORG}/${API_IMAGE}:${GITHUB_REF_NAME}"
+            PROXY_TAGS="${REGISTRY}/${ORG}/${PROXY_IMAGE}:${GITHUB_REF_NAME}"
           fi
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -90,23 +95,27 @@ jobs:
             SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:prod"
             CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:prod"
             API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:prod"
+            PROXY_TAGS="${PROXY_TAGS},${REGISTRY}/${ORG}/${PROXY_IMAGE}:prod"
           elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
             BASE_TAGS="${BASE_TAGS},${REGISTRY}/${ORG}/${BASE_IMAGE}:stag"
             SERVER_TAGS="${SERVER_TAGS},${REGISTRY}/${ORG}/${SERVER_IMAGE}:stag"
             CLIENT_TAGS="${CLIENT_TAGS},${REGISTRY}/${ORG}/${CLIENT_IMAGE}:stag"
             API_TAGS="${API_TAGS},${REGISTRY}/${ORG}/${API_IMAGE}:stag"
+            PROXY_TAGS="${PROXY_TAGS},${REGISTRY}/${ORG}/${PROXY_IMAGE}:stag"
           fi
 
           echo "base_tags=${BASE_TAGS}"   >> $GITHUB_OUTPUT
           echo "server_tags=${SERVER_TAGS}" >> $GITHUB_OUTPUT
           echo "client_tags=${CLIENT_TAGS}" >> $GITHUB_OUTPUT
           echo "api_tags=${API_TAGS}" >> $GITHUB_OUTPUT
+          echo "proxy_tags=${PROXY_TAGS}" >> $GITHUB_OUTPUT
           echo "release=${RELEASE}" >> $GITHUB_OUTPUT
           echo "Generated tags:"
           echo "Base:   ${BASE_TAGS}"
           echo "Server: ${SERVER_TAGS}"
           echo "Client: ${CLIENT_TAGS}"
           echo "API:    ${API_TAGS}"
+          echo "Proxy:  ${PROXY_TAGS}"
 
       - name: Log in to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
@@ -239,7 +248,42 @@ jobs:
           df -h
 
       ###########################################
-      # 4️⃣ Build and Push FL API
+      # 4️⃣ Build and Push the fleet proxy (FLIP#1517)
+      ###########################################
+      # Plain nginx, not derived from the base image: its own dir is the context.
+      - name: Build Fleet Proxy Image
+        run: |
+          docker build \
+            -f fl-services/flower/fleet-proxy/Dockerfile \
+            -t $REGISTRY/$ORG/$PROXY_IMAGE:${{ github.sha }} \
+            -t $REGISTRY/$ORG/$PROXY_IMAGE:sha-$SHORT_SHA fl-services/flower/fleet-proxy
+
+          echo "✅ Built fleet proxy."
+
+      - name: Push Fleet Proxy Image
+        env:
+          TAGS: ${{ steps.tags.outputs.proxy_tags }}
+        run: |
+          for tag in ${TAGS//,/ }; do
+            docker tag "$REGISTRY/$ORG/$PROXY_IMAGE:${{ github.sha }}" "$tag"
+            docker push "$tag"
+          done
+          echo "✅ Pushed fleet proxy."
+
+      - name: Cleanup after fleet proxy
+        run: |
+          docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:${{ github.sha }} || true
+          docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:sha-$SHORT_SHA || true
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:prod || true
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:stag || true
+          elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            docker rmi $REGISTRY/$ORG/$PROXY_IMAGE:${GITHUB_REF_NAME} || true
+          fi
+
+      ###########################################
+      # 5️⃣ Build and Push FL API
       ###########################################
       - name: Build FL API Image
         env:
