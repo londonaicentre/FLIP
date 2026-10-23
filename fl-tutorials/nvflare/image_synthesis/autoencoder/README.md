@@ -30,7 +30,7 @@ FedAvg job, after which every site evaluates the final global model.
 
 The **brain MRI** cohort: MSD Task01_BrainTumour, the Medical Segmentation Decathlon's cut of BraTS
 (see [`fl-tutorials/datasets/brain_mri/`](../../../datasets/brain_mri/)). On the platform,
-`query.sql` selects every brain MR study, one row per accession. Each study holds **four
+`query.sql` selects up to 100 brain MR studies, one row per accession. Each study holds **four
 co-registered MR sequences** (FLAIR, T1w, T1Gd and T2w), each a separate single-channel NIfTI
 volume. The trainer reads NIfTI only, so create the project with **DICOM to NIfTI** on.
 

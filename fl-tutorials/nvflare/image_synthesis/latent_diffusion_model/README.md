@@ -35,8 +35,8 @@ a single-channel NIfTI, resampled to 2 mm voxels (`voxel_spacing`), centre-cropp
 96 × 112 × 80 (`spatial_shape`) and z-scored. The sequence is read from the filename
 (`input_<sequence>_<case>.nii.gz`, see the autoencoder tutorial's *Data* section); the trainer stops
 if no file matches `MODALITIES`. Studies are split by accession, so the four sequences of one study
-all go to training or all to validation (`VAL_SPLIT`, 0.2). `query.sql` selects every brain MR
-study; the app reads NIfTI, so create its project with **DICOM to NIfTI** on. From the repository
+all go to training or all to validation (`VAL_SPLIT`, 0.2). `query.sql` selects up to 100 brain MR
+studies; the app reads NIfTI, so create its project with **DICOM to NIfTI** on. From the repository
 root:
 
 ```bash

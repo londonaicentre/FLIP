@@ -17,4 +17,7 @@ SELECT DISTINCT io.accession_id
 FROM omop.image_occurrence io
 WHERE io.modality_concept_id = 4013636
   AND io.anatomic_site_concept_id = 4133034
+-- Without an order the LIMIT picks an unspecified 100 studies, which can differ between approval,
+-- the imaging pull and training.
+ORDER BY io.accession_id
 LIMIT 100
