@@ -66,6 +66,7 @@ HUB_HOST_PORTS = (
     "KEYCLOAK_PORT",
     "OBJECT_STORE_PORT",
     "OBJECT_STORE_CONSOLE_PORT",
+    "MLFLOW_PORT",
 )
 # Per-trust host ports in a kit; the kit's other *_PORT values are container-side and stay put.
 TRUST_HOST_PORTS = (
