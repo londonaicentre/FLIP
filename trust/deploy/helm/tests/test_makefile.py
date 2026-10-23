@@ -62,23 +62,6 @@ def test_deploy_trust_k8s_regenerates_the_override_from_the_kit_first():
     assert regenerate < deploy, out
 
 
-def test_deploy_moves_a_live_fl_client_to_recreate_before_helm_runs():
-    """A release installed before FLIP#1428 holds the API server's RollingUpdate defaults, which no field manager
-    owns: Helm's server-side apply cannot drop them and refuses the chart's Recreate beside them."""
-    out = subprocess.run(
-        ["make", "-n", "-C", str(CHART_DIR), "deploy", "NAMESPACE=flip-trust", "RELEASE_NAME=flip-trust"],
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=60,
-    ).stdout
-
-    patch = out.index('"op":"remove","path":"/spec/strategy/rollingUpdate"')
-    assert patch < out.index("upgrade --install")
-    assert "app.kubernetes.io/component=fl-client" in out[:patch]
-    assert "app.kubernetes.io/instance=flip-trust" in out[:patch]
-
-
 def test_xnat_init_deletes_the_previous_init_job_before_applying_it():
     """Left in place, the apply reports the Job unchanged and the wait passes at once on the old one."""
     out = subprocess.run(
@@ -92,3 +75,14 @@ def test_xnat_init_deletes_the_previous_init_job_before_applying_it():
     assert "--selector app.kubernetes.io/component=xnat-init" in delete
     assert "--ignore-not-found" in delete
     assert out.index(" delete job ") < out.index(" apply -n ") < out.index(" wait job"), out
+
+
+def test_sync_k8s_kit_runs_with_the_dependencies_it_declares():
+    """A host python3 without PyYAML stopped every sync-kit and upgrade-trust-k8s after the Secret
+    patch: the values-secrets realign refuses to write a file it cannot parse. uv installs it."""
+    makefile = (CHART_DIR / "Makefile").read_text()
+    script = (CHART_DIR / "sync_k8s_kit.py").read_text()
+
+    assert "python3 $(CHART_DIR)/sync_k8s_kit.py" not in makefile
+    assert makefile.count("uv run --no-config $(CHART_DIR)/sync_k8s_kit.py") == 3
+    assert '# dependencies = ["pyyaml>=6.0.3"]' in script

@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""``rollback-centralhub`` resets the NVFLARE fl-server's ``local/`` before it moves a service (FLIP#1390).
+"""``rollback-centralhub`` resets the FLARE fl-server's ``local/`` before it moves a service (FLIP#1390).
 
 Since FLIP#1390 the fl-server writes ``local/flip__p_resources.json`` onto EFS at every start, and an older
 fl-server image fails to load its configuration while that file is there. An operator reaches for the

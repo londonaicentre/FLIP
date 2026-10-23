@@ -14,8 +14,8 @@
 # Streams the licensed core vocabulary bundle into a RUNNING OMOP database over
 # an ordinary client connection (COPY FROM STDIN — no server-side file access,
 # no image layer, no volume mount), then optionally applies the FK constraints.
-# This is the one credentialed seeding step: published images and pgdata
-# tarballs are vocab-free (FLIP#842/#843), so every environment loads the
+# This is the one credentialed seeding step: published images and seeded data
+# carry no licensed vocabulary (FLIP#842/#843), so every environment loads the
 # bundle it is licensed to hold. Idempotent: tables that already hold rows are
 # skipped, and the constraints file guards itself with IF NOT EXISTS checks.
 # The bundle is read only for the tables that actually need loading, so a run
@@ -74,7 +74,7 @@ run_psql() {
 }
 
 # Per-table "already loaded" predicates. Four tables are SHARED with the DICOM
-# vocabulary that ships inside the published pgdata tarballs, so a plain
+# vocabulary the seed loads (omop_db_tools.load_dicom_vocab), so a plain
 # row-exists check would wrongly skip the core load on a freshly seeded trust —
 # those use core-specific predicates instead (the DICOM rows live in the
 # 2128xxxxxxx concept range / 'DICOM' vocabulary and never collide with the

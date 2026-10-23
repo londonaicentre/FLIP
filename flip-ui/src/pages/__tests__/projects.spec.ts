@@ -283,6 +283,14 @@ describe("Projects Page", () => {
         expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(0);
     });
 
+    test("heads the list view's columns like the Models table", async () => {
+        setProject(makeProject("STAGED", [trust("t1", "KCH", "APPROVED")]));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        const header = wrapper.find("[data-test='projects-list-header']");
+        expect(header.findAll(".grid > div").map(c => c.text())).toEqual(["Project", "Description", "Trusts", "Status"]);
+    });
+
     test("toggles between list and grid views via the view-mode buttons", async () => {
         setProject(makeProject("STAGED", [trust("t1", "KCH", "APPROVED")]));
         const wrapper = mountPage();
@@ -405,6 +413,7 @@ describe("Projects Page", () => {
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
+        expect(wrapper.find("[data-test='project-sort']").attributes("aria-label")).toBe("Sort projects");
         await wrapper.find("[data-test='project-sort']").setValue("name");
 
         const titles = wrapper.findAll("[data-test='project-name']").map(n => n.text());

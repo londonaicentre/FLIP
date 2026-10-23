@@ -13,6 +13,12 @@
 
 # Pre-configurations needed for FLIP Deployment
 
+> [!NOTE]
+> **This README is maintainer notes** for the deployment layer: where things live, the hub's production
+> container config, container hardening and the service-authentication design. **To deploy or operate FLIP, use the
+> operator manual on ReadTheDocs:** [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) (prerequisites, registering trusts, deploys,
+> email, MFA recovery), [on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html), [a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) and [a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+
 ## Where things live
 
 Deployment artifacts are **not** all under `deploy/`. Two different concerns share the word "deploy", and
@@ -31,7 +37,7 @@ they are filed by two different rules:
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
 | Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
 | Provision an **on-prem** trust host (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
-| Deploy a trust to **Kubernetes** (Helm) | [`trust/deploy/helm/`](../trust/deploy/helm/README.md) |
+| Deploy a trust to **Kubernetes** (Helm) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) (chart: [`trust/deploy/helm/`](../trust/deploy/helm/README.md)) |
 
 Every compose file in **this** directory is Central-Hub-only — `flip-ui`, `flip-api`, `flip-db`, `pgadmin`,
 `keycloak` (development only: the local identity provider, ephemeral — no volume — importing
@@ -90,129 +96,23 @@ FLIP uses AWS RDS PostgreSQL with the following version support policy:
 
 ### Prerequisites
 
-#### Step 1: Authenticate with GitHub Container Registry
-
-Log in to GHCR to pull pre-built images from CI/CD:
-
-Create a token with `read:packages` scope from GitHub settings.
-We recommend following [GitHub's guide](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#authenticating-with-a-personal-access-token-classic).
-
-```bash
-echo <GITHUB_PAT> | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
-```
-
-> **Note**: You need a GitHub Personal Access Token (PAT) with `read:packages` permission.
-
-#### Step 2: Configure AWS CLI SSO
-
-Set up AWS CLI with SSO for authentication:
-
-```bash
-aws configure sso
-```
-
-if you have already configured SSO, you can then login with:
-
-```bash
-aws sso login
-```
-
-#### Step 3: Get SSH key configured
-
-Generate an SSH key pair for EC2 instance access:
-
-```bash
-ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "YOUR_EMAIL@example.com"
-```
-
-This key will automatically be uploaded to AWS during deployment and can be found in the AWS console under AWS EC2 > Network & Security > Key Pairs.
-
-See `TF_VAR_flip_keypair` and `TF_VAR_ec2_public_key_path` in the Terraform environment configuration if you need to customize the key name or path.
+The workstation prerequisites for a hub deploy — the GHCR login (a `read:packages` token), AWS CLI SSO, the
+`~/.ssh/host-aws` key pair Terraform uploads as the EC2 key pair (`TF_VAR_flip_keypair` /
+`TF_VAR_ec2_public_key_path` customise it), the AWS profile aliases — are in
+[Deploy the Central Hub → Prerequisites](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#prerequisites).
 
 ### Final configuration
 
 #### Verify AWS SES email address
 
-The SES email address will have received a verification link you need to click. Then, to check the email has been verified, log in to the AWS console, navigate to the SES service, and check the Configuration > Identities section.
+Verifying the SES sender identity (and re-verifying an expired one) and checking email end to end:
+[Deploy the Central Hub → Email setup](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#email-setup).
 
 #### Cognito Email Configuration
 
-FLIP uses AWS Cognito for user authentication and includes branded email templates for temporary password invitations and password reset flows. The email templates are deployed as part of the Terraform infrastructure.
-
-**Email Templates:**
-
-1. **Temporary Password Email** (`admin_create_user_config.invite_message_template`)
-   - Sent when administrators invite users to FLIP
-   - Contains: Username and temporary password
-   - Uses Cognito placeholders:
-     - `{username}` — User's Cognito username
-     - `{####}` — 6-character temporary password
-
-2. **Password Reset Email** (`verification_message_template`)
-   - Sent when users request password reset
-   - Includes both verification code and reset link options
-   - Uses Cognito placeholders:
-     - `{####}` — 6-character verification code
-     - `{##...##}` — Dynamically generated password reset link token
-
-**SES Email Verification Requirement:**
-
-Before deploying Cognito email templates, the SES email address must be verified:
-
-```bash
-cd deploy/providers/AWS
-
-# For initial deployment or if verification has expired:
-# 1. Delete the existing SES identity in AWS Console (if expired):
-#    - Navigate to AWS SES > Configuration > Identities
-#    - Delete the FLIP email identity
-# 2. Re-verify the email address
-#    - Run: make plan apply
-#    - Check your email inbox for AWS SES verification link
-#    - Click the link to confirm the email address
-# 3. Verify the configuration:
-#    - Return to AWS SES > Identities
-#    - Confirm the email status shows "Verified"
-```
-
-**Testing Email Delivery:**
-
-After deployment, test the email configuration by creating a test user:
-
-```bash
-# Get the Cognito user pool ID
-USER_POOL_ID=$(cd deploy/providers/AWS && terraform output -raw cognito_user_pool_id)
-
-# Create test user (suppress automatic email)
-aws cognito-idp admin-create-user \
-  --user-pool-id "$USER_POOL_ID" \
-  --username testuser@example.com \
-  --message-action SUPPRESS
-
-# Verify the temporary password email is received with correct formatting
-# (Check inbox for email from FLIP with temporary credentials)
-
-# Test password reset flow
-# 1. Login as testuser with temporary password
-# 2. Change password to permanent one
-# 3. Logout and request password reset
-# 4. Verify password reset email arrives with verification code or reset link
-
-# Verify email rendering across clients:
-# - Gmail
-# - Outlook
-# - Apple Mail
-# - Mobile email clients
-```
-
-**Manual Verification Checklist:**
-
-- [ ] SES email identity shows "Verified" status in AWS Console
-- [ ] Temporary password email includes username and temporary password
-- [ ] Password reset email includes 6-digit verification code or reset link
-- [ ] Email templates render correctly in Gmail, Outlook, Apple Mail
-- [ ] Links in email templates resolve to correct environment subdomain (e.g., `https://flip-staging.example.com`)
-- [ ] SMS fallback messages deliver (if SMS is enabled in Cognito)
+The Cognito invitation and password-reset emails are Terraform-managed templates; their files, placeholders and
+local test utility are in [`providers/AWS/README.md` → Email Templates](providers/AWS/README.md#email-templates).
+Cognito sends them itself, not through SES.
 
 #### Cognito MFA Administration
 
@@ -240,49 +140,17 @@ Development stacks (Keycloak, the only provider there) keep `ENFORCE_MFA=false`:
 
 ##### Resetting MFA for another user
 
-For users other than yourself, use the FLIP Admin UI. See the *Reset User MFA* subsection in [`docs/source/sys-admin/admin-project-and-user-management.rst`](../docs/source/sys-admin/admin-project-and-user-management.rst) for the step-by-step flow. The UI calls `POST /users/{user_id}/mfa/reset` on `flip-api`, which runs the same two Cognito operations documented below but under the FLIP permission model (requires `CAN_MANAGE_USERS`) and leaves an application-level audit trail.
+Use *Reset MFA* in the FLIP Admin area: [User management → Reset User MFA](https://londonaicentreflip.readthedocs.io/en/latest/sys-admin/admin-project-and-user-management.html). The UI calls
+`POST /users/{user_id}/mfa/reset` on `flip-api`, which runs the same two Cognito operations as the CLI recovery
+below, under the FLIP permission model (requires `CAN_MANAGE_USERS`) and with an application-level audit trail.
 
 ##### Recovering an administrator account that has lost its authenticator
 
-This runbook is for the case where **you** have lost access to your TOTP device and the UI flow above is therefore unavailable (you cannot sign in to reach the Admin Area). Another operator with AWS credentials runs these commands on your behalf. Direct AWS CLI access is required:
-
-**Prerequisites:**
-
-- AWS credentials for the account that hosts the Cognito user pool (the same SSO profile used for `make full-deploy`)
-- IAM permissions for `cognito-idp:AdminSetUserMFAPreference` and `cognito-idp:AdminUserGlobalSignOut`
-
-**Steps:**
-
-1. Fetch the Cognito user pool ID from Terraform (or read it from the AWS Console):
-
-   ```bash
-   # From the stag/prod root (development signs in through Keycloak, not Cognito)
-   cd deploy/providers/AWS
-   tofu output -raw cognito_user_pool_id
-   ```
-
-2. Clear the locked-out administrator's TOTP preference:
-
-   ```bash
-   aws cognito-idp admin-set-user-mfa-preference \
-     --user-pool-id "$USER_POOL_ID" \
-     --username admin@example.com \
-     --software-token-mfa-settings Enabled=false,PreferredMfa=false
-   ```
-
-3. Revoke the administrator's existing refresh tokens so no pre-reset session can keep operating:
-
-   ```bash
-   aws cognito-idp admin-user-global-sign-out \
-     --user-pool-id "$USER_POOL_ID" \
-     --username admin@example.com
-   ```
-
-4. The administrator now signs in with their existing password. Because `SOFTWARE_TOKEN_MFA` is no longer in their `UserMFASettingList`, the `flip-api` MFA gate and the `flip-ui` router guard funnel them through the post-auth enrolment page where they register a new authenticator. Their password does not need to be reset.
-
-> **Note:** These two CLI commands have exactly the same server-side effect as clicking **Reset MFA** in the Admin UI — the UI endpoint calls the Cognito identity provider (`_reset_mfa` in `flip-api/src/flip_api/auth/identity/cognito.py`), which runs `admin_set_user_mfa_preference` followed by `admin_user_global_sign_out`. The CLI path exists only because it does not require a signed-in FLIP session.
->
-> **Warning:** This path is an AWS-level escape hatch and is **not** audit-logged inside FLIP. Use it only for administrator self-recovery. For any user who is not currently locked out of FLIP itself, prefer the Admin UI flow so the reset is captured in the application logs.
+The AWS CLI runbook for an administrator locked out of their own MFA:
+[Deploy the Central Hub → Recovering an administrator's lost MFA](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#deploy-central-hub-mfa-recovery). It runs
+`admin_set_user_mfa_preference` followed by `admin_user_global_sign_out`, exactly what the Cognito identity provider's
+`_reset_mfa` (`flip-api/src/flip_api/auth/identity/cognito.py`) does for the UI flow, but outside FLIP and therefore
+without FLIP's audit log.
 
 ## Deployment Models
 
@@ -301,7 +169,7 @@ trust hosts excluded because their GPU sizing is a per-trust decision — is on 
 [Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
 section. The ECS FL task definitions serve **both
 FL backends** ([FLIP#566](https://github.com/londonaicentre/FLIP/issues/566)): `FL_BACKEND` in the env file
-switches the same task families between NVFLARE and Flower (SuperLink ports/command/creds — Flower
+switches the same task families between FLARE and Flower (SuperLink ports/command/creds — Flower
 additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
 `make -C fl-services/flower provision upload-creds-to-s3`, with `FLOWER_EXTRA_SERVER_SANS` covering the
 Cloud Map + public FL hostnames).
@@ -321,9 +189,9 @@ FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
 | ------- | ---------- | --------------- |
-| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`deploy/providers/AWS/README.md`](providers/AWS/README.md) |
-| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [`trust/deploy/ansible/README.md`](../trust/deploy/ansible/README.md) |
-| **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [`trust/deploy/helm/README.md`](../trust/deploy/helm/README.md) |
+| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [Deploy the Central Hub on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html) ([`providers/AWS/README.md`](providers/AWS/README.md)) |
+| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [Deploy a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) ([`trust/deploy/ansible/README.md`](../trust/deploy/ansible/README.md)) |
+| **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) ([`trust/deploy/helm/README.md`](../trust/deploy/helm/README.md)) |
 
 In all models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound** from the trust. The hub never makes inbound requests to trusts.
 
@@ -345,6 +213,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
 | xnat-dcm2niix | `1001:1001` (numeric; no named user in the image) | `USER 1001:1001` in the dcm2niix Dockerfile — xnat-web's uid, so the NIfTIs it writes onto the Container Service's build mount carry the one owner everything else under `xnat-data` has (XNAT reads them back off that mount), and a service the Container Service can hand arbitrary host mounts does not run as root. Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
+| xnat-export-mask | `1001:1001` (numeric) | `USER 1001:1001` in `trust/xnat/export-mask/Dockerfile`, for the same reasons as xnat-dcm2niix. Launched by the Container Service per saved OHIF mask, MONAI Label trusts only. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -397,9 +266,9 @@ below. The per-service grants in the compose files are:
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
-| fl-client-net-* (both backends, production and development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. NVFLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. In production the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `onprem.yml`; the `DAC_OVERRIDE`/`FOWNER` grant kept for pre-GHSA-8465 root images is gone (FLIP#973). |
-| fl-api (NVFLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
-| fl-server (NVFLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
+| fl-client-net-* (both backends, production and development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. FLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. In production the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `onprem.yml`; the `DAC_OVERRIDE`/`FOWNER` grant kept for pre-GHSA-8465 root images is gone (FLIP#973). |
+| fl-api (FLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
+| fl-server (FLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
 | fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1 (the root-image `DAC_OVERRIDE`/`FOWNER` grant is gone, FLIP#863). The storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps; `CHOWN` is kept as the shared baseline. |
@@ -420,20 +289,21 @@ container.
 > (config/archive/build/cache/plugins), so `make up`'s XNAT configure step fails on both trusts
 > (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
 > from a branch whose images are not yet published, build the hardened images locally:
-> `make up BUILD=true` covers the compose-built services (including orthanc), and the XNAT stack
-> needs `make -C trust/xnat build DOCKER_REGISTRY= DOCKER_TAG=dev` followed by redeploying the
-> stack with the same `DOCKER_REGISTRY=`/`XNAT_TAG=dev` overrides so `docker stack deploy`
-> resolves the locally built image instead of the GHCR one.
+> `make up BUILD=true` covers the compose-built services (including orthanc and omop-db) and the
+> XNAT stack, which it builds and deploys at the local-only `:dev` tag (or a command-line `XNAT_TAG`) so `docker stack deploy`
+> runs the locally built images instead of the GHCR ones.
 
 ### Docker Socket Isolation (XNAT Container Service)
 
 XNAT's Container Service plugin launches processing containers — currently
 `ghcr.io/londonaicentre/xnat-dcm2niix` (a version-pinned build of dcm2niix; see
 `trust/xnat/dcm2niix/`), which every project created with DICOM→NIfTI conversion enabled
-triggers automatically on scan archive. That GHCR package must be **public** — the Container
-Service pulls it with no credentials, and org packages default to private, so a first publish (or
+triggers automatically on scan archive, and on MONAI Label trusts
+`ghcr.io/londonaicentre/xnat-export-mask` (`trust/xnat/export-mask/`), triggered by every mask
+saved in the OHIF viewer. Those GHCR packages must be **public** — the Container
+Service pulls them with no credentials, and org packages default to private, so a first publish (or
 any package recreate) needs a one-off operator visibility flip; see
-[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-package-must-be-public).
+[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-packages-must-be-public).
 It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
 which is a root-equivalent capability: anything that compromises XNAT can exec into any container
 on the host, start privileged containers, or mount arbitrary host paths.
@@ -564,23 +434,18 @@ cannot be re-targeted at a different handler by rewriting the unauthenticated `t
 covered: the trust's own responses (cohort results, task outcomes) travel back to the hub as plain JSON under TLS
 only.
 
-Two operational consequences:
+Two operational consequences, both with the operator procedure in the manual's
+[Upgrading across the payload-encryption change](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#upgrading-across-the-payload-encryption-change):
 
 - **The key must be byte-identical on the hub and on every trust container that decrypts** (trust-api,
-  imaging-api, data-access-api). A mismatch fails closed: trust-api reports every task as
-  `Invalid payload: failed authentication`, and imaging-api / data-access-api answer the FL client with a **400**
-  (`... failed authentication`; a payload that is not an envelope at all is a 400 `... is not a valid envelope`).
-  A 500 from either is a different class of fault — the key could not be loaded, or the cipher itself failed —
-  not a mismatch. The key must decode to exactly 32 bytes (AES-256); every service refuses a shorter one at
-  key load rather than silently running AES-128/192 under the same envelope.
-  On stag/prod the hub's copy is whatever the CI Terraform apply wrote into Secrets Manager from the GitHub
-  environment, which is not necessarily the operator's `.env.<env>` copy — recover the deployed inputs with
-  `deploy/providers/AWS/scripts/reconcile_ci_env.py` before minting or refreshing trust kits.
-- **There is no compatibility with the pre-FLIP#1179 AES-CBC format.** A hub and its trusts must cross that
-  boundary together: enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, redeploy the hub
-  and every trust, then disable Deployment Mode. Anything still encrypted under the old format at the moment
-  of upgrade fails afterwards — a task collected under CBC stays `IN_PROGRESS` (reset it to `PENDING`), and a
-  running FL job carrying a CBC project id fails at imaging-api once that trust upgrades.
+  imaging-api, data-access-api), and decode to exactly 32 bytes: every service refuses a shorter key at load rather
+  than silently running AES-128/192 under the same envelope. A mismatch fails closed — `Invalid payload: failed
+  authentication` at trust-api, a **400** from imaging-api / data-access-api (a payload that is not an envelope at
+  all is a 400 `... is not a valid envelope`); a 500 is a key-load or cipher fault, not a mismatch. On stag/prod the
+  hub's copy is what the CI apply wrote into Secrets Manager, recoverable with
+  `deploy/providers/AWS/scripts/reconcile_ci_env.py`.
+- **There is no compatibility with the pre-FLIP#1179 AES-CBC format**, so a hub and its trusts cross that boundary
+  together, as a flag day under Deployment Mode.
 
 Per-trust keys — a distinct key per trust, so a compromised trust can neither read nor forge another's traffic —
 are the follow-up in FLIP#845; they add keyring entries without changing the wire format.

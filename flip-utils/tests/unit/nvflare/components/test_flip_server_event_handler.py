@@ -724,7 +724,7 @@ class TestRoundEventRelay:
     def test_round_started_relays_one_based_round_and_total(self):
         from nvflare.app_common.app_constant import AppConstants
 
-        # NVFLARE's _current_round is 0-based: prop 2 means round 3 of 5.
+        # FLARE's _current_round is 0-based: prop 2 means round 3 of 5.
         handler, flip, fl_ctx = self._handler_and_ctx({AppConstants.CURRENT_ROUND: 2, AppConstants.NUM_ROUNDS: 5})
 
         handler.handle_event(AppEventType.ROUND_STARTED, fl_ctx)

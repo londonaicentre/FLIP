@@ -43,7 +43,7 @@ For the platform architecture, workflows, deployment guides, and user documentat
 | --- | --- |
 | Run FLIP on my machine (Central Hub + two example Trusts) | [Run FLIP locally for development](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-local-dev.html) |
 | Deploy the Central Hub on AWS | [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) — self-contained ([on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html)) or on a Landing Zone Accelerator estate ([on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html)) |
-| Add a Trust to a FLIP network | [On premises](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) · [In a TRE](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-in-tre.html) · [On Kubernetes](trust/deploy/helm/README.md) |
+| Add a Trust to a FLIP network | [Deploy a trust node](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-trust-node.html): the shared [onboarding runbook](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/onboarding-a-trust.html), then [on a Docker Compose host](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) · [on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) · [in a TRE](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-in-tre.html) |
 | Build or run a federated-learning application | [Working with FLIP apps](https://londonaicentreflip.readthedocs.io/en/latest/working-with-flip-apps.html) · [FL tutorials](fl-tutorials/README.md) |
 | Contribute to FLIP | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
@@ -57,7 +57,7 @@ FLIP is maintained as one monorepo. Each major area owns its detailed setup and 
 | [`flip-ui/`](flip-ui/) | Vue 3 web application |
 | [`trust/`](trust/) | Trust gateway, data and imaging APIs, local OMOP/PACS/XNAT services, and the trust node's deployment shapes (Compose, Helm chart, on-prem Ansible play) |
 | [`flip-utils/`](flip-utils/) | Shared, pip-installable `flip` Python library |
-| [`fl-services/`](fl-services/) | NVFLARE and Flower network services, images, and provisioning |
+| [`fl-services/`](fl-services/) | FLARE and Flower network services, images, and provisioning |
 | [`fl-apps/`](fl-apps/) | Backend-specific application templates bundled by the Central Hub |
 | [`fl-tutorials/`](fl-tutorials/) | Worked federated-learning applications and local runners |
 | [`map-apps/`](map-apps/) | MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment |

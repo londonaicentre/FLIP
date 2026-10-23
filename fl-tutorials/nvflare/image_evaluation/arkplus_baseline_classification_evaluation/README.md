@@ -11,10 +11,10 @@
     limitations under the License.
 -->
 
-# Baseline Ark+ Chest X-ray Evaluation (NVFLARE Client API) — FLIP tutorial
+# Baseline Ark+ Chest X-ray Evaluation (FLARE Client API) — FLIP tutorial
 
 FLIP tutorial for federated evaluation of a single zero-shot Ark+ foundation model on chest X-ray
-classification, using the **NVFLARE Client API**. The hold-out data at each site is scored against the
+classification, using the **FLARE Client API**. The hold-out data at each site is scored against the
 model and per-lesion AUROC is reported.
 
 This tutorial replaces the previous executor-based implementation (`class FLIP_EVALUATOR(Executor)` +
@@ -140,7 +140,7 @@ package set the `flare-fl-base` FL image installs) so a local run matches the de
 ```bash
 make download-raw-checkpoint   # once: fetch the raw Ark6 checkpoint into models/
 
-# Export the complete NVFLARE job for review or Docker deployment (no GPU needed)
+# Export the complete FLARE job for review or Docker deployment (no GPU needed)
 make export                    # prepares the checkpoint, then writes ./fl_job/flip_evaluation/
 
 # SimEnv local simulation (requires GPU + data + checkpoint)

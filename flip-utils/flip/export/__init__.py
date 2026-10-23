@@ -46,7 +46,7 @@ This subpackage requires PyTorch, which ships in the ``full`` extra rather than 
 
     pip install "flip-utils[full]"
 
-See ``docs/source/working-with-flip-apps/package-model-as-map.rst`` for the end-to-end guide.
+See ``docs/source/working-with-flip-apps/wrap-model-for-deployment.rst`` for the end-to-end guide.
 """
 
 try:  # pragma: no cover - exercised by environment, not by tests

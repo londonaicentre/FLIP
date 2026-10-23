@@ -11,7 +11,7 @@
 #
 
 """
-FLIP Controllers module containing NVFLARE workflow controllers.
+FLIP Controllers module containing FLARE workflow controllers.
 
 Controllers orchestrate federated learning workflows.
 

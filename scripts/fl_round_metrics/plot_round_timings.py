@@ -21,7 +21,7 @@ any FLIP service — pandas/seaborn are deliberately NOT project dependencies.
 One subplot per metric, each on its own linear seconds axis (aggregation is ~3
 orders of magnitude below round duration, so a shared axis would flatten it):
   - Round duration       (end_ms - start_ms per round)
-  - Aggregation time     (agg_end_ms - agg_start_ms; NVFLARE only — "-" for Flower)
+  - Aggregation time     (agg_end_ms - agg_start_ms; FLARE only — "-" for Flower)
   - Inter-round gap      (next round's start_ms - this round's end_ms)
 """
 

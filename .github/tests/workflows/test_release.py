@@ -92,7 +92,7 @@ class ReleaseWaitsThenDispatchesTheApply(unittest.TestCase):
     """The release re-pins production, and only after its own builds are green (FLIP#1283).
 
     The hub bakes FLIP_RELEASE at build time, so only the ``:v<X.Y.Z>`` images name the release.
-    They exist only once the twelve dispatches above conclude, and the resolver fails closed when
+    They exist only once the fourteen dispatches above conclude, and the resolver fails closed when
     told a release tag it cannot find — so waiting is what makes the dispatch safe, and the ref it
     is dispatched at is what makes the apply's OIDC work. Both are read as text here.
     """
@@ -319,7 +319,7 @@ jq -c "$jqf" < "$fx"
         assert "::error::" in result.stdout
 
     def test_one_transient_poll_failure_is_not_a_failed_release(self) -> None:
-        """A single 502 used to abort the wait under `set -e`, costing a rebuild of all twelve
+        """A single 502 used to abort the wait under `set -e`, costing a rebuild of all fourteen
         images. It must read as 'still pending' instead."""
         self.write("a.yml", [self.run_entry("a")])
         (self.fixtures / "fail").write_text("")
@@ -343,7 +343,7 @@ jq -c "$jqf" < "$fx"
         assert "no builds were dispatched" in result.stdout
 
     def test_no_failure_message_tells_the_operator_to_re_run_the_release(self) -> None:
-        """A re-run goes back through the dispatch step: it rebuilds all twelve images and
+        """A re-run goes back through the dispatch step: it rebuilds all fourteen images and
         republishes :v<X.Y.Z> with different digests from the ones sites already pulled. Every
         message must name the manual apply instead."""
         self.write("a.yml", [self.run_entry("a", conclusion="failure")])

@@ -16,7 +16,7 @@
 > See also the README under [fl-server/README.md](../fl-server/README.md)
 
 The FL base image installs the python packages required by the base application and the user-uploaded application.
-The NVFLARE client dependencies come pre-baked into the image; users cannot add per-job dependencies on the NVFLARE
+The FLARE client dependencies come pre-baked into the image; users cannot add per-job dependencies on the FLARE
 backend. The Flower SuperNodes do the same: the ClientApp runs in the image's environment, with no per-run
 `uv sync` (FLIP#1418) — see `fl-services/flower/README.md`.
 

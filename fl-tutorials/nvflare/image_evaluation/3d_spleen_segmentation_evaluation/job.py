@@ -15,18 +15,18 @@ This module defines the federated evaluation job using :class:`FlipEvalRecipe`. 
 execution modes:
 
 *Export* (``--export --export-dir <path>``):
-    Writes the complete NVFLARE job to ``<path>/flip_evaluation/``, including ``meta.json`` (carrying
+    Writes the complete FLARE job to ``<path>/flip_evaluation/``, including ``meta.json`` (carrying
     ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client configs), and
     ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files, including the
     ``model.pt`` checkpoint the server loads). This is the primary, fully-local-verifiable path — no
     GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the NVFLARE simulator. Requires a GPU, the reference dataset
+    Runs a local simulation under the FLARE simulator. Requires a GPU, the reference dataset
     (``make -C fl-tutorials download-spleen-data``), and the checkpoint (``make download-checkpoints``).
     FLIP-specific values are injected via environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``).
 
-Both modes go through NVFLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir`` from
+Both modes go through FLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir`` from
 ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and exports-or-runs
 accordingly — so there is no separate ``--export`` branch here.
 
@@ -59,7 +59,7 @@ from nvflare.recipe import SimEnv  # noqa: E402
 def stage_app_files(job: FedJob) -> None:
     """Bundle every file in ``app_files/`` into the job's server + client ``custom/`` directories.
 
-    The recipe wires only the NVFLARE components; the user-supplied app files (``evaluator.py``,
+    The recipe wires only the FLARE components; the user-supplied app files (``evaluator.py``,
     ``models.py``, ``transforms.py``, ``config.json`` and the ``model.pt`` checkpoint) must be added to
     the job explicitly so they land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}``
     registers them with the job's file sources, so they are bundled for **both** the SimEnv/simulator run
@@ -84,7 +84,7 @@ def main() -> None:
         default="/tmp/nvflare/spleen_eval",
         help="SimEnv workspace root",
     )
-    # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them
+    # NOTE: ``--export``/``--export-dir`` are handled by FLARE's ``Recipe.execute`` (it strips them
     # from ``sys.argv`` before this parser runs), so they are intentionally not declared here.
     args = parser.parse_args()
 

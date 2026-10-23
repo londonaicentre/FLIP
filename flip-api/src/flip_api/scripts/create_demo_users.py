@@ -12,7 +12,7 @@
 
 """Provision the demo users used by the demo-video recorder.
 
-Creates (idempotently) the demo researcher and demo admin in the configured
+Creates (idempotently) the demo researcher, admin and Trust Admin in the configured
 identity provider (``AUTH_BACKEND``: the local Keycloak realm or the Cognito
 user pool) and sets their permanent passwords, so the scripted demo
 (tests/demo_video.py) can sign them in through the real login form. Their
@@ -20,7 +20,7 @@ FLIP role grants are seeded at flip-api boot by db/seed/main_users.py —
 restart flip-api after running this so the grants land.
 
 Passwords come exclusively from the environment (DEMO_RESEARCHER_PASSWORD /
-DEMO_ADMIN_PASSWORD) and are never stored anywhere else; they must satisfy
+DEMO_ADMIN_PASSWORD / DEMO_TRUST_ADMIN_PASSWORD) and are never stored anywhere else; they must satisfy
 the provider's password policy. Under Cognito this needs live AWS credentials
 with admin permissions on the pool (aws sso login --sso-session FLIP).
 
@@ -41,7 +41,7 @@ import sys
 from flip_api.auth.identity import IdentityProvider, IdentityProviderError, UserAlreadyExistsError
 from flip_api.auth.identity.factory import build_identity_provider
 from flip_api.config import get_settings
-from flip_api.utils.constants import DEMO_ADMIN_EMAIL, DEMO_RESEARCHER_EMAIL
+from flip_api.utils.constants import DEMO_ADMIN_EMAIL, DEMO_RESEARCHER_EMAIL, DEMO_TRUST_ADMIN_EMAIL
 
 
 def _describe_target(idp: IdentityProvider) -> str:
@@ -106,11 +106,12 @@ def main() -> int:
     wanted = [
         (DEMO_RESEARCHER_EMAIL, os.environ.get("DEMO_RESEARCHER_PASSWORD", "")),
         (DEMO_ADMIN_EMAIL, os.environ.get("DEMO_ADMIN_PASSWORD", "")),
+        (DEMO_TRUST_ADMIN_EMAIL, os.environ.get("DEMO_TRUST_ADMIN_PASSWORD", "")),
     ]
     missing = [email for email, password in wanted if not password]
     if missing:
         print(
-            "❌ Set DEMO_RESEARCHER_PASSWORD and DEMO_ADMIN_PASSWORD in the environment "
+            "❌ Set DEMO_RESEARCHER_PASSWORD, DEMO_ADMIN_PASSWORD and DEMO_TRUST_ADMIN_PASSWORD in the environment "
             f"(missing for: {', '.join(missing)}). Passwords are env-only — never commit them.",
             file=sys.stderr,
         )

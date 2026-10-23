@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from make_dry_run import REPO, assert_data_safe, dry_run, main  # noqa: E402
+from make_dry_run import REPO, assert_data_safe, dry_run, main, run_target  # noqa: E402
 
 HUB_ONLY_SERVICES = {"flip-db", "flip-api"}  # what `make central-hub` starts (flip-api/Makefile `up`)
 
@@ -67,6 +67,30 @@ def hub_only_networks() -> set[str]:
         elif section == "networks" and (name := re.match(r"^    name: \$\{FLIP_INSTANCE:[^}]*\}(\S+)", line)):
             names[entry] = name[1]
     return {names[key] for key in keys}
+
+
+def repo_built_services(compose: str) -> dict[str, str]:
+    """Each dev-compose service that runs a repo-built image, mapped to its service block."""
+    blocks = re.findall(r"^  ([\w-]+):\n((?:(?:    .*)?\n)+)", (REPO / compose).read_text(), re.MULTILINE)
+    return {
+        name: body
+        for name, body in blocks
+        if re.search(r"^    image: (?:ghcr\.io/londonaicentre/|\$\{DOCKER_REGISTRY\})", body, re.MULTILINE)
+    }
+
+
+class BuildTrue(unittest.TestCase):
+    """`make up BUILD=true` (`--build --pull missing`) rebuilds only services with a build: block."""
+
+    def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
+        services = {
+            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("trust/deploy/compose_trust.development.yml"),
+        }
+        assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
+        for name, body in services.items():
+            assert re.search(r"^    pull_policy: always$", body, re.MULTILINE), f"{name} lacks pull_policy: always"
+            assert re.search(r"^    build:$", body, re.MULTILINE), f"{name} has no build: for BUILD=true"
 
 
 class UpgradeOnpremTrust(unittest.TestCase):
@@ -128,6 +152,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "deploy/portable.mk",
             "trust/Makefile",
             "trust/xnat/Makefile",
             "trust/xnat/.env",
@@ -494,6 +519,128 @@ class HubProjectOwnerGuard(unittest.TestCase):
         for target in sorted(OWNER_GUARDED_TARGETS):
             with self.subTest(target=target):
                 assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
+
+
+class GenerateInternalServiceKey(unittest.TestCase):
+    """The key lands in the env file the stack runs from, not always `.env.development` (FLIP#1603)."""
+
+    def env_file_arg(self, *extra: str) -> str:
+        out = dry_run("generate-internal-service-key", *extra, subdir=".")
+        line = next(line for line in out.splitlines() if "generate_internal_service_key" in line)
+        args = shlex.split(line)
+        return args[args.index("--env-file") + 1]
+
+    def test_it_follows_main_env_file(self):
+        assert self.env_file_arg().endswith("/.env.production")  # run_target pins PROD=true
+        assert self.env_file_arg("MAIN_ENV_FILE=.env.b.development").endswith("/.env.b.development")
+
+    def test_it_resolves_against_the_repo_root(self):
+        for extra in ((), ("ENV_FILE=.env.x",)):
+            path = Path(self.env_file_arg(*extra))
+            assert path.is_absolute(), path
+            assert path.parent.name != "flip-api", path
+
+    def test_an_explicit_env_file_wins(self):
+        assert self.env_file_arg("ENV_FILE=/abs/.env.x") == "/abs/.env.x"
+
+
+class FlEnvFile(unittest.TestCase):
+    """The FL Makefiles load MAIN_ENV_FILE from the repo root, like every other Makefile (FLIP#1608).
+
+    A command-line MAIN_ENV_FILE (a bare filename, as the root passes it) used to override the FL
+    Makefiles' absolute path, so the include resolved inside fl-services/<backend>/, matched nothing
+    and was skipped silently: the FL targets of a second instance ran with no env at all.
+    """
+
+    PROBE = "__env_path: ; @echo env_path=[$(MAIN_ENV_PATH)]\n"
+
+    def env_path(self, backend: str, *extra: str) -> str:
+        out = run_target("__env_path", *extra, subdir=f"fl-services/{backend}", probe=self.PROBE)
+        assert out.returncode == 0, out.stdout + out.stderr
+        return re.search(r"env_path=\[(.*)\]", out.stdout).group(1)
+
+    def test_default_is_the_prod_selected_file_in_the_repo_root(self):
+        for backend in ("nvflare", "flower"):
+            path = Path(self.env_path(backend))
+            assert path.name == ".env.production", path
+            assert "fl-services" not in path.parts, path
+
+    def test_a_command_line_env_file_resolves_against_the_repo_root(self):
+        for backend in ("nvflare", "flower"):
+            path = Path(self.env_path(backend, "MAIN_ENV_FILE=.env.b.development"))
+            assert path.name == ".env.b.development", path
+            assert "fl-services" not in path.parts, path
+
+
+class BuildFl(unittest.TestCase):
+    """`make build-fl` tags the whole FL image chain with DOCKER_FL_TAG from the command line, else :dev (FLIP#1605).
+
+    `:dev` is global to the Docker daemon, so an isolated instance building with its own tag must not
+    overwrite the images other stacks on the host run. The env file's DOCKER_FL_TAG (the GHCR pull tag,
+    exported into the backend Makefile's environment) is not a build tag.
+    """
+
+    COMPOSE_FILES = {
+        "nvflare": ["compose.dev.yml"],
+        "flower": ["compose.dev.yml", "compose.secure.yml"],
+    }
+
+    def build_lines(self, backend: str, *extra: str) -> list[str]:
+        env = {"DOCKER_FL_TAG": "stag"}  # what the env file exports into the backend Makefile
+        out = run_target("build-fl", f"FL_BACKEND={backend}", *extra, subdir=".", dry=True, env=env)
+        assert out.returncode == 0, out.stdout + out.stderr
+        lines = [line for line in out.stdout.splitlines() if "docker compose" in line and " build " in line]
+        assert len(lines) == 2, out.stdout  # fl-base, then the images built FROM it
+        return lines
+
+    def test_default_tag_stays_dev(self):
+        for backend in self.COMPOSE_FILES:
+            for line in self.build_lines(backend):
+                assert "DOCKER_FL_TAG=dev " in line, line
+
+    def test_command_line_tag_reaches_every_build(self):
+        for backend in self.COMPOSE_FILES:
+            for line in self.build_lines(backend, "DOCKER_FL_TAG=rc-check"):
+                assert "DOCKER_FL_TAG=rc-check " in line, line
+
+    def test_compose_images_and_base_follow_the_tag(self):
+        for backend, files in self.COMPOSE_FILES.items():
+            for name in files:
+                text = (REPO / "fl-services" / backend / name).read_text()
+                images = re.findall(r"^\s+image: ((?:flare|flower)-\S+)", text, re.M)
+                bases = re.findall(r"^\s+BASE_REF: (\S+)", text, re.M)
+                assert images, name
+                assert bases, name
+                for ref in images:
+                    assert ref.endswith(":${DOCKER_FL_TAG:-dev}"), f"{backend}/{name}: {ref}"
+                for ref in bases:
+                    assert ref.endswith(":${DOCKER_FL_TAG:-dev}}"), f"{backend}/{name}: {ref}"
+
+
+class E2eSmokeQuery(unittest.TestCase):
+    """`make e2e_smoke` picks the x-ray query from PROD: a trust without the OMOP vocabulary (FLIP#1390)
+    gets the vocabulary-free copy. dry_run always passes PROD=true, so the dev-stack cases override it."""
+
+    def query_file(self, *extra: str) -> str:
+        out = dry_run("e2e_smoke", *extra, subdir=".")
+        match = re.search(r'--query-file "([^"]+)"', out)
+        assert match, out
+        return match[1]
+
+    def test_the_canonical_query_stays_the_default(self):
+        for backend in ("nvflare", "flower"):
+            assert self.query_file(f"FL_BACKEND={backend}").endswith("/query.sql"), backend
+
+    def test_a_dev_stack_picks_the_sibling_query_on_both_backends(self):
+        for backend in ("nvflare", "flower"):
+            path = self.query_file(f"FL_BACKEND={backend}", "PROD=")
+            assert path.endswith("/query_novocab.sql"), (backend, path)
+            # The scratch copy holds Makefiles only; the file must exist where the path points in the repo.
+            rel = path.split("/fl-tutorials/", 1)[1]
+            assert (REPO / "fl-tutorials" / rel).is_file(), (backend, rel)
+
+    def test_an_explicit_query_file_still_wins(self):
+        assert self.query_file("PROD=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
 
 
 if __name__ == "__main__":

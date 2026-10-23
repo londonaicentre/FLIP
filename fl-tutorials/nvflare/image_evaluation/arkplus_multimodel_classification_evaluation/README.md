@@ -11,10 +11,10 @@
     limitations under the License.
 -->
 
-# Multi-model Ark+ Chest X-ray Evaluation (NVFLARE Client API) — FLIP tutorial
+# Multi-model Ark+ Chest X-ray Evaluation (FLARE Client API) — FLIP tutorial
 
 FLIP tutorial for federated evaluation of **multiple** Ark+ models (a zero-shot foundation model and a
-fine-tuned model) on chest X-ray classification, using the **NVFLARE Client API**. The same hold-out data
+fine-tuned model) on chest X-ray classification, using the **FLARE Client API**. The same hold-out data
 at each site is scored against every model, and per-lesion AUROC plus pairwise **DeLong** statistical
 comparisons between the models are reported.
 
@@ -33,7 +33,7 @@ DeLong map, which is what the server's last-reply-wins `EvaluationJsonGenerator`
 `evaluation_results.json` output contract (per-site, per-model metrics + DeLong) is unchanged from the
 legacy tutorial.
 
-> **Scope.** The same code path runs on the **local NVFLARE simulator / `uv` workflow** (`make run`,
+> **Scope.** The same code path runs on the **local FLARE simulator / `uv` workflow** (`make run`,
 > where `job.py` bundles the `.pt` files for the server-side locator) and on the **production FL
 > platform** (where the FL API de-bundles uploaded checkpoints onto the hub staging volume — nothing
 > client-side ever opens a `.pt` file in either mode). The FL server must run a `flip` package recent
@@ -160,7 +160,7 @@ package set the `flare-fl-base` FL image installs) so a local run matches the de
 ```bash
 make download-raw-checkpoint   # once: fetch the raw Ark6 foundation checkpoint into models/
 
-# Export the complete NVFLARE job for review (no GPU needed)
+# Export the complete FLARE job for review (no GPU needed)
 make export                    # prepares both checkpoints, then writes ./fl_job/flip_evaluation/
 
 # SimEnv local simulation (requires GPU + data + both checkpoints)

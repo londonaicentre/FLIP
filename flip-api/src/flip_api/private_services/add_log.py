@@ -65,7 +65,7 @@ def add_log_endpoint(
         # event from the fl-server's own control flow) — there is no slot to resolve.
         trust = None
         if fl_client_name is not None:
-            # The FL client name the FL server reports differs per FL_BACKEND (NVFLARE: the FL kit slot;
+            # The FL client name the FL server reports differs per FL_BACKEND (FLARE: the FL kit slot;
             # Flower: SUPERNODE_NAME). resolve_trust_from_fl_client_name hides that discrepancy and
             # returns the trust to validate against the model's approved trusts — see issue #538.
             trust = resolve_trust_from_fl_client_name(fl_client_name, db)

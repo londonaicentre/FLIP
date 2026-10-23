@@ -513,7 +513,7 @@ apply-fl-kit-slots: ## Apply only the FL kit-slot SSM parameter — the slot act
 	@echo "✅ FL kit-slot parameter applied — new slots (if any) are claimable on the next trust registration."
 
 .PHONY: add-fl-kits
-add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (NVFLARE; PROD=stag|true)
+add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (FLARE; PROD=stag|true)
 	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
 	## (kits already minted on every net but not yet in FL_KIT_SLOT_NAMES — no certs, no
 	## upload) → MINT only the shortfall on every net (restore/fingerprint-verify each
@@ -877,7 +877,7 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	## the family — that is the documented bootstrap-tag path; re-run deploy-centralhub
 	## after it. The UI is NOT rolled back — re-run `make deploy-ui` from the matching
 	## commit if the UI must move too.
-	## On NVFLARE it first empties the fl-server's local/ on EFS and re-syncs the kit
+	## On FLARE it first empties the fl-server's local/ on EFS and re-syncs the kit
 	## (scripts/reset-fl-server-local.sh, the efs-provision-certs task, a minute or two):
 	## since FLIP#1390 the fl-server writes local/flip__p_resources.json, and an older
 	## fl-server image cannot load it and fails to start. If that step fails nothing is
@@ -1197,7 +1197,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
 	    $$TRUST_KIT_DIR && \
 	  echo "" && \
-	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
+	  echo "  # Deploy the $(FL_KIT_SLOT) FLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
 	  echo "  # \$$FL_KIT_DIR is the kit root from trust/.env.$(KIT).$(KIT_ENV_SUFFIX) (default /opt/flip/fl-kit):" && \
 	  echo "  sudo mkdir -p /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/local /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/transfer" && \
 	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)/startup/" && \
@@ -1205,7 +1205,7 @@ ifeq ($(FL_BACKEND),nvflare)
 	  echo "  # fl-client now runs as a non-root uid (GHSA-8465) — hand the rsync'd kit back to" && \
 	  echo "  # this shell's own user so the container can read/write it:" && \
 	  echo "  sudo chown -R \$$(id -u):\$$(id -g) /opt/flip/fl-kit/net-1/services/$(FL_KIT_SLOT)" && \
-	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
+	  echo "✅ $(FL_KIT_SLOT) FLARE kit staged"
 else
 	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
@@ -1309,15 +1309,13 @@ ifneq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 endif
 	@echo ""
 	@echo "🗑️  DESTROYING:"
-	@echo "   • EC2 instances (flip, trust)"
-	@echo "   • RDS database (PostgreSQL)"
-	@echo "   • Security groups"
+	@echo "   • RDS database (PostgreSQL) — no final snapshot"
+	@echo "   • EC2 instances (flip, trust), their key pairs and instance role"
+	@echo "   • Security groups and the ALB"
+	@echo "   • SES email templates"
 ifeq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 	@echo "   • VPC"
 endif
-	@echo "   • ALB/NLB load balancers"
-	@echo "   • IAM roles and policies"
-	@echo "   • CloudWatch logs"
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
@@ -1348,9 +1346,10 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
-	## Does NOT edit the kit file. The admin populates trust/.env.<KIT> first:
-	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into trust/.env.<KIT>.
-	##   2. `make sync-trust-kit KIT=<slot> PROD=true` (from repo root) — fills Hub-shared.
+	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
+	##   1. register-trusts, sync-trust-kit and generate-xnat-credentials with KIT=<CODE>
+	##      PROD=true fill trust/.env.<CODE>.production;
+	##   2. `cp trust/.env.<CODE>.production trust/.env.<slot>` (<slot> = its FL_KIT_SLOT).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one

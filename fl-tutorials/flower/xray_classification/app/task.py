@@ -45,7 +45,7 @@ def _aggregate(metrics: dict, lesions: LesionDict) -> dict:
 def macro_mean(aggregated: dict, kind: str, lesions: LesionDict) -> float:
     """Average a per-lesion metric across lesions, ignoring lesions that scored NaN.
 
-    Mirrors the macro ``VAL-<METRIC>`` label the NVFLARE chest-X-ray tutorial reports
+    Mirrors the macro ``VAL-<METRIC>`` label the FLARE chest-X-ray tutorial reports
     (mean across lesions) — the single interpretable number best-model selection scores
     there. ``compute_precision_recall_f1`` returns NaN on a zero denominator, so a lesion
     absent from the split is skipped rather than counted as zero.

@@ -190,8 +190,37 @@ def create_project(
     return project_id
 
 
+def approve_at_trust(rec: Take, trust_admin: Persona, project_id: str, trust_name: str) -> None:
+    """Segment 2: one trust's Trust Admin approves the staged project for that trust, on My Trust.
+
+    The other trusts are approved off camera (tests/demo_video.py): a second approval would look the same.
+    """
+    page = rec.page
+    page.goto("/auth/login")
+    by_test(page, "username").wait_for()
+    rec.start()
+    rec.caption(f"Each trust decides for itself — {trust_name}'s Trust Admin signs in", 1200)
+    sign_in(rec, trust_admin, scenic=True)
+
+    rec.caption("My Trust: the project requests staged at this trust", 700)
+    rec.click(page.locator('a[href="/my-trust"]:visible').first)
+    card = page.locator(f'[data-test="request-card"][data-project="{project_id}"]')
+    card.wait_for(timeout=60000)
+    rec.scroll_to(card, 800)
+    rec.caption("The request shows the cohort found in this trust's data, and whether imaging is needed", 1500)
+
+    rec.click(by_test(card, "approve-btn"))
+    dialog = page.locator("[role=dialog]")
+    by_test(dialog, "confirm-modal-btn").wait_for()
+    rec.pause(1800)
+    rec.click(by_test(dialog, "confirm-modal-btn"))
+    page.get_by_text("Project approved", exact=True).first.wait_for(timeout=90000)
+    rec.caption(f"Approved for {trust_name} — every other trust takes its own decision", 800)
+    rec.pause(2500)
+
+
 def approve(rec: Take, admin: Persona, project_id: str, has_imaging: bool) -> None:
-    """Segment 2: the administrator approves the staged project at every trust."""
+    """Segment 2 without a demo Trust Admin: the administrator approves the staged project at every trust."""
     page = rec.page
     page.goto("/auth/login")
     by_test(page, "username").wait_for()

@@ -36,8 +36,10 @@ async def health_check() -> dict[str, object]:
         release a site upgrade defaults to), ``hub_key_match`` (whether the AES key this
         process runs with matches the hub's) and ``hub_key_fingerprint`` (the hub's key
         digest, so a refreshed kit can be checked before the recreate). All ``None`` until
-        a reply has been seen, after a failed heartbeat, or when the hub predates
-        FLIP#1204. The on-prem readiness checklist reads them.
+        a reply has been seen, after a failed heartbeat, or when a reply omits them or
+        carries them as null; ``hub_key_match`` also when this trust's own key cannot be
+        fingerprinted.
+        The on-prem readiness checklist reads them.
     """
     dead = dead_background_tasks()
 

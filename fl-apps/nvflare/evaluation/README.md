@@ -15,7 +15,7 @@
 
 ## Overview
 
-This is the NVFLARE **Client API** evaluation job type (`JOB_TYPE=evaluation`). It evaluates
+This is the FLARE **Client API** evaluation job type (`JOB_TYPE=evaluation`). It evaluates
 every uploaded model listed in `config.json['models']` across every site and reports aggregate
 metrics. It replaced the retired
 Executor-based `evaluation` template, which paired the `RUN_EVALUATOR` executor with the bespoke
@@ -38,7 +38,7 @@ regenerate via `recipe.py` after any recipe change and commit the result.
    and validates that `config.json` declares the model(s) to evaluate.
 2. `GlobalModelEval` loads the uploaded checkpoint via `EvaluationModelLocator` and broadcasts it to
    every site as a single `FLModel` (`validate` task).
-3. Each site runs the user's `evaluator.py` via `ClientAPIExecutor` (in-process mode), using the NVFLARE Client
+3. Each site runs the user's `evaluator.py` via `ClientAPIExecutor` (in-process mode), using the FLARE Client
    API `is_evaluate()` path (`flare.receive()` / `flare.send()`) to receive the model and return
    **aggregate-only** metrics (`DataKind.METRICS`).
 4. `EvaluationJsonGenerator` collects the metrics into `evaluation_results.json` and every failed

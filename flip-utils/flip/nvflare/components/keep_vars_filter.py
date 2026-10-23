@@ -21,7 +21,7 @@ from nvflare.apis.shareable import Shareable
 class KeepOnlyVars(DXOFilter):
     """Keep ONLY the weights whose key matches ``include_vars`` (regex); drop the rest.
 
-    The include-only inverse of NVFLARE's ``ExcludeVars`` (which is exclude-only). Used as a
+    The include-only inverse of FLARE's ``ExcludeVars`` (which is exclude-only). Used as a
     client-side ``task_result_filter`` to shrink a per-round update to just the trainable
     parameters: a frozen-backbone fine-tune sends only its head (~KB) instead of the full model
     (~759 MiB), which fixes the large-payload client→server ``SubmitUpdate`` timeout (FLIP#684).
@@ -47,7 +47,7 @@ class KeepOnlyVars(DXOFilter):
             supported_data_kinds=[DataKind.WEIGHTS, DataKind.WEIGHT_DIFF],
             data_kinds_to_filter=data_kinds,
         )
-        # Stored under the exact constructor-param name so NVFLARE's FedJob/Recipe export round-trips it:
+        # Stored under the exact constructor-param name so FLARE's FedJob/Recipe export round-trips it:
         # FedJob serialises a component's args by matching instance attributes to __init__ param names, so
         # without this the recipe-exported config would drop include_vars and the filter would silently
         # become a no-op. (The deploy-time fl-server injection writes args.include_vars explicitly, so only

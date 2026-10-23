@@ -29,7 +29,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Pin the hash seed before importing NVFLARE (via flip): export_job serialises some task lists via
+# Pin the hash seed before importing nvflare (via flip): export_job serialises some task lists via
 # sets, whose iteration order depends on PYTHONHASHSEED, so an unpinned seed yields spurious
 # task-order diffs on every regeneration. The seed must be set before interpreter start, so re-exec
 # once when it isn't already fixed.
@@ -43,7 +43,7 @@ from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402  (imported after
 def _copy_json(src: Path, dest: Path) -> None:
     """Copy a generated JSON file, guaranteeing exactly one trailing newline.
 
-    NVFLARE's ``export_job`` emits ``config_fed_server.json`` / ``meta.json`` without a trailing
+    FLARE's ``export_job`` emits ``config_fed_server.json`` / ``meta.json`` without a trailing
     newline. Normalising on copy keeps the committed templates stable across regenerations and
     satisfies the ``end-of-file-fixer`` pre-commit hook.
     """

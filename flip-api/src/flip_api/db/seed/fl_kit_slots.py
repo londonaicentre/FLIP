@@ -34,7 +34,7 @@ _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 # Sentinel used as slot_number for names without a trailing integer (e.g. "Trust_K8s").
 # Must be larger than any real slot number so the free-slot query (ORDER BY slot_number ASC)
 # never hands these out before conventional Trust_N slots.  Flower's per-supernode key
-# lookup requires a trailing _<N> suffix; non-numeric names still work for NVFLARE but
+# lookup requires a trailing _<N> suffix; non-numeric names still work for FLARE but
 # should be reserved for purpose-built slots (K8s, staging) that are registered explicitly.
 _NON_NUMERIC_SLOT_NUMBER = 10_000
 

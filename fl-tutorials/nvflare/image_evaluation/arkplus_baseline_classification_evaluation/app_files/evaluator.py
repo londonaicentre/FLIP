@@ -11,7 +11,7 @@
 
 """Client-API evaluator for the Ark+ baseline chest X-ray evaluation tutorial.
 
-This is the NVFLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
+This is the FLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
 (``CrossSiteModelEval`` + ``EvaluationModelLocator``, wired by ``FlipEvalRecipe``) loads the single
 uploaded Ark+ checkpoint and broadcasts it to every client as one ``FLModel``; this script implements the
 canonical ``is_evaluate()`` loop — receive the global model, score it on the local cohort, and send back
@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config (top-level ``query`` key).
 
-    NVFlare's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can contain
+    FLARE's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can contain
     spaces) is plumbed via ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator
     mode this is ignored — data comes from the local SITE/DEV paths.
     """
@@ -78,13 +78,6 @@ def load_config() -> dict:
     config_path = Path(__file__).parent.resolve() / "config.json"
     with open(config_path) as f:
         return json.load(f)
-
-
-def _autocast(enabled: bool = False):
-    """AMP autocast context — mirrors the legacy evaluator so inference results are identical."""
-    if hasattr(torch, "amp"):
-        return torch.amp.autocast(device_type="cuda", enabled=enabled)
-    return torch.cuda.amp.autocast(enabled=enabled)
 
 
 def resolve_model_config(config: dict) -> tuple[str, dict, list[tuple[int, str]], LesionDict]:
@@ -149,7 +142,7 @@ def predict(
     """
     head_id = model_cfg["head_id"]
     with torch.no_grad():
-        with _autocast(enabled=model_cfg["amp"]):
+        with torch.amp.autocast(device_type="cuda", enabled=model_cfg["amp"]):
             _features, logits = model(images, head_n=head_id)
             probs = torch.sigmoid(logits).cpu().numpy()
 

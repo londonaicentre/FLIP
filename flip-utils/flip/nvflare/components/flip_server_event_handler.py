@@ -85,7 +85,7 @@ class ServerEventHandler(FLComponent):
     def _relay_round_event(self, fl_ctx: FLContext, event: FLLogEvent) -> None:
         """Relay a stock round boundary to the hub as a typed fact.
 
-        Facts only — display text is composed hub-side. NVFLARE's
+        Facts only — display text is composed hub-side. FLARE's
         ``CURRENT_ROUND`` prop is 0-based; the wire contract is 1-based.
         ``ROUND_AGGREGATED`` counts come from the sticky props seeded here at
         round start ("0 of m") and overwritten by the FLIP ScatterAndGather

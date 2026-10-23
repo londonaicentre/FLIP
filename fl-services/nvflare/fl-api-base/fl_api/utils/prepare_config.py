@@ -203,13 +203,13 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
 
     Wired as a SINGLE filter chain over ``["train", "validate"]`` so ONE component instance handles
     both tasks: the frozen backbone the client reconstructs against is the round-0 broadcast cached
-    during training, and NVFLARE builds a fresh filter instance per chain occurrence — so that cache
+    during training, and FLARE builds a fresh filter instance per chain occurrence — so that cache
     is only visible during validation when the same instance serves both tasks. Prepended so it runs
     before any other incoming task_data_filter. Injected alongside the KeepOnlyVars result filter —
     together the matched client-side ends of the frozen-backbone round-trip. Mutates ``config`` in
     place.
 
-    NVFLARE rejects a job in which the same task appears in more than one task_data_filters chain
+    FLARE rejects a job in which the same task appears in more than one task_data_filters chain
     (``FedJsonConfigurator._build_filter_table`` raises "multiple data filter chains defined for
     task ..."), so any pre-existing chain covering ``train`` or ``validate`` is FOLDED INTO the
     injected chain rather than left alongside it: its filters keep their relative order after the
@@ -221,7 +221,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
 
     Raises:
         ValueError: if an existing task_data_filters chain covers ``train`` or ``validate`` together
-            with other tasks — unmergeable, and NVFLARE would reject the overlap at job parse time.
+            with other tasks — unmergeable, and FLARE would reject the overlap at job parse time.
     """
     reconstruct_filter = {
         "id": "reconstruct_full_model",
@@ -236,7 +236,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
         raise ValueError(
             "AGGREGATE_ONLY_REGEX requires a single client task_data_filters chain over ['train', 'validate'], "
             f"but the app config has a chain over {unmergeable[0].get('tasks')} — folding it in would apply its "
-            "filters to train/validate only, and NVFLARE rejects a task covered by two chains. Restrict the "
+            "filters to train/validate only, and FLARE rejects a task covered by two chains. Restrict the "
             "chain to train/validate tasks or unset AGGREGATE_ONLY_REGEX."
         )
     merged_filters = [reconstruct_filter]
@@ -244,7 +244,7 @@ def _inject_reconstruct_full_model_filter(config: dict) -> None:
         for existing in block.get("filters", []):
             if str(existing.get("path", "")).startswith("flip.nvflare.components.ReconstructFullModel"):
                 # Already wired (e.g. recipe-baked); superseded by the instance injected above — keeping
-                # both would double-reconstruct and NVFLARE would build a second, cache-less instance.
+                # both would double-reconstruct and FLARE would build a second, cache-less instance.
                 logger.info(f"Dropping pre-existing {existing.get('path')} filter superseded by injected chain")
                 continue
             merged_filters.append(existing)
@@ -289,7 +289,7 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
     from the ``["train"]`` TrimBroadcastVars chain); both filters are stateless, so a separate
     server-side instance per task is fine. Mutates ``config`` in place.
 
-    Detection is by membership (any chain covering ``validate``), not exact match — NVFLARE rejects a
+    Detection is by membership (any chain covering ``validate``), not exact match — FLARE rejects a
     task covered by two chains, so appending a second validate-covering chain would fail the job at
     parse time. But unlike the round-gated TrimBroadcastVars (which no-ops on tasks without a round
     header), this filter trims UNCONDITIONALLY, so it must not be appended into a chain that also
@@ -314,7 +314,7 @@ def _inject_trim_eval_broadcast_filter(config: dict, include_regex: str) -> None
             raise ValueError(
                 "AGGREGATE_ONLY_REGEX requires a dedicated ['validate'] server task_data_filters chain, but the "
                 f"app config has a chain over {tasks} — TrimEvalBroadcastVars trims unconditionally, so it cannot "
-                "share a chain with other tasks, and NVFLARE rejects a task covered by two chains. Split validate "
+                "share a chain with other tasks, and FLARE rejects a task covered by two chains. Split validate "
                 "into its own chain or unset AGGREGATE_ONLY_REGEX."
             )
         block.setdefault("filters", []).append(trim_filter)
@@ -359,7 +359,7 @@ def configure_client(
     aggregate_only_regex: str | None = None,
 ) -> Path:
     """
-    Populates config_fed_client.json, necessary to modulate the client controllers in NVFLARE jobs, with the project_id
+    Populates config_fed_client.json, necessary to modulate the client controllers in FLARE jobs, with the project_id
     and cohort_query.
 
     Args:
@@ -543,7 +543,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str], job_meta: Jo
 
     Args:
         job_dir (Path): job directory
-        app_name (str): the job's name in NVFLARE, the hub's model id.
+        app_name (str): the job's name in FLARE, the hub's model id.
         trusts (list[str]): list of trusts that are part of this training (site names)
         job_meta (JobMeta): what the job's own meta.json declared: its portable resources and ``custom_props``.
         resources (JobResources): the GPU count, already resolved from the submission override, the job's
@@ -552,9 +552,9 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str], job_meta: Jo
     Returns:
         Path: path to the meta file that was written.
     """
-    # What the job needs at each site. NVFLARE's scheduler holds the job until every site's resource
+    # What the job needs at each site. FLARE's scheduler holds the job until every site's resource
     # manager can provide it; the request is never lowered to fit a site.
-    # NVFLARE 2.9 resolves the portable block per site in nvflare/utils/job_launcher_utils.py.
+    # FLARE 2.9 resolves the portable block per site in nvflare/utils/job_launcher_utils.py.
     resource_spec = nvflare_resource_spec(resources, job_meta.resources)
     logger.info(f"Job resource_spec: {resource_spec or 'nothing requested'}")
 
@@ -579,7 +579,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str], job_meta: Jo
 
 def configure_environment(job_dir: Path) -> Path:
     """
-    Configures the environment.json file, which is part of the NVFLARE application. This file is used to set environment
+    Configures the environment.json file, which is part of the FLARE application. This file is used to set environment
     variables for the job.
 
     Inside the config folder, you can have an optional environment.json which defines the EnvironmentKey variables.

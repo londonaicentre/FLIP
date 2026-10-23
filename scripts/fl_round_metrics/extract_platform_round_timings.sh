@@ -79,9 +79,9 @@
 #    dump loop over to start-query/get-query-results is the natural next step.
 #
 # Metrics coverage (see summary.md's "Data provenance" table for the authoritative version):
-#   1. Communication rounds       — fl-server-net-* logs (NVFLARE: "Round N started/finished";
+#   1. Communication rounds       — fl-server-net-* logs (FLARE: "Round N started/finished";
 #                                    Flower: "(round N)" in forwarded-metric lines). FULL for
-#                                    NVFLARE, PARTIAL for Flower (round numbers only, no
+#                                    FLARE, PARTIAL for Flower (round numbers only, no
 #                                    explicit round-boundary log line), NONE if backend can't
 #                                    be identified from the logs in-window.
 #   2. Update size (bytes)        — NOT AVAILABLE. No code path logs the byte size of a
@@ -92,10 +92,10 @@
 #                                    reported separately, clearly marked as NOT the same
 #                                    metric. Per-round weight size would need trust-side or
 #                                    fl-server-side instrumentation that doesn't exist yet.
-#   3. Aggregation time            — fl-server-net-* logs, NVFLARE only ("Start aggregation."/
+#   3. Aggregation time            — fl-server-net-* logs, FLARE only ("Start aggregation."/
 #                                    "End aggregation." pairs). NOT AVAILABLE for Flower (no
 #                                    equivalent log line in the platform code).
-#   4. Per-round communication time — derived from the same NVFLARE round/aggregation/
+#   4. Per-round communication time — derived from the same FLARE round/aggregation/
 #                                    contribution log lines; PARTIAL for Flower (only a rough
 #                                    per-round timestamp spread from forwarded metrics).
 #   5. Wall-clock time             — flip-api model-status-transition timeline (FULL).
@@ -133,8 +133,8 @@ Options:
       --start ISO8601       Start of the search window (skips auto-discovery), e.g. 2026-06-30T09:00:00Z
       --end ISO8601         End of the search window (requires --start)
       --search-days N       When --start/--end are not given, how many days back to search
-                             for the model_id in flip-api logs (default: 7, matching the
-                             CloudWatch retention configured in deploy/providers/AWS/ecs.tf)
+                             for the model_id in flip-api logs (default: 7; the logs
+                             themselves are kept 365 days in prod, 90 elsewhere)
       --pad-minutes N        Padding (minutes) applied around the discovered training window
                              before querying fl-api-net-*/fl-server-net-* (default: 10)
       --ecs-cluster NAME     ECS cluster name for the best-effort stopped-task check
@@ -668,7 +668,7 @@ sort -n -k1,1 -o "$FL_API_TEXT" "$FL_API_TEXT" 2>/dev/null || true
 # --------------------------------------------------------------------------------------
 # Step 6: detect FL backend from the log content actually observed in-window.
 #
-# NVFLARE's ScatterAndGather controller (flip-utils/flip/nvflare/controllers/
+# FLARE's ScatterAndGather controller (flip-utils/flip/nvflare/controllers/
 # scatter_and_gather.py) logs "Round N started."/"Round N finished." and
 # "Start aggregation."/"End aggregation.". Flower has no equivalent in-repo server code
 # (stock flwr framework); the only round-tagged signal is flip-utils/flip/flower/metrics.py
@@ -709,7 +709,7 @@ if [[ "$BACKEND" == "nvflare" ]]; then
     grep -oP '^\d+ .*Start aggregation\.' "$FL_SERVER_TEXT" | awk '{print $1}' > "$AGG_STARTS" || true
     grep -oP '^\d+ .*End aggregation\.' "$FL_SERVER_TEXT" | awk '{print $1}' > "$AGG_ENDS" || true
 
-    # Per-contribution lines. Stock NVFLARE's ScatterAndGather controller itself logs
+    # Per-contribution lines. Stock FLARE's ScatterAndGather controller itself logs
     #   "Contribution from <client> ACCEPTED|REJECTED by the aggregator at round <N>."
     # (nvflare/app_common/workflows/scatter_and_gather.py; older builds omit " at round <N>",
     # hence the optional group). The round tag lets us break contributions out per-round in
@@ -890,7 +890,7 @@ FAILURES_FILE="${MODEL_OUT_DIR}/failures.tsv"
     grep -E "Session inactive, trying to reconnect|attempting to reconnect and retry|Retry after reconnect failed|Failed to run Flower|Flower .* failed|Failed to parse Flower|Flower run command failed" "$FL_API_TEXT" 2>/dev/null \
         | sed 's/^/fl-api\t/' || true
 
-    # fl-server-net-*: client rejects / aborts (NVFLARE) — a REJECTED contribution or an
+    # fl-server-net-*: client rejects / aborts (FLARE) — a REJECTED contribution or an
     # abort signal is evidence of a client-side dropout or protocol failure. A JobLogReceiver
     # "Saving live log 'error_log.txt' as 'ERRORLOG' from <client>" line means that client
     # produced an error log during the job — the error itself is only readable trust-side.
@@ -999,7 +999,7 @@ SUMMARY_FILE="${MODEL_OUT_DIR}/summary.md"
     echo "## 1. Communication rounds"
     echo
     if [[ "$BACKEND" == "nvflare" && "$TOTAL_ROUNDS" -gt 0 ]]; then
-        echo "**${TOTAL_ROUNDS} round(s) executed** (source: fl-server-net-* \`Round N started.\`/\`Round N finished.\` lines, NVFLARE ScatterAndGather controller)."
+        echo "**${TOTAL_ROUNDS} round(s) executed** (source: fl-server-net-* \`Round N started.\`/\`Round N finished.\` lines, FLARE ScatterAndGather controller)."
     elif [[ "$BACKEND" == "flower" && "$TOTAL_ROUNDS" -gt 0 ]]; then
         echo "**${TOTAL_ROUNDS} round(s) observed** (PARTIAL — source: fl-server/fl-api \`(round N)\` tags in forwarded-metric log lines; Flower has no explicit round-start/finish log line in the platform code, so this is the highest round number seen, not necessarily confirmed as complete)."
     else
@@ -1029,7 +1029,7 @@ SUMMARY_FILE="${MODEL_OUT_DIR}/summary.md"
     echo "## 3. Aggregation time"
     echo
     if [[ "$BACKEND" == "nvflare" && "$TOTAL_ROUNDS" -gt 0 ]]; then
-        echo "See per-round table below (\`agg_start\`/\`agg_end\` columns; source: fl-server-net-* \`Start aggregation.\`/\`End aggregation.\` lines). Aggregation-start/end pairs are matched to rounds in chronological order (NVFLARE's ScatterAndGather aggregates synchronously once per round)."
+        echo "See per-round table below (\`agg_start\`/\`agg_end\` columns; source: fl-server-net-* \`Start aggregation.\`/\`End aggregation.\` lines). Aggregation-start/end pairs are matched to rounds in chronological order (FLARE's ScatterAndGather aggregates synchronously once per round)."
     elif [[ "$BACKEND" == "flower" ]]; then
         echo "**NOT AVAILABLE for Flower** — no aggregation start/end log line exists in the platform code for this backend (stock \`flwr\` strategy internals aren't captured by FLIP's own logging)."
     else
@@ -1054,7 +1054,7 @@ SUMMARY_FILE="${MODEL_OUT_DIR}/summary.md"
         done < "$ROUND_TABLE_FILE"
         echo
         if [[ "$BACKEND" == "nvflare" ]]; then
-            echo "Client contributions in-window: **${ACCEPTED_TOTAL:-0} accepted**, **${REJECTED_TOTAL:-0} rejected** (source: fl-server-net-* \`Contribution from <client> ACCEPTED|REJECTED by the aggregator at round <N>.\` lines; per-round counts in the table above — untagged lines from older NVFLARE builds only appear in the totals)."
+            echo "Client contributions in-window: **${ACCEPTED_TOTAL:-0} accepted**, **${REJECTED_TOTAL:-0} rejected** (source: fl-server-net-* \`Contribution from <client> ACCEPTED|REJECTED by the aggregator at round <N>.\` lines; per-round counts in the table above — untagged lines from older FLARE builds only appear in the totals)."
         fi
         echo
         echo "Summary statistics (all rounds; std is the sample standard deviation):"
@@ -1140,10 +1140,10 @@ SUMMARY_FILE="${MODEL_OUT_DIR}/summary.md"
     echo
     echo "| # | Metric | Availability | Source |"
     echo "|---|---|---|---|"
-    echo "| 1 | Communication rounds | Full (NVFLARE) / Partial (Flower) / None | fl-server-net-* |"
+    echo "| 1 | Communication rounds | Full (FLARE) / Partial (Flower) / None | fl-server-net-* |"
     echo "| 2 | Update size (per round) | **Not available** (hub logs) | n/a — needs new instrumentation |"
-    echo "| 3 | Aggregation time | Full (NVFLARE) / **Not available** (Flower) | fl-server-net-* |"
-    echo "| 4 | Per-round communication time | Full (NVFLARE) / Partial (Flower) | fl-server-net-* |"
+    echo "| 3 | Aggregation time | Full (FLARE) / **Not available** (Flower) | fl-server-net-* |"
+    echo "| 4 | Per-round communication time | Full (FLARE) / Partial (Flower) | fl-server-net-* |"
     echo "| 5 | Wall-clock time | Full | flip-api |"
     echo "| 6 | Deployment failures | Full, best-effort | flip-api + fl-api-net-* + fl-server-net-* |"
     echo "| 7 | Infrastructure constraints | Best-effort (log greps); ECS stopped-task check is time-limited | all three + ECS API |"

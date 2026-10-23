@@ -62,7 +62,7 @@ Report **every** label the model can produce with an explicit present/absent sta
 above threshold: that is what lets downstream systems accept or reject findings individually. This
 template already evaluates every label, so it is a formatting change rather than a behavioural one.
 
-See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/package-model-as-map.rst) for
+See [Deploying to deepcOS](../../docs/source/working-with-flip-apps/wrap-model-for-deployment.rst) for
 the report's required fields and how it is discovered.
 
 ## Verifying

@@ -13,7 +13,7 @@
 
 FedOpt (Reddi et al., "Adaptive Federated Optimization") replaces FedAvg's plain
 apply-the-average with a **server-side optimizer step**: the aggregator averages the clients'
-``WEIGHT_DIFF`` updates directly (as in every FLIP job type — stock NVFLARE semantics), and the
+``WEIGHT_DIFF`` updates directly (as in every FLIP job type — stock FLARE semantics), and the
 shareable generator treats the averaged diff as a pseudo-gradient, applying it to the global
 model through a configurable ``torch.optim`` optimizer (+ optional LR scheduler).
 
@@ -21,7 +21,7 @@ The client contract is identical to the ``standard`` job type: a Client API ``tr
 that sends its update as ``FLModel(params=diff, params_type="DIFF")`` — every ``standard``
 tutorial app is FedOpt-compatible as-is.
 
-Optimizer defaults follow stock NVFLARE FedOpt (``fedopt_ctl`` / the official ``FedOptRecipe``):
+Optimizer defaults follow stock FLARE FedOpt (``fedopt_ctl`` / the official ``FedOptRecipe``):
 server SGD at ``lr=1.0`` with ``momentum=0.6`` and no LR scheduler. The ``device="cpu"`` default
 is FLIP's own (stock defaults to cuda-if-available; the hub's fl-server has no GPU). The retired
 hand-written template wired server Adam — its README cited ``lr=0.5``, though the config's ``lr``
@@ -53,7 +53,7 @@ class FlipFedOptRecipe(FlipFedAvgRecipe):
     Args:
         optimizer_args: ``torch.optim`` component config for the server optimizer
             (``{"path": ..., "args": {...}}``). Defaults to SGD at ``lr=1.0`` with
-            ``momentum=0.6`` (stock NVFLARE FedOpt).
+            ``momentum=0.6`` (stock FLARE FedOpt).
         lr_scheduler_args: Optional ``torch.optim.lr_scheduler`` component config for the server
             optimizer's schedule. Defaults to ``None`` (no schedule).
         device: Device the server-side model copy lives on for the optimizer step.

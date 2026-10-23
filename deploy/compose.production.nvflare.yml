@@ -10,9 +10,9 @@
 # limitations under the License.
 #
 
-# ROLE (FLIP#936): NVFLARE overlay of the local prod-image harness (see the note in
+# ROLE (FLIP#936): FLARE overlay of the local prod-image harness (see the note in
 # compose.production.yml) — not a deployment target. The canonical production FL task definitions live in
-# deploy/providers/AWS/ecs_tasks.tf, whose NVFLARE branch (fl_backend=nvflare) mirrors this overlay.
+# deploy/providers/AWS/ecs_tasks.tf, whose FLARE branch (fl_backend=nvflare) mirrors this overlay.
 
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
@@ -22,7 +22,7 @@
 # not be renamed: every provisioned client kit pins the server by name (`fed_client.json` carries
 # `"target": "fl-server-net-1:8002"`, and the name is a SAN in the provisioned certificates), and
 # `fl-api-net-<N>` is what NET_ENDPOINTS dials. The `/opt/flip/services/flip-fl-api-net-1/…` bind
-# mounts below are unrelated — those are directory names in the provisioned NVFLARE kit layout.
+# mounts below are unrelated — those are directory names in the provisioned FLARE kit layout.
 services:
   #################### CENTRAL HUB FL ####################
 
@@ -42,7 +42,7 @@ services:
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # GPUs written into the meta.json resource_spec of a job that declares none (configure_meta).
-      # Default 0 => empty resource_spec => NVFLARE hides the GPU from the training worker (CPU).
+      # Default 0 => empty resource_spec => FLARE hides the GPU from the training worker (CPU).
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
     ports:
       - "${FL_API_PORT}:8000"
@@ -53,11 +53,11 @@ services:
     cap_add:
       - CHOWN
     volumes:
-      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      # Provisioned FLARE admin secrets (certificates, fed_admin.json)
       - /opt/flip/services/flip-fl-api-net-1/local:/app/admin/local
       - /opt/flip/services/flip-fl-api-net-1/startup:/app/admin/startup
       # Shared with fl-server-net-1: the FL API writes de-bundled eval checkpoints here; the
-      # fl-server reads them from disk. The checkpoint is never bundled into the NVFLARE job,
+      # fl-server reads them from disk. The checkpoint is never bundled into the FLARE job,
       # so it is never deployed to clients (mirrors the Flower backend's /app/src mount).
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
     depends_on:
@@ -71,7 +71,7 @@ services:
   #     - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
   #     - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
   #   volumes:
-  #     # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+  #     # Provisioned FLARE admin secrets (certificates, fed_admin.json)
   #     - /opt/flip/services/flip-fl-api-net-2/local:/app/admin/local
   #     - /opt/flip/services/flip-fl-api-net-2/startup:/app/admin/startup
   #   depends_on:
@@ -81,12 +81,12 @@ services:
   fl-server-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      # Provisioned FLARE secrets (certificates, fed_server.json)
       - /opt/flip/services/fl-server-net-1/local:/app/local
       - /opt/flip/services/fl-server-net-1/startup:/app/startup
       - /opt/flip/services/fl-server-net-1/transfer:/app/transfer
       # Shared with fl-api-net-1: de-bundled eval checkpoints staged by the FL API are read
-      # from here by the fl-server. The checkpoint is never in the NVFLARE job, so it is never
+      # from here by the fl-server. The checkpoint is never in the FLARE job, so it is never
       # deployed to clients (mirrors the Flower backend's /app/src mount). If the fl-server runs
       # as a separate ECS task in cloud prod, this needs a shared EFS mount (same as Flower).
       - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
@@ -98,7 +98,7 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      # The container runs as root, but the provisioned NVFLARE kit under
+      # The container runs as root, but the provisioned FLARE kit under
       # /opt/flip/services is bind-mounted with 0600 keys owned by the provisioning
       # uid. cap_drop: ALL strips root's implicit DAC bypass, so DAC_OVERRIDE is
       # needed to read keys it does not own; the entrypoint also chmods kit scripts
@@ -122,7 +122,7 @@ services:
   # fl-server-net-2:
   #   image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
   #   volumes:
-  #     # Provisioned NVFLARE secrets (certificates, fed_server.json)
+  #     # Provisioned FLARE secrets (certificates, fed_server.json)
   #     - /opt/flip/services/fl-server-net-2/local:/app/local
   #     - /opt/flip/services/fl-server-net-2/startup:/app/startup
   #     - /opt/flip/services/fl-server-net-2/transfer:/app/transfer

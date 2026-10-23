@@ -64,8 +64,8 @@ def test_records_a_key_mismatch_and_says_so_once(caplog):
 
 
 @pytest.mark.usefixtures("own_key")
-def test_an_older_hub_leaves_both_unknown():
-    """Pre-FLIP#1204 hubs reply with the identity block only; that is not a mismatch."""
+def test_a_reply_without_the_fields_leaves_all_unknown():
+    """A reply carrying only the identity block is not a mismatch."""
     hub_status.record({"trust_id": "x", "trust_name": "T"})
     assert hub_status.current() == {"hub_version": None, "hub_key_match": None, "hub_key_fingerprint": None}
 

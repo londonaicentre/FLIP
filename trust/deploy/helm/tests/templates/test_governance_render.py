@@ -15,7 +15,7 @@ The Kubernetes trust was the deployment shape that silently ignored a trust's go
 document: the Compose stack mounts it and points ``ACCESS_POLICY_FILE`` at it, the chart did
 that for nothing, and the two shapes looked equally healthy. These tests render the chart and
 assert the whole contract — the ConfigMap carrying the document verbatim, a READ-ONLY mount on
-data-access-api, the NVFLARE fl-client reading only the section its init container extracts
+data-access-api, the FLARE fl-client reading only the section its init container extracts
 (never the whole document, since researcher code runs there), nothing at all on the Flower
 client, and pod-template annotations that change with what each pod reads.
 
@@ -299,7 +299,7 @@ def test_the_fl_client_rolls_on_its_own_sections_digest(tmp_path: Path) -> None:
 def test_the_flower_client_gets_none_of_the_document(tmp_path: Path) -> None:
     """Nothing on Flower reads a site privacy section. Mounting the document there reported a
     policy nothing enforced, and rolling the pod on every edit killed its jobs for nothing. The
-    [disclosure]/[access] halves still reach data-access-api, as on NVFLARE."""
+    [disclosure]/[access] halves still reach data-access-api, as on FLARE."""
     rendered = _render("--set", "flBackend=flower", "--set-file", f"governance.document={_document_file(tmp_path)}")
     pods = _pods(rendered)
     pod = pods["fl-client"]

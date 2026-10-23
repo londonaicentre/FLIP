@@ -32,7 +32,7 @@ class FLLogEvent(StrEnum):
     migration.
 
     The round events arrive from the FL layer via ``POST /model/{id}/logs`` and
-    are 1-based on both backends (NVFLARE's internal ``_current_round`` is
+    are 1-based on both backends (FLARE's internal ``_current_round`` is
     0-based and is normalised at the emission boundary). ``QUEUE_POSITION`` is
     the exception: hub-emitted and round-less, it is written directly by the FL
     scheduler, and the ingest endpoint's validator (``TrainingLog``) rejects it
@@ -43,7 +43,7 @@ class FLLogEvent(StrEnum):
     ROUND_STARTED = "ROUND_STARTED"
     CLIENT_RESULT_RECEIVED = "CLIENT_RESULT_RECEIVED"
     ROUND_AGGREGATED = "ROUND_AGGREGATED"
-    # Sent by the fl-server's JobSchedulingReporter when NVFLARE's scheduler holds a job because a
+    # Sent by the fl-server's JobSchedulingReporter when FLARE's scheduler holds a job because a
     # site cannot provide what its resource_spec asks for. One row per such site, attributed to it;
     # details = {"attempt", "max_attempts", "final", "requested": the site's resource request}.
     JOB_WAITING_FOR_RESOURCES = "JOB_WAITING_FOR_RESOURCES"
@@ -71,7 +71,7 @@ class FLBackend(StrEnum):
     fields and S3 path segments all use that plain lowercase value, exactly as the
     previous ``Literal`` did. The ``FLNets.fl_backend`` column is an auto-mapped
     SQLAlchemy ``Enum`` (like the other enum columns) and so persists the member
-    *name* (``NVFLARE``/``FLOWER``); reads return a real ``FLBackend`` member.
+    *name* (``FLARE``/``FLOWER``); reads return a real ``FLBackend`` member.
     """
 
     NVFLARE = "nvflare"

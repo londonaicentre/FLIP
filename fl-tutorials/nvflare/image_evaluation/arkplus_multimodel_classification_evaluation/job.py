@@ -15,14 +15,14 @@ This module defines the federated evaluation job using :class:`FlipEvalRecipe`. 
 execution modes:
 
 *Export* (``--export --export-dir <path>``):
-    Writes the complete NVFLARE job to ``<path>/flip_evaluation/``, including ``meta.json`` (carrying
+    Writes the complete FLARE job to ``<path>/flip_evaluation/``, including ``meta.json`` (carrying
     ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client configs), and
     ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files, including the
     ``arkplus_pretrained_weights.pt`` / ``arkplus_finetuned_weights.pt`` checkpoints the server-side
     locator loads). This is the primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the NVFLARE simulator. Requires a GPU, the DECAF chest X-ray dataset,
+    Runs a local simulation under the FLARE simulator. Requires a GPU, the DECAF chest X-ray dataset,
     and both processed checkpoints (``make prepare-checkpoint``). FLIP-specific values are injected via
     environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``). Per-site data is selected inside the
     evaluator via ``flare.get_site_name()`` (see ``app_files/data_utils.py``).
@@ -31,7 +31,7 @@ The checkpoints stay server-side in both modes — ``EvaluationModelLocator`` lo
 ``GlobalModelEval`` broadcasts each one as its own named ``validate`` task; the evaluator scores the
 broadcast weights and caches scores across tasks for the DeLong comparison (see
 ``app_files/evaluator.py``). This matches the production platform, where the FL API de-bundles the
-``.pt`` files onto the hub staging volume and clients never receive them. Both modes go through NVFLARE's
+``.pt`` files onto the hub staging volume and clients never receive them. Both modes go through FLARE's
 :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir`` from ``sys.argv`` itself (it strips
 them before this script's own ``argparse`` runs) and exports-or-runs accordingly — so there is no
 separate ``--export`` branch here.
@@ -65,13 +65,13 @@ from nvflare.recipe import SimEnv  # noqa: E402
 def stage_app_files(job: FedJob) -> None:
     """Bundle ``app_files/`` into the job — code + config to every site, ``.pt`` checkpoints for the server.
 
-    The recipe wires only the NVFLARE components; the user-supplied app files (``evaluator.py``,
+    The recipe wires only the FLARE components; the user-supplied app files (``evaluator.py``,
     ``models.py``, ``config.json``, the Ark+ model code) must be added to the job explicitly so they land
     in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}`` registers them with the
     job's file sources, so they are bundled for **both** the SimEnv/simulator run (``recipe.execute``)
     and ``--export``. The checkpoints are registered for the **server only** — only the server-side
     ``EvaluationModelLocator`` reads them, broadcasting each as a named ``validate`` task that the
-    evaluator scores. (NVFLARE's combined single-app layout still materialises one shared ``custom/``
+    evaluator scores. (FLARE's combined single-app layout still materialises one shared ``custom/``
     dir, so the files are physically present at every simulator site — harmless, nothing client-side
     opens them. On the production platform the FL API keeps them out of the job entirely and stages
     them on the hub volume.)
@@ -100,7 +100,7 @@ def main() -> None:
         default="/tmp/nvflare/arkplus_multimodel_eval",
         help="SimEnv workspace root",
     )
-    # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them
+    # NOTE: ``--export``/``--export-dir`` are handled by FLARE's ``Recipe.execute`` (it strips them
     # from ``sys.argv`` before this parser runs), so they are intentionally not declared here.
     args = parser.parse_args()
 

@@ -13,7 +13,7 @@
 
 By convention a FLIP app declares its transforms here, so the inference chain can be found in one
 predictable place when the model is later packaged for deployment. See
-``docs/source/working-with-flip-apps/package-model-as-map.rst``.
+``docs/source/working-with-flip-apps/wrap-model-for-deployment.rst``.
 """
 
 import monai.transforms as mt

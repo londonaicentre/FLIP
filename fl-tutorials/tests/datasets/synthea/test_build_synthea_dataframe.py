@@ -40,7 +40,7 @@ import pytest
 FL_TUTORIALS_DIR = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = FL_TUTORIALS_DIR / "datasets" / "synthea" / "build_synthea_dataframe.py"
 # Both backends' copies are byte-identical (scripts/check_tutorial_sync.sh pins the Flower copy to
-# the NVFLARE one); test the reference and the copy both, so either drifting from pandas is caught.
+# the FLARE one); test the reference and the copy both, so either drifting from pandas is caught.
 QUERY_FILES = {
     "nvflare": FL_TUTORIALS_DIR / "nvflare" / "tabular_classification" / "ehr_risk_prediction" / "query.sql",
     "flower": FL_TUTORIALS_DIR / "flower" / "ehr_risk_prediction" / "query.sql",

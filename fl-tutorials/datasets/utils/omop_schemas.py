@@ -28,12 +28,6 @@ Notes:
     - Schemas are cached alongside this module as committed YAML (see `SCHEMA_DIR`); importing this
       module never needs the network. Regenerate the cache with `python omop_schemas.py --regenerate`.
     - If run as a script, debug messages will be printed.
-
-Imported from ``londonaicentre/flip-omop-mock-data`` (FLIP#1092) so the provenance of FLIP's
-published mock OMOP data lives with the platform. The schemas produced are unchanged from that
-repo; only the cache resolution (module-relative instead of cwd-relative) and the removal of the
-import-time network fallback have changed, so an offline, cwd-independent test suite can import
-this module.
 """
 
 from __future__ import annotations

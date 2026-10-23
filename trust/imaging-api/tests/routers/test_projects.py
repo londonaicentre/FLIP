@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -87,9 +88,16 @@ async def test_create_project_event_subscription_active_matches_dicom_to_nifti(
 
     headers = {"Cookie": "JSESSIONID=mock"}
     background_tasks = MagicMock()
-    await create_project_from_central_hub_project(central_hub_project, headers, background_tasks)
+    create_project_from_central_hub_project(central_hub_project, headers, background_tasks)
 
     mock_event_sub.assert_called_once_with(TEST_XNAT_PROJECT_ID, get_settings().DCM2NIIX_IMAGE, dicom_to_nifti, headers)
+
+
+def test_create_project_from_central_hub_project_runs_in_the_threadpool():
+    """Its XNAT calls block; as a coroutine they would stall the single event loop, /health included."""
+    from imaging_api.routers.projects import create_project_from_central_hub_project
+
+    assert not inspect.iscoroutinefunction(create_project_from_central_hub_project)
 
 
 # ── GET /projects/ ──

@@ -128,7 +128,7 @@ class TestInitialCheckpointPTModelPersistor:
             mock_load.assert_called_once()
             assert mock_load.call_args[0][0] == os.path.join(custom, "backbone.pt")
             p.model.load_state_dict.assert_called_once_with({"w": 1}, strict=False)
-            # source_ckpt must NOT be set — we merge into the model, not use NVFLARE's raw-ckpt path.
+            # source_ckpt must NOT be set — we merge into the model, not use FLARE's raw-ckpt path.
             mock_super.assert_called_once()
 
     @patch("flip.nvflare.components.pt_model_persistor.FlipConstants")

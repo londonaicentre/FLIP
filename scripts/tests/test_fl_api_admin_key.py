@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""The NVFLARE dev FL API can read its admin key through the host group (FLIP#1384).
+"""The FLARE dev FL API can read its admin key through the host group (FLIP#1384).
 
-NVFLARE writes ``client.key`` 0600 and the dev FL API runs as the image's user, so three pieces
+FLARE writes ``client.key`` 0600 and the dev FL API runs as the image's user, so three pieces
 must agree: ``make provision`` opens exactly the key the compose mounts to the provisioning user's
 group, the compose makes the FL API join the host group (with no guessed default), and the root
 ``make up`` refuses a workspace whose key the FL API could not open.
@@ -34,7 +34,7 @@ GUARD = REPO / "scripts" / "check-fl-provisioned.sh"
 
 
 def service_block(name: str) -> str:
-    """The text of one top-level service in the dev NVFLARE compose."""
+    """The text of one top-level service in the dev FLARE compose."""
     text = COMPOSE.read_text()
     match = re.search(rf"^  {re.escape(name)}:\n(.*?)(?=^  \S|\Z)", text, re.M | re.S)
     assert match, f"{name} not found in {COMPOSE}"

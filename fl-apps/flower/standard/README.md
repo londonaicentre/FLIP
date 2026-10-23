@@ -40,7 +40,7 @@ app, the strategy or the project config.
 ## Differential privacy: expected in the uploaded `client_app.py`
 
 `client_app.py` is **uploaded, not templated**, so this template cannot wire the privacy filter
-itself the way the NVFLARE templates do (theirs is a `task_result_filters` entry in the
+itself the way the FLARE templates do (theirs is a `task_result_filters` entry in the
 FLIP-owned `config_fed_client.json`). An uploaded Flower training app is expected to privatise its
 update by registering FLIP's DP mod on its training handler:
 
