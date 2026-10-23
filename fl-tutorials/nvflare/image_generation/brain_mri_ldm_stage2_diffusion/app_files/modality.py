@@ -72,7 +72,7 @@ def one_hot_condition(modality_index: torch.Tensor, num_modalities: int, device:
     The condition here is a single categorical fact per sample, so the sequence length is 1 and
     ``cross_attention_dim`` is the number of modalities — which is why ``config.json``'s
     ``net_config.diffusion_model.cross_attention_dim`` must equal ``len(MODALITIES)`` (pinned by
-    fl-tutorials/tests/test_image_synthesis_config_parity.py).
+    fl-tutorials/tests/test_image_generation_config_parity.py).
 
     Args:
         modality_index (torch.Tensor): Integer index per sample, as collated from the datalist.

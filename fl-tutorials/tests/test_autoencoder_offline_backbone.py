@@ -37,7 +37,7 @@ from tutorial_apps import TUTORIALS_ROOT, load_module
 
 # The perceptual loss lives here, and only here: the two diffusion tutorials score in latent/noise
 # space and construct no perceptual loss at all.
-TUTORIAL_DIR = TUTORIALS_ROOT / "nvflare/image_synthesis/autoencoder"
+TUTORIAL_DIR = TUTORIALS_ROOT / "nvflare/image_generation/brain_mri_ldm_stage1_autoencoder"
 APP_DIR = TUTORIAL_DIR / "app_files"
 fetch_weights = load_module("fetch_weights_under_test", TUTORIALS_ROOT / "datasets" / "weights" / "fetch_weights.py")
 

@@ -196,8 +196,8 @@ dev = [
     "ruff>=0.14.2",
     "types-requests>=2.32.4.20260107",
 ]
-# Local runs of the fl-tutorials image-synthesis tutorials, which write debug images and loss curves
-# from their shared image_synthesis/dev/plot_utils.py. Kept out of `dev` so nothing else gets a
+# Local runs of the fl-tutorials image-generation tutorials, which write debug images and loss curves
+# from their shared image_generation/dev/plot_utils.py. Kept out of `dev` so nothing else gets a
 # plotting stack, and out of `full` so no FL image does.
 diffusion = [
     "matplotlib>=3.10.7",

@@ -30,7 +30,7 @@ endif
 
 # --- Local-run knobs ---
 # Local-sim/export values passed to job.py; override per invocation (`make run NUM_ROUNDS=10`),
-# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=autoencoder
+# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=xray_diffusion
 # NUM_ROUNDS=10`), or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from
 # config.json at submit time and overrides whatever the recipe baked in.
 NUM_ROUNDS ?= 1
@@ -41,29 +41,23 @@ N_CLIENTS ?= 2
 # of the simulator check: images are written only with SAVE_DEBUG_SAMPLES true in config.json AND
 # LOCAL_DEV true AND this set (plot_utils.samples_enabled). Never set on a trust, which also runs
 # with LOCAL_DEV=false, so production writes nothing whatever config.json says.
-DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/autoencoder
+DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/xray_diffusion
 
-# --- Shipped weights (FLIP#1206) ---
-# The perceptual loss's MedicalNet ResNet-50 backbone. FL apps never download at run time, so the
-# tutorial ships it: the download is shared (`make -C fl-tutorials download-weights
-# ARCH=medicalnet_resnet50`, sha256-pinned) and `weights` copies the checkpoint flat into
-# app_files/, which is what gets uploaded with the code and what job.py bundles into every site's
-# custom/ for the simulator and `export`. Gitignored. The filename must be MEDICALNET_CHECKPOINT in
-# app_files/medicalnet_perceptual.py, which checks its hash prefix at load time.
-# This tutorial owns it because this is where the perceptual loss is: the diffusion tutorials
-# score in latent/noise space and construct no PerceptualLoss at all.
-HUB_CHECKPOINT := medicalnet_resnet50_23datasets-ff48a622.pth
-SHARED_CHECKPOINT := $(FL_TUTORIALS)/data/weights/$(HUB_CHECKPOINT)
+# --- Which dataset a local run trains on ---
+# arkplus (default): the Ark+ training splits, ~1.9k X-rays per site, each site on its own folder.
+# mini: xrays_mini_300, halved between the sites. For testing code only; too small to train on.
+DATASET ?= arkplus
+ifeq ($(DATASET),mini)
+override SITE1_IMAGES_DIR :=
+override SITE1_DATAFRAME :=
+override SITE2_IMAGES_DIR :=
+override SITE2_DATAFRAME :=
+else ifneq ($(DATASET),arkplus)
+$(error DATASET must be arkplus or mini, got '$(DATASET)')
+endif
+site_path = $(if $(1),$(abspath $(1)))
 
-.PHONY: run export sim clean weights
-
-weights: app_files/$(HUB_CHECKPOINT)
-
-app_files/$(HUB_CHECKPOINT): $(SHARED_CHECKPOINT)
-	cp "$<" "$@"
-
-$(SHARED_CHECKPOINT):
-	$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=medicalnet_resnet50
+.PHONY: run export sim clean
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
@@ -73,9 +67,8 @@ run: sim
 # --- Export job config (no GPU needed) ---
 # Builds a complete FLARE job under ./fl_job/flip_fedavg/ including meta.json,
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
-# FLIP-specific values (project_id, query) are injected via environment variables. Both bundling
-# paths (this and sim) need the shipped backbone in app_files/ first — hence `weights`.
-export: weights
+# FLIP-specific values (project_id, query) are injected via environment variables.
+export:
 	$(UV_RUN) python job.py \
 		--export \
 		--export-dir ./fl_job \
@@ -83,13 +76,23 @@ export: weights
 		--num_rounds $(NUM_ROUNDS)
 
 # --- SimEnv local simulation (requires GPU + data) ---
-# Runs the job under the FLARE simulator. Requires a GPU and the reference
-# dataset (run `make -C fl-tutorials download-brain-mri-data` first).
+# Runs the job under the FLARE simulator. Requires a GPU and the dataset DATASET names (see above).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
-# DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
+# SITE{1,2}_* and DEV_* paths are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
-sim: weights
+# A local run does NUM_ROUNDS rounds; GLOBAL_ROUNDS in config.json is what the platform runs.
+sim:
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
+	@if [ "$(DATASET)" = arkplus ] && [ ! -f "$(SITE1_DATAFRAME)" ]; then \
+		echo "Ark+ data not found at $(SITE1_DATAFRAME)."; \
+		echo "Run: make -C $(FL_TUTORIALS) download-arkplus-finetuning-data"; \
+		echo "Or, to test code only: make run DATASET=mini"; \
+		exit 1; \
+	fi
+	SITE1_IMAGES_DIR="$(call site_path,$(SITE1_IMAGES_DIR))" \
+	SITE1_DATAFRAME="$(call site_path,$(SITE1_DATAFRAME))" \
+	SITE2_IMAGES_DIR="$(call site_path,$(SITE2_IMAGES_DIR))" \
+	SITE2_DATAFRAME="$(call site_path,$(SITE2_DATAFRAME))" \
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
 	DEBUG_SAMPLES_DIR="$(abspath $(DEBUG_SAMPLES_DIR))" \

@@ -1,10 +1,11 @@
-# Diffusion Model (chest X-ray) — FLIP tutorial
+# Chest X-ray diffusion model — FLIP tutorial
 
 This tutorial trains a denoising diffusion model (DDPM) that generates 2-D chest X-rays, using the
 **FLARE Client API** (`nvflare.client`). A single network, MONAI's `DiffusionModelUNet`, learns to
 remove noise from the images themselves, so there is one model, one loss and nothing to prepare
 before training. The job is defined entirely in Python via `FlipFedAvgRecipe` — no hand-written
-JSON configs required.
+JSON configs required. It stands alone, and is the simplest of the
+[image-generation tutorials](../README.md) to read.
 
 The network, noise scheduler and inferer are MONAI's generative-model components: Pinaya *et al.*,
 "Generative AI for Medical Imaging: extending the MONAI Framework",
@@ -97,8 +98,9 @@ connections line up; `fl-tutorials/tests/` pins the latter.
 
 ## Debugging
 
-Sample images and loss curves for local runs: see [Debugging](../README.md#debugging) in the guide.
-Here both go to `fl-tutorials/data/debug_samples/diffusion_model/`.
+Sample images and loss curves for local runs: see [Debugging](../README.md#debugging) in the
+image-generation index.
+Here both go to `fl-tutorials/data/debug_samples/xray_diffusion/`.
 
 ## FLIP-specific values
 
@@ -147,7 +149,7 @@ and propagate through the harness. They are **local knobs only**: on the platfor
 ```bash
 make sim NUM_ROUNDS=2
 make export NUM_ROUNDS=2 N_CLIENTS=3
-make -C fl-tutorials run-tutorial TUTORIAL=diffusion_model NUM_ROUNDS=2
+make -C fl-tutorials run-tutorial TUTORIAL=xray_diffusion NUM_ROUNDS=2
 ```
 
 ### On the platform
@@ -156,5 +158,9 @@ Use `query.sql` as the project's cohort query, then upload **everything in `app_
 (`trainer.py`, `config.json`, `models.py`, `transforms.py`) through the FLIP UI as a model with job
 type `standard`.
 
-This is the first of the three image-synthesis tutorials to read; [`../README.md`](../README.md)
-shows how they fit together.
+## References
+
+- Ho, J., Jain, A. & Abbeel, P. Denoising Diffusion Probabilistic Models. NeurIPS 2020. [arXiv:2006.11239](https://arxiv.org/abs/2006.11239)
+- Dhariwal, P. & Nichol, A. Diffusion Models Beat GANs on Image Synthesis. NeurIPS 2021. [arXiv:2105.05233](https://arxiv.org/abs/2105.05233)
+- Ronneberger, O., Fischer, P. & Brox, T. U-Net: Convolutional Networks for Biomedical Image Segmentation. MICCAI 2015. [arXiv:1505.04597](https://arxiv.org/abs/1505.04597)
+- Pinaya, W. H. L. *et al.* Generative AI for Medical Imaging: extending the MONAI Framework. 2023. [arXiv:2307.15208](https://arxiv.org/abs/2307.15208)

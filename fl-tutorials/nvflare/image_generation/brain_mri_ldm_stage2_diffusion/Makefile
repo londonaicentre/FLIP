@@ -29,9 +29,9 @@ export $(shell sed -e '/^[[:space:]]*\#/d' -e 's/=.*//' ./.env.app)
 endif
 
 # --- Local-run knobs ---
-# Local-sim/export values passed to job.py; override per invocation (`make run NUM_ROUNDS=10`),
-# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=diffusion_model
-# NUM_ROUNDS=10`), or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from
+# Local-sim/export values passed to job.py; override per invocation (`make run NUM_ROUNDS=2`),
+# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage2_diffusion
+# NUM_ROUNDS=2`), or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from
 # config.json at submit time and overrides whatever the recipe baked in.
 NUM_ROUNDS ?= 1
 N_CLIENTS ?= 2
@@ -41,33 +41,49 @@ N_CLIENTS ?= 2
 # of the simulator check: images are written only with SAVE_DEBUG_SAMPLES true in config.json AND
 # LOCAL_DEV true AND this set (plot_utils.samples_enabled). Never set on a trust, which also runs
 # with LOCAL_DEV=false, so production writes nothing whatever config.json says.
-DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/diffusion_model
+DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/brain_mri_ldm_stage2_diffusion
 
-# --- Which dataset a local run trains on ---
-# arkplus (default): the Ark+ training splits, ~1.9k X-rays per site, each site on its own folder.
-# mini: xrays_mini_300, halved between the sites. For testing code only; too small to train on.
-DATASET ?= arkplus
-ifeq ($(DATASET),mini)
-override SITE1_IMAGES_DIR :=
-override SITE1_DATAFRAME :=
-override SITE2_IMAGES_DIR :=
-override SITE2_DATAFRAME :=
-else ifneq ($(DATASET),arkplus)
-$(error DATASET must be arkplus or mini, got '$(DATASET)')
-endif
-site_path = $(if $(1),$(abspath $(1)))
+# --- Frozen autoencoder checkpoint ---
+# Must match config.json's SERVER_CHECKPOINT and job.py's _CHECKPOINT_NAME. extract_autoencoder.py
+# writes autoencoder_config.yaml beside it: the architecture clients build and the weights'
+# fingerprint the trainer checks. The two files are one artifact; prepare them together.
+PROCESSED_CHECKPOINT ?= app_files/pretrained_autoencoder.pt
+# Point this at a finished `brain_mri_ldm_stage1_autoencoder` tutorial run's checkpoint (the downloaded FL global model,
+# or the simulator's FL_global_model.pt) to build PROCESSED_CHECKPOINT from it.
+RAW_CHECKPOINT ?=
+# The config.json that run was trained with. Defaults to the autoencoder tutorial's own, so set it
+# whenever the run's uploaded config.json changed the network.
+RAW_CONFIG ?=
 
-.PHONY: run export sim clean
+.PHONY: run export sim prepare-checkpoint clean
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
 # and invokes `make run`, which delegates to `sim` (the recipe/simulator path via job.py).
-run: sim
+run: prepare-checkpoint sim
+
+# --- Autoencoder checkpoint preparation ---
+# This job trains only the diffusion model. The autoencoder arrives frozen: the checkpoint is loaded on
+# the FL server and broadcast in round 0, and every client builds the bare network from the YAML.
+prepare-checkpoint:
+ifneq ($(RAW_CHECKPOINT),)
+	$(UV_RUN) python process_tools/extract_autoencoder.py --src "$(RAW_CHECKPOINT)" \
+		--dst "$(PROCESSED_CHECKPOINT)" $(if $(RAW_CONFIG),--autoencoder-config "$(RAW_CONFIG)")
+else
+	@test -f "$(PROCESSED_CHECKPOINT)" || { \
+		echo "❌ No $(PROCESSED_CHECKPOINT). This tutorial trains inside a frozen autoencoder's latent space."; \
+		echo "   Train one with the sibling tutorial, then extract it:"; \
+		echo "     make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder"; \
+		echo "     make prepare-checkpoint RAW_CHECKPOINT=/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/flip_fedavg/server/simulate_job/FL_global_model.pt"; \
+		exit 1; }
+endif
 
 # --- Export job config (no GPU needed) ---
 # Builds a complete FLARE job under ./fl_job/flip_fedavg/ including meta.json,
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
 # FLIP-specific values (project_id, query) are injected via environment variables.
+# Deliberately does NOT depend on prepare-checkpoint: exporting is for reviewing the job wiring and
+# works without the checkpoint (it is staged only if present).
 export:
 	$(UV_RUN) python job.py \
 		--export \
@@ -75,24 +91,15 @@ export:
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS)
 
-# --- SimEnv local simulation (requires GPU + data) ---
-# Runs the job under the FLARE simulator. Requires a GPU and the dataset DATASET names (see above).
+# --- SimEnv local simulation (requires GPU + data + checkpoint) ---
+# Runs the job under the FLARE simulator. Requires a GPU and the reference
+# dataset (run `make -C fl-tutorials download-brain-mri-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
-# SITE{1,2}_* and DEV_* paths are resolved to absolute paths so the simulator's client workers
+# DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
 # A local run does NUM_ROUNDS rounds; GLOBAL_ROUNDS in config.json is what the platform runs.
 sim:
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
-	@if [ "$(DATASET)" = arkplus ] && [ ! -f "$(SITE1_DATAFRAME)" ]; then \
-		echo "Ark+ data not found at $(SITE1_DATAFRAME)."; \
-		echo "Run: make -C $(FL_TUTORIALS) download-arkplus-finetuning-data"; \
-		echo "Or, to test code only: make run DATASET=mini"; \
-		exit 1; \
-	fi
-	SITE1_IMAGES_DIR="$(call site_path,$(SITE1_IMAGES_DIR))" \
-	SITE1_DATAFRAME="$(call site_path,$(SITE1_DATAFRAME))" \
-	SITE2_IMAGES_DIR="$(call site_path,$(SITE2_IMAGES_DIR))" \
-	SITE2_DATAFRAME="$(call site_path,$(SITE2_DATAFRAME))" \
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
 	DEBUG_SAMPLES_DIR="$(abspath $(DEBUG_SAMPLES_DIR))" \

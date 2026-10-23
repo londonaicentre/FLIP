@@ -41,7 +41,7 @@ from monai.losses import PatchAdversarialLoss
 from monai.networks.nets import PatchDiscriminator
 from tutorial_apps import TUTORIALS_ROOT
 
-APP_FILES = TUTORIALS_ROOT / "nvflare" / "image_synthesis" / "autoencoder" / "app_files"
+APP_FILES = TUTORIALS_ROOT / "nvflare" / "image_generation" / "brain_mri_ldm_stage1_autoencoder" / "app_files"
 
 # The smallest shape that survives `num_layers_d` halvings and still exceeds the 4-voxel kernel
 # that follows them. The trainer runs at 96^3; nothing here depends on the exact value.

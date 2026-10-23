@@ -112,7 +112,7 @@ radiographs while the model was being fed the transpose.
 
 The environment is **flip-utils'** (`flip-utils[full]` — monai, pydicom, torch, timm, sklearn),
 which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib) for
-the image-synthesis tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
+the image-generation tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
 here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml`
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
 shared environment matching the runtime is both cheaper and more faithful.
@@ -202,9 +202,9 @@ contract, and should not be mistaken for it. Untested here:
 `Orientationd`/`Spacingd`, where this correction would be actively wrong. Do not add them to
 `DICOM_APPS`.
 
-The three `image_synthesis` tutorials (`autoencoder`, `diffusion_model`, `latent_diffusion_model`)
-**are** registered: they read the same 2-D DICOM chest X-rays as `xray_classification`, through a
-copy of its chain, so the same orientation guarantees apply. A generative model trained on sideways
+Of the three `image_generation` tutorials, `xray_diffusion` **is** registered: it reads the same 2-D
+DICOM chest X-rays as `xray_classification`, through a copy of its chain, so the same orientation
+guarantees apply. The two brain MRI tutorials read NIfTI and are not. A generative model trained on sideways
 or mirrored radiographs would go on to synthesise them.
 
 Tutorials are copy-and-adapt example code, and a repository test cannot follow a copy out of the

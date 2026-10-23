@@ -9,10 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Figures for the image-synthesis tutorials, for local development only.
+"""Figures for the image-generation tutorials, for local development only.
 
 ``save_grid`` and ``save_triplanar`` write debug images during a simulator run; run as a script, this
-module plots each site's losses from a simulator workspace. It sits in ``image_synthesis/dev/``,
+module plots each site's losses from a simulator workspace. It sits in ``image_generation/dev/``,
 which is never uploaded: each tutorial's ``job.py`` stages it into simulator runs, and on a trust the
 trainers' import of it fails and debug output is simply off.
 

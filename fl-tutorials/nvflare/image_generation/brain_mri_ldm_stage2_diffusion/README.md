@@ -1,10 +1,17 @@
-# Latent Diffusion Model — FLIP tutorial
+# Brain MRI latent diffusion model — FLIP tutorial
 
 This tutorial trains a diffusion UNet (MONAI `DiffusionModelUNet`) in the latent space of a frozen
 autoencoder, on 3-D brain MRI, conditioned on the MR sequence, using the **FLARE Client API**
-(`nvflare.client`). The job is defined entirely in Python via `FlipFedAvgRecipe`. The autoencoder is
-not trained here: train it first with the [`autoencoder`](../autoencoder/) tutorial. How the three
-image-synthesis tutorials fit together is in the [guide](../README.md).
+(`nvflare.client`). The job is defined entirely in Python via `FlipFedAvgRecipe`. It is the second of
+the two jobs that make a latent diffusion model; the
+[autoencoder tutorial](../brain_mri_ldm_stage1_autoencoder/README.md#how-the-two-jobs-fit-together) shows how they fit together.
+The [index](../README.md) lists the other image-generation tutorials.
+
+> **You need an autoencoder before you start, but you don't have to train one.** We trained one with
+> the [autoencoder tutorial](../brain_mri_ldm_stage1_autoencoder/) and published it on Hugging Face
+> ([`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder)),
+> and `make prepare-checkpoint` fetches it. Or train your own and extract it.
+> [Getting the autoencoder](#getting-the-autoencoder-do-this-first) covers both.
 
 Adapted from MONAI's 3-D latent diffusion example
 ([Project-MONAI/tutorials, `generation/3d_ldm`](https://github.com/Project-MONAI/tutorials/tree/d948baa25946d109556f4304ba999d7c74a97c4d/generation/3d_ldm),
@@ -46,25 +53,47 @@ make -C fl-tutorials download-brain-mri-data NUM_CASES=20  # -> fl-tutorials/dat
 
 ## Getting the autoencoder (do this first)
 
-A finished [`autoencoder`](../autoencoder/) run holds the whole training network (autoencoder and
-discriminator) inside FLARE's persistor envelope, so extract the autoencoder from it first:
+The job trains inside a frozen autoencoder, which it takes as two files in `app_files/`. There are
+two ways to get them, and `make prepare-checkpoint` writes both files either way.
+
+### The published autoencoder
+
+```bash
+make prepare-checkpoint   # from this directory
+```
+
+With no arguments it downloads the autoencoder we trained with the
+[autoencoder tutorial](../brain_mri_ldm_stage1_autoencoder/) and published on Hugging Face
+([`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder)),
+checks its hash, and writes both files. It was trained with the autoencoder tutorial's shipped
+configuration, which this tutorial's `config.json` matches. Its model card says how it was trained,
+on which data, and how it scores on held-out patients.
+
+### Your own autoencoder
+
+A finished autoencoder run holds the whole training network (autoencoder and discriminator) inside
+FLARE's persistor envelope, so extract the autoencoder from it:
 
 ```bash
 # 1. Train an autoencoder (from the repository root)
-make -C fl-tutorials run-tutorial TUTORIAL=autoencoder
+make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder
 
 # 2. Extract it (from this directory)
 make prepare-checkpoint \
-    RAW_CHECKPOINT=/tmp/nvflare/autoencoder/flip_fedavg/server/simulate_job/FL_global_model.pt
+    RAW_CHECKPOINT=/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/flip_fedavg/server/simulate_job/FL_global_model.pt
 ```
 
 `RAW_CHECKPOINT` is that run's `.pt`: the simulator's global model, as above, or the global model
 downloaded from a platform run. If the run's `config.json` changed the network, also pass
 `RAW_CONFIG=<that config.json>`; the default is the autoencoder tutorial's own.
 
-`prepare-checkpoint` (`process_tools/extract_autoencoder.py`) keeps the `autoencoder.*` tensors,
-loads them strictly into the recorded architecture, so weights from another network fail here
-rather than in training, and writes two files that belong together:
+Here `prepare-checkpoint` (`process_tools/extract_autoencoder.py`) keeps the `autoencoder.*` tensors
+and loads them strictly into the recorded architecture, so weights from another network fail here
+rather than in training.
+
+### The two files
+
+Either way, `prepare-checkpoint` writes two files that belong together:
 
 | File | What it is | Where it goes |
 | --- | --- | --- |
@@ -77,8 +106,9 @@ to train on any other autoencoder ("The autoencoder this client received is not 
 autoencoder_config.yaml describes"). Every `prepare-checkpoint` overwrites the YAML, so always
 generate the two files together and never mix them across runs.
 
-**Checking the load.** The server loads the checkpoint with `strict=False`. Look for this line in the
-server log:
+### Checking the load
+
+The server loads the checkpoint with `strict=False`. Look for this line in the server log:
 
 ```text
 Loaded backbone into initial global model from <path> (missing=496, unexpected=0 keys).
@@ -106,7 +136,7 @@ cross-attention (`app_files/modality.py`), so one model generates any of the fou
 - unconditional, e.g. `["T1w"]` alone: `with_conditioning: false`, `cross_attention_dim: 0`.
 
 Keep `MODALITIES` in the autoencoder tutorial's order too: the index is the one-hot position.
-`fl-tutorials/tests/test_image_synthesis_config_parity.py` checks both rules.
+`fl-tutorials/tests/test_image_generation_config_parity.py` checks both rules.
 
 The frozen autoencoder is MONAI `AutoencoderKL`, built from `autoencoder_config.yaml` rather than
 `config.json`, on a submodule named `autoencoder` so the checkpoint's `autoencoder.*` keys land on
@@ -154,7 +184,7 @@ whose cutoff is computed over the whole update.
 ## Debugging
 
 Sample images (one generated volume per sequence, local runs only) and loss curves are described in
-the guide's [Debugging](../README.md#debugging) section.
+the [Debugging](../README.md#debugging) section of the image-generation index.
 
 ## FLIP-specific values
 
@@ -185,7 +215,7 @@ With the data downloaded and the autoencoder prepared (see above), from this dir
 make run      # checks app_files/pretrained_autoencoder.pt exists, then runs `make sim`
 ```
 
-or, from the repository root, `make -C fl-tutorials run-tutorial TUTORIAL=latent_diffusion_model`.
+or, from the repository root, `make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage2_diffusion`.
 In simulation the two sites train on different halves of the dataset; on the platform each trust's
 cohort is its own.
 
@@ -197,7 +227,7 @@ cohort is its own.
 ```bash
 make run NUM_ROUNDS=2
 make export NUM_ROUNDS=2 N_CLIENTS=3
-make -C fl-tutorials run-tutorial TUTORIAL=latent_diffusion_model NUM_ROUNDS=2
+make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage2_diffusion NUM_ROUNDS=2
 ```
 
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
@@ -213,3 +243,12 @@ Upload **everything in `app_files/`** once prepared through the FLIP UI, as a mo
 file named by `SERVER_CHECKPOINT`: FLIP stages it on the FL server only, never on the trusts, and
 loads it into the round-0 global model. There is no diffusion-model checkpoint to upload. The
 standalone FLARE submit path (`make -C fl-services/nvflare submit`) is **not wired**.
+
+## References
+
+- Rombach, R. *et al.* High-Resolution Image Synthesis with Latent Diffusion Models. CVPR 2022. [arXiv:2112.10752](https://arxiv.org/abs/2112.10752)
+- Pinaya, W. H. L. *et al.* Brain Imaging Generation with Latent Diffusion Models. DGM4MICCAI 2022. [arXiv:2209.07162](https://arxiv.org/abs/2209.07162)
+- Ho, J., Jain, A. & Abbeel, P. Denoising Diffusion Probabilistic Models. NeurIPS 2020. [arXiv:2006.11239](https://arxiv.org/abs/2006.11239)
+- Ronneberger, O., Fischer, P. & Brox, T. U-Net: Convolutional Networks for Biomedical Image Segmentation. MICCAI 2015. [arXiv:1505.04597](https://arxiv.org/abs/1505.04597)
+- Pinaya, W. H. L. *et al.* Generative AI for Medical Imaging: extending the MONAI Framework. 2023. [arXiv:2307.15208](https://arxiv.org/abs/2307.15208)
+- Antonelli, M. *et al.* The Medical Segmentation Decathlon. *Nature Communications* 13, 4128, 2022. The brain MRI data, CC BY-SA 4.0.

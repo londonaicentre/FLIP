@@ -54,10 +54,10 @@ for why the plan is pooled and the measured per-center figures.
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
-| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends); image_synthesis/diffusion_model (smoke only) |
+| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends); image_generation/xray_diffusion (smoke only) |
 | spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation (**both backends**); enrichment labels |
 | spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
-| brain_mri | MSD Task01_BrainTumour (`download-brain-mri-msd-raw`, 7.6 GB; `NUM_CASES` for the simulator layout) | `Task01_BrainTumour/`, `brain_mri/{images/, dataframe.csv, dicom/, source/, canonical/}` | image_synthesis/autoencoder + image_synthesis/latent_diffusion_model (3-D, 96³, four MR sequences); the mock trust data via `seed-brain-mri` |
+| brain_mri | MSD Task01_BrainTumour (`download-brain-mri-msd-raw`, 7.6 GB; `NUM_CASES` for the simulator layout) | `Task01_BrainTumour/`, `brain_mri/{images/, dataframe.csv, dicom/, source/, canonical/}` | image_generation/brain_mri_ldm_stage1_autoencoder + image_generation/brain_mri_ldm_stage2_diffusion (3-D, 96³, four MR sequences); the mock trust data via `seed-brain-mri` |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (FLARE) |
 | synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
 | prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |

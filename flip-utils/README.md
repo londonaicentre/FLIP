@@ -248,9 +248,9 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `evaluation` | `nvflare/image_evaluation/3d_spleen_segmentation_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_baseline_classification_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_multimodel_classification_evaluation` |
-| nvflare | `standard` | `nvflare/image_synthesis/autoencoder` |
-| nvflare | `standard` | `nvflare/image_synthesis/diffusion_model` (pixel-space) |
-| nvflare | `standard` | `nvflare/image_synthesis/latent_diffusion_model` |
+| nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage1_autoencoder` |
+| nvflare | `standard` | `nvflare/image_generation/xray_diffusion` (pixel-space) |
+| nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage2_diffusion` |
 | flower | `standard` | `flower/xray_classification` |
 | flower | `standard` | `flower/3d_spleen_segmentation` |
 | flower | `standard` | `flower/ehr_risk_prediction` |
@@ -260,8 +260,8 @@ The plain job-type names (`standard`, `evaluation`, `fed_opt`) are the
 Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
 such apps can no longer run.
 
-A latent diffusion model is trained as two `standard` jobs: an `autoencoder` run, then a separate
-`latent_diffusion_model` run that takes the resulting autoencoder as a frozen `SERVER_CHECKPOINT`.
+A latent diffusion model is trained as two `standard` jobs: a `brain_mri_ldm_stage1_autoencoder` run, then a
+separate `brain_mri_ldm_stage2_diffusion` run that takes the resulting autoencoder as a frozen `SERVER_CHECKPOINT`.
 The two-stage `diffusion_model` job type that once did both in one job has been removed.
 
 ---

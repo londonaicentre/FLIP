@@ -1,10 +1,18 @@
-# Autoencoder — FLIP tutorial
+# Brain MRI autoencoder — FLIP tutorial
 
 This tutorial trains a KL-regularised autoencoder (MONAI `AutoencoderKL`) and a patch discriminator
 on 3-D brain MRI, using the **FLARE Client API** (`nvflare.client`), with the job defined in Python
-via `FlipFedAvgRecipe`. The trained autoencoder is the first half of a latent diffusion model: the
-[latent diffusion tutorial](../latent_diffusion_model/README.md) loads it and keeps it frozen. The
-[guide](../README.md) explains how the three image-synthesis tutorials fit together.
+via `FlipFedAvgRecipe`. It is the first of the two jobs that make a latent diffusion model for brain
+MRI: the [latent diffusion tutorial](../brain_mri_ldm_stage2_diffusion/README.md) loads the autoencoder trained here and keeps it
+frozen. The [index](../README.md) lists the other image-generation tutorials.
+
+> **Only want to generate brain MRI? You can skip this tutorial.** We trained an autoencoder with it
+> and published it on Hugging Face, in
+> [`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder),
+> whose model card says how it was trained and how it scores on held-out patients. The latent
+> diffusion tutorial fetches and checks it for you: go straight to its
+> [Getting the autoencoder](../brain_mri_ldm_stage2_diffusion/README.md#getting-the-autoencoder-do-this-first). Train your own
+> here when you want one fitted to your own data or configuration.
 
 Adapted from MONAI's 3-D latent diffusion example
 ([Project-MONAI/tutorials, `generation/3d_ldm`](https://github.com/Project-MONAI/tutorials/tree/d948baa25946d109556f4304ba999d7c74a97c4d/generation/3d_ldm),
@@ -12,6 +20,18 @@ Apache-2.0; Pinaya *et al.* [2022](https://arxiv.org/abs/2209.07162),
 [2023](https://arxiv.org/abs/2307.15208)). The autoencoder architecture follows its configuration. We
 changed the training for FLIP: federated across sites, all four MR sequences, whole-brain 2 mm
 geometry, and a MedicalNet perceptual loss that loads uploaded weights instead of downloading them.
+
+## How the two jobs fit together
+
+![Latent diffusion on FLIP in two jobs: train the autoencoder, extract it, then train the diffusion model with the autoencoder frozen](assets/latent_diffusion_in_two_jobs.svg)
+
+A latent diffusion model has two parts, trained one after the other: an **autoencoder** that maps an
+image to a much smaller latent volume and back, then a **diffusion model** that learns to generate
+latents (Rombach *et al.* 2022). On FLIP they are separate jobs: this tutorial, then
+[`brain_mri_ldm_stage2_diffusion`](../brain_mri_ldm_stage2_diffusion/). This job's result is extracted into a checkpoint, which the latent diffusion job
+uploads and keeps **frozen**: only the diffusion model is trained, and only its weights are
+aggregated. Keeping the jobs apart means one autoencoder can serve many diffusion runs, and that you
+can skip this one by starting from the published autoencoder.
 
 ## Example outputs from this tutorial
 
@@ -64,11 +84,14 @@ the FLARE site name); on the platform each trust's cohort is already its own.
 `app_files/models.py` builds two networks from `net_config` in `config.json`, trained and aggregated
 together:
 
-- **`AutoencoderKL`**: an encoder of residual blocks at three resolutions (64, 128 and 256
-  channels, two blocks per level, no attention) that maps a 96 × 112 × 80 volume to a
-  **3 × 24 × 28 × 20** latent (3 latent channels), and a mirror-image decoder that maps it back.
-- **`PatchDiscriminator`** (4 layers, 32 base channels), which scores local patches as real or
-  reconstructed. It is 3-D by default; `net_config.discriminator.spatial_dims: 2` makes it score 12
+- **`AutoencoderKL`** (20.9 M parameters): an encoder of residual blocks at three resolutions (64,
+  128 and 256 channels, two blocks per level, no attention) that maps a 96 × 112 × 80 volume to a
+  **3 × 24 × 28 × 20** latent (3 latent channels, about 21 times fewer values), and a mirror-image
+  decoder that maps it back. The latent is a diagonal Gaussian, as in a variational autoencoder
+  (Kingma & Welling 2014), but with a very small KL weight (`W_KL`, 1e-8), so it behaves almost like
+  a plain autoencoder while keeping the latent space smooth enough to diffuse in.
+- **`PatchDiscriminator`** (4 layers, 32 base channels, 11.2 M parameters; Isola *et al.* 2017),
+  which scores local patches as real or reconstructed. It is 3-D by default; `net_config.discriminator.spatial_dims: 2` makes it score 12
   randomly chosen axial slices of each volume instead.
 
 The autoencoder submodule must stay named `autoencoder`: the latent diffusion tutorial loads this
@@ -85,6 +108,9 @@ difference. Per batch:
 2. **Discriminator step.** The discriminator learns to tell real volumes from the (detached)
    reconstructions, with a least-squares adversarial loss scaled by `W_GAN`.
 
+L1 alone gives blurry reconstructions; the perceptual and adversarial terms sharpen them. Both
+critics exist only for training: the latent diffusion tutorial keeps the autoencoder alone.
+
 The generator step runs under bfloat16 mixed precision and the discriminator step in float32.
 bfloat16 has float32's range, so there is no gradient scaler. Under float16, whose largest value is
 65504, the loss sometimes became NaN in the first iterations: at MONAI's clamp on the latent's
@@ -93,7 +119,7 @@ log-variance, sigma is about 22,000, and the latent passed to the decoder can ov
 
 The learning rate starts at `LR_START`. Add `LR_END` and `LR_DECAY_EPOCHS` to `config.json` to
 decay it along half a cosine over the job's first `LR_DECAY_EPOCHS` epochs, counted across rounds,
-then hold it at `LR_END`. The other two image-synthesis tutorials use the same rule.
+then hold it at `LR_END`. The other two image-generation tutorials use the same rule.
 
 Validation runs on the held-out split after every epoch and reports the L1 loss and **foreground
 SSIM**: the skull-stripped background, about 80 % of the grid, scores close to 1 for any
@@ -125,7 +151,7 @@ file, checking its hash and refusing a partial load.
 
 Sample images (tri-planar input vs reconstruction figures) need `"SAVE_DEBUG_SAMPLES": true` and a
 local simulator run; loss curves come from `python ../dev/plot_utils.py`. Both are described in the
-[guide's debugging section](../README.md#debugging).
+[Debugging](../README.md#debugging) section of the image-generation index.
 
 ## FLIP-specific values
 
@@ -161,9 +187,9 @@ uv run --project ../../../../flip-utils --extra full --group diffusion python jo
 ### Local simulation (requires a GPU + the dataset)
 
 With the dataset downloaded (see *Data requirements*), run `make sim` here, or
-`make -C fl-tutorials run-tutorial TUTORIAL=autoencoder` from the repository root. The simulator
+`make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder` from the repository root. The simulator
 runs one site at a time (a site peaks at about 20 GB of GPU memory) and writes its workspace, final
-global model included, under `/tmp/nvflare/autoencoder/`.
+global model included, under `/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/`.
 
 ### Overriding rounds and clients
 
@@ -173,7 +199,7 @@ global model included, under `/tmp/nvflare/autoencoder/`.
 ```bash
 make sim NUM_ROUNDS=2
 make export NUM_ROUNDS=2 N_CLIENTS=3
-make -C fl-tutorials run-tutorial TUTORIAL=autoencoder NUM_ROUNDS=2
+make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder NUM_ROUNDS=2
 ```
 
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API
@@ -187,3 +213,13 @@ in `app_files/` (`trainer.py`, `config.json`, `models.py`, `transforms.py`, `mod
 `medicalnet_perceptual.py`) **plus** the staged `medicalnet_resnet50_23datasets-ff48a622.pth`. Use
 `query.sql` as the cohort query. The standalone FLARE submit path
 (`make -C fl-services/nvflare submit`) is not wired, so the UI is the way in.
+
+## References
+
+- Rombach, R. *et al.* High-Resolution Image Synthesis with Latent Diffusion Models. CVPR 2022. [arXiv:2112.10752](https://arxiv.org/abs/2112.10752)
+- Pinaya, W. H. L. *et al.* Brain Imaging Generation with Latent Diffusion Models. DGM4MICCAI 2022. [arXiv:2209.07162](https://arxiv.org/abs/2209.07162)
+- Kingma, D. P. & Welling, M. Auto-Encoding Variational Bayes. ICLR 2014. [arXiv:1312.6114](https://arxiv.org/abs/1312.6114)
+- Chen, S., Ma, K. & Zheng, Y. Med3D: Transfer Learning for 3D Medical Image Analysis. 2019. [arXiv:1904.00625](https://arxiv.org/abs/1904.00625)
+- Isola, P. *et al.* Image-to-Image Translation with Conditional Adversarial Networks. CVPR 2017. [arXiv:1611.07004](https://arxiv.org/abs/1611.07004)
+- Pinaya, W. H. L. *et al.* Generative AI for Medical Imaging: extending the MONAI Framework. 2023. [arXiv:2307.15208](https://arxiv.org/abs/2307.15208)
+- Antonelli, M. *et al.* The Medical Segmentation Decathlon. *Nature Communications* 13, 4128, 2022. The brain MRI data, CC BY-SA 4.0.

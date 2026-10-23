@@ -29,9 +29,9 @@ export $(shell sed -e '/^[[:space:]]*\#/d' -e 's/=.*//' ./.env.app)
 endif
 
 # --- Local-run knobs ---
-# Local-sim/export values passed to job.py; override per invocation (`make run NUM_ROUNDS=2`),
-# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=latent_diffusion_model
-# NUM_ROUNDS=2`), or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from
+# Local-sim/export values passed to job.py; override per invocation (`make run NUM_ROUNDS=10`),
+# via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder
+# NUM_ROUNDS=10`), or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from
 # config.json at submit time and overrides whatever the recipe baked in.
 NUM_ROUNDS ?= 1
 N_CLIENTS ?= 2
@@ -41,64 +41,54 @@ N_CLIENTS ?= 2
 # of the simulator check: images are written only with SAVE_DEBUG_SAMPLES true in config.json AND
 # LOCAL_DEV true AND this set (plot_utils.samples_enabled). Never set on a trust, which also runs
 # with LOCAL_DEV=false, so production writes nothing whatever config.json says.
-DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/latent_diffusion_model
+DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/brain_mri_ldm_stage1_autoencoder
 
-# --- Frozen autoencoder checkpoint ---
-# Must match config.json's SERVER_CHECKPOINT and job.py's _CHECKPOINT_NAME. extract_autoencoder.py
-# writes autoencoder_config.yaml beside it: the architecture clients build and the weights'
-# fingerprint the trainer checks. The two files are one artifact; prepare them together.
-PROCESSED_CHECKPOINT ?= app_files/pretrained_autoencoder.pt
-# Point this at a finished `autoencoder` tutorial run's checkpoint (the downloaded FL global model,
-# or the simulator's FL_global_model.pt) to build PROCESSED_CHECKPOINT from it.
-RAW_CHECKPOINT ?=
-# The config.json that run was trained with. Defaults to the autoencoder tutorial's own, so set it
-# whenever the run's uploaded config.json changed the network.
-RAW_CONFIG ?=
+# --- Shipped weights (FLIP#1206) ---
+# The perceptual loss's MedicalNet ResNet-50 backbone. FL apps never download at run time, so the
+# tutorial ships it: the download is shared (`make -C fl-tutorials download-weights
+# ARCH=medicalnet_resnet50`, sha256-pinned) and `weights` copies the checkpoint flat into
+# app_files/, which is what gets uploaded with the code and what job.py bundles into every site's
+# custom/ for the simulator and `export`. Gitignored. The filename must be MEDICALNET_CHECKPOINT in
+# app_files/medicalnet_perceptual.py, which checks its hash prefix at load time.
+# This tutorial owns it because this is where the perceptual loss is: the diffusion tutorials
+# score in latent/noise space and construct no PerceptualLoss at all.
+HUB_CHECKPOINT := medicalnet_resnet50_23datasets-ff48a622.pth
+SHARED_CHECKPOINT := $(FL_TUTORIALS)/data/weights/$(HUB_CHECKPOINT)
 
-.PHONY: run export sim prepare-checkpoint clean
+.PHONY: run export sim clean weights
+
+weights: app_files/$(HUB_CHECKPOINT)
+
+app_files/$(HUB_CHECKPOINT): $(SHARED_CHECKPOINT)
+	cp "$<" "$@"
+
+$(SHARED_CHECKPOINT):
+	$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=medicalnet_resnet50
 
 # --- Tutorial-harness entrypoint ---
 # The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
 # and invokes `make run`, which delegates to `sim` (the recipe/simulator path via job.py).
-run: prepare-checkpoint sim
-
-# --- Autoencoder checkpoint preparation ---
-# This job trains only the diffusion model. The autoencoder arrives frozen: the checkpoint is loaded on
-# the FL server and broadcast in round 0, and every client builds the bare network from the YAML.
-prepare-checkpoint:
-ifneq ($(RAW_CHECKPOINT),)
-	$(UV_RUN) python process_tools/extract_autoencoder.py --src "$(RAW_CHECKPOINT)" \
-		--dst "$(PROCESSED_CHECKPOINT)" $(if $(RAW_CONFIG),--autoencoder-config "$(RAW_CONFIG)")
-else
-	@test -f "$(PROCESSED_CHECKPOINT)" || { \
-		echo "❌ No $(PROCESSED_CHECKPOINT). This tutorial trains inside a frozen autoencoder's latent space."; \
-		echo "   Train one with the sibling tutorial, then extract it:"; \
-		echo "     make -C fl-tutorials run-tutorial TUTORIAL=autoencoder"; \
-		echo "     make prepare-checkpoint RAW_CHECKPOINT=/tmp/nvflare/autoencoder/flip_fedavg/server/simulate_job/FL_global_model.pt"; \
-		exit 1; }
-endif
+run: sim
 
 # --- Export job config (no GPU needed) ---
 # Builds a complete FLARE job under ./fl_job/flip_fedavg/ including meta.json,
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
-# FLIP-specific values (project_id, query) are injected via environment variables.
-# Deliberately does NOT depend on prepare-checkpoint: exporting is for reviewing the job wiring and
-# works without the checkpoint (it is staged only if present).
-export:
+# FLIP-specific values (project_id, query) are injected via environment variables. Both bundling
+# paths (this and sim) need the shipped backbone in app_files/ first — hence `weights`.
+export: weights
 	$(UV_RUN) python job.py \
 		--export \
 		--export-dir ./fl_job \
 		--n_clients $(N_CLIENTS) \
 		--num_rounds $(NUM_ROUNDS)
 
-# --- SimEnv local simulation (requires GPU + data + checkpoint) ---
+# --- SimEnv local simulation (requires GPU + data) ---
 # Runs the job under the FLARE simulator. Requires a GPU and the reference
 # dataset (run `make -C fl-tutorials download-brain-mri-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
-# A local run does NUM_ROUNDS rounds; GLOBAL_ROUNDS in config.json is what the platform runs.
-sim:
+sim: weights
 	@echo "Running tutorial with: n_clients=$(N_CLIENTS), num_rounds=$(NUM_ROUNDS)"
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \

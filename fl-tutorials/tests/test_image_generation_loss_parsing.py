@@ -13,7 +13,7 @@
 
 ``plot_utils.parse_log`` recovers training curves by scraping ``name: number`` pairs out of a
 simulator log, rather than by matching one tutorial's loss names. That is what lets the same module
-ship to all three image-synthesis tutorials, which log different terms under different names — but
+ship to all three image-generation tutorials, which log different terms under different names — but
 it means the parser has to tell metrics apart from every other number a log contains, using only
 the shape of the text.
 
@@ -40,10 +40,10 @@ import sys
 import pytest
 from tutorial_apps import TUTORIALS_ROOT
 
-_SYNTHESIS = TUTORIALS_ROOT / "nvflare" / "image_synthesis"
-_SHARED_DEV = _SYNTHESIS / "dev"
+_GENERATION = TUTORIALS_ROOT / "nvflare" / "image_generation"
+_SHARED_DEV = _GENERATION / "dev"
 
-# Verbatim from /tmp/nvflare/autoencoder/flip_fedavg/site-1/log.txt.
+# Verbatim from /tmp/nvflare/brain_mri_ldm_stage1_autoencoder/flip_fedavg/site-1/log.txt.
 ITERATION_LINE = (
     "2026-09-24 21:22:20,945 - TaskScriptRunner - INFO - "
     "KL: 0.0018423980800434947, l1: 0.036178652197122574, "

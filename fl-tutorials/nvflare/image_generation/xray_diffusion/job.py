@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Autoencoder (VAE) FedAvg Client API job definition for FLIP.
+"""Pixel-space diffusion FedAvg Client API job definition for FLIP.
 
-Trains a KL-regularised autoencoder plus its patch discriminator as an ordinary single-stage
+Trains a DiffusionModelUNet that denoises images directly, as an ordinary single-stage
 FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
 
 *Export* (``--export --export-dir <path>``):
@@ -21,8 +21,8 @@ FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
     This is the primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the FLARE simulator. Requires a GPU and the reference dataset
-    (``make -C fl-tutorials download-brain-mri-data``). FLIP-specific values are injected via
+    Runs a local simulation under the FLARE simulator. Requires a GPU and the Ark+ X-rays
+    (``make -C fl-tutorials download-arkplus-finetuning-data``). FLIP-specific values are injected via
     environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL
     queries contain spaces that don't survive argparse whitespace-splitting.
 
@@ -48,7 +48,7 @@ from pathlib import Path
 # app_files/ must be importable at recipe-construction time so PTFileModelPersistor / PTModelLocator
 # can reference 'models.get_model' correctly.
 _APP_FILES_DIR = Path(__file__).parent / "app_files"
-# Local-development helpers (plot_utils.py), shared by the image-synthesis tutorials: staged into
+# Local-development helpers (plot_utils.py), shared by the image-generation tutorials: staged into
 # simulator runs, never part of an upload.
 _DEV_FILES_DIR = Path(__file__).parent.parent / "dev"
 if str(_APP_FILES_DIR) not in sys.path:
@@ -84,13 +84,13 @@ def stage_app_files(job: FedJob) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="FLIP Autoencoder Client API FedAvg Job")
+    parser = argparse.ArgumentParser(description="FLIP Pixel-space Diffusion Client API FedAvg Job")
     parser.add_argument("--n_clients", type=int, default=2, help="Number of clients")
     parser.add_argument("--num_rounds", type=int, default=1, help="Number of federated rounds")
     parser.add_argument(
         "--workspace",
         type=str,
-        default="/tmp/nvflare/autoencoder",
+        default="/tmp/nvflare/xray_diffusion",
         help="SimEnv workspace root",
     )
     # NOTE: ``--export``/``--export-dir`` are handled by FLARE's ``Recipe.execute`` (it strips them
@@ -124,9 +124,7 @@ def main() -> None:
 
     env = SimEnv(
         num_clients=args.n_clients,
-        # One site at a time: a site peaks at ~20 GB of GPU memory, so two at once overflow a 32 GB
-        # card (seen as CUDNN_STATUS_INTERNAL_ERROR in backward, not as an out-of-memory error).
-        num_threads=1,
+        num_threads=args.n_clients,
         workspace_root=args.workspace,
     )
     run = recipe.execute(env)

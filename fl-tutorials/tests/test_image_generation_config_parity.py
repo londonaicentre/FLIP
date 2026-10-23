@@ -9,10 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guard the three image-synthesis tutorials' config wiring, which otherwise fails silently.
+"""Guard the three image-generation tutorials' config wiring, which otherwise fails silently.
 
-The ``autoencoder`` / ``diffusion_model`` / ``latent_diffusion_model`` tutorials are three
-independent single-stage jobs, and the latent one consumes the autoencoder one's output as a frozen
+The ``brain_mri_ldm_stage1_autoencoder`` / ``brain_mri_ldm_stage2_diffusion`` / ``xray_diffusion``
+tutorials are three independent single-stage jobs, and the latent one consumes the autoencoder one's
+output as a frozen
 encoder declared via ``SERVER_CHECKPOINT``. That handoff spans two directories and rests entirely on
 convention, so every way it breaks breaks **quietly**:
 
@@ -22,9 +23,10 @@ convention, so every way it breaks breaks **quietly**:
   plausible losses. This is the failure mode the tests here exist for. The architecture is not
   duplicated between the two ``config.json`` files: it is recorded once, in the
   ``autoencoder_config.yaml`` that ``extract_autoencoder.py`` writes beside a checkpoint and
-  ``latent_diffusion_model``'s ``models.py`` reads. So the checks below compare that YAML against the
-  `autoencoder` tutorial's *actual* construction rather than comparing two JSON literals — which also
-  covers the arguments no shape comparison can see, ``norm_num_groups`` chief among them.
+  ``brain_mri_ldm_stage2_diffusion``'s ``models.py`` reads. So the checks below compare that YAML
+  against the ``brain_mri_ldm_stage1_autoencoder`` tutorial's *actual* construction rather than
+  comparing two JSON literals — which also covers the arguments no shape comparison can see,
+  ``norm_num_groups`` chief among them.
 * ``SERVER_CHECKPOINT`` naming a file that ``job.py`` does not stage means the persistor looks for a
   file nobody produced — logged, not raised.
 * ``AGGREGATE_ONLY_REGEX`` is a *privacy* control as well as a bandwidth one. ``PercentilePrivacy``
@@ -35,8 +37,8 @@ convention, so every way it breaks breaks **quietly**:
   named exactly ``LOCAL_ROUNDS`` — but only at submit time, i.e. after upload, on the platform.
   Catching it here keeps that a local failure.
 
-The three do not share a cohort: ``autoencoder`` and ``latent_diffusion_model``
-train on 3-D brain MRI (four MR sequences per study), while ``diffusion_model`` stays on 2-D chest
+The three do not share a cohort: the two ``brain_mri_ldm_*`` tutorials
+train on 3-D brain MRI (four MR sequences per study), while ``xray_diffusion`` stays on 2-D chest
 X-rays as the cheap read-this-first tutorial. That adds a second silent-failure surface, because the
 brain pair's conditioning is spread across two config keys that must agree:
 
@@ -67,11 +69,11 @@ import pytest
 import torch
 import yaml
 
-_SYNTHESIS_ROOT = Path(__file__).resolve().parents[1] / "nvflare" / "image_synthesis"
+_GENERATION_ROOT = Path(__file__).resolve().parents[1] / "nvflare" / "image_generation"
 
-_AUTOENCODER = _SYNTHESIS_ROOT / "autoencoder"
-_DIFFUSION = _SYNTHESIS_ROOT / "diffusion_model"
-_LATENT_DIFFUSION = _SYNTHESIS_ROOT / "latent_diffusion_model"
+_AUTOENCODER = _GENERATION_ROOT / "brain_mri_ldm_stage1_autoencoder"
+_DIFFUSION = _GENERATION_ROOT / "xray_diffusion"
+_LATENT_DIFFUSION = _GENERATION_ROOT / "brain_mri_ldm_stage2_diffusion"
 
 _ALL_TUTORIALS = (_AUTOENCODER, _DIFFUSION, _LATENT_DIFFUSION)
 # The two retargeted onto the 3-D brain-MRI cohort, which share the modality contract.
@@ -101,7 +103,7 @@ def _autoencoder_config(tutorial: Path = _LATENT_DIFFUSION) -> dict:
 def _load_process_tool(tutorial: Path, module: str) -> ModuleType:
     """Import one of a tutorial's host-side ``process_tools/*.py`` modules."""
     path = tutorial / "process_tools" / f"{module}.py"
-    module_name = f"fl_tutorials_under_test.image_synthesis.{tutorial.name}.process_tools.{module}"
+    module_name = f"fl_tutorials_under_test.image_generation.{tutorial.name}.process_tools.{module}"
     if module_name in sys.modules:
         return sys.modules[module_name]
     spec = importlib.util.spec_from_file_location(module_name, path)
@@ -125,9 +127,9 @@ def _load_app_module(tutorial: Path, module: str, *, with_dev: bool = True) -> M
     its module-level ``_net = ...`` singleton, which is the point — it builds the real network from
     the real config.
     """
-    dirs = [tutorial / "app_files"] + ([_SYNTHESIS_ROOT / "dev"] if with_dev else [])
+    dirs = [tutorial / "app_files"] + ([_GENERATION_ROOT / "dev"] if with_dev else [])
     path = next((d / f"{module}.py" for d in dirs if (d / f"{module}.py").is_file()), dirs[0] / f"{module}.py")
-    module_name = f"fl_tutorials_under_test.image_synthesis.{tutorial.name}.{module}{'' if with_dev else '_trust'}"
+    module_name = f"fl_tutorials_under_test.image_generation.{tutorial.name}.{module}{'' if with_dev else '_trust'}"
     if module_name in sys.modules:
         return sys.modules[module_name]
 
@@ -219,7 +221,7 @@ def test_rounds_keys_are_unsuffixed(tutorial: Path) -> None:
 
 
 def test_frozen_autoencoder_config_matches_the_autoencoder_tutorials_network() -> None:
-    """The shipped ``autoencoder_config.yaml`` is what the `autoencoder` tutorial actually builds.
+    """The shipped ``autoencoder_config.yaml`` is what the `brain_mri_ldm_stage1_autoencoder` tutorial actually builds.
 
     That YAML *is* the architecture the uploaded checkpoint was trained for, and the only copy of it.
     Any drift makes the checkpoint unloadable — and because the persistor loads ``strict=False``,
@@ -235,7 +237,7 @@ def test_frozen_autoencoder_config_matches_the_autoencoder_tutorials_network() -
     built = autoencoder_models.autoencoder_kwargs(_config(_AUTOENCODER)["net_config"])
     recorded = _autoencoder_config()["autoencoder"]
     assert recorded == built, (
-        "latent_diffusion_model's autoencoder_config.yaml has drifted from what the autoencoder "
+        "brain_mri_ldm_stage2_diffusion's autoencoder_config.yaml has drifted from what the autoencoder "
         "tutorial builds. Regenerate it with `make prepare-checkpoint RAW_CHECKPOINT=...`. Until "
         "then the uploaded checkpoint loads nothing (strict=False swallows it) and the diffusion "
         "model trains against a randomly-initialised encoder."
@@ -250,7 +252,7 @@ def test_the_latent_config_does_not_redeclare_the_autoencoder_architecture() -> 
     """
     net_config = _config(_LATENT_DIFFUSION)["net_config"]
     assert "autoencoder" not in net_config, (
-        "latent_diffusion_model's net_config has an autoencoder block. The frozen autoencoder's "
+        "brain_mri_ldm_stage2_diffusion's net_config has an autoencoder block. The frozen autoencoder's "
         "architecture belongs in autoencoder_config.yaml, beside the checkpoint it describes."
     )
 
@@ -447,7 +449,7 @@ def test_latent_server_checkpoint_matches_job_py_constant() -> None:
     declared = _config(_LATENT_DIFFUSION)["SERVER_CHECKPOINT"]
     job_py = (_LATENT_DIFFUSION / "job.py").read_text()
     staged = re.search(r'^_CHECKPOINT_NAME\s*=\s*"([^"]+)"', job_py, re.MULTILINE)
-    assert staged is not None, "latent_diffusion_model/job.py declares no _CHECKPOINT_NAME"
+    assert staged is not None, "brain_mri_ldm_stage2_diffusion/job.py declares no _CHECKPOINT_NAME"
     assert staged.group(1) == declared, (
         f"job.py stages {staged.group(1)!r} but config.json declares SERVER_CHECKPOINT="
         f"{declared!r}; the persistor would look for a file that was never staged."
@@ -646,7 +648,7 @@ def test_debug_samples_ship_disabled(tutorial: Path) -> None:
 def test_plotting_is_not_an_app_file(tutorial: Path) -> None:
     """``app_files/`` is what gets uploaded, so plotting stays out of it, in the shared ``dev/``."""
     assert not (tutorial / "app_files" / "plot_utils.py").exists()
-    assert (_SYNTHESIS_ROOT / "dev" / "plot_utils.py").is_file()
+    assert (_GENERATION_ROOT / "dev" / "plot_utils.py").is_file()
     assert not (tutorial / "dev" / "plot_utils.py").exists(), f"{tutorial.name} carries its own copy"
 
 
@@ -1062,7 +1064,7 @@ def test_the_trainer_refuses_an_autoencoder_other_than_the_recorded_one() -> Non
 
 
 def _tiny_run(tmp_path: Path, channels: list[int], norm_num_groups: int = 2) -> tuple[Path, Path]:
-    """An `autoencoder` run's checkpoint (FLARE envelope, discriminator included) and its config.json."""
+    """A `brain_mri_ldm_stage1_autoencoder` run's checkpoint (FLARE envelope, discriminator in) and its config."""
     from monai.networks.nets import AutoencoderKL
 
     architecture = {**_tiny_autoencoder_architecture(), "channels": channels, "norm_num_groups": norm_num_groups}
@@ -1145,7 +1147,7 @@ def test_the_makefile_prepares_the_checkpoint_the_config_declares() -> None:
     """
     makefile = (_LATENT_DIFFUSION / "Makefile").read_text(encoding="utf-8")
     match = re.search(r"^PROCESSED_CHECKPOINT \?= (\S+)$", makefile, re.MULTILINE)
-    assert match, "PROCESSED_CHECKPOINT is not defined in latent_diffusion_model/Makefile"
+    assert match, "PROCESSED_CHECKPOINT is not defined in brain_mri_ldm_stage2_diffusion/Makefile"
     assert Path(match.group(1)).name == _config(_LATENT_DIFFUSION)["SERVER_CHECKPOINT"]
 
 
@@ -1452,7 +1454,7 @@ def test_gradients_are_clipped_before_each_step(tutorial: Path) -> None:
 
 
 def test_generated_volumes_are_plotted_tri_planar_not_as_a_mid_slice_grid() -> None:
-    """The latent tutorial writes tri-planar figures, matching the `autoencoder` tutorial.
+    """The latent tutorial writes tri-planar figures, matching the `brain_mri_ldm_stage1_autoencoder` tutorial.
 
     A mid-axial grid can look like a brain while the model has learnt nothing about through-plane
     structure — for a *generative* model that is the question, so the sagittal and coronal cuts are

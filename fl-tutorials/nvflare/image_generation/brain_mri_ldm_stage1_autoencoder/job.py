@@ -9,32 +9,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Latent diffusion FedAvg Client API job definition for FLIP.
+"""Autoencoder (VAE) FedAvg Client API job definition for FLIP.
 
-Trains a diffusion model inside a **frozen, uploaded** autoencoder's latent space as an ordinary
-single-stage FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
+Trains a KL-regularised autoencoder plus its patch discriminator as an ordinary single-stage
+FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
 
 *Export* (``--export --export-dir <path>``):
-    Writes the complete FLARE job to ``<path>/flip_fedavg/``, including ``meta.json`` (carrying
-    ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client configs), and
-    ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files). This is the
-    primary, fully-local-verifiable path — no GPU or data required.
+    Writes the complete FLARE job to ``<path>/flip_fedavg/``, including ``meta.json``
+    (carrying ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client
+    configs), and ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files).
+    This is the primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the FLARE simulator. Requires a GPU, the reference dataset
-    (``make -C fl-tutorials download-brain-mri-data``) and the prepared autoencoder checkpoint
-    (``make prepare-checkpoint``). FLIP-specific values are injected via environment variables
-    (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL queries contain spaces
-    that don't survive argparse whitespace-splitting.
-
-Frozen-autoencoder specifics, driven by ``app_files/config.json``:
-
-* ``SERVER_CHECKPOINT``: the autoencoder checkpoint is staged to the server only and loaded into the
-  round-0 global model by ``InitialCheckpointPTModelPersistor``; clients receive it in the broadcast.
-* ``AGGREGATE_ONLY_REGEX``: the recipe wires ``KeepOnlyVars`` (clients return only the diffusion
-  model), ``TrimBroadcastVars`` (the server broadcasts only it after round 0) and
-  ``ReconstructFullModel`` (each client rebuilds the full model from its round-0 copy), as the
-  fl-server does from the same key on the platform.
+    Runs a local simulation under the FLARE simulator. Requires a GPU and the reference dataset
+    (``make -C fl-tutorials download-brain-mri-data``). FLIP-specific values are injected via
+    environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL
+    queries contain spaces that don't survive argparse whitespace-splitting.
 
 Both modes go through FLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
 from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
@@ -44,14 +34,13 @@ Usage:
     # Export job config for review or Docker deployment (no GPU needed)
     python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
 
-    # SimEnv local simulation (requires GPU + data + checkpoint)
+    # SimEnv local simulation (requires GPU + data)
     python job.py --n_clients 2 --num_rounds 1
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
@@ -59,7 +48,7 @@ from pathlib import Path
 # app_files/ must be importable at recipe-construction time so PTFileModelPersistor / PTModelLocator
 # can reference 'models.get_model' correctly.
 _APP_FILES_DIR = Path(__file__).parent / "app_files"
-# Local-development helpers (plot_utils.py), shared by the image-synthesis tutorials: staged into
+# Local-development helpers (plot_utils.py), shared by the image-generation tutorials: staged into
 # simulator runs, never part of an upload.
 _DEV_FILES_DIR = Path(__file__).parent.parent / "dev"
 if str(_APP_FILES_DIR) not in sys.path:
@@ -69,47 +58,39 @@ from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402
 from nvflare import FedJob  # noqa: E402
 from nvflare.recipe import SimEnv  # noqa: E402
 
-# The autoencoder checkpoint filename, matching config.json's SERVER_CHECKPOINT. Staged server-side
-# only. Kept as a constant here (rather than read from the config) so the two are checked against
-# each other by fl-tutorials/tests/test_image_synthesis_config_parity.py.
-_CHECKPOINT_NAME = "pretrained_autoencoder.pt"
-
 
 def stage_app_files(job: FedJob) -> None:
-    """Bundle every file in ``app_files/`` into the job's ``custom/`` directories.
+    """Bundle every file in ``app_files/`` into the job's server + client ``custom/`` directories.
 
-    Everything goes to the server and the clients except the autoencoder checkpoint, which goes to the
-    server only: clients receive the autoencoder in the round-0 broadcast. On the platform the
-    checkpoint never enters the job bundle (flip-api diverts the file ``SERVER_CHECKPOINT`` names to a
-    hub-only location). The shared ``dev/`` helpers go to the clients too, for local debug images.
+    The recipe wires only the FLARE components; the user-supplied app files (``trainer.py``,
+    ``models.py``, ``config.json``, ``transforms.py``) must be added to the job explicitly so they
+    land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}`` registers them
+    with the job's file sources, so they are bundled for **both** the SimEnv/simulator run
+    (``recipe.execute``) and ``--export`` — unlike a post-export filesystem copy, which the SimEnv
+    path never triggered.
+
+    The ``dev/`` helpers go to the clients as well, so a simulator run can write debug images; they
+    are not app files, and an upload to the platform never includes them.
 
     Args:
         job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).
     """
     for src in sorted(_APP_FILES_DIR.iterdir()):
-        if not src.is_file():
-            continue
-        job.add_file_to_server(str(src))
-        if src.name != _CHECKPOINT_NAME:
+        if src.is_file():
+            job.add_file_to_server(str(src))
             job.add_file_to_clients(str(src))
     for src in sorted(_DEV_FILES_DIR.glob("*.py")):
         job.add_file_to_clients(str(src))
 
 
-def _load_aggregate_only_regex() -> str:
-    """Read ``AGGREGATE_ONLY_REGEX`` from the app config so the recipe can wire the head-only filters."""
-    cfg = json.loads((_APP_FILES_DIR / "config.json").read_text())
-    return cfg.get("AGGREGATE_ONLY_REGEX", "") or ""
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="FLIP Latent Diffusion Client API FedAvg Job")
+    parser = argparse.ArgumentParser(description="FLIP Autoencoder Client API FedAvg Job")
     parser.add_argument("--n_clients", type=int, default=2, help="Number of clients")
     parser.add_argument("--num_rounds", type=int, default=1, help="Number of federated rounds")
     parser.add_argument(
         "--workspace",
         type=str,
-        default="/tmp/nvflare/latent_diffusion_model",
+        default="/tmp/nvflare/brain_mri_ldm_stage1_autoencoder",
         help="SimEnv workspace root",
     )
     # NOTE: ``--export``/``--export-dir`` are handled by FLARE's ``Recipe.execute`` (it strips them
@@ -134,7 +115,6 @@ def main() -> None:
         train_args="--project_id {project_id}",
         project_id=project_id,
         query=query,
-        aggregate_only_regex=_load_aggregate_only_regex(),
     )
 
     # Stage the user app files into the job's custom/ dirs *before* execute() — this is what makes the
@@ -144,7 +124,9 @@ def main() -> None:
 
     env = SimEnv(
         num_clients=args.n_clients,
-        num_threads=args.n_clients,
+        # One site at a time: a site peaks at ~20 GB of GPU memory, so two at once overflow a 32 GB
+        # card (seen as CUDNN_STATUS_INTERNAL_ERROR in backward, not as an out-of-memory error).
+        num_threads=1,
         workspace_root=args.workspace,
     )
     run = recipe.execute(env)

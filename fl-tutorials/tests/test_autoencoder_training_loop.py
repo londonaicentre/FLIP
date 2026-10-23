@@ -39,7 +39,7 @@ import torch
 from torch import nn
 from tutorial_apps import TUTORIALS_ROOT
 
-TRAINER = TUTORIALS_ROOT / "nvflare/image_synthesis/autoencoder/app_files/trainer.py"
+TRAINER = TUTORIALS_ROOT / "nvflare/image_generation/brain_mri_ldm_stage1_autoencoder/app_files/trainer.py"
 ACCUMULATION = 4  # what batch_accumulation_step gives for the shipped BATCH_SIZE of 2
 
 

@@ -53,7 +53,8 @@ def read_autoencoder_document(path: Path = AUTOENCODER_CONFIG) -> dict[str, Any]
     if not path.is_file():
         raise FileNotFoundError(
             f"No {path.name} at {path}. This job needs the frozen autoencoder's architecture, which "
-            "comes with its checkpoint:\n    make prepare-checkpoint RAW_CHECKPOINT=<an `autoencoder` run's .pt>"
+            "comes with its checkpoint:\n    make prepare-checkpoint "
+            "RAW_CHECKPOINT=<a `brain_mri_ldm_stage1_autoencoder` run's .pt>"
         )
     with open(path) as handle:
         document = yaml.safe_load(handle)
