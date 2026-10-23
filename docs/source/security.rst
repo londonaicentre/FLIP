@@ -42,10 +42,9 @@ alone. It stays inside the trust's own network. AWS-hosted trusts have no such p
 run FLIP's own bundled Orthanc, which XNAT reaches over the container network, so their
 security groups keep no ingress rules at all.
 
-**The Central Hub is the internet-facing entry point.** It sits behind CloudFront with
-modern TLS, HSTS, AWS WAF managed rules, and an internal-only load balancer. The one other
-public endpoint is the FL server's load balancer in the self-contained AWS deployment,
-which admits only the allowlisted IP addresses of the trusts' FL clients.
+**Only the Central Hub is internet-facing.** It sits behind CloudFront with modern TLS,
+HSTS, AWS WAF managed rules, and an internal-only load balancer. Nothing
+else in the platform is reachable from the public internet.
 
 **A site-to-site VPN is available on request.** Trust-to-hub traffic is encrypted in
 transit by default, and payloads carry their own authenticated encryption layer
@@ -62,7 +61,7 @@ Cloud infrastructure
 The Central Hub runs on AWS, architected to align with AWS's own reference guidance for
 regulated workloads.
 
-**The estate is being consolidated onto the AWS Landing Zone Accelerator.** This is AWS's
+**The estate runs on the AWS Landing Zone Accelerator.** This is AWS's
 reference implementation for organisations with elevated compliance requirements, and the
 pattern AWS recommends for healthcare and public sector workloads. It provides:
 
@@ -71,8 +70,8 @@ pattern AWS recommends for healthcare and public sector workloads. It provides:
 - consistent logging and encryption baselines;
 - a controlled path for images and dependencies entering the environment.
 
-These apply uniformly across environments rather than being configured per service. What
-that changes in the Central Hub's own layout is on :ref:`deploy-central-hub-aws-lza`.
+These apply uniformly across environments rather than being configured per service. The
+Central Hub's own layout is on :ref:`deploy-central-hub-aws-lza`.
 
 Within that estate:
 

@@ -29,6 +29,7 @@ from fl_api.utils.prepare_config import (
     configure_meta,
     configure_server,
 )
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import JobResources
 
 MOCK_CONFIG_PATH = Path("/path/to/config.json")
@@ -414,7 +415,7 @@ class TestConfigureClient:
 
         # Execute and Assert
         with pytest.raises(
-            FileNotFoundError,
+            ResearcherRefusal,
             match="No config_fed_client.json found in app 'test_app'",
         ):
             configure_client(
@@ -821,7 +822,7 @@ class TestConfigureServer:
 
         # Execute and Assert
         with pytest.raises(
-            FileNotFoundError,
+            ResearcherRefusal,
             match="No config_fed_server.json found in app 'test_app'",
         ):
             configure_server(

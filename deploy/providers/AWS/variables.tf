@@ -26,20 +26,14 @@ variable "environment" {
   }
 }
 
-variable "lza_managed_network" {
-  description = "Run against the LZA-provisioned (platform-managed) network instead of creating one (FLIP#749). true skips the VPC module (and with it NAT/IGW/EIPs), the VPC endpoints, the DHCP options, and the legacy /flip/networking/* SSM params (fl_ingress_lza.tf publishes the LZA edge-handoff set under that prefix instead), and discovers the AWSAccelerator VPC + subnets by Name tag instead (see network_lza.tf). Orthogonal to var.environment: the LZA account is prod-grade, so it deploys with environment=prod AND this flag. Set via PROD=lza in the Makefile."
-  type        = bool
-  default     = false
-}
-
 variable "lza_vpc_name" {
-  description = "Name tag of the platform-managed VPC to discover when lza_managed_network is set. The subnet lookups derive their Name-tag patterns from it (<name>-app-*, <name>-data-*)."
+  description = "Name tag of the platform-managed VPC to discover. The subnet lookups derive their Name-tag patterns from it (<name>-app-*, <name>-data-*)."
   type        = string
   default     = "AWSAccelerator-eu-west-2-prod"
 }
 
 variable "networking_ingress_cidrs" {
-  description = "CIDRs of the networking account's ingress-VPC subnets (the edge NLB and CloudFront relay path over the TGW), admitted onto the LZA internal NLB's FL and web listeners (fl_ingress_lza.tf). Empty by default so the stack applies standalone; the value comes from the networking account. LZA-only — legacy prod/stag never reads it."
+  description = "CIDRs of the networking account's ingress-VPC subnets (the edge NLB and CloudFront relay path over the TGW), admitted onto the LZA internal NLB's FL and web listeners (fl_ingress_lza.tf). Empty by default so the stack applies standalone; the value comes from the networking account."
   type        = list(string)
   default     = []
 }
@@ -51,31 +45,19 @@ variable "lza_fl_nlb_host_num" {
 }
 
 variable "lza_web_edge_domain" {
-  description = "Domain name of the networking account's edge CloudFront distribution -- the user-facing front door on LZA (FLIP#749 WP3; the workload distribution is gated off there). Used for local.ui_origin (CORS / UI origin URL). LZA-only."
+  description = "Domain name of the networking account's edge CloudFront distribution -- the user-facing front door (FLIP#749 WP3). Used for local.ui_origin (CORS / UI origin URL)."
   type        = string
   default     = ""
 }
 
 variable "lza_web_edge_distribution_arn" {
-  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui (and demo-assets) buckets via cross-account OAC on LZA. LZA-only -- legacy grants the in-account distribution instead."
+  description = "ARN of the networking account's edge CloudFront distribution, granted s3:GetObject on the flip-ui (and demo-assets) buckets via cross-account OAC."
   type        = string
   default     = ""
 }
 
-variable "max_azs" {
-  type = number
-}
-
 variable "vpc_cidr" {
   type = string
-}
-
-variable "public_subnets" {
-  type = list(string)
-}
-
-variable "private_subnets" {
-  type = list(string)
 }
 
 # POSTGRES_USER / POSTGRES_DB are configuration, not credentials, and are treated
@@ -116,10 +98,10 @@ variable "POSTGRES_DB" {
 # by a platform repository, or by ci/ in an account you bootstrap yourself; never
 # by this root — and the CI apply role may only create a role, or write an inline
 # policy onto one, when that role carries this boundary (apply_iam in the
-# module). The LZA modes override it with the platform's
-# AICentre-WorkloadRoleBoundary (Makefile), which an LZA SCP requires on every
-# workload role. Set the name to "" to detach it, which is only correct in a
-# self-contained account where the bootstrap has never been applied: an automated
+# module). The Makefile overrides it with the platform's
+# AICentre-WorkloadRoleBoundary, which an LZA SCP requires on every workload
+# role. Set the name to "" to detach it, which is only correct in an account
+# where the bootstrap has never been applied: an automated
 # apply into an account whose roles have no boundary is denied, loudly, on the
 # first CreateRole.
 variable "iam_permissions_boundary_name" {
@@ -146,21 +128,8 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
-variable "K8S_TRUST_IP" {
-  description = "DEPRECATED (kept for back-compat): single public IP of a Kubernetes-deployed trust host. Prefer k8s_trust_public_ips. When set, it is merged into the NLB ingress rule set."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
-variable "k8s_trust_public_ips" {
-  description = "Public/egress IPs of Kubernetes-deployed trust nodes. Each IP gets an ingress rule on the FL-server NLB security group. Set via K8S_TRUST_PUBLIC_IPS in the env file (an HCL list). Managed by a normal `terraform apply` — no -target, no drift, idempotent on re-add (mirrors local_trust_public_ips)."
-  type        = list(string)
-  default     = []
-}
-
 variable "deploy_trust_ec2" {
-  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts + allow-local-trust-nlb as usual."
+  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts as usual."
   type        = bool
   default     = true
 }
@@ -266,7 +235,7 @@ variable "flower_kit_date" {
 }
 
 # The GPUs the fl-api writes into a FLARE job's meta when the job declares
-# none (mirrors JOB_RESOURCE_SPEC_NUM_GPUS in compose.production.nvflare.yml).
+# none (mirrors JOB_RESOURCE_SPEC_NUM_GPUS in compose.prod.nvflare.yml).
 # A job declares its own in its meta.json (the Ark+ tutorials do), and a
 # researcher can override it per run (FLIP#70), so keep this 0: a non-zero
 # default keeps every job off a CPU-only trust (FLIP#1390). The GPUs are the
@@ -292,12 +261,6 @@ variable "enable_efs" {
   default     = true
 }
 
-variable "enable_ecs_endpoints" {
-  description = "Enable VPC interface endpoints (SSM, Secrets Manager, CloudWatch Logs) for ECS Fargate"
-  type        = bool
-  default     = true
-}
-
 variable "enable_service_discovery" {
   description = "Enable Cloud Map Service Discovery namespace"
   type        = bool
@@ -305,7 +268,7 @@ variable "enable_service_discovery" {
 }
 
 variable "ACCESS_LOGS_BUCKET_NAME" {
-  description = "Override for the S3 server-access-logs bucket name; empty derives flip-access-logs-<flip_alb_subdomain>. Bucket names are global, so set this where the derived name is already owned by another account — e.g. the LZA env, whose flip_alb_subdomain deliberately keeps its post-cutover value while legacy prod still owns the derived name (FLIP#749)."
+  description = "Override for the S3 server-access-logs bucket name; empty derives flip-access-logs-<flip_alb_subdomain>. Bucket names are global, so set this where the derived name is already owned by another account (FLIP#749)."
   type        = string
   default     = ""
 }
@@ -338,18 +301,12 @@ variable "DEMO_ASSETS_BUCKET_NAME" {
   description = <<-EOT
     S3 bucket holding the public Ark+ demo download bundles (results + model
     files zips), served through CloudFront at /ark_demo/assets/* via OAC.
-    Who owns the bucket depends on the estate (FLIP#1199):
-      * legacy (lza_managed_network = false) — NOT Terraform-managed. The
-        bucket predates this stack and objects are staged by hand; Terraform
-        manages only its public-access block, its OAC bucket policy, and the
-        CloudFront origin/behaviour on the in-account distribution.
-      * LZA (lza_managed_network = true) — created and owned by
-        module.flip_demo_assets_bucket (services.tf), with the cross-account
-        OAC grant to the networking account's edge distribution in its policy.
-        Serving it needs a /ark_demo/assets/* behaviour on that edge
-        distribution, which lives in aicentre-lza-iac, not here.
+    Created and owned by module.flip_demo_assets_bucket (services.tf), with the
+    cross-account OAC grant to the networking account's edge distribution in its
+    policy. Serving it needs a /ark_demo/assets/* behaviour on that edge
+    distribution, which lives in aicentre-lza-iac, not here.
     Leave empty (the default) to disable all demo-assets resources — e.g. on
-    stag, which hosts no public demo. Clearing it on an LZA estate that already
+    stag, which hosts no public demo. Clearing it on an estate that already
     has the bucket proposes a destroy, which prevent_destroy turns into an
     apply failure rather than silent data loss.
   EOT
@@ -383,15 +340,9 @@ variable "flip_cognito_admin_email" {
 }
 
 variable "ALB_HTTPS_PORT" {
-  description = "HTTPS port for ALB external access"
+  description = "Port of the internal NLB's web listener"
   type        = number
   default     = 443
-}
-
-variable "ALB_HTTP_PORT" {
-  description = "HTTP port for ALB redirect to HTTPS"
-  type        = number
-  default     = 80
 }
 
 variable "FL_SERVER_PORT" {
@@ -401,19 +352,13 @@ variable "FL_SERVER_PORT" {
 }
 
 variable "manage_dns" {
-  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (first LZA bring-up, before the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record, and both DNS-validated ACM certs: CloudFront then serves on its default *.cloudfront.net domain with the default viewer certificate (allowed only when no aliases are set), and the CloudFront→ALB origin leg falls back to plain HTTP over the private VPC-origin ENI, because an ALB HTTPS listener needs an ISSUED certificate and issuance needs DNS validation (legacy; on LZA the same gating applies to the internal NLB's web listener — TCP until a cert can be ISSUED, then TLS). Legacy prod/stag keep the default true."
+  description = "Whether this account hosts the Route53 zone for flip_alb_subdomain. false (the LZA estates until the zone moves in the platform DNS migration — FLIP#749) skips the zone lookup, every Route53 record and the DNS-validated ACM cert, so the internal NLB's web listener serves plain TCP until a cert can be ISSUED, then TLS."
   type        = bool
   default     = true
 }
 
-variable "release_web_alias" {
-  description = "Drop flip_alb_subdomain from this account's CloudFront distribution so another estate's edge can serve it (FLIP#749 change 2b). Alternate domain names are unique across every AWS account and an exact alias beats a wildcard, so while this distribution lists the name it serves it wherever DNS points — this flag, not DNS, is the web cutover. Setting it true also drops the custom viewer certificate, which CloudFront permits only alongside an alias. Separate from manage_dns so the drop lands in a chosen window; this account keeps its zone, records and certificate, so false plus a re-apply is the rollback. Runbook: README.md, 'Handing the public name over'."
-  type        = bool
-  default     = false
-}
-
 variable "flip_alb_subdomain" {
-  description = "Public canonical subdomain for FLIP. Aliased via Route53 to the CloudFront distribution; CloudFront fronts both the SPA (from S3) and the API (/api/* -> ALB). Name is retained for Terraform-state backwards compatibility - see main.tf:492-494."
+  description = "Public canonical subdomain for FLIP, served by the networking account's edge distribution. Named for the ALB that once fronted it."
   type        = string
   default     = "dev.flip.aicentre.co.uk"
 }
@@ -459,27 +404,9 @@ variable "ENFORCE_MFA" {
   default     = ""
 }
 
-variable "local_trust_public_ips" {
-  description = "Public IPs of on-premises Trust hosts. Each IP gets an ingress rule on the FL-server NLB security group allowing FL communication to the Central Hub. Set via LOCAL_TRUST_PUBLIC_IPS in the env file."
-  type        = list(string)
-  default     = []
-}
-
 variable "ecs_exec_enabled" {
   description = "Enable ECS Exec (execute-command) on Fargate tasks. Default false; set to true for debugging sessions via 'aws ecs execute-command'."
   type        = bool
   default     = false
 }
 
-variable "lza_elb_access_logs_bucket" {
-  description = <<-EOT
-    Name of the LZA LogArchive account's central ELB access-logs bucket. On the
-    LZA estate the accelerator's guardrail auto-enables ALB access logging to
-    this bucket out-of-band; setting it here codifies that state so plans stop
-    proposing to disable platform-managed logging. Empty (the default, and the
-    only valid value on legacy) omits the access_logs block entirely, keeping
-    legacy plans byte-identical.
-  EOT
-  type        = string
-  default     = ""
-}

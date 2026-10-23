@@ -15,7 +15,7 @@
 """On-prem trust readiness checklist.
 
 Diagnoses what's still missing in the operator's setup before `make
-up-onprem-trust KIT=<slot>` will succeed: public IP, docker swarm state,
+up-onprem-trust KIT=<slot>` will succeed: docker swarm state,
 kit file presence, Hub-shared block, Kit credentials, FL_KIT_DIR + its
 on-disk contents, OMOP / Orthanc data dirs.
 
@@ -48,7 +48,6 @@ import shlex
 import subprocess
 import sys
 import tempfile
-import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum
@@ -119,7 +118,6 @@ DIM = "\033[2m" if _TTY else ""
 GREEN = "\033[32m" if _TTY else ""
 RED = "\033[31m" if _TTY else ""
 YELLOW = "\033[33m" if _TTY else ""
-CYAN = "\033[36m" if _TTY else ""
 
 
 class Status(Enum):
@@ -196,15 +194,6 @@ def is_filled(value: str | None) -> bool:
 # ─────────────────────────────────────────────────────────────────────
 # Environment probes (independent of kit file)
 # ─────────────────────────────────────────────────────────────────────
-
-
-def fetch_public_ip(timeout: float = 5.0) -> str | None:
-    """Best-effort fetch of this host's public IPv4 via ipify. Returns None on failure."""
-    try:
-        with urllib.request.urlopen("https://api.ipify.org", timeout=timeout) as response:  # noqa: S310
-            return response.read().decode("ascii").strip() or None
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return None
 
 
 def docker_swarm_state() -> str:
@@ -296,7 +285,8 @@ def check_kit_file(kit: str, kit_file: Path, kit_path: str | None = None) -> Che
         kit_path,
         hints=[
             "Ask the FLIP admin to package + send your kit (`make package-onprem-trust-kit",
-            f"  KIT={kit}` from deploy/providers/AWS), extract the tarball, then:",
+            f"  KIT={kit} HUB={os.environ.get('HUB') or 'prod'}` from deploy/providers/AWS),",
+            "  extract the tarball, then:",
             f"    cp <extracted-dir>/<kit-file> {kit_path}",
         ],
     )
@@ -381,8 +371,8 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
     stale_hints = [
         "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
         (
-            "  make sync-trust-kit KIT=<CODE> PROD=<env>  →  "
-            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>"
+            "  make sync-trust-kit KIT=<CODE> HUB=<env>  →  "
+            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env>"
         ),
         "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
     ]
@@ -751,8 +741,8 @@ def check_governance_document(
             f"make -C trust check-governance {quote_make_assignment('KIT', kit)} "
             f"{quote_make_assignment('KIT_FILE', kit_file)}"
         )
-        if prod := os.environ.get("PROD"):
-            command += f" {quote_make_assignment('PROD', prod)}"
+        if hub := os.environ.get("HUB"):
+            command += f" {quote_make_assignment('HUB', hub)}"
         return Check(
             label,
             Status.FAIL,
@@ -779,41 +769,19 @@ def check_unrotated_passwords(
     kit: str,
     kit_path: str | None = None,
 ) -> Check:
-    """Soft-warn if any Trust-local password still matches the .example template.
+    """Soft-warn if any Trust-local password still matches the template default.
 
-    The packager hands the operator a kit whose Trust-local credentials section
-    is verbatim from the .production.example (dev-friendly defaults). For a
-    real on-prem hospital deployment the operator must rotate these before
-    bringing the stack up. Returns Status.WARN (not FAIL) — defaults are
-    technically usable for dev/testing and we don't want to block that path.
+    Every kit is scaffolded from trust/.env.example (`make new-trust`), whose Trust-local
+    credentials are dev-friendly defaults. For a real on-prem hospital deployment the
+    operator must rotate these before bringing the stack up. Returns Status.WARN (not FAIL)
+    — defaults are technically usable for dev/testing and we don't want to block that path.
     """
     kit_path = kit_path or f"trust/.env.{kit}"
     if not kit_present:
         return Check("Trust-local passwords", Status.PENDING, "pending — needs kit file")
-    # Use FL_KIT_SLOT (the canonical slot name minted by the hub) to find the
-    # template — not the KIT argument. They CAN differ: a kit is named by its
-    # trust CODE (e.g. .env.<CODE>.production) while its FL_KIT_SLOT is the
-    # hub-assigned slot (e.g. Trust_2) — the two are independent.
-    # Without this fall-through the check would silently skip on every
-    # custom-named kit. Falls back to KIT when the slot isn't filled in yet
-    # (the kit-credentials check below will already be failing in that case).
-    canonical = kit_vars.get("FL_KIT_SLOT") or kit
-    if not canonical or "<run-make-" in canonical:
-        canonical = kit
-    # Prefer the production template (closer to what an on-prem operator copied);
-    # fall back to the dev template; skip silently if neither exists.
-    candidates = [
-        repo_root / "trust" / f".env.{canonical}.production.example",
-        repo_root / "trust" / f".env.{canonical}.example",
-    ]
-    template = next((c for c in candidates if c.is_file()), None)
-    if template is None:
-        names = " or ".join(c.name for c in candidates)
-        return Check(
-            "Trust-local passwords",
-            Status.PASS,
-            f"skipped — no template found ({names})",
-        )
+    template = repo_root / "trust" / ".env.example"
+    if not template.is_file():
+        return Check("Trust-local passwords", Status.WARN, "not checked — trust/.env.example is missing")
     template_vars = read_kit_vars(template)
     unchanged = [
         key for key in TRUST_LOCAL_PASSWORD_KEYS if kit_vars.get(key) and kit_vars[key] == template_vars.get(key)
@@ -967,14 +935,6 @@ def main() -> None:
     heading(f"On-prem trust onboarding checklist — kit {kit_file_label(kit_file, repo_root)}")
 
     print()
-    ip = fetch_public_ip()
-    ip_display = ip or f"{DIM}<could not detect — set it manually>{RESET}"
-    print(f"  {BOLD}Your public IP:{RESET}  {CYAN}{ip_display}{RESET}")
-    print("  Send this to the FLIP admin so they can open the prod FL-server NLB")
-    print(f"  (the admin runs this from {BOLD}deploy/providers/AWS{RESET}, with prod AWS creds):")
-    print("      cd deploy/providers/AWS")
-    print(f"      AWS_PROFILE=prod make allow-local-trust-nlb LOCAL_TRUST_IP={ip or '<your-ip>'} PROD=true")
-    print()
     print(f"  {BOLD}Checks:{RESET}")
     print()
 
@@ -1008,9 +968,9 @@ def main() -> None:
                 f"sudo -E make up-onprem-trust {quote_make_assignment('KIT', kit)} "
                 f"{quote_make_assignment('KIT_FILE', kit_file)}"
             )
-            prod = os.environ.get("PROD", "true")
-            if prod and prod != "true":
-                command += f" {quote_make_assignment('PROD', prod)}"
+            hub = os.environ.get("HUB", "prod")
+            if hub and hub != "prod":
+                command += f" {quote_make_assignment('HUB', hub)}"
             print(f"      {BOLD}{command}{RESET}")
         if n_warn:
             print(

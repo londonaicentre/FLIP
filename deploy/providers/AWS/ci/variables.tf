@@ -107,7 +107,6 @@ variable "managed_role_names" {
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
     "flip-rds-proxy-role",
-    "flip-sg-drift-lambda-role",
     "ec2-role",
     "trust-ec2-role",
   ]
@@ -150,15 +149,12 @@ variable "apply_service_prefixes" {
   default = [
     "acm",
     "cloudfront",
-    "cloudwatch",
     "cognito-idp",
     "ec2",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
-    "events",
     "kms",
-    "lambda",
     "logs",
     "rds",
     "route53",
@@ -166,10 +162,7 @@ variable "apply_service_prefixes" {
     "secretsmanager",
     "servicediscovery",
     "ses",
-    "sns",
-    "sqs",
     "ssm",
-    "wafv2",
   ]
 
   validation {

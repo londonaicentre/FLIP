@@ -11,7 +11,7 @@
 #
 
 # ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
-# compose.production.yml) — not a deployment target. The canonical production equivalent is the Flower
+# compose.prod.yml) — not a deployment target. The canonical production equivalent is the Flower
 # branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
 # which mirrors this overlay: SuperLink 9092/8000/9097, TLS + SuperNode-auth command flags, and the
 # register-supernode-keys one-shot (ecs_flower.tf).
@@ -19,7 +19,7 @@
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
-# No `container_name` here either — see the header of compose.production.yml. Container names come
+# No `container_name` here either — see the header of compose.prod.yml. Container names come
 # from the compose project (`deploy-fl-server-net-1-1`); the service KEYS are load-bearing and must
 # not be renamed: `fl-server-net-<N>` is the SAN in the SuperLink's provisioned TLS certificate
 # (`DNS:fl-server-net-1`), so a SuperNode's certificate check fails outright if that name stops
@@ -40,8 +40,6 @@ services:
       # the one origin to admit. The two lines must move together, or every bundle download 400s.
       # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
       - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
-      # The pre-#1291 name too, for one release: an fl-api image from before the rename reads only this one.
-      - BUNDLE_URL_ALLOWED_HOSTS=s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # Use the internal hostnames and ports for the server since the API is within the same Docker network
       - SUPERLINK_ADDRESS=fl-server-net-1:8000
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097

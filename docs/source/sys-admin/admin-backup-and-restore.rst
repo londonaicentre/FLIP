@@ -92,7 +92,7 @@ What holds state
      - None. Both are gitignored.
      - Partly: Terraform inputs can be recovered from AWS (see `Restoring the hub`_). Trust kit credentials cannot.
 
-**Production-grade** means ``PROD=true`` or ``PROD=lza``. Staging (``stag``, ``lza-stag``) keeps the 7-day backups but
+**Production-grade** means ``HUB=prod``. Staging (``HUB=stag``) keeps the 7-day backups but
 has no deletion protection and no final snapshot, so the database can be torn down freely.
 
 .. note::
@@ -104,13 +104,12 @@ What ``make destroy`` keeps
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS destroy PROD=<env>
+   make -C deploy/providers/AWS destroy HUB=<env>
 
 It lists what it will remove and asks you to type ``yes``. It **keeps** the Cognito user pool, the ``FLIP_API``
-secret, every S3 bucket, the ACM certificates and Route 53 records, and the VPC unless you pass
-``PRESERVE_VPC=false`` (``PROD=true`` always keeps it). It removes only what it targets: the database (unless
-deletion protection stops it) with its parameter and subnet groups, the cloud trust's EC2 instance, the bastion, the
-security groups, the ALB, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
+secret, every S3 bucket, the ACM certificates and Route 53 records, and the platform's VPC, which is never this
+stack's. It removes only what it targets: the database (unless deletion protection stops it) with its parameter and
+subnet groups, the cloud trust's EC2 instance, the bastion, the security groups, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
 finds depend on them. Everything else, including the CloudWatch logs, stays.
 
 .. warning::
@@ -153,7 +152,7 @@ The hub database
    wrote the backup or a later one: flip-api upgrades the schema when it starts, but cannot move it backward.
 
    A trust registered after the restore point is unknown to the restored database, so the hub rejects its
-   credentials. Register it again (``make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=<env>``), which
+   credentials. Register it again (``make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>``), which
    issues new credentials, and send the site its new kit.
 
 A deleted or overwritten S3 object
@@ -214,7 +213,7 @@ names each directory; the table gives the default the production stack uses when
      - The frozen cohort of each approved project: person and accession IDs, no clinical values.
      - Partly. Re-freezing rebuilds it from the live database, which may no longer match the original cohort.
    * - Kit file
-     - ``trust/.env.<CODE>.production`` in the checkout. For an EC2 trust it stays on the admin's workstation.
+     - ``trust/.env.<CODE>.prod`` in the checkout. For an EC2 trust it stays on the admin's workstation.
      - The trust's credentials, the hub-shared settings, your host profile and your local passwords.
      - Hub-shared settings: yes, the admin can refresh them. **Credentials: no** (see below).
    * - Governance document
@@ -266,7 +265,7 @@ FLIP schedules none of these. Take them with the site running (see the warning u
 
    .. code-block:: shell
 
-      sudo -E make -C trust/xnat xnat-backup KIT=<slot> PROD=true
+      sudo -E make -C trust/xnat xnat-backup KIT=<slot> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
    off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.
@@ -312,13 +311,13 @@ FLIP has no restore command for a trust. What it does tell you:
   ``POST /api/projects/{project_id}/cohort-snapshots?include_frozen=true``. Sites that still hold their cohort keep it;
   yours freezes afresh from its live database. Until then your site refuses the project's training and imaging pulls.
 - **Lost OMOP core vocabulary.** Load it again from your own export: :ref:`onprem-core-vocabulary`.
-- **Lost kit file.** The admin can rebuild the hub-shared settings (``make sync-trust-kit KIT=<CODE> PROD=<env>`` from
+- **Lost kit file.** The admin can rebuild the hub-shared settings (``make sync-trust-kit KIT=<CODE> HUB=<env>`` from
   the repo root on the admin workstation), but not the credentials.
 
 .. warning::
 
    **The only way FLIP gives a trust new credentials is to delete it on the hub and register it again**
-   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> PROD=<env>``, then ``register-trusts``). Deleting a
+   (``make -C deploy/providers/AWS delete-trust NAME=<trust-name> HUB=<env>``, then ``register-trusts``). Deleting a
    trust also deletes its records on the hub: its task queue, project and model links, FL job participation, metrics
    and logs, cohort results, cohort snapshot and imaging status, and user roles scoped to it.
 
@@ -433,5 +432,5 @@ All three run from the repo root. Things to know:
 .. seealso::
 
    - Upgrading a site, and the first-install commands to avoid: :doc:`admin-upgrading-sites`
-   - Deploying the hub on AWS: :doc:`/deploy-flip/deploy-central-hub-aws`
+   - Deploying the hub on AWS: :doc:`/deploy-flip/deploy-central-hub-aws-lza`
    - Onboarding a site: :doc:`/deploy-flip/onboarding-a-trust`

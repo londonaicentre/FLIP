@@ -531,7 +531,7 @@ def test_make_passes_no_vocab_load_through_to_every_sync(target):
     chart = Path(__file__).resolve().parents[1]
 
     def run(*extra: str) -> str:
-        args = ["make", "-n", "-C", str(chart), target, "KIT=Trust_K8s", "PROD=stag", *extra]
+        args = ["make", "-n", "-C", str(chart), target, "KIT=Trust_K8s", "HUB=stag", *extra]
         return subprocess.run(args, capture_output=True, text=True, timeout=60).stdout
 
     assert "--no-vocab-load" in run("NO_VOCAB_LOAD=1")

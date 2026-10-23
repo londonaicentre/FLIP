@@ -121,7 +121,7 @@ def test_ignores_examples_and_other_envs() -> None:
     trust = _trust_dir()
     _write_kit(trust, "KCH", "development", TRUST_NAME="KCH", FL_KIT_SLOT_NUMBER=1)
     (trust / ".env.KCH.development.example").write_text("TRUST_NAME=SHOULD_IGNORE\n")
-    _write_kit(trust, "PROD1", "production", TRUST_NAME="PROD1", FL_KIT_SLOT_NUMBER=1)
+    _write_kit(trust, "PROD1", "prod", TRUST_NAME="PROD1", FL_KIT_SLOT_NUMBER=1)
     kits = discover_trust_kits(trust, "development")
     _assert(
         len(kits) == 1 and kits[0].code == "KCH",

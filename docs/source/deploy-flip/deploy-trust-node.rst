@@ -51,8 +51,8 @@ What is a kit?
 
 A trust's **kit** is everything it needs to join one FLIP network:
 
-- **The kit file**, ``trust/.env.<CODE>.<env>`` (``<CODE>`` is the trust's short code). On a Docker Compose host
-  the operator's copy is named after the FL slot instead, ``trust/.env.<slot>``. It holds four blocks:
+- **The kit file**, ``trust/.env.<CODE>.<hub>`` (``<CODE>`` is the trust's short code). On a Docker Compose host
+  the operator's copy is named after the FL slot instead, ``trust/.env.<slot>.<hub>``. It holds four blocks:
 
   - *Hub-shared* settings, the same for every trust on the hub (encryption key, hub URL, FL backend, image tags);
   - *Kit credentials*, this trust's own keys and FL slot, written when the trust is registered;
@@ -101,8 +101,8 @@ Choose your platform
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
 
-The mock trust on an AWS EC2 instance, which the Central Hub deployment can create for testing, is covered on
-:doc:`deploy-central-hub-aws`.
+The mock trust on an AWS EC2 instance, which the Central Hub deployment can create for testing, is covered in
+:gh:`deploy/providers/AWS/README.md`.
 
 ****************
 Before you start
@@ -139,9 +139,8 @@ number:
 Central Hub
 ===========
 
-The hub must be deployed in AWS (:doc:`deploy-central-hub-aws`) before a trust can be registered, receive its FL
-participant kit and be let through the FL load balancer. On a Landing Zone Accelerator estate the FL entry point is
-the networking account's edge instead (:doc:`deploy-central-hub-aws-lza`). Shared prerequisites are in
+The hub must be deployed in AWS (:doc:`deploy-central-hub-aws-lza`) before a trust can be registered and receive its
+FL participant kit. The FL entry point is the networking account's edge. Shared prerequisites are in
 :doc:`deploy-central-hub`.
 
 .. _deploy-trust-node-network:
@@ -168,11 +167,10 @@ so allow both:
      - 443
    * - FL server (gRPC or HTTP)
      - ``fl.app.flip.aicentre.co.uk``
-     - The kit's ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``: 8002 on production, 8003 on LZA staging
+     - The kit's ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``: 8002 on production, 8003 on staging
 
-The FL server's load balancer admits only the public IPs the admin has listed. Step 6 of :doc:`onboarding-a-trust`
-adds the trust's IP; repeat it whenever that IP changes. On a Landing Zone Accelerator estate there is no such list:
-the networking account's edge decides what reaches the FL server.
+The hub keeps no per-trust allowlist: the networking account's edge decides what reaches the FL server, and the kit's
+mTLS certificates decide who gets in, so a changed public IP needs no hub-side change.
 
 The node also needs outbound access to pull FLIP's container images (``ghcr.io/londonaicentre``) and OS packages.
 The Docker Compose deploy commands always pull, so this applies in a TRE too (see :doc:`deploy-flip-node-in-tre`).

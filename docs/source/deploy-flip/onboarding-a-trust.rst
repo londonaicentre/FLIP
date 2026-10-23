@@ -15,8 +15,8 @@
 Onboard a trust
 ################
 
-This is the runbook for adding a trust to a running FLIP network, on any platform. Steps 1 to 4 and 6 are the FLIP
-admin's; steps 5, 7 and 8 are the trust operator's. Only step 5, the install, differs by platform, and it lives on
+This is the runbook for adding a trust to a running FLIP network, on any platform. Steps 1 to 4 are the FLIP
+admin's; steps 5 to 7 are the trust operator's. Only step 5, the install, differs by platform, and it lives on
 the platform's own page.
 
 Before you start, check the requirements on :doc:`deploy-trust-node`.
@@ -42,9 +42,8 @@ How to read it
    * - ``<N>``
      - The slot's number (``FL_KIT_SLOT_NUMBER`` in the kit file).
 
-The commands target production (``PROD=true``, kit file ``trust/.env.<CODE>.production``). For staging use
-``PROD=stag`` (``.stag``); on a Landing Zone Accelerator estate, ``PROD=lza`` (``.lza-prod``) or ``PROD=lza-stag``
-(``.lza-stag``).
+The commands target the production hub (``HUB=prod``, kit file ``trust/.env.<CODE>.prod``). For the staging hub use
+``HUB=stag`` (``.stag``).
 
 *******************************
 Step 1 — Create the kit
@@ -54,9 +53,9 @@ Step 1 — Create the kit
 
 .. code-block:: shell
 
-   make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" PROD=true
+   make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" HUB=prod
 
-This writes ``trust/.env.<CODE>.production`` with host defaults, placeholder local passwords and
+This writes ``trust/.env.<CODE>.prod`` with host defaults, placeholder local passwords and
 ``<run-make-register-trust>`` placeholders for the values the hub manages.
 
 **************************************
@@ -67,7 +66,7 @@ Step 2 — Register the trust on the hub
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=true
+   make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod
 
 This registers the trust with the hub and writes the trust's **credentials** into its kit file (API key, internal
 service key, FL slot and expected trust id). No hub redeploy is needed. Most of the **hub-shared settings**,
@@ -84,12 +83,12 @@ including the encryption key and the hub URL, are still placeholders afterwards;
 Step 3 — Fill in the hub-shared settings and XNAT passwords
 ************************************************************
 
-*Who: FLIP admin, from the repo root with your local* ``.env.production`` *present*
+*Who: FLIP admin, from the repo root with your local* ``.env.prod`` *present*
 
 .. code-block:: shell
 
-   make sync-trust-kit KIT=<CODE> PROD=true
-   make generate-xnat-credentials KIT=<CODE> PROD=true
+   make sync-trust-kit KIT=<CODE> HUB=prod
+   make generate-xnat-credentials KIT=<CODE> HUB=prod
 
 The first command copies the hub-shared settings from your local env file into the kit and leaves the credentials
 from step 2 untouched. The second mints the XNAT database and message-broker passwords, which registration on the
@@ -124,14 +123,13 @@ checks out that release before installing.
 
        .. code-block:: shell
 
-          cp trust/.env.<CODE>.production trust/.env.<slot>
-          make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=true
+          make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
 
-       The packaging script reads the kit from ``trust/.env.<slot>`` and refuses to run if the slot in the file does
-       not match ``KIT``, or if any placeholder is still unfilled. It fetches the FL kit share from S3 and writes the
+       The packaging is keyed on the slot, so it takes the kit by path and ships it as ``.env.<slot>.prod``. It
+       refuses to run if the slot in the file does not match ``KIT``, or if any placeholder is still unfilled. It fetches the FL kit share from S3 and writes the
        tarball under ``deploy/providers/AWS/build/trust-kits/``. It does not modify the kit file.
    * - Kubernetes
-     - The kit file ``trust/.env.<CODE>.production`` and this trust's share of the FL participant kit. The operator
+     - The kit file ``trust/.env.<CODE>.prod`` and this trust's share of the FL participant kit. The operator
        stages the FL kit onto the node with ``stage-kit``.
 
 .. warning::
@@ -151,42 +149,8 @@ Follow your platform's page, then come back here for step 6:
 - **Azure VM**: :doc:`deploy-flip-node-azure`
 - **Kubernetes**: :doc:`deploy-flip-node-kubernetes`
 
-***********************************************
-Step 6 — Open the FL load balancer to the trust
-***********************************************
-
-*Who: FLIP admin.* Needed for FL training only; polling works without it.
-
-The operator sends you the trust's public (egress) IP. Add it to the list for the trust's platform in your hub env
-file (``.env.production``), then apply:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 22 30 48
-
-   * - Platform
-     - List (an HCL list)
-     - Apply
-   * - Docker Compose host
-     - ``LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]``
-     - ``make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip> PROD=true``
-   * - Kubernetes
-     - ``K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]``
-     - ``make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=true``
-
-Each command checks the IP is in the list, then runs a normal Terraform plan and apply. The rule is ordinary config,
-so later full applies show no drift, and re-running with an IP already listed changes nothing.
-
-On a Landing Zone Accelerator estate these commands create no rule: FLIP runs no FL load balancer of its own there,
-and the FL entry point is the networking account's edge (:doc:`deploy-central-hub-aws-lza`).
-
-.. note::
-
-   **If the trust's public IP changes** (common on residential broadband), FL connections time out. Add the new IP
-   to the list and apply again.
-
 **************************************
-Step 7 — Check the trust is polling
+Step 6 — Check the trust is polling
 **************************************
 
 *Who: trust operator*
@@ -212,7 +176,7 @@ and the FL port (see :ref:`deploy-trust-node-network`). Platform-specific checks
 .. _onprem-core-vocabulary:
 
 ******************************************
-Step 8 — Load the OMOP core vocabulary
+Step 7 — Load the OMOP core vocabulary
 ******************************************
 
 *Who: trust operator, once, after the first start*
@@ -284,7 +248,7 @@ whatever the researcher's app configures.
 #. Apply it:
 
    - **Docker Compose host:** ``sudo -E make onboard-onprem-trust KIT=<slot>`` from the repo root validates the
-     settings; then restart the FL clients with ``sudo -E make -C trust up-fl-clients-kit KIT=<slot> PROD=true``.
+     settings; then restart the FL clients with ``sudo -E make -C trust up-fl-clients-kit KIT=<slot> HUB=prod``.
    - **Kubernetes:** re-run the deploy (Step 4 on :doc:`deploy-flip-node-kubernetes`), which carries the settings
      into the chart.
 
@@ -308,7 +272,7 @@ to be re-issued.
 
    .. code-block:: shell
 
-      make sync-trust-kit KIT=<CODE> PROD=true
+      make sync-trust-kit KIT=<CODE> HUB=prod
 
 #. *Trust operator:* replace only the *Hub-shared* block in your kit file, then apply it:
 
@@ -330,7 +294,7 @@ Later — upgrade to a new release
 Check out the new release tag, then:
 
 - **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<slot>`` from the repo root.
-- **Kubernetes:** ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=true``; see "Upgrading" on
+- **Kubernetes:** ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=prod``; see "Upgrading" on
   :doc:`deploy-flip-node-kubernetes`.
 
 By default both move the site to the release the hub runs.

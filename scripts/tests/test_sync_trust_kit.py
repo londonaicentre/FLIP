@@ -240,11 +240,12 @@ def test_7_edge_port_defaults_to_server_port_unless_set() -> None:
 def test_8_edge_port_is_required_on_lza_staging() -> None:
     """An LZA staging kit never inherits FL_SERVER_PORT, production's edge listener, and a port must be numeric."""
     print("▶ LZA staging refuses a defaulted FL_EDGE_PORT; a non-numeric one is refused everywhere")
-    result, content = _sync_one("Trust_1.lza-stag", {})
-    _assert(result.returncode != 0 and "FL_EDGE_PORT" in result.stderr, "lza-stag without FL_EDGE_PORT refused")
-    _assert("FL_EDGE_PORT=" not in content, "lza-stag kit left untouched")
-    result, content = _sync_one("Trust_1.lza-stag", {"FL_EDGE_PORT": "8003"})
-    _assert(result.returncode == 0 and "FL_EDGE_PORT=8003\n" in content, "lza-stag with FL_EDGE_PORT=8003 syncs")
+    for kit_name in ("Trust_1.stag", "Trust_1.lza-stag"):  # the staging kit, and its pre-FLIP#1479 name
+        result, content = _sync_one(kit_name, {})
+        _assert(result.returncode != 0 and "FL_EDGE_PORT" in result.stderr, f"{kit_name} without FL_EDGE_PORT refused")
+        _assert("FL_EDGE_PORT=" not in content, f"{kit_name} kit left untouched")
+        result, content = _sync_one(kit_name, {"FL_EDGE_PORT": "8003"})
+        _assert(result.returncode == 0 and "FL_EDGE_PORT=8003\n" in content, f"{kit_name} with FL_EDGE_PORT=8003 syncs")
     result, _ = _sync_one("Trust_1", {"FL_EDGE_PORT": "8003 # staging"})
     _assert(result.returncode != 0, "non-numeric FL_EDGE_PORT refused", result.stderr)
 

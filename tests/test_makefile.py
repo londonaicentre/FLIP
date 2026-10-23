@@ -103,7 +103,7 @@ class UpgradeOnpremTrust(unittest.TestCase):
         gate = next(line for line in out.splitlines() if "onboard_onprem_trust.py" in line)
         assert "--gate" in gate, gate  # the gate must not suggest up-onprem-trust
         assert "--kit-file" in gate, gate
-        assert ".env.SCR.production" in gate, gate
+        assert ".env.SCR.prod" in gate, gate
         assert "_upgrade-trust-apply" in out, out
         assert_data_safe(out, "upgrade-onprem-trust")
 
@@ -127,12 +127,31 @@ class CentralHubNetworks(unittest.TestCase):
 
 
 ENVIRONMENTS = (
-    (None, "production"),
-    ("true", "production"),
+    (None, "prod"),
+    ("prod", "prod"),
     ("stag", "stag"),
-    ("lza", "lza-prod"),
-    ("lza-stag", "lza-stag"),
 )
+#: Kit names before FLIP#1479, by the HUB that still finds them (env_mode.mk's kit_file).
+OLD_KIT_NAMES = (
+    ("prod", ".env.SITE.production"),
+    ("prod", ".env.SITE.lza-prod"),
+    ("stag", ".env.SITE.lza-stag"),
+)
+#: The smallest hub env file the AWS Makefile's parse-time guards accept (inert values).
+AWS_STUB_ENV = {
+    "AWS_PROFILE": "probe",
+    "PROD_AWS_PROFILE": "probe",
+    "FLARE_KIT_DATE": "00000000",
+    "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
+    "FLIP_FL_RESULTS_BUCKET_NAME": "probe-results",
+    "FLIP_APP_BUNDLES_BUCKET_NAME": "probe-bundles",
+    "AICENTRE_BUCKET_NAME": "probe-aicentre",
+    "INTERNAL_SERVICE_KEY": "probe",  # pragma: allowlist secret
+    "INTERNAL_SERVICE_KEY_HASH": "probe",  # pragma: allowlist secret
+    "INTERNAL_SERVICE_KEY_HEADER": "X-Probe",  # pragma: allowlist secret
+    "MANAGE_DNS": "false",
+}
+AWS = "deploy/providers/AWS"
 KIT = (
     "FL_BACKEND=nvflare\n"  # Synthetic kit values; no credentials.
     "FL_KIT_SLOT=Trust_9\n"
@@ -152,8 +171,10 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "deploy/providers/AWS/Makefile",
             "deploy/portable.mk",
             "trust/Makefile",
+            "trust/deploy/helm/Makefile",
             "trust/xnat/Makefile",
             "trust/xnat/.env",
         ):
@@ -166,66 +187,219 @@ class MakeKitSelection(unittest.TestCase):
         uv.write_text(
             f"#!{sys.executable}\nimport json, os, sys\n"
             "with open(os.environ['ARGS_FILE'], 'w') as out: json.dump(sys.argv[1:], out)\n"
-            "with open(os.environ['PROD_FILE'], 'w') as out: out.write(os.environ.get('PROD', 'unset'))\n"
+            "with open(os.environ['HUB_FILE'], 'w') as out: out.write(os.environ.get('HUB', 'unset'))\n"
+            "sys.exit(bool(os.environ.get('UV_FAIL_ON')) and any(os.environ['UV_FAIL_ON'] in a for a in sys.argv))\n"
         )
         uv.chmod(0o755)
         self.args_file = self.root / "args.json"
-        self.prod_file = self.root / "prod.txt"
+        self.hub_file = self.root / "hub.txt"
         self.env = {
-            key: value for key, value in os.environ.items() if key not in {"PROD", "KIT", "KIT_FILE", "MAKEFLAGS"}
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PROD", "HUB", "KIT", "KIT_FILE", "MAKEFLAGS"}
         }
         self.env.update(
-            PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file), PROD_FILE=str(self.prod_file)
+            PATH=f"{bin_dir}:{os.environ['PATH']}", ARGS_FILE=str(self.args_file), HUB_FILE=str(self.hub_file)
         )
 
-    def run_make(self, target, prod=None, *extra, dry=False, subdir="."):
-        command = [
-            "make",
-            "--no-print-directory",
-            *(["-n"] if dry else []),
-            "-C",
-            str(self.root / subdir),
-            target,
-            "KIT=SITE",
-        ]
-        if prod is not None:
-            command.append(f"PROD={prod}")
-        result = subprocess.run(command + list(extra), env=self.env, capture_output=True, text=True, timeout=30)
+    def make(self, target, *extra, dry=False, subdir="."):
+        command = ["make", "--no-print-directory", *(["-n"] if dry else []), "-C", str(self.root / subdir), target]
+        return subprocess.run(command + list(extra), env=self.env, capture_output=True, text=True, timeout=30)
+
+    def run_make(self, target, hub=None, *extra, dry=False, subdir="."):
+        hub_arg = [] if hub is None else [f"HUB={hub}"]
+        result = self.make(target, "KIT=SITE", *hub_arg, *extra, dry=dry, subdir=subdir)
         assert result.returncode == 0, result.stdout + result.stderr
         return result.stdout
 
-    def check_selected(self, expected, prod=None, *extra, subdir="."):
-        self.run_make("onboard-onprem-trust", prod, *extra, subdir=subdir)
+    def write_kits(self, *names):
+        for name in names:
+            (self.root / "trust" / name).write_text(KIT)
+
+    def check_selected(self, expected, hub=None, *extra, subdir="."):
+        output = self.run_make("onboard-onprem-trust", hub, *extra, subdir=subdir)
         args = json.loads(self.args_file.read_text())
         assert args[:4] == ["run", "--no-config", "../scripts/onboard_onprem_trust.py", "SITE"], args
         assert Path(args[args.index("--kit-file") + 1]) == self.root / "trust" / expected, args
-        assert self.prod_file.read_text() == (prod or ("" if subdir == "trust" else "true"))
+        assert self.hub_file.read_text() == (hub or ("" if subdir == "trust" else "prod"))
+        return output
 
-    def test_suffixed_kit_wins_over_legacy_in_every_onprem_environment(self):
-        (self.root / "trust/.env.SITE").write_text(KIT)
-        for prod, suffix in ENVIRONMENTS:
-            with self.subTest(prod=prod):
-                filename = f".env.SITE.{suffix}"
-                (self.root / "trust" / filename).write_text(KIT)
-                self.check_selected(filename, prod)
+    def test_a_kit_under_two_names_is_refused(self):
+        """Only one of them holds the live kit; choosing either silently could deploy the stale one."""
+        for hub, names in (
+            (None, (".env.SITE", ".env.SITE.prod")),
+            ("prod", (".env.SITE.production", ".env.SITE.lza-prod")),
+            ("stag", (".env.SITE.lza-stag", ".env.SITE.stag")),
+        ):
+            with self.subTest(hub=hub, names=names):
+                self.write_kits(*names)
+                result = self.make("onboard-onprem-trust", "KIT=SITE", *([f"HUB={hub}"] if hub else []))
+                assert result.returncode != 0, result.stdout
+                assert all(name in result.stderr for name in names), result.stderr
+                assert f"keep the live one as .env.SITE.{hub or 'prod'}" in result.stderr, result.stderr
+                for name in names:
+                    (self.root / "trust" / name).unlink()
 
-    def test_legacy_kit_is_the_fallback_in_every_onprem_environment(self):
-        (self.root / "trust/.env.SITE").write_text(KIT)
-        for prod, _ in ENVIRONMENTS:
-            with self.subTest(prod=prod):
-                self.check_selected(".env.SITE", prod)
+    def test_a_bare_kit_is_found_under_prod_only(self):
+        """The bare .env.<CODE> was only ever a prod kit, so stag never falls back to it."""
+        self.write_kits(".env.SITE")
+        for hub, suffix in ENVIRONMENTS:
+            with self.subTest(hub=hub):
+                self.check_selected(".env.SITE" if suffix == "prod" else f".env.SITE.{suffix}", hub)
+
+    def test_old_kit_names_are_still_found_with_a_rename_hint(self):
+        """A live site's next upgrade must not break on a kit named before FLIP#1479."""
+        probe = ".DEFAULT_GOAL := __probe\ninclude Makefile\n__probe:\n\t@printf '%s' '$(KIT_FILE)'\n"
+        for hub, filename in OLD_KIT_NAMES:
+            with self.subTest(filename=filename):
+                self.write_kits(filename)
+                output = self.check_selected(filename, hub)
+                hint = f"trust/{filename} is an old kit name — rename (mv) it to trust/.env.SITE.{hub}"
+                assert output.count(hint) == 1, output  # once, though several makes resolve it
+                xnat = subprocess.run(
+                    ["make", "-s", "-f", "-", "__probe", "KIT=SITE", f"HUB={hub}", "TRUST_NUM=9"],
+                    input=probe,
+                    cwd=self.root / "trust/xnat",
+                    env=self.env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                assert xnat.stdout == f"../{filename}", xnat.stdout + xnat.stderr
+                (self.root / "trust" / filename).unlink()
+
+    def test_new_trust_refuses_beside_an_old_named_kit(self):
+        self.write_kits(".env.SITE.production")
+        result = self.make("new-trust", "TRUST_CODE=SITE", "TRUST_NAME=Site", "HUB=prod")
+        assert result.returncode != 0, result.stdout
+        assert "trust/.env.SITE.production already exists under an old kit name" in result.stdout, result.stdout
+        assert not self.args_file.exists(), "new_trust.py must not run"
+        result = self.make("new-trust", "TRUST_CODE=OTHER", "TRUST_NAME=Other", "HUB=prod")
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "scripts/new_trust.py" in self.args_file.read_text()
+
+    def test_sweeps_take_current_names_and_name_the_old_kits_they_skip(self):
+        """Only KIT= finds an old name: a sweep also took trust/.env.<word> (.env.local) for a kit."""
+        self.write_kits(".env.SITE.production", ".env.OK.prod", ".env.local")
+        for target, subdir, loop in (
+            ("down-fl-clients", "trust", "for kit in OK;"),
+            ("sync-trust-kits", ".", "for code in OK;"),
+        ):
+            with self.subTest(target=target):
+                result = self.make(target, "HUB=prod", dry=True, subdir=subdir)
+                assert loop in result.stdout, result.stdout + result.stderr
+                assert "rename (mv) to include them: trust/.env.SITE.production → .env.SITE.prod" in result.stdout
+
+    def test_a_sweep_fails_when_an_earlier_kit_fails(self):
+        """A bare `for` loop exits with the last kit's status, so an earlier kit's failure was lost."""
+        (self.root / "trust/.env.OTHER.prod").write_text(KIT.replace("SLOT_NUMBER=9", "SLOT_NUMBER=8"))
+        (self.root / "trust/.env.SITE.prod").write_text(KIT)
+        docker = self.root / "bin/docker"
+        docker.write_text('#!/bin/sh\ncase "$*" in compose*trust8*) exit 1;; esac\n')
+        docker.chmod(0o755)
+        result = self.make("down-fl-clients", "HUB=prod", subdir="trust")
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert "-p trust9 rm" in result.stdout, result.stdout  # the later kit still ran
+
+    def test_sync_trust_kits_fails_when_a_kit_fails(self):
+        self.write_kits(".env.SITE.prod", ".env.OTHER.prod")
+        self.env["UV_FAIL_ON"] = "OTHER."  # the first kit fails, the last succeeds
+        result = self.make("sync-trust-kits", "HUB=prod")
+        assert result.returncode != 0, result.stdout + result.stderr
+
+    def test_the_aws_and_helm_targets_find_an_old_named_kit(self):
+        self.write_kits(".env.SITE.lza-prod")
+        env_file = self.root / "hub.env"
+        env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
+        kit = f"{self.root}/trust/.env.SITE.lza-prod"
+        for target, subdir, expected in (
+            ("register-trusts", "deploy/providers/AWS", f'KIT_FILES="{kit}"'),
+            ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
+            ("upgrade-trust-k8s", "trust/deploy/helm", f"plan --kit-file {kit}"),
+        ):
+            with self.subTest(target=target):
+                args = ("HUB=prod", f"MAIN_ENV_FILE={env_file}", "KIT=SITE")
+                result = self.make(target, *args, dry=True, subdir=subdir)
+                assert expected in result.stdout, result.stdout + result.stderr
+                assert "trust/.env.SITE.lza-prod is an old kit name" in result.stdout, result.stdout
+        # Without KIT= it is a sweep: current names only.
+        result = self.make("register-trusts", "HUB=prod", f"MAIN_ENV_FILE={env_file}", dry=True, subdir=AWS)
+        assert 'KIT_FILES=""' in result.stdout, result.stdout + result.stderr
+        assert "trust/.env.SITE.lza-prod → .env.SITE.prod" in result.stdout, result.stdout
+
+    def test_a_kit_file_given_outright_is_not_looked_up(self):
+        """Two names for one kit stop the lookup, which a KIT_FILE= makes unnecessary."""
+        self.write_kits(".env.SITE.prod", ".env.SITE.production", "operator-kit")
+        env_file = self.root / "hub.env"
+        env_file.write_text("".join(f"{key}={value}\n" for key, value in AWS_STUB_ENV.items()))
+        kit = self.root / "trust/operator-kit"
+        self.check_selected("operator-kit", "prod", f"KIT_FILE={kit}")
+        for target, subdir, expected in (
+            ("register-trusts", AWS, f'KIT_FILES="{kit}"'),
+            ("sync-kit", "trust/deploy/helm", f"--kit-file {kit}"),
+            ("down-xnat", "trust/xnat", "xnat"),
+        ):
+            with self.subTest(target=target):
+                args = ("KIT=SITE", "HUB=prod", f"KIT_FILE={kit}", f"MAIN_ENV_FILE={env_file}")
+                result = self.make(target, *args, dry=True, subdir=subdir)
+                assert result.returncode == 0, result.stdout + result.stderr
+                assert expected in result.stdout, result.stdout
+
+    def test_an_occupied_slot_is_its_own_trust_under_any_name_its_kit_answers_to(self):
+        """A stack started before the FLIP#1479 rename still carries the old kit name in its label."""
+        self.write_kits(".env.SITE.prod")
+        docker = self.root / "bin/docker"
+        docker.write_text('#!/bin/sh\ncase "$*" in *" -q") echo occupied;; *environment_file*) echo "$OWNER";; esac\n')
+        docker.chmod(0o755)
+        for owner, allowed in (
+            ("/srv/flip/trust/.env.SITE.production", True),
+            ("/srv/flip/trust/.env.SITE.lza-prod", True),
+            ("/srv/flip/trust/.env.SITE", True),
+            ("/srv/flip/trust/.env.SITE.lza-stag", False),  # the staging hub's kit
+            ("/srv/flip/trust/.env.OTHER.production", False),
+        ):
+            with self.subTest(owner=owner):
+                self.env["OWNER"] = owner
+                result = self.make("down-fl-clients-kit", "KIT=SITE", "HUB=prod", subdir="trust")
+                assert (result.returncode == 0) == allowed, result.stdout + result.stderr
+
+    def test_trust_commands_ignore_an_old_named_hub_env_file(self):
+        """They read only the kit, so a hub admin's .env.lza-prod must not stop them; a hub command still refuses."""
+        self.write_kits(".env.SITE.prod")
+        (self.root / ".env.lza-prod").write_text("")
+        self.check_selected(".env.SITE.prod", "prod")
+        self.run_make("upgrade-onprem-trust", "prod", dry=True)
+        for target, subdir in (("down-fl-clients-kit", "trust"), ("upgrade-trust-k8s", "trust/deploy/helm")):
+            with self.subTest(target=target):
+                result = self.make(target, "KIT=SITE", "HUB=prod", dry=True, subdir=subdir)
+                assert result.returncode == 0, result.stdout + result.stderr
+        result = self.make("sync-trust-kits", "HUB=prod", dry=True)
+        assert result.returncode != 0, result.stdout
+        assert ".env.lza-prod is the hub env file's pre-FLIP#1479 name" in result.stderr, result.stderr
+
+    def test_a_staging_hub_env_file_must_name_the_lza_vpc(self):
+        """A .env.stag left from the retired self-contained staging account must not reach a kit."""
+        self.write_kits(".env.SITE.stag")
+        env_file = self.root / ".env.stag"
+        env_file.write_text("CENTRAL_HUB_API_URL=https://retired.example/api\n")
+        result = self.make("sync-trust-kits", "HUB=stag", dry=True)
+        assert result.returncode != 0, result.stdout
+        assert ".env.stag sets no LZA_VPC_NAME" in result.stderr, result.stderr
+        env_file.write_text("LZA_VPC_NAME=probe-vpc\n")
+        result = self.make("sync-trust-kits", "HUB=stag", dry=True)
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def test_a_missing_kit_is_still_passed_to_the_checklist_for_diagnostics(self):
-        self.check_selected(".env.SITE")
+        self.check_selected(".env.SITE.prod")
 
-    def test_a_development_kit_cannot_override_the_onprem_production_default(self):
+    def test_a_development_kit_cannot_override_the_onprem_prod_default(self):
         (self.root / "trust/.env.SITE.development").write_text(KIT)
-        (self.root / "trust/.env.SITE.production").write_text(KIT)
-        self.check_selected(".env.SITE.production")
+        (self.root / "trust/.env.SITE.prod").write_text(KIT)
+        self.check_selected(".env.SITE.prod")
         self.check_selected(".env.SITE.development", subdir="trust")
 
     def test_explicit_kit_file_override_reaches_the_checklist(self):
-        (self.root / "trust/.env.SITE.production").write_text(KIT)
+        (self.root / "trust/.env.SITE.prod").write_text(KIT)
         (self.root / "trust/operator-kit").write_text(KIT)
         self.check_selected("operator-kit", None, "KIT_FILE=operator-kit")
 
@@ -252,7 +426,6 @@ selected = Path(sys.argv[1])
 sys.argv = ['checklist', 'SITE', '--kit-file', str(selected)]
 out = io.StringIO()
 with contextlib.redirect_stdout(out), \\
-     mock.patch.object(mod, 'fetch_public_ip', return_value=None), \\
      mock.patch.object(mod, 'run_checks', return_value=[mod.Check('x', mod.Status.PASS, 'mocked')]):
     try:
         mod.main()
@@ -265,10 +438,10 @@ with mock.patch.object(mod.subprocess, 'run', return_value=mod.subprocess.Comple
 hint = next(hint for hint in check.hints if 'check-governance' in hint)
 print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
 """
-        for prod in ("true", "stag", "lza", "lza-stag"):
+        for hub in ("prod", "stag"):
             generated = subprocess.run(
                 [sys.executable, "-c", code, str(selected)],
-                env={**self.env, "PYTHONPATH": str(REPO / "scripts"), "PROD": prod},
+                env={**self.env, "PYTHONPATH": str(REPO / "scripts"), "HUB": hub},
                 capture_output=True,
                 text=True,
                 timeout=30,
@@ -276,7 +449,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             assert generated.returncode == 0, generated.stdout + generated.stderr
             commands = json.loads(generated.stdout)
             for name, command in commands.items():
-                with self.subTest(prod=prod, command=name):
+                with self.subTest(hub=hub, command=name):
                     # Reuse the printed assignments, but run only the read-only checklist through stub uv.
                     assignments = shlex.split(command)[4:]
                     self.run_make(
@@ -287,10 +460,10 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     )
                     args = json.loads(self.args_file.read_text())
                     assert Path(args[args.index("--kit-file") + 1]) == selected, args
-                    assert self.prod_file.read_text() == prod
+                    assert self.hub_file.read_text() == hub
 
     def test_an_occupied_slot_allows_only_its_own_kit_for_absolute_and_relative_paths(self):
-        selected = self.root / "trust/.env.SITE.production"
+        selected = self.root / "trust/.env.SITE.prod"
         selected.write_text(KIT)
         calls_file = self.root / "docker-calls.jsonl"
         docker = self.root / "bin/docker"
@@ -322,7 +495,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             target = "down-fl-clients-kit" if requested in (selected.name, str(selected)) else "_test-slot-guard"
             for owner, allowed in (
                 (f"/previous/checkout/{Path(requested).name}", True),
-                ("/other/.env.OTHER.production", False),
+                ("/other/.env.OTHER.prod", False),
                 ("", False),
             ):
                 with self.subTest(requested=requested, owner=owner):
@@ -336,7 +509,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                             str(self.root / "trust"),
                             target,
                             "KIT=SITE",
-                            "PROD=true",
+                            "HUB=prod",
                             "FL_KIT_SLOT_NUMBER=9",
                             f"KIT_FILE={requested.replace('$', '$$')}",
                         ],
@@ -368,7 +541,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
                     str(self.root / "trust"),
                     "up-trust-ec2",
                     "KIT=SITE",
-                    "PROD=true",
+                    "HUB=prod",
                     f"KIT_FILE={requested}",
                 ],
                 env=self.env,
@@ -383,10 +556,13 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             assert "trust//" not in result.stdout, result.stdout
 
     def test_both_gate_callers_and_the_deployment_use_the_same_file(self):
-        for filename in (".env.SITE.production", ".env.SITE"):
+        for filename in (".env.SITE.prod", ".env.SITE.production", ".env.SITE"):
             with self.subTest(filename=filename):
                 kit_file = self.root / "trust" / filename
                 kit_file.write_text(KIT)
+                down = self.run_make("down-onprem-trust", dry=True)
+                assert "down-trust KIT=SITE HUB=prod" in down, down
+                assert f"--env-file {filename} " in down, down
                 for target in ("up-onprem-trust", "upgrade-onprem-trust"):
                     output = self.run_make(target, dry=True)
                     gate = next(line for line in output.splitlines() if "onboard_onprem_trust.py" in line)
@@ -466,7 +642,7 @@ class HubProjectOwnerGuard(unittest.TestCase):
             "    for working_dir in json.loads(os.environ['WORKING_DIRS']): print(working_dir)\n"
         )
         docker.chmod(0o755)
-        excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "ALLOW_FOREIGN_PROJECT", "FORCE"}
+        excluded = {"MAKEFLAGS", "PROD", "HUB", "FLIP_INSTANCE", "ALLOW_FOREIGN_PROJECT", "FORCE"}
         self.env = {key: value for key, value in os.environ.items() if key not in excluded}
         self.env.update(PATH=f"{bin_dir}:{os.environ['PATH']}", PROJECT="deploy")
 
@@ -531,7 +707,7 @@ class GenerateInternalServiceKey(unittest.TestCase):
         return args[args.index("--env-file") + 1]
 
     def test_it_follows_main_env_file(self):
-        assert self.env_file_arg().endswith("/.env.production")  # run_target pins PROD=true
+        assert self.env_file_arg().endswith("/.env.prod")  # run_target pins HUB=prod
         assert self.env_file_arg("MAIN_ENV_FILE=.env.b.development").endswith("/.env.b.development")
 
     def test_it_resolves_against_the_repo_root(self):
@@ -562,7 +738,7 @@ class FlEnvFile(unittest.TestCase):
     def test_default_is_the_prod_selected_file_in_the_repo_root(self):
         for backend in ("nvflare", "flower"):
             path = Path(self.env_path(backend))
-            assert path.name == ".env.production", path
+            assert path.name == ".env.prod", path
             assert "fl-services" not in path.parts, path
 
     def test_a_command_line_env_file_resolves_against_the_repo_root(self):
@@ -618,8 +794,8 @@ class BuildFl(unittest.TestCase):
 
 
 class E2eSmokeQuery(unittest.TestCase):
-    """`make e2e_smoke` picks the x-ray query from PROD: a trust without the OMOP vocabulary (FLIP#1390)
-    gets the vocabulary-free copy. dry_run always passes PROD=true, so the dev-stack cases override it."""
+    """`make e2e_smoke` picks the x-ray query from HUB: a trust without the OMOP vocabulary (FLIP#1390)
+    gets the vocabulary-free copy. dry_run always passes HUB=prod, so the dev-stack cases override it."""
 
     def query_file(self, *extra: str) -> str:
         out = dry_run("e2e_smoke", *extra, subdir=".")
@@ -633,14 +809,14 @@ class E2eSmokeQuery(unittest.TestCase):
 
     def test_a_dev_stack_picks_the_sibling_query_on_both_backends(self):
         for backend in ("nvflare", "flower"):
-            path = self.query_file(f"FL_BACKEND={backend}", "PROD=")
+            path = self.query_file(f"FL_BACKEND={backend}", "HUB=")
             assert path.endswith("/query_novocab.sql"), (backend, path)
             # The scratch copy holds Makefiles only; the file must exist where the path points in the repo.
             rel = path.split("/fl-tutorials/", 1)[1]
             assert (REPO / "fl-tutorials" / rel).is_file(), (backend, rel)
 
     def test_an_explicit_query_file_still_wins(self):
-        assert self.query_file("PROD=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
+        assert self.query_file("HUB=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
 
 
 if __name__ == "__main__":
