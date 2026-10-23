@@ -287,6 +287,7 @@ def test_the_guard_sees_every_shipped_app():
     for expected in (
         "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
         "fl-tutorials/flower/xray_classification/app",
+        "fl-tutorials/nvflare/image_synthesis/autoencoder/app_files",
         "fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/app_files",
         "fl-apps/nvflare/standard",
         "fl-apps/flower/standard",

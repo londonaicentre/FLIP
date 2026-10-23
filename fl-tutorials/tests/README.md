@@ -218,6 +218,11 @@ The spleen and latent-diffusion tutorials have their own NIfTI orientation check
 outside `DICOM_APPS`: the 2-D DICOM reader correction does not apply to their 3-D
 `Orientationd`/`Spacingd` path.
 
+The three `image_synthesis` tutorials (`autoencoder`, `diffusion_model`, `latent_diffusion_model`)
+**are** registered: they read the same 2-D DICOM chest X-rays as `xray_classification`, through a
+copy of its chain, so the same orientation guarantees apply. A generative model trained on sideways
+or mirrored radiographs would go on to synthesise them.
+
 Tutorials are copy-and-adapt example code, and a repository test cannot follow a copy out of the
 repository. It can keep the thing being copied correct, which is the point: `fl-apps/` (the
 templates flip-api actually bundles) contains no image-loading code at all, so `fl-tutorials/` is

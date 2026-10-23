@@ -9,47 +9,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""MONAI transforms for the brain-MRI cohort (MSD Task01_BrainTumour)."""
+
+import json
+from pathlib import Path
+
 import monai.transforms as mt
 
 
-def get_train_transforms(spatial_shape: tuple | list) -> mt.Compose:
-    return mt.Compose(
-        [
-            mt.LoadImaged(keys=["image"], image_only=True),
-            mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-            mt.Orientationd(keys=["image"], axcodes="RAS", labels=None),
-            mt.Spacingd(
-                keys=["image"],
-                pixdim=(1.5, 1.5, 2.0),
-                mode=("bilinear"),
-            ),
-            mt.ResizeWithPadOrCropd(keys=["image"], spatial_size=spatial_shape),
+def load_spatial_shape() -> list[int]:
+    """Read ``spatial_shape`` from the ``config.json`` next to this file."""
+    with open(Path(__file__).parent / "config.json", "r") as f:
+        return list(json.load(f)["spatial_shape"])
+
+
+SPATIAL_SHAPE = load_spatial_shape()
+
+#: Non-image keys carried through the chain; ``modality_index`` is the latent diffusion condition.
+MODALITY_KEYS = ("modality", "modality_index")
+
+
+def get_brain_mri_transforms(is_validation: bool = False) -> mt.Compose:
+    """Return the MONAI transforms used for brain-MRI training/validation.
+
+    Args:
+        is_validation (bool): When True, skip random augmentation.
+
+    Returns:
+        mt.Compose: Composed transform pipeline keyed on "image".
+    """
+    transforms = [
+        mt.LoadImaged(keys=["image"], image_only=True),
+        mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
+        mt.Orientationd(keys=["image"], axcodes="RAS", labels=None),
+        mt.Resized(keys=["image"], spatial_size=SPATIAL_SHAPE),
+        mt.NormalizeIntensityd(keys=["image"], channel_wise=True),
+    ]
+    if not is_validation:
+        transforms.append(
             mt.RandAffined(
                 keys=["image"],
-                shear_range=(-0.1, 0.1),
-                scale_range=(0.01, 0.05),
                 rotate_range=(-0.05, 0.05),
+                scale_range=(0.01, 0.05),
                 translate_range=(-0.05, 0.05),
                 prob=1.0,
                 padding_mode="border",
-            ),
-            mt.ScaleIntensityRanged(keys=["image"], a_min=-57, a_max=250, b_min=0.0, b_max=1.0, clip=True),
-        ]
-    )
-
-
-def get_val_transforms(spatial_shape: tuple | list) -> mt.Compose:
-    return mt.Compose(
-        [
-            mt.LoadImaged(keys=["image"], image_only=True),
-            mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-            mt.Orientationd(keys=["image"], axcodes="RAS", labels=None),
-            mt.Spacingd(
-                keys=["image"],
-                pixdim=(1.5, 1.5, 2.0),
-                mode=("bilinear"),
-            ),
-            mt.ResizeWithPadOrCropd(keys=["image"], spatial_size=spatial_shape),
-            mt.ScaleIntensityRanged(keys=["image"], a_min=-57, a_max=250, b_min=0.0, b_max=1.0, clip=True),
-        ]
-    )
+            )
+        )
+    return mt.Compose(transforms)

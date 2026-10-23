@@ -251,7 +251,10 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `evaluation` | `nvflare/image_evaluation/3d_spleen_segmentation_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_baseline_classification_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_multimodel_classification_evaluation` |
-| nvflare | `diffusion_model` | `nvflare/image_synthesis/latent_diffusion_model` |
+| nvflare | `standard` | `nvflare/image_synthesis/autoencoder` |
+| nvflare | `standard` | `nvflare/image_synthesis/diffusion_model` (pixel-space; the directory name is not the job type) |
+| nvflare | `standard` | `nvflare/image_synthesis/latent_diffusion_model` |
+| nvflare | `diffusion_model` | *(no tutorial — see below)* |
 | flower | `standard` | `flower/xray_classification` |
 | flower | `standard` | `flower/3d_spleen_segmentation` |
 | flower | `standard` | `flower/ehr_risk_prediction` |
@@ -260,6 +263,12 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 The plain job-type names (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) are the
 Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
 such apps can no longer run.
+
+`diffusion_model` is the two-stage (autoencoder-then-diffusion) job type. It remains registered and
+working for existing models, but no tutorial uses it: the image-synthesis tutorials are three
+independent single-stage `standard` jobs, so a latent diffusion model is trained as an
+`autoencoder` run followed by a separate `latent_diffusion_model` run that takes the resulting
+autoencoder as a frozen `SERVER_CHECKPOINT`.
 
 ---
 
@@ -380,7 +389,7 @@ means edits take effect immediately without a rebuild. A new job type needs no S
 | `make -C fl-tutorials download-synthea-data` | Fetch the Synthea EHR dataset (EHR risk-prediction tutorials) |
 | `make -C fl-tutorials download-arkplus-finetuning-data` | Fetch the Ark+ TRAIN splits |
 | `make -C fl-tutorials download-arkplus-eval-data` | Fetch the Ark+ HOLD-OUT splits |
-| `make -C fl-tutorials download-brain-mri-data` | Fetch the brain MRI dataset (trust seeding only; no tutorial consumes it) |
+| `make -C fl-tutorials download-brain-mri-data` | Fetch the brain MRI dataset (the autoencoder and latent-diffusion tutorials; trust seeding) |
 | `make -C fl-tutorials upload-spleen-labels FLIP_PROJECT_ID=<uuid> …` | Enrich XNAT with spleen labels |
 | `make -C fl-tutorials reproduce-<dataset>-omop` | Rebuild + verify the dataset's OMOP tables against the published copy |
 | `make -C fl-tutorials seed-spleen KIT=<CODE>` / `seed-brain-mri KIT=<CODE>` | Seed a running dev trust from the local tree (cxr uses `make -C trust seed PROJECTS=cxr_project`) |

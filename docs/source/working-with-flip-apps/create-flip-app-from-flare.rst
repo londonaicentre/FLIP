@@ -704,8 +704,8 @@ API shape and change only what the script returns:
   ``flare.send(flare.FLModel(metrics={...}))`` — never per-patient values. Reference:
   ``fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation/``.
 - ``diffusion_model`` — two-stage latent-diffusion training. Adds ``validator.py`` and per-stage
-  ``GLOBAL_ROUNDS_AE`` / ``GLOBAL_ROUNDS_DM`` keys. Reference:
-  ``fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/``.
+  ``GLOBAL_ROUNDS_AE`` / ``GLOBAL_ROUNDS_DM`` keys. No tutorial uses it: the image-synthesis tutorials under
+  ``fl-tutorials/nvflare/image_synthesis/`` are ``standard`` jobs.
 
 :ref:`fl-required-files` is the authoritative list of required files per job type.
 

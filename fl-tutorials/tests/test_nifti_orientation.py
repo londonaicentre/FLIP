@@ -73,8 +73,15 @@ NIFTI_APPS = (
         keys=("image", "whole_gland", "pz_tz"),
     ),
     NiftiApp(
+        "nvflare_brain_mri_autoencoder",
+        "nvflare/image_synthesis/autoencoder/app_files/transforms.py",
+        factories=("get_brain_mri_transforms",),
+        keys=("image",),
+    ),
+    NiftiApp(
         "nvflare_ldm",
         "nvflare/image_synthesis/latent_diffusion_model/app_files/transforms.py",
+        factories=("get_brain_mri_transforms",),
         keys=("image",),
     ),
 )

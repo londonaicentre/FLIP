@@ -137,7 +137,7 @@ bundled with the app and sent to the participating Trusts, with two exceptions:
    Upload the weights instead, as ``.safetensors`` where you can (tensors only, nothing to execute) or as
    ``.pt``/``.pth``, which the platform scans (see :ref:`upload-model-files`). Build the model with
    ``pretrained=False`` and load the file from beside your code. The
-   :gh:`latent-diffusion tutorial <fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`
+   :gh:`autoencoder tutorial <fl-tutorials/nvflare/image_synthesis/autoencoder>`
    shows how to ship a network a library would otherwise fetch through ``torch.hub``.
 
 .. tip::

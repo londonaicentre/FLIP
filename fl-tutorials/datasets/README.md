@@ -54,14 +54,14 @@ for why the plan is pooled and the measured per-center figures.
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
 | --- | --- | --- | --- |
-| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends) |
-| spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation + latent_diffusion_model (**both backends**); enrichment labels |
+| xray | HF `aicentreflip/flip-fl-base-test-data` | `xrays_mini_300/{accession-resources/, dataframe.csv}` | xray_classification (both backends); image_synthesis/diffusion_model (smoke only) |
+| spleen | MSD Task09_Spleen (`NUM_CASES`, default 10) | `spleen/{images/, dataframe.csv}` | 3d_spleen_segmentation + evaluation (**both backends**); enrichment labels |
 | spleen checkpoint | HF `aicentreflip/flip-fl-base-test-data` | `model_checkpoints/model.pt` | 3d_spleen_segmentation_evaluation |
-| brain_mri | MSD Task01_BrainTumour (`download-brain-mri-msd-raw`, 7.6 GB; `NUM_CASES` for the simulator layout) | `Task01_BrainTumour/`, `brain_mri/{images/, dataframe.csv, dicom/, source/, canonical/}` | the latent-diffusion tutorial once retargeted (FLIP#1221 follow-up); the mock trust data via `seed-brain-mri` |
+| brain_mri | MSD Task01_BrainTumour (`download-brain-mri-msd-raw`, 7.6 GB; `NUM_CASES` for the simulator layout) | `Task01_BrainTumour/`, `brain_mri/{images/, dataframe.csv, dicom/, source/, canonical/}` | image_synthesis/autoencoder + image_synthesis/latent_diffusion_model (3-D, 96³, four MR sequences); the mock trust data via `seed-brain-mri` |
 | arkplus | HF `aicentreflip/tutorials-arkplus-cxr-classification` | `arkplus/site{1,2}[,_holdoff]/` | the three Ark+ tutorials (FLARE) |
 | synthea | Synthea-in-OMOP, 1k persons (AWS Open Data Registry) | `synthea/{dataframe.csv, site{1,2}/dataframe.csv}` | ehr_risk_prediction (both backends); on the platform the same data goes into each trust's OMOP via `make -C trust load-synthea-ehr` |
 | prostate | Zenodo PI-CAI + `picai_labels` (GitHub) | `prostate/{images/, labels/, zonal_labels/, clinical_information/, dicom/, nifti/, sites/<CENTER>/}` | 3d_prostate_segmentation (Flower) |
-| weights | `download.pytorch.org` (torchvision checkpoints, sha256-prefix checked; `weights/fetch_weights.py` lists them) | `weights/<torchvision filename>` (flat, e.g. `squeezenet1_1-b8a52dc0.pth`) | latent_diffusion_model via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
+| weights | `download.pytorch.org` (torchvision checkpoints, sha256-prefix checked; `weights/fetch_weights.py` lists them) | `weights/<torchvision filename>` (flat, e.g. `squeezenet1_1-b8a52dc0.pth`) | autoencoder via its own `make weights`, which copies the file into `app_files/` to be uploaded with the app — FL apps never download at run time (FLIP#1206) |
 
 One spleen tree serves both backends. `download-spleen-data` refuses to overwrite an
 existing `data/spleen/images` — remove it first to rebuild at a different `NUM_CASES`.

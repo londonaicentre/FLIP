@@ -54,13 +54,33 @@ def spec(monkeypatch, good_bytes):
     return spec
 
 
+# Hosts a checkpoint may be fetched from. An allowlist rather than a single hardcoded prefix,
+# because the backbones come from more than one publisher now — but still a closed set, so adding a
+# source is a visible decision in the diff rather than a URL nobody reviewed.
+TRUSTED_HOSTS = ("https://download.pytorch.org/models/", "https://huggingface.co/")
+
+
 def test_known_checkpoints_carry_torch_hubs_hash_prefix():
-    """The prefix torch.hub embeds in the filename is the whole integrity story; every entry needs one."""
+    """Every entry is hash-verified and staged under a name carrying that hash.
+
+    The digest is the whole integrity story: the file is fetched over the network once and then
+    trusted by every later run, so nothing may be stageable without one. Publishers that hash-name
+    their files (torchvision) supply it in the URL; those that do not (Hugging Face) must pin
+    ``sha256`` explicitly, and the staged name is rewritten to carry the prefix either way, so an
+    app can check a checkpoint against its own filename.
+    """
     for arch, checkpoint in fetch_weights.CHECKPOINTS.items():
-        assert checkpoint.url.startswith("https://download.pytorch.org/models/"), arch
+        assert checkpoint.url.startswith(TRUSTED_HOSTS), arch
         assert len(checkpoint.hash_prefix) == 8, arch
         assert checkpoint.filename.endswith(f"-{checkpoint.hash_prefix}.pth"), arch
+        if not fetch_weights.HASH_REGEX.search(checkpoint.url.rsplit("/", 1)[-1]):
+            # Not hash-named upstream, so the digest has to come from the pin, and the staged name
+            # has to be an explicit rewrite rather than whatever the publisher happened to call it.
+            assert checkpoint.sha256 is not None, arch
+            assert checkpoint.stage_as is not None, arch
+            assert checkpoint.sha256.startswith(checkpoint.hash_prefix), arch
     assert "squeezenet1_1" in fetch_weights.CHECKPOINTS
+    assert "medicalnet_resnet10" in fetch_weights.CHECKPOINTS
 
 
 def test_a_checkpoint_without_a_hash_prefix_is_refused():

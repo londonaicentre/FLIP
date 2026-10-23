@@ -49,7 +49,8 @@ training loop, model architecture); for the server side, you choose a **job type
      - Yes
      - Yes
    * - ``diffusion_model``
-     - Two-stage diffusion model training (autoencoder, then diffusion model).
+     - Two-stage diffusion model training (autoencoder, then diffusion model). No tutorial uses it: the
+       image-synthesis tutorials are three independent ``standard`` jobs.
      - Yes
      - No
    * - ``fed_opt``
