@@ -152,7 +152,8 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
    keys are not in the task definition at all). That gap is why the manual's `sync-trust-kit` step is mandatory.
    It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`), runtime-only
-   trust-side secrets the hub never holds.
+   trust-side secrets the hub never holds. That step runs locally through flip-api, so it needs flip-api's `uv`
+   environment on the admin's machine.
 
 An already-registered trust returns a metadata-only kit (the hub keeps only the SHA-256 hash of the API key, so
 there is nothing to re-emit); it never re-issues credentials. Delivery to a host is deliberately separate:

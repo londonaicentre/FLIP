@@ -15,7 +15,7 @@
 """Refresh the Hub-shared block in trust/.env.<KIT> from environment variables.
 
 Usage:
-    uv run scripts/sync_trust_kit.py <KIT>
+    uv run scripts/sync_trust_kit.py --env-class <stag|prod> <CODE>.<env>
 
 Picks the Hub-shared values out of the caller's environment and upserts each
 into trust/.env.<KIT> under the managed sentinel — credentials and operator
@@ -60,7 +60,7 @@ def die(msg: str) -> NoReturn:
 def main() -> None:
     """CLI entry point: refresh the Hub-shared block in trust/.env.<KIT>."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("kit", help="Slot/handle (e.g. Trust_2). Selects trust/.env.<kit>.")
+    parser.add_argument("kit", help="<CODE>.<env> (e.g. GSTT.prod). Selects trust/.env.<kit>.")
     parser.add_argument("--env-class", required=True, choices=("stag", "prod"), help="ENV_CLASS from env_mode.mk")
     args = parser.parse_args()
 
@@ -91,7 +91,8 @@ def main() -> None:
 
     new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS}
     # Most site images were never built at a sha- tag (path-filtered CI, see site_upgrade.py):
-    # use its release, else (staging only; prod sites pin releases) the stag tag every image carries.
+    # use its release, else the stag tag every image carries: staging and development (ENV_CLASS stag) only,
+    # as prod sites pin releases.
     for key in ("DOCKER_TAG", "DOCKER_FL_TAG"):
         tag = new_values[key]
         if tag.startswith("sha-"):
