@@ -911,7 +911,7 @@ xnat:
 # MONAI Label — optional AI-assisted annotation in the XNAT OHIF viewer
 # ---------------------------------------------------------------------------
 # Off by default: needs an NVIDIA GPU node and pulls a ~10.4GB image. Mirrors the compose
-# overlay (trust/deploy/compose_trust.*.monailabel.yml); operational caveats — the
+# overlay (trust/deploy/compose/compose_trust.*.monailabel.yml); operational caveats — the
 # browser-reachable URL, the unauthenticated API, the stock-viewer quirks — are documented
 # in trust/README.md#monai-label-optional.
 monailabel:

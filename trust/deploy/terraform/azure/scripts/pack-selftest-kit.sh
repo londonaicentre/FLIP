@@ -33,7 +33,7 @@ esac
     exit 2
 }
 
-REPO_ROOT="${FLIP_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)}"
+REPO_ROOT="${FLIP_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)}"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "${STAGE}"' EXIT
 

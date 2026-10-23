@@ -12,10 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Black-box tests for scripts/selftest_node.sh with make/curl/docker stubbed (FLIP#1390).
+"""Black-box tests for trust/deploy/scripts/selftest_node.sh with make/curl/docker stubbed (FLIP#1390).
 
 Usage:
-    uv run --no-config scripts/tests/test_selftest_node.py
+    uv run --no-config trust/deploy/scripts/tests/test_selftest_node.py
 """
 
 from __future__ import annotations

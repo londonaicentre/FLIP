@@ -12,13 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Black-box tests for scripts/distribute_trust_kits.py.
+"""Black-box tests for trust/deploy/scripts/distribute_trust_kits.py.
 
 Pins the ``--target PATH`` contract (one kit JSON on stdin → that kit file) that
 the dev register-trust pipe and deploy/providers/AWS/scripts/register-trusts.sh use.
 
 Usage:
-    uv run --no-config scripts/tests/test_distribute_trust_kits.py
+    uv run --no-config trust/deploy/scripts/tests/test_distribute_trust_kits.py
 """
 
 from __future__ import annotations
@@ -53,18 +53,18 @@ def _assert(condition: bool, label: str, detail: str = "") -> None:
 
 
 def _temp_repo() -> Path:
-    """Create a temp repo with scripts/ (copies of the script + lib) and trust/."""
+    """Create a temp repo with trust/deploy/scripts/ (copies of the script + lib) and trust/."""
     root = Path(tempfile.mkdtemp())
-    (root / "scripts").mkdir()
-    (root / "trust").mkdir()
-    shutil.copy2(DISTRIBUTE, root / "scripts" / "distribute_trust_kits.py")
-    shutil.copy2(LIB, root / "scripts" / "trust_kit_lib.py")
+    (root / "trust/deploy/scripts").mkdir(parents=True)
+    (root / "trust").mkdir(exist_ok=True)
+    shutil.copy2(DISTRIBUTE, root / "trust/deploy/scripts" / "distribute_trust_kits.py")
+    shutil.copy2(LIB, root / "trust/deploy/scripts" / "trust_kit_lib.py")
     return root
 
 
 def _run(root: Path, stdin: str, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["python3", str(root / "scripts" / "distribute_trust_kits.py"), *args],
+        ["python3", str(root / "trust/deploy/scripts" / "distribute_trust_kits.py"), *args],
         cwd=root,
         input=stdin,
         env={**os.environ, "PATH": os.environ.get("PATH", "")},
@@ -91,7 +91,7 @@ def test_target_is_required() -> None:
     try:
         res = _run(root, json.dumps([_full_kit()]))
         _assert(res.returncode != 0, "non-zero exit without --target", res.stdout)
-        _assert(not list((root / "trust").iterdir()), "no kit file written")
+        _assert(not list((root / "trust").glob(".env*")), "no kit file written")
     finally:
         shutil.rmtree(root)
 

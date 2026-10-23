@@ -32,7 +32,7 @@ gets diagnostics instead of a cryptic compose / pydantic failure deeper
 in the stack.
 
 Usage:
-    uv run scripts/onboard_onprem_trust.py [KIT] [--kit-file PATH]
+    uv run trust/deploy/scripts/onboard_onprem_trust.py [KIT] [--kit-file PATH]
     # KIT defaults to Trust_2; without --kit-file, reads trust/.env.<KIT>.
     # Make passes its resolved kit path, including the selected environment suffix.
 """
@@ -66,7 +66,7 @@ def quote_make_assignment(key: str, value: str | Path) -> str:
 
 
 # Hub-shared keys — MUST stay in lockstep with HUB_SHARED_KEYS in
-# scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
+# trust/deploy/scripts/sync_trust_kit.py and HUB_SHARED_ENV_KEYS in
 # flip-api/src/flip_api/scripts/register_trust.py, except FL_EDGE_PORT: a kit synced before
 # FLIP#1365 lacks it and every reader falls back to FL_SERVER_PORT, so requiring it would fail
 # every existing site's upgrade checklist.
@@ -926,7 +926,7 @@ def main() -> None:
 
     kit = args.kit or "Trust_2"
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parents[3]
     kit_file = args.kit_file or Path("trust") / f".env.{kit}"
     if not kit_file.is_absolute():
         kit_file = repo_root / kit_file

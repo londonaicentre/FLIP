@@ -58,13 +58,13 @@ KIT_WRITE_TARGETS = ("/app/local", "/app/transfer", "/app/admin/transfer")
 
 DEV_COMPOSE_FILES = (
     "deploy/compose.development.nvflare.yml",
-    "trust/deploy/compose_trust.development.nvflare.yml",
+    "trust/deploy/compose/compose_trust.development.nvflare.yml",
     "fl-services/nvflare/compose.dev.yml",
 )
 
 PROD_COMPOSE_GLOBS = (
     "deploy/compose.prod*.yml",
-    "trust/deploy/compose_trust.prod*.yml",
+    "trust/deploy/compose/compose_trust.prod*.yml",
 )
 
 IDENTITY_ENV_KEYS = ("HOME", "USER", "LOGNAME")

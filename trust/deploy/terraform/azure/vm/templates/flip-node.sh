@@ -96,7 +96,9 @@ provision() {
     mount_data_disk
     checkout "${1:-}"
     # cloud-init wrote flip-node once, at first boot; the checkout's copy is the one for this ref.
-    local shipped="${REPO_DIR}/deploy/providers/azure/vm/templates/flip-node.sh"
+    # Refs before FLIP#1438 ship it under deploy/providers/azure.
+    local shipped="${REPO_DIR}/trust/deploy/terraform/azure/vm/templates/flip-node.sh"
+    [ -f "${shipped}" ] || shipped="${REPO_DIR}/deploy/providers/azure/vm/templates/flip-node.sh"
     if [ -f "${shipped}" ]; then
         install -m 0755 "${shipped}" "${FLIP_NODE_BIN}"
     fi
@@ -190,7 +192,7 @@ run_selftest() {
     refuse_if_joined
     if ! (fetch_kit "selftest-${backend}.tar.gz"); then
         echo "ERROR: no ${backend} self-test kit could be fetched. From the operator's machine:" >&2
-        echo "       make -C deploy/providers/azure selftest-kit FL_BACKEND=${backend}" >&2
+        echo "       make -C trust/deploy/terraform/azure selftest-kit FL_BACKEND=${backend}" >&2
         exit 1
     fi
     SELFTEST_SKIP_PROVISION=1 SELFTEST_DEV_KIT_DIR="${FLIP_DIR}/kits/selftest-${backend}/fl-kit" \

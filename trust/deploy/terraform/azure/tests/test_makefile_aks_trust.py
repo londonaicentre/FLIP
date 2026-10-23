@@ -38,7 +38,7 @@ def test_mock_pacs_seeds_orthanc_last(tmp_path):
     overlay = AZURE_DIR / "aks" / "values-mock-pacs.yaml"
     recorded = result.stdout.split()[-1]
     assert not recorded.startswith("/"), "the kit file must not pin this checkout's location"
-    assert (AZURE_DIR.parents[2] / "trust" / "deploy" / "helm" / recorded).resolve() == overlay.resolve()
+    assert (REPO_ROOT / "trust" / "deploy" / "helm" / recorded).resolve() == overlay.resolve()
     assert overlay.read_text().endswith("trustData:\n  seed:\n    orthanc: true\n")
 
 

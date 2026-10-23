@@ -325,7 +325,7 @@ def test_run_selftest_stops_when_no_kit_was_delivered(tmp_path):
     _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $*" >> "{log}"')
     result = _run(env, "run-selftest", "nvflare")
     assert result.returncode != 0
-    assert "deploy/providers/azure selftest-kit FL_BACKEND=nvflare" in result.stderr, (
+    assert "trust/deploy/terraform/azure selftest-kit FL_BACKEND=nvflare" in result.stderr, (
         "the error says how to deliver one"
     )
     assert not log.exists() or "selftest-node" not in log.read_text()

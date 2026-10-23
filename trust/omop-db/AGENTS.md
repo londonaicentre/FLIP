@@ -14,7 +14,7 @@ Two halves of one pipeline (merged from the retired private `flip-omop-db` repo,
    services). FK **constraints are deliberately absent from init** — they are applied only AFTER data
    load (loading after constraints fails).
 2. **Seed loaders** for the dev trust stacks (FLIP#1187): the container initialises an empty schema on
-   `volumes/Trust_<N>/db_data` (which `trust/deploy/compose_trust.<env>.yml` mounts) and
+   `volumes/Trust_<N>/db_data` (which `trust/deploy/compose/compose_trust.<env>.yml` mounts) and
    `omop_db_tools.import_tables` then loads this trust's `source_trust` slice of the published
    per-project tables (`omop-csv/<project>/`, fetched anonymously from the public HF dataset
    `aicentreflip/trust-data` at the tag pinned by `trust/.data_version`). Bring-up downloads no
