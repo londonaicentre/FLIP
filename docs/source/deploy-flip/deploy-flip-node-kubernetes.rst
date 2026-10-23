@@ -88,7 +88,8 @@ The machine you run the ``make`` targets from. It needs a FLIP checkout and:
 
 - ``kubectl`` 1.28 or newer, configured for the target cluster;
 - ``helm`` 4.x (the version CI tests; 3.16 or newer also works);
-- Python 3 with PyYAML (``pip install pyyaml``), 3.11 or newer if the kit names a governance document;
+- ``uv``, which runs the kit sync and upgrade scripts with the Python and PyYAML they declare;
+- Python 3, for ``make status``;
 - ``docker``, only for ``stage-kit`` on a kind cluster (see `Step 3 — Stage the FL participant kit`_).
 
 Cluster
@@ -196,9 +197,8 @@ The kit holds the per-trust keys. The chart's other secrets (OMOP, XNAT, Orthanc
      --env-file trust/.env.<CODE>.<env> \
      --output-dir trust/deploy/helm
 
-This writes ``trust/deploy/helm/values-secrets.yaml`` (mode ``0600``). Then hand-fill the one slot no kit carries,
-``orthanc-registered-users``: a JSON user map such as ``{"admin": "<password>"}``. Orthanc will not start until it is
-set.
+This writes ``trust/deploy/helm/values-secrets.yaml`` (mode ``0600``). It builds ``orthanc-registered-users`` from
+the kit's ``ORTHANC_USERNAME`` and ``ORTHANC_PASSWORD``, as Compose does; Orthanc will not start without it.
 
 .. warning::
 
@@ -234,6 +234,35 @@ the FL client starts.
 
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the
 missing path.
+
+On a managed cluster (AKS): the kit from a Secret
+=================================================
+
+A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret instead and deploy
+with ``flClient.kit.source=secret`` (FLIP#1390):
+
+.. code-block:: shell
+
+   make -C trust/deploy/helm kit-secret KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> \
+     PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube-context>
+
+- ``values-aks.yaml`` carries what belongs to a managed cluster rather than to the trust: the kit from the Secret,
+  Postgres data below the fresh disk's ``lost+found``, and the S3 vocabulary load off. ``PLATFORM_VALUES`` layers it
+  after the per-trust override. Better, put ``K8S_PLATFORM_VALUES=values-aks.yaml`` in the kit file: every
+  ``deploy``, ``deploy-trust-k8s`` and ``upgrade-trust-k8s`` with that ``KIT`` then applies it. A run without it
+  moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
+  stays ``Pending``).
+- The overlays live beside the chart in the repository, not in the packaged chart, so a deploy from a chart tarball
+  passes a checkout's copy by path.
+- ``kit-secret`` makes one key per mounted file in ``<release>-flip-trust-fl-kit``. It refuses a kit missing its
+  backend's files, a nested directory, or more than a Secret's 1 MiB, and a Flower kit holding anything beyond
+  ``certificates/ca.crt`` and one ``keys/supernode_credentials_<slot>``, so a whole provisioning tree never lands
+  in one trust's Secret. Set ``flClient.kit.secretName`` only for a Secret you build yourself with
+  ``scripts/kit_secret.py --name``.
+- At pod start the ``stage-fl-kit`` init container copies the files into the pod's own kit volume, because a Secret
+  volume is read-only and NVFLARE writes into ``local/``, ``startup/`` and ``transfer/``. That volume lives as long
+  as the pod, so anything NVFLARE leaves in ``transfer/`` goes with it.
 
 ***************
 Step 4 — Deploy
@@ -315,6 +344,48 @@ neither implies the other.
 
    A DICOM C-ECHO is not a substitute. It never reaches XNAT's importer and passes even when every store is aborted.
 
+The trust self-test
+===================
+
+``make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>`` runs the acceptance checklist every trust shape shares
+(the VM node self-test's, FLIP#1406) against the deployed release:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Check
+     - Passes when
+   * - release ready
+     - Every Deployment, StatefulSet and DaemonSet of the release has finished rolling out (all replicas updated and
+       ready, no old pod left).
+   * - fl kit delivered
+     - The FL client sees its kit (``/app/startup/fed_client.json``; Flower: ``/certs/ca.crt`` and ``/keys``).
+   * - trust-api / imaging-api / data-access-api health
+     - Each answers its own ``/health`` with ``"status":"ok"``.
+   * - omop seeded
+     - ``omop.person`` has rows.
+   * - orthanc seeded
+     - Orthanc holds instances.
+   * - orthanc requires auth
+     - Orthanc answers 401 without credentials.
+   * - xnat c-store
+     - ``smoke-cstore`` exits 0; its inconclusive exit 2 fails the check.
+   * - dcm2niix conversion
+     - The smallest Orthanc series, imported into a throwaway ``FLIPSELFTEST`` project, is converted by a dcm2niix
+       job: its container ends ``Complete`` and the scan holds a ``.nii``/``.nii.gz`` file within 10 minutes
+       (``--conversion-timeout``).
+   * - fl client running
+     - The FL client is running, with no restart, at two samples 45 s apart.
+
+It needs no hub: an unreachable hub or FL server is not a failure. Every check runs in a pod the release already
+has, so it adds no RBAC or NetworkPolicy exception. The conversion check starts one dcm2niix job, as a cohort pull
+would, and deletes its ``FLIPSELFTEST`` project when it ends, pass or fail: a C-STORE alone shows XNAT received a
+study, not that this cluster can convert it. If other conversions are queued, its job waits for a slot under the
+cap (:ref:`ts-k8s-dcm2niix-jobs-cap`), so run it on an idle trust. It writes
+``selftest-k8s-<backend>-<stamp>.json`` and ``.md`` (and ``latest-k8s-<backend>.md``) under ``SELFTEST_OUT``
+(default ``build/selftest/`` in the checkout) and exits non-zero on any failure.
+
 Send the node's public (egress) IP to the FLIP admin and continue at step 6 of :doc:`onboarding-a-trust`.
 
 *****************************
@@ -341,6 +412,15 @@ After a default install, Helm prints a warning that it is not loaded. On Kuberne
 
    The S3 load runs as a Helm hook. If the cluster cannot read the bucket, the hook fails and **the whole release
    is marked failed**, not just the vocabulary load. The deploy does not roll it back.
+
+On a cluster with no route to AWS, ``values-aks.yaml`` keeps the S3 load out whatever bucket the kit names, and with
+it the metadata endpoint, which on Azure hands out managed-identity tokens; ``NO_VOCAB_LOAD=1`` does the same for
+``sync-kit`` on any other cluster. The trust then runs without the vocabulary until one is loaded another way, and
+cohort queries that name concepts through ``omop.concept`` return nothing. The x-ray tutorial ships
+``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``PROD`` unset) smokes such a trust with it.
+With ``PROD`` set, pass it by hand:
+``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
+``fl-tutorials/flower/xray_classification/query_novocab.sql``).
 
 .. seealso::
 
@@ -496,7 +576,8 @@ Troubleshooting
    * - PVCs ``Pending``
      - No default StorageClass, or none matching ``storageClassName``.
    * - Orthanc fails with ``CreateContainerConfigError``
-     - ``orthanc-registered-users`` is empty in ``values-secrets.yaml`` (Step 2).
+     - ``orthanc-registered-users`` is empty in ``values-secrets.yaml``: the kit lacks ``ORTHANC_USERNAME`` or
+       ``ORTHANC_PASSWORD`` (Step 2).
    * - Deploy refused with ``conflict with "kubectl-patch"``
      - Run ``make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>`` once, then deploy again. Do not use
        ``--force-conflicts``: it would overwrite the live keys.
@@ -504,6 +585,8 @@ Troubleshooting
      - The OMOP vocabulary is not loaded (see above).
    * - Polling works, imaging pulls fail
      - Run ``status`` and ``smoke-cstore`` (Step 5).
+   * - Hundreds of Pending pods that are not the release's own
+     - Conversion jobs from before the dcm2niix cap: :ref:`ts-k8s-dcm2niix-jobs-cap`.
 
 .. seealso::
 

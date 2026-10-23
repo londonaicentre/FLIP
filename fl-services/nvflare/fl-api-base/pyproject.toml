@@ -12,7 +12,7 @@
 
 [project]
 name = "flip-fl-api"
-version = "0.13.0"
+version = "0.13.1"
 description = "Wrapper API for FLARE FL Admin API."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

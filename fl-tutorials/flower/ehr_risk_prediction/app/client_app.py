@@ -23,13 +23,12 @@ through the upload flow.
 """
 
 import json
-import os
 from logging import INFO
 from pathlib import Path
 
 import torch
 from flip import FLIP
-from flip.constants import FlipConstants
+from flip.flower.identity import client_identity, partition_cohort
 from flip.flower.privacy import flip_local_dp_mod
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
@@ -39,7 +38,6 @@ from torch.utils.data import DataLoader, TensorDataset
 from app.feature_engineering import (
     apply_preprocessor,
     fit_preprocessor,
-    partition_for_client,
     positive_class_weight,
     select_features,
     split_frame,
@@ -60,18 +58,18 @@ def _load_config() -> dict:
 def _fetch_cohort(context: Context, client_name: str):
     """Fetch this client's cohort dataframe via FLIP.
 
-    Deployed: each trust's data-access-api already serves a disjoint cohort. LOCAL_DEV
-    (the dev compose stack): every SuperNode reads the same mounted CSV, so it is sliced
-    into this client's partition by ``person_id`` modulo — the injected trust count
-    (``flip-min-clients``) doubles as the partition count.
+    Deployed: each trust's data-access-api already serves a disjoint cohort, and
+    :func:`flip.flower.identity.partition_cohort` is a no-op. Under LOCAL_DEV (the simulator and the
+    dev compose stack) every site reads the same CSV, so it slices it into this client's partition by
+    ``person_id`` modulo, keyed on the identity the context carries (``partition-id`` under the
+    simulator, ``SUPERNODE_NAME`` on the compose stack) and the ``num-partitions`` it declares;
+    it raises rather than hand an unidentified site the whole cohort.
     """
     project_id = context.run_config.get("flip-project-id", "ehr-flower-tutorial")
     query = context.run_config.get("flip-cohort-query", "*")
     log(INFO, f"Fetching FLIP dataframe project_id={project_id}")
     dataframe = FLIP().get_dataframe(project_id, query)
-    if FlipConstants.LOCAL_DEV:
-        num_partitions = int(context.run_config.get("flip-min-clients", 2))
-        dataframe = partition_for_client(dataframe, client_name, num_partitions)
+    dataframe = partition_cohort(dataframe, context)
     log(INFO, f"Cohort dataframe for {client_name}: {len(dataframe)} persons")
     return dataframe
 
@@ -122,7 +120,7 @@ def train(msg: Message, context: Context) -> Message:
     lr_start = float(config["LR_START"])
     lr_end = float(config["LR_END"])
 
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
     global_round = int(msg.content["config"]["server-round"]) - 1
 
     dataframe = _fetch_cohort(context, client_name)
@@ -178,7 +176,7 @@ def train(msg: Message, context: Context) -> Message:
 def evaluate(msg: Message, context: Context) -> Message:
     """Evaluate the global model on the local held-out test split."""
     config = _load_config()
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
+    client_name = client_identity(context)
 
     dataframe = _fetch_cohort(context, client_name)
     loaders, _ = _build_loaders(config, dataframe)
