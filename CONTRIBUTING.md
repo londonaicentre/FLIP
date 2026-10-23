@@ -235,8 +235,8 @@ Then generate the internal service key (also generated automatically by `make up
 make generate-internal-service-key
 ```
 
-This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
-fl-server-to-hub authentication.
+This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
+(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication.
 
 #### Updating an existing checkout
 
@@ -246,6 +246,7 @@ These changes affect checkouts created before them. None is picked up automatica
 | What changed | What to do |
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
+| `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 | `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |

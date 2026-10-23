@@ -80,6 +80,21 @@ class TestGenerateInternalServiceKey:
         assert env["INTERNAL_SERVICE_KEY"] == key
         assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(key.encode()).hexdigest()
 
+    def test_replaces_old_example_placeholder_key(self, env_file: Path) -> None:
+        """A key left at the old example's published placeholder is regenerated, not kept (FLIP#1501)."""
+        placeholder = "<run-make-generate-internal-service-key>"
+        env_file.write_text(
+            f"INTERNAL_SERVICE_KEY={placeholder}\n"
+            f"INTERNAL_SERVICE_KEY_HASH={hashlib.sha256(placeholder.encode()).hexdigest()}\n"
+        )
+
+        with patch("sys.argv", ["prog", "--env-file", str(env_file)]):
+            main()
+
+        env = _parse_env(env_file.read_text())
+        assert env["INTERNAL_SERVICE_KEY"] != placeholder
+        assert env["INTERNAL_SERVICE_KEY_HASH"] == hashlib.sha256(env["INTERNAL_SERVICE_KEY"].encode()).hexdigest()
+
     def test_force_regenerates_even_when_in_sync(self, env_file: Path) -> None:
         """--force generates a new key even if current key and hash are in sync."""
         old_key = "old-key"
