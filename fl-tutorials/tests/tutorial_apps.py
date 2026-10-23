@@ -23,12 +23,15 @@ axis-order correction these tests pin would be actively wrong — they are delib
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import importlib.util
 import inspect
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import monai.transforms as mt
 
@@ -74,6 +77,35 @@ _NON_RESAMPLING_TRANSFORMS: tuple[type, ...] = (
     mt.EnsureTyped,
     mt.Lambdad,
 )
+
+
+@contextlib.contextmanager
+def flower_client_app(tutorial_dir: Path) -> Iterator[ModuleType]:
+    """Import a Flower tutorial's ``app.client_app`` under the ``app`` package name it ships as.
+
+    Every Flower tutorial ships its code as a package called ``app``, so whichever one is imported first
+    would otherwise be served to the next test; this displaces any cached ``app*`` modules while the
+    tutorial is in use and restores them afterwards.
+    """
+    displaced = {name: module for name, module in sys.modules.items() if name == "app" or name.startswith("app.")}
+    for name in displaced:
+        del sys.modules[name]
+    sys.path.insert(0, str(tutorial_dir))
+    try:
+        yield importlib.import_module("app.client_app")
+    finally:
+        for name in [name for name in sys.modules if name == "app" or name.startswith("app.")]:
+            del sys.modules[name]
+        sys.modules.update(displaced)
+        with contextlib.suppress(ValueError):
+            sys.path.remove(str(tutorial_dir))
+
+
+def simulated_site_context(partition_id: int, num_partitions: int = 2) -> SimpleNamespace:
+    """A ClientApp ``Context`` the way the flwr simulator shapes it: node_config values are strings."""
+    return SimpleNamespace(
+        run_config={}, node_config={"partition-id": str(partition_id), "num-partitions": str(num_partitions)}
+    )
 
 
 @dataclass(frozen=True)

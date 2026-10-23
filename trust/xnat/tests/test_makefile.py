@@ -21,6 +21,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests"))
 
@@ -150,9 +151,9 @@ class XnatImageRegistry(unittest.TestCase):
         result = run_target(
             "__registry",
             "-s",
-            "--eval=__registry: ; @echo registry=[$$DOCKER_REGISTRY]",
             *extra,
             subdir="trust/xnat",
+            probe="__registry: ; @echo registry=[$$DOCKER_REGISTRY]\n",
             kit=KIT + f"DOCKER_REGISTRY={self.ECR}\n",
             env=env,
         )
@@ -171,6 +172,49 @@ class XnatImageRegistry(unittest.TestCase):
     def test_development_with_an_empty_registry_runs_local_images(self):
         for image in self._images("PROD=", PROD="", DOCKER_REGISTRY=""):
             assert image.startswith("xnat-"), image
+
+
+class UpXnatBuild(unittest.TestCase):
+    """`make up BUILD=true` builds the XNAT images from this checkout and deploys exactly those.
+
+    The swarm agent re-pulls a tag on every deploy and keeps a local image only when that pull
+    fails, so the build goes to the unpublished `dev` tag: tagged `stag`, it would be replaced
+    by the registry's `stag` and the stack would run images built from another commit.
+    """
+
+    def test_build_true_builds_then_deploys_the_local_tag(self):
+        out = dry_run("up-xnat", "BUILD=true", subdir="trust/xnat")
+        for image in ("xnat-web", "xnat-db", "xnat-nginx"):
+            assert f"{image}:dev " in out, f"{image} is not built at :dev:\n{out}"
+        assert "XNAT_TAG=dev" in out, out
+        assert '--resolve-image "never"' in out, out
+        # Built before the running stack is torn down, so a failed build leaves it up.
+        assert out.index("docker build") < out.index("down-xnat"), out
+
+    def test_a_command_line_xnat_tag_names_the_build(self):
+        """Tags are daemon-wide: a second stack on the host (a release check) keeps off the shared :dev."""
+        out = dry_run("up-xnat", "BUILD=true", "XNAT_TAG=rel0130", subdir="trust/xnat")
+        for image in ("xnat-web", "xnat-db", "xnat-nginx"):
+            assert f"{image}:rel0130 " in out, f"{image} is not built at :rel0130:\n{out}"
+        assert "XNAT_TAG=rel0130" in out, out
+        assert ":dev" not in out, out
+        assert '--resolve-image "never"' in out, out
+
+    def test_a_kit_xnat_tag_is_a_pull_pin_not_a_build_tag(self):
+        out = dry_run("up-xnat", "BUILD=true", subdir="trust/xnat", kit=KIT + "XNAT_TAG=stag\n")
+        assert "xnat-web:dev " in out, out
+        assert "XNAT_TAG=dev" in out, out
+
+    def test_default_up_xnat_builds_nothing_and_deploys_the_kit_tag(self):
+        out = dry_run("up-xnat", subdir="trust/xnat")
+        assert "docker build" not in out, out
+        assert "XNAT_TAG=sha-badcff1" in out, out
+
+    def test_an_inherited_xnat_tag_does_not_beat_the_kit(self):
+        """`make -C trust/xnat test` exports XNAT_TAG=stag (no kit there) into every test's environment."""
+        with mock.patch.dict(os.environ, {"XNAT_TAG": "stag"}):
+            out = dry_run("up-xnat", subdir="trust/xnat")
+        assert "XNAT_TAG=sha-badcff1" in out, out
 
 
 if __name__ == "__main__":

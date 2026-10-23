@@ -1576,7 +1576,7 @@ told:
 
 1. The push to `main` runs `terraform_apply.yml` as usual and pins
    `sha-<short7>`.
-2. `release.yml` creates the tag, dispatches the twelve image builds at it, then
+2. `release.yml` creates the tag, dispatches the fourteen image builds at it, then
    **waits** for those runs to conclude (bounded by the repository variable
    `RELEASE_BUILD_WAIT_SECONDS`, default 5400s; polled every
    `RELEASE_BUILD_POLL_SECONDS`, default 30s). A red build or an expired budget

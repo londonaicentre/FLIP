@@ -65,8 +65,10 @@ on:
       - ".github/tests/**"
       - "tests/**"
       - "Makefile"
+      - "flip-api/Makefile"
       - "trust/Makefile"
       - "trust/xnat/Makefile"
+      - "deploy/portable.mk"
   pull_request:
     branches: [develop]
 
