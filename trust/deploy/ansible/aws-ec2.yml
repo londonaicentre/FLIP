@@ -1,0 +1,62 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# aws-ec2.yml — provisions the trust node that trust/deploy/terraform/aws-ec2 created (FLIP#1528).
+#
+# Run by that root's Makefile (`make -C trust/deploy/terraform/aws-ec2 provision`), never against
+# the hub: the inventory comes from this root's own Terraform outputs, and the host is reached over
+# SSM through the ~/.ssh/config entry the Makefile's ssh-config target writes for node_alias. The
+# host plays themselves are aws-ec2-host.yml, shared with the hub's site.yml.
+#
+# Needs: node_alias (from the Makefile), trust_data_version, fl_backend, trust_num;
+# flip_aicentre_bucket and fl_kit_date while the kit comes from S3 (fl_kit_source, default s3).
+
+---
+- name: build the inventory from the aws-ec2 root's outputs
+  hosts: localhost
+  gather_facts: false
+  # `always` so the host is in the inventory even when a tag filter selects a later play only.
+  tags: always
+  vars:
+    aws_ec2_root: "{{ playbook_dir }}/../terraform/aws-ec2"
+  tasks:
+    - name: ensure the node's address and the release data version are given
+      assert:
+        that:
+          - node_alias is defined and node_alias | length > 0
+          - trust_data_version is defined and trust_data_version | length > 0
+        fail_msg: >-
+          node_alias and trust_data_version are required; run this play through
+          `make -C trust/deploy/terraform/aws-ec2 provision`, which passes them.
+
+    - name: ensure the S3 kit source is named
+      assert:
+        that:
+          - flip_aicentre_bucket is defined and flip_aicentre_bucket | length > 0
+          - fl_kit_date is defined and fl_kit_date | length > 0
+        fail_msg: >-
+          The kit is staged from S3: KIT_BUCKET and FL_KIT_DATE are required. A kit delivered out of
+          band instead takes -e fl_kit_source=precreate.
+      when: (fl_kit_source | default('s3')) == 's3'
+
+    - name: read the root's outputs
+      command: terraform -chdir={{ aws_ec2_root }} output -json
+      register: aws_ec2_outputs
+      changed_when: false
+
+    - name: add the trust node to the inventory
+      add_host:
+        name: "{{ node_alias }}"
+        groups: [trust_ec2]
+        ansible_ssh_user: ubuntu
+        ansible_ec2_instance_id: "{{ (aws_ec2_outputs.stdout | from_json).instance_id.value }}"
+
+- import_playbook: aws-ec2-host.yml

@@ -1,0 +1,160 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# aws-ec2-host.yml — provisions an EC2 trust host: the hosts in group trust_ec2.
+#
+# Not run on its own. aws-ec2.yml imports it after building the inventory from the
+# trust/deploy/terraform/aws-ec2 root, and deploy/providers/AWS/site.yml imports it for the hub's
+# own trust EC2 until FLIP#1438 PR 3 removes that one. Every play composes ./roles, shared with
+# onprem.yml and azure.yml; what is EC2-specific is stated in each play's vars.
+#
+# Needs: flip_aicentre_bucket, fl_kit_date and trust_data_version (asserted by the importing
+# play), trust_num (the kit's slot number; 1 before registration), fl_backend.
+# Tags: flkit (kit staging only), data / seed / omop-vocab (the seed and the vocabulary load,
+# which need the kit's OMOP credentials).
+
+---
+- name: hold the NVIDIA driver on a GPU trust host
+  hosts: trust_ec2
+  become: true
+  roles:
+    - flip_gpu_host
+
+- name: update packages
+  hosts: trust_ec2
+  become: true
+  tasks:
+    - name: update and upgrade apt packages
+      apt:
+        upgrade: yes
+        update_cache: yes
+
+- name: reboot if kernel update requires it
+  hosts: trust_ec2
+  become: true
+  tasks:
+    - name: check if reboot is required
+      stat:
+        path: /run/reboot-required
+      register: reboot_required_file
+
+    - name: reboot and wait for EC2 to come back
+      reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: reboot_required_file.stat.exists
+
+- name: install Docker on Trust EC2, adding ubuntu to docker group
+  hosts: trust_ec2
+  become: true
+  vars:
+    # The EC2 host is reachable only through SSM, so the login user may hold the
+    # (root-equivalent) docker group; the on-prem play deliberately does not.
+    flip_docker_users: [ubuntu]
+  roles:
+    - flip_base_packages
+    - flip_docker
+
+- name: wire the NVIDIA container runtime into Docker on a GPU trust host
+  hosts: trust_ec2
+  become: true
+  tasks:
+    - name: register the runtime and check a container sees the GPU
+      include_role:
+        name: flip_gpu_host
+        tasks_from: runtime
+
+- name: install AWS CLI v2 on Trust EC2 (if missing)
+  hosts: trust_ec2
+  become: true
+  roles:
+    - flip_aws_cli
+
+- name: create Trust EC2 application directories
+  hosts: trust_ec2
+  become: true
+  vars:
+    # /opt/flip/trust is where a per-trust kit file (.env.<slot>) lands if one is ever
+    # delivered to the host out of band. Nothing here copies one: deploy and upgrade evaluate
+    # the trust compose on the ADMIN workstation against its local trust/.env.<KIT>.<env> and
+    # drive the EC2 daemon over the ssh docker context, so the kit never has to exist on the
+    # instance.
+    flip_app_dirs:
+      - /opt/flip/trust
+    # One images tree per FL kit slot: the prod composes default
+    # BASE_IMAGES_DOWNLOAD_DIR to /opt/flip/data/trust-<slot> and prod kits deliberately
+    # leave that variable unset. Slots 1 and 2 unconditionally, so the pre-registration
+    # pass — which has no assigned slot to read yet — still lays down the common case. The
+    # registered slot is added on top: FL_KIT_SLOT_NUMBER is handed out by the hub and is not
+    # bounded by 2, so a host on slot 3 would otherwise have Docker create the path
+    # root-owned, which is exactly the failure the role's comments describe. `unique` keeps
+    # the list flat when the registered slot is 1 or 2.
+    flip_images_base_dirs: >-
+      {{ (['/opt/flip/data/trust-1', '/opt/flip/data/trust-2']
+          + (['/opt/flip/data/trust-' ~ trust_num]
+             if trust_num is defined and trust_num | string | length > 0
+             else [])) | unique }}
+    # The approved-cohort membership stores (FLIP#857), the same slot derivation as the images
+    # trees: the prod composes default COHORT_SNAPSHOT_STORAGE_DIR to
+    # /opt/flip/cohort-snapshots/trust-<slot>. An upgrade also prepares the registered slot's,
+    # for a host provisioned before the store existed.
+    flip_cohort_snapshot_dirs: >-
+      {{ (['/opt/flip/cohort-snapshots/trust-1', '/opt/flip/cohort-snapshots/trust-2']
+          + (['/opt/flip/cohort-snapshots/trust-' ~ trust_num]
+             if trust_num is defined and trust_num | string | length > 0
+             else [])) | unique }}
+    # The EC2 stack bind-mounts Loki/Grafana data from /opt/flip/volumes.
+    flip_observability_volume_dirs: true
+  roles:
+    - flip_trust_dirs
+
+- name: stage the FL participant kit on Trust EC2
+  hosts: trust_ec2
+  become: true
+  # `flkit` so this kit-staging play can be run on its own (e.g. re-staging a
+  # kit after re-registration) via `--tags flkit`, without the host reboot /
+  # OMOP+Orthanc seeding the full playbook performs.
+  tags: flkit
+  vars:
+    fl_kit_source: s3
+  roles:
+    - flip_fl_kit
+
+- name: deploy observability config files to Trust EC2
+  hosts: trust_ec2
+  become: true
+  roles:
+    - flip_observability_config
+
+- name: install and configure CloudWatch agent on Trust EC2
+  hosts: trust_ec2
+  become: true
+  roles:
+    - flip_cloudwatch_agent
+
+- name: seed the trust's OMOP database and Orthanc from the canonical dataset on Trust EC2
+  hosts: trust_ec2
+  become: true
+  tags: [data, seed]
+  roles:
+    - flip_trust_seed
+
+- name: load OMOP core vocabulary on Trust EC2
+  # The canonical dataset carries no core vocabulary (FLIP#842/#843): it is licensed, so
+  # it is loaded separately (role flip_omop_vocab), into the cluster the seed play above
+  # filled, via a throwaway container on a loopback-only port. The loader skips tables
+  # that already hold the core vocabulary, so re-runs are safe. Bundle comes from the org
+  # S3 bucket via the instance role.
+  hosts: trust_ec2
+  become: true
+  tags: [data, omop, omop-vocab]
+  roles:
+    - flip_omop_vocab

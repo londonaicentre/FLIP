@@ -1,0 +1,57 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Ships syslog, the container logs and host metrics to CloudWatch. The instance profile carries
+# CloudWatchAgentServerPolicy, which lets the agent create its log group.
+---
+- name: download CloudWatch agent package
+  get_url:
+    url: "{{ cloudwatch_agent_deb }}"
+    dest: "/tmp/amazon-cloudwatch-agent.deb"
+    mode: "0644"
+
+# The package creates cwagent with the highest free system uid, which on a fresh host is 999: the
+# Orthanc container's uid, so the agent's account would own the DICOM store on the host. The
+# package keeps an account that already exists, so create it first, below 999.
+- name: create the cwagent account below the Orthanc uid
+  shell: |
+    set -euo pipefail
+    if ! getent group cwagent >/dev/null; then
+      groupadd --system -K SYS_GID_MAX=998 cwagent
+      echo created
+    fi
+    if ! id cwagent >/dev/null 2>&1; then
+      useradd --system -K SYS_UID_MAX=998 -M -d /home/cwagent -g cwagent -s /usr/sbin/nologin \
+        -c "Cloudwatch Agent" cwagent
+      echo created
+    fi
+  args:
+    executable: /bin/bash
+  register: cwagent_account
+  changed_when: "'created' in cwagent_account.stdout"
+
+- name: install CloudWatch agent
+  apt:
+    deb: "/tmp/amazon-cloudwatch-agent.deb"
+
+- name: configure CloudWatch agent for Trust EC2
+  template:
+    src: cloudwatch-agent-trust.json.j2
+    dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: start CloudWatch agent
+  command: >
+    /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+    -a fetch-config -m ec2
+    -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s

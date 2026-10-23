@@ -19,8 +19,9 @@
 
 Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
-`onprem.yml` is the on-prem counterpart of the EC2 play [`deploy/providers/AWS/site.yml`](../../../deploy/providers/AWS/site.yml),
-which the [AWS provider](../../../deploy/providers/AWS/README.md) runs against the cloud trust it creates. Together they implement the
+`onprem.yml` is the on-prem counterpart of the EC2 plays [`aws-ec2-host.yml`](aws-ec2-host.yml), which
+[`aws-ec2.yml`](aws-ec2.yml) runs against a node from [`../terraform/aws-ec2`](../terraform/aws-ec2/README.md) and
+[`deploy/providers/AWS/site.yml`](../../../deploy/providers/AWS/site.yml) against the hub's own cloud trust. Together they implement the
 [hybrid deployment model](../../../docs/source/deploy-flip.rst).
 
 ## Architecture
@@ -128,7 +129,7 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 ### What `provision-local-trust` does
 
 1. Runs the Ansible playbook (`onprem.yml`), a composition of the shared roles in
-   [`roles/`](roles/README.md) (the EC2 play `deploy/providers/AWS/site.yml` composes the same ones):
+   [`roles/`](roles/README.md) (the EC2 plays `aws-ec2-host.yml` compose the same ones):
    - Installs Docker and the base packages (`flip_base_packages`, `flip_docker` — no docker-group grant)
    - Creates the application, images and XNAT directories under `/opt/flip/` (`flip_trust_dirs`):
      - `/opt/flip/` and `/opt/flip/data/images/`, owned by `ubuntu`

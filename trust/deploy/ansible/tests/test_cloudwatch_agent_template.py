@@ -26,7 +26,7 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "roles" / "flip_cloudwatch_agent" / "templates"
 TEMPLATE_NAME = "cloudwatch-agent-trust.json.j2"
 INSTANCE_ID = "i-0123456789abcdef0"
 TRUST_LOG_GROUP = "/aws/ec2/flip-trust"
