@@ -5,10 +5,15 @@
 FL nets
 #######
 
-FLIP supports two federated learning frameworks, :term:`NVIDIA FLARE` and the :term:`Flower Framework`. In
-both, the federated learning services are deployed as a collection of **nets**: each net is one FL API and one
-FL server on the Central Hub plus one FL client at every participating Trust, and the hub's scheduler hands
-each queued training job to whichever net is free.
+FLIP runs federated learning on :term:`NVIDIA FLARE` or the :term:`Flower Framework`, deployed as a set of
+**nets**. A net is one FL API and one FL server on the Central Hub, plus one FL client at every participating
+Trust. The hub's scheduler hands each queued training job to a free net.
+
+This page is for engineers deploying or operating FLIP. It covers what a net is made of, how a job reaches one,
+and what holds a job back. Two companion pages cover the rest:
+
+- :doc:`component-fl-jobs`: job types, required files, ``config.json`` and the ``flip`` package your code calls.
+- :doc:`component-fl-privacy`: the privacy filters on model updates, and the controls a Trust sets for itself.
 
 .. contents:: On this page
    :local:
@@ -29,658 +34,171 @@ Nets and the scheduler
 What a net is made of
 =====================
 
-- **FL server** — orchestrates the training process across sites and aggregates the weights; it also uploads
-  the results at the end of training. FLARE: the FLARE server. Flower: the SuperLink.
-- **FL client** — performs local training on the data at its site and sends weight updates to the server. One
-  per Trust per net, and the only component that runs deep learning — so the only one that needs a GPU.
-  FLARE: a FLARE client holding that Trust's signed startup kit. Flower: a SuperNode.
-- **FL API** — a small FastAPI service in front of the server that launches jobs and reports their status; it
-  is the only FL component the Central Hub API talks to. The FLARE one wraps the FLARE admin session, the
-  Flower one wraps ``flwr`` (a Flower net also runs a one-shot job at start-up to register the SuperNodes'
-  authentication keys with the SuperLink).
+.. list-table::
+   :header-rows: 1
+   :widths: 16 44 20 20
 
-The FL API and server are hosted at the Central Hub (in the cloud), while clients are launched at the Trusts
-participating in a project (cloud or on-premise). Service names follow the net: ``fl-api-net-N`` and
-``fl-server-net-N`` on the hub, ``fl-client-net-N`` at each Trust. The FL data plane is a dedicated network
-per net (``fl-net-N``) whose only members are that net's server and clients — the Central Hub API and the FL
-API are deliberately not on it, and an FL client carries no hub URL and no hub credential. Trusts connect
-**outbound** to the server, with mutual TLS on both backends using the per-participant certificates from the
-provisioned kits.
+   * - Component
+     - What it does
+     - FLARE
+     - Flower
+   * - **FL server**
+     - Orchestrates training across sites, aggregates the weights and uploads the results at the end.
+     - FLARE server
+     - SuperLink
+   * - **FL client**
+     - Trains locally on its site's data and sends weight updates to the server. One per Trust per net. The
+       only component that runs deep learning, so the only one that needs a GPU.
+     - FLARE client holding the Trust's signed startup kit
+     - SuperNode
+   * - **FL API**
+     - A small FastAPI service in front of the server that launches jobs and reports their status. The only FL
+       component the Central Hub API talks to.
+     - Wraps the FLARE admin session
+     - Wraps the ``flwr`` command line
 
-Neither end of that plane can be assumed to have a route to the public internet. On a platform-managed
-estate the FL server runs in an account with no internet gateway or NAT of its own — its egress leaves through
-a central inspection firewall that permits only the platform's own endpoints — and a Trust's training host
-sits behind the Trust's firewall. An app is therefore **offline by construction**: everything it needs —
-weights, checkpoints, auxiliary networks — must arrive through the model-file upload, never a run-time
-download (see the note under *Model Files* in the :doc:`user guide <../user-guides/user-common>`). A
-``pretrained=True`` or ``torch.hub`` call in an app hangs the server-side job process; on FLARE the Trust
-then reports ``cannot sync with server Runner``, on Flower the run simply never issues a round, and either
-way the model is left at ``INITIATED`` and the net ``BUSY``.
+The FL API and server run on the Central Hub. FL clients run at the Trusts, in the cloud or on-premises. Service
+names follow the net: ``fl-api-net-N`` and ``fl-server-net-N`` on the hub, ``fl-client-net-N`` at each Trust.
+
+Each net has its own FL network (``fl-net-N``) whose only members are that net's server and clients. The Central
+Hub API and the FL API are not on it, and an FL client has no hub URL or hub credential. Trusts connect
+**outbound** to the server, over TLS:
+
+- **FLARE** uses mutual TLS with the per-participant certificates in the provisioned kits.
+- **Flower** checks the SuperLink's certificate, and each SuperNode authenticates with its own key pair. A
+  one-shot job registers the SuperNodes' public keys with the SuperLink when the net starts.
+
+.. warning::
+
+   **FL apps must work offline.** Neither the FL server nor a Trust's training host can be assumed to reach the
+   public internet: on a platform-managed estate the server's egress allows only the platform's own endpoints,
+   and Trust hosts sit behind the Trust's firewall. Everything an app needs (weights, checkpoints, auxiliary
+   networks) must arrive as uploaded model files, never as a run-time download (see *Model files* in the
+   :ref:`user guide <model-files>`).
+
+   A ``pretrained=True`` or ``torch.hub`` call hangs the job on the server. On FLARE the Trust then reports
+   ``cannot sync with server Runner``; on Flower the run never starts a round. Either way the model stays
+   ``INITIATED`` and the net ``BUSY``.
 
 Kit slots and client names
 ==========================
 
-The FL server knows a client by the name in its certificate, not by the Trust's hub-side name. Those names
-are the **FL kit slots** (``Trust_1``, ``Trust_2``, …): a fixed pool provisioned once per net, from which a
-Trust claims one slot when it registers with the hub. The slot name is what appears in FL logs and what an
-app's ``AGGREGATION_WEIGHTS`` keys must use (see :ref:`fl-training-configuration`).
+The FL server knows a client by the name in its credentials, not by the Trust's hub-side name. These names are
+the **FL kit slots** (``Trust_1``, ``Trust_2``, …): a fixed pool provisioned once per net, from which each Trust
+claims one when it registers with the hub. The slot name is what appears in FL logs, and what an app's
+``AGGREGATION_WEIGHTS`` keys must use (see :ref:`fl-training-configuration`).
 
 How a job reaches a net
 =======================
 
-Initiating training on a model creates a **job** in the hub's queue. Every ``SCHEDULER_RUN_JOBS_RATE``
-minutes (default 1) the Central Hub API's scheduler:
+Starting training on a model creates a **job** in the hub's queue. On each scheduler tick the Central Hub API:
 
-1. frees any net whose job has already finished or been deleted;
-2. stops here if **deployment mode** is on (below);
-3. locks one net whose status is ``AVAILABLE`` and marks it ``BUSY``;
-4. takes the oldest ``QUEUED`` job — retiring any whose Trusts are no longer approved for the model — and
-   marks it ``IN_PROGRESS``, or releases the net again if the queue is empty;
-5. bundles the app (the researcher's uploaded files plus the platform's template for the job type, see
-   :ref:`fl-required-files`), uploads it to that net's FL API and submits it.
+#. frees any net whose job has finished or been deleted;
+#. stops here if **deployment mode** is on (see below);
+#. locks one ``AVAILABLE`` net and marks it ``BUSY``;
+#. takes the oldest ``QUEUED`` job and marks it ``IN_PROGRESS``, retiring any job whose Trusts are no longer
+   approved for the model; if the queue is empty, it releases the net again;
+#. bundles the app from the platform's template for the job type and the researcher's uploaded files (see
+   :doc:`component-fl-jobs`), uploads it to that net's FL API and submits it.
 
-Each net trains one job at a time; the queue is first-come, first-served, and a model's queue position is
-shown in the UI while it waits. The backend of each net (FLARE or Flower) is recorded on the hub when the
-nets are seeded and decides which template is bundled: a deployment chooses the backend, a model does not.
+Each net trains one job at a time. The queue is first-come, first-served, and the UI shows a waiting model's
+queue position. Each net's backend is recorded on the hub when the nets are seeded and decides which template
+is bundled: **the deployment chooses the backend, not the model**.
 
-A job's server-side process reports the model's final status to the hub itself. If that process dies first (out of
-memory, killed, or lost when its server restarts), the hub notices on its own: every ``SCHEDULER_FL_JOB_WATCHDOG_RATE``
-minutes it compares each running job with its net's job list, and a job the FL server has ended or no longer has, while
-its model is still running, is set to ``ERROR`` after ``FL_JOB_WATCHDOG_STRIKES`` checks in a row (default 3). The
-model's log says what the FL server reported, and the net takes the next queued job. A job still being prepared
-``FL_JOB_PREPARE_TIMEOUT_MINUTES`` (default 30) after pickup is treated the same way. An FL API the hub cannot reach
-fails nothing: the net shows offline on the Connection Status page instead.
+Any problem with the app itself (an unknown job type, a missing required file, invalid settings) is found while
+bundling or submitting. The model is then set to ``ERROR`` with the reason in its log, and the net is freed.
+
+**Which clients train** differs by backend:
+
+- **FLARE** trains on exactly the Trusts selected for the run, and every one of them is mandatory. Before
+  submitting, the hub checks that all of them are connected; if one is not, the model fails straight away with
+  *Clients unavailable* and the Trust's slot name.
+- **Flower** waits until at least as many SuperNodes are connected as Trusts were selected, then trains on
+  **every SuperNode connected to the net**, selected or not. The hub only logs a warning about a selected Trust
+  that is not connected.
+
+When a job dies without reporting
+---------------------------------
+
+A job's server-side process reports the model's final status to the hub itself. If that process dies first (out
+of memory, killed, or lost in a server restart), the hub's **job watchdog** catches it. It compares each running
+job with its net's job list; a job the FL server has ended or no longer has, while the model is still running,
+is set to ``ERROR`` after several checks in a row. The model's log records what the FL server reported, and the
+net moves on to the next queued job. A job still being prepared after a timeout is treated the same way.
+
+An FL API the hub cannot reach fails nothing: the net shows as offline on the Connection Status page instead.
+
+Scheduler settings
+------------------
+
+These are Central Hub API settings. All are in minutes except the strike count.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 45 15
+
+   * - Setting
+     - What it controls
+     - Default
+   * - ``SCHEDULER_RUN_JOBS_RATE``
+     - How often the scheduler runs the steps above.
+     - 1
+   * - ``SCHEDULER_FL_JOB_WATCHDOG_RATE``
+     - How often the watchdog checks running jobs.
+     - 1
+   * - ``FL_JOB_WATCHDOG_STRIKES``
+     - Consecutive failed checks before a job is set to ``ERROR``.
+     - 3
+   * - ``FL_JOB_PREPARE_TIMEOUT_MINUTES``
+     - How long a job may stay in preparation after pickup.
+     - 30
 
 GPU requirements and FLARE's scheduler
 ========================================
 
-On FLARE a job states what it needs at each Trust in its ``meta.json`` ``resource_spec``
-(``num_of_gpus``: the job's own declaration, a per-run override, or the hub's ``JOB_RESOURCE_SPEC_NUM_GPUS``
-default; see :ref:`fl-nvflare-meta-json`), and each Trust's FL client states what it has: its
-``GPUResourceManager`` is configured from the kit's ``NUM_AVAILABLE_GPUS``. Before the FL server starts a
-job it asks every Trust whether it can provide its share. FLIP never lowers the request to fit a Trust,
+On FLARE, a job states how many GPUs it needs at each Trust (``num_of_gpus`` in its ``meta.json``; see
+:ref:`fl-nvflare-meta-json`). The count comes from, first match wins:
+
+#. an override the researcher sets when starting training;
+#. the job's own ``meta.json``;
+#. the FL API's default, ``JOB_RESOURCE_SPEC_NUM_GPUS`` (0 unless the deployment changes it).
+
+Each Trust's FL client states what it has, from ``NUM_AVAILABLE_GPUS`` in its kit. Before starting a job, the
+FL server asks every Trust whether it can provide its share. **FLIP never lowers the request to fit a Trust**,
 because that would quietly train a GPU job on a CPU.
 
-If a Trust says no, FLARE's scheduler holds the job and tries again later, waiting longer each time
-(10 s, doubling to at most 10 minutes). After 10 tries, about 40 minutes, it gives up and marks the job
-``FINISHED:CAN_NOT_SCHEDULE``. The FL server's ``JobSchedulingReporter`` (a FLIP site component that the
-fl-server registers at start-up through ``local/flip__p_resources.json``, which FLARE loads only into
-the server's parent process) puts each refusal in the model's activity feed, against the Trust that could
-not provide the resources:
+If a Trust cannot provide the GPUs, FLARE holds the job and retries with a growing delay (10 s, doubling up to
+10 minutes). After 10 tries (about 40 minutes) it gives up and marks the job ``FINISHED:CAN_NOT_SCHEDULE``. Each
+refusal appears in the model's activity feed, against the Trust that could not provide the resources:
 
-- while FLARE keeps trying: *Waiting for resources · this trust cannot provide 1 GPU · try
-  2 of 10*;
+- while FLARE keeps trying: *Waiting for resources · this trust cannot provide 1 GPU · try 2 of 10*;
 - on the last try: *Training could not start · … · FLARE gave up after 10 tries*. The model then turns
-  ``ERROR`` and the net is freed. Without this, a job that never starts has nothing inside it to tell the
-  hub, and the model would sit at ``INITIATED`` with the net ``BUSY``. That last update is the reporter's
-  only chance, so it retries it for about a minute until the hub accepts it; if the hub is unreachable for
-  longer, the job watchdog above fails the model once FLARE lists the job as failed.
+  ``ERROR`` and the net is freed. This final update is retried for about a minute until the hub accepts it; if
+  the hub is unreachable for longer, the job watchdog fails the model once FLARE lists the job as failed.
 
-The reporter only hears about a job once the scheduler has asked the Trusts for their resources. FLARE
-stops before that, and fires no event, when a job has no deploy map (refused outright), when one of its
-Trusts is not connected (FLIP makes every Trust in a run mandatory), or when fewer Trusts are connected
-than its ``min_clients`` (both retried as above). The hub is told about none of these: the model stays at
-``INITIATED`` with the net ``BUSY`` until **Abort job** frees it. The job watchdog does not catch the two retried
-cases either, because FLARE still lists the job as pending.
+A CPU-only Trust (``NUM_AVAILABLE_GPUS=0``) can only take part in jobs that ask for no GPUs. To run a GPU model,
+either the Trust adds GPUs or the model goes to Trusts that have them.
 
-**Abort job** also takes a job that is still waiting out of the FL server's queue (FLARE marks it
-``FINISHED:ABORTED``), so it cannot start later, or report to the model once it has been queued again.
+.. important::
 
-To run that model, either the Trust adds the GPUs, or the model goes to Trusts that have them. A CPU-only
-Trust (``NUM_AVAILABLE_GPUS=0``) can only take part in jobs that ask for no GPUs.
+   If a Trust **disconnects** after the job is submitted but before FLARE starts it, the hub hears nothing.
+   FLARE keeps retrying, but lists the job as pending, so the job watchdog does not catch it either. The model
+   stays ``INITIATED`` and the net ``BUSY`` until someone clicks **Abort job**.
+
+**Abort job** also removes a job still waiting in the FL server's queue (FLARE marks it ``FINISHED:ABORTED``),
+so it cannot start later or report to the model once that model has been queued again.
+
+On Flower, a GPU request is recorded but not enforced: Flower's deployment runtime does not schedule jobs by GPU.
 
 Deployment mode (quiescing the nets)
 ====================================
 
-Replacing an FL server kills any training run in flight on its net. Administrators can therefore switch the
-hub into **deployment mode**: the scheduler stops picking up queued jobs (they keep their place and resume,
-oldest first, when the mode is switched off) while running jobs finish and free their nets.
-``GET /api/fl/quiesce`` reports both the mode and whether any net is still ``BUSY`` — the safe-to-redeploy
-signal. The admin workflow is on :doc:`/sys-admin/admin-project-and-user-management`.
-
-*********
-Job types
-*********
-
-Due to security restrictions, FLIP users are not allowed to control what happens on the server side.
-Although most adjustable aspects of machine learning training happen on the client side
-(e.g. dataloading, training loop, model architecture), FLIP provides different job types
-that the user can choose based on their needs.
-Which job types are available depends on the backend.
-**Both backends** offer federated averaging (job type `standard`) and an evaluation task
-(job type `evaluation`) — for a Flower app, those two are the whole set.
-**FLARE** adds two-stage diffusion model training (job type `diffusion_model`) and federated
-optimisation (job type `fed_opt`, which shares `standard`'s client contract and differs only in
-the server-side optimizer aggregation). Every FLARE job type drives the client code through the
-modern **FLARE Client API** — a plain training/evaluation script using ``nvflare.client``
-(these Client-API templates briefly lived under `*_client_api` names alongside the Executor-based
-ones, then took over the plain names when those were retired).
-The manifests under :ref:`fl-required-files` are the authoritative list for each backend.
-On both backends an evaluation sends each trust's returned metrics to the hub from the FL server,
-so they appear on the model page as one point per trust, at round 0 on FLARE and round 1 on
-Flower. Whatever aggregate metrics the evaluation returns are forwarded, upper-cased, with undefined
-values such as NaN left out. FLARE evaluation code needs nothing extra and nested keys are joined
-with ``/``; a Flower client must name itself with ``client_name`` (or ``site``) in its reply config. A FLARE
-evaluator can keep results out of the plots and in the results file only: see the evaluation template's README.
-More job types will be added in the future, adjusting to the community's needs.
-
-**How to choose a job type?**
-
-A federated learning job is an ensemble of files (among which we can find `python`, `json` or `toml` files)
-we call an app. Some of these files are required to run the app, and some are optional — which ones
-are required depends on the job type (see :ref:`fl-required-files` below).
-
-The job type is passed as key `job_type` in the `config.json` file (for both FLARE and Flower apps).
-An unrecognised value is rejected at submission, and a missing one falls back to ``standard``. The file
-itself is a required file for every job type on both backends (see :ref:`fl-required-files`), so an app
-that omits it is rejected before bundling rather than defaulted.
-
-Once uploaded, the UI will indicate which files are required for the specific job.
-
-Then, the Central Hub API will take care of bundling together:
-
-- The files the user has uploaded
-- The static (non-modifiable) files that are required for the specific job type.
-
-For more information about currently supported apps, see the per-job-type implementations under
-`fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_.
-
-The FLARE tutorials (all Client-API apps):
-
-- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification>`_ (job type `standard`)
-- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_ (job type `standard`)
-- `3d_spleen_segmentation_evaluation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation>`_ (job type `evaluation`)
-- `latent_diffusion_model <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_synthesis/latent_diffusion_model>`_ (job type `diffusion_model`)
-- `ehr_risk_prediction <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction>`_ (job type `standard`)
-
-The three `standard` examples show how one job type runs quite different user-uploaded
-applications: each performs a supervised federated averaging training, but the data, architecture
-and training configuration differ. The third goes furthest — its cohort is tabular OMOP data with no
-imaging in it at all, which is possible because a job type describes the FLARE job FLIP assembles
-around your files, never the modality. What to fetch is the uploaded script's decision: an imaging
-app calls ``flip.get_by_accession_number``, the EHR one calls only ``flip.get_dataframe``.
-
-These tutorials run on the local FLARE simulator from the repo root — e.g.
-``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (the imaging ones require a GPU;
-the tabular EHR example runs on CPU — see the
-`fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ README).
-
-
-.. figure:: ../assets/fl/job_types.svg
-   :alt: The researcher uploads config.json, trainer.py, models.py and any helpers. The job_type in
-         config.json selects a template, which lists the files it requires and provides fixed
-         server-side files. If a required file is missing the submission is rejected; otherwise the
-         template's files and the researcher's files are bundled into one app and submitted to the
-         net's FL API.
-   :align: center
-   :width: 100%
-
-   From uploaded files to a submitted app. The job type decides which files you must supply; the
-   server side always comes from the platform's template.
-
-.. _fl-required-files:
-
-***************************
-Required files per job type
-***************************
-
-Each job type declares its own set of required files. A submission missing any of them is rejected
-before anything is shipped to a Trust, with a message naming the missing files.
-
-The manifests that decide this are included below **directly from the repository** rather than
-transcribed, so this page cannot fall out of step with the platform. Each key is a job type and its
-array is the exact set of files that job type requires.
-
-Each backend's manifest is generated from the per-template
-``fl-apps/<backend>/<job_type>/required_files.json`` files by ``fl-apps/check_required_files.sh``,
-which runs as a pre-commit hook and is enforced in CI — so adding a job type or changing its
-required set updates this page as a side effect of the change itself. The FLIP UI reads the same
-manifests through the ``/model/job-types`` endpoint and shows the applicable list on the model page.
-
-.. literalinclude:: ../../../fl-apps/nvflare/required_files.json
-   :language: json
-   :caption: ``fl-apps/nvflare/required_files.json`` — required files per FLARE job type
-
-.. literalinclude:: ../../../fl-apps/flower/required_files.json
-   :language: json
-   :caption: ``fl-apps/flower/required_files.json`` — required files per Flower job type
-
-.. note::
-
-   Every job type on both backends lists ``config.json``, because it is what selects the job type:
-   an app declares ``job_type`` there, and an app without one can only ever run ``standard``. For
-   FLARE it also carries the training configuration described below; for Flower it carries
-   nothing else, since Flower apps take their run configuration from ``config.toml``.
-
-   ``pyproject.toml`` is **not** a file the researcher supplies for a Flower app. It is part of the
-   platform's base template for the job type and is bundled automatically; a ``pyproject.toml``
-   uploaded as a model file does not become the app's project file. Per-run overrides go in
-   ``config.toml`` instead (see below).
-
-Beyond the required set, additional files uploaded with the model are bundled into the app, which is
-how apps ship helper modules and transforms. Two exceptions are worth knowing:
-
-- **A file whose name collides with one the base template already provides is silently dropped.**
-  The template's copy wins and the upload is skipped with only a server-side log line — no error
-  reaches the UI. For Flower this covers ``server_app.py``, ``strategy.py``, ``__init__.py`` and
-  ``pyproject.toml``, which matters in practice because the Flower tutorials ship the first three in
-  their app directories; for FLARE it covers whatever the chosen job type's template already
-  contains.
-- **A checkpoint declared for server-side use is not shipped to the Trusts.** A file named by
-  ``SERVER_CHECKPOINT``, or by an evaluation job's ``models`` entries, is staged on the FL server
-  rather than placed in the app bundle, so it never travels to a client. This is deliberate: it
-  keeps large weights off the client deployment path.
-
-.. _fl-training-configuration:
-
-**********************
-Training configuration
-**********************
-
-FLARE ``config.json``
-=======================
-
-For FLARE job types, ``config.json`` carries both the job type and the platform-recognised
-training settings. Every setting has a default, so an app that declares only ``job_type`` is valid.
-
-.. code-block:: json
-
-    {
-      "job_type": "standard",
-      "GLOBAL_ROUNDS": 5,
-      "LOCAL_ROUNDS": 2,
-      "IGNORE_RESULT_ERROR": false,
-      "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-      "AGGREGATION_WEIGHTS": {
-         "Trust_1": 1.0,
-         "Trust_2": 0.5
-      }
-    }
-
-**GLOBAL_ROUNDS**
-   Number of global (server-side) rounds — how many times the server distributes the global model,
-   collects client updates and aggregates them. Accepted range 1–1000 inclusive.
-
-   *Default = 1*
-
-**LOCAL_ROUNDS**
-   Number of local training iterations performed at each client site per global round. Accepted
-   range 1–1000 inclusive.
-
-   *Default = 1*
-
-   .. note::
-
-      A value that is not a number, or that falls outside the accepted range, is discarded rather
-      than reported. What happens next differs between the two keys, because the platform consumes
-      them differently.
-
-      ``GLOBAL_ROUNDS`` is read by the platform and written into the server's job configuration, so
-      a discarded value really does produce a **one-round run**. A single-round job is easy to
-      mistake for a broken one, so check the value that reached the job if training finishes sooner
-      than expected. The exception is ``BEST_MODEL_METRIC``: because it requires at least two global
-      rounds, a discarded ``GLOBAL_ROUNDS`` fails the job outright instead of defaulting.
-
-      ``LOCAL_ROUNDS`` is **not** read by the platform — it is read by your own trainer, straight out
-      of ``config.json``. The default of 1 is filled in only when the key is *absent*; a key that is
-      present but invalid is left exactly as written, so the value reaches your trainer verbatim.
-      ``"LOCAL_ROUNDS": 5000`` will run 5000 local iterations, and a non-numeric value will fail
-      inside your own code rather than at validation.
-
-      Neither key is rewritten in the ``config.json`` deployed with the app, so app code that reads
-      ``GLOBAL_ROUNDS`` from that file sees the value you wrote, not the value the server is using.
-
-**IGNORE_RESULT_ERROR**
-   Whether training should proceed when a client returns an error.
-
-   *Default = false*
-
-**AGGREGATOR**
-   The FLARE aggregation component used to combine client updates. FLIP only supports aggregator
-   components built into FLARE; allowed values are ``InTimeAccumulateWeightedAggregator`` and
-   ``AccumulateWeightedAggregator``. Any other value fails config validation and prevents training
-   from starting.
-
-   *Default =* ``InTimeAccumulateWeightedAggregator``
-
-**AGGREGATION_WEIGHTS**
-   JSON object mapping a client site to the weight its update carries in aggregation. Weights must
-   be numbers between 0 and 1 inclusive; a non-object value, or a weight outside that range, fails
-   config validation.
-
-   .. warning::
-
-      The keys are **FL client site names** — the FL kit slot each Trust occupies (``Trust_1``,
-      ``Trust_2``, …), which is what the FL server knows a client by. They are not the Trust's
-      hub-side name or code. A key that matches no participating client is simply unused, so a
-      mistyped key produces no error and no effect.
-
-   *Default = no weights supplied, which FLARE treats as a weight of 1.0 for every participating
-   client*
-
-**AGGREGATE_ONLY_REGEX**
-   Regular expression matching the model-parameter names to keep in each client update. When set,
-   only matching parameters are sent back to the server — for example, a fine-tune with a frozen
-   backbone can ship just its head instead of the full model. Must be a valid regular expression.
-
-   *Default = unset, i.e. the full model update is sent*
-
-**BEST_MODEL_METRIC** / **BEST_MODEL_METRIC_MINIMIZE**
-   Validation-metric label driving best-global-model selection. When set, the best global model is
-   saved alongside the final one and included in the results, and the client trainer must report a
-   metric under this label. Set ``BEST_MODEL_METRIC_MINIMIZE`` to ``true`` for loss-like metrics
-   where lower is better. Because selection cannot happen before the first aggregate exists,
-   ``BEST_MODEL_METRIC`` requires ``GLOBAL_ROUNDS`` of at least 2, and setting
-   ``BEST_MODEL_METRIC_MINIMIZE`` on its own is rejected.
-
-   *Default = unset, i.e. only the final model is saved*
-
-Three further keys are read by FLIP's own FLARE components rather than by the FL API's validator,
-so they are unvalidated but are not simply passed through either: ``SERVER_CHECKPOINT`` (names a
-model file to stage on the FL server instead of bundling it into the app — a string or a list of
-strings), ``GLOBAL_ROUNDS_AE`` and ``GLOBAL_ROUNDS_DM`` (per-phase round counts for the two-phase
-``diffusion_model`` job types, which bypass the range check applied to ``GLOBAL_ROUNDS``), and
-``models`` (the checkpoints an evaluation job loads, each entry naming a ``checkpoint`` file).
-
-Any other key the platform does not recognise is passed through to the app untouched, for the
-uploaded code to read at runtime. This is how the tutorials carry app-specific settings such as
-``LEARNING_RATE`` or ``VAL_SPLIT`` — those are conventions of individual apps, not platform
-settings, and they are neither validated nor defaulted. A misspelled key of this kind is therefore
-silently absent at runtime rather than reported as an error.
-
-One key is written by the platform rather than read: ``FLIP_MODEL_ID``, the hub's id for the model,
-which FLIP's components on the FL server report under. The FL API writes it into every app
-folder's ``config.json`` when training starts, replacing any value you set, as the Flower FL API
-writes ``flip-model-id`` into ``config.toml``.
-
-.. _fl-nvflare-meta-json:
-
-FLARE ``meta.json``
-=====================
-
-A FLARE job's ``meta.json`` states what the job needs at each site. FLIP takes the job's own:
-upload a ``meta.json`` with your model files and it replaces the template's. Write it by hand, or
-export it from a recipe or ``FedJob`` (``export_job``), as you would for ``nvflare job submit``. FLIP
-keeps two keys and writes the rest from the run:
-
-**resource_spec**
-   What the job needs at every participating Trust, as FLARE's portable ``@default`` block:
-
-   .. code-block:: json
-
-      {"resource_spec": {"@default": {"num_of_gpus": 1}}}
-
-   ``num_of_gpus`` is a whole number from 0 to 8. The FL server's scheduler holds the job until
-   every Trust's resource manager (configured from the kit's ``NUM_AVAILABLE_GPUS``) can provide
-   the GPUs, and the request is never lowered to fit a Trust. ``num_of_cpus`` (a whole number, at
-   least 1) and ``memory`` (such as ``"32Gi"``) are accepted too; only FLARE's container job
-   launchers (Docker, Kubernetes) read them, as the job container's request.
-
-   A block naming a site is refused, because a job cannot know the Trusts' site names, and so is
-   ``mem_per_gpu_in_GiB``, which FLARE's portable block does not accept. A researcher can
-   override the GPU count for one run when initiating training (see the
-   :doc:`user guide <../user-guides/user-common>`).
-
-   *Default = the platform's* ``JOB_RESOURCE_SPEC_NUM_GPUS`` *(0 GPUs unless the deployment changes
-   it), when the job's* ``resource_spec`` *states no GPU count. FLIP's templates ship an empty one.*
-
-**custom_props**
-   Kept as written, for your own components. FLIP no longer reads a ``model_id`` from it, and drops
-   one if present: the recipes leave a placeholder there for local runs.
-
-**name**, **deploy_map**, **min_clients**, **mandatory_clients**
-   Written by FLIP from the run: the job is named after the model, and every selected Trust must
-   take part.
-
-Any other key fails the job when training starts, ``launcher_spec``, ``study`` and ``scope`` among
-them. Those choose how a Trust runs the job (its container image, its data, its privacy scope),
-which is the Trust's decision. Flower apps have no ``meta.json``: Flower's deployment runtime does
-not schedule jobs by GPU.
-
-Flower run configuration
-========================
-
-Flower apps do not use the FLARE keys above. Their run configuration lives in the
-``[tool.flwr.app.config]`` table of the base template's ``pyproject.toml``, which the platform
-supplies. An app overrides those values with a ``config.toml`` file uploaded alongside its code:
-the FL API passes it to ``flwr run --run-config`` at submission, and the FLIP runtime parameters
-(model id, project id, cohort query, job directory) are injected into it automatically.
-
-``config.toml`` can only override keys that the template's ``pyproject.toml`` already declares — it
-cannot introduce new ones. Round counts follow Flower's naming rather than FLARE's, as
-``num-server-rounds`` (global rounds) and ``local-epochs`` (local rounds).
-
-For a worked example of both files, see the Flower tutorials under
-`fl-tutorials/flower/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/flower>`_
-and :doc:`/working-with-flip-apps/create-flip-app-from-flower`.
-
-****************************************************
-Data access and communication with external services
-****************************************************
-
-Though the user is allowed to upload the training script that will run on the client side, the access to data will have
-to be via the FLIP package (see `flip-utils/flip/
-<https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip>`_).
-This package, installed by default in client and server nodes, will make a series of functions available to the user.
-
-For data access:
-
-- ``flip.get_dataframe(project_id, query)``: retrieves the dataframe linked to the project ID and query that have been
-  used on the project.
-- ``flip.get_by_accession_number(project_id, accession_id, resource_type)``: retrieves data of a certain type
-  (e.g. NIFTI) associated with an accession ID. ``resource_type`` defaults to ``ResourceType.NIFTI`` and can be a
-  single type or a list.
-
-These calls - among others - communicate with the Imaging API and retrieve the data from the project's XNAT.
-
-The first ``get_by_accession_number`` call per (project, accession, resource type) is a full study download out of
-XNAT onto the trust host. The Imaging API caches it there, so later calls — e.g. the same fetch loop running again on
-the next FL round — return the local copy after one small XNAT check, which downloads it again if the study changed
-there. Training code can therefore call it every round
-without penalty and should not build its own on-disk guards around it; to force a re-download (e.g. a file replaced
-by one of the same size), the Imaging API's download route accepts ``force_refresh=true`` (uploads through
-``flip.add_resource`` invalidate the cache automatically).
-
-For communication with the Central Hub:
-
-- ``flip.update_status(model_id, new_model_status)``: these calls will update the Central Hub about status on the
-  specific model that is running (example: when it started training, or if there's an error).
-- ``flip.send_metrics(client_name, model_id, label, value, global_round, x_value=None, x_label=None)``: sends a metric
-  to the central hub so that it can plot the training results. ``global_round`` is provenance — always the FL global
-  round the metric is reported in. Where the point is *plotted* is the optional coordinate pair: ``x_value`` is the
-  x-coordinate (any float, e.g. an epoch counter) and ``x_label`` names the x-axis (e.g. ``"epoch"``); both default to
-  the global round on the "Global Rounds" axis. A plot is identified by the ``(label, x_label)`` pair, so the same
-  metric logged against different x-labels is shown as separate plots.
-- ``flip.send_event(model_id, event_type, global_round, ...)``: sends a typed round-progress **fact** to the Central
-  Hub — one of ``ROUND_STARTED``, ``CLIENT_RESULT_RECEIVED`` (with the serialized update size in
-  ``details.size_bytes``) or ``ROUND_AGGREGATED`` (with ``returned``/``expected`` counts). The hub composes the display
-  text shown in the model page's Live activity feed at serve time, so wording changes ship with a flip-api redeploy and
-  never require rebuilding FL images. Rounds are 1-based on both backends.
-
-The fl-server emits these events automatically — FLARE via the FLIP ``ScatterAndGather``/``ServerEventHandler`` components (wired by path in each template's server config, so no app-template changes were required), Flower via the ``flip.flower.strategy.FlipFedAvg`` base strategy the app templates subclass. User training code never calls ``send_event`` directly. Pre-existing **Flower** apps (whose uploaded strategy subclasses stock ``FedAvg``) keep working and simply emit no round telemetry; pre-existing **FLARE** apps reference the FLIP components by path from the baked ``flip`` package, so they start emitting as soon as the fl-server image carries this version — with no app change.
-
-Note the reported upload sizes measure slightly different things per backend — FLARE sums the in-memory tensor sizes of the client's (possibly partial) weight update, Flower sums the serialized array buffers — each internally consistent within a run.
-
-The server will also use the package to update the status, as well as to upload the final results, which will be first saved in the server, to the final S3 buckets users can download from.
-
-
-***************************************
-Privacy filters on shared model updates
-***************************************
-
-Both backends privatise a client's training result before it leaves the site, but with different
-mechanisms: FLARE sparsifies and clips without noise, while Flower clips and adds calibrated
-Gaussian noise for a formal ``(epsilon, delta)`` guarantee.
-
-FLARE: percentile sparsification
-==================================
-
-Before a client's training result leaves a site, the FLARE training job types (`standard`, `fed_opt`,
-`diffusion_model`) pass it through a percentile-based
-privacy filter (``PercentilePrivacy``, following Shokri & Shmatikov, "Privacy-preserving deep learning",
-CCS '15; the diffusion job types use the stage-aware ``StagePercentilePrivacy`` subclass, which computes
-the cutoff per training stage):
-
-- weight-diff components with magnitude **below** the ``percentile``-th percentile are zeroed, so only the
-  largest ``100 - percentile`` % of each update's components are shared;
-- the surviving components are truncated to ``±gamma``.
-
-FLIP ships the stock FLARE defaults — ``percentile=10``, ``gamma=0.01`` (share the top 90 %, clip at 0.01).
-Both values can be tuned per app in the job's ``config_fed_client.json`` (or via
-``FlipFedAvgRecipe(percentile_privacy=...)`` for recipe-generated jobs), and the filter can be disabled for a
-run with ``off: true``. Two caveats for anyone changing them:
-
-- **Raising** ``percentile`` **sharply degrades training.** At e.g. 95 only the top 5 % of every update
-  survives, which stalls FedAvg convergence; on a frozen-backbone (head-only) finetune it silently resets the
-  global head every round. For that reason the head-only ``KeepOnlyVars`` filter is always ordered before
-  ``PercentilePrivacy``, so the percentile is computed over the trainable parameters only, never the frozen
-  backbone's all-zero diffs.
-- **This is a heuristic output filter, not formal differential privacy.** Sparsifying and clipping each shared
-  update bounds what a single round reveals, but adds no calibrated noise and carries no
-  ``(epsilon, delta)`` guarantee. It complements — rather than replaces — FLIP's primary output controls
-  (review of the uploaded app code and aggregate-only results).
-
-Site-enforced privacy policy (per trust)
-========================================
-
-The filter above is part of the **app**: it is configured in the job's ``config_fed_client.json``, so its
-parameters — including ``off: true`` — are chosen on the researcher's side. Since `FLIP#851 <https://github.com/londonaicentre/FLIP/issues/851>`__ each trust can
-additionally enforce its **own** update-privacy filter through FLARE's site privacy policy
-(``local/privacy.json`` in the client's workspace), configured entirely on the trust's side:
-
-- The trust sets ``FL_SITE_PRIVACY_*`` variables in its kit file (``trust/.env.<CODE>.<env>``, Host-local
-  profile section) and restarts its fl-clients (``make -C trust up-fl-clients-kit KIT=<CODE>``). No hub
-  redeploy, and no coordination with other trusts — different trusts can run different policies in the same
-  federation.
-- The fl-client entrypoint renders the policy into ``/app/local/privacy.json`` at container start
-  (``python -m flip.nvflare.site_policy``). With the variables unset, no policy file is written and behaviour
-  is exactly as before (app-level filters only). An **invalid** combination — including an unrecognised
-  ``FL_SITE_PRIVACY_*`` name, so a typo cannot quietly leave the defaults in force — stops the fl-client at
-  startup (fail closed) rather than running unfiltered.
-
-The policy uses the **stock** FLARE ``PercentilePrivacy`` filter, which unlike FLIP's app-level subclass
-has no ``off`` switch:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 40 30
-
-   * - Variable
-     - Meaning
-     - Default
-   * - ``FL_SITE_PRIVACY_POLICY``
-     - ``percentile`` (deterministic clip + sparsify). Unset = no site policy.
-     - unset
-   * - ``FL_SITE_PRIVACY_PERCENTILE`` / ``FL_SITE_PRIVACY_GAMMA``
-     - Parameters for the percentile policy (same maths as the app-level filter above). ``gamma`` accepts
-       any positive value; a larger ``gamma`` merely weakens the truncation.
-     - ``10`` / ``0.01``
-
-Semantics — verified against FLARE 2.9.0:
-
-- **The site policy composes with, and cannot be bypassed by, the app config.** FLARE applies site scope
-  filters *before* the job's ``task_result_filters`` in one chain (``nvflare/apis/utils/task_utils.py``);
-  job filters are appended, never substituted. An app that sets ``off: true`` (or ships no filter at all —
-  the evaluation templates) disables only its own filter instance; the site filter still runs.
-- **Jobs cannot opt out or pick a weaker scope.** The rendered policy defines exactly one scope
-  (``site_default``) set as ``default_scope``. FLIP's fl-api refuses a job whose ``meta.json`` sets a ``scope``
-  key and never sets one itself, so every job lands in the default scope; a job carrying an unknown scope name
-  is rejected at deploy time on that site with ``privacy scope 'X' is not allowed``.
-- **Ordering changes the percentile maths slightly.** The site filter runs before the job's ``KeepOnlyVars``,
-  so it computes its percentile over the *full* result dict — on a frozen-backbone (head-only) finetune that
-  vector is dominated by the backbone's all-zero diffs, unlike the app-level filter which deliberately runs
-  after ``KeepOnlyVars``. Prefer modest site percentiles (the default ``10``); the convergence caveat above
-  applies doubly here.
-- **Evaluation results are unaffected.** The filter only transforms ``WEIGHTS`` / ``WEIGHT_DIFF``
-  payloads, so metrics and validation results pass through untouched.
-- **Failures are loud.** A filter error surfaces as ``TASK_RESULT_FILTER_ERROR`` in the FL logs and the
-  client's audit trail — never a silent unfiltered send.
-- **FLARE only.** Flower has no site-side filter hook, so this enforcement point does not exist on the
-  Flower backend; the app-level review of uploaded training code remains the control there (Flower parity is
-  tracked in `FLIP#852 <https://github.com/londonaicentre/FLIP/issues/852>`__).
-
-Trust governance document (per trust)
-=====================================
-
-A trust can also state its policy as a **governance document** (``trust/governance.<CODE>.toml``,
-`FLIP#1259 <https://github.com/londonaicentre/FLIP/issues/1259>`__) and point ``ACCESS_POLICY_FILE``
-at it. Its ``[fl_privacy.nvflare]`` section is this renderer's other input, an **alternative** to
-``FL_SITE_PRIVACY_*`` rather than an override: setting the filter in both stops the fl-client, since a
-document able to override the kit could also weaken it. Its ``[disclosure]``/``[access]`` sections
-carry ``COHORT_QUERY_THRESHOLD`` (which they may raise but never lower) and permit/deny rules over
-project and operation, enforced by ``data-access-api`` (see :doc:`component-trust-apis`). The document
-is optional, and can only tighten a trust's posture: with none configured the settings above remain
-the only controls and behaviour is unchanged. ``trust/governance.example.toml`` is a worked example of
-every key.
-
-The section is nested under the backend because ``percentile`` and ``gamma`` are FLARE's
-``PercentilePrivacy`` parameters. ``[fl_privacy.flower]`` is refused until Flower has a site-side hook
-(FLIP#852), and ``make -C trust check-governance`` fails a site privacy section on a Flower trust
-rather than report it active.
-
-The fl-client never mounts the whole document: researcher code runs inside the client as the same
-user, and would read every access rule. A one-shot init step in the client's own image
-(``fl-governance-init`` in Compose, the ``governance-extract`` init container on Kubernetes) runs
-``python -m flip.nvflare.site_policy --extract`` and hands the client the ``[fl_privacy]`` table
-alone. An invalid document fails that step, and the client does not start. Validate and apply an
-edit to a live trust:
-
-.. code-block:: sh
-
-   make -C trust check-governance KIT=<CODE>    # both halves, through the services' own loaders
-   make -C trust reload-governance KIT=<CODE>   # recreates data-access-api (+ the FLARE clients) only
-
-``reload-governance`` touches no data. Deliberately not ``up-trust`` or ``restart-trust``: both are
-first-install verbs, and on a live trust their XNAT step runs ``xnat-reset`` (wiping the XNAT archive
-and database) while their seeding step can replace the data volumes. Recreating the fl-clients does
-interrupt any job they are running, so apply between runs.
-
-Flower: local differential privacy
-==================================
-
-The Flower counterpart is ``flip.flower.privacy.flip_local_dp_mod``, a Flower *mod* that runs on the
-SuperNode. It clips the local update to a fixed L2 norm and adds Gaussian noise scaled to the configured
-budget, so the fl-server only ever receives a privatised update:
-
-.. code-block:: text
-
-   sigma = dp-sensitivity * sqrt(2 * ln(1.25 / dp-delta)) / dp-epsilon
-
-The maths is Flower's own (``compute_clip_model_update`` and ``add_gaussian_noise_inplace``); FLIP adds a
-config toggle and an integer-buffer carve-out. Parameters come from ``[tool.flwr.app.config]`` —
-``dp-enabled`` (default ``true``), ``dp-clipping-norm``, ``dp-sensitivity``, ``dp-epsilon``, ``dp-delta`` —
-and can be overridden per run with ``flwr run . --run-config "dp-enabled=false"``. ``dp-enabled: false``
-makes the mod a pass-through, mirroring the FLARE filter's ``off`` flag so DP-on and DP-off runs use an
-identical app.
-
-Three things to know:
-
-- **It applies to training rounds only.** The mod is registered as ``@app.train(mods=[flip_local_dp_mod])``,
-  leaving ``@app.evaluate`` untouched, which mirrors the ``train``-task scope of the FLARE filter.
-- **Integer buffers pass through unprivatised.** BatchNorm's ``num_batches_tracked`` counters and similar
-  integer entries are step counts rather than learned parameters, and Flower's clipping scales each array
-  in place by a float, which numpy cannot write back into an integer array. Excluding them is what keeps
-  the mod from crashing the client the first time clipping engages on a real model.
-- **Enforcement is by code review, not by the platform.** Unlike FLARE — where the filter is a
-  ``task_result_filters`` entry in the FLIP-owned ``config_fed_client.json`` — a Flower app's
-  ``client_app.py`` is uploaded by the model developer, so the template cannot register the mod on the
-  developer's behalf. An uploaded app that omits it shares raw updates. The shipped tutorials
-  (``xray_classification``, ``3d_spleen_segmentation``) wire it as worked examples.
-
-The shipped parameter defaults are utility-first demonstration values, not a defensible privacy budget: a
-real budget calibrates ``dp-sensitivity`` to the local dataset and accounts for composition across rounds,
-which this mod does not do — every round spends the budget again.
-
-
-**********************************************
-Where the template ends and your upload begins
-**********************************************
-
-Two facts about how an app is assembled are easy to miss:
-
-- for every FLARE job type the user upload is intentionally minimal — see :ref:`fl-required-files` for the per-job-type set — and the rest of the app is filled in from
-  the static (non-modifiable) templates baked into the flip-api image at `FL_APP_BASE_DIR` (`fl-apps/`, see `FLIP#724 <https://github.com/londonaicentre/FLIP/issues/724>`__).
-  These templates used to be published to an S3 bucket; that path has been removed. You can check what a fully bundled app looks like by consulting
-  the per-job-type implementations under `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`__.
-- every FLARE job type takes a plain training/evaluation script that calls
-  ``nvflare.client`` directly (`fed_opt` reuses `standard`'s trainer contract unchanged).
+Replacing an FL server kills any training run in flight on its net. Before redeploying, an administrator can
+switch the hub into **deployment mode**:
+
+- the scheduler stops picking up queued jobs; they keep their place and resume, oldest first, when the mode is
+  switched off;
+- running jobs finish and free their nets.
+
+``GET /api/fl/quiesce`` reports the mode and whether any net is still ``BUSY``. When no net is busy, it is safe to
+redeploy. The admin workflow is in :ref:`deployment-mode`.

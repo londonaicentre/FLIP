@@ -293,6 +293,7 @@ services:
       # or the recorder signs in as an account the seed never granted.
       - DEMO_ADMIN_EMAIL=${DEMO_ADMIN_EMAIL:-flip-demo-admin@example.com}
       - DEMO_RESEARCHER_EMAIL=${DEMO_RESEARCHER_EMAIL:-flip-demo-researcher@example.com}
+      - DEMO_TRUST_ADMIN_EMAIL=${DEMO_TRUST_ADMIN_EMAIL:-flip-demo-trust-admin@example.com}
       # Settings.LOG_LEVEL defaults to INFO so unknown environments emit
       # at INFO. Local dev defaults to DEBUG when LOG_LEVEL is unset
       # (override via LOG_LEVEL in .env.development) so debug-level

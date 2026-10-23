@@ -8,24 +8,28 @@
 | `source/components.rst` | Toctree of the component pages (Overview, Central Hub, FL nets, Trust APIs, OMOP, XNAT, PACS, Logging Stack) |
 | `source/sys-admin.rst` | System administration, deployment, auth configuration |
 | `source/user-guides.rst` | User-facing workflows and guides |
-| `source/api-reference.rst` | Auto-generated Python module reference (sphinx-autoapi); the REST endpoint table lives in `source/components/component-central-hub.rst` |
-| `source/deploy-flip.rst` | Deployment instructions (central hub — a parent page with one child per AWS deployment mode — TRE, on-prem) |
+| `source/api-reference.rst` | Auto-generated Python reference for `flip-utils` only (sphinx-autoapi; the hub and trust services are applications, not libraries); the REST endpoint table lives in `source/components/component-central-hub.rst` |
+| `source/deploy-flip.rst` | Deployment section index: the Central Hub, a trust node, local development |
 | `source/working-with-flip-apps.rst` | Building FL apps (FLARE / Flower) |
 | `source/flip-workflow.rst` | End-to-end FLIP workflow |
 | `source/faqs.rst` | Frequently asked questions |
 | `source/glossary.rst` | Terminology definitions |
 | `source/security.rst` | How FLIP addresses security at each layer (network, cloud estate, identity, clinical-data boundary, the FL process itself, storage/transport, supply chain) — written for partner trusts and information governance leads |
 | `source/governance-and-compliance.rst` | Who decides what in FLIP and how the platform maps onto NHS assurance frameworks — written for information governance/Caldicott functions and research ethics committees; companion to `security.rst` |
+| `source/paper.rst` | The FLIP paper (arXiv 2609.36001): citation, plus the guides reproducing its experiments under `source/paper/` (Ark+ fine-tuning, platform overhead) — last section of the Documentation toctree |
+| `source/troubleshooting.rst` | Troubleshooting section index (symptom → cause → fix pages under `source/troubleshooting/`) |
+| `source/release-notes.rst` | Where release notes live (GitHub Releases) and how releases are versioned |
 
 ## Sub-docs
 
 | Directory | Topic |
 |-----------|-------|
-| `source/components/` | Per-component deep dives: `overview` (component map), `component-central-hub` (hub services, deployment-agnostic), `component-fl-nets` (nets, scheduler, job types, config, privacy filters), `component-trust-apis` (trust-api / imaging-api / data-access-api), OMOP, XNAT, PACS, logging stack |
-| `source/sys-admin/` | Admin tasks (user roles, project/user management, platform support) |
-| `source/user-guides/` | User guide files |
-| `source/deploy-flip/` | Per-target deployment guides: `deploy-local-dev` (the one-host `make up` walkthrough: env file, XNAT `prepare-artifacts`, the optional AWS SSO for the OMOP vocabulary, first sign-in), `deploy-central-hub` (modes table + shared sections) with children `deploy-central-hub-aws` (self-contained, the legacy generated diagrams) and `deploy-central-hub-aws-lza` (platform-managed, the LZA generated diagrams); TRE; on-prem |
-| `source/working-with-flip-apps/` | Step-by-step FLARE / Flower app authoring |
+| `source/components/` | Per-component deep dives: `overview` (component map), `component-central-hub` (hub services, deployment-agnostic), `component-fl-nets` (nets, kit slots, scheduler, GPUs, quiesce), `component-fl-jobs` (job types, required files, config.json, meta.json, `flip.*` calls), `component-fl-privacy` (privacy filters, site policy, governance document), `component-trust-apis` (trust-api / imaging-api / data-access-api), OMOP, XNAT, PACS, logging stack |
+| `source/sys-admin/` | Admin tasks: project/user management, user roles, platform support, upgrading sites, backup and restore |
+| `source/user-guides/` | Researcher guides: `getting-started`, `user-common` (landing) with `user-account` / `user-projects` / `user-models` / `user-training`, data enrichment, trust admin |
+| `source/deploy-flip/` | Deployment guides: `deploy-central-hub` (modes, shared hub operations) with children `deploy-central-hub-aws` (self-contained) and `deploy-central-hub-aws-lza` (platform-managed); `deploy-trust-node` (landing) with `onboarding-a-trust` (the shared runbook) and the per-platform pages `deploy-flip-node-on-prem` (Docker Compose), `deploy-flip-node-azure` (Azure VM), `deploy-flip-node-kubernetes` (Helm), `deploy-flip-node-in-tre`; `deploy-local-dev` (the one-host `make up` walkthrough) |
+| `source/working-with-flip-apps/` | `choosing-an-fl-framework`, the paired FLARE / Flower app-authoring pages, `wrap-model-for-deployment` (MAP tutorial) and `map-toolchain-reference` |
+| `source/troubleshooting/` | Symptom-first troubleshooting: FL training/projects, Central Hub on AWS, trust on Compose, trust on Kubernetes (index: `source/troubleshooting.rst`) |
 
 ## Paired pages
 
@@ -66,3 +70,10 @@ revision. Recordings are published by `.github/workflows/regenerate_docs_gifs.ym
 job tags the recording a release ships (`scripts/freeze_docs_gifs.py`) before it pushes the git tag. The card
 is `scripts/docs_gifs_card.md`. Adding a GIF is a spec + an rst figure in one PR; it renders once that PR
 reaches `develop` and is recorded — `tests/test_docs_gifs_wiring.py` keeps figures and specs in step.
+
+GIFs that need a live trust (the MONAI Label walkthrough: GPU + the real XNAT OHIF viewer) are listed in
+`scripts/live-recorded-gifs.txt` instead of having a spec; `expected_gifs()` joins them to the spec set, so the
+wiring test and the publisher treat them alike. They are cut by `make -C trust/monailabel-demo demo-gifs` and
+published by hand to dataset branch `pr-<N>` of the PR that re-cuts them (its preview shows them); a CI publish,
+which cannot record them, carries each one forward from the merged PR's `pr-<N>`, else from `main`
+(`--carry-from`, sha256-checked against that ref's manifest).

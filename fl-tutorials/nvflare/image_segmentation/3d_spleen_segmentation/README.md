@@ -22,7 +22,7 @@ Each converted `input_*.nii.gz` CT volume must have a sibling `label_*.nii.gz` s
 the same folder. The trainer QC-skips non-3D images and image/label shape mismatches, and **fails
 loudly when no pair is found** — on the platform that almost always means the data-enrichment (label
 upload) step was skipped (the trust PACS supplies CT images only; see
-`docs/source/user-guides/user-common.rst`).
+`docs/source/user-guides/user-data-enrichment.rst`).
 
 ### Dataset setup (local runs)
 

@@ -469,3 +469,20 @@ footer hr { display: none; }
 
 /* ── Scrollbar hint in dark sidebar ────────────────────────────────────*/
 .wy-menu-vertical { scrollbar-color: rgba(255,255,255,0.2) transparent; }
+
+/* ── Mermaid swimlanes ──────────────────────────────────────────────────
+   Natural size, fitted to the column on wide screens. On a phone a diagram keeps a readable width and
+   scrolls sideways instead of shrinking to illegible text. */
+.rst-content .mermaid-container {
+    overflow-x: auto;
+    max-width: 100%;
+}
+.rst-content .mermaid-container > pre {
+    min-width: 0;  /* a flex item otherwise grows to its content and widens the page */
+    overflow-x: auto;
+}
+@media (max-width: 768px) {
+    .rst-content .mermaid-container > pre > svg {
+        min-width: 900px;
+    }
+}

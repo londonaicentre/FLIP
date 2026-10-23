@@ -100,16 +100,26 @@ full = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Emergency cooldown override (CONTRIBUTING.md, "Emergency override"): admit the critical-advisory fixes
+# certifi 2026.10.19 and uv 0.13.4 before the 3-day cooldown does. Each cutoff is that release's upload time, so
+# nothing newer gets in, and it also freezes the package: remove it after 2026-10-23T15:13Z (#1618).
+exclude-newer-package = { certifi = "2026-10-20T02:25:00Z", uv = "2026-10-20T15:13:00Z" }
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
-    "aiohttp>=3.14.3",           # CVE-2026-47265, CVE-2026-34993, CVE-2026-34525/16/15/14/13/12, CVE-2026-22815, CVE-2026-21860
+    # GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3, GHSA-494j-54xm-rwp3; prior hardening: CVE-2026-47265,
+    # CVE-2026-34993, CVE-2026-34525/16/15/14/13/12, CVE-2026-22815, CVE-2026-21860.
+    "aiohttp>=3.14.4",
     "anyio>=4.14.2",             # CVE-2026-63374, CVE-2026-64847
+    "certifi>=2026.10.19",       # GHSA-6q48-6c7w-9gw2
     "click>=8.3.3",              # CVE-2026-7246
     "cryptography>=50.0.0",      # CVE-2026-26007, CVE-2026-39892, CVE-2026-34073
     "filelock>=3.20.3",          # CVE-2025-68146, CVE-2026-22701
     "fonttools>=4.62.0",         # arbitrary code execution (dev-only, via matplotlib)
     "idna>=3.15",                # CVE-2026-45409
-    "pillow>=12.3.0",            # CVE-2026-42311/42310/42309/42308/40192/25990
+    # GHSA-58r4-6rv3-gfh8, GHSA-8g5g-8vmr-9782, GHSA-pchr-8j38-3x4p, GHSA-vx6w-vv9f-6gvg, GHSA-q45j-58j2-45rg,
+    # GHSA-c6hw-5grf-ff96, GHSA-65qm-jvmh-6pqg, GHSA-p4wg-p73j-c528, GHSA-462x-pgg6-55fp;
+    # prior hardening: CVE-2026-42311/42310/42309/42308/40192/25990.
+    "pillow>=13.0.0",
     "protobuf>=6.33.5",          # CVE-2026-0994
     "pygments>=2.20.0",          # CVE-2026-4539
     "pyjwt>=2.15.0",             # GHSA-42vr-xj54-vc7v, GHSA-x33g-cr3x-6449, CVE-2026-32597
@@ -127,7 +137,9 @@ constraint-dependencies = [
 # Mirrors fl-services/flower/fl-api-flower/pyproject.toml and the fl-base Dockerfile's
 # pip-equivalent (#874); it also keeps the dev group's real-flwr test dependency
 # (test_privacy.py) resolvable against the cryptography floor.
-override-dependencies = ["cryptography>=50.0.0"]
+# flwr 1.38 also pins uv<0.12 for its per-run app install, which FLIP does not use (#1418); override it so
+# uv>=0.13.4 (GHSA-hq85-5cpj-mr62, the same compromised CA root as certifi) can be installed.
+override-dependencies = ["cryptography>=50.0.0", "uv>=0.13.4"]
 
 # Pull torch from PyTorch's cu130 wheel index so every FL backend uses the
 # security-patched 2.13 line. cu130 needs NVIDIA driver >=580.

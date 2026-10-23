@@ -16,7 +16,7 @@ The arkplus fine-tuning tutorial wraps the simulator side as
 `make round-metrics` / `make reproduce-overhead`
 (`fl-tutorials/nvflare/image_classification/arkplus_fine_tuning/`); the full
 cross-site protocol is documented in
-`docs/source/user-guides/reproducing-platform-overhead.rst`.
+`docs/source/paper/reproducing-platform-overhead.rst`.
 
 ## The `rounds.tsv` schema is the contract
 

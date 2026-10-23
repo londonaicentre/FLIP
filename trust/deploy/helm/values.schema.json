@@ -270,6 +270,15 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "kit": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Where the FL kit comes from: hostPath (flClient.kitHostPath on the node) or secret (a Kubernetes Secret, for a managed node pool such as AKS).",
+          "properties": {
+            "source": { "type": "string", "enum": ["hostPath", "secret"] },
+            "secretName": { "type": "string" }
+          }
+        },
         "resources": {
           "type": "object",
           "properties": {
@@ -303,6 +312,16 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "pgdataSubdir": {
+              "type": "string",
+              "pattern": "^([A-Za-z0-9_-][A-Za-z0-9._-]*)?$",
+              "description": "Postgres data directory within the volume: one relative name (e.g. pgdata on a fresh cloud disk), or empty for the volume root"
+            }
+          }
+        },
         "vocabLoad": {
           "type": "object",
           "properties": {
@@ -367,10 +386,46 @@
       "additionalProperties": true,
       "properties": {
         "enabled": { "type": "boolean" },
+        "containerService": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxConcurrentJobs": {
+              "type": ["integer", "null"],
+              "minimum": 1,
+              "description": "How many Container Service jobs (dcm2niix, BestEffort pods) run at once in the namespace, enforced by a ResourceQuota (FLIP#1448). null removes the cap"
+            }
+          }
+        },
+        "db": {
+          "type": "object",
+          "properties": {
+            "persistence": {
+              "type": "object",
+              "properties": {
+                "pgdataSubdir": {
+                  "type": "string",
+                  "pattern": "^([A-Za-z0-9_-][A-Za-z0-9._-]*)?$",
+                  "description": "Postgres data directory within the volume: one relative name (e.g. pgdata on a fresh cloud disk), or empty for the volume root"
+                }
+              }
+            }
+          }
+        },
         "web": {
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
+            "dicomService": {
+              "type": "object",
+              "properties": {
+                "annotations": {
+                  "type": "object",
+                  "description": "Annotations on the DICOM Service, e.g. an internal load balancer on AKS. Scalars only: the template quotes each value",
+                  "additionalProperties": { "type": ["string", "boolean", "number"] }
+                }
+              }
+            },
             "resources": {
               "type": "object",
               "properties": {
@@ -445,6 +500,66 @@
             }
           }
         }
+      }
+    },
+    "monailabel": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "models": { "type": "string" },
+        "projects": { "type": "string" },
+        "publicUrl": { "type": "string" },
+        "shmSize": { "type": "string" },
+        "gpu": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "count": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "coScheduleWithXnat": { "type": "boolean" },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
+            },
+            "nodePort": {
+              "anyOf": [
+                { "type": "integer", "minimum": 30000, "maximum": 32767 },
+                { "type": "null" },
+                { "type": "string", "maxLength": 0 }
+              ]
+            },
+            "allowExternalIngress": { "type": "boolean" }
+          }
+        },
+        "allowedIngressCIDRs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "authEnable": { "type": "boolean" },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "size": { "type": "string" },
+            "storageClassName": { "type": "string" }
+          }
+        },
+        "resources": { "type": "object" }
       }
     }
   }

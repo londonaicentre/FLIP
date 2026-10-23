@@ -139,8 +139,15 @@ else
     fi
 fi
 
+if ! command -v uv >/dev/null 2>&1; then
+    fail "uv not found — required by sync_k8s_kit.py (sync-kit, deploy-trust-k8s) and upgrade-trust-k8s"
+    hint "Install: https://docs.astral.sh/uv/getting-started/installation/"
+else
+    pass "uv $(uv --version 2>&1 | extract_semver)"
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 not found — required by sync_k8s_kit.py, check_status.py"
+    fail "python3 not found — required by check_status.py"
     hint "macOS:  brew install python3"
     hint "Linux:  sudo apt-get install python3"
 else
@@ -283,7 +290,7 @@ else
     hint "Or generate it before deploying (never hand-write it — it is gitignored):"
     hint "  python3 ${CHART_DIR}/scripts/generate_values.py \\"
     hint "    --env-file ${REPO_ROOT}/trust/.env.<KIT>.${ENV_SUFFIX} --output-dir ${CHART_DIR}"
-    hint "Then hand-fill the slots no kit carries: orthanc-registered-users and the S3 keys"
+    hint "Then hand-fill any slot it reports unfilled"
 fi
 
 if [ -n "$OVERRIDES_FILE" ]; then

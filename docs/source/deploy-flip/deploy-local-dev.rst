@@ -30,30 +30,38 @@ hub on AWS see :doc:`deploy-central-hub`; for a real Trust see
    :local:
    :depth: 1
 
-***********************************
-What still needs AWS (and what not)
-***********************************
+*******************************
+What you need from AWS: nothing
+*******************************
 
-Neither the hub nor the two example Trusts need a **cloud account**. Sign-in is
-a local Keycloak container, email is printed to the flip-api log, and model
-files, FL app bundles and results live in a local S3-compatible object store
-(RustFS, data under ``./object-store/``). The Trusts' XNAT WAR and plugins are
-public upstream downloads, and the mock patient data (OMOP rows and DICOM
-studies) comes anonymously from the public Hugging Face dataset
-``aicentreflip/trust-data``.
+A local deployment needs no **cloud account and no AWS credentials**, for the
+hub or for either Trust. Sign-in is a local Keycloak container, email is
+printed to the flip-api log, and model files, FL app bundles and results live
+in a local S3-compatible object store (RustFS, data under ``./object-store/``).
+The Trusts' XNAT WAR and plugins are public upstream downloads, and the mock
+patient data (OMOP rows and DICOM studies) comes anonymously from the public
+Hugging Face dataset ``aicentreflip/trust-data``. The walkthrough below,
+including the x-ray tutorial and ``make e2e_smoke``, runs with no AWS CLI
+installed and no credentials configured.
 
-AWS is used for one optional step: the **OMOP core vocabulary** (Step 7). It is
-licensed (SNOMED CT, LOINC, ...), so it is never published, and
-``make -C trust/omop-db load-omop-vocab`` fetches the AI Centre's copy from the
-``vocab/`` prefix of a FLIP deployment's S3 bucket.
+The one thing that *can* come from AWS is the **OMOP core vocabulary** (Step
+7), and only for AI Centre staff. It is licensed (SNOMED CT, LOINC, ...), so it
+is never published, and ``make -C trust/omop-db load-omop-vocab`` fetches the
+AI Centre's copy from the ``vocab/`` prefix of a FLIP deployment's S3 bucket.
+You do not need it for the standard walkthrough: the x-ray tutorial and the
+end-to-end smoke test run without it, through ``query_novocab.sql``, a copy of
+the tutorial's cohort query with the names of the handful of concepts the mock
+data uses written in. You need the vocabulary for the tutorials' own
+``query.sql`` and for any query of yours that looks concepts up by name.
 
 .. note::
 
-   **External contributors can skip Step 3 entirely.** The SSO profile and the
+   **Outside the AI Centre, skip Step 3 entirely.** The SSO profile and the
    maintainer access it mentions only apply to the AI Centre team. Download an
    equivalent vocabulary export from `OHDSI Athena <https://athena.ohdsi.org/>`_
    under your own licence instead — see
    `the core vocabulary bundle <https://github.com/londonaicentre/FLIP/blob/develop/trust/omop-db/README.md#the-core-vocabulary-bundle>`__.
+   That route needs no AWS account either.
 
 *************
 Prerequisites
@@ -68,9 +76,10 @@ Prerequisites
 - A GitHub account with read access to the FLIP packages on GitHub Container
   Registry (``ghcr.io/londonaicentre``). Without it, use ``make up BUILD=true``
   to build every image locally.
-- Optional, AI Centre team only: the `AWS CLI v2 <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>`_
+- Optional, AI Centre team only, and only for the vocabulary in Step 7: the
+  `AWS CLI v2 <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>`_
   and an AWS IAM Identity Center (SSO) user with read access to the bucket
-  holding the OMOP vocabulary (see above).
+  holding the OMOP vocabulary (see above). Nothing else in this guide uses it.
 - Free host ports for the hub (UI, ``8080`` API, ``5432`` database, ``8180``
   Keycloak, ``9000``/``9001`` object store) and for the two Trusts (their ports
   are listed in ``trust/.env.GSTT.development.example`` and
@@ -89,7 +98,8 @@ Step 1 — Clone the project
    git checkout develop
 
 Run every command below from the repository root, as your own user (never
-with ``sudo`` — the containers run with your UID).
+with ``sudo`` — the containers run with your UID). ``make up`` asks for your
+password itself at one point (Step 6), so run it in an interactive terminal.
 
 ************************************
 Step 2 — Create the environment file
@@ -137,12 +147,13 @@ You do **not** need to create the Trust files by hand. ``make up`` copies
 to ``trust/.env.<CODE>.development`` on the first run and fills in each
 Trust's credentials when it registers it with the hub.
 
-*****************************************
-Step 3 — Set up AWS SSO (vocabulary only)
-*****************************************
+*******************************************************
+Step 3 — (Optional) Set up AWS SSO for the vocabulary
+*******************************************************
 
-Skip this step unless you are on the AI Centre team and want the vocabulary
-from its bucket (Step 7).
+**Skip this step and the stack stays entirely AWS-free.** It only matters if
+you are on the AI Centre team and want the licensed vocabulary from its bucket
+(Step 7). Everything up to and including a training run works without it.
 
 1. Configure an SSO profile for the AWS account whose bucket holds the
    vocabulary. A maintainer tells you the SSO start URL, the account, the role
@@ -252,6 +263,21 @@ its XNAT.
 The first run takes a while: images are pulled and each Trust's mock DICOM is
 loaded into Orthanc. Later runs skip anything already seeded.
 
+.. note::
+
+   Before each Trust's XNAT starts, ``make up`` resets its data directory,
+   which XNAT's container owns as UID 1001. That step runs ``sudo`` itself, so
+   expect a **password prompt** (usually just one: sudo remembers it for the
+   second Trust). Answer it in the terminal; do not
+   rerun the whole command as ``sudo make up``, which leaves root-owned files
+   behind (see Troubleshooting). From a script, CI job or any shell without a
+   terminal it fails with ``sudo: A terminal is required to authenticate``.
+
+The two Trusts run side by side on one host as separate Compose projects,
+``trust1`` (GSTT) and ``trust2`` (KCH), each with its own network, data
+directories and host ports from its kit file. KCH's trust API publishes no host
+port: Trusts only ever dial out to the hub.
+
 To start only part of the stack:
 
 .. list-table::
@@ -269,29 +295,37 @@ To start only part of the stack:
    * - ``make up-trusts``
      - The Trusts only, against an already-running hub
 
-*********************************
-Step 7 — Load the OMOP vocabulary
-*********************************
+********************************************
+Step 7 — (Optional) Load the OMOP vocabulary
+********************************************
 
-The published OMOP data is vocabulary-free (the vocabulary is licensed). Load
-it once per Trust, then restart the data-access APIs so they drop cached
-results. The first load downloads the bundle from ``VOCAB_S3_BUCKET`` (Step 3)
-into ``trust/omop-db/data/``; later loads reuse that copy:
+**Optional** — skip it unless you need concept names in your own cohort
+queries (see `What you need from AWS: nothing`_). The published OMOP data
+carries only the freely licensed DICOM vocabulary. To add the core vocabulary,
+load it once per Trust, naming each Trust's kit file so the loader uses that
+Trust's port and credentials, then restart the data-access APIs so they drop
+cached results. The first load downloads the bundle from ``VOCAB_S3_BUCKET``
+(Step 3) into ``trust/omop-db/data/``; later loads reuse that copy:
 
 .. code-block:: bash
 
-   make -C trust/omop-db load-omop-vocab                    # GSTT (port 5434)
-   make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # KCH
+   make -C trust/omop-db load-omop-vocab KIT_ENV_FILE=../.env.GSTT.development
+   make -C trust/omop-db load-omop-vocab KIT_ENV_FILE=../.env.KCH.development
 
    docker restart trust1-data-access-api-1 trust2-data-access-api-1
+
+Each load takes around fifteen minutes. Check the result rather than the
+closing message, which is printed even when the target database was already
+loaded: ``omop.concept`` holds about six million rows afterwards, against
+under ten thousand before.
 
 The container names assume the default stack; with ``FLIP_INSTANCE`` set they
 carry its prefix (``<instance>-trust1-...``). ``docker ps`` lists them.
 
-If you skip this, every cohort query returns zero rows, and later the project
-cannot be staged with ``returned no cohort records (zero or
-privacy-suppressed)`` — which looks like a privacy-threshold problem but is the
-missing vocabulary.
+Without it, a cohort query of your own that joins ``omop.concept`` with an
+inner ``JOIN`` returns zero rows, and the project later fails staging with
+``returned no cohort records (zero or privacy-suppressed)`` — which looks like a
+privacy-threshold problem but is the missing vocabulary.
 
 **************************
 Step 8 — Sign in and check
@@ -309,6 +343,26 @@ built-in users are listed in ``flip-api/src/flip_api/utils/constants.py``. MFA
 is off in development. The realm behind sign-in is described in
 `deploy/keycloak/README.md <https://github.com/londonaicentre/FLIP/blob/develop/deploy/keycloak/README.md>`__.
 
+.. note::
+
+   **Running the stack on another machine.** If the browser is not on the
+   host running the stack, forward every port the browser talks to and keep
+   using ``localhost`` in the address bar. The UI port and the API and
+   Keycloak ports are not enough: model-file uploads and result downloads go
+   straight from the browser to the object store on port ``9000``, through
+   URLs the hub signs for ``localhost:9000``. Without that port forwarded,
+   sign-in works but every upload fails with "Error uploading file" (the
+   browser console shows ``net::ERR_CONNECTION_REFUSED``).
+
+   .. code-block:: bash
+
+      ssh -N -L <UI_PORT>:localhost:<UI_PORT> -L 8080:localhost:8080 \
+             -L 8180:localhost:8180 -L 9000:localhost:9000 -L 9001:localhost:9001 \
+             <user>@<stack-host>
+
+   Add ``-L 8105:localhost:8105 -L 8107:localhost:8107`` to view the Trusts'
+   XNAT in the browser.
+
 To prove the whole chain works — create a project, run a cohort query, import
 images, train, download results — run the end-to-end smoke test (several
 minutes):
@@ -316,6 +370,27 @@ minutes):
 .. code-block:: bash
 
    make e2e_smoke
+
+The smoke test talks to ``http://localhost:8080/api``. If you changed
+``API_PORT``, point it at your port instead:
+``FLIP_E2E_BASE_URL=http://127.0.0.1:<API_PORT>/api make e2e_smoke``.
+
+On a development stack the smoke test submits the x-ray tutorial's
+``query_novocab.sql``, which needs no vocabulary. Pass
+``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query.sql``
+to smoke the vocabulary-backed query instead, once Step 7 is done.
+
+To run the same job by hand, sign in to the UI and follow
+:doc:`../user-guides`, using the cohort query and app files of
+``fl-tutorials/nvflare/image_classification/xray_classification/``
+(``query_novocab.sql`` and ``app_files/``). Each Trust should report about 300
+subjects. Use ``query.sql`` instead once you have loaded the vocabulary
+(Step 7); it returns the same cohort. The Trusts hold only the chest X-ray
+project the seed loads, so a query for other data
+(``flip-api/tests/example_query.sql`` looks for spleen CT, for example) comes
+back empty, and so does any query that filters on concept names until you load
+the vocabulary. An empty cohort and one below the
+Trust's privacy threshold are reported the same way, as suppressed.
 
 **************
 Day-to-day use
@@ -360,12 +435,28 @@ Image pulls fail with ``denied`` or ``unauthorized``
    ``trust/xnat/artifacts.manifest``. Run ``make -C trust prepare-artifacts``
    (Step 5) and ``make up`` again.
 
+Uploading a model file fails with "Error uploading file"
+   The browser cannot reach the object store on port ``9000``. This happens
+   when the browser runs on another machine and only the UI, API and Keycloak
+   ports are forwarded. Forward port ``9000`` too (see Step 8).
+
 The UI loads but sign-in fails
-   Check ``UI_PORT`` is the port in your browser's address bar, and that
-   nothing else is using port ``8180``.
+   Open the UI at ``http://localhost:<UI_PORT>``, not ``127.0.0.1``: the hub
+   API only accepts browser requests from the ``localhost`` origin, and a
+   refused request shows only "There was a problem logging you in". Also check
+   that ``UI_PORT`` is the port in the address bar and that nothing else is
+   using port ``8180``.
+
+``make up`` stops with ``sudo: A terminal is required to authenticate``
+   The XNAT reset needs your password (Step 6). Run ``make up`` again in an
+   interactive terminal; the hub and anything already seeded are skipped.
 
 Cohort queries return no records
-   Load the OMOP vocabulary (Step 7).
+   If the query joins ``omop.concept``, load the OMOP vocabulary (Step 7). If
+   you loaded data or vocabulary after first running the query, restart the
+   data-access APIs (``docker restart trust1-data-access-api-1
+   trust2-data-access-api-1``): each caches a query's result, zero rows
+   included, and logs a cached zero with the same privacy-suppression wording.
 
 ``permission denied`` on ``object-store/`` or ``jobs/``
    A container created the directory as root, usually after a plain

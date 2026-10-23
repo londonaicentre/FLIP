@@ -133,8 +133,8 @@ Options:
       --start ISO8601       Start of the search window (skips auto-discovery), e.g. 2026-06-30T09:00:00Z
       --end ISO8601         End of the search window (requires --start)
       --search-days N       When --start/--end are not given, how many days back to search
-                             for the model_id in flip-api logs (default: 7, matching the
-                             CloudWatch retention configured in deploy/providers/AWS/ecs.tf)
+                             for the model_id in flip-api logs (default: 7; the logs
+                             themselves are kept 365 days in prod, 90 elsewhere)
       --pad-minutes N        Padding (minutes) applied around the discovered training window
                              before querying fl-api-net-*/fl-server-net-* (default: 10)
       --ecs-cluster NAME     ECS cluster name for the best-effort stopped-task check

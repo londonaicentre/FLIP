@@ -18,6 +18,7 @@ DQR 3.0.0 and xnat-web 1.10.0 serve: camelCase fields, epoch-millisecond times, 
 """
 
 import json
+import logging
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -31,8 +32,11 @@ from imaging_api.services import import_requests
 from imaging_api.services.import_requests import (
     DirectArchiveSession,
     PacsRequest,
+    archive_prearchive_session,
+    delete_prearchive_session,
     get_direct_archive_sessions,
     get_executed_import_requests,
+    get_prearchive_sessions,
     get_queued_import_requests,
 )
 from imaging_api.utils.exceptions import NotFoundError, XnatFetchError
@@ -441,10 +445,138 @@ def test_every_read_is_bounded_in_time(xnat):
     xnat.pages("GET", "/xapi/dqr/import/queue", [[]])
     xnat.pages("GET", "/xapi/dqr/import/history", [[]])
     xnat.pages("POST", "/xapi/direct-archive", [[]])
+    xnat.on("GET", f"/data/prearchive/projects/{PROJECT}", lambda r: (200, {"ResultSet": {"Result": []}}))
+    xnat.on("POST", "/data/services/archive", lambda r: (303, ""))
     with patch.object(requests.Session, "send", side_effect=record_timeout):
         get_queued_import_requests(PROJECT, {})
         get_executed_import_requests(PROJECT, {})
         get_direct_archive_sessions(PROJECT, {})
+        get_prearchive_sessions(PROJECT, {})
+        archive_prearchive_session("/prearchive/projects/p/t/ACC", {})
 
-    assert len(timeouts) == 4
+    assert len(timeouts) == 6
     assert all(t == XNAT_REQUEST_TIMEOUT for t in timeouts)
+
+
+# ===========================================================================
+# Prearchive (FLIP#1511)
+# ===========================================================================
+
+PREARCHIVE = f"/data/prearchive/projects/{PROJECT}"
+
+
+def _prearchived(name: str = "ACC", project: str = PROJECT, status: str = "ERROR") -> dict[str, Any]:
+    """A prearchive session as xnat-web 1.10.0 lists it, here one whose direct-archive failed."""
+    stamp = "20261016_095724314"
+    return {
+        "project": project,
+        "timestamp": stamp,
+        "folderName": name,
+        "name": name,
+        "status": status,
+        "url": f"/prearchive/projects/{project}/{stamp}/{name}",
+    }
+
+
+def test_prearchive_lists_the_projects_sessions_with_their_urls(xnat):
+    xnat.on(
+        "GET",
+        PREARCHIVE,
+        lambda r: (
+            200,
+            {
+                "ResultSet": {
+                    "Result": [_prearchived("A1"), _prearchived("B1", OTHER), _prearchived("A2", status="READY")]
+                }
+            },
+        ),
+    )
+
+    sessions = get_prearchive_sessions(PROJECT, {})
+
+    [request] = xnat.requested("GET", PREARCHIVE)
+    assert _query(request) == {"format": ["json"]}
+    assert [(s.name, s.folder_name, s.status, s.url) for s in sessions] == [
+        ("A1", "A1", "ERROR", f"/prearchive/projects/{PROJECT}/20261016_095724314/A1"),
+        ("A2", "A2", "READY", f"/prearchive/projects/{PROJECT}/20261016_095724314/A2"),
+    ]
+
+
+def test_an_empty_prearchive_is_no_sessions(xnat):
+    xnat.on("GET", PREARCHIVE, lambda r: (200, {"ResultSet": {"Result": []}}))
+
+    assert get_prearchive_sessions(PROJECT, {}) == []
+
+
+@pytest.mark.parametrize(
+    "answer", [(500, "There was an error"), (200, {"unexpected": True})], ids=["500", "not-a-listing"]
+)
+def test_an_unreadable_prearchive_is_a_fetch_error(xnat, answer):
+    xnat.on("GET", PREARCHIVE, lambda r: answer)
+
+    with pytest.raises(XnatFetchError, match="prearchive session fetch failed"):
+        get_prearchive_sessions(PROJECT, {})
+
+
+@pytest.mark.parametrize("status", [200, 303])
+def test_archiving_a_prearchive_session_appends_it_to_the_archive(xnat, status):
+    src = _prearchived()["url"]
+    xnat.on("POST", "/data/services/archive", lambda r: (status, ""))
+
+    assert archive_prearchive_session(src, {}) is True
+
+    [request] = xnat.requested("POST", "/data/services/archive")
+    assert _query(request) == {"src": [src], "overwrite": ["append"]}
+
+
+@pytest.mark.parametrize("status", [400, 409, 500])
+def test_a_refused_archive_is_false(xnat, status):
+    xnat.on("POST", "/data/services/archive", lambda r: (status, "Session already exists"))
+
+    assert archive_prearchive_session(_prearchived()["url"], {}) is False
+
+
+def test_an_archive_transport_failure_is_false_and_never_logs_the_session(xnat, caplog):
+    """The prearchive URL names the session, i.e. the accession number, so it must not reach the log."""
+    caplog.set_level(logging.DEBUG)
+    src = _prearchived("ACC_SECRET")["url"]
+
+    def refuse(request):
+        raise requests.ConnectionError(f"failed to reach {request.url}")
+
+    xnat.on("POST", "/data/services/archive", refuse)
+
+    assert archive_prearchive_session(src, {}) is False
+    assert "ConnectionError" in caplog.text
+    assert "ACC_SECRET" not in caplog.text
+
+
+def test_deleting_a_prearchive_session_deletes_it_by_its_url(xnat):
+    src = _prearchived()["url"]
+    xnat.on("DELETE", f"/data{src}", lambda r: (200, ""))
+
+    assert delete_prearchive_session(src, {}) is True
+
+    assert len(xnat.requested("DELETE", f"/data{src}")) == 1
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_a_refused_delete_is_false(xnat, status):
+    src = _prearchived()["url"]
+    xnat.on("DELETE", f"/data{src}", lambda r: (status, "Unable to modify session data"))
+
+    assert delete_prearchive_session(src, {}) is False
+
+
+def test_a_delete_transport_failure_is_false_and_never_logs_the_session(xnat, caplog):
+    caplog.set_level(logging.DEBUG)
+    src = _prearchived("ACC_SECRET")["url"]
+
+    def refuse(request):
+        raise requests.ConnectionError(f"failed to reach {request.url}")
+
+    xnat.on("DELETE", f"/data{src}", refuse)
+
+    assert delete_prearchive_session(src, {}) is False
+    assert "ConnectionError" in caplog.text
+    assert "ACC_SECRET" not in caplog.text

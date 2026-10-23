@@ -378,6 +378,10 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
 def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
     """Every image reference the site would pull once the kit pins ``tag`` (FL client at ``fl_tag``)."""
     refs = [f"{_SITE_REGISTRY}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
+    # The optional MONAI Label overlay (compose_trust.production.monailabel.yml) pulls at DOCKER_TAG
+    # too, but only on a kit that turns it on — the same exact-"true" test as trust/Makefile.
+    if kit.get("MONAI_LABEL", "").strip() == "true":
+        refs.append(f"{_SITE_REGISTRY}monailabel:{tag}")
     fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
     return [*refs, f"{_SITE_REGISTRY}{fl_client}:{fl_tag or tag}"]
 

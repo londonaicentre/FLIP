@@ -37,6 +37,7 @@ One copy of every file, at an unversioned path:
 | --- | --- |
 | `admin/<name>.gif` | one per `flip-ui/test/cypress/docs/admin/<name>.spec.ts` |
 | `flip/<name>.gif` | one per `flip-ui/test/cypress/docs/flip/<name>.spec.ts` |
+| `<category>/<name>.gif` | one per line of `docs/scripts/live-recorded-gifs.txt`: recorded on a live trust (e.g. `monailabel/`, the MONAI Label walkthrough), carried forward unchanged by CI publishes |
 | `manifest.json` | the provenance of this recording and the sha256 + size of every GIF |
 | `README.md` | this card (`docs/scripts/docs_gifs_card.md` in the FLIP repository) |
 

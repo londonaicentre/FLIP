@@ -1,0 +1,41 @@
+#cloud-config
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# First boot of an Azure FLIP trust node (FLIP#1390): install the tools, write flip-node and
+# its settings, then let flip-node mount the data disk, clone FLIP at the pinned ref and run
+# trust/deploy/ansible/azure.yml locally. Holds no secrets.
+package_update: true
+packages:
+  - git
+  - make
+  - curl
+  - unzip
+  - python3
+  - ansible-core
+write_files:
+  - path: /etc/flip/node.env
+    permissions: "0644"
+    content: |
+      FLIP_REPO_URL=${repo_url}
+      FLIP_REF=${ref}
+      FLIP_ADMIN_USER=${admin_user}
+      FL_BACKEND=${fl_backend}
+      KIT_DROP_URL=${kit_drop_url}
+  - path: /usr/local/sbin/flip-node
+    permissions: "0755"
+    content: |
+      ${indent(6, flip_node_script)}
+runcmd:
+  - [/usr/local/sbin/flip-node, provision]
