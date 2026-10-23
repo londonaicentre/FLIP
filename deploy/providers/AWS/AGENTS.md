@@ -59,7 +59,7 @@ make rollback-centralhub                      # Repoint ECS services at the prev
 make deploy-trust                             # Deploy trust stack to EC2
 make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
 make stage-fl-kit KIT=<CODE>                  # Re-stage the trust's FL participant kit for its REGISTERED slot (runs inside deploy-trust, after register-trusts). ansible-init stages Trust_1 pre-registration because no slot exists yet; this replaces it once one does. The wipe is net-1-wide, so the host ends up holding exactly one slot's kit, and the play asserts the staged fed_client.json names that slot
-make deploy-ui                                # Build + sync UI to S3 (excludes ark_demo/*; no invalidation, the edge distribution is the networking account's)
+make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes ark_demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
 make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
@@ -84,7 +84,8 @@ uv run --no-project --with pytest --with jinja2 --with click --with diagrams pyt
 
 Terraform runs in GitHub Actions as well as from a laptop. `terraform_plan.yml`
 plans staging on every PR touching `deploy/providers/AWS/**`; `terraform_apply.yml`
-applies on push to `develop` (stag) and `main` (prod); `terraform_drift.yml` plans
+applies on every push to `develop` (stag) and `main` (prod), then its `ui` job
+publishes flip-ui through the reusable `publish_ui.yml`; `terraform_drift.yml` plans
 nightly and raises one issue per environment. All three authenticate via OIDC —
 no long-lived AWS keys in GitHub. **Merging to `main` changes production
 infrastructure.**
@@ -211,6 +212,16 @@ Things worth knowing before touching any of it:
   `apply_service_prefixes`. Either way, merge that, have the platform repository bump
   its pinned SHA and apply **before** the FLIP change that needs it, or the apply is
   denied.
+- **The UI publishes after the apply, under its own role (FLIP#1186).** The `ui` job of
+  `terraform_apply.yml` needs `apply`, so a held apply holds the UI. `publish_ui.yml`'s
+  build job holds no token and no secret (`npm ci` runs third-party scripts) and reads
+  only public `window.js` inputs from the environment; its publish job assumes
+  `TF_UI_PUBLISH_ROLE_ARN`, the module's optional `AICentre-FLIPUiPublishRole` (created
+  when the caller sets `ui_bucket_name`). That role trusts `publish_ui.yml@refs/heads/<branch>`
+  — for a reusable workflow, `job_workflow_ref` names the called file — and can list the
+  bucket and write its objects, never `ark_demo/*`. `scripts/publish-ui.sh` is the one
+  sync recipe, shared with `make deploy-ui`; `.github/tests/workflows/test_publish_ui.py`
+  and `scripts/tests/test_publish_ui.sh` pin both halves.
 - **The pytest suite under `tests/` runs in CI** as the `AWS deploy tests` job in
   `validate_terraform.yml`. The root `make unit_test` does not reach this directory
   and this directory's Makefile has no `test` target, so

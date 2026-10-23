@@ -438,7 +438,7 @@ ifeq ($(IS_DEPLOYED),)
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
-	@echo "    Run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\` to publish the bundle."
+	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\`."
 endif
 ui-off: _check-compose-project-owner
 ifeq ($(IS_DEPLOYED),)

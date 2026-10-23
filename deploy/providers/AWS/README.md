@@ -184,7 +184,12 @@ values reach the host only as container environment.
 
 The UI is served from S3 by the networking account's edge CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`), which reads the bucket through cross-account OAC and relays `/api/*` to the internal NLB's web listener (see [Deploying onto an LZA estate](#deploying-onto-an-lza-estate)). There is no EC2 UI container to fall back to.
 
-**Subsequent UI deploys**: just `make deploy-ui HUB=stag|prod` — builds the UI from the working tree, regenerates `window.js` and syncs to S3. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. No Terraform involved. `deploy-ui` syncs `dist/` to the bucket **root** with `--delete`, so it always excludes the `ark_demo/*` prefix — the real build's `dist/` has no `ark_demo/` output, and without the exclude a routine UI (or `deploy-centralhub`, which calls `deploy-ui` as its last step) deploy would delete the demo SPA on every run. Publishing the demo bundle itself is a separate target — see below.
+**The UI ships with the apply (FLIP#1186).** Once `terraform_apply.yml` has applied a push to `develop` or `main`, its `ui` job runs [`publish_ui.yml`](../../../.github/workflows/publish_ui.yml), which publishes flip-ui from the same commit to that environment's bucket. A held or failed apply publishes nothing, so the UI never reaches users ahead of the API it calls; the `fl_quiesced: true` re-dispatch that releases a held apply publishes it. The workflow has two jobs:
+
+- **`build`** runs `npm ci && npm run build:deploy` with no AWS credentials and no secrets, because `npm ci` runs third-party install scripts. `window.js` is generated from the environment's variables `AWS_COGNITO_USER_POOL_ID`, `AWS_COGNITO_APP_CLIENT_ID`, `CENTRAL_HUB_API_URL`, `AWS_REGION` and `BLACKLISTED_MODEL_FILES`. These values are public: every browser receives them. `RELEASE_VERSION` is the release tag, or `sha-<short7>`. The apply job warns when the two Cognito variables no longer match `terraform output`.
+- **`publish`** assumes `TF_UI_PUBLISH_ROLE_ARN` and runs `scripts/publish-ui.sh` against `FLIP_UI_BUCKET_NAME`. That role is the bootstrap module's `AICentre-FLIPUiPublishRole` (set `ui_bucket_name` on the module): it can list the bucket and write its objects, never `ark_demo/*`, and nothing else. Afterwards the job reads `js/window.js` back through the site to confirm the new build is being served. While `TF_UI_PUBLISH_ROLE_ARN` is unset the job only warns.
+
+If the `ui` job fails, re-run it from the apply run once the cause is fixed, or publish from a laptop with `make deploy-ui HUB=stag|prod`, which is also the rollback: run it from the previous release's checkout. There is no invalidation, since the distribution is in another account: `index.html` is served `no-cache` and the hashed assets as immutable. Both paths run `scripts/publish-ui.sh`, which syncs `dist/` to the bucket **root** with `--delete` and always excludes the `ark_demo/*` prefix. The real build's `dist/` has no `ark_demo/` output, so without the exclude every routine UI deploy (including `deploy-centralhub`, which calls `deploy-ui` as its last step) would delete the demo SPA. Publishing the demo bundle itself is a separate target, described below.
 
 ### Ark+ demo SPA bundle (`/ark_demo/*`)
 
@@ -1099,7 +1104,7 @@ GitHub:
 | Workflow | Trigger | Role | What it does |
 | --- | --- | --- | --- |
 | `terraform_plan.yml` | PR touching `deploy/providers/AWS/**` | plan (read-only) | Posts the staging plan as a PR comment, and runs the FL/LZA-ingress advisory (advisory-only — exits 0 on every readable plan, and `continue-on-error` keeps an unreadable one from failing the check) |
-| `terraform_apply.yml` | Push to `develop` / `main` | apply | Applies to staging / production |
+| `terraform_apply.yml` | Every push to `develop` / `main` | apply, then UI-publish | Applies to staging / production, then publishes flip-ui from the same commit ([flip-ui on S3 + CloudFront](#flip-ui-on-s3--cloudfront)) |
 | `terraform_drift.yml` | Nightly 03:00 UTC | plan (read-only) | Raises one issue per environment when reality has drifted |
 
 The drift workflow runs **twice**, and which environment a run checks is decided
@@ -1116,8 +1121,9 @@ change; it catches HCL errors without credentials and is the fast gate.
 
 ### Where the CI identity comes from
 
-The plan and apply roles, the `AICentre-FLIPTerraformBoundary` permissions
-boundary and the Terraform state bucket are declared by
+The plan and apply roles, the optional UI-publish role, the
+`AICentre-FLIPTerraformBoundary` permissions boundary and the Terraform state
+bucket are declared by
 [`modules/terraform_ci_bootstrap`](modules/terraform_ci_bootstrap/README.md). This
 root never manages them — the pipeline must not set its own ceiling, and an apply
 that broke its own roles would lock CI out of the apply that fixes them.
@@ -1703,8 +1709,9 @@ Three constraints are easy to break and worth keeping in mind:
   the queued one was cancelled before it started, and fails the release if it
   happens twice.
 
-It also bypasses the `deploy/providers/AWS/**` path filter, which is the point: a
-release that touches no infrastructure would otherwise never re-pin the hub.
+The push apply runs on every push, so this dispatch is not needed to reach the
+apply; it is what pins the release digests over the push apply's `sha-` images.
+The `ui` job follows it, so the release's UI ships from the tagged commit.
 
 A release apply that changes the FL task-definition tag trips the FL gate above
 and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any other
