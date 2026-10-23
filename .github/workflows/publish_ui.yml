@@ -104,6 +104,10 @@ jobs:
           done
           [[ -z "${missing}" ]] ||
             { echo "::error::${ENVIRONMENT} is missing the variable(s):${missing}. See deploy/providers/AWS/README.md, \"flip-ui on S3 + CloudFront\"."; exit 1; }
+          # The site shares the API's origin, which the check after the publish
+          # finds by dropping this suffix.
+          [[ "${CENTRAL_HUB_API_URL}" == */api ]] ||
+            { echo "::error::${ENVIRONMENT}'s CENTRAL_HUB_API_URL must end in /api, got '${CENTRAL_HUB_API_URL}'."; exit 1; }
 
       - name: Build
         if: steps.role.outputs.set == 'true'

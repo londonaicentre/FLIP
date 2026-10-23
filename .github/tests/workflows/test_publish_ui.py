@@ -21,7 +21,9 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -94,6 +96,36 @@ class PublishUi(unittest.TestCase):
         assert len(guarded) == len(steps) - 1, "every build step after the role check must be skipped without it"
         assert "configured: ${{ steps.role.outputs.set }}" in build
         assert "if: needs.build.outputs.configured == 'true'" in job("publish_ui.yml", "publish")
+
+    def test_the_api_url_must_end_in_api(self) -> None:
+        """The check after the publish finds the site by dropping /api, so a URL without it fails the build."""
+        step = re.search(
+            r"^      - name: Check the window\.js inputs\n(?:        [^\n]*\n)*?        run: \|\n"
+            r"(?P<run>(?:          [^\n]*\n)+)",
+            job("publish_ui.yml", "build"),
+            re.MULTILINE,
+        )
+        assert step, "no 'Check the window.js inputs' step"
+        script = "\n".join(line[10:] for line in step["run"].splitlines())
+        env = {
+            "PATH": os.environ["PATH"],
+            "ENVIRONMENT": "aws-stag",
+            "AWS_COGNITO_USER_POOL_ID": "eu-west-2_x",
+            "AWS_COGNITO_APP_CLIENT_ID": "x",
+            "AWS_REGION": "eu-west-2",
+        }
+        for url, ok in [
+            ("https://stag.example.org/api", True),
+            ("https://stag.example.org/api/", False),
+            ("https://stag.example.org", False),
+        ]:
+            with self.subTest(url=url):
+                run = subprocess.run(
+                    ["bash", "-c", script], env={**env, "CENTRAL_HUB_API_URL": url}, capture_output=True, text=True
+                )
+                assert (run.returncode == 0) is ok, run.stdout + run.stderr
+                if not ok:
+                    assert "CENTRAL_HUB_API_URL must end in /api" in run.stdout
 
     def test_no_secret_is_read_anywhere(self) -> None:
         assert "secrets." not in code("publish_ui.yml")
