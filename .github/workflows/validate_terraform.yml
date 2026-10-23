@@ -109,6 +109,7 @@ jobs:
           - test_add_fl_kits.sh
           - test_checkov_lint.sh
           - test_check_fl_plan_impact.sh
+          - test_staging_power.sh
           - test_tflint_lint.sh
           - test_compose_ci_env.sh
           - test_reset_fl_server_local.sh
@@ -182,7 +183,7 @@ jobs:
 
       - name: Run AWS deploy test suite
         working-directory: deploy/providers/AWS
-        run: uv run --no-project --with pytest --with jinja2 --with click --with diagrams pytest tests/ -v
+        run: uv run --no-project --with pytest --with jinja2 --with click --with diagrams --with pyyaml pytest tests/ -v
 
   # Static checkov security lint (FLIP#1052 + the FLIP#1058 triage): a curated
   # check list over the whole AWS tree — IAM policy content (overly-broad

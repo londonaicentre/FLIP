@@ -1,0 +1,275 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Start and stop the LZA staging estate (FLIP#1596).
+#
+# Staging used to run permanently, for an account nobody looks at between
+# deploys: three ECS services at 1/1, the hub host up for months, RDS available.
+# This workflow is the thing that brings it down and the thing that brings it
+# back. The work itself is deploy/providers/AWS/scripts/staging-power.sh, which
+# is tested offline in scripts/tests/test_staging_power.sh; this file is the
+# scheduling around it.
+#
+# Three ways in:
+#
+#   start-stag       a dispatch. Starts RDS, starts the hub host, WAITS for RDS to
+#                    answer, and restores the ECS desired counts.
+#
+#   start-stag-data        the same, minus the ECS counts.
+#   start-stag-services    the ECS counts, and nothing else.
+#                    terraform_apply.yml uses the two halves rather than
+#                    start-stag, and the order is the point. The RDS wait has to
+#                    finish before the plan, because Terraform refreshes RDS on
+#                    every plan and a stopped instance fails the refresh. The ECS
+#                    counts have to stay at 0 until after the FL gate has read the
+#                    plan, because "the FL services are at 0" is exactly what lets
+#                    that gate pass a develop apply without an fl_quiesced
+#                    dispatch. Restore them first and every apply holds again.
+#
+#   hold-then-stop   what terraform_apply.yml calls after the end to end check.
+#                    Sleeps the hold window, then stops the estate. Extending a
+#                    hold is simply dispatching this again: the `stag-hold`
+#                    concurrency group cancels the sleeping job, and the stop job
+#                    declines to run on a cancelled hold, so the new window
+#                    replaces the old one rather than racing it.
+#
+#   stop-stag        an immediate stop, by dispatch or on the nightly schedule.
+#
+# WHY THE NIGHTLY GUARD EXISTS. A hold lives in a runner, and runners die: a
+# cancelled run, a six-hour job limit, a workflow re-dispatched over the top of
+# itself. Any of those leaves staging up with nothing scheduled to bring it down.
+# The guard also re-stops RDS, which matters on its own: AWS restarts a stopped
+# instance by itself after seven days, so without a recurring stop the database
+# comes back every week forever. It runs at 03:30 UTC, half an hour after
+# terraform_drift.yml, so the drift run has already decided what it is looking at
+# before anything moves.
+#
+# PRODUCTION IS NOT REACHABLE FROM HERE, by four independent means: this workflow
+# has no `main` trigger, the jobs refuse to run on `main`, the environment is
+# hard-coded to aws-stag, and staging-power.sh itself checks the environment name,
+# the TF_PROD token and the ref before it makes a single call. The resource names
+# are identical in both estates, so one check was never going to be enough.
+
+name: Staging Lifecycle
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do with staging"
+        type: choice
+        required: true
+        default: start-stag
+        options:
+          - start-stag
+          - start-stag-data
+          - start-stag-services
+          - stop-stag
+          - hold-then-stop
+      hold_minutes:
+        description: >-
+          Minutes to hold staging up before stopping it (hold-then-stop only).
+          Empty uses the repository variable STAGING_HOLD_MINUTES, or 120.
+          Dispatching again replaces a hold that is already running.
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      action:
+        type: string
+        required: true
+      hold_minutes:
+        type: string
+        default: ""
+  schedule:
+    # 03:30 UTC, half an hour after terraform_drift.yml.
+    - cron: "30 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  # The schedule fires from the default branch whatever anyone has merged, so the
+  # guard has to establish for itself that it is not about to interrupt work in
+  # progress. A deploy that is mid-apply, or a hold a developer started twenty
+  # minutes ago, are both reasons to do nothing tonight and look again tomorrow.
+  # The whole point of the hold window is that it is honoured.
+  #
+  # Only the schedule consults this. A dispatched or called stop is somebody
+  # asking for a stop, and second-guessing that would make the dispatch unusable.
+  nightly-guard:
+    name: Decide whether the nightly guard should stop staging
+    if: github.event_name == 'schedule' && github.ref_name != 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # list in-flight runs
+    outputs:
+      proceed: ${{ steps.decide.outputs.proceed }}
+    steps:
+      - name: Look for work in flight
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          THIS_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          # A failure to answer the question must not read as "nothing in flight":
+          # that would make the guard stop an estate somebody is deploying to. Same
+          # fail-closed rule as the drift workflow's dispatch probe.
+          : >"${RUNNER_TEMP}/busy.txt"
+          for workflow in staging_lifecycle.yml terraform_apply.yml; do
+            for status in in_progress queued; do
+              gh api "repos/${GH_REPO}/actions/workflows/${workflow}/runs?status=${status}&per_page=50" \
+                --jq ".workflow_runs[] | select((.id|tostring) != \"${THIS_RUN}\") | \"${workflow} #\(.run_number)\"" \
+                >>"${RUNNER_TEMP}/busy.txt"
+            done
+          done
+          busy="$(sort -u "${RUNNER_TEMP}/busy.txt" | tr '\n' ' ')"
+
+          if [[ -n "${busy// /}" ]]; then
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            echo "Work in flight (${busy}); leaving staging alone tonight."
+            {
+              echo "### 🌙 Nightly guard stood down"
+              echo
+              echo "Something is in flight, so staging was left up: \`${busy}\`"
+              echo
+              echo "The guard looks again tomorrow at 03:30 UTC."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "proceed=true" >> "$GITHUB_OUTPUT"
+            echo "Nothing in flight; the guard will stop anything still up."
+          fi
+
+  # The sleep. Deliberately has no `environment:` and no AWS credentials: it does
+  # nothing but wait, and giving a six-hour idle job the keys to the estate buys
+  # nothing. It is also what makes "extend the hold" work; see the concurrency
+  # group below.
+  hold:
+    name: Hold staging up
+    if: inputs.action == 'hold-then-stop' && github.ref_name != 'main'
+    runs-on: ubuntu-latest
+    concurrency:
+      # Not the workflow-level group: a second hold-then-stop must displace the
+      # first, so that dispatching again *extends* the window instead of queueing
+      # a second stop behind it. The stop job below treats a cancelled hold as
+      # "somebody else owns the window now" and does not stop.
+      group: stag-hold
+      cancel-in-progress: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      # Resolved by the script, not inline here, so the precedence (dispatch input,
+      # then repository variable, then 120) and the rejection of a non-numeric
+      # value are covered by scripts/tests/test_staging_power.sh rather than by
+      # reading a YAML expression carefully.
+      - name: Resolve the hold window
+        id: window
+        env:
+          HOLD_MINUTES_INPUT: ${{ inputs.hold_minutes }}
+          HOLD_MINUTES_VAR: ${{ vars.STAGING_HOLD_MINUTES }}
+        run: deploy/providers/AWS/scripts/staging-power.sh hold-minutes
+
+      - name: Sleep
+        env:
+          SECONDS_TO_HOLD: ${{ steps.window.outputs.seconds }}
+          MINUTES: ${{ steps.window.outputs.minutes }}
+        run: |
+          set -euo pipefail
+          echo "Holding staging up for ${MINUTES} minute(s)."
+          {
+            echo "### ⏳ Staging held for ${MINUTES} minute(s)"
+            echo
+            echo "Staging stops when this window ends. To extend it, dispatch"
+            echo "\`Staging Lifecycle\` again with \`hold-then-stop\`, which replaces this"
+            echo "window rather than queueing behind it."
+          } >> "$GITHUB_STEP_SUMMARY"
+          sleep "${SECONDS_TO_HOLD}"
+
+  power:
+    name: ${{ startsWith(inputs.action, 'start-') && 'Start staging' || 'Stop staging' }}
+    needs: [nightly-guard, hold]
+    # `always()` because both dependencies are skipped on most paths: the guard
+    # only runs on the schedule, and the hold only on hold-then-stop. The explicit
+    # result checks are what keep that from meaning "run regardless":
+    #   * a cancelled hold means a newer dispatch owns the window, so do not stop;
+    #   * a failed hold or guard means the decision was never made, so do not stop;
+    #   * on the schedule, stop only if the guard said nothing is in flight.
+    if: >-
+      always() && github.ref_name != 'main'
+      && needs.hold.result != 'cancelled' && needs.hold.result != 'failure'
+      && needs.nightly-guard.result != 'failure' && needs.nightly-guard.result != 'cancelled'
+      && (github.event_name != 'schedule' || needs.nightly-guard.outputs.proceed == 'true')
+      && vars.TF_STAG_DISABLED != 'true'
+    runs-on: ubuntu-latest
+    # Hard-coded, never a ternary on the ref. There is no branch of this workflow
+    # that should be able to select aws-prod, and an expression here is one typo
+    # away from one.
+    environment: aws-stag
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          # The apply role, because stopping is a mutation: ecs:UpdateService,
+          # ec2:StopInstances/StartInstances, rds:StopDBInstance/StartDBInstance.
+          # The plan role is read-only and cannot do any of it.
+          role-to-assume: ${{ vars.TF_APPLY_ROLE_ARN }}
+          role-session-name: flip-stag-power-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: ${{ startsWith(inputs.action, 'start-') && 'Start' || 'Stop' }} the staging estate
+        env:
+          # The script re-derives the refusal from these three, independently of
+          # every `if` above. They are passed rather than assumed so that running
+          # the script by hand is subject to the same guard as running it here.
+          FLIP_ENVIRONMENT: aws-stag
+          TF_PROD: ${{ vars.TF_PROD }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          action="${{ inputs.action || 'stop-stag' }}"
+          case "${action}" in
+            start-stag) deploy/providers/AWS/scripts/staging-power.sh start ;;
+            start-stag-data) deploy/providers/AWS/scripts/staging-power.sh start-data ;;
+            start-stag-services) deploy/providers/AWS/scripts/staging-power.sh start-services ;;
+            stop-stag | hold-then-stop) deploy/providers/AWS/scripts/staging-power.sh stop ;;
+            *) echo "::error::unknown action '${action}'"; exit 1 ;;
+          esac
+
+      # The acceptance criterion is stated in terms of describe calls, so make them
+      # and put the answer where it can be read without opening AWS. Read-only, and
+      # never allowed to fail the job it is reporting on.
+      - name: Report the resulting state
+        if: always()
+        continue-on-error: true
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          deploy/providers/AWS/scripts/staging-power.sh status > "${RUNNER_TEMP}/state.txt"
+          {
+            echo "### Staging state after this run"
+            echo
+            echo '```'
+            cat "${RUNNER_TEMP}/state.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "${RUNNER_TEMP}/state.txt"
