@@ -13,7 +13,7 @@ Docker services and network provisioning for both FL backends. Each backend's
 | `nvflare/README.md`, `flower/README.md` | Per-backend provisioning and onboarding runbooks |
 
 ```bash
-make build-fl FL_BACKEND=<backend>          # build the FL images locally as :dev (from repo root)
+make build-fl FL_BACKEND=<backend>          # build the FL images locally as :dev (from repo root); DOCKER_FL_TAG=<tag> on the command line tags the whole chain (fl-base included) <tag> instead — use it on a shared host, where :dev is daemon-wide (FLIP#1605)
 make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the stack on those local images
 make -C fl-services/nvflare provision-2-nets    # provision FLARE dev nets
 make -C fl-services/flower provision NET_NUMBER=<N>

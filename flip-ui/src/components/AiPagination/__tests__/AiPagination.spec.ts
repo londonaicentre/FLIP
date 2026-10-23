@@ -68,6 +68,19 @@ describe("Ai Pagination", () => {
         expect(comp.find("[data-test='page-btn-next']").find("svg").exists()).toBe(true);
     });
 
+    test("names the prev/next buttons for screen readers when slim hides their text", () => {
+        const comp = mount(AiPagination, {
+            props: {
+                totalPages: 3,
+                currentPage: 2,
+                slim: true
+            }
+        });
+
+        expect(comp.find("[data-test='page-btn-prev']").attributes("aria-label")).toBe("Previous page");
+        expect(comp.find("[data-test='page-btn-next']").attributes("aria-label")).toBe("Next page");
+    });
+
     test("disables prev on the first page and next on the last", () => {
         const first = mount(AiPagination, {
             props: {

@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 from huggingface_hub import CommitOperationAdd, CommitOperationDelete
+from huggingface_hub.errors import EntryNotFoundError
 
 SOURCE_COMMIT = "594524287f1826969c1a3cb250dd4fbeb2ac5fa3"  # pragma: allowlist secret (a git sha)
 VERSION = "20260907T122006Z-5945242"
@@ -49,6 +50,12 @@ class FakeApi:
     def create_commit(self, repo, repo_type, revision, operations, commit_message, commit_description):
         self.commits.append({"branch": revision, "operations": list(operations), "message": commit_message})
         return SimpleNamespace(oid=f"sha-{len(self.commits)}")
+
+
+@pytest.fixture(autouse=True)
+def no_live_gifs(publisher, monkeypatch, tmp_path):
+    """The repo's own live-recorded list stays out of these tests; TestLiveRecorded opts back in explicitly."""
+    monkeypatch.setattr(publisher, "DEFAULT_LIVE_LIST", tmp_path / "no-live-list.txt")
 
 
 def write(path: Path, data: bytes = b"GIF89a") -> Path:
@@ -317,3 +324,120 @@ class TestCli:
         monkeypatch.setattr(publisher, "HfApi", lambda: FakeApi())
         with pytest.raises(SystemExit, match="full 40-hex"):
             publisher.main(["--branch", "pr-1", "--source-commit", "5945242", "--gifs-dir", str(tree.gifs)])
+
+
+class TestLiveRecorded:
+    """GIFs recorded on a live trust: listed by hand, published with the Cypress set, never dropped by CI."""
+
+    def test_listed_gifs_join_the_spec_set(self, publisher, tree, tmp_path):
+        live = write(tmp_path / "live.txt", b"# comment\n\nmonailabel/monailabel-export.gif  # trailing note\n")
+        assert publisher.expected_gifs(tree.specs, live) == [
+            "admin/create-user.gif",
+            "flip/approve-project.gif",
+            "flip/create-model.gif",
+            "monailabel/monailabel-export.gif",
+        ]
+
+    def test_a_malformed_line_is_refused(self, publisher, tree, tmp_path):
+        live = write(tmp_path / "live.txt", b"MonaiLabel/Export.GIF\n")
+        with pytest.raises(SystemExit, match="is not <category>/<name>.gif"):
+            publisher.expected_gifs(tree.specs, live)
+
+    def test_a_gif_cannot_be_both_a_spec_and_a_live_recording(self, publisher, tree, tmp_path):
+        live = write(tmp_path / "live.txt", b"flip/create-model.gif\n")
+        with pytest.raises(SystemExit, match="both a Cypress spec and a live recording"):
+            publisher.expected_gifs(tree.specs, live)
+
+    def test_the_repo_list_is_well_formed_and_disjoint_from_the_specs(self, publisher):
+        specs = publisher.DEFAULT_SPECS_DIR
+        live = publisher.live_gifs(publisher.DOCS_DIR / "scripts" / "live-recorded-gifs.txt")
+        assert live, "the repo's live-recorded list is empty"
+        assert set(live) <= set(
+            publisher.expected_gifs(specs, publisher.DOCS_DIR / "scripts" / "live-recorded-gifs.txt")
+        )
+
+
+class TestCarryForward:
+    """A CI publish has only the Cypress GIFs; the live ones come from the first dataset ref that has them."""
+
+    GIF = "monailabel/monailabel-export.gif"
+
+    @staticmethod
+    def hub(tmp_path: Path, refs: dict[str, dict[str, bytes]], manifests: dict[str, dict] | None = None):
+        """A fake ``download(filename, ref)`` serving each ref's files and a manifest recording their sha256.
+
+        A ref missing from ``refs`` does not exist on the dataset.
+        """
+        root = tmp_path / "hub"
+        for ref, files in refs.items():
+            for name, data in files.items():
+                write(root / ref / name, data)
+            manifest = (manifests or {}).get(ref) or {
+                "files": {n: {"sha256": hashlib.sha256(d).hexdigest(), "bytes": len(d)} for n, d in files.items()}
+            }
+            write(root / ref / "manifest.json", json.dumps(manifest).encode())
+        calls: list[tuple[str, str]] = []
+
+        def download(filename: str, ref: str) -> str:
+            calls.append((filename, ref))
+            path = root / ref / filename
+            if not path.is_file():
+                raise EntryNotFoundError(f"{filename} at {ref}")
+            return str(path)
+
+        return download, calls
+
+    def test_a_missing_live_gif_comes_from_the_first_ref_that_has_it(self, publisher, tree, tmp_path):
+        download, _ = self.hub(tmp_path, {"pr-945": {self.GIF: b"GIF89a re-cut"}, "main": {self.GIF: b"GIF89a old"}})
+        refs = ["pr-1", "pr-945", "main"]  # pr-1 was never published
+        assert publisher.carry_forward(tree.gifs, [self.GIF], "repo", refs, download) == [self.GIF]
+        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a re-cut"
+
+    def test_main_is_the_fallback(self, publisher, tree, tmp_path):
+        download, _ = self.hub(tmp_path, {"pr-945": {}, "main": {self.GIF: b"GIF89a live"}})
+        publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["pr-945", "main"], download)
+        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a live"
+
+    def test_a_local_live_gif_wins_and_nothing_is_fetched(self, publisher, tree, tmp_path):
+        write(tree.gifs / self.GIF, b"GIF89a re-recorded")
+        download, calls = self.hub(tmp_path, {"main": {self.GIF: b"GIF89a old"}})
+        assert publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["main"], download) == []
+        assert calls == []
+        assert (tree.gifs / self.GIF).read_bytes() == b"GIF89a re-recorded"
+
+    def test_bytes_that_do_not_match_the_manifest_are_refused(self, publisher, tree, tmp_path):
+        manifests = {"main": {"files": {self.GIF: {"sha256": "0" * 64, "bytes": 1}}}}
+        download, _ = self.hub(tmp_path, {"main": {self.GIF: b"GIF89a tampered"}}, manifests)
+        with pytest.raises(SystemExit, match="does not match that ref's manifest"):
+            publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["main"], download)
+        assert not (tree.gifs / self.GIF).exists()
+
+    def test_a_gif_no_ref_has_is_refused(self, publisher, tree, tmp_path):
+        download, _ = self.hub(tmp_path, {"main": {}})
+        with pytest.raises(SystemExit, match="on none of pr-945, main .* record it on a live trust first"):
+            publisher.carry_forward(tree.gifs, [self.GIF], "repo", ["pr-945", "main"], download)
+
+    def test_the_cli_tries_carry_from_then_the_branch_then_main(self, publisher, tree, tmp_path, monkeypatch):
+        live = write(tmp_path / "live.txt", f"{self.GIF}\n".encode())
+        seen: list[list[str]] = []
+        monkeypatch.setattr(publisher, "carry_forward", lambda gifs, paths, repo, refs, dl: seen.append(refs))
+        write(tree.gifs / self.GIF)  # carry_forward is stubbed, so the GIF must already be there
+        monkeypatch.setattr(publisher, "HfApi", lambda: FakeApi())
+        args = ["--source-commit", SOURCE_COMMIT, "--gifs-dir", str(tree.gifs), "--specs-dir", str(tree.specs)]
+        publisher.main([*args, "--card", str(tree.card), "--live-list", str(live), "--branch", "pr-7"])
+        publisher.main(
+            [
+                *args,
+                "--card",
+                str(tree.card),
+                "--live-list",
+                str(live),
+                "--branch",
+                "main",
+                "--workflow-run",
+                RUN,
+                "--carry-from",
+                "pr-945",
+            ]
+        )
+        assert seen == [["pr-7", "main"], ["pr-945", "main"]]

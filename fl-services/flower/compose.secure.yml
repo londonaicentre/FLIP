@@ -23,7 +23,7 @@
 services:
   # build the flower-fl-base image for a Flower app
   flwr-base:
-    image: flower-fl-base:dev
+    image: flower-fl-base:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../
       dockerfile: fl-services/flower/fl-base/Dockerfile
@@ -32,7 +32,7 @@ services:
     profiles: ["build-only"]
 
   fl-api:
-    image: flower-fl-api:dev
+    image: flower-fl-api:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../fl-services/flower/fl-api-flower
       dockerfile: Dockerfile
@@ -56,12 +56,12 @@ services:
 
   # create a SuperLink service
   superlink:
-    image: flower-superlink:dev
+    image: flower-superlink:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../fl-services/flower/superlink
       dockerfile: Dockerfile
       args:
-        BASE_REF: ${BASE_REF:-flower-fl-base:dev}
+        BASE_REF: ${BASE_REF:-flower-fl-base:${DOCKER_FL_TAG:-dev}}
     group_add: *host-gid
     environment:
       - LOCAL_DEV=true
@@ -105,7 +105,7 @@ services:
   # The SuperNodes' only route to the SuperLink (see the header and fleet-proxy/), serving
   # the SuperLink's own certificate (SAN `superlink`).
   fleet-proxy:
-    image: flower-fleet-proxy:dev
+    image: flower-fleet-proxy:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../fl-services/flower/fleet-proxy
       dockerfile: Dockerfile
@@ -149,12 +149,12 @@ services:
 
   # create two SuperNode services with different node configs
   supernode-1:
-    image: flower-supernode:dev
+    image: flower-supernode:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../fl-services/flower/supernode
       dockerfile: Dockerfile
       args:
-        BASE_REF: ${BASE_REF:-flower-fl-base:dev}
+        BASE_REF: ${BASE_REF:-flower-fl-base:${DOCKER_FL_TAG:-dev}}
     working_dir: /app
     group_add: *host-gid
     environment:
@@ -204,12 +204,12 @@ services:
       - flwr-trust-net
 
   supernode-2:
-    image: flower-supernode:dev
+    image: flower-supernode:${DOCKER_FL_TAG:-dev}
     build:
       context: ../../fl-services/flower/supernode
       dockerfile: Dockerfile
       args:
-        BASE_REF: ${BASE_REF:-flower-fl-base:dev}
+        BASE_REF: ${BASE_REF:-flower-fl-base:${DOCKER_FL_TAG:-dev}}
     working_dir: /app
     group_add: *host-gid
     environment:
