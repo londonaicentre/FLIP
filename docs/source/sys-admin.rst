@@ -11,6 +11,7 @@ System administration
    sys-admin/admin-user-roles
    sys-admin/admin-platform-support
    sys-admin/admin-upgrading-sites
+   sys-admin/admin-trust-auto-upgrade
    sys-admin/admin-backup-and-restore
 
 .. seealso::
