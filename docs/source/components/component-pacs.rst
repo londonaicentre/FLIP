@@ -240,6 +240,11 @@ above), not the settings themselves.
      - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM, but it must differ from
        ``XNAT_PORT`` because the receiver is host-published too. The deploy refuses a collision
      - none; every kit must set it (``8105`` in the kit template)
+   * - ``XNAT_SITE_URL``
+     - ``xnat.web.siteUrl``
+     - The URL a browser opens XNAT at, written to XNAT's ``siteUrl``. Set it on any host whose XNAT is opened from
+       another machine: the OHIF viewer fetches its images from that URL, so a wrong value renders the viewport black
+     - ``http://127.0.0.1:${XNAT_WEB_PORT}``
    * - ``PACS_SUPPORTS_EXTENDED_NEGOTIATIONS``
      - ``pacs.supportsExtendedNegotiations``
      - Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a

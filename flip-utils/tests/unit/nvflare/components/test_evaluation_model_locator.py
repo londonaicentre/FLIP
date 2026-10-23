@@ -14,6 +14,7 @@ import os
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import pytest
 from nvflare.apis.dxo import DataKind
 
 from flip.constants import FlipMetaKey
@@ -124,7 +125,7 @@ class TestEvaluationModelLocator:
         assert "models" in str(locator.log_error.call_args)
 
     @patch("flip.nvflare.components.pt_model_locator.torch")
-    def test_missing_checkpoint_is_skipped(self, mock_torch):
+    def test_missing_checkpoint_fails_the_run(self, mock_torch):
         config = {"models": {"m": {"checkpoint": "missing.pt", "path": "unet"}}}
         mock_torch.cuda.is_available.return_value = False
 
@@ -132,9 +133,9 @@ class TestEvaluationModelLocator:
             _write_config(tmpdir, config)  # no missing.pt on disk
             locator = EvaluationModelLocator()
             locator.log_error = MagicMock()
-            names = locator.get_model_names(_fl_ctx_for(tmpdir))
+            with pytest.raises(RuntimeError, match="No checkpoint found"):
+                locator.get_model_names(_fl_ctx_for(tmpdir))
 
-        assert names == []
         locator.log_error.assert_called()
         assert "not found" in str(locator.log_error.call_args_list[0])
 
@@ -175,9 +176,9 @@ class TestEvaluationModelLocator:
 
     @patch("flip.nvflare.components.pt_model_locator.FlipConstants")
     @patch("flip.nvflare.components.pt_model_locator.torch")
-    def test_staged_fallback_missing_everywhere_logs_error_and_skips(self, mock_torch, mock_constants):
+    def test_staged_fallback_missing_everywhere_logs_error_and_fails(self, mock_torch, mock_constants):
         """model_id resolves but the checkpoint is neither bundled nor staged → the error names both
-        candidate paths and the model is skipped (no crash)."""
+        candidate paths and the run fails rather than evaluating nothing."""
         from nvflare.apis.fl_constant import FLContextKey
 
         model_id = "0a1b2c3d-1111-2222-3333-444455556666"
@@ -197,9 +198,9 @@ class TestEvaluationModelLocator:
 
             locator = EvaluationModelLocator()
             locator.log_error = MagicMock()
-            names = locator.get_model_names(fl_ctx)
+            with pytest.raises(RuntimeError, match="No checkpoint found"):
+                locator.get_model_names(fl_ctx)
 
-        assert names == []
         mock_torch.load.assert_not_called()
         locator.log_error.assert_called_once()
         assert "Tried bundled path" in str(locator.log_error.call_args)
@@ -207,7 +208,7 @@ class TestEvaluationModelLocator:
     @patch("flip.nvflare.components.pt_model_locator.FlipConstants")
     @patch("flip.nvflare.components.pt_model_locator.torch")
     def test_staged_fallback_without_model_id_logs_error(self, mock_torch, mock_constants):
-        """No bundled checkpoint and no resolvable model_id → error logged, model skipped (no crash)."""
+        """No bundled checkpoint and no resolvable model_id → error logged, run fails."""
         config = {"models": {"arkplus": {"checkpoint": "model.pt", "path": "swin"}}}
         mock_torch.cuda.is_available.return_value = False
         mock_constants.LOCAL_DEV = False
@@ -220,8 +221,8 @@ class TestEvaluationModelLocator:
 
             locator = EvaluationModelLocator()
             locator.log_error = MagicMock()
-            names = locator.get_model_names(fl_ctx)
+            with pytest.raises(RuntimeError, match="No checkpoint found"):
+                locator.get_model_names(fl_ctx)
 
-        assert names == []
         locator.log_error.assert_called_once()
         assert "model_id" in str(locator.log_error.call_args)

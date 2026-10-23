@@ -305,6 +305,15 @@ screencast overlays (they survive navigations), the pointer a page-injected arro
 Useful `DEMO_ARGS`: `--app ehr` (record the tabular EHR risk-prediction tutorial: the project is created with imaging
 off and the XNAT segment is skipped), `--app spleen` (record the 3D spleen segmentation tutorial instead of chest
 X-ray; pair with `--data-enrichment-cwd/-cmd` for the off-camera label upload, same contract as `e2e_smoke`),
+`--app digipath` (the IDC nuclei-detection evaluation on DICOM whole-slide imaging; NVFLARE only. Its profile carries
+its own enrichment step, `make -C fl-tutorials/datasets upload-idc-pathology-annotations` against every XNAT in
+`--xnat-urls`: the reference annotations cannot ride the imaging pull, as XNAT's DICOM receiver has no presentation
+context for the Microscopy Bulk Simple Annotations SOP class and an annotation left in Orthanc fails its study's whole
+C-MOVE. An evaluation reports its scores only when the run ends (FLIP#1526), so segment 5 is skipped and segment 6
+shows each trust's scores and closes on "scored", not "trained". The detector it scores, `detector_specification.pt`, is gitignored: the take refuses to start until
+`make -C fl-tutorials/nvflare/image_evaluation/idc_pathology_nuclei_detection_evaluation prepare-model` has made it. Segment 3 opens session `TCGA-A8-A06Y`, which shows nuclei, rather than the first),
+`--xnat-session-label <label>` (the XNAT session segment 3 opens, over the profile's default; an unknown label falls
+back to the usual choice, with a log line),
 `--publish-segmentations` (republish those NIfTI labels as DICOM-SEG ROI collections via
 `flip-api/tests/xnat_seg_upload.py` so segment 3 shows the segmentation overlaid in OHIF — dcmqi in Docker for the
 conversion, the viewer's own `PUT /xapi/roi/…?type=SEG` for the upload; `--seg-limit` caps how many sessions per trust
