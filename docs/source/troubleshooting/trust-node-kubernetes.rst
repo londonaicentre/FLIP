@@ -114,6 +114,55 @@ Start with the pod's events and logs:
    The "Troubleshooting" section of the :gh:`chart README <trust/deploy/helm/README.md>` for pods stuck in
    ``Pending`` or ``CrashLoopBackOff``, a slow XNAT start and the FL client checklist.
 
+.. _ts-k8s-xnat-db-roles:
+
+xnat-db crash-loops on upgrade: no ``postgres`` role
+====================================================
+
+*Symptom.* ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
+carry a ``FailedPostStartHook`` entry and its ``postgres`` container log ends in::
+
+   psql: error: could not connect to server: FATAL:  role "postgres" does not exist
+
+``xnat-web`` then fails its readiness check and every DICOM path stops with it.
+
+*Cause.* The volume was first initialised by a chart that rendered ``POSTGRES_USER``. The Postgres entrypoint
+honours that variable only at the first initdb, so that database's single superuser is ``xnat`` and no
+``postgres`` role exists. A data volume is never initialised twice, so the layout survives every later chart
+and only shows up when a release starts connecting to it.
+
+*Check.* Ask the database which roles it holds:
+
+.. code-block:: shell
+
+   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- psql -X -U xnat -d postgres \
+     -tAc "select rolname, rolsuper from pg_roles where rolname in ('postgres','xnat')"
+
+``xnat|t`` on its own is this layout. ``postgres|t`` alongside ``xnat|f`` is a current one.
+
+*Fix.* A release that carries FLIP#1658 probes both roles over the local socket and connects as whichever
+answers, so the upgrade completes and the application role's password is re-synced either way. On an older
+release, create the missing role once, after dumping the database:
+
+.. code-block:: shell
+
+   kubectl -n flip-trust exec <release>-flip-trust-xnat-db-0 -c postgres -- \
+     psql -X -v ON_ERROR_STOP=1 -U xnat -d postgres -c "CREATE ROLE postgres SUPERUSER LOGIN"
+
+No password is needed: the statement runs over the container's local socket, where the image's authentication
+is ``trust``.
+
+.. note::
+
+   On this layout the application role is also the database superuser, which a current install does not allow.
+   The chart leaves the layout alone rather than rewriting roles on a live database at container start;
+   converging it is an operator job (``ALTER DATABASE ... OWNER TO``, then ``REASSIGN OWNED``), tracked as
+   FLIP#1666.
+
+.. seealso::
+
+   The upgrade path itself, including this case, is in :ref:`admin-upgrading-sites`.
+
 .. _ts-k8s-secret-conflict:
 
 Deploy refused: ``conflict with "kubectl-patch"``

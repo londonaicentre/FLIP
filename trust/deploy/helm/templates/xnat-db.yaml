@@ -139,18 +139,19 @@ spec:
                     # omop-db.yaml's data_analyst_reader sync but narrower: that one CREATEs the
                     # role if absent; this one only ALTERs.
                     #
-                    # Connects as `postgres` over the local socket (stock-image pg_hba
-                    # `local all all trust`, so no credential is needed) rather than as `xnat`
-                    # itself. PG12 does not redact `ALTER ROLE ... PASSWORD` on a server-side
-                    # error, and the image's default log_min_error_statement (error) would
-                    # otherwise write the new plaintext password into the container's log stream
-                    # on any error on that statement. Authenticating as `xnat` would let a holder
-                    # of the *current* xnat credential force exactly that error (e.g.
-                    # `ALTER ROLE xnat SET default_transaction_read_only = on` — USERSET, no
-                    # CREATEROLE needed) to leak the *new* password on the next rotation. The two
-                    # SET statements below close that: log_statement=none suppresses the
-                    # statement text on success, and log_min_error_statement=panic means nothing
-                    # short of a server crash logs the erroring statement either.
+                    # Connects over the local socket (stock-image pg_hba `local all all trust`,
+                    # so no credential is needed), preferring the `postgres` superuser over the
+                    # app role itself. PG12 does not redact `ALTER ROLE ... PASSWORD` on a
+                    # server-side error, and the image's default log_min_error_statement (error)
+                    # would otherwise write the new plaintext password into the container's log
+                    # stream on any error on that statement. Authenticating as the app role would
+                    # let a holder of its *current* credential force exactly that error (e.g.
+                    # `ALTER ROLE xnat SET default_transaction_read_only = on`, a USERSET that
+                    # needs no CREATEROLE) to leak the *new* password on the next rotation. The
+                    # two SET statements below close that on their own: log_statement=none
+                    # suppresses the statement text on success, and log_min_error_statement=panic
+                    # means nothing short of a server crash logs the erroring statement either,
+                    # which is what makes the fallback below safe when `postgres` is absent.
                     #
                     # The outcome is reported by psql rather than by the shell. postStart stdout
                     # goes nowhere (the kubelet surfaces it only in a FailedPostStartHook event)
@@ -167,8 +168,32 @@ spec:
                     # credential-logging CI guard looks for, and busybox provides the applet
                     # anyway. The heredoc body is tab-indented so `<<-` does the stripping
                     # rather than YAML's de-indent.
-                    if ! psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres \
-                           -v u={{ .Values.xnat.db.datasourceUsername | quote }} <<-'EOSQL'
+                    # Which role to connect as. A volume first initialised by a chart that
+                    # rendered POSTGRES_USER has its superuser under the app role's own name, so
+                    # `postgres` does not exist there and connecting as it fails with `role
+                    # "postgres" does not exist`. Probe both, cheapest statement first, and fail
+                    # with a diagnosis if neither answers: the ALTER below is the one statement
+                    # that must reach the live role, and a silent skip leaves xnat-web
+                    # authenticating with a stale password. `pg_isready` cannot make this choice,
+                    # because it reports "accepting connections" as soon as the server answers,
+                    # including when the server rejects the role.
+                    app_role={{ .Values.xnat.db.datasourceUsername | quote }}
+                    role=
+                    for candidate in postgres "$app_role"; do
+                      if psql -X -q -U "$candidate" -d postgres -tAc 'select 1' >/dev/null 2>&1; then
+                        role="$candidate"
+                        break
+                      fi
+                    done
+                    if [ -z "$role" ]; then
+                      echo "xnat-db postStart: no usable role: psql refused both 'postgres' and" \
+                           "'${app_role}' over the local socket. The volume's role layout is" \
+                           "unexpected; see the trust on Kubernetes troubleshooting page, xnat-db" \
+                           "crash loop. App role password NOT synced" >&2
+                      exit 1
+                    fi
+                    if ! psql -X -q -v ON_ERROR_STOP=1 -U "$role" -d postgres \
+                           -v u="$app_role" <<-'EOSQL'
                     	SET log_statement = none;
                     	SET log_min_error_statement = panic;
                     	\set pw `printenv XNAT_DATASOURCE_PASSWORD`
@@ -176,8 +201,8 @@ spec:
                     	DO $$ BEGIN RAISE WARNING 'xnat-db postStart: xnat role password synced'; END $$;
                     	EOSQL
                     then
-                      echo "xnat-db postStart: FAILED to sync the xnat role password;" \
-                           "xnat-web and imaging-api will not authenticate" >&2
+                      echo "xnat-db postStart: FAILED to sync the ${app_role} role password" \
+                           "(connected as ${role}); xnat-web and imaging-api will not authenticate" >&2
                       exit 1
                     fi
           volumeMounts:
