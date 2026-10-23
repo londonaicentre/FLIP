@@ -28,8 +28,9 @@ server {
 
     # The SuperNode chunks arrays at 5 MiB (FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE); a push-object
     # body is one chunk plus protobuf framing, as is a pull-object reply. Stream both
-    # rather than spool them to disk.
-    client_max_body_size 64m;
+    # rather than spool them to disk. A larger body is refused 413, which the SuperNode
+    # does not retry: raise this with any chunk-size override.
+    client_max_body_size ${FLEET_PROXY_MAX_BODY_SIZE};
     proxy_request_buffering off;
     proxy_buffering off;
     client_body_timeout 300s;

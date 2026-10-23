@@ -189,6 +189,9 @@ and raw request URI — to the SuperLink over TLS, and answers everything else 4
 reach or verify the SuperLink it answers 503, which the SuperNode retries, and its health check
 (`fleet-proxy/healthcheck.sh`, also on the ECS sidecar) fails, since the NLB's TCP check alone would
 still pass. The access log's `upstream=` field tells the two apart.
+The proxy refuses a request body over `FLEET_PROXY_MAX_BODY_SIZE` (default `64m`, against
+flwr's 5 MiB array chunks) with 413, which the SuperNode does not retry; raise it alongside any
+`FLWR_PRIVATE_MAX_ARRAY_CHUNK_SIZE` override.
 
 | Where | Shape |
 |---|---|
