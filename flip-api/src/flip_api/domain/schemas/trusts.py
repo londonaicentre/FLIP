@@ -124,3 +124,9 @@ class UpgradeStatusInput(BaseModel):
     release: str = Field(min_length=1, max_length=64)
     # A captured log tail on FAILED, or the reason on BLOCKED.
     detail: str | None = Field(default=None, max_length=8000)
+
+
+class UpgradeEnableInput(BaseModel):
+    """The install step's one setting (``PUT /trust/upgrade-policy``): the trust's own operator switching it."""
+
+    enabled: bool

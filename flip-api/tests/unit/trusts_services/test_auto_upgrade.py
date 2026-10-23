@@ -225,3 +225,67 @@ class TestClaim:
         assert t.upgrade_blocker == "LOCAL_MODIFICATIONS"
         svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", detail="<script>"), db)
         assert t.upgrade_blocker is None
+
+
+class TestRoutes:
+    """The agent routes authenticate by trust key; the portal routes by user and trust-scoped permission."""
+
+    def _client(self, trust: Trust, db: MagicMock):
+        from fastapi.testclient import TestClient
+
+        from flip_api.auth.access_manager import authenticate_trust
+        from flip_api.auth.dependencies import verify_token
+        from flip_api.db.database import get_session
+        from flip_api.main import app
+
+        app.dependency_overrides[authenticate_trust] = lambda: trust
+        app.dependency_overrides[get_session] = lambda: db
+        app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+        return TestClient(app), app
+
+    def test_trust_key_can_set_the_switch_only(self):
+        t = _trust(auto_upgrade_enabled=False, auto_upgrade_window_start="01:00", auto_upgrade_window_end="05:00")
+        client, app = self._client(t, MagicMock())
+        try:
+            with patch(f"{SVC}.is_busy", return_value=False):
+                r = client.put("/api/trust/upgrade-policy", json={"enabled": True})
+        finally:
+            app.dependency_overrides.clear()
+        assert r.status_code == 200
+        assert t.auto_upgrade_enabled is True
+        assert t.auto_upgrade_window_start == "01:00"
+
+    def test_admin_routes_refuse_a_user_without_the_permission(self):
+        t = _trust()
+        db = MagicMock()
+        db.get.return_value = t
+        client, app = self._client(t, db)
+        try:
+            with (
+                patch("flip_api.trusts_services.trust_auto_upgrade.has_trust_permissions", return_value=False),
+                patch("flip_api.trusts_services.trust_auto_upgrade.has_permissions", return_value=False),
+            ):
+                get = client.get(f"/api/trust/{t.id}/auto-upgrade")
+                put = client.put(f"/api/trust/{t.id}/auto-upgrade", json={"enabled": True})
+        finally:
+            app.dependency_overrides.clear()
+        assert (get.status_code, put.status_code) == (403, 403)
+
+    def test_admin_get_uses_the_camel_case_the_ui_reads(self):
+        t = _trust(auto_upgrade_enabled=True)
+        db = MagicMock()
+        db.get.return_value = t
+        client, app = self._client(t, db)
+        try:
+            with (
+                patch("flip_api.trusts_services.trust_auto_upgrade.has_trust_permissions", return_value=True),
+                patch(f"{SVC}.target_release", return_value="v1.3.0"),
+                patch(f"{SVC}.is_busy", return_value=True),
+            ):
+                r = client.get(f"/api/trust/{t.id}/auto-upgrade")
+        finally:
+            app.dependency_overrides.clear()
+        body = r.json()
+        assert body["targetRelease"] == "v1.3.0"
+        assert body["currentRelease"] == "v1.2.0"
+        assert body["blockers"] == ["JOBS_RUNNING"]

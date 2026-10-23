@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply up-trust-ec2 down-trust-ec2 \
+.PHONY: build up down prepare-artifacts up-trust down-trust create-trust-network selftest-node restart-trust upgrade-trust _upgrade-trust-apply setup-auto-upgrade up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
@@ -739,6 +739,11 @@ upgrade-trust: require-xnat-aetitle
 	$(refuse_remote_governance)
 	uv run --no-config ../scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-apply KIT=$(KIT) PROD=$(PROD) DEBUG=$(DEBUG)
+
+# Install (or, with AUTO_UPGRADE=no, remove) the automatic-upgrade agent for this kit.
+setup-auto-upgrade:
+	$(require_kit_file)
+	uv run --no-config ../scripts/setup_auto_upgrade.py --kit-file $(KIT_FILE) $(if $(AUTO_UPGRADE),--answer $(AUTO_UPGRADE))
 
 # Phase 2 of upgrade-trust — never call directly (the tag it applies is whatever the
 # kit says, which is only right after phase 1 wrote it). No ensure_net_dirs: the net

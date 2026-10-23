@@ -26,6 +26,7 @@ from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.trusts import (
     AutoUpgradeSettings,
     AutoUpgradeView,
+    UpgradeEnableInput,
     UpgradeLease,
     UpgradePolicy,
     UpgradeStatusInput,
@@ -155,3 +156,23 @@ def post_upgrade_status(
 ) -> UpgradeLease | None:
     """STARTING claims the lease (409 if refused); SUCCEEDED and FAILED release it and record the attempt."""
     return auto_upgrade.record_status(authenticated_trust.id, report, db)
+
+
+@router.put(
+    "/trust/upgrade-policy",
+    summary="Switch automatic upgrades on or off with the trust's own API key (the install step).",
+    response_model=UpgradePolicy,
+)
+@limiter.limit("10/minute")
+def put_upgrade_policy(
+    request: Request,
+    body: UpgradeEnableInput = Body(...),
+    db: Session = Depends(get_session),
+    authenticated_trust: Trust = Depends(authenticate_trust),
+) -> UpgradePolicy:
+    """Set only the switch; the window stays whatever the Trust Admin set. Used by ``make setup-auto-upgrade``."""
+    authenticated_trust.auto_upgrade_enabled = body.enabled
+    db.add(authenticated_trust)
+    db.commit()
+    logger.info(f"Trust {authenticated_trust.name} set automatic upgrades enabled={body.enabled} with its own key")
+    return auto_upgrade.policy_for_agent(authenticated_trust, db)
