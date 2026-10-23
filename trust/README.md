@@ -63,7 +63,7 @@ Registration (`register_trust` service, `POST /admin/trusts`):
 
 ### 2. The per-trust kit file
 
-Each trust stack reads a per-trust kit file `trust/.env.<CODE>.<env>` (e.g. `trust/.env.GSTT.development`, `trust/.env.<CODE>.production`; gitignored; dev templates `trust/.env.<CODE>.development.example` for GSTT/KCH, generic base `trust/.env.example`), auto-included by `trust/Makefile`. `make register-trust KIT=<CODE>` writes the managed blocks. It carries:
+Each trust stack reads a per-trust kit file `trust/.env.<CODE>.<env>` (e.g. `trust/.env.GSTT.development`, `trust/.env.<CODE>.prod`; gitignored; dev templates `trust/.env.<CODE>.development.example` for GSTT/KCH, generic base `trust/.env.example`), auto-included by `trust/Makefile`. `make register-trust KIT=<CODE>` writes the managed blocks. It carries:
 
 ```sh
 TRUST_API_KEY=<from kit>
@@ -102,7 +102,7 @@ The kit also carries the trust's **disclosure floor**:
 COHORT_QUERY_THRESHOLD=10
 ```
 
-This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
+This is the minimum cohort size the trust will release anything about. Cohort statistics below it are privacy-suppressed (a genuine zero and a small count are indistinguishable), and both row-level routes refuse outright — `/cohort/dataframe`, which supplies FL training data, and `/cohort/accession-ids`, which decides whose imaging is pulled into XNAT. Raise it to release less. It is the operator's setting, not the hub's: trusts need not agree on a value, and the hub cannot lower it. See [`data-access-api/README.md`](data-access-api/README.md#row-level-data-and-the-disclosure-threshold). The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> HUB=<env>` handles the rest.
 
 #### Site-enforced FL privacy policy (optional, FLARE only)
 
@@ -286,7 +286,7 @@ concept is present, and that concept is committed before the bulk load, so a run
 between leaves a database that reports itself loaded and is skipped for good.
 `make -C trust/omop-db load-dicom-vocab FORCE_DICOM_VOCAB=1` reloads over it. The same
 variable reaches the Kubernetes hook (`trustData.seed.forceDicomVocab`) and the EC2 play
-(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> FORCE_DICOM_VOCAB=1`).
+(`make -C deploy/providers/AWS seed-trust-data KIT=<CODE> HUB=<hub> FORCE_DICOM_VOCAB=1`).
 
 ### Which partition a trust is seeded with
 
@@ -343,6 +343,132 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 
 `make up` (and `make up-trust KIT=<name>`) brings up that trust's XNAT automatically — it is no longer a separate step. See the dedicated README under [xnat/README.md](xnat/README.md) for standalone XNAT management and debugging.
 
+## MONAI Label (optional)
+
+MONAI Label adds AI-assisted annotation to the XNAT OHIF viewer: a **MONAI Label** menu in the
+viewer's Masks panel that runs a segmentation model over the scan on screen and lets a user
+correct the result interactively.
+
+> **Prerequisite: the XNAT OHIF Viewer plugin** — the MONAI Label panel lives inside the viewer
+> and registration targets its `/xapi/ohifaiaa` endpoint. FLIP ships the plugin by default in
+> every deployment mode (see the plugin table in [xnat/README.md](xnat/README.md)), so there is
+> no extra plugin step.
+
+It is **off by default** — it needs an NVIDIA GPU on the trust host and pulls a large image, so
+a trust that does not want it is unaffected. Enable it per trust:
+
+```sh
+make up-trust KIT=<CODE> MONAI_LABEL=true       # or set MONAI_LABEL=true in trust/.env.<CODE>.<env>
+```
+
+The trust's kit file carries the rest of the settings:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MONAI_LABEL` | `false` | Master switch. Requires `NUM_AVAILABLE_GPUS>0`. |
+| `MONAI_LABEL_PORT` | `8030` | Host port the server listens on. |
+| `MONAI_LABEL_MODELS` | `deepedit` | Comma-separated radiology models. `all` loads nine, each downloading its own weights. |
+| `MONAI_LABEL_PROJECTS` | *(empty)* | XNAT projects the server may read. Empty means **every** project on this trust. |
+| `MONAI_LABEL_PUBLIC_URL` | Dev: `http://localhost:$MONAI_LABEL_PORT`; required in production | See below — this one matters. |
+| `MONAI_LABEL_SHM_SIZE` | `8gb` | Shared memory for dataloader workers. |
+| `MONAI_LABEL_BIND_HOST` | `127.0.0.1` | Host interface `MONAI_LABEL_PORT` is published on. Loopback by default — see below. |
+| `MONAI_LABEL_AUTH_ENABLE` | `false` | MONAI Label's own auth. Upstream default; enabling it needs an OAuth realm FLIP does not run. |
+
+**`MONAI_LABEL_PUBLIC_URL` is the setting people get wrong.** XNAT stores this URL and hands it
+to the OHIF viewer, which calls it **from the clinician's browser** — XNAT never proxies the
+request. So it must resolve on the clinician's machine: a Docker service name, or `0.0.0.0`,
+will not work. Production Compose refuses an empty value. The development default only works
+when the browser runs on the trust host itself. Two
+further consequences on a real trust:
+
+- If XNAT is served over **HTTPS**, the browser blocks a plain-`http://` MONAI Label URL as
+  mixed content. Terminate TLS in front of MONAI Label, or serve it through the XNAT nginx so
+  it is same-origin.
+- The MONAI Label API is **unauthenticated** and holds this trust's XNAT service-account
+  credentials. Anyone who can reach the port can enumerate every study the server can see,
+  download identifiable DICOM, and write labels back to XNAT as an admin. `MONAI_LABEL_AUTH_ENABLE`
+  is upstream's own switch, but turning it on requires an OAuth realm FLIP does not run — so
+  the containment is the network, not the app.
+
+  Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
+  is published on loopback only, and the trust host gains no listener reachable from the
+  network (the trust deployment model is otherwise strictly outbound — see
+  [Deployment Architecture](../CLAUDE.md)). That default is deliberately *not* browser-usable
+  from another machine. To give clinicians access, pick one:
+
+  1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also
+     resolves the mixed-content problem above, and it inherits XNAT's TLS.
+  2. **Set `MONAI_LABEL_BIND_HOST`** to an interface you have explicitly firewalled to the
+     clinical network, and set `MONAI_LABEL_PUBLIC_URL` to match.
+
+**Each user must switch the panel on themselves**, once per browser: in the viewer, *Options →
+Preferences → Experimental*, tick **MONAILabel Tools**. A **MONAI Label** entry then appears in
+the Masks panel. Registering the server is automatic, but this flag is not, and it cannot be
+defaulted from the server — the viewer keeps it in the browser's `localStorage`. Until it is
+ticked, a perfectly working server is simply absent from the viewer; that is the first thing to
+check when it "isn't showing up", followed by `GET /xapi/ohifaiaa/servers` returning the URL and
+that URL opening in the browser.
+
+Known stock-viewer defects (all client-side — the server returns valid masks throughout,
+verifiable in the monailabel container's logs):
+
+- **Clicks do nothing in DeepGrow/DeepEdit** after the panel first connects: it activates the
+  NVIDIA AIAA click tool instead of MONAI Label's, so left-clicks on the image never reach the
+  server. **Pick *Mask ▾ → MONAILabel* again** once the panel shows the server; clicks then prompt
+  the model (Ctrl+click for a negative point).
+
+- *"Empty mask was returned by the model run"* from every interactive model (`sam_2d`,
+  `deepgrow_*`) while `deepedit_seg` still works: the tab's segment state has gone stale —
+  **reload the tab**.
+- Interactive (DeepGrow-type) results always land in the **first segment**, regardless of which
+  segment is selected — the viewer routes the mask through an active-segment index that segment
+  selection does not update (observed in the OHIF **viewer frontend** 3.7.2 that ships inside
+  XNAT OHIF **plugin** 3.8.0; the 3.7.0 frontend did not have the reworked segment store —
+  note the frontend and plugin carry separate version numbers). Until fixed upstream, treat
+  SAM/DeepGrow as single-target — rename the first segment afterwards — and use `deepedit_seg`
+  for multi-organ work.
+
+A recorded walkthrough of all this (enable, run, export, convert) can be regenerated on any trust with
+`make -C trust/monailabel-demo demo-video`; see [monailabel-demo/README.md](monailabel-demo/README.md).
+
+### Getting labels back out: the `export_mask` pipeline
+
+A mask saved in the viewer lands in XNAT as a **DICOM-SEG assessor**, which FL training cannot
+read — it consumes NIfTI. `trust/xnat/xnat/config/configure-export-mask.sh` closes that gap: it
+registers an `export_mask` container-service command plus a site-wide event subscription on
+image-assessor creation, so every saved segmentation is converted to NIfTI and uploaded back to
+the session automatically. Nothing upstream does this step.
+
+Two things to know:
+
+- **It is registered only when `MONAI_LABEL=true`.** `make xnat-configure` gates it (see
+  `xnat-configure-export-mask` in `trust/xnat/Makefile`), so a trust without MONAI Label gets
+  neither the converter command nor the subscription. **If you enable MONAI Label on a trust
+  that was already up, re-run `make -C trust/xnat xnat-configure KIT=<CODE>`** (or bring XNAT
+  up again) — otherwise the annotation UI works but masks are never converted.
+- **The converter is FLIP-built:** `ghcr.io/londonaicentre/xnat-export-mask:<version>`, from
+  [`xnat/export-mask/`](xnat/export-mask/), pinned by an immutable version tag in
+  `export_mask_command.json`. It runs on the trust network with the XNAT credentials the
+  container service injects, reads the assessor's DICOM-SEG, resamples the mask onto the
+  session's NIfTI scan when there is exactly one, and uploads the `.nii.gz` into the
+  assessor's `SEG` resource. Like `xnat-dcm2niix`, the GHCR package must be **public**
+  (see [xnat/README.md](xnat/README.md#operator-action-the-ghcr-packages-must-be-public)).
+
+Notes:
+
+- **SAM is always on**, independently of `MONAI_LABEL_MODELS`: the radiology app registers
+  `sam_2d` and `sam_3d` (interactive click-to-segment) whenever the `sam2` package is
+  importable. Their checkpoint is a further ~900 MB fetched from HuggingFace on first start,
+  into the same persisted model directory. Upstream's `--conf sam2 false` would disable them,
+  but `entrypoint.sh` passes only `--conf models`, so there is currently no way to turn SAM off
+  from the kit file — it would need an entrypoint change.
+- The server reads DICOM straight off this trust's XNAT archive (mounted read-only), falling
+  back to HTTP downloads only for scans it cannot resolve there.
+- Pretrained weights are fetched on first start and persisted in the `monailabel-models`
+  volume, so a container recreate does not re-download them.
+- A deployed trust (`HUB=stag|prod`) runs the published `ghcr.io/londonaicentre/monailabel` image
+  (built by `docker_build_monailabel.yml`; dev builds locally from `trust/monailabel/`).
+
 ## Running standalone (remote trust operator)
 
 If you are operating a trust on a host that does not have the hub's
@@ -350,38 +476,36 @@ If you are operating a trust on a host that does not have the hub's
 need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 
 The root `onboard-onprem-trust`, `up-onprem-trust` and `upgrade-onprem-trust`
-wrappers default to production. Their readiness checklist checks the same file
-as deployment: `trust/.env.<KIT>.<env>` when present, otherwise `trust/.env.<KIT>`.
-Its heading and fix hints name that selected path, so a suffixed kit needs no
-unsuffixed copy. Pass the same `PROD` value to the checklist and deployment when
-joining stag or an LZA environment.
+wrappers default to `HUB=prod`. Their readiness checklist checks the same file
+as deployment: `trust/.env.<KIT>.<env>`, resolved by `deploy/env_mode.mk`'s `kit_file`.
+Its heading and fix hints name that selected path. Pass `HUB=stag` to the checklist and deployment when joining the staging hub.
 
 ### One-time setup
 
 1. The hub admin scaffolds and registers your kit
-   (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=true`
-   then `make register-trust KIT=<CODE> PROD=true`). The result is a complete
-   kit file at `trust/.env.<CODE>.production` containing credentials, the AES
+   (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod`
+   then `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod` and
+   `make sync-trust-kit KIT=<CODE> HUB=prod`). The result is a complete
+   kit file at `trust/.env.<CODE>.prod` containing credentials, the AES
    key, the hub URL, image tags, and a host-local profile.
 2. The hub admin transmits the file to you out-of-band (SCP-via-SSM for an
    EC2 trust; encrypted channel for on-prem).
-3. Drop it at `trust/.env.<CODE>.production` in your checkout.
+3. Drop it at `trust/.env.<CODE>.prod` in your checkout.
 4. Fill in the **Trust-local credentials** block (Orthanc / OMOP / XNAT /
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
-   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true` (stop it with
-     `make -C trust down-trust-ec2 KIT=<CODE> PROD=true`)
-   - On-prem trust: `sudo -E env PROD=true make -C trust up-trust KIT=<CODE>`
+   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> HUB=prod` (stop it with
+     `make -C trust down-trust-ec2 KIT=<CODE> HUB=prod`)
+   - On-prem trust: `sudo -E make -C trust up-trust KIT=<CODE> HUB=prod`
      (sudo: the provisioned login user is deliberately not in the docker group;
      `-E` keeps `$HOME` so root's docker reuses your GHCR login)
-   - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> PROD=true` (no sudo —
+   - Laptop-against-prod: `make -C trust up-trust KIT=<CODE> HUB=prod` (no sudo —
      your workstation isn't provisioned by the on-prem playbook)
 
-   `PROD` names the hub you are joining, and with it the kit-file suffix the
-   trust Makefiles read: `true` → `.env.<CODE>.production`, `stag` → `.stag`,
-   and on an LZA estate (FLIP#749) `lza` → `.lza-prod`, `lza-stag` → `.lza-stag`.
-   All four run the production compose and stack files; only `PROD` unset is
-   the development stack.
+   `HUB` names the hub you are joining, and with it the kit-file suffix the
+   trust Makefiles read: `prod` → `.env.<CODE>.prod`, `stag` → `.env.<CODE>.stag`.
+   Both run the prod compose and stack files; only `HUB` unset is the
+   development stack.
 
    On-prem, `up-trust` runs `ensure-seeded` unconditionally, the same way it does in
    dev: a store with no `.seeded` marker beside it is seeded with the listed mock
@@ -416,7 +540,9 @@ and upgrades XNAT in place (database dump first, no reset); it never runs
 it asks the registry for every image at the target and refuses a tag any of them was
 never built at (each `sha-` build is path-filtered; a release tag builds them all —
 for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
-`ORTHANC_TAG` / `XNAT_TAG` in the kit do the same for the data services).
+`ORTHANC_TAG` in the kit do the same for those data services). `XNAT_TAG` pins all three
+XNAT images together; their builds no longer share `sha-` tags. Set it to a release tag
+(or `stag`/`prod`) published for all three images when moving a site to a `sha-` tag.
 `FORCE=1` allows a downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
 Kubernetes and EC2 variants, rollback — is
 `docs/source/sys-admin/admin-upgrading-sites.rst`.
@@ -424,7 +550,7 @@ Kubernetes and EC2 variants, rollback — is
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 
 When the hub admin rotates a shared value (AES key, FL backend, image tag),
-they will run `make sync-trust-kit KIT=<CODE> PROD=true` on their side. That
+they will run `make sync-trust-kit KIT=<CODE> HUB=prod` on their side. That
 produces an updated kit file with the new Hub-shared block; credentials are
 preserved. The updated file is transmitted to you using the same out-of-band
 channel. Replace **only the Hub-shared block** in your local copy (your

@@ -83,7 +83,7 @@ def _kv(path: Path) -> dict[str, str]:
 
 def main() -> int:
     tmp = Path(tempfile.mkdtemp())
-    out = tmp / ".env.SELFTEST.production"
+    out = tmp / ".env.SELFTEST.prod"
 
     print("placeholders_all_filled")
     result = _run(out)

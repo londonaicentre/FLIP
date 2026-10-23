@@ -117,6 +117,10 @@ repos:
         args: ['--check', '--project', 'trust/xnat/tests']
         files: '^trust/xnat/tests/(pyproject\.toml|uv\.lock|uv\.toml)$'
       - id: uv-lock
+        name: uv-lock (xnat-export-mask)
+        args: ['--check', '--project', 'trust/xnat/export-mask']
+        files: '^trust/xnat/export-mask/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
         name: uv-lock (aws-deploy)
         args: ['--check', '--project', 'deploy/providers/AWS']
         files: '^deploy/providers/AWS/(pyproject\.toml|uv\.lock|uv\.toml)$'

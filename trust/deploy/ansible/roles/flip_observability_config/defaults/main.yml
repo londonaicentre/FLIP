@@ -15,7 +15,7 @@
 observability_src_dir: "{{ role_path }}/../../../../observability"
 # Root of everything the trust stack bind-mounts from the host (flip_trust_dirs uses it too).
 flip_dir: /opt/flip
-# What the production compose mounts by default (OBSERVABILITY_CONFIG_DIR=/opt/flip/config/observability).
+# What the prod compose mounts by default (OBSERVABILITY_CONFIG_DIR=/opt/flip/config/observability).
 observability_dest_dir: "{{ flip_dir }}/config/observability"
 flip_owner: ubuntu
 flip_group: ubuntu

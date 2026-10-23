@@ -73,6 +73,9 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
+- [Node.js 24 LTS](https://nodejs.org/) (npm **>= 11.10**) for flip-ui work outside Docker (`npm ci`, lint, unit
+  tests): earlier npm ignores `flip-ui/.npmrc`'s `min-release-age` without a word, so installs skip the cooldown
+  (see [Dependency cooldown](#dependency-cooldown-supply-chain-protection)). The stack itself builds flip-ui in Docker.
 - No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
   [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
   downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
@@ -180,9 +183,8 @@ The policy is enforced through native package-manager configuration:
 - **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
   younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
   workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
-  `flip-ui/package.json`'s `engines` field still permits older Node (`^20.19.0 || >=22.12.0`) for compatibility, but
-  installing on one of those silently drops the cooldown rather than failing — so develop against Node 24 locally
-  to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
+  `flip-ui/package.json`'s `engines` field asks for Node >= 24 and npm >= 11.10, so npm warns (`EBADENGINE`) on an
+  older toolchain instead of dropping the cooldown unnoticed — develop against Node 24 locally to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
   enforces `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
   `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
 
@@ -294,7 +296,7 @@ table is the capability matrix behind it.
 | The example Trusts' XNAT plugins (first `make up`) | Nothing | `make -C trust prepare-artifacts` downloads them from upstream, checksum-verified |
 | Building the XNAT images locally (`make -C trust/xnat build`) | Nothing | The build downloads the WAR and plugins from upstream the same way; most developers pull the published `xnat-*` images and never build |
 | OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | AI Centre developers: the `dev` AWS profile (`FLIPDeveloperAccess`, see [Setting up AWS access](#setting-up-aws-access)) | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
-| Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
+| Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<hub>`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
 | Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
 | `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
 
@@ -331,9 +333,9 @@ carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `regis
 automatically once the hub is up.
 
 For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
-that `up-onprem-trust` and `upgrade-onprem-trust` use: `.env.<CODE>.<env>` first,
-then the legacy `.env.<KIT>`, under `trust/`. These root wrappers default to
-`PROD=true`; pass `PROD=stag`, `lza` or `lza-stag` for another deployed environment.
+that `up-onprem-trust` and `upgrade-onprem-trust` use: `trust/.env.<CODE>.<env>`, resolved by
+`deploy/env_mode.mk`'s `kit_file`. These root wrappers default to
+`HUB=prod`; pass `HUB=stag` for the staging hub.
 The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
 resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
 
@@ -540,7 +542,7 @@ false positive.
 
 ### Running the stack (pull vs. build)
 
-In development (`PROD` unset), `make up` **pulls** the repo-built service images
+In development (`HUB` unset), `make up` **pulls** the repo-built service images
 (`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
 instead of building them — each carries `image:` + `pull_policy: always` in the dev
 compose, and your local `src/` is bind-mounted on top, so editing a `.py` still
@@ -555,7 +557,10 @@ make up BUILD=true     # rebuild the repo-built services from local source inste
 Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
 system packages, or a `Dockerfile` — those live in the image layer, so a plain
 `make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
-no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+no GHCR image). `BUILD=true` also builds `omop-db` and the XNAT images (the latter
+deployed at the local-only `:dev` tag, so the swarm cannot swap them for the registry's;
+a second stack on the same host passes its own with `XNAT_TAG=<tag>`).
+Stag/prod (`HUB=stag|prod`) are unaffected: they run the prod
 compose with baked images and no bind-mounts.
 
 ## The contribution process
@@ -689,7 +694,7 @@ make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
 # Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
 # without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
-make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
+make -C trust/deploy/helm sync-kit-override KIT=<CODE> HUB=<env>
 
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
 # receiver log (a C-ECHO cannot see an importer crash — FLIP#1228). Exits 0 pass, 1 fail,
@@ -823,7 +828,7 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
-`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the twelve image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
+`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the fourteen image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
 
 - **The release job runs as long as the slowest image build** (xnat-web, ~30 min). A red build, or an expired wait budget, fails the release job and names what to re-run; production stays on the sha pin it got from the push apply. Re-running `release.yml` is safe — everything after the tag is keyed on the GitHub Release not existing, so a re-run re-dispatches the builds and re-tries the apply.
 - **Nothing may merge to `main` during the wait.** The release apply runs `main` as it is when the dispatch fires, so a hotfix merged in that window would have the *release's* images applied over its code — a silent production rollback. Both ends refuse it: `release.yml` checks `main`'s HEAD before dispatching, and `terraform_apply.yml` refuses unless `release_tag` resolves to the very commit it has checked out. Recovery is to cut a release from the newer commit, not to re-run the old one.
@@ -868,6 +873,19 @@ The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the 
 
 Before opening the release PR from `develop` to `main`:
 
+The mechanical steps are make targets (FLIP#1608), each a script under [`scripts/release/`](scripts/release/):
+
+| Target | Does |
+|---|---|
+| `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; bumps the root, every changed service and (if changed) flip-utils; `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
+| `make release-instance TAG=… PR=<n>` | An isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. `release-gates` runs it; on its own it is for debugging. |
+| `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
+| `make release-gates TAG=… PR=<n>` | On the GPU host, quickest first: `unit_test`, `integration_test` and both tutorial suites on a quiet host, then the instance, both smokes and teardown; one JSON result per gate under `release-gates/<TAG>/`, and every container's log when a stack gate fails. Run it from a dedicated release worktree: the instance writes `trust/.env.<KIT>.development`, the files a developer's own trusts use, so it refuses a checkout whose kits another stack wrote. |
+| `make release-record TAG=… PR=<n> APPLY=1` | Writes *Release checks* from those results, refusing results from another commit. |
+| `make release-main-check TAG=… [OWED=<file>]` | Read-only. Checks the `develop` → `main` PR is MERGEABLE, its branch-origin and (if flip-utils changed) version-bump checks passed and the notes preview is posted, then prints the after-merge checklist; with no PR yet, prints the `gh pr create` command for it. |
+
+The list below is what they check and do, and what stays manual (the notes' prose, Dependabot fixes, the PRs).
+
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file listed under [Versioning](#versioning) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
@@ -882,7 +900,7 @@ Before opening the release PR from `develop` to `main`:
 ### Cutting the release
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
-1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop` or, for a hotfix, from a `hotfix/*` branch (see [Hotfixes](#hotfixes)).
    **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
@@ -892,13 +910,13 @@ Before opening the release PR from `develop` to `main`:
    - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
    - `release.yml` then **dispatches** every image workflow — `docker_build_*.yml` and both `fl-docker-build-*.yml` — at the new tag (`gh workflow run <wf> --ref v<X.Y.Z>`), building every image at the release commit, unfiltered, and pushing `:v<X.Y.Z>` (FLIP#1204). This is the tag hub and sites deploy: a release is one identity across the whole stack, not a different `sha-` per service. The image workflows also carry a `push.tags: ['v*.*.*']` trigger, but it cannot serve the real release: the tag is pushed with the workflow's own `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way (only `workflow_dispatch` / `repository_dispatch` are exempt) — the push trigger is what a **hand-pushed** tag uses, i.e. a release candidate. `.github/tests/workflows/test_release.py` holds the dispatch roster to the exact set of publishing workflows, so one added without being listed fails CI.
-1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (twelve workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (fourteen workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
 ### Rolling the release out
 
 The release is not deployed by merging. Two steps, in this order:
 
-1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui PROD=true` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --profile prod --compare .env.production` → `make sync-trust-kits PROD=true` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui HUB=prod` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`.
 1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<slot>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes
@@ -908,7 +926,7 @@ There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Releas
 - **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
 - **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
 
-Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
+Both are rendered into the preview comment on the `develop` → `main` PR (and on a hotfix PR), and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
 
 ### flip-utils and the PyPI release path
 
@@ -920,15 +938,17 @@ Full detail — the per-PR gates, the trusted-publishing setup, and the `release
 
 ### Deploying the release
 
-Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
+Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
 
 ### Hotfixes
 
-For an urgent fix on `main` without pulling in unrelated `develop` work:
+For an urgent fix, a security fix say, that cannot wait for the next release of everything on `develop`. `main` takes PRs from `develop` and from `hotfix/*` branches only, so a hotfix ships the fix alone:
 
-1. Branch from `main`, apply the fix, bump the patch version in the root `pyproject.toml` (and any affected service).
-1. Open a PR targeting `main`. On merge, the same automation kicks in — `release.yml` tags `v<X.Y.Z+1>` and `docker_build_*.yml` rebuilds `:prod`.
-1. Forward-port the fix to `develop` so the next regular release includes it.
+1. Branch `hotfix/v<X.Y.Z>` from the last release tag, where `<X.Y.Z>` is the next patch version: `git switch -c hotfix/v0.13.2 v0.13.1`.
+1. Add the fix. When it was reviewed on its own PR to `develop`, cherry-pick that PR's commits (`git cherry-pick -x`); otherwise commit it here.
+1. Bump the patch version in the root `pyproject.toml` (and the root `uv.lock`), in any service under [Versioning](#versioning) that the fix touches and, if `flip-utils/**` changed, in `flip-utils/flip/__init__.py`. Fill in `.github/RELEASE_NOTES_TEMPLATE.md` as for any release: *Site upgrade* says whether sites must upgrade, and *Release checks* records the pre-release checks you ran, which are at least the ones that exercise the fix.
+1. Open a PR from `hotfix/v<X.Y.Z>` to `main`. `validate_branch_origin.yml` accepts it and the release-notes preview runs on it; `check-version-bump.yml` does not, so a flip-utils bump (step 3) is yours to check. Merge it with a merge commit: `release.yml` then releases `v<X.Y.Z>` as above, and *Nothing may merge to `main` during the wait* applies.
+1. Merge `main` back into `develop` through a PR, again with a merge commit, so `develop` carries the fix, the new version and the release notes, and the next `develop` → `main` PR does not conflict with the hotfix.
 
 ### Testing a release candidate before merge to main
 
@@ -1018,6 +1038,15 @@ make -C flip-api backfill_cohort_snapshots
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
 
+To record the MONAI Label demo video against a running trust with MONAI Label on (a spleen CT segmented in the XNAT
+OHIF viewer, exported and converted to NIfTI; it doubles as an end-to-end check), run on the trust host:
+
+```bash
+make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=<CT session ID>
+```
+
+See [`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md) for the prerequisites.
+
 ## Building the documentation
 
 The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs docs` (see
@@ -1063,11 +1092,11 @@ run was 95% of a clone). Instead:
 - **Each release freezes its GIFs**: `release.yml`'s `docs-gifs` job tags the newest recording the release
   contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
   that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
-- **GIFs CI cannot record** (one that needs a live trust, say) are recorded by hand and published to the
-  dataset branch of the PR that documents them, which that PR's ReadTheDocs preview then shows:
-  `uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"` (needs
-  `hf auth login` with write access to the dataset), then rebuild the preview. Only CI writes the dataset's
-  `main`; delete `pr-<N>` once the PR closes.
+- **GIFs CI cannot record** (the MONAI Label walkthrough needs a live trust) are listed in
+  `docs/scripts/live-recorded-gifs.txt` instead of having a spec. Recorded by hand, they go to the dataset
+  branch of the PR that carries them, which that PR's ReadTheDocs preview then shows (see "Publishing by
+  hand"). When that PR merges, the CI publish takes them from its `pr-<N>`; every later CI publish carries
+  them forward unchanged from `main`. Only CI writes the dataset's `main`; delete `pr-<N>` once the PR merges.
 
 ### Adding a new GIF
 
@@ -1088,21 +1117,24 @@ Authoring is two-step, because a PR cannot ship the GIF itself:
 cd flip-ui
 npm run docs:record   # records videos under test/cypress/videos/
 npm run docs:gifs     # ffmpeg → docs/source/assets/generated/gifs/<category>/*.gif (requires ffmpeg on PATH)
-FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the pinned ones
+FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the published ones
 ```
 
-Without the skip flag the build restores the pinned bytes over any file that differs — the pin wins.
+Without the skip flag the build restores the published bytes over any file that differs.
 
 ### Publishing by hand
 
-Rarely needed (the workflow does it), but the same script works from a laptop with an account that can
-write to the dataset:
+Only for GIFs CI cannot record, and only to the dataset branch of your PR (the script refuses `main`). From a
+laptop with an account that can write to the dataset, with the full set under
+`docs/source/assets/generated/gifs/` (fetch the rest with `uv run docs/scripts/fetch_docs_gifs.py`, then add
+yours):
 
 ```bash
 uvx --from 'huggingface_hub>=1.6' hf auth login
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)" --dry-run
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)"   # then pin the printed tag
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)" --dry-run
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"
 ```
 
-`--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION` (e.g. `main`) let a
-build read another dataset or an untagged revision, mirroring `HF_TRUST_DATA_REVISION`.
+Then rebuild the PR's ReadTheDocs preview. `--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` /
+`FLIP_DOCS_GIFS_REVISION` (e.g. `pr-945`, `v0.12.0`) let a build read another dataset or another ref, mirroring
+`HF_TRUST_DATA_REVISION`.

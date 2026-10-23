@@ -199,17 +199,16 @@ on-prem trust:
 
 .. code-block:: bash
 
-   make new-trust TRUST_CODE=<CODE> TRUST_NAME="<name>" PROD=<env>
-   make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=<env>
-   make sync-trust-kit KIT=<CODE> PROD=<env>
-   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=<env>
+   make new-trust TRUST_CODE=<CODE> TRUST_NAME="<name>" HUB=<env>
+   make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
+   make sync-trust-kit KIT=<CODE> HUB=<env>
+   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env> KIT_FILE=$PWD/trust/.env.<CODE>.<env>
 
 .. note::
 
    Until `FLIP#1419 <https://github.com/londonaicentre/FLIP/issues/1419>`_ is fixed, the admin
-   also has to: run ``make generate-xnat-credentials KIT=<CODE> PROD=<env>``; copy
-   ``trust/.env.<CODE>.<env>`` to ``trust/.env.<slot>`` (the packager reads that name and wants
-   the FL slot, e.g. ``Trust_3``); and, for a node outside AWS, set ``DOCKER_REGISTRY`` and
+   also has to: run ``make generate-xnat-credentials KIT=<CODE> HUB=<env>``; give the
+   packager the FL slot as ``KIT`` (e.g. ``Trust_3``) and the kit by path as ``KIT_FILE``; and, for a node outside AWS, set ``DOCKER_REGISTRY`` and
    ``DOCKER_FL_REGISTRY`` to ``ghcr.io/londonaicentre/``, ``DOCKER_TAG`` to a tag every trust image
    exists at (``stag`` on staging) and, on the LZA staging edge, ``FL_SERVER_PORT=8003``.
 
@@ -222,7 +221,7 @@ The tarball then goes to the node through the kit drop, and ``join`` installs it
 .. code-block:: bash
 
    make kit-upload AZ_SUBSCRIPTION="$SUB" TARBALL=flip-trust-kit-<slot>-<date>.tar.gz
-   make join       AZ_SUBSCRIPTION="$SUB" NAME=flip-trust-kit-<slot>-<date>.tar.gz KIT=<slot> PROD=<env>
+   make join       AZ_SUBSCRIPTION="$SUB" NAME=flip-trust-kit-<slot>-<date>.tar.gz KIT=<slot> HUB=<env>
    make logs       AZ_SUBSCRIPTION="$SUB" UNIT=flip-join-<slot>
 
 ``join`` fetches the kit with the node's identity, installs its kit file (owner-only) with the
@@ -306,7 +305,7 @@ hand:
 
 .. code-block:: bash
 
-   make aks-join TARBALL=flip-trust-kit-<slot>-<date>.tar.gz KIT=<slot> PROD=<env>   # MOCK_PACS=1 on a test node
+   make aks-join TARBALL=flip-trust-kit-<slot>-<date>.tar.gz KIT=<slot> HUB=<env>   # MOCK_PACS=1 on a test node
    make aks-selftest
 
 ``aks-join`` unpacks the tarball under ``build/kits/``, installs the kit file as
@@ -335,7 +334,7 @@ Operate and remove:
 
 - ``make aks-stop`` stops the node billing; ``make aks-start`` starts it and admits your current
   IP. After your IP changes, ``make aks-allow-ip`` admits the new one.
-- ``make aks-deploy KIT=<slot> PROD=<env>`` redeploys or upgrades from the installed kit.
+- ``make aks-deploy KIT=<slot> HUB=<env>`` redeploys or upgrades from the installed kit.
 - ``make aks-destroy`` (with the same ``SUBNET_ID`` and ``NODE_EGRESS_IPS``) removes the cluster and its network and keeps
   the bootstrap layer;
   ``make destroy-bootstrap`` refuses while the cluster or a VM exists.

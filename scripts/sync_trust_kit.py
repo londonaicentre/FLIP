@@ -25,9 +25,9 @@ have one definition.
 
 The caller (the root Makefile) is responsible for sourcing the right env file:
 `include $(MAIN_ENV_FILE)` + `export` populates os.environ with
-.env.development / .env.stag / .env.production (or .env.lza-prod / .env.lza-stag)
-values before invoking this script. No docker compose exec, no ECS round-trip, no
-per-trust lookup — just a file→file copy keyed on KIT, portable across dev/stag/prod.
+.env.development / .env.stag / .env.prod values before invoking this script. No
+docker compose exec, no ECS round-trip, no per-trust lookup — just a file→file copy
+keyed on KIT, portable across dev/stag/prod.
 """
 
 from __future__ import annotations
@@ -71,8 +71,8 @@ def main() -> None:
     # does, except on LZA staging: its edge serves staging on :8003 and :8002 is production's.
     edge_port = os.environ.get("FL_EDGE_PORT", "").strip()
     if not edge_port:
-        if args.kit.endswith(".lza-stag"):
-            die("❌ FL_EDGE_PORT is unset. Set FL_EDGE_PORT=8003 in .env.lza-stag (the edge's staging listener).")
+        if args.kit.endswith((".stag", ".lza-stag")):
+            die("❌ FL_EDGE_PORT is unset. Set FL_EDGE_PORT=8003 in .env.stag (the edge's staging listener).")
         edge_port = os.environ.get("FL_SERVER_PORT", "").strip()
     if edge_port and not edge_port.isdigit():
         die(f"❌ FL_EDGE_PORT must be a port number, got {edge_port!r}.")
@@ -90,7 +90,7 @@ def main() -> None:
     new_values = {k: os.environ[k] for k in tkl.HUB_SHARED_KEYS}
 
     # Surface the source env file + destination URL up-front — doubles as a
-    # footgun guard: an on-prem-pointed kit accidentally synced without PROD=true
+    # footgun guard: an on-prem-pointed kit accidentally synced without HUB=prod
     # would silently get the dev hub URL.
     source = os.environ.get("MAIN_ENV_FILE", "<environment>")
     hub_url = new_values["CENTRAL_HUB_API_URL"]
@@ -98,7 +98,7 @@ def main() -> None:
     print(f"   CENTRAL_HUB_API_URL → {hub_url}")
     if "localhost" in hub_url or "127.0.0.1" in hub_url:
         print("   ⚠️  Hub URL points at localhost — this is the dev hub.")
-        print("       If this kit should target stag/prod, re-run with PROD=stag or PROD=true.")
+        print("       If this kit should target stag/prod, re-run with HUB=stag or HUB=prod.")
 
     # Delegate the in-place merge: only the hub-shared block is passed, so
     # credentials and host-local edits are never touched.
