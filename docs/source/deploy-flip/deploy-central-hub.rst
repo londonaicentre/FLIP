@@ -6,65 +6,32 @@ Deploy the Central Hub
 
 The Central Hub is the cloud-hosted side of FLIP. It manages projects and users, runs the federated learning server
 and serves the web UI. It runs on AWS and is provisioned with Terraform (or OpenTofu) from one root module,
-``deploy/providers/AWS/``, in one of **two deployment modes**.
+``deploy/providers/AWS/``.
 
-This page covers what the two modes share. Each mode has its own page with its architecture and runbook. To deploy a
-trust, see :doc:`deploy-trust-node`.
+This page covers what every hub deployment shares; :doc:`deploy-central-hub-aws-lza` has the architecture and the
+runbook. To deploy a trust, see :doc:`deploy-trust-node`.
 
 .. contents:: On this page
    :local:
    :depth: 1
 
 ****************
-Deployment modes
+Deployment shape
 ****************
 
-Both modes are permanently supported and use the same code. You choose one with the ``PROD`` setting, not by
-forking anything.
+The hub deploys onto an AWS estate governed by the `Landing Zone Accelerator
+<https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_, where a platform team owns the
+network, the guardrails and a shared edge, and workload accounts are denied VPC-layer creation. FLIP uses the network
+it is given instead of building one, and ingress arrives through the estate's own edge over a Transit Gateway, so you
+must coordinate with whoever runs the estate. See :doc:`deploy-central-hub-aws-lza`.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 20 18 31 31
-
-   * - Mode
-     - Selected by
-     - Network
-     - Ingress
-   * - **Self-contained** (default)
-     - ``PROD=stag`` / ``PROD=true``
-     - FLIP creates its own VPC, subnets, internet gateway and NAT
-     - In-account CloudFront for the UI and ``/api/*``; a public NLB for FL traffic
-   * - **Platform-managed**
-     - ``PROD=lza`` (production) / ``PROD=lza-stag`` (staging)
-     - Discovered from a VPC provisioned by the AWS `Landing Zone Accelerator
-       <https://aws.amazon.com/solutions/implementations/landing-zone-accelerator-on-aws/>`_;
-       FLIP creates no network resources
-     - A shared networking account's edge, reached over a Transit Gateway; no public load
-       balancer in the workload account
-
-**Self-contained** puts everything in one AWS account. It is the simplest way to stand up a hub and the shape the
-open-source project targets. See :doc:`deploy-central-hub-aws`.
-
-**Platform-managed** is for an AWS estate already governed by the Landing Zone Accelerator, where a platform team owns
-the network, the guardrails and a shared edge. FLIP uses the network it is given instead of building one, so you must
-coordinate with whoever runs the estate. See :doc:`deploy-central-hub-aws-lza`.
-
-.. figure:: ../assets/deploy/central-hub-self-contained-vs-lza.svg
-   :align: center
-   :width: 100%
-   :alt: Left, a standalone AWS account holding its own CloudFront and WAF, a public FL NLB, and a VPC with an
-         internet gateway and NAT around the FLIP hub, FL server, RDS, S3 and VPC endpoints. Right, on the Landing
-         Zone Accelerator: a networking account owned by the platform team with CloudFront and WAF, an edge NLB,
-         a Network Firewall and a Transit Gateway, and a workload account with no internet gateway or NAT holding
-         the FLIP hub, FL server, ECR pull-through cache, isolated RDS, S3 with KMS and Session Manager access.
-
-   The same FLIP stack in each mode. Self-contained, one account owns its own edge and outbound route.
-   Platform-managed, the platform team owns and inspects the edge, and the hub account has no internet route.
+The self-contained single-account mode, in which FLIP built its own VPC and in-account edge, is no longer supported
+and has been removed (`FLIP#1479 <https://github.com/londonaicentre/FLIP/issues/1479>`_). To move a hub off it,
+see :ref:`deploy-central-hub-migrating`.
 
 .. toctree::
    :maxdepth: 1
 
-   deploy-central-hub-aws
    deploy-central-hub-aws-lza
 
 .. _deploy-central-hub-costs:
@@ -79,22 +46,13 @@ Cost Explorer reports for your account.
 
 .. list-table::
    :header-rows: 1
-   :widths: 18 44 12 26
+   :widths: 50 14 36
 
-   * - Mode
-     - What bills to the workload account
+   * - What bills to the workload account
      - Roughly
      - Notes
-   * - **Self-contained**
-     - ECS Fargate (three tasks), RDS and RDS Proxy, EFS, the internal ALB and the public
-       FL NLB, a NAT gateway and in-account VPC endpoints, CloudFront and its WAF,
-       CloudWatch, GuardDuty and Security Hub
-     - $500 a month
-     - Fargate is about a third of it; the NAT gateway and endpoints about a fifth.
-       Everything is in the one account, so this is the whole bill.
-   * - **Platform-managed**
-     - The same compute and data services, minus the NAT gateway, endpoints, CloudFront,
-       WAF and ALB, which the estate provides centrally
+   * - ECS Fargate (three tasks), RDS and RDS Proxy, EFS, the internal NLB, CloudWatch, GuardDuty and Security Hub;
+       the NAT gateway, endpoints, CloudFront and WAF are the estate's
      - $400 a month
      - Plus a share of the **platform layer**: Transit Gateway attachments, the central
        Network Firewall, central endpoints and NAT, and the shared edge. For the AI
@@ -102,18 +60,16 @@ Cost Explorer reports for your account.
        whether or not FLIP is deployed, so attribute all of it to FLIP only when FLIP is
        the estate's sole workload.
 
-The platform-managed hub is not cheaper on its own. It becomes cheaper per workload once the estate hosts several, and
-its platform-layer charges land on the platform team's accounts, so agree with them how that cost is recharged.
-Staging costs about the same as production in either mode: nothing in the hub scales with the number of users.
+The platform layer's charges land on the platform team's accounts rather than the workload's, so agree with them how
+that cost is recharged. Staging costs about the same as production: nothing in the hub scales with the number of
+users.
 
 .. note::
 
    **Trust hosts are not included.** A trust's cost depends on its GPU instance and how long that instance is busy,
-   which depends on the projects it joins. The mock trust EC2 in the self-contained runbook (a ``t3.xlarge`` with no
+   which depends on the projects it joins. The mock trust EC2 Terraform can provision (a ``t3.xlarge`` with no
    GPU) is a test fixture, not a sizing recommendation. For always-on versus on-demand GPUs, see *GPU Resource
    Management* in :doc:`deploy-flip-node-in-tre`.
-
-Everything below applies to both modes.
 
 *************
 Prerequisites
@@ -144,9 +100,9 @@ Prerequisites
       region = <aws-region>
       output = json
 
-   If your profile names differ, set ``STAG_AWS_PROFILE``, ``PROD_AWS_PROFILE``, ``LZA_STAG_AWS_PROFILE`` or
-   ``LZA_AWS_PROFILE`` to them, in the env file or on the ``make`` command line.
-7. Self-contained mode only:
+   If your profile names differ, set ``STAG_AWS_PROFILE`` or ``PROD_AWS_PROFILE`` to them, in the env file or on the
+   ``make`` command line.
+7. For the hub's SSM bastion and the optional mock trust EC2:
 
    - an **SSH key pair** at ``~/.ssh/host-aws``. Terraform uploads the public key as the EC2 key pair, and you use
      it for SSH over SSM:
@@ -156,46 +112,28 @@ Prerequisites
         ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "<your email>"
 
    - the **AWS Session Manager plugin**, needed for ``ssh flip`` and ``make forward-trust``. See
-     :ref:`deploy-central-hub-aws-ssm`.
+     "Remote Access via SSM Session Manager" in :gh:`deploy/providers/AWS/README.md`.
 
-   The platform-managed mode has no SSH or Ansible step.
-
-**Choose the environment with** ``PROD``:
+**Choose the hub with** ``HUB``, which every target in ``deploy/providers/AWS`` requires:
 
 .. list-table::
    :header-rows: 1
-   :widths: 18 22 18 18 24
+   :widths: 18 30 26 26
 
-   * - ``PROD``
+   * - ``HUB``
      - Environment file
      - AWS profile
      - Treated as
-     - Mode
    * - ``stag``
      - ``.env.stag``
      - ``stag``
      - staging
-     - self-contained
-   * - ``true``
-     - ``.env.production``
+   * - ``prod``
+     - ``.env.prod``
      - ``prod``
      - production
-     - self-contained
-   * - ``lza-stag``
-     - ``.env.lza-stag``
-     - ``lza-stag``
-     - staging
-     - platform-managed
-   * - ``lza``
-     - ``.env.lza-prod``
-     - ``lza-prod``
-     - production
-     - platform-managed
 
-Production environments get the production-only database safeguards (RDS deletion protection and a final snapshot).
-The mode and the environment are independent: ``PROD=lza`` keeps every production control, while ``PROD=lza-stag`` is
-staging on the platform-managed network. If you leave ``PROD`` unset, the targets in ``deploy/providers/AWS`` use
-staging (``PROD=stag``).
+Production gets the production-only database safeguards (RDS deletion protection and a final snapshot).
 
 ************************
 Required IAM permissions
@@ -211,11 +149,11 @@ the same ground:
    * - Service
      - Needed for
      - Managed policy
-   * - EC2 and VPC
-     - The VPC, subnets, NAT gateway, VPC endpoints, security groups, instances, key pairs and Elastic IPs
+   * - EC2
+     - Instances, security groups and key pairs, and reads of the platform's VPC and subnets
      - ``AmazonEC2FullAccess``
    * - ECS and Fargate
-     - The cluster, task definitions and services
+     - The cluster, task definitions and services. Task images come through the account's ECR pull-through cache
      - ``AmazonECS_FullAccess``
    * - RDS
      - The database, its subnet group and parameter group
@@ -224,7 +162,7 @@ the same ground:
      - The shared FL workspace volumes
      - ``AmazonElasticFileSystemFullAccess``
    * - CloudWatch Logs
-     - ECS task logs and WAF logs
+     - ECS task logs
      - ``CloudWatchLogsFullAccess``
    * - Secrets Manager
      - Database credentials and API secrets
@@ -233,16 +171,18 @@ the same ground:
      - Roles for the EC2 hosts and the ECS tasks
      - ``IAMFullAccess``
    * - Load balancing
-     - The application load balancer (API) and network load balancer (FL traffic)
+     - The internal network load balancer, carrying both the ``/api/*`` web leg and FL traffic
      - ``ElasticLoadBalancingFullAccess``
-   * - CloudFront and WAF
-     - The UI distribution and the web ACL attached to it
-     - ``CloudFrontFullAccess``, ``AWSWAFFullAccess``
+   * - CloudFront
+     - The origin access control, function and policies this stack declares (the distribution and its WAF are the
+       networking account's)
+     - ``CloudFrontFullAccess``
    * - Certificate Manager
-     - Certificates in ``eu-west-2`` (load balancer) and ``us-east-1`` (CloudFront)
+     - The ``eu-west-2`` certificate for the internal load balancer's web listener, once ``MANAGE_DNS=true``
      - ``AWSCertificateManagerFullAccess``
    * - Route 53
-     - DNS records for the UI name and the FL load balancer
+     - The private hosted zone for the FL server's name, and the certificate's validation records once
+       ``MANAGE_DNS=true``
      - ``AmazonRoute53FullAccess``
    * - Cloud Map
      - The private DNS namespace the ECS tasks use to find each other
@@ -254,8 +194,6 @@ the same ground:
      - Email templates
      - ``AmazonSESFullAccess``
 
-No container-registry permissions are needed in the self-contained mode: images come from GHCR.
-
 The deployed hosts and services do not get these broad permissions; each runs with a scoped role:
 
 - **Central Hub bastion:** Session Manager access only. It cannot read FLIP secrets or buckets.
@@ -263,8 +201,8 @@ The deployed hosts and services do not get these broad permissions; each runs wi
   kits. No access to Cognito, SES, Secrets Manager or the FLIP application buckets.
 - **ECS tasks:** each service has its own task role with the application permissions it needs.
 
-On a **platform-managed** estate, the workload account's Identity Center permission set replaces this list, bounded by
-the estate's service control policies. Creating network resources is denied there by design.
+The workload account's Identity Center permission set replaces this list, bounded by the estate's service control
+policies. Creating network resources is denied there by design.
 
 ***********************
 Service authentication
@@ -282,7 +220,7 @@ The hub uses three separate keys. See :doc:`/sys-admin` for full details.
    * - **Trust API key**
      - Each trust's calls to the hub. One key per trust.
      - Minted when you register the trust and written once into its kit file
-       (``trust/.env.<CODE>.<env>``). The hub keeps only a hash.
+       (``trust/.env.<CODE>.<hub>``). The hub keeps only a hash.
    * - **Internal service key**
      - Calls from the FL server to the hub API. One key per hub.
      - ``make generate-internal-service-key``
@@ -307,29 +245,14 @@ Registering trusts
 *Who: FLIP admin, with AWS access to the hub's account.* The hub must already be deployed: registration runs as a
 one-off task inside it.
 
-A trust's **kit file**, ``trust/.env.<CODE>.<suffix>``, is its identity and its configuration. The suffix follows
-``PROD``:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - ``PROD``
-     - Kit file
-   * - ``true``
-     - ``trust/.env.<CODE>.production``
-   * - ``stag``
-     - ``trust/.env.<CODE>.stag``
-   * - ``lza``
-     - ``trust/.env.<CODE>.lza-prod``
-   * - ``lza-stag``
-     - ``trust/.env.<CODE>.lza-stag``
+A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its configuration: ``HUB=prod`` reads
+``trust/.env.<CODE>.prod``, ``HUB=stag`` ``trust/.env.<CODE>.stag``.
 
 1. **Create the kit file.** From the repository root:
 
    .. code-block:: shell
 
-      make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" PROD=<env>
+      make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" HUB=<hub>
 
    The trust's name, code and region are read from this file, never from environment variables.
 
@@ -337,17 +260,17 @@ A trust's **kit file**, ``trust/.env.<CODE>.<suffix>``, is its identity and its 
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=<env>
+      make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>
 
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
    **credentials** (API key, trust-internal service key and FL kit slot) into the kit file. Of the hub-shared
    settings, only the API key header name and the FL backend are filled in.
 
-3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<env>`` present:
+3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<hub>`` present:
 
    .. code-block:: shell
 
-      make sync-trust-kit KIT=<CODE> PROD=<env>
+      make sync-trust-kit KIT=<CODE> HUB=<hub>
 
    ``make sync-trust-kits`` does the same for every local kit file.
 
@@ -360,7 +283,7 @@ A trust's **kit file**, ``trust/.env.<CODE>.<suffix>``, is its identity and its 
 
    .. code-block:: shell
 
-      make generate-xnat-credentials KIT=<CODE> PROD=<env>
+      make generate-xnat-credentials KIT=<CODE> HUB=<hub>
 
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
 maps onto the matching FLARE participant kit or Flower SuperNode key.
@@ -372,17 +295,15 @@ file are kept.
 
 **Getting the kit to the trust host** is a separate, explicit step; nothing copies the kit file anywhere.
 
-- For the cloud trust EC2, ``make -C deploy/providers/AWS deploy-trust KIT=<CODE> PROD=<env>`` reads the kit
+- For the cloud trust EC2, ``make -C deploy/providers/AWS deploy-trust KIT=<CODE> HUB=<hub>`` reads the kit
   locally and passes its values to the containers on the host.
-- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. Note that
-  ``make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot>`` packages the slot-named file
-  ``trust/.env.<slot>`` (for example ``trust/.env.Trust_2``), not the ``trust/.env.<CODE>.<suffix>`` file above,
-  and refuses to run unless that file's ``FL_KIT_SLOT`` equals ``KIT``. Copy the filled kit there first:
+- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging is keyed on the slot, not the code:
+  pass ``KIT=<slot>`` (for example ``Trust_2``) and the kit above by path; it refuses to run unless the kit's
+  ``FL_KIT_SLOT`` equals ``KIT``, and ships it as ``.env.<slot>.<hub>``:
 
   .. code-block:: shell
 
-     cp trust/.env.<CODE>.<suffix> trust/.env.<slot>
-     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> PROD=<env>
+     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.<hub> HUB=<hub>
 
 If registration fails
 =====================
@@ -391,7 +312,7 @@ If registration fails
   and prints them before cleaning up. That is where the remedy is, for example that the FL kit slots have run out.
 - **A run over several kits tries every kit** and exits non-zero if any failed, so one bad kit never blocks the
   rest and a partial failure never looks like success.
-- **"No trust/.env.*.<suffix> kits found"** means no kit file exists for this environment (``.example`` templates
+- **"No trust/.env.*.<hub> kits found"** means no kit file exists for this environment (``.example`` templates
   do not count). Run ``make new-trust`` first. This is only a warning, so a ``full-deploy`` carries on past it.
 
 .. _deploy-central-hub-kit-slots:
@@ -404,7 +325,7 @@ slot left. One command adds more (FLARE only):
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS add-fl-kits N=2 PROD=<stag|true>
+   make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
 
 ``N`` is the number of **extra claimable slots** you want, not the number of kits to create. The command first
 activates spare kits that were provisioned earlier but never made claimable, which is quick and needs no
@@ -417,7 +338,7 @@ slots without a restart, so the next ``register-trusts`` can claim one.
 
 .. warning::
 
-   If the final apply fails, recover with ``make -C deploy/providers/AWS apply-fl-kit-slots PROD=<env>``. Do not
+   If the final apply fails, recover with ``make -C deploy/providers/AWS apply-fl-kit-slots HUB=<hub>``. Do not
    re-run ``add-fl-kits``: the slot names are already in your env file, and a second run would add another ``N``.
 
 .. seealso::
@@ -431,7 +352,7 @@ Deploying and rolling back the hub
 **********************************
 
 *Who: FLIP admin.* This redeploys the hub's three services (``flip-api``, ``fl-api-net-1``, ``fl-server-net-1``)
-and publishes the UI, in either mode. Every deploy pins an immutable image tag.
+and publishes the UI. Every deploy pins an immutable image tag.
 
 1. **Pause FL activity.** Replacing the FL server kills any training run in progress and leaves its model stuck at
    ``TRAINING_STARTED``. Enable Deployment Mode (*Admin → Deployments*): queued jobs hold, and only a running job
@@ -441,12 +362,11 @@ and publishes the UI, in either mode. Every deploy pins an immutable image tag.
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS deploy-centralhub PROD=<env>
+      make -C deploy/providers/AWS deploy-centralhub HUB=<hub>
 
-   This deploys the build of the tip of ``origin/main`` (production: ``PROD=true`` or ``lza``) or
-   ``origin/develop`` (staging: ``PROD=stag`` or ``lza-stag``), tagged ``sha-<short7>``. It checks that every
-   service has an image at that tag **before** changing anything, so a missing image deploys nothing. With
-   ``PROD=true`` it asks you to confirm first. It finishes by building the UI from your working tree and publishing
+   This deploys the build of the tip of ``origin/main`` (``HUB=prod``) or ``origin/develop`` (``HUB=stag``), tagged
+   ``sha-<short7>``. It checks that every service has an image at that tag **before** changing anything, so a
+   missing image deploys nothing. With ``HUB=prod`` it asks you to confirm first. It finishes by building the UI from your working tree and publishing
    it.
 
 3. **Resume.** Disable Deployment Mode.
@@ -459,19 +379,19 @@ then deploy its ``sha-`` tag.
 run for the services a merge touched, and the ``flip-api`` build waits for its tests, so right after a merge an image
 may be missing or still building. The message names the workflow: run it with ``gh workflow run`` as above, then
 deploy again. If the message reports a registry error rather than a missing image (an outage, or an authentication
-failure), do not trigger rebuilds. The platform-managed mode pulls through its ECR cache and skips this check.
+failure), do not trigger rebuilds. With the account's ECR pull-through cache as the registry, the check is skipped.
 
 Rolling back
 ============
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS rollback-centralhub PROD=<env>
+   make -C deploy/providers/AWS rollback-centralhub HUB=<hub>
 
 This points each service back at its previous revision in seconds, with no rebuild, and retires the revision it
 rolled away from so a later Terraform apply cannot bring it back.
 
-- **The UI does not move.** Re-run ``make -C deploy/providers/AWS deploy-ui PROD=<env>`` from the matching commit if
+- **The UI does not move.** Re-run ``make -C deploy/providers/AWS deploy-ui HUB=<hub>`` from the matching commit if
   it must.
 - **On a FLARE hub** it first resets the FL server's local state on EFS and re-syncs the kit, which takes a
   minute or two. If that step fails, nothing is rolled back. ``SKIP_FL_LOCAL_RESET=1`` skips it.
@@ -521,7 +441,7 @@ one maintenance window.
 
    ``AES_KEY_BASE64`` must be identical on the hub and on every trust, and decode to exactly 32 bytes. On staging and
    production, the hub's value is the one CI wrote into Secrets Manager, which may differ from your checked-out
-   ``.env.<env>``. Recover the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` before you
+   ``.env.<hub>``. Recover the deployed value with ``deploy/providers/AWS/scripts/reconcile_ci_env.py`` before you
    create or refresh trust kits.
 
    A mismatched key fails closed: the trust reports every task as ``Invalid payload: failed authentication``, and
@@ -538,7 +458,7 @@ schema it does not expect.
 
 - **Development**: ``make restart`` recreates the ``flip-api`` container (``deploy-flip-api-1``), which migrates on
   boot.
-- **Staging and production** (either mode): a normal redeploy, ``make deploy-centralhub`` from
+- **Staging and production**: a normal redeploy, ``make deploy-centralhub`` from
   ``deploy/providers/AWS/``, migrates before the new task serves traffic.
 
 Migrations alter the existing tables in place, so your data is preserved. There is **no** drop-and-recreate step for
@@ -580,7 +500,7 @@ If SES is still in its sandbox, request production access from the SES console. 
 verified addresses.
 
 **If the verification link has expired**, delete the FLIP identity in the SES console (*Configuration → Identities*),
-then run ``make -C deploy/providers/AWS plan apply PROD=<env>`` to create it again and send a new link.
+then run ``make -C deploy/providers/AWS plan apply HUB=<hub>`` to create it again and send a new link.
 
 **To check email works end to end**, register a new user in FLIP. The invitation email with the temporary password
 comes from Cognito, so this tests the invitation templates in a real mail client.
@@ -647,3 +567,46 @@ who has lost their **own** authenticator cannot use it.
 
 On a local development stack, sign-in uses Keycloak instead: clear the user's OTP credential in the Keycloak admin
 console (``http://localhost:8180/admin``).
+
+.. _deploy-central-hub-migrating:
+
+*************************************************
+Migrating from a single-account deployment
+*************************************************
+
+Before FLIP#1479 the hub could also run self-contained, in one AWS account that built its own VPC, internet gateway,
+NAT, CloudFront and WAF, and a public FL load balancer. On the Landing Zone Accelerator the FLIP stack is the same, but
+the platform team owns the edge and the network, and the hub's workload account has no internet route.
+
+.. figure:: ../assets/deploy/central-hub-self-contained-vs-lza.svg
+   :align: center
+   :width: 100%
+   :alt: Left, a standalone AWS account holding its own CloudFront and WAF, a public FL NLB, and a VPC with an
+         internet gateway and NAT around the FLIP hub, FL server, RDS, S3 and VPC endpoints. Right, on the Landing
+         Zone Accelerator: a networking account owned by the platform team with CloudFront and WAF, an edge NLB,
+         a Network Firewall and a Transit Gateway, and a workload account with no internet gateway or NAT holding
+         the FLIP hub, FL server, ECR pull-through cache, isolated RDS, S3 with KMS and Session Manager access.
+
+   Before, one account owned its own edge and outbound route. After, the platform team owns and inspects the edge,
+   and the hub account has no internet route.
+
+There is no in-place migration. The Terraform no longer describes the single-account network, so a plan against an
+old state would destroy it. Move the hub instead:
+
+1. **Archive the old hub's files.** Move the old hub env file and every kit file for it out of the checkout; do not
+   rename them. The old staging names (``.env.stag``, ``trust/.env.<CODE>.stag``) are already the new ones, and make
+   tells you to rename the old production names, so either way the retired hub's AES key and URLs would reach the new
+   hub's files.
+2. **Stand up the new hub** in an LZA workload account, with a fresh ``.env.prod`` or ``.env.stag``. Agree the
+   network, the edge and the hub's public URL and domain with the platform team first: see
+   :ref:`deploy-central-hub-aws-lza-account`.
+3. **Decide what to keep.** :ref:`admin-backup-and-restore` lists what the hub holds; FLIP has no tool that copies it
+   to another account. Unrestored, the new hub starts with no projects, models or audit records. Its Cognito pool is
+   new either way, so invite every user again and re-grant their roles.
+4. **Re-onboard each trust** against the new hub from Step 1 of :ref:`onboarding-a-trust`. The hub URL, AES key and
+   FL kit all change. On a trust host that is already running, install the new kit and FL kit and upgrade the trust;
+   do not use the first-install commands, which re-seed its data and reset XNAT.
+5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
+   (``v0.13.1`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
+   the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
+

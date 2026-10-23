@@ -46,7 +46,7 @@ Three checks narrow most problems down to one component:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS status PROD=<stag|true>
+      make -C deploy/providers/AWS status HUB=<stag|prod>
 
 #. **Trust health.** The trust operator checks the services on the trust host:
 

@@ -301,16 +301,13 @@ run_on "no LZA ingress change is silent" "$(plan_with \
 expect_rc 0 "safe to apply"
 expect_silent_about "LZA FL ingress" "no advisory"
 
-#     LEGACY MODE UNAFFECTED. On a legacy (non-LZA) estate the NLB module, its
-#     security group and the handoff parameters are all count = 0, so they never
-#     appear in a plan; the legacy front door and the target groups shared between
-#     the two modes must not trigger the advisory.
-run_on "legacy NLB and shared target groups are silent" "$(plan_with \
-    "aws_lb this module.fl_server_nlb.aws_lb.this[0] update" \
+#     The target groups are not part of the handoff (the edge registers the NLB's
+#     static IPs), so changing them must not trigger the advisory.
+run_on "the target groups are silent" "$(plan_with \
     "aws_lb_target_group ecs_fl_server_tcp aws_lb_target_group.ecs_fl_server_tcp update" \
     "aws_lb_target_group ecs_flip_api aws_lb_target_group.ecs_flip_api update")"
 expect_rc 0 "safe to apply"
-expect_silent_about "LZA FL ingress" "no advisory in legacy mode"
+expect_silent_about "LZA FL ingress" "no advisory"
 
 #     An ingress change alongside an FL-disruptive change: the hold still wins the
 #     exit code and the hold message still appears, with the advisory beside it.

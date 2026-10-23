@@ -17,4 +17,5 @@ SELECT DISTINCT io.accession_id
 FROM omop.image_occurrence io
 WHERE io.modality_concept_id = 4013636
   AND io.anatomic_site_concept_id = 4133034
+ORDER BY io.accession_id
 LIMIT 100

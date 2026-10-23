@@ -125,43 +125,23 @@ def _upload_body() -> IStartTrainingBody:
     return IStartTrainingBody(project_id="proj", cohort_query="query", trusts=["client1"], bundle_urls=[])
 
 
-@patch("flip_api.fl_services.services.fl_service.http_post")
-def test_upload_app_passes_the_fl_apis_reason_on_to_the_model_log(mock_post, model_id):
-    """A refused job's model log said only "Client error '400 Bad Request' for url ..." (FLIP#70). The FL API's
-    detail says which meta.json key it refused and why; the researcher needs that, not the status line."""
-    detail = "meta.json has key(s) FLIP does not accept: ['launcher_spec']."
-    mock_post.side_effect = _refusal(400, {"detail": detail})
-
-    with pytest.raises(ValueError, match=r"^The FL API refused the job: meta\.json has key\(s\)") as raised:
-        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
-
-    assert str(raised.value) == f"The FL API refused the job: {detail}"
-
-
-@patch("flip_api.fl_services.services.fl_service.http_post")
-def test_upload_app_redacts_urls_from_the_reason(mock_post, model_id):
-    """A bundle URL is presigned: it must not land in a log every project member can read."""
-    detail = "Bundle URL returned a redirect: 'https://s3/b/f?X-Amz-Signature=abc'."
-    mock_post.side_effect = _refusal(400, {"detail": detail})
-
-    with pytest.raises(ValueError, match="^The FL API refused the job") as raised:
-        fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
-
-    assert "X-Amz-Signature" not in str(raised.value)
-    assert "Bundle URL returned a redirect: '<url>'" in str(raised.value)
-
-
 @pytest.mark.parametrize(
     ("status_code", "body"),
-    [(500, {"detail": "Internal server error: boom"}), (400, ["x"]), (400, {"detail": "  "}), (400, {"detail": 42})],
+    [
+        (400, {"refusal": "Choose a supported aggregator", "detail": "private path /app/src"}),
+        (400, {"detail": "Bundle URL returned a redirect: 'https://s3/b/f?X-Amz-Signature=private'."}),
+        (500, {"detail": "Internal server error: boom"}),
+    ],
 )
 @patch("flip_api.fl_services.services.fl_service.http_post")
-def test_upload_app_leaves_other_failures_as_they_were(mock_post, status_code, body, model_id):
-    """A server error, or a refusal without a readable detail, keeps httpx's own error."""
-    mock_post.side_effect = _refusal(status_code, body)
+def test_upload_app_preserves_http_error_for_shared_refusal_handling(mock_post, status_code, body, model_id):
+    error = _refusal(status_code, body)
+    mock_post.side_effect = error
 
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx.HTTPStatusError) as raised:
         fl_service.upload_app(model_id, _upload_body(), "http://fl-api-net-1:8000")
+
+    assert raised.value is error
 
 
 def test_get_fl_backend_job_id_by_model_id(model_id, fake_session):

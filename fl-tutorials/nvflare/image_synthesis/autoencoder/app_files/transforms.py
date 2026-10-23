@@ -41,7 +41,7 @@ def get_brain_mri_transforms(is_validation: bool = False) -> mt.Compose:
     transforms = [
         mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-        mt.Orientationd(keys=["image"], axcodes="RAS"),
+        mt.Orientationd(keys=["image"], axcodes="RAS", labels=None),
         mt.Resized(keys=["image"], spatial_size=SPATIAL_SHAPE),
         mt.NormalizeIntensityd(keys=["image"], channel_wise=True),
     ]
