@@ -177,7 +177,7 @@
     # the ssh docker context, so the kit never has to exist on the instance.
     flip_app_dirs:
       - /opt/flip/trust
-    # One images tree per FL kit slot: the production composes default
+    # One images tree per FL kit slot: the prod composes default
     # BASE_IMAGES_DOWNLOAD_DIR to /opt/flip/data/trust-<slot> and prod kits deliberately
     # leave that variable unset. Slots 1 and 2 unconditionally, so the pre-registration
     # ansible-init pass — which has no assigned slot to read yet — still lays down the
@@ -191,7 +191,7 @@
              if trust_num is defined and trust_num | string | length > 0
              else [])) | unique }}
     # The approved-cohort membership stores (FLIP#857), the same slot derivation as the images
-    # trees: the production composes default COHORT_SNAPSHOT_STORAGE_DIR to
+    # trees: the prod composes default COHORT_SNAPSHOT_STORAGE_DIR to
     # /opt/flip/cohort-snapshots/trust-<slot>. `make upgrade-trust-ec2` also prepares the
     # registered slot's, for a host provisioned before the store existed.
     flip_cohort_snapshot_dirs: >-
@@ -314,7 +314,7 @@
         fail_msg: >-
           a container on this host has {{ omop_dir }}/db_data open ({{ omop_dir_holders.stdout | trim }}):
           stop the trust stack first — DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2
-          KIT=<CODE> PROD=<env>, which is what deploy-trust runs before seeding — or remove a
+          KIT=<CODE> HUB=<env>, which is what deploy-trust runs before seeding — or remove a
           leftover throwaway with `docker rm -f omop-seed`; seeding over a live database would
           run crash recovery on it from a second postmaster.
 
@@ -344,7 +344,7 @@
           source_trust {{ seed_source_trust }} is not a partition of the dataset (it has
           {{ seed_num_trusts }}): this trust's FL kit slot number is being used as the default and
           exceeds it. Pick the partition this trust should receive and pass it explicitly, e.g.
-          make seed-trust-data KIT=<CODE> PROD=<env> SOURCE_TRUST=1
+          make seed-trust-data KIT=<CODE> HUB=<env> SOURCE_TRUST=1
 
     # omop-db's entrypoint takes ownership of its data dir itself (it runs as root with CHOWN);
     # Orthanc runs as uid 999 with no way to chown, so its directories must be 999-owned first.

@@ -196,7 +196,7 @@ def test_registry_covers_every_dicom_load_site() -> None:
     scanned = set()
     unaccounted = []
     for path in sorted(TUTORIALS_ROOT.rglob("*.py")):
-        # Skip this suite itself and anything non-tree-owned (per-tutorial .venv/ uv environments).
+        # Skip this suite, per-tutorial .venv environments and generated fl_job exports.
         # Match on the tree-relative parts, never on `path.parts`: those carry the absolute path, so
         # a checkout under any dot component (~/.local/src/FLIP, a .worktrees/ worktree) would skip
         # every file and pass this test without inspecting anything.

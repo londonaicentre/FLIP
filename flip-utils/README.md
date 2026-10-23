@@ -78,6 +78,7 @@ flip/
 ├── utils/        # General utilities: Utils, model weight helpers
 ├── schemas.py    # Shared Pydantic schemas
 ├── exceptions.py # Package-level exception types
+├── training.py   # Shared guards for masked batches and non-finite losses (requires the full extra)
 ├── xnat/         # XNAT protocol client and enrichment helpers (also exposed as the `flip-xnat` CLI)
 ├── export/       # Model-export bundling (`python -m flip.export`; see map-apps/README.md)
 ├── nvflare/           # FLARE-specific logic and components

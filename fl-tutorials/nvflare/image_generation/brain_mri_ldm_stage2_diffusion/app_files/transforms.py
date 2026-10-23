@@ -42,7 +42,7 @@ def get_brain_mri_transforms(is_validation: bool = False) -> mt.Compose:
     transforms = [
         mt.LoadImaged(keys=["image"], image_only=True),
         mt.EnsureChannelFirstd(keys=["image"], channel_dim="no_channel"),
-        mt.Orientationd(keys=["image"], axcodes="RAS"),
+        mt.Orientationd(keys=["image"], axcodes="RAS", labels=None),
         # A fixed physical voxel size, then a centre crop or pad, as MONAI's 3-D latent diffusion
         # tutorial does, so anatomy keeps its proportions. Resizing straight to the grid would scale
         # each axis by a different factor.
