@@ -45,7 +45,7 @@ APP_ROLE_EXPR = "{{ .Values.xnat.db.datasourceUsername | quote }}"
 APP_ROLE = "xnat"
 
 #: A value the SQL must never carry in psql's argv: the hook hands it over through `printenv`.
-PASSWORD = "poststart-test-password"
+PASSWORD = "poststart-test-password"  # pragma: allowlist secret
 
 PSQL_STUB = """#!{python}
 import os
