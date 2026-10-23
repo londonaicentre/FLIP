@@ -105,7 +105,7 @@ How the two compare
      - Percentile filter (clip and sparsify, no noise), wired by the template
      - Local differential privacy (clip plus Gaussian noise), registered by your ``client_app.py``
    * - Site-enforced privacy policy
-     - Optional, set by each Trust; the app's config cannot opt out (job code runs in the client process, FLIP#1572)
+     - Optional, set by each Trust; your app's configuration cannot opt out
      - Not available
    * - Local run
      - ``job.py`` recipe: ``make export`` / ``make sim``

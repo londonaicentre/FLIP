@@ -16,7 +16,7 @@ Run by the fl-client at container start (``python -m flip.nvflare.site_policy /a
 so each trust can enforce its own update-privacy filter through its kit env file, independently of
 whatever ``task_result_filters`` the submitted job carries: FLARE applies site scope filters *before*
 job filters and never lets a job's *configuration* opt out (``nvflare/apis/utils/task_utils.py::apply_filters``).
-What the filter binds is the job's configuration, not its code: every FLIP app template sets
+What the filter binds is the job's configuration, not its code: every FLARE app template sets
 ``"execution_mode": "in_process"``, so the job's training code runs in this same process, alongside the privacy
 service and the filter objects, and is not currently isolated from them (FLIP#1572).
 
