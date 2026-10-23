@@ -14,7 +14,9 @@
 They share sharedImagesPvc, ReadWriteOnce by default. The fl-client used to follow imaging-api, but
 nothing held imaging-api: on a two-node EKS cluster ``patch-kit-secrets`` restarted it, the surge pod
 went to the other node (its own anti-affinity and the full node sent it there) and waited on the
-volume until the rollout timed out. Text-level, like the other chart tests.
+volume until the rollout timed out. The chart now adds the label, the affinity and Recreate itself,
+only while the volume is RWO; tests/templates/test_shared_images_render.py checks the renders.
+Text-level, like the other chart tests.
 """
 
 from pathlib import Path
@@ -25,24 +27,14 @@ import yaml
 CHART_DIR = Path(__file__).resolve().parents[1]
 TEMPLATES = CHART_DIR / "templates"
 VALUES = yaml.safe_load((CHART_DIR / "values.yaml").read_text())
-SHARED = {"flip/shared-images": "true"}
 
 
 @pytest.mark.parametrize("template", ["imaging-api.yaml", "fl-client.yaml"])
-def test_both_pods_carry_the_shared_label(template):
-    assert 'flip/shared-images: "true"' in (TEMPLATES / template).read_text()
+def test_both_pods_take_their_affinity_through_the_shared_images_helper(template):
+    assert 'include "flip-trust.sharedImagesAffinity"' in (TEMPLATES / template).read_text()
 
 
 @pytest.mark.parametrize("component", ["imagingApi", "flClient"])
-def test_both_pods_require_a_node_with_the_shared_label(component):
-    """Each follows the other; at install the first matches its own term and goes anywhere."""
-    terms = VALUES[component]["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
-    assert {"labelSelector": {"matchLabels": SHARED}, "topologyKey": "kubernetes.io/hostname"} in terms
-
-
-@pytest.mark.parametrize("template", ["imaging-api.yaml", "fl-client.yaml"])
-def test_both_are_recreated_while_the_volume_is_read_write_once(template):
-    text = (TEMPLATES / template).read_text()
-    guard = '{{- if and .Values.sharedImagesPvc.enabled (eq .Values.sharedImagesPvc.accessMode "ReadWriteOnce") }}'
-    assert guard in text
-    assert "type: Recreate" in text.split(guard, 1)[1].split("{{- end }}", 1)[0]
+def test_values_leave_the_shared_images_term_to_the_chart(component):
+    """A term in values would survive an RWX switch, the case the chart now drops it for."""
+    assert "podAffinity" not in (VALUES[component]["affinity"] or {})
