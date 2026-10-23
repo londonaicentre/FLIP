@@ -28,9 +28,8 @@ STUB_ENV = {
     "AWS_PROFILE": "probe",
     "PROD_AWS_PROFILE": "probe",
     "STAG_AWS_PROFILE": "probe",
-    "LZA_AWS_PROFILE": "probe",
-    "LZA_STAG_AWS_PROFILE": "probe",
     "LZA_VPC_NAME": "probe-vpc",
+    "MANAGE_DNS": "false",
     "FLARE_KIT_DATE": "00000000",
     "FLOWER_KIT_DATE": "00000000",
     "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": "probe-uploads",
@@ -59,14 +58,14 @@ def run_make_with_stubs(
     env: Mapping[str, str] = (),
     **variables: str,
 ) -> StubRun:
-    """Run ``make -s <target> PROD=stag`` against a stub env file with ``stubs`` first on PATH.
+    """Run ``make -s <target> HUB=stag`` against a stub env file with ``stubs`` first on PATH.
 
     Args:
         tmp_path (Path): Scratch directory for the stubs, the env file and the call log.
         target (str): The Makefile target to run.
         stubs (Mapping[str, str]): Executable name -> script body. Each can append to ``$CALLS``.
         env (Mapping[str, str]): Extra process environment for the stubs (fixture paths and the like).
-        **variables (str): Command-line ``NAME=value`` overrides; ``PROD`` and ``MAIN_ENV_FILE`` default.
+        **variables (str): Command-line ``NAME=value`` overrides; ``HUB`` and ``MAIN_ENV_FILE`` default.
 
     Returns:
         StubRun: The exit code, every line the stubs logged to ``$CALLS``, and stdout plus stderr.
@@ -83,7 +82,7 @@ def run_make_with_stubs(
 
     process_env = {k: v for k, v in os.environ.items() if not k.startswith("TF_VAR_")}
     process_env.update(PATH=f"{bin_dir}{os.pathsep}{process_env['PATH']}", CALLS=str(calls), **dict(env))
-    args = {"PROD": "stag", "MAIN_ENV_FILE": str(env_file), **variables}
+    args = {"HUB": "stag", "MAIN_ENV_FILE": str(env_file), **variables}
     result = subprocess.run(
         ["make", "-s", target, *(f"{k}={v}" for k, v in args.items())],
         cwd=AWS_DIR,

@@ -72,7 +72,7 @@ FLOWER_COMPOSE_GLOBS = (
 # check below would pass by asserting over nothing after a rename.
 SUPERLINK_COMPOSES = (
     "deploy/compose.development.flower.yml",
-    "deploy/compose.production.flower.yml",
+    "deploy/compose.prod.flower.yml",
     "fl-services/flower/compose.dev.yml",
     "fl-services/flower/compose.secure.yml",
 )

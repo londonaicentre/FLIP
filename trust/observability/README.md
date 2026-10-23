@@ -69,7 +69,7 @@ opens an `aws ssm start-session --document-name AWS-StartPortForwardingSession` 
 (port `3000`) alongside XNAT, Orthanc, and the three API Swagger UIs, in one command:
 
 ```bash
-make -C deploy/providers/AWS forward-trust   # then open http://localhost:3000
+make -C deploy/providers/AWS forward-trust HUB=<hub>   # then open http://localhost:3000
 ```
 
 (The make target, not the script directly: its first line is `terraform output -raw

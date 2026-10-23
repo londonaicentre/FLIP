@@ -19,18 +19,18 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
-# Load the env file selected by PROD (dev by default), exactly as the root Makefile
+# Load the env file selected by HUB (dev by default), exactly as the root Makefile
 # does, so compose + the provisioning targets see the dev vars (FL_API_PORT,
-# LOG_LEVEL, NET_ENDPOINTS, FL_PORT, …) and, with PROD=stag|true (or lza|lza-stag
-# for the LZA estate, FLIP#749), the upload vars (AICENTRE_BUCKET_NAME,
-# FLARE_KIT_DATE) used by upload-kits-to-s3.
+# LOG_LEVEL, NET_ENDPOINTS, FL_PORT, …) and, with HUB=stag|prod, the upload vars
+# (AICENTRE_BUCKET_NAME, FLARE_KIT_DATE) used by upload-kits-to-s3.
+READS_HUB_ENV_FILE := yes
 include $(REPO_ROOT)/deploy/env_mode.mk
 # MAIN_ENV_FILE is a bare filename in the repo root, as everywhere else; a second instance passes its own.
 MAIN_ENV_FILE ?= $(ENV_FILE_NAME)
 MAIN_ENV_PATH := $(REPO_ROOT)/$(MAIN_ENV_FILE)
 ifneq ("$(wildcard $(MAIN_ENV_PATH))","")
 include $(MAIN_ENV_PATH)
-export $(shell sed 's/=.*//' $(MAIN_ENV_PATH))
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_PATH))
 endif
 include $(REPO_ROOT)/deploy/fl_backend.mk
 
@@ -118,14 +118,14 @@ provision-add-client-prod:
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
 # the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
 # which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
-# net-N/services/<slot>/). Run with PROD=stag|true (or lza|lza-stag) so AICENTRE_BUCKET_NAME +
-# FLARE_KIT_DATE load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload
-# for real. The LZA pair maps onto the legacy workspaces (same FQDN + CA by design, FLIP#749).
+# net-N/services/<slot>/). Run with HUB=stag|prod so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
+# load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real. The
+# workspace follows ENV_CLASS whatever the network mode (same FQDN + CA by design, FLIP#749).
 FL_KIT_WORKSPACE := $(if $(filter prod,$(ENV_CLASS)),$(PROD_WORKSPACE_DIR),$(STAG_WORKSPACE_DIR))
 DRYRUN ?= --dryrun
 upload-kits-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
-	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with HUB=stag|prod"; exit 1; }
+	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with HUB=stag|prod"; exit 1; }
 	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
 

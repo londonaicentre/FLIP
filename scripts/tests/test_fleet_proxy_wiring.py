@@ -21,7 +21,7 @@ notice. Each check below pins one shape's wiring:
 - hub dev (``deploy/compose.development.flower.yml``): on ``fl-net-<N>`` the only hub service is
   ``fl-fleet-proxy-net-<N>``, answering to ``fl-server-net-<N>``; the SuperLink is on ``default``
   alone, where the proxy reaches it by an alias of its own.
-- production harness (``deploy/compose.production.flower.yml``): only the proxy publishes
+- production harness (``deploy/compose.prod.flower.yml``): only the proxy publishes
   ``FL_SERVER_PORT``.
 - standalone secure stack (``fl-services/flower/compose.secure.yml``): the SuperNodes are on
   ``flwr-trust-net`` alone, the SuperLink is not on it, and the proxy is the one service on both.
@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_container_identity import REPO_ROOT, Service, parse_services  # noqa: E402
 
 HUB_DEV = REPO_ROOT / "deploy/compose.development.flower.yml"
-HUB_PROD = REPO_ROOT / "deploy/compose.production.flower.yml"
+HUB_PROD = REPO_ROOT / "deploy/compose.prod.flower.yml"
 SECURE = REPO_ROOT / "fl-services/flower/compose.secure.yml"
 NETS = (1, 2)
 
