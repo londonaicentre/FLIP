@@ -296,7 +296,7 @@ table is the capability matrix behind it.
 | Hub: sign-in, email, model files, FL bundles, training, results | Nothing | Keycloak, the console email backend and RustFS are local |
 | The example Trusts' XNAT plugins (first `make up`) | Nothing | `make -C trust prepare-artifacts` downloads them from upstream, checksum-verified |
 | Building the XNAT images locally (`make -C trust/xnat build`) | Nothing | The build downloads the WAR and plugins from upstream the same way; most developers pull the published `xnat-*` images and never build |
-| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | `VOCAB_S3_BUCKET` + AWS CLI | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
+| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | AI Centre developers: the `dev` AWS profile (`FLIPDeveloperAccess`, see [Setting up AWS access](#setting-up-aws-access)) | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
 | Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<hub>`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
 | Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
 | `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
@@ -375,7 +375,12 @@ container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291), and the ex
 are public upstream downloads (FLIP#1292). AWS SSO is needed only for the optional OMOP vocabulary fetch, FL kit
 uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
 
-Configure AWS SSO:
+AI Centre developers: the vocabulary needs only the `dev` profile, whose `FLIPDeveloperAccess` role can read the
+vocabulary bucket and nothing else. Add it to `~/.aws/config` as in Step 3 of
+[`deploy-local-dev.rst`](docs/source/deploy-flip/deploy-local-dev.rst), then
+`aws sso login --sso-session FLIP_LZA`.
+
+Otherwise, configure AWS SSO:
 
 ```bash
 aws configure sso
