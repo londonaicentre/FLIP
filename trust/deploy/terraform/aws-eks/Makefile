@@ -143,7 +143,9 @@ deploy: ## Deploy or upgrade the trust from its installed kit
 # The chart's volumes are EBS volumes the CSI driver made, not Terraform: deleting the namespace
 # deletes their claims, and the default class's reclaim policy the volumes. A destroy without it
 # leaves them behind, still billing.
-undeploy: ## Remove the release and its namespace, and with it the trust's EBS volumes (the data goes)
+undeploy: ## Remove the release and its namespace, and with it the trust's volumes (asks first: the data goes)
+	$(require_name)
+	@read -r -p "Delete the release, namespace $(K8S_NAMESPACE) and the trust's volumes on context $(NAME)? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not removed."; exit 1; }
 	$(CHART) undeploy || true
 	$(KUBECTL) delete namespace $(K8S_NAMESPACE) --ignore-not-found --wait
 

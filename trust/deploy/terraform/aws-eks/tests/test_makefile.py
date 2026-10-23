@@ -99,3 +99,17 @@ def test_undeploy_deletes_the_namespace_and_destroy_refuses_left_volumes():
     destroy = make("destroy", "KIT=EKS1", "HUB=stag").stdout
     assert "kubernetes.io/created-for/pvc/namespace,Values=flip-trust" in destroy
     assert destroy.index("describe-volumes") < destroy.index("terraform destroy")
+
+
+def test_undeploy_asks_before_it_deletes():
+    out = make("undeploy", "KIT=EKS1", "HUB=stag").stdout
+    assert "on context flip-stag-eks1? Type yes to continue" in out
+    assert out.index("Type yes") < out.index("undeploy || true")
+
+
+def test_undeploy_without_a_kit_stops():
+    """With no NAME the chart's half would uninstall from kubectl's current context."""
+    result = make("undeploy", dry=False)
+    assert result.returncode != 0
+    assert "KIT=<CODE>" in result.stdout + result.stderr
+    assert "uninstall" not in result.stdout + result.stderr

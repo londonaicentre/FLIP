@@ -189,7 +189,7 @@ Remove
 
 .. code-block:: bash
 
-   make undeploy KIT=$KIT HUB=$HUB                  # the release, its namespace and its EBS volumes
+   make undeploy KIT=$KIT HUB=$HUB                  # the release, its namespace and its volumes (asks first)
    make destroy  KIT=$KIT HUB=$HUB REGION=$REGION   # cluster, roles, EFS and the created network
 
 The chart's volumes are made by the EBS CSI driver, not by Terraform, so they would outlive the cluster
