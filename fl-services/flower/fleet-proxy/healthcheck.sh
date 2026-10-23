@@ -11,14 +11,15 @@
 # limitations under the License.
 #
 # Passes only when a Fleet request reaches the SuperLink through this proxy (FLIP#1517).
-# An unsigned, empty get-run is refused by the SuperLink itself with a 4xx; the proxy
-# answers 503 when it cannot reach or verify the SuperLink. `localhost` is a SAN of the
-# provisioned server certificate.
+# The SuperLink refuses an unsigned, empty get-run with 401 (flwr's NodeAuthMiddleware).
+# Every other status is the proxy answering by itself, so it fails: 404 off the allowlist
+# (a mis-rendered map), 503 when it cannot reach or verify the SuperLink.
+# `localhost` is a SAN of the provisioned server certificate.
 code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 \
     --cacert "${FLEET_PROXY_CERTS_DIR}/ca.crt" \
     -X POST -H 'Content-Type: application/protobuf' --data-binary '' \
     "https://localhost:${FLEET_PROXY_LISTEN_PORT}/v1/fleet/get-run")
 case "$code" in
-    4??) exit 0 ;;
+    401) exit 0 ;;
     *) echo "fleet proxy -> SuperLink: HTTP ${code}" >&2; exit 1 ;;
 esac

@@ -22,6 +22,7 @@ the allowlist depends on.
 
 import os
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -98,6 +99,20 @@ def test_the_upstream_is_verified_and_sent_the_request_unchanged(template):
 def test_an_unreachable_superlink_reads_as_retryable(template):
     # The SuperNode retries 503/504 and gives up on any other error status.
     assert "error_page 502 =503" in template
+
+
+@pytest.mark.parametrize(("status", "healthy"), [("401", True), ("404", False), ("413", False), ("503", False)])
+def test_the_health_check_passes_only_on_the_superlinks_own_refusal(tmp_path, status, healthy):
+    # flwr's SuperLink refuses the check's unsigned get-run with 401; a 404 is the proxy's own
+    # off-allowlist answer, so a mis-rendered map must not read healthy.
+    script = PROXY_DIR / "healthcheck.sh"
+    _read(script)
+    curl = tmp_path / "curl"
+    curl.write_text(f"#!/bin/sh\nprintf {status}\n")
+    curl.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"}
+    result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True)
+    assert (result.returncode == 0) is healthy, result.stderr
 
 
 def test_every_template_variable_is_one_the_image_defines(template):
