@@ -111,6 +111,13 @@
                                 <AiLoader />
                             </div>
                         </AiCard>
+                        <AiCard v-if="autoUpgrade" class="mt-6" data-test="auto-upgrade-column">
+                            <TrustAutoUpgradeCard
+                                :auto-upgrade="autoUpgrade"
+                                :saving="savingAutoUpgrade"
+                                @save="saveAutoUpgrade"
+                            />
+                        </AiCard>
                     </div>
                 </div>
             </div>
@@ -136,16 +143,21 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import TrustDetailCard from "@/partials/connection/TrustDetailCard.vue";
+import TrustAutoUpgradeCard from "@/partials/trusts/TrustAutoUpgradeCard.vue";
 import TrustDecisionsTable from "@/partials/trusts/TrustDecisionsTable.vue";
 import TrustRequestCard from "@/partials/trusts/TrustRequestCard.vue";
 import { routeChange } from "@/router";
 import { approveProject } from "@/services/project-service";
-import { getHubHealth,
+import { getAutoUpgrade,
+    getHubHealth,
     getTrustDecisions,
     getTrustStatuses,
+    IAutoUpgrade,
+    IAutoUpgradeSettings,
     IHubHealth,
     ITrustDecision,
-    ITrustResponse } from "@/services/trust-service";
+    ITrustResponse,
+    updateAutoUpgrade } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 import { extractErrorDetail } from "@/utils/api-errors";
 import { deriveTrust } from "@/utils/connection-health";
@@ -189,6 +201,41 @@ const { data: decisions, error: decisionsError, mutate: refreshDecisions } = use
 );
 const pending = computed(() => (decisions.value ?? []).filter(d => d.status === "PENDING"));
 const decided = computed(() => (decisions.value ?? []).filter(d => d.status !== "PENDING"));
+
+// A hub that predates auto-upgrade answers 404: the error is swallowed and the card simply does not render.
+const { data: autoUpgrade, mutate: refreshAutoUpgrade } = useSWRV<IAutoUpgrade>(
+    () => (trustAdminOf.value ? `/trust/${trustAdminOf.value.id}/auto-upgrade` : null),
+    () => getAutoUpgrade(trustAdminOf.value!.id),
+    {
+        dedupingInterval: 5_000,
+        shouldRetryOnError: false,
+        refreshInterval: 30_000
+    }
+);
+const savingAutoUpgrade = ref(false);
+
+const saveAutoUpgrade = async (settings: IAutoUpgradeSettings) => {
+    if (!trustAdminOf.value) return;
+    savingAutoUpgrade.value = true;
+    try {
+        await updateAutoUpgrade(trustAdminOf.value.id, settings);
+        Snackbar.success({
+            title: "Automatic upgrades saved",
+            text: settings.enabled
+                ? `${trustName.value} will upgrade itself to the hub's release when no training is running on it.`
+                : `${trustName.value} will not upgrade itself. An operator upgrades it by hand.`
+        });
+        await refreshAutoUpgrade();
+    } catch (e) {
+        Snackbar.error({
+            title: "Setting not saved",
+            text: extractErrorDetail(e, "The setting could not be saved, please try again.")
+        });
+        await refreshAutoUpgrade();
+    } finally {
+        savingAutoUpgrade.value = false;
+    }
+};
 
 const choice = ref<{ decision: ITrustDecision; approve: boolean } | null>(null);
 const submitting = ref(false);

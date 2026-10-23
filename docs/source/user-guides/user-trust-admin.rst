@@ -23,6 +23,8 @@ Open **My Trust** from the top navigation. Its badge counts the projects awaitin
 - **Decided** — a table of the projects you (or the hub, before your Trust had a Trust Admin) approved or declined, each row marked green or red with who decided and when. Click a row for its description and a link to its query.
 - **Trust detail** — to the right, your Trust as the Connection Status page shows it: whether it is online, and the health and version of each of its services.
 
+- **Automatic upgrades** — under the trust detail, the switch that lets your Trust upgrade itself to the hub's release when no training is running on it, with an optional maintenance window. See :ref:`admin-trust-auto-upgrade`.
+
 Deciding on a project
 =====================
 
