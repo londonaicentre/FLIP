@@ -123,6 +123,9 @@ services:
       - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
+      # MLflow dual-write (FLIP#745): the flip package mirrors metrics/status to
+      # MLflow, reached over `default` (hub-internal). Empty => sink disabled.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     depends_on:
       # The store must serve before the first results upload (FLIP#1291).
       object-store:
@@ -230,6 +233,8 @@ services:
       - AWS_ACCESS_KEY_ID=${OBJECT_STORE_ACCESS_KEY:-flip-dev}
       - AWS_SECRET_ACCESS_KEY=${OBJECT_STORE_SECRET_KEY:-flip-dev-object-store}  # pragma: allowlist secret
       - AWS_DEFAULT_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
+      # MLflow dual-write (FLIP#745): see fl-server-net-1.
+      - MLFLOW_TRACKING_URI=${MLFLOW_TRACKING_URI:-}
     depends_on:
       # The store must serve before the first results upload (FLIP#1291).
       object-store:

@@ -240,6 +240,11 @@ OPTIONAL_KEYS=(
     # anchor. Requiring a non-empty value here would reject the correct prod
     # configuration. Only stag sets it (to "false", for testing).
     ENFORCE_MFA
+
+    # Empty is the intended value wherever no tracking server is hosted: it
+    # disables the MLflow dual-write entirely, leaving flip-api canonical for
+    # status and metrics (FLIP#745). Requiring a value would reject that.
+    MLFLOW_TRACKING_URI
 )
 
 # ---------------------------------------------------------------------------

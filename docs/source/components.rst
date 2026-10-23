@@ -18,3 +18,4 @@ to where it runs and how they connect.
    components/component-xnat
    components/component-pacs
    components/component-logging-stack
+   components/component-mlflow

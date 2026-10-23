@@ -35,6 +35,7 @@ from requests import HTTPError
 
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
+from flip.core.mlflow_sink import get_mlflow_sink
 from flip.exceptions import ResultsUploadError
 from flip.schemas import DEFAULT_X_AXIS_LABEL, FLLogEvent, TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
@@ -305,6 +306,7 @@ class FLIPStandardProd(FLIPBase):
         endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/status/{new_model_status.value}")
 
         self.logger.info(f"Attempting to update model status to [{new_model_status}]")
+        updated = False
         try:
             self.logger.info(
                 f"Sending PUT request to {endpoint} with model ID: {model_id} and new status: {new_model_status}"
@@ -318,7 +320,7 @@ class FLIPStandardProd(FLIPBase):
             response.raise_for_status()
 
             self.logger.info(f"Successfully updated model status to [{new_model_status}]")
-            return True
+            updated = True
         except HTTPError as http_err:
             self.logger.error(
                 f"An http error occurred when updating the model status, see exception below | status code "
@@ -328,7 +330,12 @@ class FLIPStandardProd(FLIPBase):
         except Exception as e:
             self.logger.error("Something went wrong when updating the model status, see exception below")
             self.logger.exception(e)
-        return False
+
+        # Best-effort MLflow mirror (FLIP#745) — independent of and after the canonical
+        # hub call above; the sink swallows its own failures and is None when disabled.
+        if (sink := get_mlflow_sink()) is not None:
+            sink.on_status(model_id, new_model_status)
+        return updated
 
     @override
     def send_metrics(
@@ -400,6 +407,9 @@ class FLIPStandardProd(FLIPBase):
             self.logger.error("Something went wrong when sending metrics, see exception below")
             self.logger.exception(e)
 
+        if (sink := get_mlflow_sink()) is not None:
+            sink.log_metric(model_id=model_id, client_name=client_name, label=label, value=value, round=global_round)
+
     @override
     def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
         """
@@ -454,6 +464,9 @@ class FLIPStandardProd(FLIPBase):
         except Exception as e:
             self.logger.error("Something went wrong when sending the exception to the Central Hub, see exception below")
             self.logger.exception(e)
+
+        if (sink := get_mlflow_sink()) is not None:
+            sink.note_exception(model_id, client_name, formatted_exception)
 
     @override
     def send_event(
@@ -581,6 +594,14 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception("Unexpected failure in upload_results_to_s3 for model_id=%s", model_id)
             raise ResultsUploadError("Unexpected failure uploading results to S3") from e
 
+        # Best-effort MLflow mirror (FLIP#745): register the zip just uploaded as a new
+        # model version *by reference* — the version's source is the S3 object above, so
+        # the weights exist exactly once and downloads stay on the hub's results endpoint.
+        # This is the only place (on both backends) that knows the exact S3 key, and it
+        # runs before the terminal RESULTS_UPLOADED status, so the run is still RUNNING.
+        if (sink := get_mlflow_sink()) is not None:
+            sink.register_results(model_id, f"s3://{bucket}/{key}")
+
     @override
     def cleanup(self, path: Path) -> None:
         """Cleans up local files by deleting the specified path."""
@@ -673,8 +694,13 @@ class FLIPStandardDev(FLIPBase):
 
     @override
     def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
-        """Log only in dev mode - no actual status update, so there is nothing to fail."""
+        """Log in dev mode - no actual status update, so there is nothing to fail; mirror to MLflow when enabled."""
         self.logger.info("[DEV] Status → %s", new_model_status)
+
+        # Best-effort MLflow mirror (FLIP#745): lets tutorial/simulator runs track status
+        # against a local server (set MLFLOW_TRACKING_URI). No-op when unset.
+        if (sink := get_mlflow_sink()) is not None:
+            sink.on_status(model_id, new_model_status)
         return True
 
     @override
@@ -688,7 +714,7 @@ class FLIPStandardDev(FLIPBase):
         x_value: float | None = None,
         x_label: str | None = None,
     ) -> None:
-        """Log only in dev mode - no actual metrics sending."""
+        """Log in dev mode - no actual metrics sending, but mirror to MLflow when enabled."""
         self.logger.info(
             "[DEV] Metric → %s=%0.4f (%s, global_round=%s, x_value=%s, x_label=%s)",
             label,
@@ -698,6 +724,11 @@ class FLIPStandardDev(FLIPBase):
             x_value,
             x_label,
         )
+
+        # Best-effort MLflow mirror (FLIP#745): lets tutorial/simulator runs plot metrics
+        # against a local server (set MLFLOW_TRACKING_URI). No-op when unset.
+        if (sink := get_mlflow_sink()) is not None:
+            sink.log_metric(model_id=model_id, client_name=client_name, label=label, value=value, round=global_round)
 
     @override
     def send_handled_exception(self, formatted_exception: str, client_name: str | None, model_id: str) -> None:
