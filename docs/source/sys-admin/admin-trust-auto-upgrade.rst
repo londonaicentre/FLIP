@@ -169,6 +169,30 @@ including across daylight saving changes.
   closes.
 - A job running inside the window still holds the upgrade back. The window and the idle check must both be satisfied.
 
+Installing it on a Trust host
+=============================
+
+On an on-prem Trust host, run once, as root:
+
+.. code-block:: bash
+
+   sudo -E make setup-auto-upgrade KIT=<name> PROD=true            # asks, then does everything below
+   sudo -E make setup-auto-upgrade KIT=<name> PROD=true AUTO_UPGRADE=yes   # or no, to answer in advance
+
+``make up-onprem-trust`` prints this command if it has not been run. The step:
+
+#. creates the agent's own checkout at ``/opt/flip/releases/FLIP``, so your working tree is never moved;
+#. moves the kit file to ``/etc/flip/trust/`` and leaves a symlink at the old path, so you and the agent read one file;
+#. installs ``flip-trust-upgrade.timer`` (hourly) and its service, which runs ``scripts/trust_upgrade_agent.py``;
+#. switches the Trust's setting ON at the hub with the Trust's own API key.
+
+Answering ``no`` (or ``AUTO_UPGRADE=no`` later) stops the timer and switches the setting OFF. Either way the Trust
+Admin can change it any time in My Trust. A Trust that is driven remotely (``DOCKER_HOST``/``DOCKER_CONTEXT`` over
+``ssh://`` or ``tcp://``, which includes the EC2 Trust) is refused: the agent supports on-prem hosts only.
+
+The agent runs ``make upgrade-onprem-trust`` itself, after moving its own checkout to the release tag, so what it
+does is exactly what ``admin-upgrading-sites`` describes for an operator.
+
 Off
 ===
 
