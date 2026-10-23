@@ -229,7 +229,7 @@ def test_the_secret_is_merge_patched_never_server_side_applied(monkeypatch):
 def test_deploy_does_not_force_server_side_apply_conflicts():
     """Forcing would overwrite live per-trust keys with whatever values-secrets.yaml holds."""
     out = subprocess.run(
-        ["make", "-n", "-C", str(CHART_DIR), "deploy", "PROD=stag"],
+        ["make", "-n", "-C", str(CHART_DIR), "deploy", "HUB=stag"],
         capture_output=True,
         text=True,
         check=True,

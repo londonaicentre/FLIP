@@ -91,7 +91,7 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
   policy = data.aws_iam_policy_document.ecs_task_execution_secrets.json
 }
 
-# ECR pull-through cache import (FLIP#749, LZA only). On the LZA account the
+# ECR pull-through cache import (FLIP#749). On the LZA account the
 # task images come from in-account pull-through caches instead of the public
 # registries — the account has no internet egress. Two cache rules exist
 # (created out-of-band, not managed here): `ghcr/` mirroring
@@ -102,8 +102,6 @@ resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
 # perform (plus repository creation on a cache miss); already-cached pulls need
 # only the managed execution-role policy above.
 data "aws_iam_policy_document" "ecs_task_execution_ecr_pull_through" {
-  count = var.lza_managed_network ? 1 : 0
-
   statement {
     sid = "EcrPullThroughCacheImport"
     actions = [
@@ -118,10 +116,15 @@ data "aws_iam_policy_document" "ecs_task_execution_ecr_pull_through" {
 }
 
 resource "aws_iam_role_policy" "ecs_task_execution_ecr_pull_through" {
-  count  = var.lza_managed_network ? 1 : 0
   name   = "flip-ecs-task-execution-ecr-pull-through"
   role   = aws_iam_role.ecs_task_execution.id
-  policy = data.aws_iam_policy_document.ecs_task_execution_ecr_pull_through[0].json
+  policy = data.aws_iam_policy_document.ecs_task_execution_ecr_pull_through.json
+}
+
+# FLIP#1479: unconditional now that LZA is the only network; the address loses its index.
+moved {
+  from = aws_iam_role_policy.ecs_task_execution_ecr_pull_through[0]
+  to   = aws_iam_role_policy.ecs_task_execution_ecr_pull_through
 }
 
 ############################

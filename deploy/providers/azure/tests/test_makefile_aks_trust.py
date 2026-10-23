@@ -24,16 +24,16 @@ HELM = f"make -C {REPO_ROOT}/trust/deploy/helm KUBE_CONTEXT=flipaz-aks NAMESPACE
 
 
 def test_deploy_layers_the_aks_overlays(tmp_path):
-    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag")
+    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", HUB="stag")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert result.stdout.strip() == (
-        f"{HELM} deploy-trust-k8s KIT=Trust_3 PROD=lza-stag PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"
+        f"{HELM} deploy-trust-k8s KIT=Trust_3 HUB=stag PLATFORM_VALUES=values-aks.yaml values-small-node.yaml"
     )
 
 
 def test_mock_pacs_seeds_orthanc_last(tmp_path):
-    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag", MOCK_PACS="1")
+    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS="1")
 
     overlay = AZURE_DIR / "aks" / "values-mock-pacs.yaml"
     recorded = result.stdout.split()[-1]
@@ -44,7 +44,7 @@ def test_mock_pacs_seeds_orthanc_last(tmp_path):
 
 @pytest.mark.parametrize("value", ["0", "false"])
 def test_mock_pacs_off_values_add_no_overlay(tmp_path, value):
-    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", PROD="lza-stag", MOCK_PACS=value)
+    result, _ = run_make(tmp_path, "aks-deploy", MAKE="echo make", KIT="Trust_3", HUB="stag", MOCK_PACS=value)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "values-mock-pacs.yaml" not in result.stdout
@@ -55,28 +55,26 @@ def test_kit_and_env_are_required(tmp_path, target):
     result, calls = run_make(tmp_path, target, MAKE="echo make", KIT="Trust_3")
 
     assert result.returncode != 0
-    assert "PROD=<env>" in result.stdout + result.stderr
+    assert "HUB=<env>" in result.stdout + result.stderr
     assert not calls
     assert "make -C" not in result.stdout
 
 
 def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
     tarball = tmp_path / "flip-trust-kit-Trust_3-20261009.tar.gz"
-    result, _ = run_make(
-        tmp_path, "-n", "aks-join", MAKE="echo make", TARBALL=str(tarball), KIT="Trust_3", PROD="lza-stag"
-    )
+    result, _ = run_make(tmp_path, "-n", "aks-join", MAKE="echo make", TARBALL=str(tarball), KIT="Trust_3", HUB="stag")
 
     out = result.stdout
     assert result.returncode == 0, out + result.stderr
     kit_dir = "build/kits/flip-trust-kit-Trust_3-20261009"
     steps = [
-        f'install -m 0600 "{kit_dir}/.env.Trust_3" "{REPO_ROOT}/trust/.env.Trust_3.lza-stag"',
+        f'install -m 0600 "{kit_dir}/.env.Trust_3.stag" "{REPO_ROOT}/trust/.env.Trust_3.stag"',
         "K8S_PLATFORM_VALUES=%s",
         f"--secrets-file {REPO_ROOT}/trust/deploy/helm/values-secrets.yaml",
         "kubectl --context flipaz-aks create namespace flip-trust",
         "make _aks-fl-kit",
         f'{HELM} kit-secret KIT_SRC="{AZURE_DIR}/{kit_dir}/fl-kit-secret"',
-        "make aks-deploy KIT=Trust_3 PROD=lza-stag",
+        "make aks-deploy KIT=Trust_3 HUB=stag",
     ]
     positions = [out.find(s) for s in steps]
     assert -1 not in positions, (steps[positions.index(-1)], out)

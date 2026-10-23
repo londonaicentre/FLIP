@@ -166,7 +166,7 @@ def test_idempotent_rotation_no_dupes() -> None:
 def test_absent_target_no_example_creates_file() -> None:
     print("▶ write_kit with absent target and no example creates the file with managed content")
     with tempfile.TemporaryDirectory() as td:
-        target = Path(td) / ".env.DEMO.production"
+        target = Path(td) / ".env.DEMO.prod"
         tkl.write_kit(target, _full_kit())
         _assert(target.exists(), "file created")
         _assert("TRUST_API_KEY=plain-api-key" in target.read_text(), "creds written into new file")
@@ -178,7 +178,7 @@ def test_absent_target_no_example_creates_file() -> None:
 def test_ec2_rerun_preserves_host_local_profile() -> None:
     print("▶ ec2 re-run: pre-seeded host-local + old creds; skip kit preserves both, refreshes hub-shared")
     with tempfile.TemporaryDirectory() as td:
-        target = Path(td) / ".env.DEMO.production"
+        target = Path(td) / ".env.DEMO.prod"
         target.write_text(
             "# Host-local profile\n"
             "LOKI_PORT=3201\n"

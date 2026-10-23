@@ -29,7 +29,7 @@
 # reclassifies real required keys as optional, and the operator is told a key the
 # workflow will dereference is "fine to omit". So the fixture omits one key from
 # the middle of REQUIRED_KEYS (AWS_REGION) and one from its end
-# (LOCAL_TRUST_PUBLIC_IPS), and asserts both.
+# (DEPLOY_TRUST_EC2), and asserts both.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_setup_github_environments.sh
@@ -108,7 +108,7 @@ case "$1 $2" in
         esac ;;
     "iam get-policy")
         # The account holds the boundaries named in STUB_BOUNDARIES: by default both
-        # FLIP's own and the LZA platform's, so each mode finds the one it expects.
+        # FLIP's own and the LZA platform's.
         [[ -z "${STUB_BOUNDARY_MISSING:-}" ]] || no_such_entity GetPolicy
         policy_arn="$(arg --policy-arn "$@")"
         for name in ${STUB_BOUNDARIES:-AICentre-FLIPTerraformBoundary AICentre-WorkloadRoleBoundary}; do
@@ -223,14 +223,14 @@ echo "==== setup-github-environments.sh ===="
 # 1. THE REGRESSION. Both ends of REQUIRED_KEYS must be classified as required: a
 #    membership glob that only matches the final element reports every other
 #    required key as an optional absence, which is the opposite of this script's
-#    job. AWS_REGION is first in the list, LOCAL_TRUST_PUBLIC_IPS last.
+#    job. AWS_REGION is first in the list, DEPLOY_TRUST_EC2 last.
 run_case "a partial env file is read in dry-run" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "- AWS_REGION" "a required key in the middle of the list is reported"
-expect_mentions "- LOCAL_TRUST_PUBLIC_IPS" "and so is the one at the end"
+expect_mentions "- DEPLOY_TRUST_EC2" "and so is the one at the end"
 expect_mentions "REQUIRED but absent" "under the required heading"
-expect_mentions "reconcile_ci_env.py --env stag" "with the recovery command for this mode"
+expect_mentions "reconcile_ci_env.py --env stag" "with the recovery command for this hub"
 
 # 2. A key that is legitimately optional is reported as optional, not required —
 #    the fix must not turn the list into "everything absent is required".
@@ -250,51 +250,36 @@ expect_silent_about "${ACCOUNT}" "nor the account ID"
 expect_no_gh_writes
 expect_mentions "nothing was written" "the dry run says so"
 
-# 4. The mode reaches the environment as TF_PROD, from the same token the workflows
-#    read — the two cannot disagree if only this one sets it.
-expect_mentions "set TF_PROD=stag" "the mode is written as TF_PROD"
-# TF_PROD comes from --mode, so it is never reported as absent from the file.
-absent_line="$(grep 'optional key(s) absent' <<<"${STDOUT}")"
-if [[ "${absent_line}" != *TF_PROD* ]]; then
-    ok "TF_PROD is not listed as an absent key"
+# 4. The estate reaches the environment as TF_HUB, the variable the workflows read —
+#    it cannot disagree with the flag if only this script sets it.
+expect_mentions "set TF_HUB=stag" "the flag is written as TF_HUB"
+# It comes from the flag, so it is never reported as absent from the file.
+if [[ "${STDOUT}" != *"- TF_HUB"* ]] && ! grep 'optional key(s) absent' <<<"${STDOUT}" | grep -q 'TF_HUB'; then
+    ok "TF_HUB is not listed as an absent key"
 else
-    no "TF_PROD is not listed as an absent key" "${absent_line}"
+    no "TF_HUB is not listed as an absent key" "${STDOUT}"
 fi
 
 # 5. Prod-only asymmetry: an empty demo bucket on prod is a gap, not an omission
 #    (cloudfront.tf gates four objects on it being non-empty). The env file is the
 #    same one case 1 used, where the same key was optional — the difference is the
-#    mode alone.
+#    hub alone.
 run_case "prod treats an absent demo bucket as required" \
     STUB_SUB="repo:acme/flip:environment:aws-prod" \
     STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
-    --mode true --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+    --hub prod --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on prod"
 expect_mentions "branch policy: main only" "and prod's branch policy is stated"
 
-# 5b. FLIP#1199: the same asymmetry on the LZA prod mode, where the key gates
-#     module.flip_demo_assets_bucket — the bucket itself — rather than four
-#     CloudFront-side objects. The classification is keyed on ENV, not MODE, and
-#     this pins that: `--mode lza` is prod, so the demo bucket is required there
-#     too, which is what makes the LZA prod environment seedable at all.
-run_case "lza prod treats an absent demo bucket as required" \
-    STUB_SUB="repo:acme/flip:environment:aws-prod" \
-    STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
-    --mode lza --env-file "${ENV_FILE}" --repo acme/flip --dry-run
-expect_rc 0 "dry run succeeds"
-expect_mentions "- DEMO_ASSETS_BUCKET_NAME" "the demo bucket is required on LZA prod too"
-expect_mentions "set TF_PROD=lza" "and the LZA prod token is what TF_PROD gets"
-
-# 6. The LZA modes require their extra keys, appended to the same array — the
+# 6. Every estate requires the LZA keys, appended to the same array — the
 #    classification has to survive the append, not just the base list.
-run_case "lza modes require the LZA keys" -- \
-    --mode lza-stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+run_case "every estate requires the LZA keys" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "- NETWORKING_INGRESS_CIDRS" "an LZA key is required"
 expect_mentions "- AWS_REGION" "the base list is still classified as required"
 expect_mentions "- EFS_PROVISION_IMAGE" "all six LZA keys, not only the last one"
-expect_mentions "set TF_PROD=lza-stag" "and the LZA token is what TF_PROD gets"
 
 # 6b. The two LZA inputs with no Makefile export of their own are written in the
 #     operator's file as `export TF_VAR_<name>=…` — the spelling make hands to
@@ -304,24 +289,23 @@ ENV_RAW="${TEST_ROOT}/raw-tf-vars.env"
 cp "${ENV_FILE}" "${ENV_RAW}"
 cat >>"${ENV_RAW}" <<'ENVFILE'
 export TF_VAR_networking_ingress_cidrs=["10.99.0.0/16"]
-export TF_VAR_lza_elb_access_logs_bucket=raw-bucket-marker
-LZA_ELB_ACCESS_LOGS_BUCKET=plain-bucket-marker
+export TF_VAR_lza_web_edge_domain=raw-domain-marker
+LZA_WEB_EDGE_DOMAIN=plain-domain-marker
 ENVFILE
 run_case "lza raw TF_VAR_ lines are read under their GitHub keys" -- \
-    --mode lza-stag --env-file "${ENV_RAW}" --repo acme/flip
+    --hub stag --env-file "${ENV_RAW}" --repo acme/flip
 expect_rc 0 "succeeds"
 expect_silent_about "- NETWORKING_INGRESS_CIDRS" "the raw spelling satisfies the required key"
-expect_silent_about "- LZA_ELB_ACCESS_LOGS_BUCKET" "for both raw keys"
 expect_mentions "- EFS_PROVISION_IMAGE" "a key with neither spelling is still required"
 if grep -A1 '^gh variable set NETWORKING_INGRESS_CIDRS ' "${CALLS}" | grep -qF 'value=["10.99.0.0/16"]'; then
     ok "the raw value is what is written"
 else
     no "the raw value is what is written" "$(grep -A1 'NETWORKING_INGRESS_CIDRS' "${CALLS}")"
 fi
-if grep -A1 '^gh variable set LZA_ELB_ACCESS_LOGS_BUCKET ' "${CALLS}" | grep -qF 'value=plain-bucket-marker'; then
+if grep -A1 '^gh variable set LZA_WEB_EDGE_DOMAIN ' "${CALLS}" | grep -qF 'value=plain-domain-marker'; then
     ok "a plain KEY= line beats the raw spelling"
 else
-    no "a plain KEY= line beats the raw spelling" "$(grep -A1 'LZA_ELB_ACCESS_LOGS_BUCKET' "${CALLS}")"
+    no "a plain KEY= line beats the raw spelling" "$(grep -A1 'LZA_WEB_EDGE_DOMAIN' "${CALLS}")"
 fi
 
 # 6c. Keys the file leaves unset keep whatever the environment held before, and the
@@ -330,9 +314,9 @@ fi
 #     command; keys the file does set are not; nothing is deleted.
 HELD_SECRET_NAMES="INTERNAL_SERVICE_KEY_HASH AES_KEY_BASE64" # pragma: allowlist secret — names, not values
 run_case "keys the file leaves unset but the environment holds are listed" \
-    STUB_GH_VARIABLES="ENFORCE_MFA JOB_RESOURCE_SPEC_NUM_GPUS AICENTRE_BUCKET_NAME TF_PROD" \
+    STUB_GH_VARIABLES="ENFORCE_MFA JOB_RESOURCE_SPEC_NUM_GPUS AICENTRE_BUCKET_NAME TF_HUB" \
     STUB_GH_SECRETS="${HELD_SECRET_NAMES}" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "Still set on aws-stag" "under its own heading"
 expect_mentions "gh variable delete ENFORCE_MFA --env aws-stag --repo acme/flip" "the skipped ENFORCE_MFA is listed"
@@ -340,103 +324,102 @@ expect_mentions "gh variable delete JOB_RESOURCE_SPEC_NUM_GPUS" "and an optional
 expect_mentions "gh secret delete INTERNAL_SERVICE_KEY_HASH" "a secret gets the secret command"
 expect_silent_about "delete AICENTRE_BUCKET_NAME" "a key the file sets is not listed"
 expect_silent_about "delete AES_KEY_BASE64" "nor a secret it sets"
-expect_silent_about "delete TF_PROD" "nor TF_PROD, which the script writes itself"
+expect_silent_about "delete TF_HUB" "nor TF_HUB, which the script writes itself"
 expect_no_gh_writes
 
 run_case "an environment that cannot be listed is said so, not passed as clean" STUB_GH_LIST_FAIL=1 -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "Could not list what aws-stag already holds" "the failed listing is reported"
 expect_mentions "ENFORCE_MFA" "with the keys to check by hand"
 
 # 7. Failures an operator has to get right. Nothing here may be a warning.
-run_case "the old flag is refused with the new name" -- \
-    --env stag --env-file "${ENV_FILE}" --dry-run
-expect_rc 1 "refused"
-expect_mentions "--env is now --mode" "and points at --mode"
+for old in --env --mode; do
+    run_case "the old ${old} flag is refused with the new names" -- \
+        "${old}" stag --env-file "${ENV_FILE}" --dry-run
+    expect_rc 1 "refused"
+    expect_mentions "${old} is gone" "saying so"
+    expect_mentions "pass --hub stag|prod" "and naming the new flag"
+done
 
-run_case "an unknown mode is refused" -- \
-    --mode prod --env-file "${ENV_FILE}" --dry-run
+run_case "an unknown hub is refused" -- \
+    --hub true --env-file "${ENV_FILE}" --dry-run
 expect_rc 1 "refused"
-expect_mentions "--mode must be one of" "listing the four tokens"
+expect_mentions "--hub must be stag or prod" "listing the two values"
 
 run_case "a missing env file is refused" -- \
-    --mode stag --env-file "${TEST_ROOT}/nope.env" --dry-run
+    --hub stag --env-file "${TEST_ROOT}/nope.env" --dry-run
 expect_rc 1 "refused"
 expect_mentions "--env-file must point at an existing file" "naming the flag"
 
 # 8. The AWS side. Every one of these runs for real (no --dry-run): the check has to
 #    stop the script before its first GitHub write, not merely before the end.
 run_case "an expired session is refused, with the login command" STUB_STS_FAIL=1 -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+# The profile follows the Makefile's defaults: the hub name.
 expect_refused_before_gh "refused" "aws sso login --profile stag" "with the command that fixes it"
 
 run_case "a state bucket in another account is refused" STUB_BUCKET="flip-terraform-state-prod" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "is not in the" "naming the env-file / profile mismatch"
 expect_mentions "flip-terraform-state-stag" "and the bucket the env file named"
 
 ENV_NO_BUCKET="${TEST_ROOT}/no-bucket.env"
 grep -v '^FLIP_TFSTATE_BUCKET_NAME=' "${ENV_FILE}" >"${ENV_NO_BUCKET}"
 run_case "an env file without the state bucket is refused" -- \
-    --mode stag --env-file "${ENV_NO_BUCKET}" --repo acme/flip
+    --hub stag --env-file "${ENV_NO_BUCKET}" --repo acme/flip
 expect_refused_before_gh "refused" "FLIP_TFSTATE_BUCKET_NAME is not set" "naming the key"
 
 run_case "a missing apply role is refused" STUB_MISSING_ROLES="AICentre-FLIPTerraformApplyRole" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "AICentre-FLIPTerraformApplyRole does not exist" "naming the role"
 expect_mentions "has not applied" "and saying who has not bootstrapped the account"
 expect_mentions "aicentre-lza-iac" "naming the platform repositories"
 
 run_case "a missing plan role is refused" STUB_MISSING_ROLES="AICentre-FLIPTerraformPlanRole" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "AICentre-FLIPTerraformPlanRole does not exist" "naming the role"
 
 run_case "the role names can be overridden" TF_APPLY_ROLE_NAME="Custom-ApplyRole" \
     STUB_MISSING_ROLES="Custom-ApplyRole" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "Custom-ApplyRole does not exist" "the override is the name looked up"
 
 run_case "an apply role pinned to the other branch is refused" \
     STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "@refs/heads/develop" "naming the ref stag needs"
 expect_mentions "job_workflow_ref" "and the claim that disagrees"
 
 run_case "roles trusting the other environment are refused" STUB_SUB="repo:acme/flip:environment:aws-prod" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "repo:acme/flip:environment:aws-stag" "naming the sub stag needs"
 
-run_case "prod roles are refused for a stag mode even on the right account" \
+run_case "prod roles are refused for a stag hub even on the right account" \
     STUB_SUB="repo:acme/flip:environment:aws-prod" \
     STUB_APPLY_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/main" -- \
-    --mode lza-stag --env-file "${ENV_FILE}" --repo acme/flip
-expect_refused_before_gh "refused" "aws-stag" "the LZA staging token is held to aws-stag too"
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_refused_before_gh "refused" "aws-stag" "LZA staging is held to aws-stag too"
 
 run_case "roles trusting another repository are refused" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo someone-else/flip
+    --hub stag --env-file "${ENV_FILE}" --repo someone-else/flip
 expect_refused_before_gh "refused" "repo:someone-else/flip:environment:aws-stag" "naming the repository's sub"
 
 run_case "a missing permissions boundary is refused" STUB_BOUNDARY_MISSING=1 -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
-expect_refused_before_gh "refused" "AICentre-FLIPTerraformBoundary does not exist" "naming the boundary"
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_refused_before_gh "refused" "AICentre-WorkloadRoleBoundary does not exist" "naming the boundary"
 
-# The boundary is the mode's: the LZA platform's on LZA (londonaicentre/lza#51),
-# the bootstrap module's own elsewhere. Each account holding only the other one is
-# refused, naming the one it lacks.
-run_case "an LZA mode needs the platform's boundary" STUB_BOUNDARIES="AICentre-FLIPTerraformBoundary" -- \
-    --mode lza-stag --env-file "${ENV_FILE}" --repo acme/flip
+# The boundary is the LZA platform's (londonaicentre/lza#51): an account holding only
+# FLIP's own bootstrap boundary is refused, naming the one it lacks.
+run_case "the platform's boundary is the one required" STUB_BOUNDARIES="AICentre-FLIPTerraformBoundary" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_refused_before_gh "refused" "AICentre-WorkloadRoleBoundary does not exist" "naming the platform's boundary"
-
-run_case "a self-contained mode needs FLIP's own boundary" STUB_BOUNDARIES="AICentre-WorkloadRoleBoundary" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
-expect_refused_before_gh "refused" "AICentre-FLIPTerraformBoundary does not exist" "naming FLIP's boundary"
 
 # 9. And the other side of "before": a run that passes every check does write, and
 #    only after the last AWS call — otherwise the empty-log assertions above could
 #    be satisfied by a script that never calls gh at all.
 run_case "a verified real run writes, after every AWS check" -- \
-    --mode stag --env-file "${ENV_FILE}" --repo acme/flip
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
 expect_rc 0 "succeeds"
 last_aws="$(grep -n '^aws ' "${CALLS}" | tail -1 | cut -d: -f1)"
 first_gh="$(grep -n '^gh ' "${CALLS}" | head -1 | cut -d: -f1)"

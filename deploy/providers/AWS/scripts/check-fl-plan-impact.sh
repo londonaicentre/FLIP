@@ -129,12 +129,9 @@ WATCHED_EFS_TYPES=(
 # and leaves the exit code alone. Holding would wedge every LZA ingress PR behind a
 # quiesce that has nothing to do with the change.
 #
-# Matched by ADDRESS PREFIX, not type+name, and only on addresses that exist solely
-# under `lza_managed_network`. That is what keeps legacy mode silent: in legacy the
-# NLB module, its security group and the SSM handoff parameters are all `count = 0`,
-# so they never appear in a plan. The shared target groups
-# (aws_lb_target_group.ecs_fl_server_tcp / .ecs_flip_api) are deliberately absent —
-# they are created in both modes, so watching them would warn on every legacy apply.
+# Matched by ADDRESS PREFIX, not type+name. The target groups
+# (aws_lb_target_group.ecs_fl_server_tcp / .ecs_flip_api) are deliberately absent:
+# the networking account registers the NLB's static IPs, never the target groups.
 WATCHED_LZA_INGRESS_PREFIXES=(
     "module.fl_server_internal_nlb"
     "module.fl_internal_nlb_security_group"

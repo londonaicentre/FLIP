@@ -97,6 +97,6 @@ The merge triggers two prod Terraform applies: the push apply at `sha-`, then th
 
 Then check that the Release page, GHCR `:v<X.Y.Z>` (all twelve) and PyPI (if bumped) are correct, and that prod
 `/api/health` reports `v<X.Y.Z>`. flip-ui is **not** deployed by the merge (#1186 is open):
-`make -C deploy/providers/AWS deploy-ui PROD=<env>` from a checkout at the tag. A fresh worktree has no Terraform
-state, so run `make -C deploy/providers/AWS init PROD=<env>` there first. Sites upgrade themselves: point
+`make -C deploy/providers/AWS deploy-ui HUB=<hub>` from a checkout at the tag. A fresh worktree has no Terraform
+state, so run `make -C deploy/providers/AWS init HUB=<hub>` there first. Sites upgrade themselves: point
 operators to *Site upgrade* and `docs/source/sys-admin/admin-upgrading-sites.rst`.

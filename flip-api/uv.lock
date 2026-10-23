@@ -10,9 +10,6 @@ resolution-markers = [
 exclude-newer = "2026-08-09T09:39:44.903314488Z"
 exclude-newer-span = "P3D"
 
-[options.exclude-newer-package]
-certifi = "2026-10-20T02:25:00Z"
-
 [manifest]
 constraints = [
     { name = "anyio", specifier = ">=4.14.2" },

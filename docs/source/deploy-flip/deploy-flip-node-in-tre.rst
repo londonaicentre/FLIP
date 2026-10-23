@@ -60,7 +60,7 @@ operator. The TRE operator is responsible for:
 FLIP's own images are published to the GitHub Container Registry
 (``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
 from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
-``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.production.yml``
+``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.prod.yml``
 and ``trust/xnat/docker-compose-stack.yml`` pin.
 
 Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of

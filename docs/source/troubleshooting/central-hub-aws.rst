@@ -16,13 +16,13 @@ Central Hub on AWS
 ######################
 
 Problems a FLIP admin meets running the Central Hub on AWS. Every command runs from the repo root on the deployment
-workstation. ``PROD`` selects the environment (``stag``, ``true`` for production, ``lza-stag`` or ``lza``).
+workstation. ``HUB`` selects the environment (``stag`` or ``prod``).
 
 Start with the deployment check. It covers resource health, connectivity, endpoints and containers:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS status PROD=<env>
+   make -C deploy/providers/AWS status HUB=<env>
 
 .. contents:: On this page
    :local:
@@ -45,12 +45,12 @@ AWS access
 
 **Cause.** Your AWS SSO session expired.
 
-**Fix.** Sign in again. The target picks the profile that matches ``PROD`` and uses a device code, so it works
+**Fix.** Sign in again. The target picks the profile that matches ``HUB`` and uses a device code, so it works
 over SSH too:
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS aws-login PROD=<env>
+   make -C deploy/providers/AWS aws-login HUB=<env>
 
 *******************
 Sign-in
@@ -77,7 +77,7 @@ deployed separately and ``full-deploy`` does not rebuild it.
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS deploy-ui PROD=<env>
+   make -C deploy/providers/AWS deploy-ui HUB=<env>
 
 Wait one to three minutes for the CloudFront invalidation, then hard-refresh the sign-in page.
 
@@ -105,8 +105,8 @@ Compose service name.
 
   .. code-block:: shell
 
-     make -C deploy/providers/AWS apply PROD=<env>
-     make -C deploy/providers/AWS deploy-centralhub PROD=<env>
+     make -C deploy/providers/AWS apply HUB=<env>
+     make -C deploy/providers/AWS deploy-centralhub HUB=<env>
 
 - **On a Compose hub:** set the service name in the hub env file and restart flip-api:
 
@@ -136,8 +136,8 @@ older ``rootCA.pem``).
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS apply PROD=<env>                     # hub: FL server and FL API storage
-      make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> PROD=<env>   # the AWS-hosted trust
+      make -C deploy/providers/AWS apply HUB=<env>                     # hub: FL server and FL API storage
+      make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<env>   # the AWS-hosted trust
 
 .. warning::
 

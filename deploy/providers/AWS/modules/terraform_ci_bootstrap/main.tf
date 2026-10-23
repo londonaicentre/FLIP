@@ -115,9 +115,8 @@ locals {
     "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${name}"
   ]
 
-  # The regions an apply may act in: the account's own, plus us-east-1, where
-  # CloudFront's certificate and WAF must live. Global services (CloudFront,
-  # Route 53) report us-east-1 as the requested region too.
+  # The regions an apply may act in: the account's own, plus us-east-1, which
+  # global services (CloudFront, Route 53) report as the requested region.
   apply_regions = distinct([data.aws_region.current.region, "us-east-1"])
 
   # The plan role may read these parameter values and no others: the FLIP root's

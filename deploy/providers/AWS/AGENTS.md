@@ -4,28 +4,25 @@
 
 | File | Resources |
 |------|-----------|
-| `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
+| `main.tf` | Provider config, RDS instance, Secrets Manager, target groups, the bastion and Trust EC2, SES |
 | `data.tf` | Shared data sources referenced across multiple files (currently the account's canonical user ID, used for S3 log-bucket ACL grants) |
-| `dhcp.tf` | Custom VPC DHCP options — adds `flip.local` as a search domain so EC2/Fargate resolve bare hostnames |
 | `kms.tf` | FLIP application KMS CMK, used for S3 SSE-KMS and Secrets Manager encryption |
-| `locals.tf` | Centralised locals consumed by ECS task definitions (the env-var maps mirroring the production composes) |
-| `security.tf` | SG drift detection: CloudTrail → EventBridge → Lambda (tag filter) → SNS → email alert on FlipSG-tagged security-group changes |
+| `locals.tf` | Centralised locals consumed by ECS task definitions (the env-var maps mirroring the prod composes) |
 | `service_discovery.tf` | AWS Cloud Map private DNS namespace + service registrations (`flip-api`, `fl-api-net-*`, `fl-server-net-*`) |
 | `s3_logging.tf` | Single S3 server-access-log destination bucket shared by every FLIP application bucket |
-| `vpc_endpoints.tf` | VPC interface/gateway endpoints (SSM, Secrets Manager, logs, S3) so Fargate tasks avoid the NAT gateway; interface endpoints gated behind `enable_ecs_endpoints` |
-| `network_lza.tf` | LZA platform-managed network (FLIP#749): VPC/subnet data lookups + the `local.vpc_id` / `local.app_subnet_ids` / `local.data_subnet_ids` locals both paths consume |
-| `fl_ingress_lza.tf` | LZA-only ingress (FLIP#749 WP3, ported from the #829 e2e harness): internal FL NLB with static per-subnet IPs + its TG/SG, the internal NLB's `:443` web listener + flip-api target group for the networking-account relay path (the ALB is gated off on LZA), and the `/flip/networking/*` edge-handoff SSM params |
+| `network_lza.tf` | The platform-managed network (FLIP#749): VPC/subnet data lookups + the `local.vpc_id` / `local.app_subnet_ids` / `local.data_subnet_ids` locals every consumer reads |
+| `fl_ingress_lza.tf` | Ingress (FLIP#749 WP3, ported from the #829 e2e harness): internal FL NLB with static per-subnet IPs + its SG, the `:443` web listener for the networking-account relay path, and the `/flip/networking/*` edge-handoff SSM params |
 | `services.tf` | S3 buckets, Cognito |
 | `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
-| `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (ALB / NLB / target groups / listener rules live in `main.tf`) |
+| `ecs.tf` | ECS cluster, capacity providers, ECS CloudWatch log groups (the target groups live in `main.tf`, the NLB in `fl_ingress_lza.tf`) |
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
 | `efs.tf` | EFS file system, mount targets, and access points (FL workspace) |
 | `ecs_efs_provision.tf` | ECS provisioning task that pre-populates the FL EFS workspace (FLARE kit or Flower creds, by `fl_backend`) |
 | `ecs_flower.tf` | Flower-only register-supernode-keys one-shot task + run-task trigger (FLIP#566) |
 | `ecs_sg.tf` | ECS security groups |
-| `certificate.tf` | ACM certificates (ALB + CloudFront) |
-| `cloudfront.tf` | CloudFront distribution for flip-ui |
+| `certificate.tf` | ACM certificate for the internal NLB's web listener (`MANAGE_DNS=true`) |
+| `cloudfront.tf` | flip-ui bucket and the edge distribution's cross-account OAC read (plus unused in-account CloudFront policies, kept for a separate cleanup) |
 | `iam_ecs.tf` | IAM roles, instance profiles, SSM policies |
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
@@ -37,43 +34,40 @@
 
 | Alias | Environment | Account alias |
 | ------- | ------------- | --------- |
-| `stag` | Staging, self-contained estate (`PROD=stag`) | `flipstag` (account closed 2026-09-28) |
-| `prod` | Production, self-contained estate (`PROD=true`) | `flipprod` (account closed 2026-10-06) |
-| `lza-stag` | LZA staging (`PROD=lza-stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`, `TF_PROD=lza-stag`) |
-| `lza-prod` | LZA production (`PROD=lza`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
+| `stag` | LZA staging (`HUB=stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`) |
+| `prod` | LZA production (`HUB=prod`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
 
-The `lza-stag` / `lza-prod` profiles are where FLIP's estate now lives; the `aws-stag` /
-`aws-prod` GitHub environments the CI workflows read carry `TF_PROD=lza-stag` /
-`TF_PROD=lza`, so both legs target the LZA pair (`README`, "Repointing CI at the LZA
-accounts"). The `stag` / `prod` aliases above remain only as the workflows'
-pre-`TF_PROD` fallback. Profile names are local aliases in
-`~/.aws/config` — one that encodes the old account ID has to be re-created, not
-edited.
+The `aws-stag` / `aws-prod` GitHub environments the CI workflows read carry `TF_HUB=stag` /
+`TF_HUB=prod` (`README`, "Repointing CI at the LZA accounts"). The Makefile's guard expects
+the profile named after the hub, `stag` / `prod` (override via `PROD_AWS_PROFILE` / `STAG_AWS_PROFILE`). The self-contained `stag` /
+`prod` accounts were closed (2026-09-28, 2026-10-06) and their mode removed (FLIP#1479). Profile
+names are local aliases in `~/.aws/config` — one that encodes the old account ID has to be
+re-created, not edited.
 
 ## Key Deploy Commands
 
 ```bash
-make full-deploy PROD=stag                   # Full staging deploy
-make full-deploy PROD=true                    # Full prod deploy
-make init/plan/apply PROD=lza                 # BREAK-GLASS ONLY on the LZA estate — CI applies it (apply on push to `main`, nightly drift; see "Terraform CI" below and README "Repointing CI at the LZA accounts"), and the next CI run reverts a laptop apply. LZA estate, platform-managed network (env-gated; full-deploy chains untested there — see README "Deploying onto an LZA estate"). PROD=lza-stag = staging semantics on the same mode (requires LZA_VPC_NAME in .env.lza-stag)
-make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
-make full-deploy-hub-only PROD=<stag|true>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
+# Every target but the static ones (lint, fmt-check, tflint-lint, checkov-lint, help) needs HUB=stag|prod —
+# there is no default — and its env file (.env.stag / .env.prod).
+make full-deploy HUB=stag                    # Full staging deploy
+make full-deploy HUB=prod                    # Full prod deploy
+make init/plan/apply HUB=prod                # BREAK-GLASS ONLY on the LZA estate — CI applies it (apply on push to `main`, nightly drift; see "Terraform CI" below and README "Repointing CI at the LZA accounts"), and the next CI run reverts a laptop apply. The full-deploy chains are untested there (README "Deploying onto an LZA estate"). HUB=stag requires LZA_VPC_NAME in .env.stag
+make full-deploy-hub-only HUB=<stag|prod>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
-make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + CloudFront UI (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. PROD=true additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
+make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + the UI to S3 (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. HUB=prod additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
 make deploy-trust                             # Deploy trust stack to EC2
-make register-trusts KIT=<CODE> PROD=<stag|true>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<env> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
+make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
 make stage-fl-kit KIT=<CODE>                  # Re-stage the trust's FL participant kit for its REGISTERED slot (runs inside deploy-trust, after register-trusts). ansible-init stages Trust_1 pre-registration because no slot exists yet; this replaces it once one does. The wipe is net-1-wide, so the host ends up holding exactly one slot's kit, and the play asserts the staged fed_client.json names that slot
-make deploy-ui                                # Build + sync UI to S3 + invalidate CloudFront (excludes ark_demo/*)
-make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/ + invalidate /ark_demo/*
+make deploy-ui                                # Build + sync UI to S3 (excludes ark_demo/*; no invalidation, the edge distribution is the networking account's)
+make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make forward-trust                            # SSM port forward all trust UIs
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
-make allow-local-trust-nlb LOCAL_TRUST_IP=<ip>  # Open the FL-server NLB to a trust's reported IP
-make package-onprem-trust-kit KIT=<CODE>      # Tarball a filled-in trust/.env.<CODE>.<env> + FL kit slice for an on-prem operator
+make package-onprem-trust-kit KIT=<slot> [KIT_FILE=<path>]  # Tarball a filled-in kit (trust/.env.<slot>.<hub>, or the one at KIT_FILE; its FL_KIT_SLOT must equal KIT) + FL kit slice for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
-make add-fl-kits N=<n> PROD=<stag|true>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (FLARE; no restart — see README)
+make add-fl-kits N=<n> HUB=<stag|prod>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (FLARE; no restart — see README)
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
@@ -98,24 +92,20 @@ infrastructure.**
 Things worth knowing before touching any of it:
 
 - **The Makefile stays the single source of truth for Terraform inputs.** CI
-  composes the mode's env file (`.env.stag` / `.env.production` on the
-  self-contained accounts, `.env.lza-stag` / `.env.lza-prod` on the
-  platform-managed ones) from GitHub environment secrets and variables
+  composes the hub's env file (`.env.stag` / `.env.prod`) from GitHub environment
+  secrets and variables
   (`scripts/compose-ci-env.sh`), then runs `make print-tf-env >> $GITHUB_ENV`.
   Adding an `export TF_VAR_…` line therefore also means adding the key to that
   script's manifest, to all three workflow `env:` blocks, and to both GitHub
   environments — `scripts/tests/test_compose_ci_env.sh` fails the build otherwise.
-- **`TF_PROD` is the one mode input, and it is a GitHub variable** (the
-  `deploy/env_mode.mk` token: `stag` | `true` | `lza-stag` | `lza`). Each workflow
-  reads `vars.TF_PROD` — falling back to the legacy pair, so an un-migrated
-  repository behaves as before — and passes it to `compose-ci-env.sh` as `PROD`,
-  which derives the env file, the profile the Makefile's guard demands, and which
-  keys are required (the LZA ones only on the LZA tokens). No workflow names an
-  account ID or a role ARN: account identity is `TF_PROD` plus
-  `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, which is why repointing an estate is a
-  value change. `tests/test_ci_env_target.py` pins the script's token table against
-  a real `make` probe of `deploy/env_mode.mk`.
-- **Env values live in two places** (the operator `.env.<env>` file and the
+- **`TF_HUB` is the one mode input, a GitHub variable.** Each workflow passes
+  `vars.TF_HUB` (`stag` | `prod`) to `compose-ci-env.sh` as `HUB`, with no fallback —
+  unset fails the run. From it the script derives the env file and the profile the
+  Makefile's guard demands. No workflow names an account ID or a role ARN: account
+  identity is `TF_HUB` plus `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN`, which is why
+  repointing an estate is a value change. `tests/test_ci_env_target.py` pins the script's table against a
+  real `make` probe of `deploy/env_mode.mk` and the Makefile's guard.
+- **Env values live in two places** (the operator `.env.<hub>` file and the
   GitHub environment) with no automatic link. Missing keys fail loudly; drifted
   ones show up as an unexpected plan diff.
 - **Use `aws-stag` / `aws-prod`, never the existing `flip` environment** — `flip`
@@ -178,8 +168,7 @@ Things worth knowing before touching any of it:
   security group and ingress rules, and the `/flip/networking/*` edge-handoff
   parameters). The networking account's edge reads those addresses, so order matters:
   adding ingress applies FLIP first; removing or replacing it applies the networking
-  account (`aicentre-lza-iac`) first. Legacy mode never fires it (every watched address
-  is `count = 0` there), and the exit code is unchanged (FLIP#1199).
+  account (`aicentre-lza-iac`) first. The exit code is unchanged (FLIP#1199).
 - **The advisory also runs where the gate does not.** `ADVISORY_ONLY=true` /
   `--advisory-only` makes the same script exit 0 on every readable plan and report
   what the gate *would* do (a parse error is still exit 2). Two callers:
@@ -197,19 +186,19 @@ Things worth knowing before touching any of it:
 - **`TF_STAG_DISABLED=true` (repository variable) pauses the staging leg** of plan,
   apply and drift, so a develop merge cannot rebuild a staging estate that has been
   torn down; production never reads it. **Leave it unset while a staging estate exists**:
-  it was deleted when `aws-stag` was repointed at LZA staging (`TF_PROD=lza-stag`), so
+  it was deleted when `aws-stag` was repointed at LZA staging (2026-10-05), so
   all three staging legs run against LZA staging. The guards remain for the next teardown;
   `.github/tests/workflows/test_terraform_stag_pause.py` pins them.
 - **Every IAM role this root owns carries a permissions boundary**
   (`var.iam_permissions_boundary_name`, the policy declared by
   `modules/terraform_ci_bootstrap`). The CI apply role may only create a role, or
-  write an inline policy onto one, when the role carries it. **The LZA modes use the
+  write an inline policy onto one, when the role carries it. **The estates use the
   platform's boundary instead**: the Makefile defaults the variable to
-  `AICentre-WorkloadRoleBoundary` there (londonaicentre/lza#51), which the
-  accelerator deploys to every workload account and an LZA SCP requires on every
-  role — a role change without it is denied, from a laptop or from CI. An env file
-  can still set the variable on any mode; `tests/test_iam_permissions_boundary.py`
-  pins both defaults (FLIP#1199, FLIP#1280).
+  `AICentre-WorkloadRoleBoundary` (londonaicentre/lza#51), which the accelerator
+  deploys to every workload account and an LZA SCP requires on every role — a role
+  change without it is denied, from a laptop or from CI. An env file can still set
+  the variable; `tests/test_iam_permissions_boundary.py` pins both defaults
+  (FLIP#1199, FLIP#1280).
 - **The CI identity is not this root's.** The plan/apply roles, the boundary (outside
   LZA) and the state bucket come from `modules/terraform_ci_bootstrap`, which a
   platform repository (`aicentre-lza-iac` for AI Centre) instantiates per account,
@@ -230,12 +219,12 @@ Things worth knowing before touching any of it:
   ansible-core and pyqt5 for a suite that needs four packages.
 
 - **Seed the GitHub environments with `scripts/setup-github-environments.sh`** (repo
-  admin, `--dry-run` first). `--mode` takes the same `PROD` token the workflows read
-  as `TF_PROD`, and the script sets that variable along with the two role ARNs. It
+  admin, `--dry-run` first). `--hub stag|prod` becomes the `TF_HUB` variable the
+  workflows read, set along with the two role ARNs. It
   derives the secret-vs-variable split from `terraform_plan.yml` rather than
   hard-coding it — a key stored as a variable but read as `secrets.X` resolves to
   empty and fails the run pointing at the wrong cause. Before any GitHub write it
-  verifies the account under the mode's profile (state bucket owner, both roles
+  verifies the account under the estate's profile (state bucket owner, both roles
   and their `sub` / apply `job_workflow_ref`, the boundary) and reads the role ARNs
   from IAM; any mismatch stops it. It, like `scripts/add_fl_kits.sh`, must stay
   **bash 3.2 compatible** (the stock macOS `/bin/bash` an admin runs it with): no
@@ -249,32 +238,30 @@ Things worth knowing before touching any of it:
   renamed UI bucket that plans as a `prevent_destroy` violation. Its `--out` writes
   only the Terraform inputs, so it refuses to overwrite a real operator env file,
   and on `--env prod` it treats an empty `DEMO_ASSETS_BUCKET_NAME` as a failed
-  recovery rather than a value — empty there destroys the Ark+ demo resources.
-  The key recovers from one of two places depending on the estate (FLIP#1199):
-  `data.aws_s3_bucket.demo_assets` on legacy, where the bucket is adopted, and
-  `module.flip_demo_assets_bucket`'s `aws_s3_bucket.this` on LZA, where Terraform
-  creates it. The module has to be matched by name, since every `flip_s3_bucket`
-  caller contributes an `aws_s3_bucket.this`.
+  recovery rather than a value — empty there plans the Ark+ demo bucket's destroy,
+  which `prevent_destroy` turns into a failed apply. The key recovers from
+  `module.flip_demo_assets_bucket`'s `aws_s3_bucket.this` (FLIP#1199); the module has
+  to be matched by name, since every `flip_s3_bucket` caller contributes an
+  `aws_s3_bucket.this`.
 
 Full flow, one-time setup and break-glass: [README.md](README.md#terraform-ci-plan-on-pr-apply-on-merge).
 
 ## Image tags, deploys and the FL quiesce
 
-Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `PROD=true` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
+Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of the built commit) alongside the mutable `:stag`/`:prod` tags. Hub ECS deploys pin these sha tags via task-definition revisions — `make deploy-centralhub` resolves the env branch tip's tag, `make rollback-centralhub` repoints at the previous revision (FLIP#751; see `deploy/providers/AWS/README.md` "Central Hub deploys and rollback"). `deploy-centralhub` also prints an **FL quiesce reminder** (FLIP#770; on `HUB=prod` it adds an interactive are-you-sure confirmation, stag stays non-interactive): replacing `fl-server-net-1` kills any in-flight training run, so enable deployment mode first — it pauses FL job pickup (queued jobs hold; the running job finishes and frees its net) — and wait until the hub's `GET /fl/quiesce` reports deployment mode ON and no BUSY net, making "enable mode → wait → deploy → disable" the standard redeploy workflow.
 
 ## Infrastructure
 
-- **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
-- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — FLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/8000 Control API (HTTP since flwr 1.37)/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The NLB listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
+- **Network**: the accelerator-provisioned VPC, looked up by Name tag (`network_lza.tf`) — app subnets for compute, data subnets for RDS; no IGW, no NAT
+- **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1). The FL task families serve **both FL backends** (FLIP#566): `FL_BACKEND` switches image/ports/command/env/mounts — FLARE (single port `FL_SERVER_PORT`, EFS kit from `fl-flare-participant-kits/<FLARE_KIT_DATE>`) vs Flower (SuperLink 9092 Fleet/8000 Control API (HTTP since flwr 1.37)/9097 health, TLS + SuperNode auth, creds from `fl-flower-participant-kits/<FLOWER_KIT_DATE>`, shared `fl_jobs` EFS volume, register-supernode-keys one-shot). The internal NLB's FL listener stays on `FL_SERVER_PORT` for both; only the target-side port changes.
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
-- **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
-- **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
-- **NLB**: gRPC for FL server traffic
-- **CloudFront + S3**: flip-ui static hosting
+- **RDS**: PostgreSQL in the data subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
+- **Internal NLB**: static per-subnet IPs; a `:443` web listener for `/api/*` relayed from the networking account's edge, and the FL listener (TCP pass-through)
+- **S3**: flip-ui static assets, served by the networking account's edge CloudFront over cross-account OAC
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)
 - **Cognito**: `flip-user-pool` with email auth
-- **Architecture diagrams**: `architecture/central_hub.py` renders the Central Hub pictures (request/FL paths; data/platform services) with the `diagrams` library, one pair per deployment mode (`Variant`): the self-contained `central-hub-aws-{network,data}.png` and the LZA `central-hub-aws-lza-{network,data}.png`. The ReadTheDocs "Deploy the Central Hub on AWS" / "… on AWS (LZA)" pages render them at docs build time; `make aws-diagram` (repo root; `--variant legacy|lza` on the script for one pair) refreshes the four committed copies under `docs/` that the README embeds (runs in docker when `dot` is absent). `tests/test_architecture_diagram.py` pins the script's `TERRAFORM_ADDRESSES` map — ONE superset over both modes — to the root-module `.tf` files both ways: a drawn address that no longer exists fails, and so does any resource of a type in `DRAWN_RESOURCE_TYPES` (ECS services, LBs' target groups, CloudFront, RDS Proxy, EFS, buckets, endpoints, …) or any root `module` that is neither drawn nor listed in `UNDRAWN_MODULES`. A label whose Terraform is gated to one mode goes in `VARIANT_ONLY_LABELS` and may only be drawn in that mode's pictures; every other label must be drawn in both (the renderer's `assert_complete` enforces it per variant, so the graphviz smoke tests catch a shared label left out of one mode). `data` blocks are inventoried for the existence check only (the LZA pictures draw the accelerator VPC/subnets this root looks up) and can never become "must be drawn". **A `.tf` change touching those updates the map in the same PR**; the package is deliberately not called `diagrams/` because `tests/conftest.py` puts this directory on `sys.path`.
-- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror outside LZA**; on the LZA modes `DOCKER_REGISTRY` is the account's ECR pull-through cache of GHCR (FLIP#749), and `scripts/resolve-image-tags.sh` probes that registry's tags upstream on `ghcr.io/<org>/` (the runner has no ECR login; FLIP#1199). A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
+- **Architecture diagrams**: `architecture/central_hub.py` renders the Central Hub pictures (request/FL paths; data/platform services) with the `diagrams` library: `central-hub-aws-lza-{network,data}.png`. The ReadTheDocs "Deploy the Central Hub on AWS (LZA)" page renders them at docs build time; `make aws-diagram` (repo root) refreshes the two committed copies under `docs/` that the README embeds (runs in docker when `dot` is absent). `tests/test_architecture_diagram.py` pins the script's `TERRAFORM_ADDRESSES` map to the root-module `.tf` files both ways: a drawn address that no longer exists fails, and so does any resource of a type in `DRAWN_RESOURCE_TYPES` (ECS services, LBs' target groups, CloudFront, RDS Proxy, EFS, buckets, endpoints, …) or any root `module` that is neither drawn nor listed in `UNDRAWN_MODULES`. Every label must be drawn (the renderer's `assert_complete` enforces it, so the graphviz smoke tests catch one left out). `data` blocks are inventoried for the existence check only (the pictures draw the accelerator VPC/subnets this root looks up) and can never become "must be drawn". **A `.tf` change touching those updates the map in the same PR**; the package is deliberately not called `diagrams/` because `tests/conftest.py` puts this directory on `sys.path`.
+- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. On the estates `DOCKER_REGISTRY` is the account's ECR pull-through cache of GHCR (FLIP#749), and `scripts/resolve-image-tags.sh` probes that registry's tags upstream on `ghcr.io/<org>/` (the runner has no ECR login; FLIP#1199). A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
 ## Verifying a Central-Hub FL redeploy
 
@@ -289,4 +276,3 @@ An FL redeploy is `make deploy-centralhub` (branch-tip resolution, or `TAG=sha-<
 
 - Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with S3 native locking (`use_lockfile = true` in `backend.tf`; no DynamoDB lock table)
 - Persistent resources (S3, Secrets, Cognito) preserved during destroy
-- `make import-persistent` to import pre-existing resources

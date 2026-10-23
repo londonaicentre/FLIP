@@ -493,7 +493,7 @@ def discover_trust_kits(trust_dir: Path, env: str) -> list[TrustKit]:
 
     Args:
         trust_dir (Path): The trust/ directory holding the kit files.
-        env (str): Environment token (development / stag / production).
+        env (str): Environment token (development / stag / prod).
 
     Returns:
         list[TrustKit]: One entry per discovered kit, sorted by filename.
