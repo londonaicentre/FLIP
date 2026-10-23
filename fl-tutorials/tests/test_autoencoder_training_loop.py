@@ -17,7 +17,7 @@ trains one of the two networks on a fraction of the data:
 
 1. **Summed instead of averaged micro-batches.** ``.grad`` accumulates, so omitting the
    ``/ accumulation_step`` makes every step ``accumulation_step`` times larger than the configured
-   learning rate implies — 4x at ``BATCH_SIZE: 2``. Nothing looks wrong; ``LR_G`` just stops meaning
+   learning rate implies — 4x at ``BATCH_SIZE: 2``. Nothing looks wrong; ``LR_START`` just stops meaning
    what it says, and stops being comparable to any published recipe.
 2. **Zeroing a gradient that is still being accumulated.** Calling ``zero_grad`` once per iteration
    while stepping once per *accumulation window* leaves only the final micro-batch's gradient to be
@@ -39,7 +39,7 @@ import torch
 from torch import nn
 from tutorial_apps import TUTORIALS_ROOT
 
-TRAINER = TUTORIALS_ROOT / "nvflare/image_synthesis/autoencoder/app_files/trainer.py"
+TRAINER = TUTORIALS_ROOT / "nvflare/image_generation/brain_mri_ldm_stage1_autoencoder/app_files/trainer.py"
 ACCUMULATION = 4  # what batch_accumulation_step gives for the shipped BATCH_SIZE of 2
 
 
@@ -77,7 +77,7 @@ def test_zeroing_every_iteration_discards_the_accumulation() -> None:
 
 
 def _calls(tree: ast.AST, dotted: str) -> list[ast.Call]:
-    """Every call whose callee spells ``dotted`` (e.g. ``scaler_g.scale``)."""
+    """Every call whose callee spells ``dotted`` (e.g. ``optimizer_g.step``)."""
     wanted = dotted.split(".")[-1]
     return [
         node
@@ -86,26 +86,23 @@ def _calls(tree: ast.AST, dotted: str) -> list[ast.Call]:
     ]
 
 
-def _divides_by_accumulation(call: ast.Call) -> bool:
-    """True when the scaled loss is divided by ``accumulation_step``."""
-    if not call.args:
-        return False
-    arg = call.args[0]
+def _divides_by_accumulation(node: ast.expr) -> bool:
+    """True when ``node`` is a loss divided by ``accumulation_step``."""
     return (
-        isinstance(arg, ast.BinOp)
-        and isinstance(arg.op, ast.Div)
-        and isinstance(arg.right, ast.Name)
-        and arg.right.id == "accumulation_step"
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Div)
+        and isinstance(node.right, ast.Name)
+        and node.right.id == "accumulation_step"
     )
 
 
-def test_both_scaled_losses_are_averaged_over_the_accumulation_window() -> None:
-    """``scaler_g.scale`` and ``scaler_d.scale`` both divide by ``accumulation_step``."""
+def test_both_losses_are_averaged_over_the_accumulation_window() -> None:
+    """The generator's and the discriminator's ``backward`` both divide by ``accumulation_step``."""
     tree = ast.parse(TRAINER.read_text())
-    scaled = [call for call in _calls(tree, "scale") if call.args]
-    assert len(scaled) == 2, "expected one scaled loss for the generator and one for the discriminator"
-    for call in scaled:
-        assert _divides_by_accumulation(call), ast.unparse(call)
+    backwards = _calls(tree, "backward")
+    assert len(backwards) == 2, "expected one backward for the generator and one for the discriminator"
+    for call in backwards:
+        assert _divides_by_accumulation(call.func.value), ast.unparse(call)
 
 
 def test_every_zero_grad_sits_inside_a_step_branch() -> None:
@@ -115,7 +112,10 @@ def test_every_zero_grad_sits_inside_a_step_branch() -> None:
     completely ordinary, which is why it needs a test rather than a reviewer.
     """
     tree = ast.parse(TRAINER.read_text())
-    train = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "train")
+    train = next(
+        node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "train_one_epoch"
+    )
+    assert _calls(train, "zero_grad"), "train_one_epoch never zeroes a gradient"
     guarded = {
         id(call) for branch in ast.walk(train) if isinstance(branch, ast.If) for call in _calls(branch, "zero_grad")
     }
@@ -138,10 +138,27 @@ def test_the_discriminator_is_frozen_for_the_generator_pass() -> None:
     ]
     assert [value for _, value in toggles] == [False, True], toggles
 
-    backward = next(
-        call.lineno
-        for call in _calls(tree, "backward")
-        if isinstance(call.func.value, ast.Call) and _divides_by_accumulation(call.func.value)
-    )
+    backward = next(call.lineno for call in _calls(tree, "backward") if _divides_by_accumulation(call.func.value))
     freeze, unfreeze = toggles[0][0], toggles[1][0]
     assert freeze < backward < unfreeze, (freeze, backward, unfreeze)
+
+
+def test_mixed_precision_is_bfloat16_without_a_gradient_scaler() -> None:
+    """Every ``autocast`` runs in bfloat16, and no ``GradScaler`` is left.
+
+    float16 tops out at 65504. When the latent's log-variance reaches MONAI's clamp, sigma is e^10 (about
+    22,000), the latent passed to the decoder can overflow, and the loss becomes NaN, at start-up or rounds
+    into training. bfloat16 has float32's range, so the gradient scaler float16 needs has nothing left to do.
+    """
+    tree = ast.parse(TRAINER.read_text())
+    autocasts = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "autocast"
+    ]
+    assert autocasts, "the trainer no longer uses autocast"
+    for call in autocasts:
+        dtype = next((keyword.value for keyword in call.keywords if keyword.arg == "dtype"), None)
+        assert dtype is not None, ast.unparse(call)
+        assert ast.unparse(dtype) == "torch.bfloat16", ast.unparse(call)
+    assert not [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "GradScaler"]

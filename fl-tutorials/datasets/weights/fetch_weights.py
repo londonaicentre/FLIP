@@ -17,10 +17,10 @@ FL apps never download at run time (FLIP#1206 — see the user guide's *Model Fi
 why). So the download happens HERE, on a developer machine, once, and the result is a file the
 tutorial ships beside its code through the ordinary scanned upload.
 
-Today that is one network: torchvision's SqueezeNet, the perceptual-loss backbone of the
-latent-diffusion tutorial. lpips resolves it through torch.hub, so it stays the ``.pth``
-torchvision itself reads and the app drops it into a hub ``checkpoints/`` dir at run time
-instead of downloading it. Add an entry to ``CHECKPOINTS`` for the next network.
+Today that is MedicalNet (ResNet-50, with ResNet-10 as the lighter option), the 3-D
+perceptual-loss backbone of the autoencoder tutorial, which loads it from beside its code.
+``squeezenet1_1`` is torchvision's 2-D LPIPS backbone, which no tutorial ships at present. Add an
+entry to ``CHECKPOINTS`` for the next network.
 
 Every checkpoint URL carries the first eight sha256 hex chars in its filename (torch.hub's
 convention, ``HASH_REGEX``), and the file is fetched with that prefix as ``hash_prefix`` — the
@@ -68,7 +68,8 @@ class Checkpoint:
 
 CHECKPOINTS: dict[str, Checkpoint] = {
     "squeezenet1_1": Checkpoint("https://download.pytorch.org/models/squeezenet1_1-b8a52dc0.pth"),
-    # MedicalNet ResNet-10, the 3-D perceptual backbone the autoencoder tutorial ships. Published
+    # MedicalNet (Chen, Ma and Zheng, arXiv:1904.00625; Tencent, MIT licence), the 3-D perceptual
+    # backbone the autoencoder tutorial ships (ResNet-50; ResNet-10 the lighter option). Published
     # on the Hugging Face hub without a hash in the filename, so the digest is pinned here and the
     # file is staged under the hash-named form the app verifies against. Fetched by plain URL
     # rather than `hf_hub_download` to keep this tool's one download path (and its hash check).

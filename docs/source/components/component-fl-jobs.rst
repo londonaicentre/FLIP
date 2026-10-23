@@ -48,11 +48,6 @@ training loop, model architecture); for the server side, you choose a **job type
      - Evaluates a model at each Trust and collects the metrics.
      - Yes
      - Yes
-   * - ``diffusion_model``
-     - Two-stage diffusion model training (autoencoder, then diffusion model). No tutorial uses it: the
-       image-synthesis tutorials are three independent ``standard`` jobs.
-     - Yes
-     - No
    * - ``fed_opt``
      - Federated optimisation. Same client contract as ``standard``; only the server-side optimiser differs.
      - Yes
@@ -238,7 +233,6 @@ Some further keys are used by FLIP's FLARE components but are **not validated**:
 
 - ``SERVER_CHECKPOINT``: a model file (string, or list of strings) to stage on the FL server instead of bundling
   it into the app.
-- ``GLOBAL_ROUNDS_AE`` and ``GLOBAL_ROUNDS_DM``: per-stage round counts for the ``diffusion_model`` job type.
 - ``models``: the checkpoints an evaluation job loads, each entry naming a ``checkpoint`` file.
 
 **Any other key is passed through untouched** for your code to read at run time, such as ``LEARNING_RATE`` or

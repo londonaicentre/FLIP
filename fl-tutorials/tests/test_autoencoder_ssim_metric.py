@@ -49,7 +49,7 @@ import pytest
 import torch
 from tutorial_apps import TUTORIALS_ROOT
 
-APP_FILES = TUTORIALS_ROOT / "nvflare" / "image_synthesis" / "autoencoder" / "app_files"
+APP_FILES = TUTORIALS_ROOT / "nvflare" / "image_generation" / "brain_mri_ldm_stage1_autoencoder" / "app_files"
 
 
 @pytest.fixture(scope="module")

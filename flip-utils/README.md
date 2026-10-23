@@ -22,7 +22,7 @@ pip-installable `flip` Python package (published as `flip-utils` on PyPI) that s
 image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
 - **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, FLARE components, Flower helpers and utilities (this directory)
-- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,evaluation,diffusion_model,fed_opt}`, `flower/{standard,evaluation}`)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates per backend (`nvflare/{standard,evaluation,fed_opt}`, `flower/{standard,evaluation}`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples per backend (`nvflare/`, `flower/`)
 - **[`../fl-services/`](../fl-services/)** — Docker images and network provisioning for FL networks per backend (`nvflare/`, `flower/`); each backend's `Makefile` owns build / provision / up / down / submit
 
@@ -138,7 +138,6 @@ directly.
 | File | Description |
 | ------ | ------------- |
 | `trainer.py` | Training logic — a plain `nvflare.client` script (`flare.init`/`receive`/`send`) |
-| `validator.py` | Extra validation module where the job type requires one (`diffusion_model`) |
 | `models.py` | Model definitions — must export `get_model()` function |
 | `config.json` | Job configuration — only `job_type` is required; platform keys such as `LOCAL_ROUNDS` are defaulted when absent, and app settings such as `LEARNING_RATE` are passed through untouched; optional `BEST_MODEL_METRIC` / `BEST_MODEL_METRIC_MINIMIZE` enable best-model selection (see below) |
 | `transforms.py` | Data transforms (optional) |
@@ -182,11 +181,10 @@ Pass the job type to the `FLIP()` factory (`FLIP(job_type=...)`). The `JobType` 
 | ------ | ------------- |
 | `standard` | Federated training with FedAvg aggregation (default) |
 | `evaluation` | Distributed model evaluation without training |
-| `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
 
-The FLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `diffusion_model`,
-`fed_opt`) are all Client-API apps with recipe-generated configs. The corresponding configs live
+The FLARE templates under `fl-apps/nvflare/` (`standard`, `evaluation`, `fed_opt`) are all
+Client-API apps with recipe-generated configs. The corresponding configs live
 in `fl-apps/nvflare/<template>/app/config/`.
 
 ### Development Mode
@@ -251,24 +249,21 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `evaluation` | `nvflare/image_evaluation/3d_spleen_segmentation_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_baseline_classification_evaluation` |
 | nvflare | `evaluation` | `nvflare/image_evaluation/arkplus_multimodel_classification_evaluation` |
-| nvflare | `standard` | `nvflare/image_synthesis/autoencoder` |
-| nvflare | `standard` | `nvflare/image_synthesis/diffusion_model` (pixel-space; the directory name is not the job type) |
-| nvflare | `standard` | `nvflare/image_synthesis/latent_diffusion_model` |
-| nvflare | `diffusion_model` | *(no tutorial — see below)* |
+| nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage1_autoencoder` |
+| nvflare | `standard` | `nvflare/image_generation/xray_diffusion` (pixel-space) |
+| nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage2_diffusion` |
 | flower | `standard` | `flower/xray_classification` |
 | flower | `standard` | `flower/3d_spleen_segmentation` |
 | flower | `standard` | `flower/ehr_risk_prediction` |
 | flower | `evaluation` | `flower/3d_spleen_segmentation_evaluation` |
 
-The plain job-type names (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) are the
+The plain job-type names (`standard`, `evaluation`, `fed_opt`) are the
 Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and
 such apps can no longer run.
 
-`diffusion_model` is the two-stage (autoencoder-then-diffusion) job type. It remains registered and
-working for existing models, but no tutorial uses it: the image-synthesis tutorials are three
-independent single-stage `standard` jobs, so a latent diffusion model is trained as an
-`autoencoder` run followed by a separate `latent_diffusion_model` run that takes the resulting
-autoencoder as a frozen `SERVER_CHECKPOINT`.
+A latent diffusion model is trained as two `standard` jobs: a `brain_mri_ldm_stage1_autoencoder` run, then a
+separate `brain_mri_ldm_stage2_diffusion` run that takes the resulting autoencoder as a frozen `SERVER_CHECKPOINT`.
+The two-stage `diffusion_model` job type that once did both in one job has been removed.
 
 ---
 
