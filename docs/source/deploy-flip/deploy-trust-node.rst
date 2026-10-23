@@ -176,6 +176,10 @@ The node also needs outbound access to pull FLIP's container images (``ghcr.io/l
 The Docker Compose deploy commands always pull, so this applies in a TRE too (see :doc:`deploy-flip-node-in-tre`).
 Kubernetes adds a few destinations of its own; see :doc:`deploy-flip-node-kubernetes`.
 
+A trust whose OMOP lives in Snowflake rather than on the node needs one further outbound destination, HTTPS 443
+to ``<account>.snowflakecomputing.com``, and its egress proxy configured for the connector if it has one. Still
+no inbound rule. See :ref:`omop-backends`.
+
 .. toctree::
    :maxdepth: 1
 

@@ -13,7 +13,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import PositiveInt, SecretStr, field_validator
+from pydantic import PositiveInt, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -22,6 +22,21 @@ from data_access_api.policy import Policy, load_policy
 # The shipped disclosure floor. Referenced by both the field default and the empty-string
 # coercion validator below, so the two cannot drift apart.
 DEFAULT_COHORT_QUERY_THRESHOLD = 10
+
+# The OMOP backends this service can read. ``postgres`` is the shipped default and the
+# behaviour every existing kit file gets: a kit carrying only the ``*POSTGRES*`` variables
+# selects it without naming it (FLIP#13).
+OMOP_BACKEND_POSTGRES: Literal["postgres"] = "postgres"
+OMOP_BACKEND_SNOWFLAKE: Literal["snowflake"] = "snowflake"
+
+# Default Snowflake schema holding the OMOP CDM tables. Matches the trust naming contract
+# used by the SPCS epic (database ``FLIP_TRUST_<CODE>``, schema ``OMOP``).
+DEFAULT_SNOWFLAKE_SCHEMA = "OMOP"
+
+# Where SPCS mounts the service's own OAuth token. A container running as a Snowpark
+# Container Services service authenticates with this file plus SNOWFLAKE_HOST /
+# SNOWFLAKE_ACCOUNT and holds no credential of its own.
+DEFAULT_SNOWFLAKE_TOKEN_FILE = "/snowflake/session/token"
 
 
 class Settings(BaseSettings):
@@ -108,12 +123,112 @@ class Settings(BaseSettings):
             return 536_870_912
         return v
 
+    # Which OMOP backend this trust's data-access-api reads (FLIP#13). Unset means
+    # ``postgres``, so a kit file carrying only the ``*POSTGRES*`` variables below keeps
+    # working untouched and the mocked ``trust/omop-db`` stays the dev/CI default. Only the
+    # trust sets this: where its OMOP lives is a trust-local fact the hub never sees.
+    OMOP_BACKEND: Literal["postgres", "snowflake"] = OMOP_BACKEND_POSTGRES
+
+    @field_validator("OMOP_BACKEND", mode="before")
+    @classmethod
+    def coerce_empty_omop_backend(cls, v: object) -> object:
+        """Treat an empty-string backend as the shipped Postgres default.
+
+        Same kit-file gotcha as ``COHORT_QUERY_THRESHOLD``: the service Makefile exports kit
+        names with ``sed 's/=.*//'``, so a commented-out ``#OMOP_BACKEND=snowflake`` arrives as
+        an empty string and would otherwise fail the Literal at import.
+        """
+        if v is None or v == "":
+            return OMOP_BACKEND_POSTGRES
+        return v
+
     #
     OMOP_DB_SERVICE_NAME: str = "omop-db"  # The name of the OMOP database service in Docker Compose or Kubernetes
     OMOP_DB_PORT: int = 5432  # Calls from another container use port 5432 (e.g. http://omop-db:5432)
-    DATA_ACCESS_POSTGRES_USER: str
-    DATA_ACCESS_POSTGRES_PASSWORD: SecretStr
-    OMOP_POSTGRES_DB: str
+    # Required on the Postgres backend, enforced by ``_check_backend_credentials`` below rather
+    # than by being mandatory fields: a Snowflake trust's kit file carries none of them, and a
+    # mandatory field would stop that service at import. On the Postgres backend a missing value
+    # still refuses to start, exactly as before.
+    DATA_ACCESS_POSTGRES_USER: str = ""
+    DATA_ACCESS_POSTGRES_PASSWORD: SecretStr = SecretStr("")
+    OMOP_POSTGRES_DB: str = ""
+
+    # ── Snowflake OMOP backend (FLIP#13) ─────────────────────────────────────────────────
+    # All trust-local, hand-edited into the kit file's "Trust-local credentials" section and
+    # never written by ``register-trust``. There is deliberately no password setting: the
+    # service authenticates either with the SPCS-provided OAuth token file or with key-pair
+    # auth, never with a password.
+    SNOWFLAKE_ACCOUNT: str = ""
+    # Set by SPCS inside a container service; the account locator alone is used off-SPCS.
+    SNOWFLAKE_HOST: str = ""
+    # Key-pair auth only. On SPCS the token carries the identity, so no user is named.
+    SNOWFLAKE_USER: str = ""
+    SNOWFLAKE_WAREHOUSE: str = ""
+    SNOWFLAKE_DATABASE: str = ""
+    SNOWFLAKE_SCHEMA: str = DEFAULT_SNOWFLAKE_SCHEMA
+    SNOWFLAKE_ROLE: str = ""
+    # PEM-encoded private key for off-SPCS key-pair auth. Optional: a service running on SPCS
+    # uses the mounted OAuth token instead and needs no key of its own.
+    SNOWFLAKE_PRIVATE_KEY_FILE: str = ""
+    SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: SecretStr = SecretStr("")
+    SNOWFLAKE_TOKEN_FILE: str = DEFAULT_SNOWFLAKE_TOKEN_FILE
+
+    @field_validator("SNOWFLAKE_SCHEMA", mode="before")
+    @classmethod
+    def coerce_empty_snowflake_schema(cls, v: object) -> object:
+        """Treat an empty-string schema as the contract default (``OMOP``)."""
+        if v is None or v == "":
+            return DEFAULT_SNOWFLAKE_SCHEMA
+        return v
+
+    @field_validator("SNOWFLAKE_TOKEN_FILE", mode="before")
+    @classmethod
+    def coerce_empty_snowflake_token_file(cls, v: object) -> object:
+        """Treat an empty-string token path as the SPCS mount point."""
+        if v is None or v == "":
+            return DEFAULT_SNOWFLAKE_TOKEN_FILE
+        return v
+
+    @model_validator(mode="after")
+    def _check_backend_credentials(self) -> "Settings":
+        """Refuse to start when the selected backend is not fully configured.
+
+        Fail-fast at import, the same stance the mandatory Postgres fields used to take: a
+        service that boots with half a connection serves its first cohort query as an opaque
+        500 instead of refusing visibly at deploy time.
+        """
+        if self.OMOP_BACKEND == OMOP_BACKEND_POSTGRES:
+            missing = [
+                name
+                for name, value in (
+                    ("DATA_ACCESS_POSTGRES_USER", self.DATA_ACCESS_POSTGRES_USER),
+                    ("DATA_ACCESS_POSTGRES_PASSWORD", self.DATA_ACCESS_POSTGRES_PASSWORD.get_secret_value()),
+                    ("OMOP_POSTGRES_DB", self.OMOP_POSTGRES_DB),
+                )
+                if not value
+            ]
+            if missing:
+                raise ValueError(f"OMOP_BACKEND=postgres requires: {', '.join(missing)}.")
+            return self
+
+        missing = [
+            name
+            for name, value in (
+                ("SNOWFLAKE_ACCOUNT", self.SNOWFLAKE_ACCOUNT),
+                ("SNOWFLAKE_WAREHOUSE", self.SNOWFLAKE_WAREHOUSE),
+                ("SNOWFLAKE_DATABASE", self.SNOWFLAKE_DATABASE),
+                ("SNOWFLAKE_ROLE", self.SNOWFLAKE_ROLE),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(f"OMOP_BACKEND=snowflake requires: {', '.join(missing)}.")
+        # Key-pair auth names a user; the SPCS token does not. Only one of the two has to be
+        # available, and which one is resolved at connect time (the token file is mounted by
+        # SPCS and may legitimately not exist on a developer box).
+        if self.SNOWFLAKE_PRIVATE_KEY_FILE and not self.SNOWFLAKE_USER:
+            raise ValueError("SNOWFLAKE_PRIVATE_KEY_FILE requires SNOWFLAKE_USER (key-pair auth names its user).")
+        return self
 
     #
     AES_KEY_BASE64: str
@@ -141,12 +256,15 @@ class Settings(BaseSettings):
     # Define the database URL for the OMOP database
     @property
     def OMOP_DATABASE_URL(self) -> SecretStr:
-        """Construct the database URL for the OMOP database.
+        """Construct the database URL for the configured OMOP backend.
 
         Returns:
-            SecretStr: A ``postgresql+psycopg2://`` URL wrapped as a SecretStr to avoid leaking
-            the password in logs or error messages.
+            SecretStr: A ``postgresql+psycopg2://`` URL on the Postgres backend, or a
+            ``snowflake://`` URL on the Snowflake one, wrapped as a SecretStr to avoid leaking
+            credentials in logs or error messages.
         """
+        if self.OMOP_BACKEND == OMOP_BACKEND_SNOWFLAKE:
+            return SecretStr(self.SNOWFLAKE_DATABASE_URL.render_as_string(hide_password=False))
         # The driver is named because a bare ``postgresql://`` lets SQLAlchemy pick one, and
         # this service ships psycopg2 only. URL.create escapes @, / and : in the credentials.
         return SecretStr(
@@ -158,6 +276,26 @@ class Settings(BaseSettings):
                 port=self.OMOP_DB_PORT,
                 database=self.OMOP_POSTGRES_DB,
             ).render_as_string(hide_password=False)
+        )
+
+    @property
+    def SNOWFLAKE_DATABASE_URL(self) -> URL:
+        """The ``snowflake://`` URL naming the account, database, schema, warehouse and role.
+
+        Carries **no credential**: authentication is resolved separately at connect time
+        (``db.backend``) and passed through ``connect_args``, so no secret is ever rendered into
+        a URL string that could reach a log line. ``snowflake-sqlalchemy`` reads
+        ``<database>/<schema>`` out of the URL's database slot.
+
+        Returns:
+            URL: The SQLAlchemy URL for the configured Snowflake OMOP.
+        """
+        return URL.create(
+            "snowflake",
+            username=self.SNOWFLAKE_USER or None,
+            host=self.SNOWFLAKE_HOST or self.SNOWFLAKE_ACCOUNT,
+            database=f"{self.SNOWFLAKE_DATABASE}/{self.SNOWFLAKE_SCHEMA}",
+            query={"warehouse": self.SNOWFLAKE_WAREHOUSE, "role": self.SNOWFLAKE_ROLE},
         )
 
 
