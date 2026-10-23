@@ -34,12 +34,12 @@
 
 | Alias | Environment | Account alias |
 | ------- | ------------- | --------- |
-| `lza-stag` | LZA staging (`HUB=stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`) |
-| `lza-prod` | LZA production (`HUB=prod`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
+| `stag` | LZA staging (`HUB=stag`; `FLIPAdminAccess` permission set) | staging workload account (live; CI-applied via `aws-stag`) |
+| `prod` | LZA production (`HUB=prod`; `FLIPAdminAccess` permission set) | `FLIPProduction` |
 
 The `aws-stag` / `aws-prod` GitHub environments the CI workflows read carry `TF_HUB=stag` /
 `TF_HUB=prod` (`README`, "Repointing CI at the LZA accounts"). The Makefile's guard expects
-`lza-<hub>` (override via `PROD_AWS_PROFILE` / `STAG_AWS_PROFILE`). The self-contained `stag` /
+the profile named after the hub, `stag` / `prod` (override via `PROD_AWS_PROFILE` / `STAG_AWS_PROFILE`). The self-contained `stag` /
 `prod` accounts were closed (2026-09-28, 2026-10-06) and their mode removed (FLIP#1479). Profile
 names are local aliases in `~/.aws/config` — one that encodes the old account ID has to be
 re-created, not edited.
@@ -144,7 +144,7 @@ Things worth knowing before touching any of it:
   running `repo:tag@sha256:…` back whole, so an infrastructure-only apply keeps the
   pin; a bare `repo@sha256:…` still yields no tag, since Terraform interpolates
   `repo:<tag>`. `RELEASE_TAG` is set by exactly one caller: `release.yml`, which
-  after creating the `v<X.Y.Z>` tag dispatches the twelve image builds at it, waits
+  after creating the `v<X.Y.Z>` tag dispatches the fourteen image builds at it, waits
   for them to conclude green (bounded by `RELEASE_BUILD_WAIT_SECONDS`, default
   5400s), and only then dispatches `terraform_apply.yml` on **`refs/heads/main`**
   with `release_tag: v<X.Y.Z>`. The ref is not negotiable: the apply role's trust

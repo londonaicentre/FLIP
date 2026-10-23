@@ -25,40 +25,23 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 from flip.flower import identity
+from tutorial_apps import flower_client_app, simulated_site_context
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EVALUATION_TUTORIAL = REPO_ROOT / "fl-tutorials" / "flower" / "3d_spleen_segmentation_evaluation"
 
 
-def _app_modules() -> dict[str, ModuleType]:
-    return {name: module for name, module in sys.modules.items() if name == "app" or name.startswith("app.")}
-
-
 @pytest.fixture
-def evaluation_client_app(monkeypatch: pytest.MonkeyPatch):
-    """The evaluation tutorial's client_app, imported under the ``app`` package name it ships as.
-
-    Every tutorial ships its code as a package called ``app``, so whichever one is imported first
-    would otherwise be served to the next; the fixture clears that name before and after.
-    """
-    displaced = _app_modules()
-    for name in displaced:
-        del sys.modules[name]
-    monkeypatch.syspath_prepend(str(EVALUATION_TUTORIAL))
-    try:
-        yield importlib.import_module("app.client_app")
-    finally:
-        for name in _app_modules():
-            del sys.modules[name]
-        sys.modules.update(displaced)
+def evaluation_client_app():
+    """The evaluation tutorial's client_app, imported under the ``app`` package name it ships as."""
+    with flower_client_app(EVALUATION_TUTORIAL) as client_app:
+        yield client_app
 
 
 class _OneRowFlipBase:
@@ -76,9 +59,7 @@ class _OneRowFlipBase:
         raise AssertionError("get_test_data_list() was reached — the starved-partition guard did not run first")
 
 
-def _context(partition_id: int) -> SimpleNamespace:
-    # Simulation writes node_config values as strings; the app must accept them as such.
-    return SimpleNamespace(run_config={}, node_config={"partition-id": str(partition_id), "num-partitions": "2"})
+_context = simulated_site_context
 
 
 def test_starved_partition_fails_naming_cohort_size(evaluation_client_app, monkeypatch: pytest.MonkeyPatch):

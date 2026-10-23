@@ -229,7 +229,7 @@ Rollout / new-bundle staging:
 ```bash
 # Stage bundles under the prefix the CloudFront behaviour maps to
 aws s3 cp s3://flip-lza-demo-assets/ark_demo/<bundle>.zip \
-          s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile lza-prod  # server-side copy
+          s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile prod  # server-side copy
 
 # DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets in .env.prod / the aws-prod
 # GitHub environment, then (LZA is CI-applied; the manual form is break-glass):
@@ -332,7 +332,7 @@ DEMO_ASSETS_BUCKET_NAME=flip-lza-demo-assets
 Then stage bundles under the prefix the behaviour maps to:
 
 ```bash
-aws s3 cp <bundle>.zip s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile lza-prod
+aws s3 cp <bundle>.zip s3://flip-lza-demo-assets/ark_demo/assets/<bundle>.zip --profile prod
 ```
 
 **NOT in this repository — the serving edge, which is a networking-account change.** There is no workload
@@ -637,6 +637,8 @@ files once:
 - `.env.lza-prod` / `.env.production` → `.env.prod`, `.env.lza-stag` → `.env.stag`. Make refuses an old name, and
   two files for one hub:
   keep the one holding the live values (`scripts/reconcile_ci_env.py --env prod --compare <file>` tells).
+- AWS profiles `lza-prod` → `prod`, `lza-stag` → `stag` in `~/.aws/config` (or set `PROD_AWS_PROFILE` /
+  `STAG_AWS_PROFILE` to the old names). Delete the retired accounts' `prod` / `stag` profiles first.
 - Kits `trust/.env.<CODE>.lza-prod` / `.production` / a bare `trust/.env.<CODE>` → `.prod`, `.lza-stag` → `.stag`.
   Until renamed, `KIT=<CODE>` finds the old name (`env_mode.mk`'s `kit_file`) and prints the rename; a target run
   without `KIT=` (`register-trusts`, `sync-trust-kits`) skips it and lists it. Move the file (`mv`), never copy it:
@@ -649,17 +651,17 @@ only once the release containing it reaches `main`: `main`'s apply and drift wor
 
 #### AWS profile aliases
 
-The Makefile guards refuse to apply unless `AWS_PROFILE` matches the expected profile for the chosen environment: `lza-prod` for `HUB=prod`, `lza-stag` for `HUB=stag` — add these aliases to `~/.aws/config` so commands like `AWS_PROFILE=lza-stag make plan HUB=stag` work without thinking about account numbers:
+The Makefile guards refuse to apply unless `AWS_PROFILE` matches the expected profile for the chosen environment: `prod` for `HUB=prod`, `stag` for `HUB=stag` — add these aliases to `~/.aws/config` so commands like `AWS_PROFILE=stag make plan HUB=stag` work without thinking about account numbers:
 
 ```ini
-[profile lza-prod]
+[profile prod]
 sso_session = FLIP
 sso_account_id = <prod-sso-account-id>
 sso_role_name = <sso-role-name>
 region = <aws-region>
 output = json
 
-[profile lza-stag]
+[profile stag]
 sso_session = FLIP
 sso_account_id = <stag-sso-account-id>
 sso_role_name = <sso-role-name>
@@ -700,15 +702,15 @@ This Terraform root deploys onto an AWS estate running the
 ([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)), where the network, guardrails and edge are owned
 by the accelerator pipeline rather than by FLIP. The self-contained single-account mode, in which FLIP built its
 own VPC and in-account edge, is no longer supported and was removed in FLIP#1479. The AI Centre's own targets are
-the **FLIPProduction** workload account in `eu-west-2` (the `lza-prod` profile alias) and a staging workload
-account reached as `lza-stag`.
+the **FLIPProduction** workload account in `eu-west-2` (the `prod` profile alias) and a staging workload
+account reached as `stag`.
 
 `HUB` selects the estate:
 
 | | `HUB=prod` | `HUB=stag` |
 | --- | --- | --- |
 | Env file / kit suffix | `.env.prod` / `trust/.env.<CODE>.prod` | `.env.stag` / `trust/.env.<CODE>.stag` |
-| Profile guard | `lza-prod` (`PROD_AWS_PROFILE`) | `lza-stag` (`STAG_AWS_PROFILE`) |
+| Profile guard | `prod` (`PROD_AWS_PROFILE`) | `stag` (`STAG_AWS_PROFILE`) |
 | `TF_VAR_environment` | `prod` — RDS deletion protection + final snapshot on | `stag` — disposable |
 | `deploy-centralhub` git ref | `origin/main` | `origin/develop` |
 | `LZA_VPC_NAME` | optional (defaults to the prod template name) | **required** in the env file — there is no defaultable staging VPC name, so the Makefile refuses to run without it rather than letting the lookup fail opaquely |
@@ -727,7 +729,7 @@ fixed per account by design.
 | Concern | Value |
 | --- | --- |
 | Env file | root `.env.prod` (gitignored, like the other env files) |
-| Profile guard | `AWS_PROFILE=lza-prod` — a short local alias for the workload account's `FLIPAdminAccess` permission set (override via `PROD_AWS_PROFILE`) |
+| Profile guard | `AWS_PROFILE=prod` — a short local alias for the workload account's `FLIPAdminAccess` permission set (override via `PROD_AWS_PROFILE`) |
 | `TF_VAR_environment` | `prod` — all prod-only hardening (RDS deletion protection, final snapshot) stays on |
 | Trust kit suffix | `trust/.env.<CODE>.prod` |
 | `deploy-centralhub` git ref | `origin/main` |
@@ -1324,8 +1326,8 @@ python3 scripts/reconcile_ci_env.py --env prod --compare ../../../.env.prod
 python3 scripts/reconcile_ci_env.py --env stag --out /tmp/stag-tf-inputs.env
 ```
 
-`--env` is required; `--profile` and `--bucket` default to the estate's (`lza-prod` /
-`flip-terraform-state-lza`, `lza-stag` / `flip-terraform-state-lza-stag`).
+`--env` is required; `--profile` and `--bucket` default to the estate's (`prod` /
+`flip-terraform-state-lza`, `stag` / `flip-terraform-state-lza-stag`).
 
 Secret values are written to `--out` but never printed; the summary shows a
 truncated SHA-256 so two copies can be compared without either being disclosed.
@@ -1379,9 +1381,9 @@ bastion. CI is unaffected (each workflow writes the file from its own account's
 `~/.ssh`:
 
 ```bash
-aws ssm get-parameter --name /flip/ci/host_aws_public_key --profile lza-stag \
+aws ssm get-parameter --name /flip/ci/host_aws_public_key --profile stag \
   --query Parameter.Value --output text > /tmp/stagkey/host-aws.pub
-AWS_PROFILE=lza-stag LOCK=false make plan HUB=stag \
+AWS_PROFILE=stag LOCK=false make plan HUB=stag \
   TF_VAR_flip_keypair=/tmp/stagkey/host-aws \
   TF_VAR_ec2_public_key_path=/tmp/stagkey/host-aws.pub
 ```
@@ -1441,8 +1443,8 @@ second is a GitHub change:
 
 | | `TF_HUB` | Env file | `ENV_CLASS` | Profile guard |
 | --- | --- | --- | --- | --- |
-| LZA staging | `stag` | `.env.stag` | `stag` | `lza-stag` |
-| LZA production | `prod` | `.env.prod` | `prod` | `lza-prod` |
+| LZA staging | `stag` | `.env.stag` | `stag` | `stag` |
+| LZA production | `prod` | `.env.prod` | `prod` | `prod` |
 
 `ENV_CLASS` is `deploy/env_mode.mk`'s derivation, carried per row of
 `compose-ci-env.sh`'s table as well: the workflows pass the class their ref implies
@@ -1459,8 +1461,8 @@ Run these in order **per account**, from a laptop authenticated to that account:
 # 0. The local profile the Makefile's guard expects for this estate: an alias for the
 #    workload account's permission set, in ~/.aws/config. An alias carrying the old
 #    account ID has to be re-created, not edited in place:
-#        [profile lza-stag]  sso_session = <session>  sso_account_id = <lza-stag-account-id>  sso_role_name = FLIPAdminAccess
-#        [profile lza-prod]  sso_session = <session>  sso_account_id = <lza-prod-account-id>  sso_role_name = FLIPAdminAccess
+#        [profile stag]  sso_session = <session>  sso_account_id = <lza-stag-account-id>  sso_role_name = FLIPAdminAccess
+#        [profile prod]  sso_session = <session>  sso_account_id = <lza-prod-account-id>  sso_role_name = FLIPAdminAccess
 
 # 1. The platform repository applies the OIDC provider, the state bucket and the CI
 #    roles: aicentre-lza-iac, one instantiation of modules/terraform_ci_bootstrap per
@@ -1555,7 +1557,7 @@ A laptop plan compared against CI's has to resolve them the same way, or it show
 `make init HUB=prod`, with `DOCKER_REGISTRY` and `FL_BACKEND` as in `.env.prod`:
 
 ```bash
-export AWS_PROFILE=lza-prod
+export AWS_PROFILE=prod
 GIT_SHA=$(git rev-parse HEAD) RESOLVE_SHA_TAG=false DOCKER_REGISTRY=<registry> FL_BACKEND=<backend> \
   FALLBACK_DOCKER_TAG=prod FALLBACK_DOCKER_FL_TAG=prod scripts/resolve-image-tags.sh > /tmp/flip-live-tags &&
   make plan HUB=prod LOCK=false $(cat /tmp/flip-live-tags)
@@ -1665,7 +1667,7 @@ told:
 
 1. The push to `main` runs `terraform_apply.yml` as usual and pins
    `sha-<short7>`.
-2. `release.yml` creates the tag, dispatches the twelve image builds at it, then
+2. `release.yml` creates the tag, dispatches the fourteen image builds at it, then
    **waits** for those runs to conclude (bounded by the repository variable
    `RELEASE_BUILD_WAIT_SECONDS`, default 5400s; polled every
    `RELEASE_BUILD_POLL_SECONDS`, default 30s). A red build or an expired budget
@@ -1722,8 +1724,8 @@ full table):
 
 | Estate | Break-glass command |
 | --- | --- |
-| LZA staging | `AWS_PROFILE=lza-stag make init plan apply HUB=stag` |
-| LZA production | `AWS_PROFILE=lza-prod make init plan apply HUB=prod` |
+| LZA staging | `AWS_PROFILE=stag make init plan apply HUB=stag` |
+| LZA production | `AWS_PROFILE=prod make init plan apply HUB=prod` |
 
 Each row needs that estate's env file (`.env.stag` / `.env.prod`) present locally; the Makefile's guard refuses to run on
 a mismatched `AWS_PROFILE`.
@@ -1965,7 +1967,7 @@ Port 22 is **not** open in any security group: SSH is tunnelled through the SSM 
 - AWS CLI authenticated for the correct account and region:
 
   ```bash
-  export AWS_PROFILE=<your-profile>   # e.g. lza-stag or lza-prod
+  export AWS_PROFILE=<your-profile>   # e.g. stag or prod
   export AWS_REGION=eu-west-2         # must match the region where instances are deployed
   aws sso login --profile $AWS_PROFILE
   ```
