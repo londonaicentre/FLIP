@@ -95,6 +95,10 @@ Choose your platform
      - The trust builds the node from code in its own AWS account and VPC. It is a Docker Compose host on an
        EC2 instance with no public IP and no inbound rule, reached through SSM only.
      - :doc:`deploy-flip-node-aws-ec2`
+   * - **Amazon EKS**
+     - The trust builds a small EKS cluster from code in its own AWS account and runs the ``flip-trust`` Helm
+       chart on it. Nodes have no public IP; the API endpoint admits the operator's address only.
+     - :doc:`deploy-flip-node-aws-eks`
    * - **Kubernetes**
      - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
        limitations first.
@@ -186,5 +190,6 @@ Kubernetes adds a few destinations of its own; see :doc:`deploy-flip-node-kubern
    deploy-flip-node-on-prem
    deploy-flip-node-azure
    deploy-flip-node-aws-ec2
+   deploy-flip-node-aws-eks
    deploy-flip-node-kubernetes
    deploy-flip-node-in-tre

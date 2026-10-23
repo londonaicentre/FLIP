@@ -36,3 +36,8 @@ output "nat_public_ip" {
   description = "The created NAT gateway's address, for reference only: the hub never checks a trust's IP (empty on a site subnet)."
   value       = try(aws_eip.nat[0].public_ip, "")
 }
+
+output "private_route_table_id" {
+  description = "Route table of the created private subnet, out through the NAT gateway (empty on a site subnet)."
+  value       = try(aws_route_table.private[0].id, "")
+}
