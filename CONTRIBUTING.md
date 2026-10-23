@@ -895,7 +895,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 ### Cutting the release
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
-1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop` or, for a hotfix, from a `hotfix/*` branch (see [Hotfixes](#hotfixes)).
    **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
@@ -921,7 +921,7 @@ There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Releas
 - **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
 - **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
 
-Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
+Both are rendered into the preview comment on the `develop` → `main` PR (and on a hotfix PR), and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
 
 ### flip-utils and the PyPI release path
 
@@ -937,11 +937,13 @@ Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml
 
 ### Hotfixes
 
-For an urgent fix on `main` without pulling in unrelated `develop` work:
+For an urgent fix, a security fix say, that cannot wait for the next release of everything on `develop`. `main` takes PRs from `develop` and from `hotfix/*` branches only, so a hotfix ships the fix alone:
 
-1. Branch from `main`, apply the fix, bump the patch version in the root `pyproject.toml` (and any affected service).
-1. Open a PR targeting `main`. On merge, the same automation kicks in — `release.yml` tags `v<X.Y.Z+1>` and `docker_build_*.yml` rebuilds `:prod`.
-1. Forward-port the fix to `develop` so the next regular release includes it.
+1. Branch `hotfix/v<X.Y.Z>` from the last release tag, where `<X.Y.Z>` is the next patch version: `git switch -c hotfix/v0.13.2 v0.13.1`.
+1. Add the fix. When it was reviewed on its own PR to `develop`, cherry-pick that PR's commits (`git cherry-pick -x`); otherwise commit it here.
+1. Bump the patch version in the root `pyproject.toml` (and the root `uv.lock`), in any service under [Versioning](#versioning) that the fix touches and, if `flip-utils/**` changed, in `flip-utils/flip/__init__.py`. Fill in `.github/RELEASE_NOTES_TEMPLATE.md` as for any release: *Site upgrade* says whether sites must upgrade, and *Release checks* records the pre-release checks you ran, which are at least the ones that exercise the fix.
+1. Open a PR from `hotfix/v<X.Y.Z>` to `main`. `validate_branch_origin.yml` accepts it and the release-notes preview runs on it; `check-version-bump.yml` does not, so a flip-utils bump (step 3) is yours to check. Merge it with a merge commit: `release.yml` then releases `v<X.Y.Z>` as above, and *Nothing may merge to `main` during the wait* applies.
+1. Merge `main` back into `develop` through a PR, again with a merge commit, so `develop` carries the fix, the new version and the release notes, and the next `develop` → `main` PR does not conflict with the hotfix.
 
 ### Testing a release candidate before merge to main
 

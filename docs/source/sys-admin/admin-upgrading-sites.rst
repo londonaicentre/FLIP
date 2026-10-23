@@ -196,7 +196,9 @@ The upgrade never re-seeds data and never resets XNAT.
    **Release tags versus** ``sha-`` **tags.** A release tag is built for every image. A ``sha-`` tag only exists for
    the images that commit changed, so ``TAG=sha-…`` is refused when any image was never built at it. To move to a
    ``sha-`` tag anyway, hold the missing images at their own build: ``FL_TAG=sha-…`` for the FL client, and
-   ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` / ``XNAT_TAG`` in the kit for the data services.
+   ``OMOP_DB_TAG`` / ``ORTHANC_TAG`` in the kit for those data services. ``XNAT_TAG`` pins all three XNAT images
+   together, whose builds no longer share ``sha-`` tags. Set it to a release tag (or ``stag``/``prod``) published
+   for all three images.
 
 .. list-table:: Exit codes
    :header-rows: 1
@@ -287,7 +289,8 @@ populated data, and the API deployments roll onto the new images.
    upgrade re-applies the listed mock projects (only those projects' rows are replaced). **Turn it off in the
    override for a site whose stores hold real data only.**
 
-**Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image:
+**Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image
+(or all three XNAT images for ``xnat.image.pin``):
 
 .. list-table::
    :header-rows: 1
@@ -304,7 +307,9 @@ populated data, and the API deployments roll onto the new images.
      - ``flClient.image.pin``
 
 A release tag never needs a pin. They are the only way to move a Kubernetes site to a ``sha-`` tag that some images
-were never built at: a StatefulSet rolled onto a tag that does not exist stays down.
+were never built at: a StatefulSet rolled onto a tag that does not exist stays down. The three XNAT builds no longer
+share ``sha-`` tags, so set ``XNAT_TAG`` (or ``xnat.image.pin``) to a release tag (or ``stag``/``prod``) published for all
+three.
 
 .. note::
 

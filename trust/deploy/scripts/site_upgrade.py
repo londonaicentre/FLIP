@@ -630,7 +630,9 @@ def plan(args: argparse.Namespace) -> int:
                 print(f"     {ref}")
             print("   A release tag (vX.Y.Z) builds every image; a sha- tag only carries the images that")
             print("   commit changed. Nothing changed — pick a tag that exists for all of them, or hold")
-            print("   the odd one at its own build (FL_TAG=, or OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG in the kit).")
+            print("   the odd one at its own build (FL_TAG=, or OMOP_DB_TAG / ORTHANC_TAG in the kit).")
+            print("   XNAT_TAG pins all three XNAT images, whose builds no longer share sha- tags;")
+            print("   set XNAT_TAG=vX.Y.Z (or stag/prod), published for all three, on a sha- move.")
             return EXIT_MISSING_IMAGES
         print(f"   ✓ all {len(site_images(kit, target, fl_tag))} images are published")
 

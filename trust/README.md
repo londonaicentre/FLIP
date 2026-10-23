@@ -540,7 +540,9 @@ and upgrades XNAT in place (database dump first, no reset); it never runs
 it asks the registry for every image at the target and refuses a tag any of them was
 never built at (each `sha-` build is path-filtered; a release tag builds them all —
 for a `sha-` move, `FL_TAG=` holds the FL client at its own build and `OMOP_DB_TAG` /
-`ORTHANC_TAG` / `XNAT_TAG` in the kit do the same for the data services).
+`ORTHANC_TAG` in the kit do the same for those data services). `XNAT_TAG` pins all three
+XNAT images together; their builds no longer share `sha-` tags. Set it to a release tag
+(or `stag`/`prod`) published for all three images when moving a site to a `sha-` tag.
 `FORCE=1` allows a downgrade, `YES=1` skips the prompt. The full runbook — ordering, refreshed kits,
 Kubernetes and EC2 variants, rollback — is
 `docs/source/sys-admin/admin-upgrading-sites.rst`.

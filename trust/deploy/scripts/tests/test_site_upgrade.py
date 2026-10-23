@@ -316,6 +316,12 @@ class SiteImages(unittest.TestCase):
         with mock.patch.object(su, "manifest_exists", side_effect=probe):
             assert su.missing_images({}, "sha-badcff1") == ["ghcr.io/londonaicentre/orthanc:sha-badcff1"]
 
+    def test_a_sha_move_keeps_all_three_xnat_images_at_the_shared_pin(self):
+        for pin in ("v0.6.0", "stag", "prod"):
+            names = {ref.rsplit("/", 1)[1] for ref in su.site_images({"XNAT_TAG": pin}, "sha-1234567")}
+            assert {f"xnat-{image}:{pin}" for image in ("web", "db", "nginx")} <= names
+            assert "trust-api:sha-1234567" in names
+
     def test_manifest_probe_reads_absence_only_from_the_registrys_answer(self):
         ok = mock.Mock(returncode=0, stdout="{}", stderr="")
         with mock.patch.object(su.subprocess, "run", return_value=ok) as run:
@@ -505,6 +511,8 @@ class Plan(_PlanHarness):
             code, out = self._run(kit, "--tag", "sha-1234567", "--yes")
             assert code == 5, out
             assert "ghcr.io/londonaicentre/orthanc:sha-1234567" in out
+            assert "XNAT_TAG pins all three XNAT images" in out
+            assert "XNAT_TAG=vX.Y.Z (or stag/prod)" in out
             assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
         self.missing_images.assert_called_once()
         assert self.missing_images.call_args.args[1] == "sha-1234567"

@@ -17,6 +17,7 @@ import pytest
 import requests
 from fastapi import HTTPException
 
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import JobResources, UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
 
@@ -175,10 +176,11 @@ def test_upload_multiple_apps_missing_meta_json(
     mock_requests_get_success,
     mock_upload_multiple_apps_request_missing_meta_json,
 ):
-    with pytest.raises(FileNotFoundError) as exc_info:
+    with pytest.raises(ResearcherRefusal) as exc_info:
         _ = upload_application(TEST_MODEL_ID, mock_upload_multiple_apps_request_missing_meta_json, TMP_PATH_UPLOAD_DIR)
 
     assert "Application must contain a meta.json file" in str(exc_info.value)
+    assert exc_info.value.status_code == 404
 
 
 @patch("fl_api.utils.upload.configure_environment", MagicMock())
@@ -552,18 +554,18 @@ def test_a_submission_override_beats_the_jobs_meta_json(tmp_path, monkeypatch):
 
 
 def test_a_meta_json_that_is_not_json_is_refused_naming_the_file(tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match="meta.json is not valid JSON"):
+    with pytest.raises(ResearcherRefusal, match="meta.json is not valid JSON"):
         _assemble(tmp_path, monkeypatch, meta='{"resource_spec": ')
 
 
 def test_a_meta_json_choosing_how_a_trust_runs_the_job_is_refused(tmp_path, monkeypatch):
-    with pytest.raises(ValueError, match="launcher_spec"):
+    with pytest.raises(ResearcherRefusal, match="launcher_spec"):
         _assemble(tmp_path, monkeypatch, meta={"launcher_spec": {"default": {"k8s": {"image": "x"}}}})
 
 
 def test_a_job_of_per_site_variants_alone_is_refused(tmp_path, monkeypatch):
     """FLIP deploys app/ to every selected trust. The hub always ships meta.json, which is not an app folder."""
-    with pytest.raises(ValueError, match="no app/ folder"):
+    with pytest.raises(ResearcherRefusal, match="no app/ folder"):
         _assemble(tmp_path, monkeypatch, meta={"resource_spec": {}}, app="app-trust1")
 
 
