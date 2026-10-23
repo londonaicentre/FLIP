@@ -145,10 +145,10 @@ regenerates the CA and invalidates every node already holding credentials. Overr
 make -C fl-services/flower provision NET_NUMBER=1   # → provision/creds/net-1/
 make -C fl-services/flower provision NET_NUMBER=2   # second net for the default dev stack
 
-# A stag/prod kit: PROD selects the env file the slot pool is read from, and the
+# A stag/prod kit: HUB selects the env file the slot pool is read from, and the
 # SuperLink cert needs the hub's own names.
 FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
-  make -C fl-services/flower provision NET_NUMBER=1 PROD=stag
+  make -C fl-services/flower provision NET_NUMBER=1 HUB=stag
 ```
 
 `make generate-tls-certificates-net-1` / `-net-2` are direct shortcuts for `provision

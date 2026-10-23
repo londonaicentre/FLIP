@@ -44,7 +44,7 @@ def test_production_requires_explicit_public_url(public_url):
             "--env-file",
             "/dev/null",
             "-f",
-            str(TRUST / "deploy/compose_trust.production.monailabel.yml"),
+            str(TRUST / "deploy/compose_trust.prod.monailabel.yml"),
             "config",
             "--format",
             "json",

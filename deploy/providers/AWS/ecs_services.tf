@@ -15,7 +15,7 @@
 # ECS Fargate services — one per Central Hub component. Each service:
 #   - Runs the corresponding task definition from ecs_tasks.tf
 #   - Registers with AWS Cloud Map (Service Discovery) under flip.local
-#   - Runs in private subnets (outbound Internet via NAT, AWS APIs via VPC endpoints)
+#   - Runs in the app subnets (AWS APIs and image pulls via the estate's central endpoints)
 #   - Assigns a public IP only if explicitly enabled (never by default)
 
 ############################
@@ -85,10 +85,9 @@ resource "aws_ecs_service" "flip_api" {
     registry_arn = aws_service_discovery_service.flip_api[0].arn
   }
 
-  # Register each running task's ENI IP with the front door's target group so
-  # /api/* reaches the Fargate task: the ALB's HTTP TG on legacy, the internal
-  # NLB's TCP TG on LZA (fl_ingress_lza.tf, FLIP#749). Without this block the
-  # service stays invisible to the load balancer.
+  # Register each running task's ENI IP with the internal NLB's TCP target group
+  # (fl_ingress_lza.tf, FLIP#749) so /api/* reaches the Fargate task. Without this
+  # block the service stays invisible to the load balancer.
   load_balancer {
     target_group_arn = aws_lb_target_group.ecs_flip_api.arn
     container_name   = "flip-api"
@@ -99,13 +98,11 @@ resource "aws_ecs_service" "flip_api" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
-  # module.fl_server_internal_nlb: on LZA the flip-api TG is only "associated with a load
-  # balancer" once the NLB's web-listener exists; without this the service update can race it
-  # (InvalidParameterException). The legacy guard is the listener rule, which is count-0 on
-  # LZA. On legacy the module creates nothing, so the plan is unchanged.
+  # module.fl_server_internal_nlb: the flip-api TG is only "associated with a load balancer"
+  # once the NLB's web-listener exists; without this the service update can race it
+  # (InvalidParameterException).
   depends_on = [
     aws_ecs_task_definition.flip_api,
-    aws_lb_listener_rule.api_routing,
     module.fl_server_internal_nlb,
   ]
 }
@@ -179,10 +176,8 @@ resource "aws_ecs_service" "fl_server_net_1" {
 
   # Register the running task's ENI IP with the NLB target group so FL
   # clients hit the Fargate task over gRPC. NLB on TCP forwards the gRPC
-  # stream untouched. Legacy: the internet-facing module.fl_server_nlb's TG,
-  # reached at fl.<env>.flip.aicentre.co.uk:8002. LZA (FLIP#749): the
-  # internal NLB's TG (fl_ingress_lza.tf), reached via the networking
-  # account's edge NLB over the TGW.
+  # stream untouched: the internal NLB's TG (fl_ingress_lza.tf), reached via
+  # the networking account's edge NLB over the TGW (FLIP#749).
   load_balancer {
     target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
     container_name   = "fl-server-net-1"

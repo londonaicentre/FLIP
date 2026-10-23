@@ -338,13 +338,15 @@ flip-fl-api/transfer/*/*
 # Environment files with sensitive credentials
 .env.development
 .env.stag
+.env.prod
+# Pre-FLIP#1479 names, kept ignored so a stale local copy is never committed.
 .env.production
 .env.lza-prod
 .env.lza-stag
 # A second instance's hub env file (MAIN_ENV_FILE=.env.<instance>.development, e.g. make release-instance)
 /.env.*.development
 # Per-trust operator kits — one file per trust, named by trust CODE and
-# environment (e.g. trust/.env.KCH.development, trust/.env.<CODE>.production).
+# environment (e.g. trust/.env.KCH.development, trust/.env.<CODE>.prod).
 # Minted by the hub via register-trust / POST /admin/trusts; contain plaintext
 # TRUST_API_KEY + TRUST_INTERNAL_SERVICE_KEY (and, in prod kits, the hub-shared
 # block). Never commit. The `.example` schema templates ARE tracked.

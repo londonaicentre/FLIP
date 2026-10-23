@@ -11,13 +11,13 @@
 #
 
 # ROLE (FLIP#936): FLARE overlay of the local prod-image harness (see the note in
-# compose.production.yml) — not a deployment target. The canonical production FL task definitions live in
+# compose.prod.yml) — not a deployment target. The canonical production FL task definitions live in
 # deploy/providers/AWS/ecs_tasks.tf, whose FLARE branch (fl_backend=nvflare) mirrors this overlay.
 
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
 # inheriting service configs below
 
-# No `container_name` here either — see the header of compose.production.yml. Container names come
+# No `container_name` here either — see the header of compose.prod.yml. Container names come
 # from the compose project (`deploy-fl-server-net-1-1`); the service KEYS are load-bearing and must
 # not be renamed: every provisioned client kit pins the server by name (`fed_client.json` carries
 # `"target": "fl-server-net-1:8002"`, and the name is a SAN in the provisioned certificates), and
@@ -37,8 +37,6 @@ services:
       # the one origin to admit. The two lines must move together, or every bundle download 400s.
       # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
       - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
-      # The pre-#1291 name too, for one release: an fl-api image from before the rename reads only this one.
-      - BUNDLE_URL_ALLOWED_HOSTS=s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
       # GPUs written into the meta.json resource_spec of a job that declares none (configure_meta).

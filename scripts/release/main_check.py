@@ -54,8 +54,7 @@ def after_merge(tag: str) -> list[str]:
         "Nothing merges to `main` until the release apply has run.",
         f"Check the Release page, GHCR `:{tag}` on all twelve images, PyPI if flip-utils was bumped, and that prod "
         f"`/api/health` reports `{tag}`.",
-        "Deploy the UI by hand (#1186): `make -C deploy/providers/AWS deploy-ui PROD=<env>` from a checkout at the "
-        "tag.",
+        "Deploy the UI by hand (#1186): `make -C deploy/providers/AWS deploy-ui HUB=<hub>` from a checkout at the tag.",
         "Sites upgrade themselves: point operators to *Site upgrade* and "
         "`docs/source/sys-admin/admin-upgrading-sites.rst`.",
     ]

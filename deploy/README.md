@@ -17,7 +17,7 @@
 > **This README is maintainer notes** for the deployment layer: where things live, the hub's production
 > container config, container hardening and the service-authentication design. **To deploy or operate FLIP, use the
 > operator manual on ReadTheDocs:** [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) (prerequisites, registering trusts, deploys,
-> email, MFA recovery), [on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html), [a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) and [a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> email, MFA recovery), [on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html), [a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) and [a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
 
 ## Where things live
 
@@ -130,7 +130,7 @@ SMS MFA is intentionally disabled — it would introduce an SNS dependency and r
 
 The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings default is `true` — when active, `verify_token` returns 403 for any signed-in user without an active TOTP and the UI's router guard redirects them through enrolment.
 
-The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.production.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.production` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
+The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.prod.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
 Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, `1`, `yes`, `on`, empty and unset keep it on, and so does any other value — a typo fails closed, with a warning naming the value in the flip-api log.
 
@@ -158,13 +158,11 @@ without FLIP's audit log.
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
-`locals.tf`) are the **canonical definition of production container config**. That root offers **two
-deployment modes**, both permanently supported: the default **self-contained single-account** shape
-(`PROD=stag`/`PROD=true`), where FLIP creates its own VPC and edge; and the **platform-managed** shape
-(`PROD=lza`, or `PROD=lza-stag` for a staging estate) for an AWS Landing Zone Accelerator estate, where the
-network and edge are owned by the accelerator. The second is an env-gated mode of the same root, not a separate path — see
-[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza)
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). What each mode costs to run — hub only,
+`locals.tf`) are the **canonical definition of production container config**. That root deploys onto an
+AWS Landing Zone Accelerator estate, where the network and edge are owned by the accelerator — see
+[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate)
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The self-contained single-account mode is no
+longer supported and has been removed (FLIP#1479). What the hub costs to run — hub only,
 trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
 [Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
 section. The ECS FL task definitions serve **both
@@ -175,13 +173,11 @@ additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
 Cloud Map + public FL hostnames).
 
 > **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
-> running the hub via `compose.production*.yml` on an EC2 or self-managed host is no longer a supported
+> running the hub via `compose.prod*.yml` on an EC2 or self-managed host is no longer a supported
 > deployment target (the former hub EC2 host was long since replaced by a minimal SSM bastion). The
-> `compose.production*.yml` files remain maintained **only** as the local prod-image harness
-> (`make up PROD=stag|true` — the baked images, no dev mounts). When changing production config, change
-> Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
-> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6) — that
-> retires one *account*, not the self-contained deployment mode, which stays supported.
+> `compose.prod*.yml` files remain maintained **only** as the local prod-image harness
+> (`make up HUB=stag|prod` — the baked images, no dev mounts). When changing production config, change
+> Terraform first and update the compose files only as far as the local harness needs.
 
 ### Trusts
 
@@ -189,7 +185,7 @@ FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
 | ------- | ---------- | --------------- |
-| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [Deploy the Central Hub on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html) ([`providers/AWS/README.md`](providers/AWS/README.md)) |
+| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`providers/AWS/README.md`](providers/AWS/README.md) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [Deploy a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) ([`trust/deploy/ansible/README.md`](../trust/deploy/ansible/README.md)) |
 | **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) ([`trust/deploy/helm/README.md`](../trust/deploy/helm/README.md)) |
 

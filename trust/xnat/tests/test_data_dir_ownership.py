@@ -272,7 +272,7 @@ class TestDevBranchProvisionsTheContainerUid:
 
     @staticmethod
     def _dev_recipe(data_dir: Path, expected_uid: int, expected_gid: int) -> str:
-        """The full shell the development branch of xnat-reset runs (PROD unset)."""
+        """The full shell the development branch of xnat-reset runs (HUB unset)."""
         result = subprocess.run(
             [
                 "make",

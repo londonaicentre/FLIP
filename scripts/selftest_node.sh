@@ -29,7 +29,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${SELFTEST_OUT:-/opt/flip/selftest}"
 DATA_ROOT="${SELFTEST_DATA_ROOT:-/opt/flip/data/trust-1}"
 DOCKER_TAG="${SELFTEST_DOCKER_TAG:-stag}"
-KIT_OUT="${SELFTEST_KIT_OUT:-${REPO_ROOT}/trust/.env.SELFTEST.production}"
+KIT_OUT="${SELFTEST_KIT_OUT:-${REPO_ROOT}/trust/.env.SELFTEST.prod}"
 STARTED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 CHECKS_FILE="$(mktemp)"
@@ -39,7 +39,7 @@ STACK_STARTED=false
 cleanup() {
     rm -f "${CHECKS_FILE}"
     if [ "${STACK_STARTED}" = true ] && [ "${SELFTEST_KEEP_UP:-0}" != 1 ]; then
-        make -C "${REPO_ROOT}/trust" down-trust KIT=SELFTEST PROD=true FL_BACKEND="${BACKEND}" >/dev/null 2>&1 || true
+        make -C "${REPO_ROOT}/trust" down-trust KIT=SELFTEST HUB=prod FL_BACKEND="${BACKEND}" >/dev/null 2>&1 || true
     fi
 }
 trap cleanup EXIT
@@ -123,8 +123,8 @@ fi
 
 if [ "${PREP_OK}" != true ]; then
     record "stack up" false "skipped: a preparation step above failed"
-elif STACK_STARTED=true && make -C "${REPO_ROOT}/trust" up-trust KIT=SELFTEST PROD=true FL_BACKEND="${BACKEND}"; then
-    record "stack up" true "make -C trust up-trust KIT=SELFTEST PROD=true"
+elif STACK_STARTED=true && make -C "${REPO_ROOT}/trust" up-trust KIT=SELFTEST HUB=prod FL_BACKEND="${BACKEND}"; then
+    record "stack up" true "make -C trust up-trust KIT=SELFTEST HUB=prod"
 else
     record "stack up" false "up-trust failed; see the output above"
 fi
