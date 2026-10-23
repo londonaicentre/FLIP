@@ -112,9 +112,9 @@ place). An upgrade is yours to run with `az aks upgrade`, and on one node it sur
 The trust goes onto the cluster from the hub admin's kit tarball (see [Joining a hub](#joining-a-hub)):
 
 ```bash
-make aks-join     TARBALL=<flip-trust-kit-…tar.gz> KIT=<slot> HUB=<env>   # MOCK_PACS=1 on a test node
+make aks-join     TARBALL=<flip-trust-kit-…tar.gz> KIT=<CODE> HUB=<env>   # MOCK_PACS=1 on a test node
 make aks-selftest
-make aks-deploy   KIT=<slot> HUB=<env>      # redeploy or upgrade from the installed kit
+make aks-deploy   KIT=<CODE> HUB=<env>      # redeploy or upgrade from the installed kit
 make aks-clear-jobs                          # dcm2niix Jobs from before the conversion cap
 ```
 

@@ -75,19 +75,18 @@ workstation (prod AWS creds required):
    on the prod hub and fills the Kit credentials; then
    `make sync-trust-kit KIT=<CODE> HUB=prod` fills the rest of the Hub-shared block.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`
-tarballs the populated kit file as-is, as `.env.<slot>.prod` (`<slot>` is its
-`FL_KIT_SLOT`, which the packager is keyed on), + the operator's slice of the FL
-participant kit S3 bucket into
+Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
+tarballs the populated kit file as-is, as `.env.<CODE>.prod`, + the operator's
+slice of the FL participant kit S3 bucket (its `FL_KIT_SLOT`'s) into
 `deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 
-The operator extracts, copies `.env.<slot>.prod` into their checkout,
+The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<slot>`
+the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
 the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<slot>` (both default to `HUB=prod`).
+exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
 Sudo because the provisioned login user is deliberately not in the docker group
 (root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
 GHCR login from `~/.docker/config.json`.

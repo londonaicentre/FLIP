@@ -65,7 +65,7 @@ make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make forward-trust                            # SSM port forward all trust UIs
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
-make package-onprem-trust-kit KIT=<slot> [KIT_FILE=<path>]  # Tarball a filled-in kit (trust/.env.<slot>.<hub>, or the one at KIT_FILE; its FL_KIT_SLOT must equal KIT) + FL kit slice for an on-prem operator
+make package-onprem-trust-kit KIT=<CODE> [KIT_FILE=<path>]  # Tarball a filled-in kit (trust/.env.<CODE>.<hub>, or the one at KIT_FILE) + the FL kit slice of its FL_KIT_SLOT for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
 make add-fl-kits N=<n> HUB=<stag|prod>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (FLARE; no restart — see README)
 make apply-fl-kit-slots                       # Targeted plan/apply of the /flip/fl_kit_slot_names SSM parameter (slot activation path)

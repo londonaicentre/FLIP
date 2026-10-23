@@ -293,3 +293,20 @@ def test_register_trusts_finding_no_kit_fails_unless_the_deploy_is_hub_only(
     )
     assert script.returncode == returncode, script.stdout + script.stderr
     assert "No trust/.env.<CODE>.stag kits found" in script.stdout + script.stderr
+
+
+def test_register_trusts_mints_the_xnat_credentials_into_the_kit(tmp_path: Path) -> None:
+    """As the dev register-trust does, so a packaged kit carries no XNAT placeholders (FLIP#1419)."""
+    result = _make_dry_run("register-trusts", "KIT=AZ1", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "generate_xnat_credentials --env-file " + str(AWS_PROVIDER_DIR.parents[2] / "trust" / ".env.AZ1.stag") in (
+        result.stdout
+    )
+
+
+def test_register_trusts_never_rotates_the_xnat_credentials(tmp_path: Path) -> None:
+    """A FORCE=1 on the command line reaches sub-makes; it must not rotate a live trust's XNAT passwords."""
+    result = _make_dry_run("register-trusts", "KIT=AZ1", "FORCE=1", tmp_path=tmp_path, env_file=_env_file(tmp_path))
+    assert result.returncode == 0, result.stderr
+    assert "generate_xnat_credentials --env-file " in result.stdout
+    assert "--force" not in result.stdout

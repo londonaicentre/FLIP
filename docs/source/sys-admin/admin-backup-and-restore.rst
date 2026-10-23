@@ -265,7 +265,7 @@ FLIP schedules none of these. Take them with the site running (see the warning u
 
    .. code-block:: shell
 
-      sudo -E make -C trust/xnat xnat-backup KIT=<slot> HUB=prod
+      sudo -E make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
    off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.
