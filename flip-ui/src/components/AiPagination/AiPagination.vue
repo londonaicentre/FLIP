@@ -16,7 +16,13 @@
         <section class="flex justify-between py-2 text-gray-700 dark:text-gray-300 border-t border-gray-200 dark:border-dark-border bg-body dark:bg-dark-canvas">
             <div class="flex items-center justify-center w-full">
                 <div class="pr-4">
-                    <AiButton text :disabled="!hasPrev()" data-test="page-btn-prev" @click="() => goToPage(prevPage)">
+                    <AiButton
+                        text
+                        aria-label="Previous page"
+                        :disabled="!hasPrev()"
+                        data-test="page-btn-prev"
+                        @click="() => goToPage(prevPage)"
+                    >
                         <icon-ph-arrow-left class="mr-2" />
                         <template v-if="!slim">
                             Previous
@@ -68,7 +74,13 @@
                     <!-- Icon first in the DOM (only the first slot child gets its own
                          source-mapped coverage line); order-last keeps it after the
                          label visually inside the button's flex row. -->
-                    <AiButton text data-test="page-btn-next" :disabled="!hasNext()" @click="() => goToPage(nextPage)">
+                    <AiButton
+                        text
+                        aria-label="Next page"
+                        data-test="page-btn-next"
+                        :disabled="!hasNext()"
+                        @click="() => goToPage(nextPage)"
+                    >
                         <icon-ph-arrow-right class="ml-2 order-last" />
                         <span v-if="!slim">Next</span>
                     </AiButton>

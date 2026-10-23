@@ -360,17 +360,17 @@ fi
 
 # 3. AWS_PROFILE is derived, not stored — this is what stops a mis-set GitHub
 #    variable from pointing a stag run at the prod account. The mapping is the
-#    one the Makefile's guard expects: lza-<hub>.
-if grep -qx 'AWS_PROFILE=lza-stag' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=lza-stag for stag"
+#    one the Makefile's guard expects: the hub name.
+if grep -qx 'AWS_PROFILE=stag' "${OUT_FILE}"; then
+    ok "derives AWS_PROFILE=stag for stag"
 else
-    no "derives AWS_PROFILE=lza-stag for stag" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
+    no "derives AWS_PROFILE=stag for stag" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"
 fi
 run_case "prod environment" HUB=prod
-if grep -qx 'AWS_PROFILE=lza-prod' "${OUT_FILE}"; then
-    ok "derives AWS_PROFILE=lza-prod for prod"
+if grep -qx 'AWS_PROFILE=prod' "${OUT_FILE}"; then
+    ok "derives AWS_PROFILE=prod for prod"
 else
-    no "derives AWS_PROFILE=lza-prod for prod"
+    no "derives AWS_PROFILE=prod for prod"
 fi
 
 # 4. UNSET OPTIONAL KEYS ARE OMITTED, not written empty. The Makefile guards
@@ -605,7 +605,7 @@ expect_stderr "HUB=prod" "names the hub"
 # A cross-check, not an input: a matching declaration composes the same target.
 run_case "a matching class composes" EXPECTED_ENV_CLASS=stag
 expect_rc 0 "exits 0"
-if grep -qxF 'AWS_PROFILE=lza-stag' "${OUT_FILE}"; then
+if grep -qxF 'AWS_PROFILE=stag' "${OUT_FILE}"; then
     ok "and composes the target HUB alone would have"
 else
     no "and composes the target HUB alone would have" "file: $(grep '^AWS_PROFILE' "${OUT_FILE}")"

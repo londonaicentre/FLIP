@@ -206,7 +206,8 @@ register_one_kit() {
 # `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,
 # then the script exits non-zero so a failure can never read as success.
 failed=0
-# shellcheck disable=SC2086 # KIT_FILES is a space-separated list of paths
+# shellcheck disable=SC2086 # KIT_FILES is a space-separated list of paths. Paths are
+# assumed space-free: the Makefile builds the list with $(wildcard), which splits on spaces.
 for kit_file in ${KIT_FILES}; do
     if [ ! -f "$kit_file" ]; then
         log_error "Kit $kit_file not found — scaffold it with 'make new-trust TRUST_CODE=${KIT} TRUST_NAME=... HUB=${HUB:-<env>}' first."

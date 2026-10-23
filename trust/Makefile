@@ -103,6 +103,8 @@ ORTHANC_CMD=make -C ./orthanc
 # mount source for Docker to root-create.
 IMAGES_BASE = $(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(IS_DEPLOYED),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT)))
 
+include ../deploy/portable.mk
+
 # Pre-create the per-net images bind sources (keep in lockstep with the fl-client-net-*
 # compose services) owned like their base dir. A plain `mkdir -p` is not enough: the
 # documented on-prem bring-up runs this Makefile under sudo, and Docker root-creates any
@@ -136,14 +138,14 @@ define ensure_net_dirs
 	@base="$(IMAGES_BASE)"; \
 	mkdir -p "$$base/net-1" "$$base/net-2"; \
 	if [ "$(FL_BACKEND)" = "flower" ]; then \
-	  owner="$$(stat -c '%u' "$$base"):$(if $(IS_DEPLOYED),49999,$(DOCKER_GID))"; mode=775; \
+	  owner="$$($(call stat_fmt,%u) "$$base"):$(if $(IS_DEPLOYED),49999,$(DOCKER_GID))"; mode=775; \
 	else \
-	  owner="$$(stat -c '%u:%g' "$$base")"; mode=755; \
+	  owner="$$($(call stat_fmt,%u:%g) "$$base")"; mode=755; \
 	fi; \
 	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
 	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
 	  for d in "$$base/net-1" "$$base/net-2"; do \
-	    got="$$(stat -c '%u:%g %a' "$$d")"; \
+	    got="$$($(call stat_fmt,%u:%g %a) "$$d")"; \
 	    case "$$got" in "$$owner "*"$$mode") continue;; esac; \
 	    echo "❌  $$d is $$got but must be $$owner $$mode — imaging-api and the $(FL_BACKEND)"; \
 	    echo "    fl-client both write there, so every image download would 500 and training"; \
@@ -165,13 +167,20 @@ endef
 # (compose tolerates absence of --env-file just fine).
 __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.development.debug.override.yml
+# $(MONAILABEL_OVERRIDE) is load-bearing here even though nothing in the debug override
+# touches monailabel: the debug targets run `up --remove-orphans`, so a compose invocation
+# that omits this overlay sees the running monailabel container as an orphan and DELETES it.
+# GPU_OVERRIDE / TRUST_OVERRIDE only ever modify existing services, which is why omitting
+# them was harmless; MONAILABEL_OVERRIDE is the first overlay here that ADDS one. Defined
+# below at MONAILABEL_OVERRIDE — safe to reference here because this is a recursive (`=`)
+# assignment, expanded when the recipe runs.
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) $(MONAILABEL_OVERRIDE) -f deploy/compose_trust.development.debug.override.yml
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
 #
-# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc)
-# carry `pull_policy: always` in compose_trust.development.yml, so they always
-# pull from GHCR on their own. This flag only adds the global `--pull always`
+# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc,
+# omop-db) carry `pull_policy: always` in compose_trust.development.yml, so they
+# always pull from GHCR on their own. This flag only adds the global `--pull always`
 # that keeps FL images fresh — dropped when DOCKER_FL_REGISTRY is empty (local
 # `:dev` FL images, e.g. flare-fl-client:dev), since docker can't pull an
 # unpublished manifest and `--pull always` would error.
@@ -180,6 +189,7 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-direc
 # `--build` forces the build; `--pull missing` overrides the per-service
 # `pull_policy: always` for this run so the fresh build isn't re-pulled away.
 # Propagated automatically from `make up BUILD=true` at the repo root.
+# up-trust's XNAT step builds and deploys the XNAT images too (trust/xnat/Makefile).
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
@@ -239,6 +249,57 @@ TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-
 GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
 GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
 
+# MONAI Label: AI-assisted annotation for the XNAT OHIF viewer. Off unless the kit (or the
+# command line) sets MONAI_LABEL=true, because it needs an NVIDIA GPU and pulls a large
+# image — a trust that does not want it must be unaffected. Same overlay mechanism as
+# GPU_OVERRIDE above.
+MONAI_LABEL ?= false
+MONAILABEL_OVERRIDE := $(if $(filter true,$(strip $(MONAI_LABEL))),-f deploy/compose_trust.$(__DCKR_SUFFIX).monailabel.yml,)
+
+# The overlay bind-mounts this trust's XNAT archive read-only so MONAI Label reads DICOM
+# off disk instead of pulling every scan over HTTP. XNAT_DATA_DIR comes from the kit but is
+# written relative to trust/xnat/ (that Makefile abspath's it from there), so anchor a
+# relative value at xnat/ — abspath'ing it from trust/ would silently resolve one level
+# too high and mount a non-existent directory. Keeps the default in step with
+# trust/xnat/Makefile's XNAT_DATA_DIR.
+__MONAI_LABEL_XNAT_DIR := $(or $(strip $(XNAT_DATA_DIR)),$(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM)))
+MONAI_LABEL_XNAT_ARCHIVE_DIR := $(abspath $(if $(filter /%,$(__MONAI_LABEL_XNAT_DIR)),$(__MONAI_LABEL_XNAT_DIR),xnat/$(__MONAI_LABEL_XNAT_DIR)))/xnat-data/archive
+export MONAI_LABEL_XNAT_ARCHIVE_DIR
+
+# A GPU-less host cannot run MONAI Label at all, so that stays a hard refusal. Under HUB=stag|prod
+# it runs from the published ghcr.io/londonaicentre/monailabel image
+# (docker_build_monailabel.yml). The XNAT OHIF viewer plugin it registers through ships by
+# default in every deployment mode (#1243), so there is no plugin trade-off to warn about.
+define require_monailabel_supported
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ] && [ -z "$(GPU_OVERRIDE)" ]; then \
+		echo "❌ MONAI_LABEL=true needs a GPU, but NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset)"; \
+		echo "   for KIT=$(KIT). Set NUM_AVAILABLE_GPUS>0 in trust/$(KIT_FILE) on a GPU host."; \
+		exit 1; \
+	fi
+endef
+
+# up-trust starts monailabel before up-xnat, whose xnat-reset deletes and recreates the XNAT
+# data dir; the container's bind mount still holds the deleted archive, so it would never see
+# a study. Once XNAT is up, check the archive exists where the overlay mounts it from (a local
+# daemon only: a remote one resolves the path on its own host), then recreate monailabel onto it.
+define rebind_monailabel_archive
+	@host="$${DOCKER_HOST:-}"; \
+	if [ -z "$$host" ]; then \
+	  host=$$(docker context inspect $${DOCKER_CONTEXT:+"$$DOCKER_CONTEXT"} --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true); \
+	fi; \
+	case "$$host" in tcp://localhost[:/]*|tcp://localhost|tcp://127.0.0.1*|tcp://\[::1\]*) host="";; esac; \
+	case "$$host" in ssh://*|tcp://*) ;; *) \
+	  if [ ! -d "$(MONAI_LABEL_XNAT_ARCHIVE_DIR)" ]; then \
+	    echo "❌ MONAI Label mounts the XNAT archive from $(MONAI_LABEL_XNAT_ARCHIVE_DIR),"; \
+	    echo "   which does not exist after up-xnat. Check XNAT_DATA_DIR in $(KIT_FILE_LABEL)."; \
+	    exit 1; \
+	  fi;; \
+	esac
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --force-recreate --no-deps monailabel
+endef
+
+MONAI_LABEL_STATUS_MSG :=$(if $(MONAILABEL_OVERRIDE),🧠 MONAI Label on — serving $(or $(strip $(MONAI_LABEL_MODELS)),deepedit) at $(or $(strip $(MONAI_LABEL_PUBLIC_URL)),http://localhost:$(or $(strip $(MONAI_LABEL_PORT)),8030)),)
+
 # TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
 # registered name, falling back to the assigned slot then the CODE so a
 # not-yet-migrated kit (no TRUST_NAME) still resolves. nvflare's FL-material
@@ -277,10 +338,10 @@ TRUST_BUILD_VARS = \
 define ensure_data_dirs
 	@omop="$(1)"; pacs="$(2)"; \
 	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; exit 1; }; \
-	if [ "$$(stat -c %u "$$pacs")" != "999" ]; then \
+	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "999" ]; then \
 	  chown 999:999 "$$pacs" 2>/dev/null || \
 	  docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine chown 999:999 /d || { \
-	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$(stat -c '%u:%g' "$$pacs")"; \
+	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
 	    echo "   Fix: sudo chown 999:999 $$pacs"; exit 1; }; \
 	fi
 endef
@@ -296,15 +357,15 @@ define ensure_snapshot_dir
 	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
 	case "$$dir" in \
 	  /*) name="$$(basename "$$dir")"; \
-	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$(stat -c '%u:%g' "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
+	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$($(call stat_fmt,%u:%g) "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
 	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
 	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
 	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
 	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
-	     if [ "$$(stat -c '%u:%g' "$$dir")" != "$$owner" ]; then \
+	     if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
 	       chown "$$owner" "$$dir" 2>/dev/null || \
 	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d || { \
-	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$(stat -c '%u:%g' "$$dir")"; \
+	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
 	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
 	     fi ;; \
 	esac
@@ -430,7 +491,7 @@ define check_slot_not_taken
 endef
 
 build:
-	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
+	$(TRUST_VARS) $(TRUST_BUILD_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) -p $(or $(TRUST_PROJECT),trust) build
 
 # The root on-prem verbs delegate here so readiness checks exactly the kit that
 # up-trust / upgrade-trust will read, including env suffixes and KIT_FILE overrides.
@@ -466,16 +527,19 @@ up-trust: require-xnat-aetitle create-networks create-trust-network
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(require_monailabel_supported)
 	$(check_slot_not_taken)
 	$(refuse_remote_governance)
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)
 	@echo "$(GPU_STATUS_MSG)"
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
+	@$(if $(MONAILABEL_OVERRIDE),echo "$(MONAI_LABEL_STATUS_MSG)",:)
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	$(MAKE) ensure-seeded KIT=$(KIT) HUB=$(HUB)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) HUB=$(HUB)
+	$(if $(MONAILABEL_OVERRIDE),$(rebind_monailabel_archive))
 
 # Validate the trust's governance document (FLIP#1259) WITHOUT starting anything.
 # The services fail closed on an invalid policy, so an operator editing rules wants the
@@ -647,7 +711,7 @@ down-trust:
 	$(require_kit)
 	$(check_slot_not_taken)
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for $(KIT)..."
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) HUB=$(HUB)
 
@@ -690,8 +754,8 @@ _upgrade-trust-apply:
 	@echo "$(GPU_STATUS_MSG)"
 	# A site upgrading from before the membership store (FLIP#857) has no directory for it yet.
 	$(ensure_snapshot_dir)
-	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) pull
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(MONAILABEL_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d
 	@echo "🩻 Upgrading XNAT for $(KIT) in place (no reset)..."
 	$(MAKE) -C xnat upgrade-xnat KIT=$(KIT) HUB=$(HUB)
 	@echo "✅ $(KIT) is on $(DOCKER_TAG). Verify: trust-api /health reports the new version and hub_key_match=true."
@@ -723,6 +787,16 @@ up-trust-ec2: require-xnat-aetitle
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
+	@# Refuse rather than silently drop the overlay. require_monailabel_supported is not
+	@# enough here: it keys off GPU_OVERRIDE, which a kit seeded with the template default
+	@# NUM_AVAILABLE_GPUS=1 leaves non-empty even though the t3.xlarge has no GPU. Without
+	@# this the kit says MONAI Label is on, the deploy says nothing, and no server ever runs.
+	@if [ "$(strip $(MONAI_LABEL))" = "true" ]; then \
+		echo "❌ MONAI_LABEL=true is not supported on the EC2 trust path — this instance type"; \
+		echo "   has no GPU (that is why the GPU overlay is omitted above). Set MONAI_LABEL=false"; \
+		echo "   in trust/$(KIT_FILE), or deploy this trust on a GPU host with up-trust."; \
+		exit 1; \
+	fi
 	$(ensure_snapshot_dir)
 	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."

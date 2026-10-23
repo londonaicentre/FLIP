@@ -10,6 +10,10 @@
 # limitations under the License.
 #
 
+import contextlib
+import time
+
+from nvflare.apis.fl_exception import FLCommunicationError
 
 from fl_api.config import get_settings
 from fl_api.utils.flip_session import FLIP_Session
@@ -35,16 +39,21 @@ def create_fl_session() -> FLIP_Session:
     logger.info(f"GPU request for a job that declares none: {default_resources.model_dump()}")
     logger.info(f"Using LOG_LEVEL: {get_settings().LOG_LEVEL}")
 
-    # Set up the session
-    session = FLIP_Session(
-        username=username,
-        startup_path=admin_dir,
-        secure_mode=secure_mode,
-        debug=debug,
-    )
-
-    # Try connecting the session here, so that we can catch any connection issues at startup
-    session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
+    # Connect here so a misconfigured admin kit fails at boot. The FL server may still be starting (it can take
+    # minutes on a loaded host), so keep trying until TIMEOUT_FL_SERVER_STARTUP: a single attempt left the
+    # API up but dead, with the failed session's connector retrying forever behind it.
+    deadline = time.monotonic() + get_settings().TIMEOUT_FL_SERVER_STARTUP
+    while True:
+        session = FLIP_Session(username=username, startup_path=admin_dir, secure_mode=secure_mode, debug=debug)
+        try:
+            session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
+            break
+        except FLCommunicationError as e:
+            with contextlib.suppress(Exception):
+                session.close()
+            if time.monotonic() >= deadline:
+                raise
+            logger.warning(f"FL server not reachable yet ({e}); retrying")
 
     logger.info(f"Upload directory set to: {session.upload_dir}")
     logger.info(f"Download directory set to: {session.download_dir}")

@@ -51,12 +51,12 @@ DESTROY_TARGETS=(
   -target=aws_iam_instance_profile.ec2_profile
   -target=aws_key_pair.flip_keypair
   -target=aws_instance.ec2_instance
-  -target=aws_ses_template.flip_access_request
-  -target=aws_ses_template.flip_xnat_invite
+  -target=module.ses.aws_ses_template.flip_access_request
+  -target=module.ses.aws_ses_template.flip_xnat_invite
+  -target=module.ses.aws_ses_template.flip_xnat_added_to_project
   -target=module.trust_ec2.aws_instance.trust_host
   -target=module.trust_security_group
   -target=aws_key_pair.host_key
-  -target=local_file.env
 )
 
 terraform destroy -auto-approve \

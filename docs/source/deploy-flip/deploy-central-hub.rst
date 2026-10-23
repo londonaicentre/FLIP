@@ -93,7 +93,7 @@ Prerequisites
 
    .. code-block:: ini
 
-      [profile lza-stag]
+      [profile stag]
       sso_session = <sso-session>
       sso_account_id = <staging-account-id>
       sso_role_name = <sso-role-name>
@@ -126,11 +126,11 @@ Prerequisites
      - Treated as
    * - ``stag``
      - ``.env.stag``
-     - ``lza-stag``
+     - ``stag``
      - staging
    * - ``prod``
      - ``.env.prod``
-     - ``lza-prod``
+     - ``prod``
      - production
 
 Production gets the production-only database safeguards (RDS deletion protection and a final snapshot).

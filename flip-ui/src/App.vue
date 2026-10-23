@@ -21,7 +21,7 @@
 <script lang="ts" setup>
 import { useDark } from "@vueuse/core";
 import useSWRV from "swrv";
-import { onMounted, watch } from "vue";
+import { computed, onMounted, watch } from "vue";
 
 import AiRouteProgress from "@/components/AiRouteProgress/AiRouteProgress.vue";
 import AiSnackbar from "@/components/AiSnackbar/AiSnackbar.vue";
@@ -31,6 +31,7 @@ import DemoBanner from "./demo/DemoBanner.vue";
 import { getHealth } from "./services/health-service";
 import { getSiteDetails } from "./services/site-service";
 import { getTrusts } from "./services/trust-service";
+import { useAuthStore } from "./store/auth";
 import { useHealthcheckStore } from "./store/healthcheck";
 import { useSiteDetailsStore } from "./store/siteDetailsStore";
 import { useTrustStore } from "./store/trusts";
@@ -46,6 +47,7 @@ const isDemoBuild = import.meta.env.VITE_DEMO === "true";
 const healthStore = useHealthcheckStore();
 const trustStore = useTrustStore();
 const detailsStore = useSiteDetailsStore();
+const authStore = useAuthStore();
 useThemeColorMeta(useDark());
 
 // Ending a session discards the whole document (utils/session-teardown.ts), so any
@@ -54,8 +56,13 @@ useThemeColorMeta(useDark());
 // nothing and does nothing.
 onMounted(replayPostSignOutNotice);
 
+// All three endpoints need a session, so fetch nothing until there is a user: a null
+// key fetches nothing, and swrv fetches once the key appears. Otherwise the signed-out
+// login page logs a 401 per endpoint (FLIP#702). VITE_LOCAL has no sign-in at all.
+const signedIn = computed(() => import.meta.env.VITE_LOCAL === "true" || !!authStore.user);
+
 const { data: health } = useSWRV(
-    "/trust/health",
+    () => (signedIn.value ? "/trust/health" : null),
     getHealth,
     {
         refreshInterval: 5_000,
@@ -66,7 +73,7 @@ const { data: health } = useSWRV(
     });
 
 const { data: trusts } = useSWRV(
-    "/trust",
+    () => (signedIn.value ? "/trust" : null),
     getTrusts,
     {
         refreshInterval: 5_000,
@@ -77,7 +84,7 @@ const { data: trusts } = useSWRV(
     });
 
 const { data: details } = useSWRV(
-    "/site/details",
+    () => (signedIn.value ? "/site/details" : null),
     getSiteDetails,
     {
         refreshInterval: 30_000,

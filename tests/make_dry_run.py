@@ -82,6 +82,17 @@ DESTRUCTIVE = (
 )
 
 
+def _without_make_vars(environ: os._Environ[str] | dict[str, str]) -> dict[str, str]:
+    """The caller's environment minus what a calling make adds: MAKEFLAGS and each command-line variable it names.
+
+    Also XNAT_TAG, which trust/xnat/Makefile exports at parse time (``make -C trust/xnat test``) and reads back
+    with ``?=``, so an inherited value would win over the scratch kit's DOCKER_TAG.
+    """
+    names = {"MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "MAKELEVEL", "XNAT_TAG"}
+    names |= {tok.split("=", 1)[0] for tok in environ.get("MAKEFLAGS", "").split() if "=" in tok and tok[0] != "-"}
+    return {k: v for k, v in environ.items() if k not in names}
+
+
 def run_target(
     target: str,
     *extra: str,
@@ -89,12 +100,15 @@ def run_target(
     kit: str = KIT,
     dry: bool = False,
     env: dict[str, str] | None = None,
+    probe: str = "",
 ) -> subprocess.CompletedProcess[str]:
     """Run ``make [-n] <target>`` in a scratch copy of the repo's Makefiles with a scratch kit.
 
     ``subdir`` is where the target lives: ``trust`` for the trust-level verbs, ``.`` for the
     root operator entry points. ``env`` is layered over the caller's environment — how a test
-    puts a stub ``docker`` first on PATH for a real (non ``-n``) run.
+    puts a stub ``docker`` first on PATH for a real (non ``-n``) run. ``probe`` is extra makefile
+    text read after the real Makefile (a ``--eval`` that make 3.81 can run), e.g. a target that
+    echoes a variable.
     """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -103,7 +117,10 @@ def run_target(
             "deploy/env_mode.mk",
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
+            "deploy/portable.mk",
             "flip-api/Makefile",
+            "fl-services/flower/Makefile",
+            "fl-services/nvflare/Makefile",
             "trust/Makefile",
             "trust/xnat/Makefile",
         ):
@@ -116,11 +133,25 @@ def run_target(
         # be printed; an empty file is enough for -n.
         (root / "scripts").mkdir()
         (root / "scripts" / "site_upgrade.py").write_text("")
+        files: list[str] = []
+        if probe:
+            (root / "probe.mk").write_text(probe)
+            files = ["-f", "Makefile", "-f", str(root / "probe.mk")]
         return subprocess.run(
-            ["make", *(["-n"] if dry else []), "-C", str(root / subdir), target, "KIT=SCR", "HUB=prod", *extra],
+            [
+                "make",
+                *(["-n"] if dry else []),
+                "-C",
+                str(root / subdir),
+                *files,
+                target,
+                "KIT=SCR",
+                "HUB=prod",
+                *extra,
+            ],
             capture_output=True,
             text=True,
-            env={**os.environ, "HUB": "prod", **(env or {})},
+            env={**_without_make_vars(os.environ), "HUB": "prod", **(env or {})},
             timeout=60,
         )
 

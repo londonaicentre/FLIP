@@ -14,6 +14,7 @@ built on the templates in `fl-apps/`; the images they run on are built from
 | `datasets/utils/` | The OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, per-project surrogate-key blocks (`omop_ids.py`), and the one verification gate (`verify_omop_tables.py --project <name>`) |
 | `data/` | Gitignored output of the dataset targets |
 | `tests/` | CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering `fl-apps/flower` |
+| `../.claude/skills/tutorial-contract/` | The tutorial contract as a project skill (#1444): what a tutorial is and the questions that settle its shape, the copy-from table, the per-backend file sets and traps, the shapes (imaging / tabular / evaluation / fine-tune), verification and what moves when flip-utils, an `fl-apps` template or a guard changes; `references/readme-shape.md` and `registration-checklist.md` are the two lookups. `/new-tutorial` and `/audit-tutorial` (`.claude/commands/`) drive it. `tests/test_tutorial_catalogue.py` is the catalogue guard (twin query pinned in the sync script, `fl_job/` ignored, Flower identity from the context, cohort-query shape) |
 
 ```bash
 make -C fl-tutorials test   # ruff + both CPU-only pytest suites (tutorial-app + per-dataset;

@@ -231,6 +231,9 @@ export default defineConfig(({ mode, command, isPreview }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
+            // A file's first test also pays for transforming the component it mounts; on a loaded host
+            // (the release gates run beside a full stack) that alone can pass vitest's 5 s default.
+            testTimeout: 20000,
             include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts", "mocks/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
             server: {

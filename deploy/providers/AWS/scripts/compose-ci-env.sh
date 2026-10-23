@@ -87,7 +87,7 @@ fi
 
 # The mode table. ENV_FILE is the name `deploy/env_mode.mk` derives from the same
 # HUB (ENV_FILE_NAME); AWS_PROFILE_VALUE is what the Makefile's account guard
-# demands for it (PROD_AWS_PROFILE / STAG_AWS_PROFILE: lza-<hub>); GH_ENV is the GitHub environment holding this environment's values;
+# demands for it (PROD_AWS_PROFILE / STAG_AWS_PROFILE: the hub name); GH_ENV is the GitHub environment holding this environment's values;
 # ENV_CLASS_VALUE is env_mode.mk's ENV_CLASS. tests/test_ci_env_target.py pins ENV,
 # ENV_FILE, ENV_CLASS and the profile against a real `make` probe, so this table
 # cannot drift from the Makefile silently.
@@ -110,7 +110,7 @@ case "${HUB_VALUE}" in
         ;;
 esac
 
-AWS_PROFILE_VALUE="lza-${HUB_VALUE}"
+AWS_PROFILE_VALUE="${HUB_VALUE}"
 
 # The class assertion described in the usage block. It runs before the print-only
 # path on purpose: a mismatched HUB should fail on the first invocation in a

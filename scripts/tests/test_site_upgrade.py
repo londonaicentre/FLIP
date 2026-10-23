@@ -281,6 +281,11 @@ class SiteImages(unittest.TestCase):
         }
         assert all(ref.startswith("ghcr.io/londonaicentre/") for ref in refs)
 
+    def test_monai_label_is_checked_only_on_a_site_that_runs_it(self):
+        assert not any("/monailabel:" in ref for ref in su.site_images({"MONAI_LABEL": "false"}, "v0.6.1"))
+        names = {ref.rsplit("/", 1)[1] for ref in su.site_images({"MONAI_LABEL": "true"}, "v0.6.1")}
+        assert "monailabel:v0.6.1" in names
+
     def test_ghcr_is_checked_whatever_the_kit_registry(self):
         """A deployed site pulls from GHCR, so an older kit's hub registry (an LZA ECR cache) is not asked."""
         refs = su.site_images({"DOCKER_REGISTRY": "111122223333.dkr.ecr.eu-west-2.amazonaws.com/ghcr/x/"}, "v0.6.1")
