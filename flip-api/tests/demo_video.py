@@ -26,7 +26,8 @@ Prerequisites:
     - Playwright's Chromium (`uv run playwright install chromium`) and ffmpeg on PATH.
     - Demo users (optional but recommended): `make demo-users`, then
       restart flip-api so seeding grants their roles. Without them the
-      segments fall back to the well-known admin for both parts.
+      segments fall back to the well-known admin for both parts; without the
+      demo Trust Admin, the admin approves at every trust on camera.
 
 Usage (preferred):
     make demo-video                                   # from the repo root
@@ -46,7 +47,8 @@ import os
 import subprocess
 import sys
 import time
-from collections.abc import Collection
+from collections.abc import Collection, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +57,7 @@ from playwright.sync_api import Browser, sync_playwright
 
 from flip_api.auth.identity.keycloak import password_grant
 from flip_api.config import get_settings
+from flip_api.db.models.user_models import RoleRef
 from flip_api.utils import constants
 from tests import demo_segments, e2e_smoke, seed_demo_projects, xnat_seg_upload
 from tests.demo_recorder import take
@@ -295,6 +298,44 @@ def resolve_ui_credentials() -> tuple[tuple[str, str], tuple[str, str], list[str
             "No usable UI credentials: set DEMO_RESEARCHER_*/DEMO_ADMIN_* or ADMIN_USER_PASSWORD in the environment"
         )
     return researcher, admin, fallback_roles
+
+
+def resolve_trust_admin() -> Persona | None:
+    """The demo Trust Admin, or None when DEMO_TRUST_ADMIN_* is unset and the admin approves on camera instead."""
+    email, password = os.environ.get("DEMO_TRUST_ADMIN_EMAIL", ""), os.environ.get("DEMO_TRUST_ADMIN_PASSWORD", "")
+    if not (email and password):
+        _log("⚠️  DEMO_TRUST_ADMIN_EMAIL/PASSWORD not set — the admin approves on camera instead of a Trust Admin")
+        return None
+    return Persona(email, password, role="trust admin")
+
+
+@contextmanager
+def trust_admin_of(
+    client: requests.Session, headers: dict[str, str], persona: Persona, trust: dict[str, Any]
+) -> Iterator[None]:
+    """Make ``persona`` the Trust Admin of ``trust`` while the block runs, then a Researcher again.
+
+    A trust with a Trust Admin is decided only by them, so for as long as the grant stands the admin's
+    approvals there (e2e_smoke, the catalogue seed, other sessions on a shared stack) are refused.
+
+    Args:
+        client (requests.Session): HTTP session for hub calls.
+        headers (dict[str, str]): Admin auth headers.
+        persona (Persona): The demo Trust Admin.
+        trust (dict[str, Any]): The trust it administers.
+    """
+    user_id = seed_demo_projects.find_user_id(client, headers, persona.email)
+
+    def set_roles(body: dict[str, Any], what: str) -> None:
+        e2e_smoke._ensure_ok(e2e_smoke._post(client, f"/users/{user_id}/roles", body, headers), what)
+
+    set_roles({"roles": [str(RoleRef.TRUST_ADMIN.value)], "trustId": str(trust["id"])}, "grant Trust Admin")
+    _log(f"🏛️  {persona.email} is Trust Admin of {trust['name']} for segment 2")
+    try:
+        yield
+    finally:
+        set_roles({"roles": [str(RoleRef.RESEARCHER.value)]}, "revoke Trust Admin")
+        _log(f"🏛️  {persona.email} is a Researcher again")
 
 
 def read_state() -> dict[str, str]:
@@ -627,7 +668,8 @@ def main(argv: list[str] | None = None) -> int:
     researcher_login, admin_login, fallback_roles = resolve_ui_credentials()
     researcher = Persona(*researcher_login, role="researcher", fallback="researcher" in fallback_roles)
     admin = Persona(*admin_login, role="admin", fallback="admin" in fallback_roles)
-    _log(f"🎭 Researcher part: {researcher.email} | Admin part: {admin.email}")
+    trust_admin = resolve_trust_admin()
+    _log(f"🎭 Researcher part: {researcher.email} | Approval: {(trust_admin or admin).email}")
 
     # Hub session for the off-camera waits (same auth as e2e_smoke).
     client = requests.Session()
@@ -673,6 +715,7 @@ def main(argv: list[str] | None = None) -> int:
                 state,
                 researcher=researcher,
                 admin=admin,
+                trust_admin=trust_admin,
                 has_imaging=has_imaging,
                 project_name=project_name,
                 project_description=project_description,
@@ -708,6 +751,7 @@ def record_segments(
     *,
     researcher: Persona,
     admin: Persona,
+    trust_admin: Persona | None,
     has_imaging: bool,
     project_name: str,
     project_description: str,
@@ -738,8 +782,19 @@ def record_segments(
         client, headers, project_id, timeout_s=args.cohort_timeout, required_trust_ids=required_trust_ids
     )
 
-    # ── Segment 2: admin stages + approves ────────────────────────────────
-    if args.from_segment <= 2:
+    # ── Segment 2: one trust's Trust Admin approves; the rest off camera ──
+    if args.from_segment <= 2 and trust_admin:
+        site, others = trusts[0], trusts[1:]
+        with trust_admin_of(client, headers, trust_admin, site):
+            with take(browser, segment_video(2, "approve"), args.ui_url, scale) as rec:
+                demo_segments.approve_at_trust(rec, trust_admin, project_id, site["name"])
+        if others:
+            body = {"trusts": [t["id"] for t in others]}
+            e2e_smoke._ensure_ok(
+                e2e_smoke._post(client, f"/step/project/{project_id}/approve", body, headers), "approve other trusts"
+            )
+            _log(f"✅ Approved off camera at {[t['name'] for t in others]}")
+    elif args.from_segment <= 2:
         with take(browser, segment_video(2, "approve"), args.ui_url, scale) as rec:
             demo_segments.approve(rec, admin, project_id, has_imaging)
 

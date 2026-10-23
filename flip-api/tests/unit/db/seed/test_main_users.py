@@ -31,6 +31,7 @@ from flip_api.utils.constants import (
     ADMIN_EMAIL_3,
     DEMO_ADMIN_EMAIL,
     DEMO_RESEARCHER_EMAIL,
+    DEMO_TRUST_ADMIN_EMAIL,
     RESEARCHER_EMAIL,
     VIEWER_EMAIL,
 )
@@ -64,7 +65,7 @@ def test_seed_main_users_calls_ensure_user_and_role(
 
     # One provider for the whole seed, passed first to every call.
     mock_build_identity_provider.assert_called_once_with()
-    assert mock_ensure_user_and_role.call_count == 7
+    assert mock_ensure_user_and_role.call_count == 8
 
     mock_ensure_user_and_role.assert_any_call(
         idp, ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1]
@@ -103,10 +104,10 @@ def test_seed_main_users_continues_after_per_user_identity_provider_error(
 
     seed_main_users(mock_session)
 
-    # All seven users are still attempted — failure on one does not abort the rest.
-    assert mock_ensure_user_and_role.call_count == 7
+    # All eight users are still attempted — failure on one does not abort the rest.
+    assert mock_ensure_user_and_role.call_count == 8
     # Each failure is logged at warning level so an operator can see what was skipped.
-    assert mock_logger.warning.call_count == 7
+    assert mock_logger.warning.call_count == 8
     # Final completion log still fires.
     mock_logger.info.assert_called_with("✅ Finished seeding main users.")
 
@@ -172,6 +173,13 @@ def test_seed_main_users_runs_all_when_each_succeeds(
         (idp, VIEWER_EMAIL, RoleRef.VIEWER, mock_session, *MAIN_USER_PROFILES[VIEWER_EMAIL]),
         (idp, DEMO_RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[DEMO_RESEARCHER_EMAIL]),
         (idp, DEMO_ADMIN_EMAIL, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[DEMO_ADMIN_EMAIL]),
+        (
+            idp,
+            DEMO_TRUST_ADMIN_EMAIL,
+            RoleRef.RESEARCHER,
+            mock_session,
+            *MAIN_USER_PROFILES[DEMO_TRUST_ADMIN_EMAIL],
+        ),
     ]
     actual_calls = [c.args for c in mock_ensure_user_and_role.call_args_list]
     assert actual_calls == expected_calls

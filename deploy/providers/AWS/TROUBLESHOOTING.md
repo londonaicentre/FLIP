@@ -1,6 +1,16 @@
 # FLIP AWS Deployment Troubleshooting Guide
 
-Common failures encountered during staging/production deployment and how to diagnose + resolve them. Each entry includes symptoms, root cause, and fix.
+Operator troubleshooting for the Central Hub on AWS and the AWS-hosted trust now lives in the docs:
+**[Troubleshooting](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting.html)**, with pages for the
+[Central Hub on AWS](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/central-hub-aws.html),
+[trust nodes on Docker Compose](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-compose.html)
+and [FL training and projects](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/fl-training-and-projects.html). Between them they cover SSO expiry, UI sign-in after a
+Cognito change, `NET_ENDPOINTS`, kit signatures, Orthanc mounts and seeding, trust disk space, the XNAT setup page and
+service-account password, imaging-api hangs and the `num_samples=0` permission fault.
+
+What stays here is maintainer material: Terraform state, regressions guarded in code, CI and image builds, and the
+hub-database queries. Section numbers are kept as they were, because code and other docs cite them (§1.8, §4.3, §5);
+the gaps are entries that moved to the docs.
 
 ---
 
@@ -86,43 +96,6 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 
 ---
 
-### 1.4 Trust EC2 runs out of disk during `make deploy-trust`
-
-**Symptom**: `make deploy-trust` fails partway through `docker compose pull` with:
-
-```
-failed to extract layer ... torch/_inductor/codegen/cpp_micro_gemm.py:
-no space left on device
-```
-
-`df -h /` on the trust EC2 shows the root volume near 100 % used, even though it was nominally 30+ GB free at the start of the pull.
-
-**Root cause**: The full trust image set (FLARE `flare-fl-client` with multi-GB torch deps, XNAT Tomcat ~4 GB compressed, Orthanc, OMOP, observability stack, three trust APIs) blows through 50 GB of overlayfs snapshot space when extracted concurrently. The 50 GB default sized for the legacy compose stack is no longer adequate.
-
-**Fix**: The trust EC2 module now provisions a 100 GB root volume (`modules/trust_ec2/main.tf`). Volume modification is in-place — no instance replacement — but the partition + filesystem still need an online resize once after `terraform apply`:
-
-```bash
-ssh flip-trust 'sudo growpart /dev/nvme0n1 1 && sudo resize2fs /dev/nvme0n1p1'
-```
-
-Then retry `make deploy-trust`. Verify with `df -h /` (should show ~100 GB).
-
----
-
-### 1.5 AWS SSO token expired
-
-**Symptom**: All `aws` commands return `Unable to locate credentials` or `AccessDenied`.
-
-**Fix**:
-
-```bash
-aws sso login --profile lza-stag --use-device-code   # or lza-prod
-```
-
-Use `--use-device-code` for headless/SSH environments.
-
----
-
 ### 1.6 ALB returns 502 / NLB shows unhealthy targets after ECS cutover
 
 **Symptom**: After bringing ECS Fargate up alongside the legacy EC2 stack, the ALB still returns 502 for `/api/*` and the NLB target group shows the legacy EC2 target as unhealthy. Trust-side fl-client cannot reach fl-server. trust-api heartbeats may also return 401 because they hit the legacy flip-api whose secret hashes are stale.
@@ -176,34 +149,6 @@ The two digests will match. To confirm the tag was rebuilt by a specific merge, 
 
 ## 2. Deployment (Ansible / Docker)
 
-### 2.1 Docker volume mount parse failure (`empty section between colons`)
-
-**Symptom**: `make deploy-trust` fails with:
-
-```
-invalid spec: :/var/lib/orthanc/db: empty section between colons
-```
-
-**Root cause**: `ORTHANC_STORAGE_DIR` is missing from the per-trust kit file
-(`trust/.env.<KIT>`), so the Orthanc compose mount expands to an empty host
-path. The compose files (`trust/deploy/compose_trust.{development,production}.yml`)
-both consume the unsuffixed `${ORTHANC_STORAGE_DIR}` — the older
-`_TRUST_{1,2}` suffixed names from `.env.stag` were retired by the
-per-trust-kit refactor.
-
-**Fix**: Set the host-local profile entry in the kit file:
-
-```
-ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage-trust1
-```
-
-The trust kit `.example` templates carry this key in their **Host-local
-profile** section; if you bootstrapped a kit before the refactor, copy the
-key from a current template (e.g. `trust/.env.GSTT.development.example` or the
-base `trust/.env.example`) and adjust the path for the trust host.
-
----
-
 ### 2.2 Container images missing for current branch tag
 
 **Symptom**: `make deploy-trust` fails with `docker manifest inspect` returning "no such manifest", or a Central Hub ECS deployment reports `CannotPullContainerError`.
@@ -225,91 +170,6 @@ gh workflow run docker_build_trust_data_access_api.yml --ref <branch>
 
 ---
 
-### 2.3 XNAT returns setup page instead of API
-
-**Symptom**: `CREATE_IMAGING` tasks fail with HTTP 500 containing HTML (`<title>XNAT Setup</title>`).
-
-**Root cause**: After `make full-deploy`, XNAT was just configured (Ansible wrote setup configs) and the XNAT Tomcat is serving its setup page. The container needs a full restart cycle to pick up the saved configuration.
-
-**Fix**:
-
-```bash
-ssh flip-trust "docker service update --force xnat1_xnat-web"
-# Wait 90 seconds for Tomcat to start (it takes ~85s)
-```
-
----
-
-### 2.4 XNAT authentication fails for imaging-api
-
-**Symptom**: `CREATE_IMAGING` / `REIMPORT_STUDIES` fail with `ReadTimeout` from trust-api → imaging-api → XNAT.
-
-**Root cause**: Multiple causes:
-
-1. **Credentials**: The imaging-api authenticates to XNAT using `XNAT_SERVICE_USER` and `XNAT_SERVICE_PASSWORD` (from `.env.stag` or Secrets Manager). Verify the deployed values match the current XNAT service account credentials — do not hardcode real values in config files or documentation.
-2. **Timeout**: The imaging-api's `requests` calls to XNAT had no `timeout` parameter. If XNAT's container management API hangs (e.g., Docker daemon busy), the imaging-api worker blocks permanently.
-
-**Fix**: Restart the imaging-api container (clears stuck state), and ensure the timeout fix is applied (see Section 3.3):
-
-```bash
-ssh flip-trust "docker restart trust1-imaging-api-1"
-```
-
----
-
-### 2.5 FLARE participant kit fails `LoadResult.INVALID_SIGNATURE` on fl-api / fl-server boot
-
-**Symptom**: After regenerating a FLARE participant kit and redeploying, fl-api or fl-server crash-loops with `LoadResult.INVALID_SIGNATURE`. Or fl-client connects to fl-server but TLS handshake fails with `SSLV3_ALERT_BAD_CERTIFICATE` / `CERTIFICATE_VERIFY_FAILED`.
-
-**Root cause**: FLARE signs every file in the kit at provision time (`signature.json` references a hash of `fed_admin.json`, `rootCA.pem`, `client.crt`, etc.). Two failure modes:
-
-1. **In-place edits**: Sed-patching `fed_admin.json` after the kit lands (e.g. to swap a hostname) tears the signature.
-2. **Stale `aws s3 sync`**: `aws s3 sync` skips files when source and destination have similar size + mtime, so a freshly regenerated kit can leave a stale `rootCA.pem` / `client.crt` / `fed_client.json` next to a fresh `signature.json` (or vice versa). The on-disk kit is then signed by one rootCA but presents a cert from another.
-
-**Fix**:
-
-1. Never edit the kit after provision. If a hostname needs to change, regenerate the kit with the right hostname baked in.
-2. The EFS provisioner (`ecs_efs_provision.tf`) and the trust Ansible playbook (`site.yml`, both FLARE Trust_1 and Flower trust syncs) now wipe the destination with `find <dest> -mindepth 1 -delete` immediately before the `aws s3 sync` / `aws s3 cp`. This forces a clean copy. If you script your own kit sync somewhere new, mirror this pattern.
-
-To recover a stuck stack: re-run `make full-deploy` (central hub) or `make deploy-trust` (trust EC2). Both now wipe before sync.
-
----
-
-### 2.6 fl-client returns 401 from data-access-api or imaging-api
-
-**Symptom**: A new model run fails with:
-
-```
-requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: http://data-access-api:8000//cohort/dataframe
-```
-
-(or the same on `imaging-api`). Trust-api → data-access-api / imaging-api calls succeed; only fl-client calls fail.
-
-**Root cause**: The running fl-client / fl-server / fl-api images predate the change that added `headers=_trust_internal_headers()` to every outbound `flip.get_dataframe` / `flip.get_by_accession_number` / `flip.add_resource` call. Without that header, the data-access-api / imaging-api router-level auth check rejects the request with 401.
-
-**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.production` for prod) to an FL image build that includes the trust-internal-header change, then redeploy. A single tag bump rolls all three images:
-
-```bash
-# Pick an FL image tag (a develop SHA) that includes the trust-internal-header change
-sed -i 's/^DOCKER_FL_TAG=.*/DOCKER_FL_TAG=<sha>/' .env.stag
-
-# fl-api + fl-server (ECS task defs read TF_VAR_flip_fl_image_tag)
-make apply PROD=stag
-
-# fl-client (trust EC2 compose pulls the same tag)
-make deploy-trust PROD=stag
-```
-
-Verify the running fl-client has the header wiring:
-
-```bash
-ssh flip-trust 'docker exec trust1-fl-client-net-1 grep -n "_trust_internal_headers" /app/flip/core/standard.py'
-```
-
-You should see calls at `get_dataframe`, `get_by_accession_number`, and `add_resource`.
-
----
-
 ### 2.7 `make deploy-ui` fails with `InvalidAccessKeyId` despite a successful SSO login
 
 **Symptom**: `make -C deploy/providers/AWS deploy-ui PROD=stag` builds the bundle successfully, then fails on the first `aws s3` call:
@@ -323,7 +183,7 @@ make: *** [Makefile:388: deploy-ui] Error 1
 
 `aws sso login` reported success seconds earlier, and other Make targets (`make plan`, `make apply`, `make status`) work in the same shell.
 
-**Root cause**: Same class of bug as 1.5 / handoff §2 (Terraform SSO poisoning). The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_AWS_ENV` macro at the top of the Makefile, or `_TF` for `terraform` calls), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
+**Root cause**: Same class of bug as Terraform SSO poisoning. The parent shell exports `AWS_ACCESS_KEY_ID=` (empty) or a stale value from a prior `.env*` source, and the AWS SDK's credential chain prefers env vars over the SSO profile. The other recipes were patched with an `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` prefix (the `_AWS_ENV` macro at the top of the Makefile, or `_TF` for `terraform` calls), but each Make recipe line runs in its own shell — so every `aws` / `terraform` invocation needs the unset on its own line. `deploy-ui` was missed.
 
 **Fix**: Prefix every `aws` call in the `deploy-ui` recipe with `$(_AWS_ENV)` (which expands to `unset AWS_* … ; AWS_PROFILE=$(AWS_PROFILE)`). Already applied — if you see this on a fresh checkout, confirm the recipe matches:
 
@@ -333,66 +193,6 @@ sed -n '/^deploy-ui:/,/^$/p' deploy/providers/AWS/Makefile | grep -c '_AWS_ENV'
 ```
 
 **Prevention**: When adding a new Make recipe that calls `aws`, `terraform`, `ansible`, or any script that uses boto3 / the AWS SDK, always prefix with `$(_AWS_ENV)` (or `$(_TF)` for `terraform`, or a bare `unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN;` on lines that run neither macro). Never trust the parent shell's AWS env vars.
-
-### 2.8 Trust EC2 Orthanc is empty — all image pulls go straight to QueueFailed
-
-**Symptom**: Every image pull on the EC2 trust shows `QueueFailed=<all>,
-Queued=0, Processing=0, Successful=0` immediately after project approval.
-imaging-api logs show `POST /xapi/dqr/query/studies` returning **204** (no
-content) for every accession — the PACS C-FIND finds nothing. The trust's
-XNAT `dqr.log` is silent (nothing was ever queued).
-
-**Diagnosis**:
-
-```bash
-# Orthanc study count — should be ~4187 for the mock trust1 dataset
-ssh flip-trust 'docker exec trust1-imaging-api-1 python3 -c "
-import httpx
-print(httpx.get(\"http://orthanc:8042/statistics\", auth=(\"admin\",\"admin\"), timeout=5).json())"'
-# CountStudies: 0  →  Orthanc has no data
-
-# Where does Orthanc's data dir actually point?
-ssh flip-trust 'docker inspect trust1-orthanc-1 --format "{{json .Mounts}}"' | python3 -m json.tool
-```
-
-**Root cause**: Compose interpolates the Orthanc bind path
-(`ORTHANC_STORAGE_DIR*` from the kit file / env) **at deploy time on the
-machine driving the deploy**. If the deploy was driven from an admin
-workstation, the workstation's local path (e.g.
-`/home/<user>/.../trust/orthanc/orthanc-storage-trust1`) gets baked into the
-remote compose stack; Docker auto-creates that directory **empty** on the EC2
-host, and Orthanc starts with zero studies. The seed that populates it
-(`ensure-seeded`) runs against the Orthanc on the machine where `up-trust`
-runs — not on the EC2.
-
-**Fix (stopgap — re-seed the EC2's data directories from the laptop):**
-
-```bash
-# The seed play starts throwaway containers on the host's data directories, so the
-# stack must be down while it runs (deploy-trust already sequences it that way).
-DOCKER_CONTEXT=flip-trust make -C trust down-trust-ec2 KIT=<CODE> PROD=true   # what deploy-trust does before seeding
-make -C deploy/providers/AWS seed-trust-data KIT=<CODE> PROD=true               # OMOP rows + Orthanc studies + vocabulary
-DOCKER_CONTEXT=flip-trust make up-trust-ec2 KIT=<CODE> PROD=true
-```
-
-Verify a cohort accession is findable, then re-trigger the pull from the UI
-(re-import button):
-
-```bash
-docker exec trust1-imaging-api-1 python3 -c "
-import httpx
-r = httpx.post('http://orthanc:8042/tools/find', auth=('admin','admin'),
-               json={'Level':'Study','Query':{'AccessionNumber':'<an accession from OMOP>'},'Limit':1}, timeout=15)
-print('found:', len(r.json()) > 0)"
-```
-
-**Fix (proper)**: Set host-appropriate data dirs in the kit file's Host-local
-profile section and run the data seeding **on the trust host** (the
-`ensure-seeded` step of `up-trust`), so deploys never inherit the admin workstation's
-paths. Audit the other bind mounts on the host for the same leak —
-`docker inspect <container> --format '{{json .Mounts}}'` per container.
-
----
 
 ## 3. Application (Pipeline / API)
 
@@ -412,42 +212,14 @@ Then redeploy: `make deploy-centralhub PROD=stag`
 
 ---
 
-### 3.2 FL status endpoints return empty / DNS resolution fails
+### 3.3 Imaging pipeline stuck on "Awaiting creation..." — hub-database workaround
 
-**Symptom**: `/api/fl/status` returns empty responses. The flip-api logs show `Name or service not known` for `fl-api-net-1.flip.local:8000`.
+The operator entry (causes, what to check at the trust) is
+[A Trust stays on "Awaiting creation…"](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/fl-training-and-projects.html#ts-awaiting-creation).
+A new project's `last_reimport` defaults to its creation time, so the reimport scheduler
+(`SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE`, 30 min) skips it until `PROJECT_REIMPORT_RATE` (60 min) has passed.
 
-**Root cause**: Central Hub services run on ECS Fargate, where the FL API is resolved through Cloud Map. A stale Docker Compose hostname such as `flip-fl-api-net-1` cannot resolve there.
-
-**Fix**: Set the Cloud Map endpoint in `.env.stag`:
-
-```text
-NET_ENDPOINTS={"net-1":"http://fl-api-net-1.flip.local:8000"}
-```
-
-Then run `make plan PROD=stag`, `make apply PROD=stag`, and `make deploy-centralhub PROD=stag`. The flip-api startup seed reconciles the `fl_nets` row to `NET_ENDPOINTS`; a manual database update is neither required nor durable.
-
----
-
-### 3.3 Imaging pipeline stuck on "Awaiting creation..."
-
-**Symptom**: Project is approved but the trust shows "Awaiting creation..." indefinitely. No images are imported to XNAT.
-
-**Root cause**: Several interacting issues:
-
-1. **`last_reimport` defaults to `now()`** (`main_models.py:235`): The `reimport_failed_studies` function checks `now > last_reimport + PROJECT_REIMPORT_RATE(60min)`. For a brand-new project, `last_reimport` was set to the creation time, so the check fails and no REIMPORT_STUDIES task is created for 60 minutes.
-
-2. **Scheduler runs every 30 minutes** (`SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE=30`): Even after the 60-minute cooldown, the next scheduler cycle may be up to 30 minutes away.
-
-3. **trust-api default 30s timeout**: `make_request()` defaults to 30 seconds, but XNAT project creation can take longer.
-
-4. **imaging-api XNAT calls lack timeouts**: `requests.get/post/put/delete` to XNAT without `timeout=` hang forever if XNAT is unresponsive.
-
-**Fix** (already applied in PR #410):
-
-- `task_handlers.py`: CREATE_IMAGING/REIMPORT_STUDIES now have 120s timeouts
-- `projects.py`: All XNAT API calls now have 120s timeouts
-
-**Temporary workaround** (force import for stuck projects):
+**Workaround** (force the import for a stuck project):
 
 ```sql
 -- Connect with psql using the bastion recipe in §5, then check the task.
@@ -462,97 +234,6 @@ UPDATE trust_task SET status='PENDING' WHERE id='<task_id>';
 UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id='<id>';
 ```
 
-If imaging-api is hung, restart it on the Trust EC2:
-
-```bash
-ssh flip-trust "docker restart trust1-imaging-api-1"
-```
-
-Related states with different causes:
-
-- **`QueueFailed` for every accession right after approval** → the PACS C-FIND
-  finds nothing; usually an empty Orthanc on the trust host — see §2.7.
-- **Stuck on "Processing" with no progress, and re-import logs
-  `No studies to retry import`** → executed PACS request rows pin the status
-  (imaging-api classifies any accession with an executed row as Processing,
-  regardless of row status); the rows must be deleted before re-import works —
-  see §2.4 "Forcing a Re-pull" in
-  `trust/deploy/helm/TROUBLESHOOTING.md` (same procedure on EC2 via
-  `docker exec` into the xnat-db container).
-
----
-
-### 3.4 FL client cannot connect to FL server
-
-**Symptom**: Trust `fl-client-net-1` logs show `cannot send to 'server': target_unreachable` or connection retries.
-
-**Root cause**: The FL server container was restarted (e.g., during `deploy-centralhub`) and the client needs to re-establish the gRPC connection. The FLARE client retries automatically every 10 seconds. The FL server log should show `Re-activate the client: Trust_1`.
-
-**Fix**: Usually self-healing. Verify the FL server is listening:
-
-```bash
-AWS_PROFILE=stag aws logs tail /ecs/fl-server-net-1 --since 2m | grep -E 'Connection|re-activate|Client'
-```
-
----
-
-### 3.5 Imaging API container hung (no responses)
-
-**Symptom**: `CREATE_IMAGING` and `REIMPORT_STUDIES` tasks repeatedly fail with `ReadTimeout`. Direct XNAT API calls work, but the imaging-api endpoint hangs.
-
-**Root cause**: The imaging-api made XNAT API calls without `timeout=` parameters. If XNAT's container management API (dcm2niix command enablement, event subscriptions) hung, the imaging-api worker thread blocked permanently. All subsequent requests queued behind the hung worker.
-
-**Fix**: Restart the imaging-api container:
-
-```bash
-ssh flip-trust "docker restart trust1-imaging-api-1"
-```
-
-The code fix (adding `timeout=120` to all XNAT calls) prevents recurrence.
-
----
-
-### 3.6 FL training aborts with `num_samples=0` (looks like a data bug)
-
-**Symptom**: A model run reaches the FL training stage and immediately dies with:
-
-```
-ValueError: num_samples should be a positive integer value, but got num_samples=0
-```
-
-The cohort query returned a non-empty dataframe (visible in trust-api logs), so this looks like a preprocessing or trainer bug at first glance.
-
-**Root cause** (the one we hit; confirm with logs before assuming): every `imaging-api/download/images/net-1` call from fl-client returned 500 with `[Errno 13] Permission denied: '/app/data/images/net-1'` and `Found 0 files in total`. The bind-mount source on the trust EC2 (`/opt/flip/data/trust-1` / `trust-2`) was owned by root because Docker auto-created it as root when no Ansible play pre-created it. imaging-api runs as uid 1000 (`flip`) and could not `mkdir` inside.
-
-**Diagnosis**: pull the fl-client log directly from the workspace, then cross-check imaging-api:
-
-```bash
-ssh flip-trust 'docker exec trust1-fl-client-net-1 \
-  find /app -name "log.txt" -path "*<run-id>*" -exec tail -200 {} \;'
-
-ssh flip-trust 'docker logs trust1-imaging-api-1 --since 10m 2>&1 | \
-  grep -iE "permission|errno|500"'
-```
-
-If you see `Permission denied` on `/app/data/images/...`, you have the same bug.
-
-**Fix** (sticky): `site.yml` now pre-creates `/opt/flip/data/trust-1` and `/opt/flip/data/trust-2` owned by `ubuntu:ubuntu` (uid 1000 inside the containers) and removes the unused `/opt/flip/data/images` entry. Re-run `make full-deploy PROD=stag`.
-
-**Hot-fix** (existing host, no redeploy):
-
-```bash
-ssh flip-trust 'sudo chown -R 1000:1000 /opt/flip/data/trust-1 /opt/flip/data/trust-2'
-```
-
-**Flower variant — same symptom, different writer.** Each fl-client bind-mounts only its own net's slice (`<base>/net-N`), and it writes there too (`flip.add_resource` stages under `net-N/upload/`). On FLARE the client is uid 1000, so the ownership above covers it. The Flower client is built on upstream `flwr/base` and runs as `app` (uid/gid **49999**): on a `1000:1000` `0755` net dir it is only "other", and `add_resource` fails with EACCES while imaging-api's own downloads succeed. `site.yml` provisions the `net-N` dirs `ubuntu:49999` `0775` when `fl_backend == flower` (matching the K8s chart's `images-init`), and `trust/Makefile`'s `$(ensure_net_dirs)` now *fails* the bring-up rather than warning if it cannot apply that. Hot-fix on an existing host:
-
-```bash
-ssh flip-trust 'sudo chown 1000:49999 /opt/flip/data/trust-{1,2}/net-{1,2} && \
-                sudo chmod 0775 /opt/flip/data/trust-{1,2}/net-{1,2}'
-```
-
-The general principle: anywhere a non-root container bind-mounts a host path, pre-create the host path with the right uid in Ansible. Letting Docker auto-create it leaves a root-owned source that silently breaks every non-root container that touches it.
-
 ---
 
 ### 3.7 Single net permanently starved of new training jobs
@@ -565,75 +246,7 @@ The general principle: anywhere a non-root container bind-mounts a host path, pr
 
 ---
 
-### 3.8 UI login fails with "There was a problem logging you in" after a Terraform apply
-
-**Symptom**: The login page loads, credentials submit, but the snackbar shows the generic *"Error — There was a problem logging you in. Please check your details and try again."* All other infra checks pass (`make status PROD=stag` is green). The same credentials work in `aws cognito-idp admin-initiate-auth` from the CLI.
-
-DevTools Network tab shows a POST to `cognito-idp.eu-west-2.amazonaws.com/` returning **400 Bad Request** with:
-
-```
-x-amzn-ErrorType:    InvalidParameterException
-x-amzn-ErrorMessage: USER_PASSWORD_AUTH flow not enabled for this client
-```
-
-**Root cause**: Commit `197bedaf` ("fix(security): drop USER_PASSWORD_AUTH, use SRP for browser sign-in") tightened the Cognito app client to remove `ALLOW_USER_PASSWORD_AUTH` *and* updated `flip-ui/src/store/auth.ts` to call `signIn({ options: { authFlowType: "USER_SRP_AUTH" } })`. The two changes are coupled — the client only accepts SRP, and only the new UI code requests SRP.
-
-`make full-deploy PROD=stag` applies the Terraform half (Cognito tightens immediately) but does **not** rebuild the UI bundle in S3 — `deploy-centralhub` redeploys ECS, not the static site. If the bundle in S3/CloudFront predates `197bedaf`, the browser keeps sending `AuthFlow=USER_PASSWORD_AUTH` and Cognito rejects every login.
-
-The `Login.vue` submit handler catches the thrown error and surfaces the generic snackbar — the real error only appears in the Network tab.
-
-**Diagnosis**:
-
-1. Open DevTools → Network → submit login.
-2. Find the POST to `cognito-idp.<region>.amazonaws.com/`. If the response body has `USER_PASSWORD_AUTH flow not enabled for this client`, you have this bug.
-3. Confirm the working tree already uses SRP:
-   ```bash
-   grep -n 'USER_SRP_AUTH' flip-ui/src/store/auth.ts
-   ```
-   You should see `options: { authFlowType: "USER_SRP_AUTH" as const }` around line 255.
-
-**Fix**: Rebuild and redeploy the UI bundle:
-
-```bash
-make -C deploy/providers/AWS deploy-ui PROD=stag
-```
-
-Wait ~1–3 min for the CloudFront invalidation to clear, then hard-refresh the login page (Ctrl+Shift+R). The new bundle calls `InitiateAuth` with `AuthFlow=USER_SRP_AUTH` and login succeeds.
-
-**Prevention**:
-
-- After any `make apply` that touches `modules/cognito/`, also run `make deploy-ui PROD=stag`. The two artifacts are coupled.
-- `make full-deploy` does not redeploy the UI by design (UI is rebuilt from the working tree, not GHCR). If a deploy follows a UI-affecting commit, redeploy the UI explicitly.
-- The generic *"There was a problem logging you in"* snackbar (`Login.vue:161`) swallows the real error class — always check the DevTools Network tab before assuming the user typed the wrong password.
-
----
-
 ## 4. Configuration
-
-### 4.1 `NET_ENDPOINTS` hostname not resolvable
-
-**Symptom**: flip-api logs show `[Errno -2] Name or service not known` for `fl-api-net-1.flip.local:8000`.
-
-**Root cause**: `NET_ENDPOINTS` points to Service Discovery FQDNs designed for ECS Fargate (PR 2). On a compose-hosted hub, containers communicate via Docker's built-in DNS.
-
-**Fix**: Set `NET_ENDPOINTS={"net-1":"http://fl-api-net-1:8000"}` in `.env.stag`. Use the compose
-**service** name `fl-api-net-1` — docker registers it as a network alias on every network the
-container joins. The pre-FLIP#957 spelling `flip-fl-api-net-1` was a `container_name`, which the
-compose files no longer set, so it now resolves nowhere. No manual `fl_nets` update is needed: the
-flip-api startup seed reconciles the row to `NET_ENDPOINTS` (see Section 3.2, which is the ECS case).
-
----
-
-### 4.2 Missing `ORTHANC_STORAGE_DIR` env var
-
-**Symptom**: `make deploy-trust` fails with Docker volume mount parse error.
-
-**Fix**: Add `ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage` to the
-per-trust kit file `trust/.env.<KIT>` (see 2.1 for the full root-cause
-context — the compose files consume the unsuffixed name and read from the
-kit, not `.env.stag`).
-
----
 
 ### 4.3 `ENFORCE_MFA` env var not passed to container
 
@@ -658,84 +271,6 @@ aws ec2 reboot-instances --instance-ids <instance-id> --profile lza-stag   # or 
 ```
 
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
-
----
-
-### 4.5 XNAT service account password not matching env file
-
-**Symptom**: `make status PROD=stag` reports:
-
-```
-✗ FAIL - XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in .env.stag
-```
-
-Canonical checks pass (Terraform, EC2, RDS, HTTPS, ECS), the XNAT web interface is serving (HTTP 302), and trust-api / imaging-api are healthy (HTTP 200). The Python health check running inside the `trust1-imaging-api-1` container cannot authenticate against XNAT's REST API.
-
-**Root cause — three common failure modes:**
-
-1. **`#` in password value (Make comment char)**: The Make `include` directive treats `#` as a comment start. If `.env.stag` contains:
-   ```
-   XNAT_SERVICE_PASSWORD=EXAMPLE#not-a-real#password
-   ```
-   Make reads this as `XNAT_SERVICE_PASSWORD=EXAMPLE` — everything after the first `#` is silently discarded. The XNAT service account was configured with the truncated value.
-
-2. **`$` in SQL UPDATE values (shell expansion)**: When running SQL via `docker exec sh -c "psql ... \"UPDATE ... SET pw='{bcrypt}\$2a\$10\$...';\""`, the `\$` escapes may not survive the nesting: `sh → psql → SQL`. The `$` signs get consumed by shell expansion, producing a corrupt hash like `{bcrypt}a` instead of `{bcrypt}$2a$10$...`. Always write sensitive SQL to a file via `scp` + `docker cp`.
-
-3. **Direct SQL UPDATE of `xdat_user.primary_password`**: XNAT's Spring Security `BCryptPasswordEncoder` uses the Java jBCrypt library. Even with the Python `bcrypt` library generating a matching `$2a$` hash, the Java implementation may reject it due to subtle encoding differences or internal state. The only reliable way to reset the XNAT password is to purge the database volume and let `configure-xnat.sh` run during redeployment.
-
-**Diagnosis**:
-
-Check if the password has a `#` character:
-```bash
-grep 'XNAT_SERVICE_PASSWORD' .env.stag
-```
-
-Check the effective Make value:
-```bash
-cd "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && \
-  printf 'include .env.stag\nall:\n\t@echo "PWD=[$(XNAT_SERVICE_PASSWORD)]"' \
-  | make -f - PROD=stag
-```
-If the output shows only the part before `#`, you have the Make comment bug.
-
-Test auth directly from inside the imaging-api container:
-```bash
-ssh flip-trust 'CID=$(docker ps --filter name=trust1-imaging-api -q); \
-  docker exec $CID python3 -c "
-import os, requests
-r = requests.post(os.environ[\"XNAT_URL\"]+\"/data/JSESSION\",
-    auth=(os.environ[\"XNAT_SERVICE_USER\"],
-          os.environ[\"XNAT_SERVICE_PASSWORD\"]), timeout=5)
-print(r.status_code, r.text.strip()[:40])
-"'
-```
-
-**Fix**:
-
-1. Replace the password in `.env.stag` with one that has no `#`, `$`, or shell-special characters:
-   ```bash
-   python3 -c "import secrets, string; \
-     print(''.join(secrets.choice(string.ascii_letters+string.digits+'-_=+!@') \
-       for _ in range(20)))"
-   ```
-2. Purge the XNAT database and redeploy — this is the only reliable path:
-   ```bash
-   ssh flip-trust 'docker stack rm xnat1'
-   sleep 15
-   ssh flip-trust 'sudo bash -c "find /opt/flip/xnat/xnat-db-data -mindepth 1 -delete"'
-   make -C trust/xnat up-xnat KIT=<CODE> PROD=stag
-   ```
-3. Verify:
-   ```bash
-   make status PROD=stag | grep XNAT
-   # Should show: ✓ PASS - XNAT API responding (HTTP 200)
-   ```
-
-**Prevention**:
-
-- Never use `#` or `$` characters in environment file values consumed by Make — they are Make comment chars.
-- Never `UPDATE xdat_user.primary_password` directly. Always let XNAT's own `configure-xnat.sh` or the user management API handle password hashing.
-- If you must set a password programmatically, generate it server-side via the XNAT `/xapi/users` API, not via SQL.
 
 ---
 

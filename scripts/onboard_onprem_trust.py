@@ -738,7 +738,7 @@ def check_governance_document(
 
     service_root = repo_root / "trust" / "data-access-api"
     result = subprocess.run(
-        [sys.executable, str(service_root / "scripts" / "check_governance.py")],
+        [sys.executable, str(service_root / "data_access_api" / "scripts" / "check_governance.py")],
         capture_output=True,
         check=False,
         env={"ACCESS_POLICY_FILE": document, "COHORT_QUERY_THRESHOLD": floor, "PYTHONPATH": str(service_root)},

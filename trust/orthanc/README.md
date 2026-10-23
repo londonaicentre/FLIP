@@ -100,7 +100,7 @@ and tags that commit, and `trust/.data_version` is then bumped to the tag.
 `--fill-empty-numbers` sets a present-but-empty `AcquisitionNumber` /
 `SeriesNumber` to 1 (the plastimatch-era spleen generator's output had both empty
 on every CT instance, which makes MONAI Deploy's loader drop the series — see
-`docs/source/working-with-flip-apps/package-model-as-map.rst`; the shared writer
+`docs/source/working-with-flip-apps/wrap-model-for-deployment.rst`; the shared writer
 that replaced it stamps both). Absent tags stay absent; populated ones are
 untouched. Published sets (`dicom/`): `cxr_project` (8,332 studies, at every tag
 from `20260729` on) and `prostate_project` (300 bpMRI studies, three series

@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Annotated
 
 import pandas as pd
@@ -31,15 +33,19 @@ from imaging_api.services.imaging import (
 from imaging_api.services.import_requests import (
     DirectArchiveSession,
     PacsRequest,
+    PrearchiveSession,
+    archive_prearchive_session,
+    delete_prearchive_session,
     get_direct_archive_sessions,
     get_executed_import_requests,
+    get_prearchive_sessions,
     get_queued_import_requests,
 )
 from imaging_api.services.projects import get_experiments, get_project
 from imaging_api.services_external.data_access import get_accession_ids
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
-from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError
+from imaging_api.utils.exceptions import CohortBelowThresholdError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
@@ -56,8 +62,29 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 # an upgrade re-checks those listings rather than database columns.
 # Any other status on a row that exists means the import is still in flight. A successful directArchive
 # deletes its row, so "successful" is never read from these records — only from the experiment listing.
+# A failed directArchive usually deletes its row too: XNAT 1.10.0 moves the session into the prearchive
+# with the same PrearcStatus.ERROR, so that is where the failure is read (FLIP#1511).
 _PACS_REQUEST_FAILED_STATUS = "FAILED"
 _DIRECT_ARCHIVE_FAILED_STATUS = "ERROR"
+
+# What _read_import_records returns: the queued requests, the direct-archive sessions, the prearchive
+# sessions and the executed requests.
+_ImportRecords = tuple[list[PacsRequest], list[DirectArchiveSession], list[PrearchiveSession], list[PacsRequest]]
+
+# Projects whose retrieval is still querying PACS and queueing. Their accessions reach the DQR queue
+# one by one while status polls run alongside, so one found in no import record has not been queued
+# *yet* rather than failed to queue. Process-local, which is enough: imaging-api runs as one worker
+# (entrypoint.sh). The retry path is not marked: it reads queue_failed to decide what to re-queue.
+_RETRIEVALS_IN_FLIGHT: set[str] = set()
+
+
+@contextmanager
+def _retrieval_in_flight(project_id: str) -> Iterator[None]:
+    _RETRIEVALS_IN_FLIGHT.add(project_id)
+    try:
+        yield
+    finally:
+        _RETRIEVALS_IN_FLIGHT.discard(project_id)
 
 
 def select_study_for_accession(accession_number: str, studies_found: list[Study], position: str) -> Study | None:
@@ -119,6 +146,12 @@ def has_default_pacs(project_id: str, headers: dict[str, str]) -> bool:
 
 
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
+    """Queue the project's cohort for import; see ``_retrieve_images_for_project``."""
+    with _retrieval_in_flight(project_id):
+        return await _retrieve_images_for_project(project_id, query, headers)
+
+
+async def _retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
     """
     Queues an import request for the images associated with the given project.
 
@@ -182,7 +215,9 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         logger.info(f"Querying PACS for accession number {idx}/{total_accessions}")
 
         try:
-            studies_found = query_by_accession_number(accession_number, headers)
+            # Off the event loop: one blocking PACS query per accession would otherwise stall every
+            # other request, /health included, for the whole cohort.
+            studies_found = await run_in_threadpool(query_by_accession_number, accession_number, headers)
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
             continue
@@ -216,7 +251,7 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
 
     logger.info(f"Creating ImportStudyRequest with {len(studies_list)} studies to queue.")
     import_request = ImportStudyRequest(projectId=project_id, studies=studies_list)
-    import_response = queue_image_import_request(import_request, headers)
+    import_response = await run_in_threadpool(queue_image_import_request, import_request, headers)
 
     # Check response gives all to QUEUED
     if all(item.status == "QUEUED" for item in import_response):
@@ -227,10 +262,8 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
         return False
 
 
-def _read_import_records(
-    project_id: str, headers: dict[str, str]
-) -> tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]]:
-    """Reads the project's DQR queue, direct-archive sessions and DQR history, in that order.
+def _read_import_records(project_id: str, headers: dict[str, str]) -> _ImportRecords:
+    """Reads the project's DQR queue, direct-archive and prearchive sessions and DQR history, in that order.
 
     A request only moves forward, from DQR's queue to its history (where it stays), so reading the
     queue first sees a request that moves between the two reads in at least one of them.
@@ -240,12 +273,13 @@ def _read_import_records(
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]]: The queued requests,
-        the direct-archive sessions and the executed requests.
+        _ImportRecords: The queued requests, the direct-archive sessions, the prearchive sessions and
+        the executed requests.
     """
     return (
         get_queued_import_requests(project_id, headers),
         get_direct_archive_sessions(project_id, headers),
+        get_prearchive_sessions(project_id, headers),
         get_executed_import_requests(project_id, headers),
     )
 
@@ -260,8 +294,8 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     * `Queued`: Studies waiting in the queue
     * `QueueFailed`: Studies that couldn't be queued for import
 
-    Known limitation: only *terminal* failures (executed `FAILED`, directArchive `ERROR`) are
-    reported as `Failed`. A study wedged in a non-terminal state with no further transition — e.g.
+    Known limitation: only *terminal* failures (executed `FAILED`, directArchive or prearchive `ERROR`)
+    are reported as `Failed`. A study wedged in a non-terminal state with no further transition — e.g.
     executed `ISSUED` (the C-MOVE was issued but objects never arrive) or a directArchive stuck at
     `RECEIVING`/`BUILDING` (a hung build that neither errors nor deletes its row) — stays `Processing`
     indefinitely and is therefore never retried. Detecting "stuck" would need a staleness window
@@ -285,8 +319,8 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             reason. 500 if the XNAT project cannot be read. Otherwise, if the request cannot be
             processed.
         imaging_api.utils.exceptions.XnatFetchError: If XNAT's experiment listing, DQR's import
-            queue or history, or the direct-archive sessions cannot be read. The route answers it
-            with a 500, never the 404 the hub reads as a missing project.
+            queue or history, or the direct-archive or prearchive sessions cannot be read. The route
+            answers it with a 500, never the 404 the hub reads as a missing project.
     """
     # Resolve the HUB project id: data-access-api serves the frozen approved-cohort
     # snapshot (FLIP#857) keyed on it, and the XNAT project stores it as secondary_ID.
@@ -337,12 +371,13 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # cannot change the answer, and a finished project polled by an open page reads none of them.
     # They are blocking calls, so they run off the event loop.
     archived = set(successfully_imported_accession_numbers)
-    records: tuple[list[PacsRequest], list[DirectArchiveSession], list[PacsRequest]] = ([], [], [])
+    records: _ImportRecords = ([], [], [], [])
     if not all(accession_number in archived for accession_number in accession_ids):
         records = await run_in_threadpool(_read_import_records, project_id, headers)
-    queued_pacs_requests, direct_archive_sessions, executed_pacs_requests = records
+    queued_pacs_requests, direct_archive_sessions, prearchive_sessions, executed_pacs_requests = records
 
     logger.debug(f"Direct Archive Sessions: {len(direct_archive_sessions)}")
+    logger.debug(f"Prearchive sessions: {len(prearchive_sessions)}")
     logger.debug(f"Executed PACS requests: {len(executed_pacs_requests)}")
     logger.debug(f"Queued PACS requests: {len(queued_pacs_requests)}")
 
@@ -355,12 +390,24 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # both received (executed RECEIVED) and failed (directArchive ERROR); `failed` takes precedence below.
     # A directArchive session's accession label is `name` (set for DQR imports); fall back to
     # `folder_name` (which carries the same label) when `name` is NULL, so a NULL-named archive
-    # failure is still attributed to its accession rather than silently dropped.
-    failed_accessions = {
-        (session.name or session.folder_name)
-        for session in direct_archive_sessions
-        if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
-    } | {req.accession_number for req in executed_pacs_requests if req.status == _PACS_REQUEST_FAILED_STATUS}
+    # failure is still attributed to its accession rather than silently dropped. A prearchive ERROR is the
+    # same failure after XNAT has moved the session out of the direct archive, its DQR request still
+    # RECEIVED, so it is `failed` too (FLIP#1511).
+    failed_accessions = (
+        {
+            (session.name or session.folder_name)
+            for session in direct_archive_sessions
+            if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
+        }
+        | {
+            (session.name or session.folder_name)
+            for session in prearchive_sessions
+            if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
+        }
+        | {req.accession_number for req in executed_pacs_requests if req.status == _PACS_REQUEST_FAILED_STATUS}
+    )
+    # The prearchive read only adds failures: a session in any other prearchive status is in flight
+    # because its DQR request is, so it is counted below through `executed_pacs_requests`.
     in_progress_accessions = {
         (session.name or session.folder_name)
         for session in direct_archive_sessions
@@ -380,7 +427,7 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
             import_status.failed.append(accession_number)
         elif accession_number in in_progress_accessions:
             import_status.processing.append(accession_number)
-        elif accession_number in queued_accessions:
+        elif accession_number in queued_accessions or project_id in _RETRIEVALS_IN_FLIGHT:
             import_status.queued.append(accession_number)
         else:
             # Never entered the DQR queue (e.g. no matching study on PACS).
@@ -399,6 +446,49 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     return import_status
 
 
+def _rearchive_failed_sessions(project_id: str, accession_numbers: list[str], headers: dict[str, str]) -> list[str]:
+    """Re-archives the prearchive ERROR sessions among ``accession_numbers``, and returns the rest.
+
+    A failed direct-archive leaves the received study in the prearchive with status ERROR, and archiving
+    it again from there is what recovers it (FLIP#1511). Only a study with no such session, or one that
+    will not archive, is pulled from the PACS again, and its stale session is deleted first so the study
+    lands in a fresh one.
+
+    Args:
+        project_id (str): The XNAT project ID.
+        accession_numbers (list[str]): The accession numbers that failed to import.
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Returns:
+        list[str]: The accession numbers still to pull from the PACS.
+    """
+    try:
+        sessions = get_prearchive_sessions(project_id, headers)
+    except XnatFetchError as e:
+        logger.warning(f"Pulling every failed study of project {project_id} again: {e}")
+        return accession_numbers
+    errored = {
+        (session.name or session.folder_name): session.url
+        for session in sessions
+        if session.status == _DIRECT_ARCHIVE_FAILED_STATUS and session.url
+    }
+
+    to_pull: list[str] = []
+    total = len(accession_numbers)
+    for idx, accession_number in enumerate(accession_numbers, 1):
+        src = errored.get(accession_number)
+        if src is None:
+            to_pull.append(accession_number)
+        elif archive_prearchive_session(src, headers):
+            logger.info(f"Re-archived the failed session of accession number {idx}/{total}")
+        else:
+            logger.warning(f"Could not re-archive the failed session of accession number {idx}/{total}; pulling it")
+            if not delete_prearchive_session(src, headers):
+                logger.warning(f"Could not delete the stale session of accession number {idx}/{total}")
+            to_pull.append(accession_number)
+    return to_pull
+
+
 async def retry_retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
     """
     Queues an import request for the images which have failed to import.
@@ -407,7 +497,8 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
     1. Get import status
     2. If none have status failed (Failed or QueueFailed), return
-    3. Create list of accession numbers that have failed.
+    3. Create list of accession numbers that have failed, and re-archive those that failed in XNAT's
+       prearchive; only the rest are pulled from the PACS again (FLIP#1511).
     4. Unencrypt the accession numbers
     5. Use Pacs Query request to find study for each accession ID -> put into a list
     6. Make a ImportStudyRequest object with the list of studies
@@ -420,7 +511,8 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
         headers (XNATAuthHeaders): The headers containing XNAT authentication details.
 
     Returns:
-        bool: True if all studies were successfully queued, False otherwise.
+        bool: True if XNAT accepted a re-archive of every failed study or all were successfully queued, False
+            otherwise. The next status poll confirms a re-archive.
 
     Raises:
         HTTPException: If the request cannot be processed.
@@ -446,6 +538,11 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
     failed_accession_numbers = import_status.failed + import_status.queue_failed
     logger.info(f"Retrying import for {len(failed_accession_numbers)} failed accession numbers")
 
+    failed_accession_numbers = _rearchive_failed_sessions(project_id, failed_accession_numbers, headers)
+    if not failed_accession_numbers:
+        logger.info(f"Every failed study of project {project_id} was re-archived; none to pull again")
+        return True
+
     if not has_default_pacs(project_id, headers):
         return False
 
@@ -460,7 +557,9 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
         logger.info(f"Querying PACS for accession number {idx}/{total_retries}")
 
         try:
-            studies_found = query_by_accession_number(accession_number, headers)
+            # Off the event loop: one blocking PACS query per accession would otherwise stall every
+            # other request, /health included, for the whole cohort.
+            studies_found = await run_in_threadpool(query_by_accession_number, accession_number, headers)
         except Exception as e:
             logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
             continue
@@ -496,7 +595,7 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
     logger.info(f"Creating ImportStudyRequest with {len(studies_list)} studies to queue.")
     import_request = ImportStudyRequest(projectId=project_id, studies=studies_list)
-    import_response = queue_image_import_request(import_request, headers)
+    import_response = await run_in_threadpool(queue_image_import_request, import_request, headers)
 
     # Check response gives all to QUEUED
     if all(item.status == "QUEUED" for item in import_response):

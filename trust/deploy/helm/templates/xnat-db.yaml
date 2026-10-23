@@ -84,6 +84,11 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-xnat-db
           env:
+{{- with .Values.xnat.db.persistence.pgdataSubdir }}
+            # A fresh cloud disk has lost+found at its root, which initdb refuses (FLIP#1390).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/{{ . }}
+{{- end }}
             # The Postgres superuser. Distinct from the xnat application role
             # below (FLIP-PT-056) — pointing both at one key would make the app
             # role's password superuser-equivalent, and the xnat-db entrypoint

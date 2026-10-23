@@ -22,7 +22,7 @@ cannot affect a training run and the FL runtime carries no deployment dependenci
 This subpackage requires PyTorch, which ships in the `full` extra rather than the base install
 (`pip install "flip-utils[full]"`); importing `flip.export` without it raises `ModuleNotFoundError`
 with that instruction. Full walkthrough:
-[`docs/source/working-with-flip-apps/package-model-as-map.rst`](../../../docs/source/working-with-flip-apps/package-model-as-map.rst).
+[`docs/source/working-with-flip-apps/wrap-model-for-deployment.rst`](../../../docs/source/working-with-flip-apps/wrap-model-for-deployment.rst).
 Consumer: [`map-apps/`](../../../map-apps/README.md) (the MAP templates a bundle is packaged into).
 
 ## Two bundle forms — a real trade, not a preference

@@ -86,11 +86,11 @@ const DATA = {
     ]
 };
 
-function mountChart(options: { withTrustStore?: boolean } = {}) {
-    const { withTrustStore = true } = options;
+function mountChart(options: { withTrustStore?: boolean; data?: typeof DATA } = {}) {
+    const { withTrustStore = true, data = DATA } = options;
 
     return mount(AiCohortChart, {
-        props: { data: DATA },
+        props: { data },
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
@@ -198,7 +198,31 @@ describe("AiCohortChart", () => {
         await flushPromises();
 
         const opts = setOption.mock.calls[0][0];
-        expect(opts.xAxis.data).toEqual(["50-70", "<50"]);
+        expect(opts.xAxis.data).toEqual(["<50", "50-70"]);
+    });
+
+    it("orders numeric categories by number, so 20-29 comes before 100-109", async () => {
+        const buckets = ["110-119", "20-29", "100-109", "10-19"];
+        mountChart({
+            data: {
+                name: "Age Distribution",
+                results: [{
+                    trustId: "t1",
+                    trustName: "Trust One",
+                    data: buckets.map(value => ({
+                        value,
+                        count: 1
+                    }))
+                }]
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        const opts = setOption.mock.calls[0][0];
+        const ordered = ["10-19", "20-29", "100-109", "110-119"];
+        expect(opts.xAxis.data).toEqual(ordered);
+        expect(opts.series[0].data.map(([value]: [string, number]) => value)).toEqual(ordered);
     });
 
     it("keeps the user's line-plot toggle across option re-pushes", async () => {

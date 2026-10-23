@@ -56,9 +56,10 @@ async def process_trust(
 
         return {"trust": trust.name, "success": True, "message": "Imaging started successfully"}
 
-    except Exception as e:
-        logger.exception(f"Error processing trust {trust.name}: {str(e)}")
-        return {"trust": trust.name, "success": False, "message": str(e)}
+    except Exception:
+        # The exception goes to the hub log only: its text can carry internal detail (FLIP#1614).
+        logger.exception(f"Error processing trust {trust.name}")
+        return {"trust": trust.name, "success": False, "message": "Could not start imaging; see the hub log"}
 
 
 def freeze_trust_cohort(project_id: UUID, trust: ITrust, db: Session) -> dict[str, Any]:
@@ -77,9 +78,13 @@ def freeze_trust_cohort(project_id: UUID, trust: ITrust, db: Session) -> dict[st
         queue_cohort_snapshot(project_id=project_id, trust=trust, db=db)
         return {"trust": trust.name, "success": True, "message": "Cohort snapshot queued (project has no imaging)"}
 
-    except Exception as e:
-        logger.exception(f"Error freezing the cohort at trust {trust.name}: {str(e)}")
-        return {"trust": trust.name, "success": False, "message": str(e)}
+    except Exception:
+        logger.exception(f"Error freezing the cohort at trust {trust.name}")
+        return {
+            "trust": trust.name,
+            "success": False,
+            "message": "Could not queue the cohort snapshot; see the hub log",
+        }
 
 
 @router.post("/project/{project_id}/approve", response_model=dict[str, Any])

@@ -1309,15 +1309,13 @@ ifneq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 endif
 	@echo ""
 	@echo "🗑️  DESTROYING:"
-	@echo "   • EC2 instances (flip, trust)"
-	@echo "   • RDS database (PostgreSQL)"
-	@echo "   • Security groups"
+	@echo "   • RDS database (PostgreSQL) — no final snapshot"
+	@echo "   • EC2 instances (flip, trust), their key pairs and instance role"
+	@echo "   • Security groups and the ALB"
+	@echo "   • SES email templates"
 ifeq ($(filter true,$(PROD) $(PRESERVE_VPC)),)
 	@echo "   • VPC"
 endif
-	@echo "   • ALB/NLB load balancers"
-	@echo "   • IAM roles and policies"
-	@echo "   • CloudWatch logs"
 	@echo ""
 	@bash -c 'read -p "Type '\''yes'\'' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || { echo "Aborted."; exit 1; }'
 	@echo ""
@@ -1348,9 +1346,10 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
-	## Does NOT edit the kit file. The admin populates trust/.env.<KIT> first:
-	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into trust/.env.<KIT>.
-	##   2. `make sync-trust-kit KIT=<slot> PROD=true` (from repo root) — fills Hub-shared.
+	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
+	##   1. register-trusts, sync-trust-kit and generate-xnat-credentials with KIT=<CODE>
+	##      PROD=true fill trust/.env.<CODE>.production;
+	##   2. `cp trust/.env.<CODE>.production trust/.env.<slot>` (<slot> = its FL_KIT_SLOT).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one

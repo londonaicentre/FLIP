@@ -708,7 +708,8 @@ def get_sex_distribution(df: pd.DataFrame) -> dict:
     """
     Returns the distribution of sexes in the DataFrame.
 
-    Assumes the DataFrame has accesion_id, query the table to get the sex distribution.
+    The person's standard Gender concept (8507 male, 8532 female), the CDM's required field, else its
+    optional ``gender_source_value`` for a row whose concept is not one of those two.
 
     Args:
         df (pd.DataFrame): The cohort DataFrame. Must include a ``person_id`` column; otherwise an
@@ -723,12 +724,16 @@ def get_sex_distribution(df: pd.DataFrame) -> dict:
     person_ids = [int(pid) for pid in df["person_id"].unique()]
 
     sex_counts_database_query = text("""
-    SELECT
-    p.gender_source_value,
-    COUNT(*) AS count
-    FROM omop.person p
-    WHERE p.person_id IN :person_ids
-    GROUP BY p.gender_source_value
+    SELECT sex, COUNT(*) AS count
+    FROM (
+        SELECT COALESCE(
+            CASE p.gender_concept_id WHEN 8507 THEN 'M' WHEN 8532 THEN 'F' END,
+            NULLIF(p.gender_source_value, '')
+        ) AS sex
+        FROM omop.person p
+        WHERE p.person_id IN :person_ids
+    ) persons
+    GROUP BY sex
     """).bindparams(bindparam("person_ids", expanding=True))
     sex_counts = get_records(
         query=sex_counts_database_query,
@@ -736,9 +741,7 @@ def get_sex_distribution(df: pd.DataFrame) -> dict:
     )
     return {
         "name": "Sex Distribution",
-        "results": [
-            {"value": row["gender_source_value"], "count": int(row["count"])} for _, row in sex_counts.iterrows()
-        ],
+        "results": [{"value": row["sex"], "count": int(row["count"])} for _, row in sex_counts.iterrows()],
     }
 
 

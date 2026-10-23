@@ -229,7 +229,7 @@ Three developer utilities drive the **running dev stack** end to end (none run i
 - `src/flip_api/scripts/create_demo_users.py` (`make create_demo_users`, `make demo-users` from the repo root —
   runs inside the flip-api container) — provisions the demo users the recorder signs in as in the configured
   identity provider (the local Keycloak realm in development, the Cognito pool in staging/production;
-  `DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` from env, never committed); restart flip-api afterwards so
+  `DEMO_RESEARCHER_PASSWORD` / `DEMO_ADMIN_PASSWORD` / `DEMO_TRUST_ADMIN_PASSWORD` from env, never committed); restart flip-api afterwards so
   boot seeding grants their roles. Before any write it names the target (pool name/region/AWS account, or
   Keycloak realm + URL) and requires an interactive `yes`, so a stale `AWS_COGNITO_USER_POOL_ID` or wrong SSO
   account can't plant a known-password admin in an unintended pool.

@@ -52,6 +52,14 @@ PAIRS=(
   "fl-tutorials/flower/ehr_risk_prediction/app/feature_engineering.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/feature_engineering.py"
   "fl-tutorials/flower/ehr_risk_prediction/app/models.py:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/models.py"
   "fl-tutorials/flower/ehr_risk_prediction/query.sql:fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/query.sql"
+  # The vocabulary-free x-ray cohort query (for dev stacks whose omop.concept holds only the DICOM
+  # vocabulary) ships on both backends as one file. The NVFLARE copy is the reference; resync by
+  # copying it over the Flower copy.
+  "fl-tutorials/flower/xray_classification/query_novocab.sql:fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql"
+  # Every twin pair shares its cohort query byte for byte (fl-tutorials/tests/test_tutorial_catalogue.py):
+  # the x-ray and spleen pairs, nvflare as the reference side.
+  "fl-tutorials/flower/xray_classification/query.sql:fl-tutorials/nvflare/image_classification/xray_classification/query.sql"
+  "fl-tutorials/flower/3d_spleen_segmentation/query.sql:fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/query.sql"
   # The two Ark+ evaluation apps differ only in how many checkpoints they score; their data
   # loading and their flattened model definitions are meant to be the same file -- and they have
   # already drifted once (the Client-API port landed in the baseline copy days before the
