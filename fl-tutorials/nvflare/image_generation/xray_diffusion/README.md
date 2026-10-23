@@ -74,11 +74,11 @@ state carries over between rounds. Gradients are clipped to a global norm of `GR
 `0` turns clipping off). The client then sends back its weight difference.
 
 **Learning rate.** Half a cosine from `LR_START` (0.001) to `LR_END` (5e-05) over the first
-`LR_DECAY_EPOCHS` (200) epochs, then held at `LR_END`. Epochs are counted across rounds (epoch `e`
-of round `r` is epoch `r × LOCAL_ROUNDS + e` of the job), so with the shipped `LOCAL_ROUNDS` of 300
-the decay ends inside the first round.
+`LR_DECAY_EPOCHS` (6) epochs, then held at `LR_END`. Epochs are counted across rounds (epoch `e`
+of round `r` is epoch `r × LOCAL_ROUNDS + e` of the job). The shipped 6 is `GLOBAL_ROUNDS` ×
+`LOCAL_ROUNDS`, so the decay spans the whole job; change it with them.
 
-**Validation.** Every `VALIDATE_EVERY` (5) epochs, and on the last epoch of each round, the trainer
+**Validation.** Every `VALIDATE_EVERY` (3) epochs, and on the last epoch of each round, the trainer
 scores the same noise-prediction loss on the held-out split, and in local runs with
 `"SAVE_DEBUG_SAMPLES": true` generates four sample images. The samples are the real check: the loss
 barely moves between a model that generates radiographs and one that generates texture. Sampling
@@ -95,6 +95,22 @@ with the square of the positions at each attended level (at 256×256 the 32×32 
 then narrow `channels` or drop attention at level 2. Channel counts must be multiples of 32
 (`GroupNorm(32)`), and `spatial_shape` divisible by `2 ** (len(channels) - 1)` (8 here) so the skip
 connections line up; `fl-tutorials/tests/` pins the latter.
+
+## Training for real
+
+The shipped `config.json` runs 2 rounds of 3 epochs, like the other tutorials: enough to run the
+whole job end to end in minutes, not to learn to generate X-rays. We ran it with 2 rounds of 300
+epochs on Ark+ (about 1.9k images per site), the learning rate decaying over the first 200, and
+sample images saved every 25 epochs: they looked like chest X-rays from about epoch 150, much like
+the ones at the top, and the run took 5 h 05 min on one RTX 5090. The settings:
+
+```json
+"GLOBAL_ROUNDS": 2,
+"LOCAL_ROUNDS": 300,
+"LR_DECAY_EPOCHS": 200,
+"VALIDATE_EVERY": 25,
+"SAVE_DEBUG_SAMPLES": true
+```
 
 ## Debugging
 
@@ -138,18 +154,18 @@ make sim DATASET=mini                                   # testing code only
 ### Overriding rounds and clients
 
 `config.json` carries `GLOBAL_ROUNDS` (federated rounds, 2) and `LOCAL_ROUNDS` (local epochs per
-round, 300). Keep the name `LOCAL_ROUNDS`: with a single local-rounds key the FL API requires that
+round, 3). Keep the name `LOCAL_ROUNDS`: with a single local-rounds key the FL API requires that
 exact name and rejects the job otherwise.
 
-`NUM_ROUNDS` (default `1`) and `N_CLIENTS` (default `2`) parameterise `make export` and `make sim`,
+`NUM_ROUNDS` (default `2`) and `N_CLIENTS` (default `2`) parameterise `make export` and `make sim`,
 and propagate through the harness. They are **local knobs only**: on the platform the FL API applies
 `config.json`'s `GLOBAL_ROUNDS` at submit time. The local datasets are split for `site-1` and
 `site-2`, so keep `N_CLIENTS=2` for `make sim`.
 
 ```bash
-make sim NUM_ROUNDS=2
-make export NUM_ROUNDS=2 N_CLIENTS=3
-make -C fl-tutorials run-tutorial TUTORIAL=xray_diffusion NUM_ROUNDS=2
+make sim NUM_ROUNDS=3
+make export NUM_ROUNDS=3 N_CLIENTS=3
+make -C fl-tutorials run-tutorial TUTORIAL=xray_diffusion NUM_ROUNDS=3
 ```
 
 ### On the platform

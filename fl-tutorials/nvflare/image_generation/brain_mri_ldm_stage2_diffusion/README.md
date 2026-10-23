@@ -181,6 +181,22 @@ recipe wires three filters from it, as the FL server does on the platform from t
 It also keeps the autoencoder's all-zero differences out of the clients' `PercentilePrivacy` filter,
 whose cutoff is computed over the whole update.
 
+## Training for real
+
+The shipped `config.json` runs 2 rounds of 3 epochs, like the other tutorials: enough to run the
+whole job end to end, not to learn to generate brains. We trained this tutorial for 5 rounds of 60
+epochs on 321 brain MR studies split between two simulated sites, with the learning rate decaying
+over all 300 epochs and validation every 20; the run took 5 h 15 min on one RTX 5090. The settings:
+
+```json
+"GLOBAL_ROUNDS": 5,
+"LOCAL_ROUNDS": 60,
+"LR_DECAY_EPOCHS": 300,
+"VALIDATE_EVERY": 20
+```
+
+Pin `LATENT_SCALE_FACTOR` for a run like this (see *The latent scale factor*).
+
 ## Debugging
 
 Sample images (one generated volume per sequence, local runs only) and loss curves are described in
@@ -221,13 +237,13 @@ cohort is its own.
 
 ### Overriding rounds and clients
 
-`NUM_ROUNDS` (default `1`) and `N_CLIENTS` (default `2`) parameterise both `make export` and
+`NUM_ROUNDS` (default `2`) and `N_CLIENTS` (default `2`) parameterise both `make export` and
 `make sim`/`make run`, and propagate through the tutorial harness:
 
 ```bash
-make run NUM_ROUNDS=2
-make export NUM_ROUNDS=2 N_CLIENTS=3
-make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage2_diffusion NUM_ROUNDS=2
+make run NUM_ROUNDS=3
+make export NUM_ROUNDS=3 N_CLIENTS=3
+make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage2_diffusion NUM_ROUNDS=3
 ```
 
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API

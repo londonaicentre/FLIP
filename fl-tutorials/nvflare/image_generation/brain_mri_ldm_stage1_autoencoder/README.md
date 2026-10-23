@@ -147,6 +147,22 @@ make weights   # -> app_files/medicalnet_resnet50_23datasets-ff48a622.pth (gitig
 `app_files/medicalnet_perceptual.py` builds the network from MONAI's `ResNetFeatures` and loads that
 file, checking its hash and refusing a partial load.
 
+## Training for real
+
+The shipped `config.json` runs 2 rounds of 3 epochs (`GLOBAL_ROUNDS`, `LOCAL_ROUNDS`), like the
+other tutorials: enough to run the whole job end to end in minutes, far too little to learn to
+reconstruct a brain. The published autoencoder was trained with this tutorial for 10 rounds of 25
+epochs, at the shipped constant learning rate, on 321 brain MR studies (1,284 volumes) split between
+two simulated sites. To train your own, raise the two counts in `config.json`:
+
+```json
+"GLOBAL_ROUNDS": 10,
+"LOCAL_ROUNDS": 25
+```
+
+Its model card, in [`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder),
+gives the full recipe and how the model scores on held-out patients.
+
 ## Debugging
 
 Sample images (tri-planar input vs reconstruction figures) need `"SAVE_DEBUG_SAMPLES": true` and a
@@ -193,13 +209,13 @@ global model included, under `/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/`.
 
 ### Overriding rounds and clients
 
-`NUM_ROUNDS` (default `1`) and `N_CLIENTS` (default `2`) parameterise both `make export` and
+`NUM_ROUNDS` (default `2`) and `N_CLIENTS` (default `2`) parameterise both `make export` and
 `make sim`/`make run`, and propagate through the tutorial harness:
 
 ```bash
-make sim NUM_ROUNDS=2
-make export NUM_ROUNDS=2 N_CLIENTS=3
-make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder NUM_ROUNDS=2
+make sim NUM_ROUNDS=3
+make export NUM_ROUNDS=3 N_CLIENTS=3
+make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder NUM_ROUNDS=3
 ```
 
 > **Local knob only.** `--num_rounds` governs local simulation and export. In production the FL API

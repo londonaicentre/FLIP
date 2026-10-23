@@ -33,7 +33,7 @@ endif
 # via the harness (`make -C fl-tutorials run-tutorial TUTORIAL=xray_diffusion
 # NUM_ROUNDS=10`), or in .env.app. Local only: in production the FL API reads GLOBAL_ROUNDS from
 # config.json at submit time and overrides whatever the recipe baked in.
-NUM_ROUNDS ?= 1
+NUM_ROUNDS ?= 2
 N_CLIENTS ?= 2
 
 # --- Where debug images land (local runs only) ---

@@ -1,7 +1,7 @@
 {
     "job_type": "standard",
-    "GLOBAL_ROUNDS": 3,
-    "LOCAL_ROUNDS": 150,
+    "GLOBAL_ROUNDS": 2,
+    "LOCAL_ROUNDS": 3,
     "LR_START": 0.0001,
     "VAL_SPLIT": 0.2,
     "BATCH_SIZE": 2,
