@@ -17,7 +17,9 @@ frozen. The [index](../README.md) lists the other image-generation tutorials.
 Adapted from MONAI's 3-D latent diffusion example
 ([Project-MONAI/tutorials, `generation/3d_ldm`](https://github.com/Project-MONAI/tutorials/tree/d948baa25946d109556f4304ba999d7c74a97c4d/generation/3d_ldm),
 Apache-2.0; Pinaya *et al.* [2022](https://arxiv.org/abs/2209.07162),
-[2023](https://arxiv.org/abs/2307.15208)). The autoencoder architecture follows its configuration. We
+[2023](https://arxiv.org/abs/2307.15208)). The autoencoder is the configuration of its scripts,
+[`config_train_32g.json`](https://github.com/Project-MONAI/tutorials/blob/d948baa25946d109556f4304ba999d7c74a97c4d/generation/3d_ldm/config/config_train_32g.json),
+unchanged, 8 latent channels included; the example's notebook uses a smaller autoencoder with 3. We
 changed the training for FLIP: federated across sites, all four MR sequences, whole-brain 2 mm
 geometry, and a MedicalNet perceptual loss that loads uploaded weights instead of downloading them.
 
@@ -84,9 +86,9 @@ the FLARE site name); on the platform each trust's cohort is already its own.
 `app_files/models.py` builds two networks from `net_config` in `config.json`, trained and aggregated
 together:
 
-- **`AutoencoderKL`** (20.9 M parameters): an encoder of residual blocks at three resolutions (64,
+- **`AutoencoderKL`** (21.0 M parameters): an encoder of residual blocks at three resolutions (64,
   128 and 256 channels, two blocks per level, no attention) that maps a 96 × 112 × 80 volume to a
-  **3 × 24 × 28 × 20** latent (3 latent channels, about 21 times fewer values), and a mirror-image
+  **8 × 24 × 28 × 20** latent (8 latent channels, 8 times fewer values), and a mirror-image
   decoder that maps it back. The latent is a diagonal Gaussian, as in a variational autoencoder
   (Kingma & Welling 2014), but with a very small KL weight (`W_KL`, 1e-8), so it behaves almost like
   a plain autoencoder while keeping the latent space smooth enough to diffuse in.

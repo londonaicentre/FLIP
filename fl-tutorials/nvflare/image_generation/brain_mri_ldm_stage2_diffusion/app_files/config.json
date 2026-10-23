@@ -32,8 +32,8 @@
     "net_config": {
         "spatial_dims": 3,
         "diffusion_model": {
-            "in_channels": 3,
-            "out_channels": 3,
+            "in_channels": 8,
+            "out_channels": 8,
             "with_conditioning": true,
             "cross_attention_dim": 4,
             "channels": [

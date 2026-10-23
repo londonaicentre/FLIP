@@ -125,8 +125,8 @@ weights did not load; `missing=626, unexpected=130` means none did, which is wha
 MONAI `DiffusionModelUNet`, configured by `net_config` in `app_files/config.json`: 3-D, residual
 blocks at three resolutions (`channels` 64, 128, 256; `num_res_blocks` 2 each), attention at the two
 coarser ones (`attention_levels`), 49.3 M parameters. It denoises latents, so `in_channels` and
-`out_channels` equal the autoencoder's `latent_channels` (3); `models.py` checks this, and that
-`spatial_dims` agrees. A 96 × 112 × 80 volume becomes a 3 × 24 × 28 × 20 latent.
+`out_channels` equal the autoencoder's `latent_channels` (8); `models.py` checks this, and that
+`spatial_dims` agrees. A 96 × 112 × 80 volume becomes an 8 × 24 × 28 × 20 latent.
 
 The UNet is told which sequence it is denoising: a one-hot vector over `MODALITIES` enters through
 cross-attention (`app_files/modality.py`), so one model generates any of the four on demand. Keep

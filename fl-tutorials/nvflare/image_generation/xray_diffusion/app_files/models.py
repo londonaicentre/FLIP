@@ -18,7 +18,7 @@ compressed first and nothing is adversarially trained.
 Because the UNet sees images rather than latents, its ``in_channels``/``out_channels`` are the
 **image** channel count (1 for the single-channel chest X-rays this tutorial uses), not an
 autoencoder's ``latent_channels``. Contrast the latent diffusion tutorial, where the same network
-operates on a 3-channel latent.
+operates on an 8-channel latent.
 """
 
 import json

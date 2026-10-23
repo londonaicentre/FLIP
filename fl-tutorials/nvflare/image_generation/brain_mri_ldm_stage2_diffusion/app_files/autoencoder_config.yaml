@@ -16,7 +16,7 @@ autoencoder:
   - false
   - false
   - false
-  latent_channels: 3
+  latent_channels: 8
   norm_num_groups: 32
   norm_eps: 1.0e-06
   with_encoder_nonlocal_attn: false
