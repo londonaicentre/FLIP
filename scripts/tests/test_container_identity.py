@@ -28,6 +28,8 @@ failure that actually happened rather than a hypothetical:
   "Artifact of type=precompile already registered in mega-cache artifact factory".
 - Prod composes must not override ``user:`` at all: prod runs as the image's
   baked user, and EFS access points remap ownership regardless.
+- Host supplementary groups must require ``DOCKER_GID``: guessing 1000 can leave
+  provisioned keys unreadable or grant a different host group's access (FLIP#1404).
 
 Deliberately stdlib-only and executable as a plain script — ``test_trust_kit_scripts.yml``
 runs these with ``python <file>``, not pytest, and PyYAML is not installed there. The
@@ -241,6 +243,24 @@ def check_no_uname_runtime_paths(failures: list[str]) -> None:
                 )
 
 
+def check_host_gid_is_required(failures: list[str]) -> None:
+    """Never guess the host group that reads provisioned keys and writes shared dev directories."""
+    for glob in ("deploy/**/compose*.yml", "trust/deploy/**/compose*.yml", "fl-services/*/compose*.yml"):
+        paths = sorted(REPO_ROOT.glob(glob))
+        if not paths:
+            failures.append(f"{glob}: matched no compose files")
+        for path in paths:
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if line.lstrip().startswith("#"):
+                    continue
+                for expression in re.findall(r"\$\{DOCKER_GID\b[^}]*\}", line):
+                    if not expression.startswith("${DOCKER_GID:?"):
+                        failures.append(
+                            f"{path.relative_to(REPO_ROOT)}:{number}: {expression} must require a non-empty "
+                            "DOCKER_GID with ${DOCKER_GID:?...}; the Makefile exports the host gid (FLIP#1404)."
+                        )
+
+
 def main() -> int:
     failures: list[str] = []
     try:
@@ -248,6 +268,7 @@ def main() -> int:
         check_user_override_names_the_user(failures)
         check_production_does_not_override_user(failures)
         check_no_uname_runtime_paths(failures)
+        check_host_gid_is_required(failures)
     except ValueError as exc:
         failures.append(str(exc))
 
