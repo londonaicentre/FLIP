@@ -24,8 +24,11 @@ on:
       # The EHR risk-prediction pairs: nvflare is the reference side, flower the copy.
       - "fl-tutorials/nvflare/tabular_classification/**"
       - "fl-tutorials/flower/ehr_risk_prediction/**"
-      - "fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql"
-      - "fl-tutorials/flower/xray_classification/query_novocab.sql"
+      # The x-ray and spleen twin pairs share query.sql (fl-tutorials/tests/test_tutorial_catalogue.py).
+      - "fl-tutorials/nvflare/image_classification/xray_classification/**"
+      - "fl-tutorials/flower/xray_classification/**"
+      - "fl-tutorials/nvflare/image_segmentation/**"
+      - "fl-tutorials/flower/3d_spleen_segmentation/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
   pull_request:
@@ -37,8 +40,11 @@ on:
       # The EHR risk-prediction pairs: nvflare is the reference side, flower the copy.
       - "fl-tutorials/nvflare/tabular_classification/**"
       - "fl-tutorials/flower/ehr_risk_prediction/**"
-      - "fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql"
-      - "fl-tutorials/flower/xray_classification/query_novocab.sql"
+      # The x-ray and spleen twin pairs share query.sql (fl-tutorials/tests/test_tutorial_catalogue.py).
+      - "fl-tutorials/nvflare/image_classification/xray_classification/**"
+      - "fl-tutorials/flower/xray_classification/**"
+      - "fl-tutorials/nvflare/image_segmentation/**"
+      - "fl-tutorials/flower/3d_spleen_segmentation/**"
       - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-apps-check-tutorial-sync.yml"
 

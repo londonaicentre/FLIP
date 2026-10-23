@@ -34,6 +34,8 @@ on:
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
+      # tests/test_tutorial_catalogue.py reads the sync script's PAIRS, so a change there re-runs the suite.
+      - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-tutorials-tests.yml"
   pull_request:
     branches: [main, develop]
@@ -44,6 +46,8 @@ on:
       - "flip-utils/flip/**"
       - "flip-utils/pyproject.toml"
       - "flip-utils/uv.lock"
+      # tests/test_tutorial_catalogue.py reads the sync script's PAIRS, so a change there re-runs the suite.
+      - "scripts/check_tutorial_sync.sh"
       - ".github/workflows/fl-tutorials-tests.yml"
 
 permissions:
