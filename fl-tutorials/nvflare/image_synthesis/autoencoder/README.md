@@ -85,9 +85,11 @@ difference. Per batch:
 2. **Discriminator step.** The discriminator learns to tell real volumes from the (detached)
    reconstructions, with a least-squares adversarial loss scaled by `W_GAN`.
 
-Both steps run under mixed precision; the KL term is computed in float32, because squaring sigma
-overflows float16. Gradients are accumulated over batches of `BATCH_SIZE` to an effective batch of 8
-volumes per optimiser step, and both networks use AdamW.
+The generator step runs under bfloat16 mixed precision and the discriminator step in float32.
+bfloat16 has float32's range, so there is no gradient scaler. Under float16, whose largest value is
+65504, the loss sometimes became NaN in the first iterations: at MONAI's clamp on the latent's
+log-variance, sigma is about 22,000, and the latent passed to the decoder can overflow. The KL term is computed in float32. Gradients are accumulated over batches of
+`BATCH_SIZE` to an effective batch of 8 volumes per optimiser step, and both networks use AdamW.
 
 The learning rate starts at `LR_START`. Add `LR_END` and `LR_DECAY_EPOCHS` to `config.json` to
 decay it along half a cosine over the job's first `LR_DECAY_EPOCHS` epochs, counted across rounds,

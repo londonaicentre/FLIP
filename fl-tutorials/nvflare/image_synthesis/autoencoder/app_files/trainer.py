@@ -41,7 +41,7 @@ from monai.data import DataLoader, Dataset
 from monai.losses import PatchAdversarialLoss
 from monai.metrics import compute_ssim_and_cs
 from nvflare.client.tracking import SummaryWriter
-from torch.amp import GradScaler, autocast
+from torch.amp import autocast
 from transforms import get_brain_mri_transforms
 
 # plot_utils.py is a local-development helper (../dev/): job.py stages it into simulator runs, and it is
@@ -245,7 +245,7 @@ def validate(model: torch.nn.Module, loader: DataLoader, device: torch.device) -
     l1_loss, ssim, first_batch = 0.0, 0.0, {}
     for batch in loader:
         images = batch["image"].to(device)
-        with torch.no_grad(), autocast(enabled=True, device_type=device.type):
+        with torch.no_grad(), autocast(enabled=True, device_type=device.type, dtype=torch.bfloat16):
             reconstruction, _, _ = model.autoencoder(images)
         require_finite({"reconstruction": reconstruction}, "validation")
         if not first_batch:
@@ -375,7 +375,9 @@ class AutoencoderTrainer:
 
             # Generator: the discriminator is frozen so this backward leaves no gradients on it.
             self.model.discriminator.requires_grad_(False)
-            with autocast(enabled=True, device_type=self.device.type):
+            # bfloat16, not float16: it has float32's range, so no GradScaler. float16 tops out at 65504; at MONAI's
+            # clamp on the log-variance sigma is ~22,000, so the latent the decoder receives can pass it: NaN loss.
+            with autocast(enabled=True, device_type=self.device.type, dtype=torch.bfloat16):
                 reconstruction, z_mu, z_sigma = self.model.autoencoder(images)
                 require_finite(
                     {"reconstruction": reconstruction, "z_mu": z_mu, "z_sigma": z_sigma},
@@ -394,11 +396,10 @@ class AutoencoderTrainer:
                 }
                 require_finite(losses, f"the generator loss (epoch {epoch + 1}, iteration {ind})")
                 generator_loss = sum(losses.values())
-            self.scaler_g.scale(generator_loss / accumulation_step).backward()
+            (generator_loss / accumulation_step).backward()
             self.model.discriminator.requires_grad_(True)
             if optimizer_step:
-                self.scaler_g.step(self.optimizer_g)
-                self.scaler_g.update()
+                self.optimizer_g.step()
                 self.optimizer_g.zero_grad(set_to_none=True)
 
             iteration = (global_round * self.epochs + epoch) * len(self.train_loader) + ind
@@ -421,10 +422,9 @@ class AutoencoderTrainer:
                 self.discriminator_logits(images, slice_indices), target_is_real=True, for_discriminator=True
             )
             discriminator_loss = self.w_gan * (fake + real) * 0.5
-            self.scaler_d.scale(discriminator_loss / accumulation_step).backward()
+            (discriminator_loss / accumulation_step).backward()
             if optimizer_step:
-                self.scaler_d.step(self.optimizer_d)
-                self.scaler_d.update()
+                self.optimizer_d.step()
                 self.optimizer_d.zero_grad(set_to_none=True)
 
             totals["generator"] += generator_loss.item()
@@ -438,7 +438,6 @@ class AutoencoderTrainer:
 
     def train(self, writer: SummaryWriter, global_round: int) -> int:
         """One ``train`` task: ``LOCAL_ROUNDS`` epochs. Returns the number of batches trained on."""
-        self.scaler_g, self.scaler_d = GradScaler(), GradScaler()
         for epoch in range(self.epochs):
             step = global_round * self.epochs + epoch + 1
             for optimizer in (self.optimizer_g, self.optimizer_d):
