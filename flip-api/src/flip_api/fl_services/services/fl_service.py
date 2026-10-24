@@ -808,7 +808,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     It uploads the local base application templates and copies the model files to the destination
     bucket. It checks if the destination bucket has any files, and if it does, it deletes them.
 
-    After copying, path-level verification ensures that all expected files are present in the destination bucket.
+    After copying, path-level verification ensures the destination contains exactly the expected files.
 
     Example:
 
@@ -873,7 +873,8 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             every job type, and declares the job_type that selects the base application.
         FileNotFoundError: If required files for the job type are missing.
         RuntimeError: If the required-files manifest lookup returns no files for the job type,
-            i.e. the manifest under FL_APP_BASE_DIR is missing or malformed.
+            i.e. the manifest under FL_APP_BASE_DIR is missing or malformed, or if the completed
+            bundle has missing or unexpected files.
 
     Returns:
         str: The destination bucket S3 path where the bundled application is located.
@@ -1024,9 +1025,10 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             logger.debug(f"Copying model file {src_key} -> {dst_key}")
             s3.copy_object(src_key, dst_key)
 
-    # Path-level verification to ensure all expected files are present in the destination bucket after copying
+    # Verify that the destination contains exactly the files this bundler wrote.
     verify_bundle_paths(
         s3=s3,
+        fl_backend=FLBackend.NVFLARE,
         base_rel_paths=base_rel_paths,
         model_files=model_files,
         app_folders=app_folders,
@@ -1044,6 +1046,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
 
     It uploads the local base application templates and copies the model files to the destination
     bucket. It checks if the destination bucket has any files, and if it does, it deletes them.
+    After copying, it verifies that the destination contains exactly the expected files.
 
     Example:
 
@@ -1085,7 +1088,8 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
             every job type, and declares the job_type that selects the base application.
         FileNotFoundError: If required files for the job type are missing.
         RuntimeError: If the required-files manifest lookup returns no files for the job type,
-            i.e. the manifest under FL_APP_BASE_DIR is missing or malformed.
+            i.e. the manifest under FL_APP_BASE_DIR is missing or malformed, or if the completed
+            bundle has missing or unexpected files.
 
     Returns:
         str: The destination bucket S3 path where the bundled application is located.
@@ -1203,12 +1207,23 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
         logger.debug(f"Copying model file {src_key} -> {dst_key}")
         s3.copy_object(src_key, dst_key)
 
+    verify_bundle_paths(
+        s3=s3,
+        fl_backend=FLBackend.FLOWER,
+        base_rel_paths=base_rel_paths,
+        model_files=model_files,
+        app_folders={flower_app_dir},
+        model_bucket_s3_path=model_bucket_s3_path,
+        dest_bucket_s3_path=dest_bucket_s3_path,
+    )
+
     return dest_bucket_s3_path
 
 
 def verify_bundle_paths(
     *,
     s3: S3Client,
+    fl_backend: FLBackend,
     base_rel_paths: list[str],
     model_files: list[str],
     app_folders: set[str],
@@ -1217,10 +1232,11 @@ def verify_bundle_paths(
     server_checkpoints: set[str] | None = None,
 ) -> None:
     """
-    Verifies that all expected destination keys exist after bundling.
+    Verifies that the destination contains exactly the expected bundle keys.
 
     Args:
         s3 (S3Client): S3 client used to list destination objects.
+        fl_backend (FLBackend): Backend defining where uploaded model files belong.
         base_rel_paths (list[str]): Relative paths of the base application files (relative to the
             local base directory), each mirrored 1:1 into the destination bundle.
         model_files (list[str]): Keys of the user-uploaded model files in the source bucket.
@@ -1228,11 +1244,11 @@ def verify_bundle_paths(
         model_bucket_s3_path (str): Root S3 path of the user model bucket.
         dest_bucket_s3_path (str): Root S3 path of the destination bundle bucket.
         server_checkpoints (set[str] | None): Model-file names diverted to the server-only
-            ``server_checkpoints/`` prefix (evaluation jobs); expected there instead of in
+            ``server_checkpoints/`` prefix (NVFLARE evaluation or training jobs); expected there instead of in
             each ``app*/custom/``.
 
     Raises:
-        RuntimeError: If any expected destination key is missing from the bundle bucket.
+        RuntimeError: If any expected destination key is missing or any unexpected key is present.
     """
 
     # Relative paths of model files
@@ -1245,30 +1261,32 @@ def verify_bundle_paths(
     for rel in base_rel_paths:
         expected.add(f"{dest_bucket_s3_path}/{rel}")
 
-    # meta.json copied once
-    if "meta.json" in model_rel:
+    # NVFLARE copies meta.json once at the root; Flower treats it like any other model file.
+    if fl_backend == FLBackend.NVFLARE and "meta.json" in model_rel:
         expected.add(f"{dest_bucket_s3_path}/meta.json")
 
-    # Model files copied into each app/custom (skip meta.json). Evaluation checkpoints are
-    # diverted once to the server-only `server_checkpoints/` prefix instead of app*/custom/.
+    # NVFLARE model files go into app*/custom/; Flower model files go directly into app/.
     server_checkpoints = server_checkpoints or set()
     for rel in model_rel:
-        if rel == "meta.json":
+        if fl_backend == FLBackend.NVFLARE and rel == "meta.json":
             continue
         if rel in server_checkpoints:
             expected.add(f"{dest_bucket_s3_path}/server_checkpoints/{rel}")
             continue
         for app in app_folders:
-            expected.add(f"{dest_bucket_s3_path}/{app}/custom/{rel}")
+            model_dir = f"{app}/custom" if fl_backend == FLBackend.NVFLARE else app
+            expected.add(f"{dest_bucket_s3_path}/{model_dir}/{rel}")
 
     # List actual destination keys
     actual = set(s3.list_objects(dest_bucket_s3_path))
 
-    # Check for missing files
     missing = expected - actual
-    if missing:
+    unexpected = actual - expected
+    if missing or unexpected:
         raise RuntimeError(
-            f"Bundle verification failed: {len(missing)} missing files. Examples: {sorted(missing)[:10]}"
+            "Bundle verification failed: the destination must contain exactly the expected files. "
+            f"{len(missing)} missing files. Examples: {sorted(missing)[:10]}. "
+            f"{len(unexpected)} unexpected files. Examples: {sorted(unexpected)[:10]}"
         )
 
     logger.info(f"Bundle verification succeeded: {len(expected)} files present.")
