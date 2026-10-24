@@ -211,7 +211,7 @@ def test_validate_client_availability_all_offline(mock_get_status):
         IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
-    with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
+    with pytest.raises(fl_service.ClientAvailabilityError, match="Clients unavailable: trust-1"):
         fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
 
 
@@ -223,7 +223,7 @@ def test_validate_client_availability_some_online(mock_get_status):
     ]
 
     # This has to raise an error for Trust_2 only.
-    with pytest.raises(ValueError, match="Clients unavailable: Trust_2"):
+    with pytest.raises(fl_service.ClientAvailabilityError, match="Clients unavailable: Trust_2"):
         fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
@@ -231,7 +231,7 @@ def test_validate_client_availability_some_online(mock_get_status):
 def test_validate_client_availability_empty_statuses(mock_get_status):
     mock_get_status.return_value = []
 
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
+    with pytest.raises(fl_service.ClientAvailabilityError, match="Unable to fetch client statuses"):
         fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
 
 
@@ -257,10 +257,10 @@ def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_nvflare_still_raises(mock_get_status):
-    """FLARE backend: empty client statuses still raises ValueError."""
+    """FLARE backend: empty client statuses raise a researcher-facing refusal."""
     mock_get_status.return_value = []
 
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
+    with pytest.raises(fl_service.ClientAvailabilityError, match="Unable to fetch client statuses"):
         fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 

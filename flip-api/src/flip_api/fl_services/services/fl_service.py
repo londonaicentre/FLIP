@@ -47,6 +47,10 @@ class UnknownJobTypeError(Exception):
     pass
 
 
+class ClientAvailabilityError(ValueError):
+    """A researcher-facing refusal when required FL clients are unavailable."""
+
+
 # Pre-rename aliases: the Client-API templates originally lived under ``*_client_api`` names and
 # took over the plain names when the legacy Executor templates were retired. Models created before
 # the rename still carry the old string in their uploaded config.json, so the bundlers normalise it
@@ -611,7 +615,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the FL API service to check the status of the clients.
-    For FLARE, raises ValueError if any client is unavailable.
+    For FLARE, raises ClientAvailabilityError if any client is unavailable.
     For Flower, logs a warning instead — Flower's SuperLink handles client selection at runtime.
 
     Args:
@@ -623,7 +627,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
         None
 
     Raises:
-        ValueError: If any client is unavailable (FLARE backend only).
+        ClientAvailabilityError: If client statuses cannot be fetched or any client is unavailable (FLARE only).
     """
     is_flower = fl_backend == FLBackend.FLOWER
 
@@ -633,7 +637,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
             logger.warning(f"No client status response from FL API at {endpoint} — Flower will handle client selection")
             return
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
-        raise ValueError("Unable to fetch client statuses to validate client availability")
+        raise ClientAvailabilityError("Unable to fetch client statuses to validate client availability")
 
     logger.info(f"Client status: {client_statuses}")
 
@@ -643,7 +647,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
         if is_flower:
             logger.warning(f"Clients unavailable: {', '.join(unavailable)} — Flower will handle client selection")
             return
-        raise ValueError(f"Clients unavailable: {', '.join(unavailable)}")
+        raise ClientAvailabilityError(f"Clients unavailable: {', '.join(unavailable)}")
 
 
 def abort_job(endpoint: str, job_id: str) -> dict:
