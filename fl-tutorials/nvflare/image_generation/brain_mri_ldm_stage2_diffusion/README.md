@@ -143,7 +143,9 @@ when asked for T1Gd, because it generates no tumours, and T1Gd differs from T1w 
 enhancing tumour rim. Every training scan has a tumour and the frozen autoencoder reconstructs it,
 but tumours differ in place, size and shape from patient to patient, and the diffusion model learns
 the brain without them: a real tumour latent noised three quarters of the way comes back healthy.
-MONAI's brain MRI diffusion examples sidestep this by generating FLAIR only.
+This is a limit of the recipe, not of latent diffusion: MONAI's `brats_mri_generative_diffusion`
+bundle, FLAIR only, unconditional and configured for 5,000 epochs, does generate tumours (smaller
+and fainter than real ones).
 
 The frozen autoencoder is MONAI `AutoencoderKL`, built from `autoencoder_config.yaml` rather than
 `config.json`, on a submodule named `autoencoder` so the checkpoint's `autoencoder.*` keys land on
