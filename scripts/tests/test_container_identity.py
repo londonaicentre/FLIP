@@ -77,6 +77,12 @@ PROD_COMPOSE_GLOBS = (
 
 IDENTITY_ENV_KEYS = ("HOME", "USER", "LOGNAME")
 
+# Paths the SuperLink and the ServerApp it spawns actually write: the Flower cache under
+# HOME, and the app templates' output dir under WORKING_DIR (default `/app/runs`). Both
+# default into /app, which the image owns as app:app 0755, so a host-uid container has to
+# re-point them or the run dies after its last round (FLIP#1320).
+WRITABLE_PATH_ENV_KEYS = ("HOME", "WORKING_DIR")
+
 
 class Service:
     """One compose service: its name, the lines in its block, and the file it came from."""
@@ -128,12 +134,16 @@ class Service:
         return []
 
     def env_keys(self) -> set[str]:
-        keys = set()
+        return set(self.env_values())
+
+    def env_values(self) -> dict[str, str]:
+        """The service's inline `- KEY=value` environment entries."""
+        values: dict[str, str] = {}
         for line in self.lines:
-            m = re.match(r"\s{6}-\s*([A-Za-z_][A-Za-z0-9_]*)=", line)
+            m = re.match(r"\s{6}-\s*([A-Za-z_][A-Za-z0-9_]*)=(.*?)\s*$", line)
             if m:
-                keys.add(m.group(1))
-        return keys
+                values[m.group(1)] = m.group(2).strip("\"'")
+        return values
 
 
 def parse_services(path: Path) -> list[Service]:
@@ -238,6 +248,12 @@ def check_dev_fl_services_are_non_root(failures: list[str]) -> None:
     shares with flip-api is open to the same thing. The host uid reads the keys as their
     owner; `group_add` with the host gid is the second route, for a kit provisioned under
     a different uid from the one running the stack (FLIP#1320).
+
+    The same services must also point HOME and WORKING_DIR outside /app. Both default
+    into the image tree, which is app:app 0755: left alone, the SuperLink cannot write
+    its ~/.flwr cache and the ServerApp (a subprocess of the SuperLink, so the same uid)
+    finishes every round and then dies at `output_dir.mkdir()` with PermissionError,
+    having uploaded nothing while the hub model still reads RUNNING.
     """
     for rel, names in NON_ROOT_DEV_SERVICES.items():
         path = REPO_ROOT / rel
@@ -278,6 +294,23 @@ def check_dev_fl_services_are_non_root(failures: list[str]) -> None:
                     f"${{DOCKER_GID}}. A hard-coded gid is either the wrong group for the "
                     f"provisioned keys or someone else's group (FLIP#1320)."
                 )
+            env = svc.env_values()
+            for key in WRITABLE_PATH_ENV_KEYS:
+                value = env.get(key)
+                if value is None:
+                    failures.append(
+                        f"{svc.where}: does not set {key}. The image writes it under /app, "
+                        f"which is app:app 0755, so the host uid cannot create it: the "
+                        f"SuperLink's caches and the ServerApp's output dir fail far from "
+                        f"the cause. Point it at /tmp (FLIP#1320)."
+                    )
+                elif value == "/app" or value.startswith("/app/"):
+                    failures.append(
+                        f"{svc.where}: `{key}={value}` is under /app, which the image owns as "
+                        f"app:app 0755. The host uid cannot write there, so setting the "
+                        f"variable is not enough: it has to point somewhere this uid can "
+                        f"create, such as /tmp (FLIP#1320)."
+                    )
 
 
 def check_production_does_not_override_user(failures: list[str]) -> None:

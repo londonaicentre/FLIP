@@ -119,16 +119,24 @@ services:
       - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - NET_ID=net-1
-      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises and HOME
-      # would fall back to '/': the SuperLink's ~/.flwr cache and the ServerApp's torch
-      # caches then fail far from the cause (FLIP#1171). /tmp rather than the image
-      # user's /app on purpose: /app is owned by app:app 0755 (and pip has already put
-      # /app/.cache there at build time), so the host uid cannot write it on any
-      # SuperLink image, including every one published before FLIP#1320. /tmp is 1777
-      # in every image, which keeps this working without a rebuild or a re-pull.
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises and the
+      # image's own HOME (`/app`, baked into flwr/base) is all that is left: the
+      # SuperLink's ~/.flwr cache and the ServerApp's torch caches then fail far from
+      # the cause (FLIP#1171). /tmp rather than the image user's /app on purpose: /app
+      # is owned by app:app 0755 (and pip has already put /app/.cache there at build
+      # time), so the host uid cannot write it on any SuperLink image, including every
+      # one published before FLIP#1320. /tmp is 1777 in every image, which keeps this
+      # working without a rebuild or a re-pull.
       - HOME=/tmp
       - USER=app
       - LOGNAME=app
+      # Same reason, for the other path the apps write: the SuperLink runs the ServerApp
+      # as a subprocess (`--isolation subprocess` is the default), so it inherits this
+      # uid, and the app templates default WORKING_DIR to /app/runs, which this uid
+      # cannot create. Left unset, every run finishes its rounds and then dies at
+      # `output_dir.mkdir()` with PermissionError, having saved and uploaded nothing
+      # while the hub model stays RUNNING (FLIP#1320).
+      - WORKING_DIR=/tmp/runs
       # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
       # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
@@ -235,10 +243,11 @@ services:
       - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - NET_ID=net-2
-      # Same HOME rationale as fl-server-net-1 above.
+      # Same HOME and WORKING_DIR rationale as fl-server-net-1 above.
       - HOME=/tmp
       - USER=app
       - LOGNAME=app
+      - WORKING_DIR=/tmp/runs
       # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
       # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
