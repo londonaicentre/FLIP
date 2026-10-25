@@ -285,7 +285,7 @@ provisioned identity.
 **Privacy filtering of model updates differs by FL backend** (see
 :ref:`fl-update-privacy`):
 
-- **NVIDIA FLARE.** Every app template clips and sparsifies each update before it
+- **NVIDIA FLARE.** Every FLARE training template clips and sparsifies each update before it
   leaves the trust, and an uploaded app's configuration cannot turn this off. It is
   **statistical clipping and sparsification, not formal differential privacy**: there is
   no calibrated noise and no privacy budget. A trust can also enforce its own filter as

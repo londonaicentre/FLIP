@@ -176,7 +176,7 @@ different policies in the same federation, with no hub redeploy.
 How the site policy behaves (verified against FLARE 2.9.0):
 
 - **A job's configuration cannot opt out of it.** FLARE runs site filters *before* the job's own filters, in one
-  chain, and the site filter has no ``off`` switch a job config can set. It also covers jobs whose app has no
+  chain, and the site filter has no ``off`` switch a job's configuration can set. It also covers jobs whose app has no
   filter of its own.
 - **A job's configuration cannot choose a weaker scope.** The policy defines a single default scope, and FLIP
   refuses any job whose ``meta.json`` sets a ``scope``.
