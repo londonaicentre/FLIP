@@ -357,6 +357,10 @@ def test_the_trust_policies_pin_the_environment_and_the_apply_ref() -> None:
     assert locals_["apply_workflow_ref"] == (
         '"${local.workflow_ref_prefix}/${var.apply_workflow_file}@refs/heads/${var.apply_branch}"'
     )
+    # The staging power workflow assumes the same role, from the same branch.
+    assert locals_["power_workflow_ref"] == (
+        '"${local.workflow_ref_prefix}/${var.power_workflow_file}@refs/heads/${var.apply_branch}"'
+    )
     apply = _block(_module_block('data "aws_iam_policy_document" "apply_assume_role"'), "statement")
     assert _conditions(apply) == [
         {
@@ -372,7 +376,7 @@ def test_the_trust_policies_pin_the_environment_and_the_apply_ref() -> None:
         {
             "test": '"StringEquals"',
             "variable": '"token.actions.githubusercontent.com:job_workflow_ref"',
-            "values": "[local.apply_workflow_ref]",
+            "values": "local.apply_workflow_refs",
         },
     ]
 

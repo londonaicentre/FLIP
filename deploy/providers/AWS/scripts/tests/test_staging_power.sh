@@ -113,6 +113,19 @@ ecs:update-service) exit 0 ;;
 ec2:describe-instances)
     if [[ -z "${STUB_EC2_ID:-}" ]]; then exit 0; fi
     if [[ "$*" == *"--instance-ids"* ]]; then
+        # A transient state settles after a fixed number of describes, the way a
+        # real `stopping` instance reaches `stopped` a few minutes later. Without
+        # this the start path could only ever be tested against a frozen world.
+        if [[ -n "${STUB_EC2_SETTLE_AFTER:-}" ]]; then
+            seen=0
+            [[ -f "${AWS_CALL_LOG}.ec2-describes" ]] && seen="$(cat "${AWS_CALL_LOG}.ec2-describes")"
+            seen=$((seen + 1))
+            printf '%s' "${seen}" >"${AWS_CALL_LOG}.ec2-describes"
+            if [[ "${seen}" -gt "${STUB_EC2_SETTLE_AFTER}" ]]; then
+                printf '%s\n' "${STUB_EC2_SETTLED_STATE:-stopped}"
+                exit 0
+            fi
+        fi
         printf '%s\n' "${STUB_EC2_STATE:-running}"
     else
         printf '%s\n' "${STUB_EC2_ID}"
@@ -125,6 +138,17 @@ rds:describe-db-instances)
     # spinning until the deadline.
     [[ -f "${AWS_CALL_LOG}.rds-started" ]] && { printf 'available\n'; exit 0; }
     [[ -n "${STUB_RDS_STATUS:-}" ]] || exit 1
+    # Same settling behaviour as EC2 above: `stopping` becomes `stopped`.
+    if [[ -n "${STUB_RDS_SETTLE_AFTER:-}" ]]; then
+        seen=0
+        [[ -f "${AWS_CALL_LOG}.rds-describes" ]] && seen="$(cat "${AWS_CALL_LOG}.rds-describes")"
+        seen=$((seen + 1))
+        printf '%s' "${seen}" >"${AWS_CALL_LOG}.rds-describes"
+        if [[ "${seen}" -gt "${STUB_RDS_SETTLE_AFTER}" ]]; then
+            printf '%s\n' "${STUB_RDS_SETTLED_STATUS:-stopped}"
+            exit 0
+        fi
+    fi
     printf '%s\n' "${STUB_RDS_STATUS}"
     ;;
 rds:start-db-instance)
@@ -150,6 +174,8 @@ up_world() {
     export STUB_EC2_STATE="running"
     export STUB_RDS_STATUS="available"
     unset STUB_FAIL_ON
+    unset STUB_RDS_SETTLE_AFTER STUB_RDS_SETTLED_STATUS
+    unset STUB_EC2_SETTLE_AFTER STUB_EC2_SETTLED_STATE
 }
 
 down_world() {
@@ -160,6 +186,8 @@ down_world() {
     export STUB_EC2_STATE="stopped"
     export STUB_RDS_STATUS="stopped"
     unset STUB_FAIL_ON
+    unset STUB_RDS_SETTLE_AFTER STUB_RDS_SETTLED_STATUS
+    unset STUB_EC2_SETTLE_AFTER STUB_EC2_SETTLED_STATE
 }
 
 stag_env() {
@@ -506,6 +534,155 @@ HOLD_MINUTES_INPUT="-5" run hold-minutes
 expect_rc 1 "a negative hold is rejected"
 HOLD_MINUTES_VAR="120m" run hold-minutes
 expect_rc 1 "a typo in the repository variable is rejected, not silently defaulted"
+
+# ---------------------------------------------------------------------------
+section "a start that arrives while the previous stop is still settling"
+# ---------------------------------------------------------------------------
+# The normal case for a merge made during a hold window: the stop was issued
+# seconds ago, so RDS reads `stopping` and the hub host reads `stopping`. The
+# start must wait for each to settle and then start it, not log "leaving it to
+# settle" and return with the estate still down.
+up_world
+stag_env
+export WAIT_POLL_SECONDS=0
+export STUB_RDS_STATUS="stopping"
+export STUB_RDS_SETTLE_AFTER=2
+export STUB_RDS_SETTLED_STATUS="stopped"
+export STUB_EC2_STATE="stopping"
+export STUB_EC2_SETTLE_AFTER=2
+export STUB_EC2_SETTLED_STATE="stopped"
+run start-data
+expect_rc 0 "start-data succeeds against an estate that is still stopping"
+expect_called "rds start-db-instance --db-instance-identifier flip-database" \
+    "a stopping RDS is started once it settles at stopped"
+expect_called "ec2 start-instances --instance-ids i-0abcdef1234567890" \
+    "a stopping hub host is started once it settles at stopped"
+expect_stdout "waiting for it to settle before starting" "the wait is explained"
+
+# Settling back to available or running is not a failure and needs no start.
+up_world
+stag_env
+export WAIT_POLL_SECONDS=0
+export STUB_RDS_STATUS="starting"
+export STUB_RDS_SETTLE_AFTER=1
+export STUB_RDS_SETTLED_STATUS="available"
+export STUB_EC2_STATE="pending"
+run start-data
+expect_rc 0 "an estate settling back up is not a failure"
+expect_not_called "start-db-instance" "an RDS that settles at available is not started again"
+
+# A transient state that never settles must fail the start rather than report a
+# running estate: the apply that follows would plan against a stopped database.
+up_world
+stag_env
+export WAIT_SECONDS=0
+export WAIT_POLL_SECONDS=0
+export STUB_RDS_STATUS="stopping"
+export STUB_EC2_STATE="running"
+run start-data
+expect_rc 1 "a transient RDS that never settles fails the start"
+expect_stderr "never started" "the failure says the instance was never started"
+up_world
+stag_env
+unset WAIT_SECONDS
+export WAIT_POLL_SECONDS=0
+
+# ---------------------------------------------------------------------------
+section "a describe that fails is fatal and says so"
+# ---------------------------------------------------------------------------
+# `2>/dev/null` on the describe helpers turned an AccessDenied into an exit with
+# no message, part way through a stop. Every describe path must now name the
+# resource and the CLI's own error.
+for action in stop start-data status; do
+    up_world
+    stag_env
+    export STUB_FAIL_ON="describe-db-instances"
+    run "${action}"
+    expect_rc 1 "${action} fails when the RDS describe is denied"
+    expect_stderr "could not describe" "${action} says which describe failed"
+    expect_stderr "stubbed failure" "${action} keeps the AWS CLI's own error"
+done
+up_world
+stag_env
+
+export STUB_FAIL_ON="describe-services"
+run stop
+expect_rc 1 "stop fails when the ECS describe is denied"
+expect_not_called "update-service" "nothing is scaled on an estate that could not be read"
+unset STUB_FAIL_ON
+
+# The FL gate in terraform_apply.yml reads `status` and releases on
+# fl_stopped=true. A denied describe must therefore never produce that line:
+# reporting the FL services as stopped while they are up would pass an apply that
+# interrupts a training round.
+up_world
+stag_env
+export STUB_FAIL_ON="describe-services"
+run status
+expect_rc 1 "status fails closed when the ECS describe is denied"
+printf '%s' "${STDOUT}" | grep -q "fl_stopped=true" &&
+    no "a denied describe never reports fl_stopped=true" "stdout: ${STDOUT}" ||
+    ok "a denied describe never reports fl_stopped=true"
+printf '%s' "${STDOUT}" | grep -q "stopped=true" &&
+    no "a denied describe never reports the estate as stopped" "stdout: ${STDOUT}" ||
+    ok "a denied describe never reports the estate as stopped"
+unset STUB_FAIL_ON
+
+# ---------------------------------------------------------------------------
+section "the stop summary reports what actually happened"
+# ---------------------------------------------------------------------------
+# It used to hard-code one row per resource reading "stopped", so a stop that
+# left RDS up still rendered a fully stopped estate.
+summary_run() {
+    AWS_CALL_LOG="${TEST_ROOT}/calls-summary-${RANDOM}.log"
+    export AWS_CALL_LOG
+    : >"${AWS_CALL_LOG}"
+    SUMMARY_FILE="${TEST_ROOT}/summary-${RANDOM}.md"
+    : >"${SUMMARY_FILE}"
+    STDOUT="$(GITHUB_ACTIONS=true GITHUB_STEP_SUMMARY="${SUMMARY_FILE}" \
+        bash "${SCRIPT}" "$@" 2>"${TEST_ROOT}/err")"
+    RC=$?
+    STDERR="$(cat "${TEST_ROOT}/err")"
+    SUMMARY="$(cat "${SUMMARY_FILE}")"
+}
+
+expect_summary() {
+    local needle="$1" title="$2"
+    printf '%s' "${SUMMARY}" | grep -qF -- "${needle}" && ok "${title}" ||
+        no "${title}" "summary did not contain: ${needle}" "${SUMMARY}"
+}
+
+expect_not_summary() {
+    local needle="$1" title="$2"
+    printf '%s' "${SUMMARY}" | grep -qF -- "${needle}" &&
+        no "${title}" "summary unexpectedly contained: ${needle}" "${SUMMARY}" || ok "${title}"
+}
+
+up_world
+stag_env
+export STUB_RDS_STATUS="backing-up"
+summary_run stop
+expect_rc 0 "a backing-up RDS still exits 0"
+expect_summary "Staging partly stopped" "the summary headline says the estate is only partly stopped"
+expect_summary "left up" "the RDS row says it was left up"
+expect_not_summary "🌙 Staging stopped" "the summary does not claim a full stop"
+printf '%s' "${STDOUT}" | grep -q "::warning title=Staging RDS left up::" &&
+    ok "an Actions warning annotation is emitted when RDS is left up" ||
+    no "an Actions warning annotation is emitted when RDS is left up" "stdout: ${STDOUT}"
+
+up_world
+stag_env
+summary_run stop
+expect_rc 0 "a full stop exits 0"
+expect_summary "🌙 Staging stopped" "a full stop still reports a full stop"
+expect_summary "available → stopping" "the RDS row reports the transition that was made"
+expect_not_summary "::warning" "no warning annotation on a clean stop"
+
+down_world
+stag_env
+summary_run stop
+expect_summary "already at desired count 0" "a service already at 0 is reported as such, not as a change"
+expect_summary "already stopped" "an already stopped resource is reported as such"
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

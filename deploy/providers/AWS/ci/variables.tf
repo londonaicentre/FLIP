@@ -86,6 +86,12 @@ variable "apply_workflow_file" {
   default     = "terraform_apply.yml"
 }
 
+variable "power_workflow_file" {
+  description = "Staging power workflow (FLIP#1596), which assumes the apply role to stop and start the estate."
+  type        = string
+  default     = "staging_lifecycle.yml"
+}
+
 variable "drift_workflow_file" {
   description = "Scheduled drift-detection workflow, which also plans."
   type        = string

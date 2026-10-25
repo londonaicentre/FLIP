@@ -104,6 +104,17 @@ variable "apply_workflow_file" {
   default     = "terraform_apply.yml"
 }
 
+variable "power_workflow_file" {
+  description = <<-EOT
+    Staging power workflow (FLIP#1596). It assumes the APPLY role, because
+    stopping staging mutates ECS, EC2 and RDS, so its job_workflow_ref has to be
+    trusted by the apply role as well. Staging only: the trust below adds it only
+    when environment == "stag".
+  EOT
+  type        = string
+  default     = "staging_lifecycle.yml"
+}
+
 variable "drift_workflow_file" {
   description = "Scheduled drift-detection workflow, which also plans."
   type        = string

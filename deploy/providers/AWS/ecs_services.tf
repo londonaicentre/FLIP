@@ -114,6 +114,12 @@ resource "aws_ecs_service" "flip_api" {
   # estate's thereafter. The start path sets it (scripts/staging-power.sh start),
   # which is why stopping staging does not need a Terraform change and starting it
   # does not need an apply.
+  #
+  # Unconditional, so it holds in production as well: a prod service scaled by
+  # hand stays where it was put, and is neither restored by an apply nor reported
+  # by drift. Nothing stops production, so no automation moves it, but the
+  # desired count there is now operational state rather than code. README,
+  # "Staging is stopped between deploys".
   lifecycle {
     ignore_changes = [desired_count]
   }
@@ -164,6 +170,12 @@ resource "aws_ecs_service" "fl_api_net_1" {
   # estate's thereafter. The start path sets it (scripts/staging-power.sh start),
   # which is why stopping staging does not need a Terraform change and starting it
   # does not need an apply.
+  #
+  # Unconditional, so it holds in production as well: a prod service scaled by
+  # hand stays where it was put, and is neither restored by an apply nor reported
+  # by drift. Nothing stops production, so no automation moves it, but the
+  # desired count there is now operational state rather than code. README,
+  # "Staging is stopped between deploys".
   lifecycle {
     ignore_changes = [desired_count]
   }
@@ -227,6 +239,12 @@ resource "aws_ecs_service" "fl_server_net_1" {
   # estate's thereafter. The start path sets it (scripts/staging-power.sh start),
   # which is why stopping staging does not need a Terraform change and starting it
   # does not need an apply.
+  #
+  # Unconditional, so it holds in production as well: a prod service scaled by
+  # hand stays where it was put, and is neither restored by an apply nor reported
+  # by drift. Nothing stops production, so no automation moves it, but the
+  # desired count there is now operational state rather than code. README,
+  # "Staging is stopped between deploys".
   lifecycle {
     ignore_changes = [desired_count]
   }

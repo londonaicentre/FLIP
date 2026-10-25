@@ -1793,11 +1793,26 @@ services at 0 would otherwise be reported as drift every night. `ecs_services.tf
 `lifecycle { ignore_changes = [desired_count] }` for the same reason, so the live count belongs to the estate rather
 than to Terraform.
 
+That `ignore_changes` is **unconditional, so it applies to production too**. A production service scaled by hand (or
+by an autoscaler) is no longer put back by an apply, and no longer shows up as drift. Production is never stopped by
+anything here, so nothing scales it down on purpose, but the consequence is that a production desired count is now
+operational state rather than code: change it with `aws ecs update-service`, and expect an apply to leave it alone.
+Setting the count back under Terraform's control means removing the `ignore_changes` and giving the staging stop a
+different mechanism.
+
 **The production refusal.** `flip-cluster`, `flip-database` and `Ec2Instance` are named identically in both estates, so
 a misrouted stop would take production down. `staging_lifecycle.yml` has no `main` trigger, its jobs refuse to run on
 `main`, its environment is the literal `aws-stag`, and `scripts/staging-power.sh` independently checks
 `FLIP_ENVIRONMENT`, `TF_PROD` and the ref before making a single call, with no override flag. Those checks are pinned
 by `scripts/tests/test_staging_power.sh` and `tests/test_staging_lifecycle_workflow.py`.
+
+**The OIDC trust.** The power job runs from `staging_lifecycle.yml`, and `job_workflow_ref` names the reusable
+workflow rather than its caller, so the staging apply role's trust policy lists that file alongside
+`terraform_apply.yml` (`modules/terraform_ci_bootstrap`, `local.apply_workflow_refs`). Staging only: there is no
+production power workflow, and the production apply role still trusts exactly one file. Without that entry the power
+job is refused, and because the apply waits on `start-staging`, every develop apply would be skipped rather than just
+the stop. The platform repository that owns the CI bootstrap therefore has to bump its pinned SHA and apply before
+this lands.
 
 **Checking the state by hand** (read-only, no guard, safe against either estate):
 

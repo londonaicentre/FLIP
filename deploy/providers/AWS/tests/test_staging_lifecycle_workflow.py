@@ -171,3 +171,46 @@ def test_the_fl_gate_is_released_by_a_measurement_not_a_literal() -> None:
         "the measurement must never run on main: production is not stopped by anything, so a true "
         "there could only come from a bug"
     )
+
+
+def test_the_end_to_end_check_declares_the_staging_environment() -> None:
+    """Without it the probe reads an empty address, skips, and the deploy is never verified."""
+    job = _jobs(APPLY)["staging-end-to-end"]
+    assert job["environment"] == "aws-stag", (
+        "LZA_WEB_EDGE_DOMAIN is an aws-stag environment variable, so a job with no environment "
+        "probes nothing and still passes"
+    )
+
+
+def test_the_end_to_end_check_can_fail_the_job() -> None:
+    """A check that renders a cross on the summary and exits 0 is not a check."""
+    steps = _jobs(APPLY)["staging-end-to-end"]["steps"]
+    report = next(step for step in steps if step.get("name") == "Report the result")
+    assert "exit 1" in report["run"], "the report step must fail the job on a failed or skipped verdict"
+    assert report.get("continue-on-error") is not True, "the step that decides the verdict cannot ignore it"
+    # And the stop must still happen whatever that verdict is.
+    stop = _jobs(APPLY)["hold-then-stop-staging"]
+    assert "always()" in stop["if"], "a failed end to end check must not leave staging running"
+
+
+def test_an_apply_cancels_a_sleeping_hold() -> None:
+    """Otherwise a merge during a hold queues behind the whole window and then its stop."""
+    start = _jobs(APPLY)["start-staging"]
+    assert start["concurrency"] == {"group": "stag-hold", "cancel-in-progress": True}, (
+        "the apply must claim the hold's concurrency group so a newer deploy replaces the window"
+    )
+    hold = _jobs(LIFECYCLE)["hold"]
+    assert hold["concurrency"]["group"] == "stag-hold", "both sides have to name the same group"
+
+
+def test_the_staging_apply_role_trusts_the_power_workflow() -> None:
+    """The power job runs from staging_lifecycle.yml, so the apply role has to accept that ref."""
+    module = (REPO_ROOT / "deploy" / "providers" / "AWS" / "modules" / "terraform_ci_bootstrap").resolve()
+    main = (module / "main.tf").read_text()
+    assert "power_workflow_ref" in main, "the staging power workflow needs its own job_workflow_ref local"
+    assert 'var.environment == "stag" ? [local.power_workflow_ref] : []' in main, (
+        "only staging may trust it: there is no production power workflow and there must not be one"
+    )
+    assert "local.apply_workflow_refs" in (module / "iam_apply.tf").read_text(), (
+        "the apply trust policy must use the set, not the single apply ref"
+    )

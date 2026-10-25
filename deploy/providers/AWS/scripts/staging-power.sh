@@ -188,35 +188,72 @@ aws_rw() {
 
 require_aws() { command -v aws >/dev/null 2>&1 || die "the AWS CLI is required"; }
 
+# Every describe goes through here, and a describe that fails is fatal rather
+# than empty.
+#
+# The earlier form was `aws ... 2>/dev/null` under `set -euo pipefail`. That
+# combination has no good outcome: an AccessDenied (the likely one, while the
+# role's permissions are being widened) discarded its own message and aborted the
+# script mid-stop with an empty stderr and exit 254, and the "could not be
+# described" branches that were meant to handle it could never be reached,
+# because the helper never returned. So: keep the CLI's error, say which resource
+# it was about, and refuse to guess the state.
+#
+# `die` here runs inside the caller's command substitution, so it exits that
+# subshell; the non-zero status then propagates through the caller's assignment
+# and `set -e` ends the run. The message is already on stderr by that point.
+describe_or_die() {
+    local what="$1"
+    shift
+    local errfile output status
+    errfile="$(mktemp "${TMPDIR:-/tmp}/staging-power-describe.XXXXXX")"
+    output="$("$@" 2>"${errfile}")" || status=$?
+    status="${status:-0}"
+    if [[ "${status}" -ne 0 ]]; then
+        local detail
+        detail="$(tr '\n' ' ' <"${errfile}" | sed 's/  */ /g; s/ *$//')"
+        rm -f "${errfile}"
+        warn "aws exited ${status} describing ${what}: ${detail:-no error output}"
+        die "could not describe ${what}; refusing to act on a state that was never read."
+    fi
+    rm -f "${errfile}"
+    printf '%s' "${output}"
+}
+
 # Desired count of one service, or the empty string when the service is absent.
 # An absent service is not an error: enable_service_discovery can be off, and a
-# stop that insists on three services would fail on an estate that has two.
+# stop that insists on three services would fail on an estate that has two. A
+# describe that FAILS is a different thing entirely, and is fatal.
 service_desired_count() {
     local service="$1"
-    aws_ro ecs describe-services \
+    describe_or_die "the ECS service ${service}" \
+        aws_ro ecs describe-services \
         --cluster "${ECS_CLUSTER}" --services "${service}" \
-        --query 'services[?status!=`INACTIVE`].desiredCount' --output text 2>/dev/null |
+        --query 'services[?status!=`INACTIVE`].desiredCount' --output text |
         tr -d '[:space:]'
 }
 
 hub_instance_id() {
-    aws_ro ec2 describe-instances \
+    describe_or_die "the EC2 instances tagged Name=${EC2_NAME_TAG}" \
+        aws_ro ec2 describe-instances \
         --filters "Name=tag:Name,Values=${EC2_NAME_TAG}" \
         "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-        --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null |
+        --query 'Reservations[].Instances[].InstanceId' --output text |
         tr '[:space:]' ' ' | sed 's/ *$//'
 }
 
 hub_instance_state() {
     local instance_id="$1"
-    aws_ro ec2 describe-instances --instance-ids "${instance_id}" \
-        --query 'Reservations[].Instances[].State.Name' --output text 2>/dev/null |
+    describe_or_die "the EC2 instance ${instance_id}" \
+        aws_ro ec2 describe-instances --instance-ids "${instance_id}" \
+        --query 'Reservations[].Instances[].State.Name' --output text |
         tr -d '[:space:]'
 }
 
 rds_status() {
-    aws_ro rds describe-db-instances --db-instance-identifier "${RDS_INSTANCE_ID}" \
-        --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null |
+    describe_or_die "the RDS instance ${RDS_INSTANCE_ID}" \
+        aws_ro rds describe-db-instances --db-instance-identifier "${RDS_INSTANCE_ID}" \
+        --query 'DBInstances[0].DBInstanceStatus' --output text |
         tr -d '[:space:]'
 }
 
@@ -229,23 +266,34 @@ do_stop() {
     require_aws
     local failures=0 service count instance_id state status
 
+    # What actually happened, per resource, for the summary. The summary used to
+    # hard-code "stopped" on every row, so a stop that left RDS up reported a
+    # fully stopped estate. Each row below is now written by the branch that did
+    # (or did not do) the thing.
+    STOP_ROWS=()
+    STOP_RDS_LEFT_UP=false
+
     log ""
     log ">> Scaling the ECS services to 0 on ${ECS_CLUSTER}"
     for service in ${ECS_SERVICES}; do
         count="$(service_desired_count "${service}")"
         if [[ -z "${count}" || "${count}" == "None" ]]; then
             log "   ${service}: not present, nothing to scale."
+            STOP_ROWS+=("\`${service}\` (ECS)|not present")
             continue
         fi
         if [[ "${count}" == "0" ]]; then
             log "   ${service}: already at 0."
+            STOP_ROWS+=("\`${service}\` (ECS)|already at desired count 0")
             continue
         fi
         if aws_rw ecs update-service --cluster "${ECS_CLUSTER}" --service "${service}" \
             --desired-count 0 >/dev/null; then
             log "   ${service}: ${count} -> 0."
+            STOP_ROWS+=("\`${service}\` (ECS)|desired count ${count} → 0")
         else
             warn "${service}: update-service failed."
+            STOP_ROWS+=("\`${service}\` (ECS)|❌ update-service failed, still at ${count}")
             failures=$((failures + 1))
         fi
     done
@@ -255,16 +303,22 @@ do_stop() {
     instance_id="$(hub_instance_id)"
     if [[ -z "${instance_id}" ]]; then
         log "   no instance matches, nothing to stop."
+        STOP_ROWS+=("\`${EC2_NAME_TAG}\` (EC2)|no instance matches the tag")
     else
         for id in ${instance_id}; do
             state="$(hub_instance_state "${id}")"
             case "${state}" in
-            stopped | stopping) log "   ${id}: already ${state}." ;;
+            stopped | stopping)
+                log "   ${id}: already ${state}."
+                STOP_ROWS+=("\`${id}\` (EC2)|already ${state}")
+                ;;
             *)
                 if aws_rw ec2 stop-instances --instance-ids "${id}" >/dev/null; then
                     log "   ${id}: ${state:-unknown} -> stopping."
+                    STOP_ROWS+=("\`${id}\` (EC2)|${state:-unknown} → stopping")
                 else
                     warn "${id}: stop-instances failed."
+                    STOP_ROWS+=("\`${id}\` (EC2)|❌ stop-instances failed, still ${state:-unknown}")
                     failures=$((failures + 1))
                 fi
                 ;;
@@ -276,44 +330,77 @@ do_stop() {
     log ">> Stopping RDS ${RDS_INSTANCE_ID}"
     status="$(rds_status)"
     case "${status}" in
-    "" | None) warn "${RDS_INSTANCE_ID} could not be described, leaving it alone."; failures=$((failures + 1)) ;;
-    stopped | stopping) log "   already ${status}." ;;
+    None)
+        warn "${RDS_INSTANCE_ID} has no status, leaving it alone."
+        STOP_ROWS+=("\`${RDS_INSTANCE_ID}\` (RDS)|❌ no status reported, left alone")
+        STOP_RDS_LEFT_UP=true
+        failures=$((failures + 1))
+        ;;
+    stopped | stopping)
+        log "   already ${status}."
+        STOP_ROWS+=("\`${RDS_INSTANCE_ID}\` (RDS)|already ${status}")
+        ;;
     available)
         if aws_rw rds stop-db-instance --db-instance-identifier "${RDS_INSTANCE_ID}" >/dev/null; then
             log "   available -> stopping."
+            STOP_ROWS+=("\`${RDS_INSTANCE_ID}\` (RDS)|available → stopping")
         else
             warn "stop-db-instance failed."
+            STOP_ROWS+=("\`${RDS_INSTANCE_ID}\` (RDS)|❌ stop-db-instance failed, still available")
+            STOP_RDS_LEFT_UP=true
             failures=$((failures + 1))
         fi
         ;;
     *)
         # backing-up, modifying, starting: a stop would be rejected, and retrying
         # here would hold the job for an unbounded time. The nightly guard runs
-        # again in under a day and finds it settled.
+        # again in under a day and finds it settled. Not a failure, but not a
+        # stopped database either, so it is reported as what it is — including as
+        # an Actions warning annotation, because the cost of this case is a
+        # database running until 03:30 and nobody reading the log.
         warn "${RDS_INSTANCE_ID} is '${status}', which cannot be stopped now. The nightly guard will retry."
+        annotate_warning "Staging RDS left up" \
+            "${RDS_INSTANCE_ID} was '${status}', which cannot be stopped. It is still running; the nightly guard retries at 03:30 UTC."
+        STOP_ROWS+=("\`${RDS_INSTANCE_ID}\` (RDS)|⚠️ '${status}', cannot be stopped now — left up")
+        STOP_RDS_LEFT_UP=true
         ;;
     esac
 
     log ""
     if [[ "${failures}" -gt 0 ]]; then
+        summarise_stop
         die "${failures} stop action(s) failed; staging may still be partly up."
     fi
-    log "✅ Staging stop requested. ECS at 0, EC2 stopping, RDS stopping."
+    if [[ "${STOP_RDS_LEFT_UP}" == "true" ]]; then
+        log "⚠️  Staging stop requested, but ${RDS_INSTANCE_ID} is still up. ECS is at 0."
+    else
+        log "✅ Staging stop requested. ECS at 0, EC2 stopping, RDS stopping."
+    fi
     summarise_stop
+}
+
+# A GitHub warning annotation, when there is a GitHub to annotate.
+annotate_warning() {
+    local title="$1" message="$2"
+    [[ -n "${GITHUB_ACTIONS:-}" ]] || return 0
+    printf '::warning title=%s::%s\n' "${title}" "${message}"
 }
 
 summarise_stop() {
     [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
+    local row
     {
-        echo "### 🌙 Staging stopped"
+        if [[ "${STOP_RDS_LEFT_UP:-false}" == "true" ]]; then
+            echo "### ⚠️ Staging partly stopped"
+        else
+            echo "### 🌙 Staging stopped"
+        fi
         echo
         echo "| Resource | Action |"
         echo "| --- | --- |"
-        for service in ${ECS_SERVICES}; do
-            echo "| \`${service}\` | desired count 0 |"
+        for row in "${STOP_ROWS[@]+"${STOP_ROWS[@]}"}"; do
+            echo "| ${row%%|*} | ${row#*|} |"
         done
-        echo "| \`${EC2_NAME_TAG}\` (EC2) | stopped |"
-        echo "| \`${RDS_INSTANCE_ID}\` (RDS) | stopped |"
         echo
         echo "Start it again with the \`start-stag\` dispatch of \`staging_lifecycle.yml\`,"
         echo "or by merging to \`develop\`, which starts it first."
@@ -344,6 +431,21 @@ wait_for() {
 
 rds_is_available() { [[ "$(rds_status)" == "available" ]]; }
 
+# Settled means "a start would be accepted or is unnecessary": stopped, or
+# already available. `stopping` and `starting` are the transient states that a
+# start cannot act on.
+rds_is_settled() {
+    local status
+    status="$(rds_status)"
+    [[ "${status}" == "stopped" || "${status}" == "available" ]]
+}
+
+ec2_is_settled() {
+    local state
+    state="$(hub_instance_state "$1")"
+    [[ "${state}" == "stopped" || "${state}" == "running" ]]
+}
+
 # The start path is split in two because the apply needs it split (FLIP#1596).
 #
 #   start-data      RDS and the hub host, and the wait for RDS. Terraform
@@ -361,6 +463,22 @@ rds_is_available() { [[ "$(rds_status)" == "available" ]]; }
 
 FAILURES=0
 
+start_rds_now() {
+    aws_rw rds start-db-instance --db-instance-identifier "${RDS_INSTANCE_ID}" >/dev/null ||
+        die "start-db-instance failed for ${RDS_INSTANCE_ID}"
+    log "   stopped -> starting."
+}
+
+start_ec2_now() {
+    local id="$1"
+    if aws_rw ec2 start-instances --instance-ids "${id}" >/dev/null; then
+        log "   ${id}: stopped -> pending."
+    else
+        warn "${id}: start-instances failed."
+        FAILURES=$((FAILURES + 1))
+    fi
+}
+
 start_data() {
     local status instance_id state id
 
@@ -368,16 +486,35 @@ start_data() {
     log ">> Starting RDS ${RDS_INSTANCE_ID}"
     status="$(rds_status)"
     case "${status}" in
-    "" | None)
-        die "${RDS_INSTANCE_ID} could not be described; nothing here can start it."
+    None)
+        die "${RDS_INSTANCE_ID} reports no status; nothing here can start it."
         ;;
     available) log "   already available." ;;
     stopped)
-        aws_rw rds start-db-instance --db-instance-identifier "${RDS_INSTANCE_ID}" >/dev/null ||
-            die "start-db-instance failed for ${RDS_INSTANCE_ID}"
-        log "   stopped -> starting."
+        start_rds_now
         ;;
-    *) log "   currently '${status}', waiting for it to settle." ;;
+    *)
+        # `stopping` is the normal case, not an edge: a merge made during a hold
+        # window arrives seconds after the previous run issued its stop, and RDS
+        # takes minutes to settle. Logging "waiting for it to settle" and then
+        # never starting anything meant that merge's apply was skipped after the
+        # full wait timed out. So wait for the transient state to end, then act
+        # on what it ended at.
+        log "   currently '${status}', waiting for it to settle before starting."
+        if [[ "${DRY_RUN}" == "true" ]]; then
+            log "   DRY RUN: not waiting for it to settle."
+        elif wait_for "RDS ${RDS_INSTANCE_ID} to settle" rds_is_settled; then
+            status="$(rds_status)"
+            if [[ "${status}" == "stopped" ]]; then
+                start_rds_now
+            else
+                log "   settled at '${status}'."
+            fi
+        else
+            warn "RDS ${RDS_INSTANCE_ID} was still '${status}' after ${WAIT_SECONDS}s; it was never started."
+            FAILURES=$((FAILURES + 1))
+        fi
+        ;;
     esac
 
     log ""
@@ -390,15 +527,26 @@ start_data() {
             state="$(hub_instance_state "${id}")"
             case "${state}" in
             running | pending) log "   ${id}: already ${state}." ;;
-            stopped)
-                if aws_rw ec2 start-instances --instance-ids "${id}" >/dev/null; then
-                    log "   ${id}: stopped -> pending."
+            stopped) start_ec2_now "${id}" ;;
+            *)
+                # Same reasoning as RDS above: `stopping` is where a merge during
+                # a hold finds the host, and leaving it to settle meant leaving it
+                # stopped.
+                log "   ${id}: '${state}', waiting for it to settle before starting."
+                if [[ "${DRY_RUN}" == "true" ]]; then
+                    log "   DRY RUN: not waiting for it to settle."
+                elif wait_for "EC2 ${id} to settle" ec2_is_settled "${id}"; then
+                    state="$(hub_instance_state "${id}")"
+                    if [[ "${state}" == "stopped" ]]; then
+                        start_ec2_now "${id}"
+                    else
+                        log "   ${id}: settled at '${state}'."
+                    fi
                 else
-                    warn "${id}: start-instances failed."
+                    warn "${id}: still '${state}' after ${WAIT_SECONDS}s; it was never started."
                     FAILURES=$((FAILURES + 1))
                 fi
                 ;;
-            *) log "   ${id}: '${state}', leaving it to settle." ;;
             esac
         done
     fi

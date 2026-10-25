@@ -118,11 +118,22 @@ jobs:
   # rather than a sleeping database. This also restores the ECS desired counts,
   # which the apply itself no longer does now that ecs_services.tf ignores them.
   #
-  # Idempotent on an estate that is already up, so a merge during a hold window
-  # costs one describe call per resource and nothing else.
+  # Idempotent on an estate that is already up, so a start against a running
+  # estate costs one describe call per resource and nothing else. A merge made
+  # while a hold is sleeping is not that case: the workflow-level
+  # `tf-apply-<ref>` group has `cancel-in-progress: false`, so the new run would
+  # otherwise queue behind the whole hold and its stop, and then start an estate
+  # that is still stopping. Claiming `stag-hold` here cancels the sleeping hold
+  # before the merge waits on it, which is also the right outcome on its own
+  # terms: the hold's purpose is to keep staging up after a deploy, and a newer
+  # deploy supersedes it. The hold-then-stop job at the end of this run opens a
+  # fresh window.
   start-staging:
     name: Start staging before the apply
     if: github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
+    concurrency:
+      group: stag-hold
+      cancel-in-progress: true
     uses: ./.github/workflows/staging_lifecycle.yml
     permissions:
       contents: read
@@ -517,11 +528,20 @@ jobs:
     needs: [apply, restore-staging-services]
     if: github.ref_name != 'main' && needs.apply.result == 'success' && vars.TF_STAG_DISABLED != 'true'
     runs-on: ubuntu-latest
+    # Required, not cosmetic. LZA_WEB_EDGE_DOMAIN is an aws-stag environment
+    # variable, not a repository one, so a job with no environment reads it as
+    # empty, skips the probe and reports a warning annotation nobody reads. The
+    # whole check then passes without having checked anything. Hard-coded rather
+    # than a ternary for the same reason as staging_lifecycle.yml: nothing here
+    # should be able to select aws-prod.
+    environment: aws-stag
     permissions:
       contents: read
     steps:
       - name: Probe the deployed hub
         id: probe
+        # The probe itself is allowed to fail so that the report step below runs
+        # and renders the summary; the report step is what sets the job's result.
         continue-on-error: true
         env:
           # Set STAGING_HEALTH_URL to point the check somewhere specific;
@@ -566,7 +586,7 @@ jobs:
           set -euo pipefail
           case "${VERDICT:-failed}" in
             passed)  icon="✅"; text="The deployed hub answered (HTTP ${STATUS})." ;;
-            skipped) icon="⏭️"; text="No address configured, so nothing was probed. Set the repository variable STAGING_HEALTH_URL." ;;
+            skipped) icon="⏭️"; text="No address configured, so nothing was probed. Set STAGING_HEALTH_URL or LZA_WEB_EDGE_DOMAIN on the aws-stag environment." ;;
             *)       icon="❌"; text="The deployed hub did not answer (last status ${STATUS:-none})." ;;
           esac
           {
@@ -577,6 +597,23 @@ jobs:
             echo "Staging now enters its hold window; it stops when the window ends."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "${icon} ${text}"
+
+          # The job's verdict. A check that renders ❌ on the summary and still
+          # exits 0 is not a check, and "skipped" is a failure too: it means the
+          # deploy was never verified, which is indistinguishable from a silent
+          # misconfiguration of the address. hold-then-stop-staging runs under
+          # `always()`, so failing here never leaves staging up.
+          case "${VERDICT:-failed}" in
+            passed) ;;
+            skipped)
+              echo "::error title=End to end check not run::Neither STAGING_HEALTH_URL nor LZA_WEB_EDGE_DOMAIN is set on aws-stag, so the deploy was not verified."
+              exit 1
+              ;;
+            *)
+              echo "::error title=End to end check failed::The deployed hub did not answer (last status ${STATUS:-none})."
+              exit 1
+              ;;
+          esac
 
   # The hold, then the stop. `needs` the end to end job but not its verdict: a
   # failed probe must not leave staging running indefinitely, which is the state
