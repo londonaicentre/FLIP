@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.40.0-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.42.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
 WORKDIR /app
@@ -49,10 +49,9 @@ COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
 # No cryptography pin: flwr>=1.40 requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf.
-# pip does not apply flip-utils' UV constraints; carry its security floors here too: setuptools, and certifi
-# and uv (GHSA-6q48-6c7w-9gw2, GHSA-hq85-5cpj-mr62), which flwr/base ships and flwr pins below the uv fix.
+# No certifi or uv pin either: flwr>=1.42 requires certifi>=2026.10.19 and uv>=0.13.5 (GHSA-6q48-6c7w-9gw2,
+# GHSA-hq85-5cpj-mr62). pip does not apply flip-utils' UV constraints; carry its setuptools floor here.
 RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=83.0.0" \
-      "certifi>=2026.10.19" "uv>=0.13.4" \
       --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
