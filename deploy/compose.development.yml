@@ -304,7 +304,7 @@ services:
       # rather than at the first presign (botocore InvalidRegionError → 500).
       - AWS_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       # Object storage is the RustFS service above (FLIP#1291), reached through boto3's
-      # native endpoint env — the production composes point the same variable at the
+      # native endpoint env — the prod composes point the same variable at the
       # regional S3 endpoint. The fl-api's BUNDLE_URL_ALLOWED_ORIGINS
       # (compose.development.<backend>.yml) names this same origin, because bundle URLs
       # are presigned against it and the fl-api admits nothing else.
@@ -418,7 +418,7 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
-    # pgadmin (dev-only; not in the production compose) starts as root and drops
+    # pgadmin (dev-only; not in the prod compose) starts as root and drops
     # to the pgadmin user via sudo in its entrypoint. That is incompatible with
     # no-new-privileges + cap_drop:ALL (sudo can't run, the setuid drop fails and
     # the container crash-loops with exit 126). Left unhardened intentionally — it

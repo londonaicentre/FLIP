@@ -38,6 +38,7 @@ from fl_api.utils.prepare_config import (
     configure_server,
     validate_config,
 )
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
 from fl_api.utils.validation import safe_join, validate_bundle_url
 
@@ -155,8 +156,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         upload_dir (str): directory where the application will be uploaded (session's upload dir.)
     Raises:
         HTTPException: if the application fails to upload, an error is raised.
-        FileNotFoundError: if the application path is not found, an error is raised.
-        ValueError: if the bundle has no ``app`` folder, or its meta.json holds something FLIP refuses.
+        ResearcherRefusal: If required config/metadata is missing, the bundle has no ``app`` folder,
+            or its meta.json is invalid.
+        ValueError: If the operator's default GPU count is invalid.
     Returns:
         dict[str, Any]: a success message naming where the application was uploaded, the GPU count written into
         meta.json (``resources``) and where it came from (``resources_source``: submission, meta.json or default;
@@ -276,7 +278,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     # FLIP deploys "app" to the server and every selected trust (configure_meta). A job cannot name the trusts'
     # sites, so app_* variants alone leave nothing to deploy.
     if "app" not in app_folder_names:
-        raise ValueError(
+        raise ResearcherRefusal(
             f"The application has no app/ folder (found {sorted(app_folder_names)}). FLIP deploys app/ to the "
             "server and every selected trust."
         )
@@ -291,7 +293,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 " multiple app sub-folders indicating different behaviors per site."
             )
             logger.error(error_message)
-            raise FileNotFoundError(error_message)
+            raise ResearcherRefusal(error_message, status_code=404)
 
     # A federated learning job consists of, at least, a CONFIG and CUSTOM folder. Within CONFIG, two files,
     # config_fed_server.json and config_fed_client.json. Within custom, all uploaded files. In addition to
@@ -308,7 +310,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         try:
             raw_meta = read_config(meta_json_path)
         except json.JSONDecodeError as e:
-            raise ValueError(f"meta.json is not valid JSON: {e}") from e
+            raise ResearcherRefusal(f"meta.json is not valid JSON: {e}") from e
         job_meta = parse_job_meta(raw_meta)
     resources, resources_source = resolve_job_resources(
         override=body.resources,

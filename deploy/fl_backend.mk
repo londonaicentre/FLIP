@@ -68,4 +68,10 @@ abs_or_relative_to = $(abspath $(if $(filter /%,$(1)),$(1),$(2)/$(1)))
 # DOCKER_FL_REGISTRY=`) wins.
 DOCKER_FL_REGISTRY ?= $(DOCKER_REGISTRY)
 
+# Tag of the locally-built FL images (`make build-fl`) and of the standalone
+# fl-services/<backend> stacks: DOCKER_FL_TAG when given on the command line, else
+# dev. The env file's DOCKER_FL_TAG is the GHCR pull tag (stag), not a build tag.
+# A non-dev tag keeps an isolated instance's build off the daemon-wide :dev images.
+FL_BUILD_TAG := $(if $(filter command line,$(origin DOCKER_FL_TAG)),$(DOCKER_FL_TAG),dev)
+
 export DOCKER_FL_API_NAME DOCKER_FL_SERVER_NAME DOCKER_FL_CLIENT_NAME FL_PROVISIONED_DIR FL_JOBS_DIR DOCKER_FL_REGISTRY

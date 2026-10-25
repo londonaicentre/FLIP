@@ -33,7 +33,7 @@ FL_KIT_DIR="${FLIP_FL_KIT_DIR:-${FLIP_DIR}/fl-kit}"
 source "${NODE_ENV}"
 
 usage() {
-    echo "usage: flip-node provision [REF] | reprovision [REF] | status | fetch-kit NAME.tar.gz | selftest nvflare|flower | join NAME.tar.gz KIT PROD | logs UNIT [LINES] | report nvflare|flower" >&2
+    echo "usage: flip-node provision [REF] | reprovision [REF] | status | fetch-kit NAME.tar.gz | selftest nvflare|flower | join NAME.tar.gz KIT HUB | logs UNIT [LINES] | report nvflare|flower" >&2
     exit 2
 }
 
@@ -218,10 +218,10 @@ stage_fl_kit() {
     fi
 }
 
-check_join_args() { # NAME KIT PROD
-    if ! [[ "${2:-}" =~ ^[A-Za-z0-9_]+$ ]] || ! [[ "${3:-}" =~ ^[a-z-]+$ ]] ||
+check_join_args() { # NAME KIT HUB
+    if ! [[ "${2:-}" =~ ^[A-Za-z0-9_]+$ ]] || ! [[ "${3:-}" =~ ^(stag|prod)$ ]] ||
         ! [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.tar\.gz$ ]]; then
-        echo "usage: flip-node join NAME.tar.gz KIT PROD (e.g. join flip-trust-kit-AZ1-20261009.tar.gz AZ1 lza-stag)" >&2
+        echo "usage: flip-node join NAME.tar.gz KIT HUB (e.g. join flip-trust-kit-AZ1-20261009.tar.gz AZ1 stag)" >&2
         exit 2
     fi
 }
@@ -229,23 +229,23 @@ check_join_args() { # NAME KIT PROD
 # Install a hub-registered kit (package-onprem-trust-kit's tarball, via the kit drop) and bring
 # the trust up through the on-prem verb, whose checklist gates the start.
 run_join() {
-    local name="$1" kit="$2" prod="$3" src backend kit_file
+    local name="$1" kit="$2" hub="$3" src backend kit_file
     fetch_kit "${name}"
     src="${FLIP_DIR}/kits/${name%.tar.gz}"
-    if [ ! -f "${src}/.env.${kit}" ] || [ ! -d "${src}/fl-kit/net-1" ]; then
-        echo "ERROR: ${name} has no .env.${kit} and fl-kit/; is KIT the code it was packaged for?" >&2
+    if [ ! -f "${src}/.env.${kit}.${hub}" ] || [ ! -d "${src}/fl-kit/net-1" ]; then
+        echo "ERROR: ${name} has no .env.${kit}.${hub} and fl-kit/; is KIT the code it was packaged for?" >&2
         exit 1
     fi
-    backend="$(sed -n 's/^FL_BACKEND=//p' "${src}/.env.${kit}" | tail -1)"
+    backend="$(sed -n 's/^FL_BACKEND=//p' "${src}/.env.${kit}.${hub}" | tail -1)"
     case "${backend}" in
         nvflare | flower) ;;
         *)
-            echo "ERROR: .env.${kit} names no FL_BACKEND (nvflare or flower)." >&2
+            echo "ERROR: .env.${kit}.${hub} names no FL_BACKEND (nvflare or flower)." >&2
             exit 1
             ;;
     esac
-    kit_file="${REPO_DIR}/trust/.env.${kit}"
-    install -m 0600 "${src}/.env.${kit}" "${kit_file}"
+    kit_file="${REPO_DIR}/trust/.env.${kit}.${hub}"
+    install -m 0600 "${src}/.env.${kit}.${hub}" "${kit_file}"
     echo "${kit}" > "${JOINED_MARKER}"
     # The node's own settings go last so they win over the template's (the kit file is make syntax).
     cat >> "${kit_file}" <<NODE
@@ -260,7 +260,7 @@ BASE_IMAGES_DOWNLOAD_DIR=${FLIP_DIR}/data/images
 XNAT_DATA_DIR=${FLIP_DIR}/xnat
 NODE
     stage_fl_kit "${backend}" "${src}/fl-kit"
-    make -C "${REPO_DIR}" up-onprem-trust "KIT=${kit}" "PROD=${prod}"
+    make -C "${REPO_DIR}" up-onprem-trust "KIT=${kit}" "HUB=${hub}"
 }
 
 start_unit() {

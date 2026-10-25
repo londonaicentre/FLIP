@@ -1,0 +1,137 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# ROLE (FLIP#936): FLARE overlay of the local prod-image harness (see the note in
+# compose.prod.yml) — not a deployment target. The canonical production FL task definitions live in
+# deploy/providers/AWS/ecs_tasks.tf, whose FLARE branch (fl_backend=nvflare) mirrors this overlay.
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+# No `container_name` here either — see the header of compose.prod.yml. Container names come
+# from the compose project (`deploy-fl-server-net-1-1`); the service KEYS are load-bearing and must
+# not be renamed: every provisioned client kit pins the server by name (`fed_client.json` carries
+# `"target": "fl-server-net-1:8002"`, and the name is a SAN in the provisioned certificates), and
+# `fl-api-net-<N>` is what NET_ENDPOINTS dials. The `/opt/flip/services/flip-fl-api-net-1/…` bind
+# mounts below are unrelated — those are directory names in the provisioned FLARE kit layout.
+services:
+  #################### CENTRAL HUB FL ####################
+
+  fl-api-net-1:
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    environment:
+      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      # Origin allow-list for the server-side bundle fetch (FLIP#905, #1291): the only origin the FL API
+      # may download an app bundle from. flip-api pins AWS_ENDPOINT_URL_S3 to the regional
+      # endpoint (see its service block), which makes boto3 presign PATH-STYLE URLs — host
+      # exactly s3.<region>.amazonaws.com, bucket in the path — so the same AWS_REGION derives
+      # the one origin to admit. The two lines must move together, or every bundle download 400s.
+      # `:?` mirrors flip-api's guard so a missing region fails at `up`, not at the first run.
+      - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
+      # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
+      - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # GPUs written into the meta.json resource_spec of a job that declares none (configure_meta).
+      # Default 0 => empty resource_spec => FLARE hides the GPU from the training worker (CPU).
+      - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
+    ports:
+      - "${FL_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    volumes:
+      # Provisioned FLARE admin secrets (certificates, fed_admin.json)
+      - /opt/flip/services/flip-fl-api-net-1/local:/app/admin/local
+      - /opt/flip/services/flip-fl-api-net-1/startup:/app/admin/startup
+      # Shared with fl-server-net-1: the FL API writes de-bundled eval checkpoints here; the
+      # fl-server reads them from disk. The checkpoint is never bundled into the FLARE job,
+      # so it is never deployed to clients (mirrors the Flower backend's /app/src mount).
+      - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
+    depends_on:
+      - fl-server-net-1
+    restart: unless-stopped
+
+  # TODO add second FL network when needed
+  # fl-api-net-2:
+  #   image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+  #   environment:
+  #     - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+  #     - BUNDLE_URL_ALLOWED_ORIGINS=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
+  #   volumes:
+  #     # Provisioned FLARE admin secrets (certificates, fed_admin.json)
+  #     - /opt/flip/services/flip-fl-api-net-2/local:/app/admin/local
+  #     - /opt/flip/services/flip-fl-api-net-2/startup:/app/admin/startup
+  #   depends_on:
+  #     - fl-server-net-2
+  #   restart: unless-stopped
+
+  fl-server-net-1:
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned FLARE secrets (certificates, fed_server.json)
+      - /opt/flip/services/fl-server-net-1/local:/app/local
+      - /opt/flip/services/fl-server-net-1/startup:/app/startup
+      - /opt/flip/services/fl-server-net-1/transfer:/app/transfer
+      # Shared with fl-api-net-1: de-bundled eval checkpoints staged by the FL API are read
+      # from here by the fl-server. The checkpoint is never in the FLARE job, so it is never
+      # deployed to clients (mirrors the Flower backend's /app/src mount). If the fl-server runs
+      # as a separate ECS task in cloud prod, this needs a shared EFS mount (same as Flower).
+      - ${FL_JOBS_DIR}/net-1:/app/server-checkpoints
+    ports:
+      - "${FL_SERVER_PORT}:8002"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      # The container runs as root, but the provisioned FLARE kit under
+      # /opt/flip/services is bind-mounted with 0600 keys owned by the provisioning
+      # uid. cap_drop: ALL strips root's implicit DAC bypass, so DAC_OVERRIDE is
+      # needed to read keys it does not own; the entrypoint also chmods kit scripts
+      # it does not own (FOWNER). Without these the container crash-loops (FLIP#485).
+      - DAC_OVERRIDE
+      - FOWNER
+    environment:
+      - NET_ID=net-1
+      - LOCAL_DEV=false
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
+      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+      - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
+    restart: unless-stopped
+    init: true
+
+  # TODO add second FL network when needed
+  # fl-server-net-2:
+  #   image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+  #   volumes:
+  #     # Provisioned FLARE secrets (certificates, fed_server.json)
+  #     - /opt/flip/services/fl-server-net-2/local:/app/local
+  #     - /opt/flip/services/fl-server-net-2/startup:/app/startup
+  #     - /opt/flip/services/fl-server-net-2/transfer:/app/transfer
+  #   environment:
+  #     - NET_ID=net-2
+  #     - LOCAL_DEV=false
+  #     - IMAGES_DIR=/app/data/images
+  #     - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+  #     - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
+  #     - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+  #     - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+  #     # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
+  #   restart: unless-stopped
+  #   init: true

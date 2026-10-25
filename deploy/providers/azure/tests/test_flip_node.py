@@ -335,7 +335,7 @@ def test_run_selftest_stops_when_no_kit_was_delivered(tmp_path):
 
 
 def _join_kit(tmp_path: Path, backend: str) -> Path:
-    members = {".env.AZ1": f"TRUST_CODE=AZ1\nFL_BACKEND={backend}\nFL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n"}
+    members = {".env.AZ1.stag": f"TRUST_CODE=AZ1\nFL_BACKEND={backend}\nFL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n"}
     if backend == "nvflare":
         members["fl-kit/net-1/services/Trust_3/startup/fed_client.json"] = "{}"
     else:
@@ -350,13 +350,13 @@ def _join(tmp_path: Path, backend: str, *args: str):
     _stub_curl(env, tmp_path, _join_kit(tmp_path, backend))
     for tool in ("make", "chgrp"):
         _stub(Path(env["PATH"].split(":")[0]), tool, f'echo "{tool} $*" >> "{log}"')
-    return env, log, _run(env, "run-join", *(args or ("flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "lza-stag")))
+    return env, log, _run(env, "run-join", *(args or ("flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "stag")))
 
 
 def test_join_installs_the_kit_file_owner_only_with_the_node_settings(tmp_path):
     env, log, result = _join(tmp_path, "nvflare")
     assert result.returncode == 0, result.stderr
-    kit = Path(env["FLIP_DIR"]) / "FLIP" / "trust" / ".env.AZ1"
+    kit = Path(env["FLIP_DIR"]) / "FLIP" / "trust" / ".env.AZ1.stag"
     assert oct(kit.stat().st_mode & 0o777) == "0o600", "the kit file holds the trust's keys"
     text = kit.read_text()
     assert text.startswith("TRUST_CODE=AZ1\n"), "the hub's values come first, unchanged"
@@ -379,14 +379,14 @@ def test_join_stages_the_nvflare_slot_for_its_client_and_brings_the_trust_up(tmp
     assert staged.exists()
     calls = log.read_text()
     assert f"chown -R 1000:1000 {env['FLIP_FL_KIT_DIR']}/net-1" in calls, "the NVFLARE client is uid 1000"
-    assert "up-onprem-trust KIT=AZ1 PROD=lza-stag" in calls
+    assert "up-onprem-trust KIT=AZ1 HUB=stag" in calls
 
 
 def test_join_points_the_kit_at_the_images_tree_the_play_made(tmp_path):
     """A per-kit dir would be made by root at bring-up, and net-N would inherit root (num_samples=0)."""
     env, _, result = _join(tmp_path, "nvflare")
     assert result.returncode == 0, result.stderr
-    text = (Path(env["FLIP_DIR"]) / "FLIP" / "trust" / ".env.AZ1").read_text()
+    text = (Path(env["FLIP_DIR"]) / "FLIP" / "trust" / ".env.AZ1.stag").read_text()
     assert f"BASE_IMAGES_DOWNLOAD_DIR={env['FLIP_DIR']}/data/images\n" in text
 
 
@@ -402,7 +402,7 @@ def test_join_refuses_a_kit_without_its_kit_file(tmp_path):
     env, log = _setup(tmp_path, disk_present=True, has_fs=True)
     _stub_curl(env, tmp_path, _tarball(tmp_path / "j.tar.gz", {"fl-kit/net-1/x": "1"}))
     _stub(Path(env["PATH"].split(":")[0]), "make", f'echo "make $*" >> "{log}"')
-    result = _run(env, "run-join", "flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "lza-stag")
+    result = _run(env, "run-join", "flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "stag")
     assert result.returncode != 0
     assert ".env.AZ1" in result.stderr
     assert not log.exists() or "up-onprem-trust" not in log.read_text()
@@ -410,11 +410,11 @@ def test_join_refuses_a_kit_without_its_kit_file(tmp_path):
 
 def test_join_rejects_unsafe_arguments(tmp_path):
     env, _ = _setup(tmp_path, disk_present=True, has_fs=True)
-    assert _run(env, "join", "kit.tar.gz", "AZ1;rm", "lza-stag").returncode == 2
+    assert _run(env, "join", "kit.tar.gz", "AZ1;rm", "stag").returncode == 2
     assert _run(env, "join", "kit.tar.gz", "AZ1", "$(id)").returncode == 2
 
 
 def test_join_starts_a_detached_unit(tmp_path):
     env, log = _setup(tmp_path, disk_present=True, has_fs=True)
-    assert _run(env, "join", "flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "lza-stag").returncode == 0
+    assert _run(env, "join", "flip-trust-kit-AZ1-20261009.tar.gz", "AZ1", "stag").returncode == 0
     assert "systemd-run --unit=flip-join-AZ1" in log.read_text()
