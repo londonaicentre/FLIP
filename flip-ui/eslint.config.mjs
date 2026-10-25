@@ -130,7 +130,6 @@ export default defineConfigWithVueTs(
         ],
         languageOptions: {
             globals: {
-                jest: "readonly",
                 describe: "readonly",
                 it: "readonly",
                 test: "readonly",

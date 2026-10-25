@@ -10,9 +10,11 @@
 # limitations under the License.
 #
 
+import json
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -25,15 +27,18 @@ from fl_api.utils.constants import (
     SERVER_CHECKPOINTS_PREFIX,
 )
 from fl_api.utils.io_utils import read_config
+from fl_api.utils.job_resources import JobMeta, default_job_resources, parse_job_meta, resolve_job_resources
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
     configure_client,
     configure_config,
     configure_environment,
+    configure_flip_model_id,
     configure_meta,
     configure_server,
     validate_config,
 )
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
 from fl_api.utils.validation import safe_join, validate_bundle_url
 
@@ -50,7 +55,7 @@ def _server_checkpoint_root() -> Path:
 def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
     """Download a de-bundled evaluation checkpoint to the shared server-checkpoint volume.
 
-    Written to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<file_name>`` — outside the NVFLARE job dir —
+    Written to ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<file_name>`` — outside the FLARE job dir —
     so it is never part of the submitted job and never deployed to clients. The fl-server mounts
     the same volume and loads the checkpoint from disk. Mirrors the Flower backend's /app/src mount.
 
@@ -139,7 +144,7 @@ def _relative_dir_for_download(model_id: str, s3_file_dir: str, file_name: str) 
     return app_folder_name, "app/custom"
 
 
-def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -> dict[str, str]:
+def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -> dict[str, Any]:
     """Uploads an application to the upload dir folder of the server.
 
     Downloads the files from the provided bundle_urls (AWS S3 pre-signed URLs) in the UploadAppRequest body, creates the
@@ -151,9 +156,13 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         upload_dir (str): directory where the application will be uploaded (session's upload dir.)
     Raises:
         HTTPException: if the application fails to upload, an error is raised.
-        FileNotFoundError: if the application path is not found, an error is raised.
+        ResearcherRefusal: If required config/metadata is missing, the bundle has no ``app`` folder,
+            or its meta.json is invalid.
+        ValueError: If the operator's default GPU count is invalid.
     Returns:
-        dict[str, str]: a dictionary containing a success message and the path where the application was uploaded.
+        dict[str, Any]: a success message naming where the application was uploaded, the GPU count written into
+        meta.json (``resources``) and where it came from (``resources_source``: submission, meta.json or default;
+        FLIP#70).
 
     .. code-block:: text
 
@@ -161,11 +170,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         └─ <upload_dir>/                    # passed in as upload_dir (session upload dir)
         └─ <model_id>/                      # job_dir
             ├─ meta.json                    # REQUIRED if >1 app folder (app + app_siteX etc)
-            │                               # Written automatically only for the "app" folder.
+            │                               # The job's own (template or researcher), checked, then rewritten
+            │                               # with the run's sites and GPU count (FLIP#70).
             │                               # If you upload multiple app folders, you must include this at root.
             │
             ├─ app/                         # default application folder (always created)
-            │  ├─ config/                   # NVFLARE config folder (expected by configure_* funcs)
+            │  ├─ config/                   # FLARE config folder (expected by configure_* funcs)
             │  │  ├─ config_fed_server.json # expected/validated by configure_server()
             │  │  ├─ config_fed_client.json # expected/validated by configure_client()
             │  │  ├─ config.json            # updated by configure_config() (rounds overrides)
@@ -232,7 +242,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         s3_file_dir, file_name = str(Path(path).parent), Path(path).name
 
         # Server-only evaluation checkpoints are staged on the shared volume for the fl-server
-        # to load from disk; they are NOT part of the NVFLARE job (never deployed to clients).
+        # to load from disk; they are NOT part of the FLARE job (never deployed to clients).
         if f"/{SERVER_CHECKPOINTS_PREFIX}" in s3_file_dir:
             _stage_server_checkpoint(url, model_id, file_name)
             continue
@@ -251,7 +261,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             raise
 
         app_folder_name, relative_dir = _relative_dir_for_download(model_id, s3_file_dir, file_name)
-        app_folder_names.add(app_folder_name)
+        if file_name != META:  # meta.json sits in the job root, not in an app folder
+            app_folder_names.add(app_folder_name)
 
         # relative_dir + file_name derive from the (untrusted) S3 URL path; contain both
         # under job_dir so a crafted URL can't escape the upload sandbox.
@@ -264,6 +275,14 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     logger.info("Successfully downloaded application, updating application config...")
 
+    # FLIP deploys "app" to the server and every selected trust (configure_meta). A job cannot name the trusts'
+    # sites, so app_* variants alone leave nothing to deploy.
+    if "app" not in app_folder_names:
+        raise ResearcherRefusal(
+            f"The application has no app/ folder (found {sorted(app_folder_names)}). FLIP deploys app/ to the "
+            "server and every selected trust."
+        )
+
     # Require meta.json if more than one app folder is present
     logger.debug(f"App folder names identified: {app_folder_names}")
     if len(app_folder_names) > 1:
@@ -274,7 +293,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 " multiple app sub-folders indicating different behaviors per site."
             )
             logger.error(error_message)
-            raise FileNotFoundError(error_message)
+            raise ResearcherRefusal(error_message, status_code=404)
 
     # A federated learning job consists of, at least, a CONFIG and CUSTOM folder. Within CONFIG, two files,
     # config_fed_server.json and config_fed_client.json. Within custom, all uploaded files. In addition to
@@ -282,6 +301,23 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     # See more information in https://nvflare.readthedocs.io/en/2.6/real_world_fl/job.html#job
 
     # We run this configuration script for all of the different app folders.
+
+    # The job's own meta.json: the template's, or the researcher's when they upload one. It is checked before any
+    # folder is configured, and its GPU count settled, because the request is job-level (FLIP#70).
+    meta_json_path = safe_join(job_dir, META)
+    job_meta = JobMeta()
+    if meta_json_path.is_file():
+        try:
+            raw_meta = read_config(meta_json_path)
+        except json.JSONDecodeError as e:
+            raise ResearcherRefusal(f"meta.json is not valid JSON: {e}") from e
+        job_meta = parse_job_meta(raw_meta)
+    resources, resources_source = resolve_job_resources(
+        override=body.resources,
+        declared_gpus=job_meta.declared_gpus,
+        default=default_job_resources,
+    )
+    logger.info(f"GPUs per site: {resources.num_gpus} (from {resources_source})")
 
     for app_folder_name in sorted(app_folder_names):
         logger.info(f"Configuring application folder: {app_folder_name}")
@@ -333,17 +369,21 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             # Configure the environment.json file if it exists.
             configure_environment(app_folder_path)
 
-            # FIXME What if it's already there? Do we overwrite? For now, we overwrite without warning, but we could
-            # consider merging if it already exists.
-            if app_folder_name == "app":
-                # Write meta.json file
-                configure_meta(job_dir, model_id, body.trusts)
+            # The hub's model id, for FLIP's components on the FL server (FLIP#70).
+            configure_flip_model_id(app_folder_path, model_id)
 
         except Exception as e:
             logger.error(f"Error occurred while configuring application folder {app_folder_name}: {e}")
             raise e
 
-    response = {"message": f"Application uploaded successfully to: {job_dir}"}
+    # The job's meta.json, with the run's sites and GPU count: job-level, so written once.
+    configure_meta(job_dir, model_id, body.trusts, job_meta, resources)
+
+    response = {
+        "message": f"Application uploaded successfully to: {job_dir}",
+        "resources": resources.model_dump(),
+        "resources_source": resources_source.value,
+    }
 
     logger.info(response)
 

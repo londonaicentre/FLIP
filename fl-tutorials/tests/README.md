@@ -19,8 +19,8 @@ templates that actually deploy), the EHR risk-prediction tutorial's shared featu
 model contract (`test_ehr_feature_engineering.py` — that app reads no DICOM, so it is deliberately
 absent from `DICOM_APPS`), and a second, dataset-tooling suite over `datasets/**`. No GPU,
 no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
-DICOMs and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and
-each suite runs in well under a second.
+DICOMs, NIfTI volumes and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV
+fixtures).
 
 ```bash
 make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
@@ -44,13 +44,16 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 `trust/imaging-api/tests/routers/test_imaging.py`.
 
 Cross-cutting guards that assert a property across several source files
-(`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
+(`test_dicom_orientation.py`, `test_nifti_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
 `test_flwr_import_paths.py`, `test_offline_apps.py`, `test_ldm_offline_backbone.py`,
 `test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
 `test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
 `test_fl_tutorials_make_targets.py`, `test_sim_tutorial_stale_guard.py`,
-`test_sim_tutorial_exit_status.py`) stay at the root of `tests/`, because
+`test_sim_tutorial_exit_status.py`, `test_xray_no_vocab_query.py`, `test_resource_spec_shape.py`,
+`test_tutorial_catalogue.py` — a twin pair's `query.sql` pinned in `scripts/check_tutorial_sync.sh`, `fl_job/`
+git-ignored, Flower clients taking their identity from the context, the cohort query's shape — and
+`test_ehr_flower_partition.py`) stay at the root of `tests/`, because
 no single source path describes what they cover.
 
 Tutorial-app tests that cover one app file mirror its path the same way:
@@ -61,8 +64,14 @@ their tests subclass one shared contract, `tests/arkplus_sim_cap_contract.py` (a
 `tutorial_apps.py`, not collected on its own). Because the three test files share a basename, the
 tutorial directory and its `app_files/` carry an `__init__.py`, which makes each module's import name
 start at the tutorial (`arkplus_fine_tuning.app_files.test_data_utils`). `nvflare/` and `image_*/`
-deliberately do **not** carry one: a package named `nvflare` would shadow the real NVFLARE library
+deliberately do **not** carry one: a package named `nvflare` would shadow the real FLARE library
 the apps import.
+
+The X-ray `app/test_task.py` (Flower) and `app_files/test_trainer.py` (NVFLARE) share
+`xray_batch_contract.py`. A tiny CPU model exercises all five train/validation/test paths with
+masked labels and NaN/infinite losses, then checks that a partially supervised batch still
+updates weights and contributes metrics. These tests call the real shared batch guard and
+also preserve the existing empty-metric behavior when every batch is skipped.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
@@ -73,7 +82,7 @@ never runs on an FL image — it has no business pulling `pandera`/`sqlglot` (ne
 the OMOP tables that tooling generates) into flip-utils' runtime environment.
 
 Those tests run against **each dataset's own uv project**, one pytest invocation per project
-(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr synthea brain_mri`), each declaring
+(`DATASET_TEST_PROJECTS` in `fl-tutorials/Makefile`, currently `spleen cxr synthea brain_mri prostate`), each declaring
 what that dataset's tooling actually needs. `make -C fl-tutorials pytest-datasets` runs them all.
 
 The split is not just tidiness: it is the only thing in CI that checks a dataset's
@@ -144,11 +153,13 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_a_listener_this_checkout_did_not_start_is_refused` / `test_a_free_control_port_passes_the_check` / `test_a_port_probe_that_cannot_tell_counts_as_taken` | The script refuses to hand the run to a local SuperLink it did not start: a real listener on a throwaway port set as `FLWR_LOCAL_SUPERLINK_HTTP_API_PORT` is refused with its pid and command line (where `ss` can see them), a free port passes silently, and an `ss` that errors counts as taken rather than free. |
 | `test_the_port_release_wait_returns_once_the_port_frees` / `test_the_port_release_wait_gives_up_loudly` | After stopping its own leftover SuperLink the script waits for the ports to free, and gives up with a message rather than racing flwr's replacement. |
 | `test_the_library_flag_only_works_when_sourced` | `SIM_TUTORIAL_LIB=1` exported into a real run is refused, not a silent successful no-op. |
+| `test_the_arkplus_tutorials_declare_their_gpu_need` / `test_a_shipped_meta_json_has_the_shape_the_fl_api_accepts` | The three Ark+ tutorials declare their GPU need in their own `app_files/meta.json` (`resource_spec["@default"]`) rather than relying on a hub-wide default (FLIP#70), and every shipped FLARE `meta.json` (tutorials and fl-apps templates) holds only what the fl-api accepts — a malformed one would otherwise be refused only when training starts. |
 | `test_every_flower_tutorial_has_a_simulator_data_mapping` | Every `fl-tutorials/flower/<tutorial>/app` is named in the script's data-mapping `case`. |
 | `test_main_flow_*` | The script end to end against the fakes (`flwr run` faked too, `pgrep` shimmed away from real processes, a synthetic `SIM_DATA_ROOT`): a completed run passes and the EHR mapping exports exactly `DEV_DATAFRAME` (no images dir); a failed run, a failed submission (`flwr run` non-zero) and a missing run id each fail with the right status. |
 | `test_app_loads_checkpoints_weights_only` (in `test_offline_apps.py`) | Every `torch.load` in a shipped app dir passes `weights_only=True` explicitly — an implicit default or `weights_only=False` unpickles arbitrary objects from the checkpoint. Host-side `process_tools/` conversions are outside the walked app dirs and stay exempt. |
+| `test_the_no_vocab_query_hands_the_app_the_same_cohort` (in `test_xray_no_vocab_query.py`) | The x-ray tutorials' `query_novocab.sql` (for a trust deployed with the Helm chart's `NO_VOCAB_LOAD=1`) returns the same studies, findings and `person_id`s as `query.sql`, both run in SQLite against one synthetic OMOP database: with the vocabulary for `query.sql`, without it for the copy. Its neighbours pin that `query.sql` really is empty without a vocabulary, that the two backends ship the same copy, and that the fixture covers Yes, No and an unrecorded answer for every finding. |
 
-Three design points are load-bearing, and each is itself asserted rather than assumed:
+Three design points underpin the DICOM checks, and each is itself asserted rather than assumed:
 
 - **The assertion is on values, never on shape.** `Rotate90d(k=-1)` restores the correct shape and
   is still wrong — upright but mirrored, which swaps the patient's left and right and looks
@@ -164,6 +175,14 @@ The fixture is synthesised, not committed: ~12 KB against ~640 KB for a downsamp
 provenance or PHI question, and the identical code path — the axis order is a property of the
 reader's convention, wholly independent of pixel content. It is parametrised over `MONOCHROME1`,
 `MONOCHROME2` and RLE Lossless, where the array path genuinely differs.
+
+## NIfTI orientation
+
+`test_nifti_orientation.py` checks spleen, prostate and latent-diffusion transform factories against
+an asymmetric synthetic RAS/LPS image and masks, pinning both known RAS output and agreement after
+deterministic preprocessing. Its registry discovers `LoadImaged` in top-level functions; class
+methods and module constants are outside that guard. Generated `fl_job/` copies are ignored, and
+the standalone prostate inference script is deliberately excluded. See the module docstring for scope.
 
 ## Bundle-export parity
 
@@ -195,9 +214,9 @@ contract, and should not be mistaken for it. Untested here:
 - End-to-end training behaviour, which stays with the GPU simulator harness
   (`make -C fl-tutorials run-tutorial`).
 
-**Out of scope by design:** the spleen and latent-diffusion tutorials. They load 3-D NIfTI through
-`Orientationd`/`Spacingd`, where this correction would be actively wrong. Do not add them to
-`DICOM_APPS`.
+The spleen and latent-diffusion tutorials have their own NIfTI orientation checks above. They stay
+outside `DICOM_APPS`: the 2-D DICOM reader correction does not apply to their 3-D
+`Orientationd`/`Spacingd` path.
 
 Tutorials are copy-and-adapt example code, and a repository test cannot follow a copy out of the
 repository. It can keep the thing being copied correct, which is the point: `fl-apps/` (the

@@ -35,6 +35,9 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
+import shlex
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -140,8 +143,8 @@ def test_4_missing_dir_warns() -> None:
 
 
 def test_5_site_privacy_uses_runtime_validator() -> None:
-    """The readiness check accepts a valid NVFLARE percentile policy."""
-    print("▶ valid NVFLARE site privacy policy -> PASS")
+    """The readiness check accepts a valid FLARE percentile policy."""
+    print("▶ valid FLARE site privacy policy -> PASS")
     result = mod.check_site_privacy_policy(
         {"FL_BACKEND": "nvflare", "FL_SITE_PRIVACY_POLICY": "percentile"},
         True,
@@ -369,7 +372,6 @@ def test_18_a_gate_never_suggests_a_command() -> None:
         with (
             mock.patch.object(sys, "argv", argv),
             mock.patch.object(sys, "stdout", out),
-            mock.patch.object(mod, "fetch_public_ip", return_value="192.0.2.1"),
             mock.patch.object(mod, "run_checks", return_value=all_pass),
         ):
             try:
@@ -473,6 +475,147 @@ def test_26_a_relative_document_resolves_against_trust() -> None:
     _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
 
 
+def test_27_selected_kit_controls_values_and_filename_hints() -> None:
+    """Read the suffixed kit, even when an unsuffixed kit with different values exists."""
+    print("▶ selected kit controls values and filename hints")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        trust = root / "trust"
+        trust.mkdir()
+        (trust / ".env.SITE").write_text("EXPECTED_TRUST_ID=wrong-file\n")
+        selected = trust / ".env.SITE.prod"
+        selected.write_text(
+            "EXPECTED_TRUST_ID=selected-file\nNUM_AVAILABLE_GPUS=invalid\n"  # pragma: allowlist secret (synthetic kit)
+        )
+        passed = mod.Check("external probe", mod.Status.PASS, "mocked")
+        with (
+            mock.patch.object(mod, "check_swarm", return_value=passed),
+            mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+            mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "invalid")),
+        ):
+            checks = mod.run_checks("SITE", root, selected)
+        present = next(check for check in checks if check.label == "Kit file present")
+        _assert(present.status == mod.Status.PASS, "selected file is present")
+        _assert(present.detail == "trust/.env.SITE.prod", "names the selected file", present.detail)
+        identity = next(check for check in checks if check.label == "EXPECTED_TRUST_ID self-check")
+        _assert(identity.detail == "set to selected-file", "reads the selected kit's values", identity.detail)
+        hints = "\n".join(hint for check in checks for hint in check.hints)
+        _assert("trust/.env.SITE.prod" in hints, "edit hints name the selected kit", hints)
+        _assert("trust/.env.SITE " not in hints and "trust/.env.SITE," not in hints, "no legacy-path advice", hints)
+        missing = mod.check_kit_file("SITE", selected.with_name("missing.prod"))
+        _assert(missing.status == mod.Status.FAIL, "missing explicit file still fails readiness")
+
+
+def test_28_missing_file_heading_and_advice_name_the_selected_path() -> None:
+    """Missing suffixed kits give actionable diagnostics without silently checking a legacy kit."""
+    print("▶ selected missing kit is named in the heading and advice")
+    selected = SCRIPTS_DIR.parent / "trust/.env.MISSING.prod"
+    out = io.StringIO()
+    exit_code = None
+    with (
+        mock.patch.object(sys, "argv", ["prog", "MISSING", "--kit-file", str(selected), "--gate"]),
+        mock.patch.object(sys, "stdout", out),
+        mock.patch.object(mod, "check_swarm", return_value=mod.Check("swarm", mod.Status.PASS, "mocked")),
+    ):
+        try:
+            mod.main()
+        except SystemExit as error:
+            exit_code = error.code
+    _assert(exit_code == 1, "missing selected kit exits 1")
+    _assert(out.getvalue().count("trust/.env.MISSING.prod") >= 3, "heading and hints name selected path")
+    _assert("Status: NOT READY" in out.getvalue(), "reports NOT READY")
+
+
+def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
+    """Copying the READY command must deploy the kit that was checked, including custom filenames."""
+    print("▶ READY command preserves and shell-quotes the selected kit")
+    selected_paths = (
+        SCRIPTS_DIR.parent / "trust/.env.SITE.stag",
+        Path("/opt/operator kits/kit's file; echo unsafe"),
+        Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
+    )
+    for selected in selected_paths:
+        for hub in (None, "prod", "stag"):
+            out = io.StringIO()
+            exit_code = None
+            with (
+                mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
+                mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
+                mock.patch.object(sys, "stdout", out),
+                mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
+            ):
+                try:
+                    mod.main()
+                except SystemExit as error:
+                    exit_code = error.code
+            text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
+            command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
+            _assert(exit_code == 0, f"{selected.name}: READY exits 0")
+            expected = ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
+            if hub and hub != "prod":
+                expected.append(f"HUB={hub}")
+            _assert(
+                shlex.split(command) == expected,
+                f"{selected.name}: selected path remains one argument and HUB={hub} is preserved",
+                command,
+            )
+
+
+def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
+    """Detailed governance checks must read the same kit as the failed readiness check."""
+    print("▶ failed governance advice preserves and shell-quotes the selected kit")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        selected = root / 'trust/kit\'s $HOME `echo unsafe` "file".prod'
+        selected.parent.mkdir()
+        selected.write_text("ACCESS_POLICY_FILE=./governance.toml\n")
+        passed = mod.Check("external probe", mod.Status.PASS, "mocked")
+        for hub in (None, "prod", "stag"):
+            with (
+                mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
+                mock.patch.object(mod, "check_swarm", return_value=passed),
+                mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+                mock.patch.object(
+                    mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "❌ bad policy\n", "")
+                ),
+            ):
+                checks = mod.run_checks("SITE", root, selected)
+            result = next(check for check in checks if check.label == "Governance document")
+            _assert(result.status == mod.Status.FAIL, "governance validation still fails")
+            hint = next(hint for hint in result.hints if "check-governance" in hint)
+            command = hint[1 : hint.rfind("`")]
+            expected = [
+                "make",
+                "-C",
+                "trust",
+                "check-governance",
+                "KIT=SITE",
+                f"KIT_FILE={selected}".replace("$", "$$"),
+            ]
+            if hub:
+                expected.append(f"HUB={hub}")
+            _assert(
+                shlex.split(command) == expected,
+                "detailed-check advice keeps the selected path as one argument and preserves HUB",
+                command,
+            )
+
+
+def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
+    """Every kit is scaffolded from trust/.env.example, so that is the template its defaults come from."""
+    print("\n[31] Trust-local passwords: compared against trust/.env.example")
+    repo_root = SCRIPTS_DIR.parent
+    defaults = mod.read_kit_vars(repo_root / "trust" / ".env.example")
+    rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
+    for kit_vars, root, status in (
+        ({"ORTHANC_PASSWORD": defaults["ORTHANC_PASSWORD"]}, repo_root, mod.Status.WARN),
+        (rotated, repo_root, mod.Status.PASS),
+        (rotated, Path(tempfile.mkdtemp()), mod.Status.WARN),  # no template: say so, never PASS
+    ):
+        check = mod.check_unrotated_passwords(kit_vars, True, root, "SITE")
+        _assert(check.status == status, f"{status.name}: {check.detail}", str(check))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -503,6 +646,11 @@ def main() -> None:
     test_24_site_privacy_in_both_sources_fails()
     test_25_documents_nvflare_section_on_flower_fails()
     test_26_a_relative_document_resolves_against_trust()
+    test_27_selected_kit_controls_values_and_filename_hints()
+    test_28_missing_file_heading_and_advice_name_the_selected_path()
+    test_29_ready_command_preserves_and_quotes_the_selected_kit()
+    test_30_governance_action_preserves_and_quotes_the_selected_kit()
+    test_31_unrotated_passwords_compare_against_the_kit_template()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

@@ -18,15 +18,17 @@
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
-# Load the env file selected by PROD (dev by default), exactly as
-# fl-services/nvflare/Makefile does — with PROD=stag|true (or lza|lza-stag for
-# the LZA estate, FLIP#749) this brings in the upload vars (AICENTRE_BUCKET_NAME,
-# FLOWER_KIT_DATE) used by upload-creds-to-s3.
+# Load the env file selected by HUB (dev by default), exactly as
+# fl-services/nvflare/Makefile does — with HUB=stag|prod this brings in the upload
+# vars (AICENTRE_BUCKET_NAME, FLOWER_KIT_DATE) used by upload-creds-to-s3.
+READS_HUB_ENV_FILE := yes
 include $(REPO_ROOT)/deploy/env_mode.mk
-MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+# MAIN_ENV_FILE is a bare filename in the repo root, as everywhere else; a second instance passes its own.
+MAIN_ENV_FILE ?= $(ENV_FILE_NAME)
+MAIN_ENV_PATH := $(REPO_ROOT)/$(MAIN_ENV_FILE)
+ifneq ("$(wildcard $(MAIN_ENV_PATH))","")
+include $(MAIN_ENV_PATH)
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_PATH))
 endif
 include $(REPO_ROOT)/deploy/fl_backend.mk
 
@@ -34,8 +36,8 @@ include $(REPO_ROOT)/deploy/fl_backend.mk
 # host user) stay writable. compose reads ${DOCKER_GID} in each service's group_add.
 export DOCKER_GID := $(shell id -g)
 
-DEV_COMPOSE      := docker compose -f $(REPO_ROOT)/fl-services/flower/compose.dev.yml
-SECURE_COMPOSE   := docker compose -f $(REPO_ROOT)/fl-services/flower/compose.secure.yml
+DEV_COMPOSE      := DOCKER_FL_TAG=$(FL_BUILD_TAG) docker compose -f $(REPO_ROOT)/fl-services/flower/compose.dev.yml
+SECURE_COMPOSE   := DOCKER_FL_TAG=$(FL_BUILD_TAG) docker compose -f $(REPO_ROOT)/fl-services/flower/compose.secure.yml
 PROVISION_SCRIPT := $(REPO_ROOT)/fl-services/flower/provision/scripts/generate-tls-certificates.sh
 LOCAL_DEV        ?= false
 NET_NUMBER       ?= 1
@@ -46,18 +48,18 @@ export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 .PHONY: build provision upload-creds-to-s3 generate-tls-certificates-net-1 generate-tls-certificates-net-2 \
         up up-secure down submit _ensure-dev-dirs
 
-# Build the flower-* :dev images. flwr-base builds first (own invocation) — a plain
+# Build the flower-* images, tagged $(FL_BUILD_TAG) (:dev unless DOCKER_FL_TAG is given). flwr-base builds first (own invocation) — a plain
 # FROM flower-fl-base in the derived Dockerfiles is invisible to Compose's build graph.
 build:
-	@echo "🛠️  Building flower-fl-base:dev (LOCAL_DEV=$(LOCAL_DEV))..."
+	@echo "🛠️  Building flower-fl-base:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
 	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build flwr-base
-	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:dev..."
+	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:$(FL_BUILD_TAG)..."
 	$(DEV_COMPOSE) build fl-api superlink supernode-1
 
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of
 # this environment's FL kit slot pool, so the kit covers every slot the hub can hand
 # out: a trust staged into slot N fetches keys/supernode_credentials_N, and the
-# NVFLARE-side staging guard now fails loudly when its slot's material is missing.
+# FLARE-side staging guard now fails loudly when its slot's material is missing.
 # Getting it wrong is expensive rather than fiddly — there is no add-a-node path
 # (unlike nvflare's `provision --add_client`), because a re-run regenerates the CA and
 # invalidates every node already holding credentials. FL_KIT_SLOT_NAMES is a JSON
@@ -78,9 +80,9 @@ provision:
 # For a hub deployment the server cert must carry the ECS hostnames — e.g.:
 #   FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
 #     make provision NET_NUMBER=1
-#   make upload-creds-to-s3 NET_NUMBER=1 PROD=stag
+#   make upload-creds-to-s3 NET_NUMBER=1 HUB=stag
 upload-creds-to-s3:
-	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true|lza|lza-stag"; exit 1; }
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with HUB=stag|prod"; exit 1; }
 	@[ -n "$(FLOWER_KIT_DATE)" ] || { echo "❌ FLOWER_KIT_DATE not set — add it to the env file (e.g. 20260811)"; exit 1; }
 	@echo "⬆️  Uploading Flower creds (net-$(NET_NUMBER)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./provision/creds/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FLOWER_KIT_DATE)/net-$(NET_NUMBER) --delete --exclude "certificates/ca.key" $(DRYRUN)
@@ -111,7 +113,8 @@ down:
 
 # Submit a tutorial folder to the running stack (no published host port): exec into fl-api
 # and POST to its loopback API (the image ships Python, not curl). Usage: make submit APP=<folder>.
-# By name → /submit_tutorial; /submit_run is UUID-only (flip-api's production model_id path).
+# By name → /submit_tutorial, which runs the folder's pyproject.toml values, not its app/config.toml
+# (FLIP#1432); /submit_run is UUID-only (flip-api's production model_id path).
 submit:
 	$(DEV_COMPOSE) -p flwr exec -T fl-api \
 		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$(APP)', method='POST')).read().decode())"

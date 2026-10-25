@@ -27,7 +27,7 @@ column saying which Trust holds each study.
 Run this **after** the image pull and **after** DICOM-to-NIfTI conversion — the target filename is
 derived from the converted image, so running early skips every scan.
 
-This is backend-agnostic: enrichment happens once per FLIP project, in XNAT, and both the NVFLARE
+This is backend-agnostic: enrichment happens once per FLIP project, in XNAT, and both the FLARE
 and Flower spleen tutorials read the result. Point ``--labels-dir`` at whichever spleen download
 variant you have (see the datasets README).
 """
@@ -195,7 +195,7 @@ def build_manifest(labels_dir: Path, trust: str | None = None) -> list[Enrichmen
 
     Args:
         labels_dir (Path): Directory of ``subject_N/scans/label_spleen_N.nii.gz`` trees, as produced
-            by ``download_spleen_dataset.py`` (NVFLARE) or the Flower spleen download.
+            by ``download_spleen_dataset.py`` (FLARE) or the Flower spleen download.
         trust (str | None): Keep only accessions whose ``source_trust`` matches, e.g. ``"1"``.
 
     Returns:

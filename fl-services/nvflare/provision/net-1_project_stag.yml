@@ -37,6 +37,10 @@ participants:
     org: AICentre
     connect_to:
       host: fl.stag.flip.aicentre.co.uk
+      # The LZA edge NLB serves prod and staging from one address: :8002 is
+      # production, :8003 forwards to staging's :8002 (FLIP#1365). Pinned by
+      # scripts/tests/test_fl_kit_edge_port.py.
+      port: 8003
     # Specifying listening_host will enable the creation of one pair of
     # certificate/private key for this client, allowing the client to function
     # as a server for 3rd-party integration.
@@ -44,9 +48,6 @@ participants:
     # listening_host: site-1-lh
 #    docker_comm_port: 8006
     enable_byoc: true
-    resource:
-      num_of_gpus: 1
-      mem_per_gpu_in_GiB: 16
   - name: admin@nvidia.com
     type: admin
     org: AICentre

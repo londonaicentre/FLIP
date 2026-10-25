@@ -12,26 +12,17 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import subprocess
-import zipfile
 from pathlib import Path
 
 import pytest
 
+from plugin_fixtures import PLUGIN_JARS, declared_ids, plugins_listing, write_plugin_jar, xnat_home
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 XNAT_DIR = REPO_ROOT / "trust" / "xnat"
-ENSURE_PLUGINS = REPO_ROOT / "trust" / "xnat" / "scripts" / "ensure_plugins.sh"
 WAIT_FOR_PLUGINS = REPO_ROOT / "trust" / "xnat" / "xnat" / "config" / "wait-for-xnat-plugins.sh"
-HELM_VALUES = REPO_ROOT / "trust" / "deploy" / "helm" / "values.yaml"
-PLUGIN_PREFIX = "xnat-1.10.0/plugins"
-REQUIRED_PLUGIN_NAMES = (
-    "batch-launch-test.jar",
-    "container-service-test.jar",
-    "dicom-query-retrieve-test.jar",
-    "ohif-viewer-test.jar",
-)
 
 
 def _write_executable(path: Path, body: str) -> None:
@@ -39,218 +30,73 @@ def _write_executable(path: Path, body: str) -> None:
     path.chmod(0o755)
 
 
-def _write_jar(path: Path) -> Path:
-    """Write a minimal but genuinely valid zip, standing in for a plugin jar.
-
-    The cache check validates archive structure, so a zero-byte file no longer counts as a present
-    plugin — which is the whole point of the guard these fixtures exercise.
-    """
-    with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\n")
-    return path
-
-
-def _aws_stub_writing_jars(template: Path, names: tuple[str, ...]) -> str:
-    """Shell body for a fake `aws` that populates the sync destination with valid jars."""
-    copies = "; ".join(f'cp "{template}" "$dest/{name}"' for name in names)
-    return f'dest="$4"; mkdir -p "$dest"; {copies}'
-
-
-def _plugin_env(tmp_path: Path, aws_body: str) -> dict[str, str]:
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    _write_executable(bin_dir / "aws", f"#!/bin/sh\nset -eu\n{aws_body}\n")
-    return {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
-
-
-def _run_plugin_check(plugin_dir: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["bash", str(ENSURE_PLUGINS), str(plugin_dir), "test-artifacts", PLUGIN_PREFIX],
-        check=False,
-        capture_output=True,
-        env=env,
-        text=True,
-    )
-
-
-def test_plugin_check_skips_aws_for_matching_complete_cache(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    plugin_dir.mkdir()
-    for name in REQUIRED_PLUGIN_NAMES:
-        _write_jar(plugin_dir / name)
-    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
-    env = _plugin_env(tmp_path, 'echo "AWS must not be called" >&2; exit 99')
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert "Skipping S3 sync" in result.stdout
-
-
-def test_plugin_check_downloads_and_validates_fresh_cache(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    template = _write_jar(tmp_path / "template.jar")
-    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES))
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert (plugin_dir / ".s3-prefix").read_text().strip() == PLUGIN_PREFIX
-
-
-def test_plugin_check_propagates_sync_failure(tmp_path: Path) -> None:
-    result = _run_plugin_check(tmp_path / "plugins", _plugin_env(tmp_path, "exit 42"))
-
-    assert result.returncode == 42
-
-
-def test_plugin_check_rejects_incomplete_download(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    template = _write_jar(tmp_path / "template.jar")
-    env = _plugin_env(
-        tmp_path,
-        _aws_stub_writing_jars(template, ("batch-launch-test.jar", "container-service-test.jar")),
-    )
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode != 0
-    assert "dicom-query-retrieve-" in result.stdout
-
-
-def test_plugin_check_rejects_a_download_without_the_ohif_viewer(tmp_path: Path) -> None:
-    """The viewer is a required family like the other three, not an optional extra."""
-    plugin_dir = tmp_path / "plugins"
-    template = _write_jar(tmp_path / "template.jar")
-    without_viewer = tuple(name for name in REQUIRED_PLUGIN_NAMES if not name.startswith("ohif-viewer-"))
-    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, without_viewer))
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode != 0
-    assert "ohif-viewer-" in result.stdout
-
-
-def test_plugin_sync_asks_s3_for_every_jar_in_the_prefix(tmp_path: Path) -> None:
-    """No family is filtered out of the sync: whatever the versioned prefix holds is the roster."""
-    plugin_dir = tmp_path / "plugins"
-    template = _write_jar(tmp_path / "template.jar")
-    argv_log = tmp_path / "aws-argv"
-    record_then_sync = f'printf "%s\\n" "$@" > "{argv_log}"; ' + _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES)
-
-    result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, record_then_sync))
-
-    assert result.returncode == 0, result.stderr
-    argv = argv_log.read_text().splitlines()
-    assert argv[:2] == ["s3", "sync"]
-    assert "--include" in argv
-    assert argv[argv.index("--include") + 1] == "*.jar"
-    assert not any("ohif" in arg for arg in argv), f"the sync filters the viewer out: {argv}"
-
-
-def _script_plugin_families() -> list[str]:
-    """Read the plugin families ``ensure_plugins.sh`` requires of the dev cache.
-
-    Returns:
-        Family names, each a ``required_prefixes`` entry with its trailing hyphen removed so it
-        is directly comparable with a chart key.
-    """
-    block = re.search(r"^required_prefixes=\(\n(.*?)^\)", ENSURE_PLUGINS.read_text(), re.DOTALL | re.MULTILINE)
-    assert block is not None, f"no required_prefixes=( ... ) array in {ENSURE_PLUGINS}"
-    return [prefix.rstrip("-") for prefix in re.findall(r'"([^"]+)"', block.group(1))]
-
-
-def _chart_plugin_families() -> list[str]:
-    """Read the plugin families the Helm chart's init container downloads.
-
-    Returns:
-        The ``xnat.web.plugins.urls`` keys. Parsed by indentation rather than with a YAML
-        loader so this suite keeps its single ``pydicom`` dependency.
-    """
-    lines = HELM_VALUES.read_text().splitlines()
-    starts = [i for i, line in enumerate(lines) if re.match(r"^\s*urls:\s*$", line)]
-    assert len(starts) == 1, f"expected one urls: block in {HELM_VALUES}, found {len(starts)}"
-    start = starts[0]
-    indent = len(lines[start]) - len(lines[start].lstrip())
-
-    families: list[str] = []
-    for line in lines[start + 1 :]:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        entry = re.match(r"^(\s+)([A-Za-z0-9_-]+):\s*\S", line)
-        if entry is None or len(entry.group(1)) <= indent:
-            break
-        families.append(entry.group(2))
-    return families
-
-
-def test_the_plugin_roster_is_the_same_in_the_script_and_the_helm_chart() -> None:
-    """The dev cache and the K8s init container must require the same plugin families.
-
-    ``ensure_plugins.sh`` guards only the Swarm and dev paths; the chart downloads its own
-    roster into an emptyDir that masks the image's plugins entirely. So a family wired into one
-    and not the other leaves K8s silently short of a plugin — nothing fails until XNAT is
-    serving, and then only on the route that plugin owns. The comment above
-    ``required_prefixes`` asks for the two to be kept in step; this pins it.
-
-    Order is not part of the contract, only membership: the chart lists the same four families
-    in a different order.
-    """
-    script = _script_plugin_families()
-    chart = _chart_plugin_families()
-
-    assert "ohif-viewer" in script, f"parsed no viewer out of {ENSURE_PLUGINS}: {script}"
-    assert "ohif-viewer" in chart, f"parsed no viewer out of {HELM_VALUES}: {chart}"
-    assert sorted(script) == sorted(chart), (
-        "the dev-cache roster and the chart roster disagree — "
-        f"only in ensure_plugins.sh: {sorted(set(script) - set(chart))}, "
-        f"only in values.yaml: {sorted(set(chart) - set(script))}"
-    )
-
-
-def test_plugin_check_resyncs_a_cache_holding_a_truncated_jar(tmp_path: Path) -> None:
-    """A zero-byte jar satisfies a filename check but boots an XNAT with no plugin routes.
-
-    Dev bind-mounts this directory into the running container, so accepting it would surface much
-    later as a readiness timeout blamed on the DQR plugin.
-    """
-    plugin_dir = tmp_path / "plugins"
-    plugin_dir.mkdir()
-    for name in REQUIRED_PLUGIN_NAMES:
-        _write_jar(plugin_dir / name)
-    (plugin_dir / REQUIRED_PLUGIN_NAMES[1]).write_bytes(b"")
-    (plugin_dir / ".s3-prefix").write_text(f"{PLUGIN_PREFIX}\n")
-    template = _write_jar(tmp_path / "template.jar")
-    env = _plugin_env(tmp_path, _aws_stub_writing_jars(template, REQUIRED_PLUGIN_NAMES))
-
-    result = _run_plugin_check(plugin_dir, env)
-
-    assert result.returncode == 0, result.stderr
-    assert "Skipping S3 sync" not in result.stdout, "a corrupt cached jar was accepted as present"
-
-
-def test_plugin_check_rejects_a_corrupt_download(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "plugins"
-    corrupt = 'dest="$4"; mkdir -p "$dest"; ' + "; ".join(f': > "$dest/{name}"' for name in REQUIRED_PLUGIN_NAMES)
-
-    result = _run_plugin_check(plugin_dir, _plugin_env(tmp_path, corrupt))
-
-    assert result.returncode != 0
+# A stub XNAT for the readiness wait. It answers by route — GET /xapi/plugins lists $PLUGINS_JSON,
+# everything else (GET /xapi/dqr/settings) answers {} — and keeps a per-route request count in $n,
+# so each test's BEHAVIOUR snippet can override `status` and `body` for the request in hand from
+# $route, $n and $creds. The reply is printed the way the script's `-w '\n%{http_code}'` makes
+# real curl print it: the body, a newline, the status.
+READINESS_CURL = r"""#!/bin/sh
+set -eu
+url=""; creds=""; prev=""
+for a in "$@"; do
+  case "$prev" in -u) creds="$a" ;; esac
+  case "$a" in http*) url="$a" ;; esac
+  prev="$a"
+done
+case "$url" in
+  */xapi/plugins) route=plugins ;;
+  */xapi/dqr/settings) route=dqr ;;
+  *) route=other ;;
+esac
+printf '%s %s\n' "$route" "$*" >> "$CURL_LOG"
+n=$(( $(cat "$CURL_COUNTS/$route" 2>/dev/null || echo 0) + 1 ))
+printf '%s' "$n" > "$CURL_COUNTS/$route"
+status=200
+body='{}'
+if [ "$route" = plugins ]; then body="$PLUGINS_JSON"; fi
+__BEHAVIOUR__
+printf '%s\n%s' "$body" "$status"
+"""
 
 
 def _readiness_env(
     tmp_path: Path,
-    curl_body: str,
+    behaviour: str = "",
     timeout: str = "5",
     initial_password: str = "test-password",
     rotated_password: str = "test-password",
+    jars: dict[str, str | None] | None = None,
+    listed: list[str] | None = None,
+    roster: bool = True,
 ) -> dict[str, str]:
+    """Environment for one run of the wait against the stub XNAT.
+
+    Args:
+        tmp_path: Per-test directory for the stub, its logs and the fixture XNAT home.
+        behaviour: Shell run per request, after the defaults are set, to override them.
+        timeout: The wait's budget, in seconds.
+        initial_password: The kit's initial admin password.
+        rotated_password: The kit's configured admin password.
+        jars: Fixture plugin jars in the XNAT home ({filename: declared id or None}).
+        listed: The plugin ids GET /xapi/plugins lists; defaults to every id ``jars`` declares.
+        roster: Set XNAT_PLUGIN_READINESS_ROSTER=1, as the Compose ``xnat-configure`` recipe does.
+    """
+    jars = PLUGIN_JARS if jars is None else jars
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    _write_executable(bin_dir / "curl", f"#!/bin/sh\nset -eu\n{curl_body}\n")
+    counts = tmp_path / "curl-counts"
+    counts.mkdir()
+    _write_executable(bin_dir / "curl", READINESS_CURL.replace("__BEHAVIOUR__", behaviour))
+    env = {k: v for k, v in os.environ.items() if k != "XNAT_PLUGIN_READINESS_ROSTER"}
+    if roster:
+        env["XNAT_PLUGIN_READINESS_ROSTER"] = "1"
     return {
-        **os.environ,
+        **env,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "XNAT_HOME": str(xnat_home(tmp_path, jars)),
+        "PLUGINS_JSON": plugins_listing(declared_ids(jars) if listed is None else listed),
+        "CURL_LOG": str(tmp_path / "curl-log"),
+        "CURL_COUNTS": str(counts),
         "XNAT_ADMIN_USER": "admin",
         "XNAT_ADMIN_INITIAL_PASSWORD": initial_password,
         "XNAT_ADMIN_PASSWORD": rotated_password,
@@ -279,50 +125,198 @@ def _run_readiness(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_readiness_waits_for_authenticated_plugin_route(tmp_path: Path) -> None:
-    count_file = tmp_path / "curl-count"
-    curl_body = (
-        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
-        f'printf "%s" "$count" > "{count_file}"; '
-        'if [ "$count" -ge 2 ]; then printf "204"; else printf "404"; fi'
-    )
+def _requests(tmp_path: Path, route: str | None = None) -> list[str]:
+    """The curl argv of every request the wait made, optionally only those to one route."""
+    log = tmp_path / "curl-log"
+    lines = log.read_text().splitlines() if log.exists() else []
+    return [line.split(" ", 1)[1] for line in lines if route is None or line.split(" ", 1)[0] == route]
 
-    result = _run_readiness(_readiness_env(tmp_path, curl_body))
+
+# A listing that lacks two of the four fixture plugins, as an XNAT that did not load them answers.
+PARTIAL_LISTING = plugins_listing(["containers", "dicom-query-retrieve"])
+
+
+# ── With the roster (XNAT_PLUGIN_READINESS_ROSTER=1, as Compose runs it) ──────────────────────────
+
+
+def test_readiness_waits_until_xnat_lists_every_plugin_the_jars_declare(tmp_path: Path) -> None:
+    """A route answering is not enough: XNAT must report every installed plugin as loaded."""
+    behaviour = f"""if [ "$route" = plugins ] && [ "$n" -lt 3 ]; then body='{PARTIAL_LISTING}'; fi"""
+
+    result = _run_readiness(_readiness_env(tmp_path, behaviour))
 
     assert result.returncode == 0, result.stderr
-    assert "ready (HTTP 204)" in result.stdout
+    assert "missing: batchLaunchPlugin ohifViewerPlugin" in result.stdout, "the retry must name what is missing"
+    assert "XNAT plugins are ready (HTTP 200)" in result.stdout
+    assert len(_requests(tmp_path, "plugins")) == 3
+    assert len(_requests(tmp_path, "dqr")) == 1, "the DQR route is asked only once the listing is complete"
+
+
+def test_readiness_names_the_plugin_xnat_has_not_loaded(tmp_path: Path) -> None:
+    """The fail-loud message must say which plugin, not just that the wait timed out."""
+    loaded = [plugin_id for plugin_id in declared_ids() if plugin_id != "ohifViewerPlugin"]
+
+    result = _run_readiness(_readiness_env(tmp_path, timeout="0", listed=loaded))
+
+    assert result.returncode != 0
+    assert "XNAT has not loaded: ohifViewerPlugin (" in result.stderr, result.stderr
+    assert "/xapi/plugins" in result.stderr
+    assert not _requests(tmp_path, "dqr"), "the DQR route must not be asked while a plugin is missing"
+
+
+def test_readiness_expects_exactly_the_plugins_the_jars_declare(tmp_path: Path) -> None:
+    """The roster is read from the jars, not a list in the script: an unknown jar is waited for…"""
+    jars = {**PLUGIN_JARS, "site-extra-1.0.jar": "siteExtraPlugin"}
+
+    result = _run_readiness(_readiness_env(tmp_path, timeout="0", jars=jars, listed=declared_ids()))
+
+    assert result.returncode != 0
+    assert "XNAT has not loaded: siteExtraPlugin (" in result.stderr, result.stderr
+
+
+def test_readiness_expects_only_the_plugins_the_jars_declare(tmp_path: Path) -> None:
+    """…and a plugin no jar declares is not."""
+    jars: dict[str, str | None] = {"dicom-query-retrieve-3.0.0-xpl.jar": "dicom-query-retrieve"}
+
+    result = _run_readiness(_readiness_env(tmp_path, jars=jars))
+
+    assert result.returncode == 0, result.stderr
+    assert "XNAT loaded dicom-query-retrieve and" in result.stdout
+
+
+def test_an_empty_plugin_directory_fails_before_any_login(tmp_path: Path) -> None:
+    """No jars is a broken install, not a vacuously ready one."""
+    result = _run_readiness(_readiness_env(tmp_path, jars={}))
+
+    assert result.returncode != 0
+    assert f"no XNAT plugin jars in {tmp_path / 'xnat-home' / 'plugins'}" in result.stderr
+    assert not _requests(tmp_path), "the wait logged in although it had nothing to wait for"
+
+
+@pytest.mark.parametrize(
+    ("name", "jar"),
+    [("error-page-1.0.jar", b"<html>503</html>"), ("library-1.0.jar", None)],
+    ids=["not-a-zip", "declares-no-plugin"],
+)
+def test_a_jar_that_names_no_plugin_fails_naming_it_before_any_login(
+    tmp_path: Path, name: str, jar: bytes | None
+) -> None:
+    """The jars are checksum-pinned or baked, so one that names no plugin is a broken install."""
+    env = _readiness_env(tmp_path)
+    plugins = Path(env["XNAT_HOME"]) / "plugins"
+    if jar is None:
+        write_plugin_jar(plugins, name, None)
+    else:
+        (plugins / name).write_bytes(jar)
+
+    result = _run_readiness(env)
+
+    assert result.returncode != 0
+    assert f"cannot read an XNAT plugin id from {plugins / name}" in result.stderr
+    assert not _requests(tmp_path)
+
+
+def test_readiness_still_requires_the_dqr_route_once_every_plugin_is_listed(tmp_path: Path) -> None:
+    """The listing does not prove a plugin's routes are registered, so DQR's own route still gates."""
+    result = _run_readiness(_readiness_env(tmp_path, 'if [ "$route" = dqr ]; then status=404; fi', timeout="0"))
+
+    assert result.returncode != 0
+    assert "endpoint:   http://xnat-web:8080/xapi/dqr/settings" in result.stderr
+    assert "last HTTP status: 404" in result.stderr
+    assert "has not loaded" not in result.stderr, "every plugin was listed; only the route was missing"
+
+
+def test_a_listing_that_is_not_json_lists_nothing(tmp_path: Path) -> None:
+    """A 200 the script cannot read must not pass the wait."""
+    result = _run_readiness(
+        _readiness_env(tmp_path, """if [ "$route" = plugins ]; then body='<html>ok</html>'; fi""", timeout="0")
+    )
+
+    assert result.returncode != 0
+    assert f"XNAT has not loaded: {' '.join(declared_ids())} (" in result.stderr, result.stderr
+
+
+def test_readiness_probe_authenticates_against_both_routes(tmp_path: Path) -> None:
+    """Both probes are only meaningful authenticated — unauthenticated XNAT 401s whatever the plugin state."""
+    result = _run_readiness(_readiness_env(tmp_path))
+
+    assert result.returncode == 0, result.stderr
+    for route in ("plugins", "dqr"):
+        (made,) = _requests(tmp_path, route)
+        assert "-u admin:test-password" in made, f"the {route} probe was not authenticated"
+
+
+# ── Without the roster: the chart's xnat-init pod, and any other caller ───────────────────────────
+
+
+def test_without_the_flag_the_wait_takes_the_dqr_route_alone(tmp_path: Path) -> None:
+    """The xnat-init pod sees the image's baked jars, which the running XNAT never loads.
+
+    The dangerous direction is a plugin the image carries but xnat.web.plugins.urls does not: a
+    roster read from that disk would wait out the whole budget for it on every install and upgrade.
+    So without the flag no jar is read at all — an unreadable one included.
+    """
+    jars = {**PLUGIN_JARS, "baked-only-1.0.jar": "bakedOnlyPlugin"}
+    env = _readiness_env(tmp_path, jars=jars, listed=declared_ids(), roster=False)
+    (Path(env["XNAT_HOME"]) / "plugins" / "error-page-1.0.jar").write_bytes(b"<html>503</html>")
+
+    result = _run_readiness(env)
+
+    assert result.returncode == 0, result.stderr
+    assert "XNAT plugins are ready (HTTP 200): the DQR settings route answers." in result.stdout
+    assert not _requests(tmp_path, "plugins"), "with no roster to check, there is nothing to ask XNAT for"
+
+
+def test_without_the_flag_the_dqr_wait_stays_bounded_and_fail_loud(tmp_path: Path) -> None:
+    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="0", roster=False))
+
+    assert result.returncode != 0
+    assert "endpoint:   http://xnat-web:8080/xapi/dqr/settings" in result.stderr
+    assert "last HTTP status: 404" in result.stderr
+
+
+def test_the_charts_init_job_does_not_ask_for_the_roster() -> None:
+    """Its pod sees the image's baked jars, not the ones the running XNAT loaded (see the script header).
+
+    The Compose recipe that does set the flag is pinned by test_container_lookup.py.
+    """
+    init_job = (REPO_ROOT / "trust/deploy/helm/templates/xnat-init-job.yaml").read_text()
+
+    assert "XNAT_PLUGIN_READINESS_ROSTER" not in init_job
+
+
+def test_readiness_rejects_a_roster_flag_it_does_not_understand(tmp_path: Path) -> None:
+    """``true`` silently meaning "off" would quietly drop the check a caller asked for."""
+    env = _readiness_env(tmp_path)
+    env["XNAT_PLUGIN_READINESS_ROSTER"] = "true"
+
+    result = _run_readiness(env)
+
+    assert result.returncode != 0
+    assert "roster='true'" in result.stderr
+    assert not _requests(tmp_path)
+
+
+# ── Shared: the bounded wait and the credential handling ──────────────────────────────────────────
 
 
 def test_readiness_fails_with_endpoint_and_status_on_timeout(tmp_path: Path) -> None:
-    result = _run_readiness(_readiness_env(tmp_path, 'printf "404"', timeout="0"))
+    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="0"))
 
     assert result.returncode != 0
-    assert "/xapi/dqr/settings" in result.stderr
+    assert "/xapi/plugins" in result.stderr
     assert "last HTTP status: 404" in result.stderr
     assert "test-password" not in result.stdout + result.stderr
 
 
-def test_readiness_probe_authenticates_against_the_plugin_route(tmp_path: Path) -> None:
-    """The gate is only meaningful authenticated — unauthenticated XNAT 401s whatever the plugin state."""
-    argv_log = tmp_path / "curl-argv"
-    result = _run_readiness(_readiness_env(tmp_path, f'printf "%s\\n" "$*" >> "{argv_log}"; printf "200"'))
-
-    assert result.returncode == 0, result.stderr
-    recorded = argv_log.read_text()
-    assert "-u admin:test-password" in recorded
-    assert "/xapi/dqr/settings" in recorded
-
-
 def test_readiness_keeps_polling_while_connection_is_refused(tmp_path: Path) -> None:
-    """`000` (curl could not connect) is the normal state for the first seconds of a boot."""
-    count_file = tmp_path / "curl-count"
-    curl_body = (
-        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
-        f'printf "%s" "$count" > "{count_file}"; '
-        'if [ "$count" -ge 3 ]; then printf "200"; else exit 7; fi'
-    )
+    """`000` (curl could not connect) is the normal state for the first seconds of a boot.
 
-    result = _run_readiness(_readiness_env(tmp_path, curl_body))
+    Real curl prints its -w status (000) and exits non-zero; the stub does the same.
+    """
+    behaviour = """if [ "$route" = plugins ] && [ "$n" -lt 3 ]; then printf '\\n000'; exit 7; fi"""
+
+    result = _run_readiness(_readiness_env(tmp_path, behaviour))
 
     assert result.returncode == 0, result.stderr
     assert "HTTP 000" in result.stdout
@@ -330,7 +324,7 @@ def test_readiness_keeps_polling_while_connection_is_refused(tmp_path: Path) -> 
 
 def test_readiness_rejects_a_leading_zero_timeout(tmp_path: Path) -> None:
     """`09` is an invalid octal literal to bash arithmetic, which would silently disable the timeout."""
-    result = _run_readiness(_readiness_env(tmp_path, 'printf "404"', timeout="09"))
+    result = _run_readiness(_readiness_env(tmp_path, "status=404", timeout="09"))
 
     assert result.returncode != 0
     assert "timeout='09'" in result.stderr, "the rejection should name the offending value"
@@ -343,22 +337,17 @@ def test_readiness_reaches_the_rotated_password_on_the_first_rejection(tmp_path:
     and the whole backoff tolerance (~45s at the shipped defaults) on every retry — on the path this
     script exists to keep idempotent.
     """
-    argv_log = tmp_path / "curl-argv"
-    curl_body = (
-        f'printf "%s\\n" "$*" >> "{argv_log}"; case "$*" in *admin:rotated*) printf "200" ;; *) printf "401" ;; esac'
-    )
-
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            curl_body,
+            'case "$creds" in *:rotated) ;; *) status=401 ;; esac',
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
     assert result.returncode == 0, result.stderr
-    probes = argv_log.read_text().strip().splitlines()
+    probes = _requests(tmp_path, "plugins")
     assert sum("admin:initial" in line for line in probes) == 1, "one rejection is enough evidence"
     assert sum("admin:rotated" in line for line in probes) == 1
 
@@ -369,44 +358,43 @@ def test_readiness_forgives_a_transient_rejection_during_boot(tmp_path: Path) ->
     XNAT can reject a valid credential for a beat while its auth providers wire up. Switching on
     that blip would strand the run on the wrong password for the rest of the wait.
     """
-    argv_log = tmp_path / "curl-argv"
-    count_file = tmp_path / "curl-count"
-    curl_body = (
-        f'printf "%s\\n" "$*" >> "{argv_log}"; '
-        f'count=$(cat "{count_file}" 2>/dev/null || echo 0); count=$((count + 1)); '
-        f'printf "%s" "$count" > "{count_file}"; '
-        'case "$count" in 1) printf "404" ;; 2) printf "401" ;; 3) printf "404" ;; *) printf "200" ;; esac'
-    )
+    behaviour = 'if [ "$route" = plugins ]; then case "$n" in 1|3) status=404 ;; 2) status=401 ;; esac; fi'
 
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            curl_body,
+            behaviour,
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
         )
     )
 
     assert result.returncode == 0, result.stderr
-    probes = argv_log.read_text().strip().splitlines()
+    probes = _requests(tmp_path, "plugins")
     # The blip does spend one look at the other password — but the 404 it gets back is inconclusive
-    # (the route is not registered yet for either credential), so the run continues, and finishes,
+    # (the route is not answering yet for either credential), so the run continues, and finishes,
     # on the credential it started with.
     assert sum("admin:rotated" in line for line in probes) == 1, "a single 401 must not switch"
     assert "admin:initial" in probes[-1], "the successful probe must be the original credential"
 
 
-def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path: Path) -> None:
-    """A 404 means the plugin is still registering, so the *other* password must not be tried.
+@pytest.mark.parametrize(
+    "behaviour",
+    [
+        pytest.param("status=404", id="route-not-answering"),
+        pytest.param(f"""if [ "$route" = plugins ]; then body='{PARTIAL_LISTING}'; fi""", id="plugins-missing"),
+    ],
+)
+def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path: Path, behaviour: str) -> None:
+    """Not ready yet means XNAT is still loading, so the *other* password must not be tried.
 
     Probing both credentials on every poll sends one wrong-password login every few seconds, which
     trips XNAT's 20-attempt account lockout long before the wait budget expires.
     """
-    argv_log = tmp_path / "curl-argv"
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            f'printf "%s\\n" "$*" >> "{argv_log}"; printf "404"',
+            behaviour,
             timeout="0",
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
@@ -414,16 +402,15 @@ def test_readiness_does_not_replay_a_dead_credential_while_plugins_load(tmp_path
     )
 
     assert result.returncode != 0
-    assert "admin:rotated" not in argv_log.read_text()
+    assert not any("admin:rotated" in line for line in _requests(tmp_path))
 
 
 def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(tmp_path: Path) -> None:
     """Waiting cannot fix a wrong password, so fail fast instead of burning the whole budget."""
-    argv_log = tmp_path / "curl-argv"
     result = _run_readiness(
         _readiness_env(
             tmp_path,
-            f'printf "%s\\n" "$*" >> "{argv_log}"; printf "401"',
+            "status=401",
             timeout="900",
             initial_password="initial",  # pragma: allowlist secret
             rotated_password="rotated",  # pragma: allowlist secret
@@ -432,7 +419,7 @@ def test_readiness_stops_well_before_lockout_when_both_credentials_are_rejected(
 
     assert result.returncode != 0
     assert "rejected every admin credential" in result.stderr
-    probes = argv_log.read_text().strip().splitlines()
+    probes = _requests(tmp_path)
     assert len(probes) <= 6, f"{len(probes)} rejected logins risks XNAT's 20-attempt lockout"
     # Pinned per credential, not just in total: the early look at the other password on the first
     # rejection is charged to that password's own allowance, so it buys the fast path to a rotated
@@ -458,8 +445,8 @@ def test_dev_up_xnat_validates_the_plugin_cache_before_tearing_xnat_down() -> No
     """A failed download must not leave the trust with a torn-down XNAT and no replacement."""
     stdout = _dry_run_up_xnat().stdout
 
-    assert "ensure_plugins.sh" in stdout
-    assert stdout.index("ensure_plugins.sh") < stdout.index("xnat-reset")
+    assert "xnat_artifacts.sh check plugin" in stdout
+    assert stdout.index("xnat_artifacts.sh check plugin") < stdout.index("xnat-reset")
 
 
 @pytest.mark.parametrize(
@@ -527,181 +514,12 @@ def test_an_empty_resolve_image_override_cannot_swallow_the_next_flag() -> None:
 def test_up_xnat_skips_the_host_plugin_cache_outside_development() -> None:
     """Only the development stack bind-mounts plugins; elsewhere they are baked into the image.
 
-    Running the download unconditionally broke the documented on-prem bring-up, which has neither
-    FLIP_ARTIFACTS_BUCKET_NAME nor any need for the cache.
+    An on-prem or EC2 trust host never prepares the dev cache, so checking it there would fail a
+    bring-up that has no use for it.
     """
-    for prod in ("true", "stag"):
-        stdout = _dry_run_up_xnat(PROD=prod).stdout
-        assert "ensure_plugins.sh" not in stdout, f"PROD={prod} still reaches for the dev cache"
-
-
-@pytest.mark.parametrize(
-    "bucket",
-    [
-        pytest.param("", id="unset"),
-        # .env.development.example ships this value, so a fresh clone reaches the download with it
-        # still in place. It is non-empty, so an emptiness check passes it through to `aws s3 sync`,
-        # which fails on bucket-name validation instead of naming the variable to set.
-        pytest.param("<your-xnat-artifacts-bucket-name>", id="placeholder"),
-    ],
-)
-def test_plugin_download_names_the_variable_it_needs(bucket: str) -> None:
-    result = subprocess.run(
-        ["make", "xnat-plugins-download", f"FLIP_ARTIFACTS_BUCKET_NAME={bucket}"],
-        cwd=XNAT_DIR,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-    assert result.returncode != 0
-    assert "FLIP_ARTIFACTS_BUCKET_NAME" in result.stdout
-    assert ".env.development" in result.stdout, "should say where to set it"
-    assert "Usage:" not in result.stdout, "leaked the script's usage line instead of naming the var"
-    assert "aws" not in result.stderr.lower(), "reached the S3 sync instead of failing at the guard"
-
-
-def test_trust_makefile_exports_the_artifacts_bucket_to_the_xnat_sub_make() -> None:
-    """`make -C trust up-trust` reaches up-xnat, which in development needs this in its env.
-
-    The bucket name is seeded as a *makefile* variable rather than on the command line, because
-    make auto-exports command-line variables — that route would pass whether or not the export
-    directive exists, so it would prove nothing. ``trust/Makefile`` gets its real value from an
-    ``-include``d env file, which is likewise not auto-exported.
-
-    The assertion is on *presence*, not on the seeded value. Asserting the value fails on any
-    checkout with a populated ``.env.development``, because the real bucket name from that file
-    wins over the seed — so the test used to pass in CI (clean checkout, no env file) and fail on
-    a configured developer machine, which is exactly backwards (FLIP#970).
-
-    Presence alone is still a real assertion. Verified against GNU Make: neither an ``-include``d
-    nor an ``--eval``'d variable is exported on its own, so *whichever* value arrives, it can only
-    have got there through the ``export`` directive under test::
-
-        -include'd + export  -> from-env-file      -include'd, no export  -> NOT-EXPORTED
-        wrapper'd  + export  -> probe-bucket       wrapper'd,  no export  -> NOT-EXPORTED
-
-    The seed and the probe target are delivered as a wrapper makefile on stdin (``-f -``)
-    rather than through ``--eval``, which GNU Make only grew in 3.82: macOS ships 3.81, where
-    ``--eval`` is rejected as an unrecognized option and the probe prints nothing — the test
-    then failed on every Mac while passing in CI. An ``-f``'d assignment is no more auto-exported
-    than an ``--eval``'d one, so the value can still only reach the sub-make environment through
-    the ``export`` directive under test.
-
-    **The ``-f`` order is load-bearing.** ``trust/Makefile`` derives
-    ``MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))`` and resolves
-    ``FL_PROVISIONED_DIR`` against it. Make materialises a stdin makefile as a temp file, so
-    passing the wrapper first (``-f -`` alone, with the real makefile pulled in by an ``include``)
-    puts ``/tmp/GmXXXXXX`` at the head of ``MAKEFILE_LIST``; ``MAKEFILE_DIR`` becomes ``/tmp/`` and
-    ``FL_PROVISIONED_DIR`` resolves against ``/`` — measured as
-    ``/fl-services/nvflare/provision/workspace-dev``. ``--eval`` left ``MAKEFILE_LIST`` untouched,
-    so this is the one axis on which the two are *not* equivalent, and the harness was parsing
-    ``trust/Makefile`` in a state no real invocation produces. Passing the real makefile first and
-    the wrapper second keeps ``$(firstword …)`` as ``Makefile`` and ``MAKEFILE_DIR`` correct. The
-    wrapper must then NOT ``include Makefile`` itself, or make reads it twice and emits an
-    "overriding recipe for target" warning per duplicated rule (29 of them, measured).
-
-    Reading the wrapper second also flips which assignment wins: its seed is parsed after the
-    ``-include``d env file, so ``probe-bucket`` now wins on a configured checkout too. The
-    assertion stays on *presence* rather than the value, so it proves the same thing either way.
-    """
-    probe_makefile = (
-        # Seeds a value for the CI case, where no env file supplies one. Read after the real
-        # makefile, so this seed wins; presence is what is asserted, so either value proves it.
-        "FLIP_ARTIFACTS_BUCKET_NAME = probe-bucket\n"
-        "__probe: ; @printenv FLIP_ARTIFACTS_BUCKET_NAME || echo NOT-EXPORTED\n"
-    )
-    result = subprocess.run(
-        [
-            "make",
-            "-C",
-            "trust",
-            # Real makefile first so MAKEFILE_DIR points at trust/; wrapper second so its seed
-            # still wins. See the docstring — the order is not cosmetic.
-            "-f",
-            "Makefile",
-            "-f",
-            "-",
-            # deploy/fl_backend.mk hard-fails on an unset backend, and a CI checkout has no
-            # .env.development to supply one.
-            "FL_BACKEND=nvflare",
-            "__probe",
-        ],
-        cwd=REPO_ROOT,
-        input=probe_makefile,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-
-    combined = result.stdout + result.stderr
-    assert "NOT-EXPORTED" not in result.stdout, (
-        "FLIP_ARTIFACTS_BUCKET_NAME did not reach the sub-make environment — the "
-        "`export FLIP_ARTIFACTS_BUCKET_NAME` directive in trust/Makefile is missing. Without it "
-        f"the dev XNAT plugin download runs against a bucket-less S3 URI.\n{combined}"
-    )
-    # Guards the guard: a make failure that printed neither the value nor NOT-EXPORTED would
-    # otherwise satisfy the assertion above by saying nothing at all.
-    assert result.stdout.strip(), f"the probe target produced no output at all\n{combined}"
-
-
-def _aws_export_probe(**caller_env: str) -> str:
-    """Runs a probe target under ``trust/Makefile`` and reports the child's AWS environment.
-
-    Args:
-        **caller_env: Variables to set in make's own environment, as an operator's shell would.
-            Both AWS names are stripped first so the host's real values cannot mask the result.
-
-    Returns:
-        str: The probe target's stdout.
-    """
-    probe_makefile = "__probe: ; @env | grep -E '^AWS_(PROFILE|REGION)=' || echo NONE-EXPORTED\n"
-    env = {k: v for k, v in os.environ.items() if k not in ("AWS_PROFILE", "AWS_REGION")}
-    env.update(caller_env)
-    result = subprocess.run(
-        ["make", "-C", "trust", "-f", "Makefile", "-f", "-", "FL_BACKEND=nvflare", "__probe"],
-        cwd=REPO_ROOT,
-        input=probe_makefile,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=60,
-        env=env,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return result.stdout
-
-
-def test_undefined_aws_names_are_not_exported_as_empty() -> None:
-    """A bare ``export`` on an undefined name defines it empty and exports ``AWS_PROFILE=``.
-
-    ``-include ../$(MAIN_ENV_FILE)`` silently skips a missing file, and a developer may comment
-    either key out to fall through to the default profile or to ambient SSO credentials — so both
-    are routinely undefined here. Empty is worse than absent for the AWS CLI, and the two fail
-    differently: ``AWS_PROFILE=`` gives "The config profile () could not be found" instead of
-    falling back to the default credential chain, and ``AWS_REGION=`` shadows the region the
-    profile defines in ``~/.aws/config``, giving "Invalid endpoint: https://s3..amazonaws.com".
-    Both land on the ``make -C trust up-trust`` path this export exists to repair.
-    """
-    assert "NONE-EXPORTED" in _aws_export_probe(), (
-        "an undefined AWS_PROFILE/AWS_REGION reached the sub-make environment as an empty value — "
-        "the ifdef guards in trust/Makefile are missing, and a bare `export` DEFINES an undefined "
-        "name as empty (origin=file) rather than passing a value through"
-    )
-
-
-def test_defined_aws_names_still_reach_the_sub_make() -> None:
-    """The ifdef guards must not cost the pass-through the export exists for.
-
-    Without these in the child environment the artifacts bucket NAME reaches the XNAT sub-make but
-    the credentials to read it do not, and the dev plugin sync dies on "Unable to locate
-    credentials".
-    """
-    out = _aws_export_probe(AWS_PROFILE="probe-profile", AWS_REGION="eu-west-2")
-    assert "AWS_PROFILE=probe-profile" in out, f"AWS_PROFILE did not reach the sub-make\n{out}"
-    assert "AWS_REGION=eu-west-2" in out, f"AWS_REGION did not reach the sub-make\n{out}"
+    for hub in ("prod", "stag"):
+        stdout = _dry_run_up_xnat(HUB=hub).stdout
+        assert "xnat_artifacts.sh" not in stdout, f"HUB={hub} still reaches for the dev cache"
 
 
 def test_root_smoke_target_resolves_relative_paths_from_repo_root() -> None:
@@ -733,7 +551,7 @@ def _kit_tree(tmp_path: Path) -> Path:
     here aborts the parse and reads as a loop that never ran.
     """
     (tmp_path / "deploy").mkdir()
-    for fragment in ("env_mode.mk", "fl_backend.mk", "instance.mk"):
+    for fragment in ("env_mode.mk", "fl_backend.mk", "instance.mk", "portable.mk"):
         shutil.copy(REPO_ROOT / "deploy" / fragment, tmp_path / "deploy" / fragment)
     trust_dir = tmp_path / "trust"
     (trust_dir / "xnat").mkdir(parents=True)
@@ -1104,3 +922,79 @@ def test_abs_or_relative_to_only_joins_relative_values(tmp_path: Path, value: st
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == expected
+
+
+def test_a_trust_on_any_slot_gets_its_own_network(tmp_path: Path) -> None:
+    """up-trust attaches to deploy_trust-network-<slot>; create-networks only ever made 1 and 2.
+
+    A trust the hub gave slot Trust_3 (the Azure node on LZA stag, FLIP#1390) created every
+    container and then failed "network deploy_trust-network-3 not found". Driven against a stub
+    docker so the test proves the network is created, not that a recipe mentions it.
+    """
+    trust_dir = _kit_tree(tmp_path)
+    (trust_dir / ".env.AZ1.development").write_text("FL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "docker-calls"
+    _write_executable(
+        bin_dir / "docker",
+        f'#!/bin/sh\necho "$@" >> "{record}"\n[ "$1 $2" = "network inspect" ] && exit 1\nexit 0\n',
+    )
+    env = _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+
+    result = subprocess.run(
+        ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), "create-trust-network", "KIT=AZ1", "FL_BACKEND=nvflare"],
+        cwd=trust_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "network create --driver overlay --attachable deploy_trust-network-3" in record.read_text()
+
+    up_trust = next(
+        line for line in (REPO_ROOT / "trust" / "Makefile").read_text().splitlines() if line.startswith("up-trust:")
+    )
+    assert "create-trust-network" in up_trust.split(":", 1)[1], "up-trust must create its network before compose"
+
+
+def test_recreate_networks_brings_back_the_slot_network(tmp_path: Path) -> None:
+    """remove-networks drops the kit's slot network and recreate-networks makes it again."""
+    trust_dir = _kit_tree(tmp_path)
+    (trust_dir / ".env.AZ1.development").write_text("FL_KIT_SLOT=Trust_3\nFL_KIT_SLOT_NUMBER=3\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    record = tmp_path / "docker-calls"
+    _write_executable(
+        bin_dir / "docker",
+        f'#!/bin/sh\necho "$@" >> "{record}"\n[ "$1 $2" = "network inspect" ] && exit 1\nexit 0\n',
+    )
+    env = _make_env({**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"})
+
+    def run(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["make", "-f", str(REPO_ROOT / "trust" / "Makefile"), *args, "FL_BACKEND=nvflare"],
+            cwd=trust_dir,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    result = run("recreate-networks", "KIT=AZ1")
+
+    assert result.returncode == 0, result.stderr
+    calls = record.read_text().splitlines()
+    rm = next(c for c in calls if c.startswith("network rm") and "trust-network-1" in c)
+    assert "deploy_trust-network-3" in rm
+    assert "network create --driver overlay --attachable deploy_trust-network-3" in calls
+
+    record.unlink()
+    result = run("recreate-networks")
+
+    assert result.returncode == 0, "without a KIT (the root Makefile's call) nothing slot-specific runs"
+    assert "trust-network-3" not in record.read_text()

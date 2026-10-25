@@ -96,17 +96,23 @@ HUB_SHARED_ENV_KEYS = (
     "FLOWER_KIT_DATE",
     "FLARE_KIT_DATE",
     "DOCKER_TAG",
-    "DOCKER_REGISTRY",
     "DOCKER_FL_TAG",
-    "DOCKER_FL_REGISTRY",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
+    "FL_EDGE_PORT",
 )
 
 
 def _hub_shared_from_env() -> dict[str, str]:
-    """Read hub-shared values from os.environ. Unset keys are omitted (no empty strings)."""
-    return {key: os.environ[key] for key in HUB_SHARED_ENV_KEYS if key in os.environ}
+    """Read hub-shared values from os.environ. Unset keys are omitted (no empty strings).
+
+    ``FL_EDGE_PORT`` (the port trusts dial) defaults to ``FL_SERVER_PORT``: they differ only where
+    the edge remaps the port, as LZA staging's ``:8003`` → ``:8002`` does (FLIP#1365).
+    """
+    shared = {key: os.environ[key] for key in HUB_SHARED_ENV_KEYS if key in os.environ}
+    if not shared.get("FL_EDGE_PORT") and "FL_SERVER_PORT" in shared:
+        shared["FL_EDGE_PORT"] = shared["FL_SERVER_PORT"]
+    return shared
 
 
 def register_one_trust(

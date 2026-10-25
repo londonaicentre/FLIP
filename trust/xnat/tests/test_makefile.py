@@ -16,14 +16,16 @@ counts when complete (FLIP#1204).
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "tests"))
 
-from make_dry_run import dry_run, kit_with, main, run_target  # noqa: E402
+from make_dry_run import KIT, dry_run, kit_with, main, run_target  # noqa: E402
 
 
 class UpgradeXnat(unittest.TestCase):
@@ -137,6 +139,82 @@ class XnatBackup(unittest.TestCase):
         code, out, _ = self._backup(NO_DB="1")
         assert code != 0, out
         assert "refusing to upgrade XNAT without a dump" in out, out
+
+
+class XnatImageRegistry(unittest.TestCase):
+    """The registry `docker stack deploy` substitutes into the XNAT images, from make's environment (FLIP#1480)."""
+
+    ECR = "111122223333.dkr.ecr.eu-west-2.amazonaws.com/ghcr/londonaicentre/"
+    STACK = (Path(__file__).resolve().parents[1] / "docker-compose-stack.yml").read_text()
+
+    def _images(self, *extra: str, **env: str) -> list[str]:
+        result = run_target(
+            "__registry",
+            "-s",
+            *extra,
+            subdir="trust/xnat",
+            probe="__registry: ; @echo registry=[$$DOCKER_REGISTRY]\n",
+            kit=KIT + f"DOCKER_REGISTRY={self.ECR}\n",
+            env=env,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        match = re.search(r"^registry=\[(.*)\]$", result.stdout, re.MULTILINE)
+        assert match, result.stdout
+        images = re.findall(r"image: \$\{DOCKER_REGISTRY\}(\S+)", self.STACK)
+        assert images, "the stack no longer takes its registry from DOCKER_REGISTRY"
+        return [match.group(1) + image for image in images]
+
+    def test_a_deployed_trust_pulls_xnat_from_ghcr_whatever_the_kit_says(self):
+        """An older kit and the admin's exported hub env can both still name an LZA hub's ECR cache."""
+        for image in self._images(DOCKER_REGISTRY=self.ECR):
+            assert image.startswith("ghcr.io/londonaicentre/xnat-"), image
+
+    def test_development_with_an_empty_registry_runs_local_images(self):
+        for image in self._images("HUB=", HUB="", DOCKER_REGISTRY=""):
+            assert image.startswith("xnat-"), image
+
+
+class UpXnatBuild(unittest.TestCase):
+    """`make up BUILD=true` builds the XNAT images from this checkout and deploys exactly those.
+
+    The swarm agent re-pulls a tag on every deploy and keeps a local image only when that pull
+    fails, so the build goes to the unpublished `dev` tag: tagged `stag`, it would be replaced
+    by the registry's `stag` and the stack would run images built from another commit.
+    """
+
+    def test_build_true_builds_then_deploys_the_local_tag(self):
+        out = dry_run("up-xnat", "BUILD=true", subdir="trust/xnat")
+        for image in ("xnat-web", "xnat-db", "xnat-nginx"):
+            assert f"{image}:dev " in out, f"{image} is not built at :dev:\n{out}"
+        assert "XNAT_TAG=dev" in out, out
+        assert '--resolve-image "never"' in out, out
+        # Built before the running stack is torn down, so a failed build leaves it up.
+        assert out.index("docker build") < out.index("down-xnat"), out
+
+    def test_a_command_line_xnat_tag_names_the_build(self):
+        """Tags are daemon-wide: a second stack on the host (a release check) keeps off the shared :dev."""
+        out = dry_run("up-xnat", "BUILD=true", "XNAT_TAG=rel0130", subdir="trust/xnat")
+        for image in ("xnat-web", "xnat-db", "xnat-nginx"):
+            assert f"{image}:rel0130 " in out, f"{image} is not built at :rel0130:\n{out}"
+        assert "XNAT_TAG=rel0130" in out, out
+        assert ":dev" not in out, out
+        assert '--resolve-image "never"' in out, out
+
+    def test_a_kit_xnat_tag_is_a_pull_pin_not_a_build_tag(self):
+        out = dry_run("up-xnat", "BUILD=true", subdir="trust/xnat", kit=KIT + "XNAT_TAG=stag\n")
+        assert "xnat-web:dev " in out, out
+        assert "XNAT_TAG=dev" in out, out
+
+    def test_default_up_xnat_builds_nothing_and_deploys_the_kit_tag(self):
+        out = dry_run("up-xnat", subdir="trust/xnat")
+        assert "docker build" not in out, out
+        assert "XNAT_TAG=sha-badcff1" in out, out
+
+    def test_an_inherited_xnat_tag_does_not_beat_the_kit(self):
+        """`make -C trust/xnat test` exports XNAT_TAG=stag (no kit there) into every test's environment."""
+        with mock.patch.dict(os.environ, {"XNAT_TAG": "stag"}):
+            out = dry_run("up-xnat", subdir="trust/xnat")
+        assert "XNAT_TAG=sha-badcff1" in out, out
 
 
 if __name__ == "__main__":

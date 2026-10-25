@@ -11,9 +11,9 @@
     limitations under the License.
 -->
 
-# NVFLARE FL API
+# FLARE FL API
 
-Base FastAPI service for the NVFLARE deployment runtime. It backs the per-net FL API instances
+Base FastAPI service for the FLARE deployment runtime. It backs the per-net FL API instances
 (one `flare-fl-api` container per network).
 
 The FL API wraps the NVIDIA FLARE admin `Session`: we subclass it as `FLIP_Session`
@@ -51,7 +51,7 @@ The Hub drives a net **only** through these endpoints
 | `/upload_app/{model_id}` | POST | Stage a ready-to-launch FLARE app — global/local rounds, bundle URLs, project/cohort, trusts, aggregator, aggregation weights — into the API's upload dir. Writes the `config_fed_{server,client}.json` but does **not** call FLARE. |
 | `/submit_job/{job_folder}` | POST | Submit a previously staged app as a FLARE job (`session.submit_job`). |
 | `/list_jobs` | GET | List FLARE jobs (the Hub filters this to find the job to abort). |
-| `/abort_job/{job_id}` | DELETE | Abort a running job. |
+| `/abort_job/{job_id}` | DELETE | Abort a job, running or still waiting to be scheduled (FLARE marks a waiting one `FINISHED:ABORTED`). |
 | `/check_server_status` | GET | FLARE server status. |
 | `/check_client_status` | GET | Per-client status; `?targets=<name>` (repeatable) to filter, otherwise all clients. |
 
@@ -89,7 +89,7 @@ reach the API (a compromised trust container, an SSM port-forward). `validate_bu
    `AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`, which makes boto3 presign
    *path-style* URLs — bucket in the path, host exactly `s3.<AWS_REGION>.amazonaws.com` — so
    `https://s3.<AWS_REGION>.amazonaws.com` is the value, set in
-   `deploy/compose.production.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
+   `deploy/compose.prod.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
    the same local as flip-api's endpoint (a static test in `deploy/providers/AWS/tests/` holds both
    fl-api task families to it); the dev compose lists its RustFS service, `http://object-store:9000`
    (FLIP#1291). Moving the presign endpoint without the allow-list 400s every bundle download, i.e.

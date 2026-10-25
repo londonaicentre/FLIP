@@ -16,28 +16,36 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Fetch the pinned documentation GIFs from the ``aicentreflip/docs-gifs`` dataset (FLIP#1236).
+"""Fetch the documentation GIFs from the ``aicentreflip/docs-gifs`` dataset (FLIP#1236, FLIP#1547).
 
-The user-guide GIFs are not tracked in git. Each recording is published to a public Hugging Face dataset as
-one immutable tag (``publish_docs_gifs.py``), ``docs/.gifs_version`` pins the tag, and ``source/conf.py`` calls
-:func:`fetch` before Sphinx reads the sources, so every build shows exactly the pinned set::
+The user-guide GIFs are not tracked in git. Every recording from ``develop`` is one commit on the dataset's
+``main`` (``publish_docs_gifs.py``), and ``release.yml`` tags the one each release ships as ``vX.Y.Z``
+(``freeze_docs_gifs.py``). ``source/conf.py`` calls :func:`fetch` before Sphinx reads the sources, trying the
+revisions :func:`revisions_to_try` picks for the build at hand::
 
-    https://huggingface.co/datasets/<repo>/resolve/<revision>/manifest.json
-    https://huggingface.co/datasets/<repo>/resolve/<revision>/<category>/<name>.gif
+    release tag vX.Y.Z                 vX.Y.Z, else main
+    git main, and ReadTheDocs' stable  v<the version in pyproject.toml>, else main
+    PR preview #N                      pr-N (a hand recording, see publish_docs_gifs.py), else main
+    anything else (latest, local)      main
+
+The first that exists is resolved to its commit, and the manifest and every file are read at that commit, so a
+recording published mid-build cannot mix two sets::
+
+    https://huggingface.co/datasets/<repo>/resolve/<commit>/manifest.json
+    https://huggingface.co/datasets/<repo>/resolve/<commit>/<category>/<name>.gif
 
 Each file is streamed to ``<file>.part``, checked against the manifest's sha256 and size, and only then renamed
-into place; the manifest is written last, so its presence at a version means every file it lists was verified.
-A build at a *tag* whose manifest is already local makes no network request at all (a tag is never moved); any
-other revision (``main``, a sha) re-reads the manifest and then skips every file whose hash already matches.
-Files under the destination that the manifest does not list are left alone (``make clean`` wipes the tree).
+into place; a file whose local bytes already match is not downloaded. The manifest is written last, so its
+presence means every file it lists was verified. Files under the destination that the manifest does not list are
+left alone (``make clean`` wipes the tree).
 
 Anonymous by construction: no token is read. The dataset is public, and the CI publish job runs this script
-without credentials to prove that a freshly published tag resolves for everyone.
+without credentials to prove that a fresh recording resolves for everyone.
 
-Usage (``FLIP_DOCS_GIFS_REPO`` / ``FLIP_DOCS_GIFS_REVISION`` override the dataset and the pin)::
+Usage (``FLIP_DOCS_GIFS_REPO`` / ``FLIP_DOCS_GIFS_REVISION`` override the dataset and the revision)::
 
-    uv run docs/scripts/fetch_docs_gifs.py                              # pinned tag -> source/assets/generated/gifs/
-    uv run docs/scripts/fetch_docs_gifs.py --revision <tag> --dest /tmp/verify
+    uv run docs/scripts/fetch_docs_gifs.py                              # -> source/assets/generated/gifs/
+    uv run docs/scripts/fetch_docs_gifs.py --revision v0.12.0 --dest /tmp/verify
 """
 
 from __future__ import annotations
@@ -49,22 +57,26 @@ import os
 import re
 import sys
 import time
-from collections.abc import Callable
+import tomllib
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import requests
 
 DOCS_DIR = Path(__file__).resolve().parents[1]
+PYPROJECT = DOCS_DIR.parent / "pyproject.toml"
 DEFAULT_REPO = "aicentreflip/docs-gifs"
 REPO_ENV = "FLIP_DOCS_GIFS_REPO"
 REVISION_ENV = "FLIP_DOCS_GIFS_REVISION"
-PIN_FILE = DOCS_DIR / ".gifs_version"
 DEFAULT_DEST = DOCS_DIR / "source" / "assets" / "generated" / "gifs"
 MANIFEST_NAME = "manifest.json"
 HF_BASE_URL = "https://huggingface.co/datasets"
+HF_API_URL = "https://huggingface.co/api/datasets"
+RELEASE_RE = re.compile(r"v\d+\.\d+\.\d+")
 
 ATTEMPTS = 3
 CONNECT_TIMEOUT_SECONDS = 10
@@ -84,6 +96,10 @@ class FetchError(Exception):
     """A fetch or verification failure. The message names the URL and what went wrong."""
 
 
+class _Missing(FetchError):
+    """HTTP 404: the revision, or a file at it, is not on the dataset."""
+
+
 class _Retry(Exception):
     """A transient failure: retried up to ATTEMPTS times, after waiting ``wait`` seconds."""
 
@@ -99,13 +115,14 @@ class FetchReport:
 
     repo: str
     revision: str
+    commit: str
     version: str
     fetched: list[str] = field(default_factory=list)
     verified: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
-            f"{self.repo}@{self.revision} (manifest version {self.version}): "
+            f"{self.repo}@{self.revision} ({self.commit[:7]}, manifest version {self.version}): "
             f"{len(self.fetched)} fetched, {len(self.verified)} already present and verified"
         )
 
@@ -115,25 +132,28 @@ def repo_from_env() -> str:
     return os.environ.get(REPO_ENV) or DEFAULT_REPO
 
 
-def pinned_revision(pin_file: Path = PIN_FILE) -> str:
-    """The one tag in the pin file.
+def project_version(pyproject: Path = PYPROJECT) -> str:
+    """The platform version, read from the file ``release.yml`` reads it from to name the release."""
+    return tomllib.loads(pyproject.read_text())["project"]["version"]
 
-    Raises:
-        FetchError: If the file is unreadable, or does not hold exactly one non-blank line.
+
+def revisions_to_try(explicit: str | None = None, environ: Mapping[str, str] = os.environ) -> list[str]:
+    """The dataset revisions for this build, best first (the table in the module docstring).
+
+    An explicit revision, else ``$FLIP_DOCS_GIFS_REVISION``, is the only one tried. Otherwise ReadTheDocs' build
+    variables say what is being built; a build without them (a contributor's) gets ``main``.
     """
-    try:
-        text = pin_file.read_text()
-    except OSError as exc:
-        raise FetchError(f"cannot read the docs GIFs pin {pin_file}: {exc}") from exc
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if len(lines) != 1:
-        raise FetchError(f"{pin_file} must hold exactly one line, the dataset tag to fetch; found {len(lines)}")
-    return lines[0]
-
-
-def resolve_revision(explicit: str | None = None, pin_file: Path = PIN_FILE) -> str:
-    """The revision to fetch: an explicit one, else ``$FLIP_DOCS_GIFS_REVISION``, else the pin."""
-    return explicit or os.environ.get(REVISION_ENV) or pinned_revision(pin_file)
+    chosen = explicit or environ.get(REVISION_ENV)
+    if chosen:
+        return [chosen]
+    name = environ.get("READTHEDOCS_VERSION_NAME", "")
+    if environ.get("READTHEDOCS_VERSION_TYPE") == "external":
+        return [f"pr-{name}", "main"]
+    if RELEASE_RE.fullmatch(name):
+        return [name, "main"]
+    if name in ("main", "stable"):
+        return [f"v{project_version()}", "main"]
+    return ["main"]
 
 
 def resolve_url(repo: str, revision: str, path: str) -> str:
@@ -175,15 +195,6 @@ def parse_manifest(raw: bytes, source: str) -> dict[str, Any]:
     return data
 
 
-def _local_manifest(dest: Path) -> dict[str, Any] | None:
-    """The manifest a previous fetch left behind, or None when there is none or it is unusable."""
-    path = dest / MANIFEST_NAME
-    try:
-        return parse_manifest(path.read_bytes(), str(path))
-    except (OSError, FetchError):
-        return None
-
-
 def _matches(path: Path, sha256: str, size: int) -> bool:
     return path.is_file() and path.stat().st_size == size and sha256_of(path) == sha256
 
@@ -213,8 +224,9 @@ def _open(session: requests.Session, url: str, *, stream: bool, attempt: int) ->
         raise _Retry(f"HTTP {response.status_code}", _retry_after(response, attempt))
     if response.status_code >= 500:
         raise _Retry(f"HTTP {response.status_code}", _backoff(attempt))
-    hint = " — does that revision exist on the dataset?" if response.status_code == 404 else ""
-    raise FetchError(f"{url}: HTTP {response.status_code}{hint}")
+    if response.status_code == 404:
+        raise _Missing(f"{url}: HTTP 404 — does that revision exist on the dataset?")
+    raise FetchError(f"{url}: HTTP {response.status_code}")
 
 
 def _with_retries(action: Callable[[int], Any], url: str, log: Log, sleep: Sleep) -> Any:
@@ -271,69 +283,77 @@ def _write_manifest(dest: Path, manifest: dict[str, Any]) -> None:
     os.replace(part, final)
 
 
+def resolve(repo: str, revisions: Sequence[str], session: requests.Session, log: Log, sleep: Sleep) -> tuple[str, str]:
+    """The first of ``revisions`` that exists on the dataset, and the commit it points at.
+
+    Raises:
+        FetchError: If none of them exists, or the Hub cannot be reached.
+    """
+    for revision in revisions:
+        url = f"{HF_API_URL}/{repo}/revision/{quote(revision, safe='')}"
+        try:
+            raw = _with_retries(partial(_read, session, url), url, log, sleep)
+        except _Missing:
+            log(f"no {revision} on {repo}")
+            continue
+        return revision, json.loads(raw)["sha"]
+    raise FetchError(f"none of {', '.join(revisions)} exists on {repo}")
+
+
 def fetch(
     repo: str,
-    revision: str,
+    revisions: Sequence[str],
     dest: Path,
     *,
     session: requests.Session | None = None,
     log: Log = lambda _message: None,
     sleep: Sleep = time.sleep,
 ) -> FetchReport:
-    """Bring ``dest`` to the manifest at ``repo@revision``, fetching only what is missing or differs.
+    """Bring ``dest`` to the manifest of the first of ``revisions`` on ``repo``, fetching only what differs.
 
     Args:
         repo (str): The dataset, ``<owner>/<name>``.
-        revision (str): A tag (the pin), ``main``, or a commit sha.
+        revisions (Sequence[str]): Tags, branches or commits to try, best first (:func:`revisions_to_try`).
         dest (Path): Where the ``<category>/<name>.gif`` files and the manifest land.
         session (requests.Session | None): The HTTP session; a fresh one when None. Tests pass a fake.
         log (Callable[[str], None]): Where progress lines go (the Sphinx logger, or ``print``).
         sleep (Callable[[float], None]): How to wait between attempts; tests pass a recorder.
 
     Returns:
-        FetchReport: What was fetched and what was already present.
+        FetchReport: The revision used, its commit, and what was fetched and what was already present.
 
     Raises:
-        FetchError: On any download, verification, or manifest failure — naming the URL.
+        FetchError: On any lookup, download, verification, or manifest failure — naming the URL.
     """
     session = session or requests.Session()
-    manifest_url = resolve_url(repo, revision, MANIFEST_NAME)
-    local = _local_manifest(dest)
-    # A tag is never moved, so a local manifest at the requested tag is still the remote one. Any other
-    # revision may have moved: re-read the manifest (one small request) and let the per-file hashes decide.
-    from_remote = local is None or local["version"] != revision
-    if from_remote:
-        raw = _with_retries(partial(_read, session, manifest_url), manifest_url, log, sleep)
-        manifest = parse_manifest(raw, manifest_url)
-    else:
-        manifest = local
-    report = FetchReport(repo=repo, revision=revision, version=manifest["version"])
+    revision, commit = resolve(repo, revisions, session, log, sleep)
+    manifest_url = resolve_url(repo, commit, MANIFEST_NAME)
+    raw = _with_retries(partial(_read, session, manifest_url), manifest_url, log, sleep)
+    manifest = parse_manifest(raw, manifest_url)
+    report = FetchReport(repo=repo, revision=revision, commit=commit, version=manifest["version"])
     dest.mkdir(parents=True, exist_ok=True)
     for path, entry in sorted(manifest["files"].items()):
         target = dest / path
         if _matches(target, entry["sha256"], entry["bytes"]):
             report.verified.append(path)
             continue
-        url = resolve_url(repo, revision, path)
+        url = resolve_url(repo, commit, path)
         target.parent.mkdir(parents=True, exist_ok=True)
         _with_retries(partial(_download, session, url, target, entry["sha256"], entry["bytes"]), url, log, sleep)
         report.fetched.append(path)
         log(f"fetched {path} ({entry['bytes']} bytes)")
-    if from_remote:
-        _write_manifest(dest, manifest)
+    _write_manifest(dest, manifest)
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--repo", default=None, help=f"the dataset (default ${REPO_ENV}, else {DEFAULT_REPO})")
-    parser.add_argument("--revision", default=None, help=f"tag, main or sha (default ${REVISION_ENV}, else the pin)")
+    parser.add_argument("--revision", default=None, help=f"tag, branch or commit (default ${REVISION_ENV}, else main)")
     parser.add_argument("--dest", type=Path, default=DEFAULT_DEST, help="where the GIFs land")
-    parser.add_argument("--pin-file", type=Path, default=PIN_FILE, help="the pin: one line, a tag")
     args = parser.parse_args(argv)
     try:
-        revision = resolve_revision(args.revision, args.pin_file)
-        report = fetch(args.repo or repo_from_env(), revision, args.dest, log=print)
+        report = fetch(args.repo or repo_from_env(), revisions_to_try(args.revision), args.dest, log=print)
     except FetchError as exc:
         print(f"❌ {exc}", file=sys.stderr)
         return 1

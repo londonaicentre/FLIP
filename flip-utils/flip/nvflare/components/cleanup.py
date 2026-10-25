@@ -25,7 +25,7 @@ from flip.constants import FlipConstants, FlipTasks
 
 
 class CleanupImages(Executor):
-    def __init__(self):
+    def __init__(self) -> None:
         """CleanupImages takes place at the start and end of the run.
         All the images used for the training are deleted to prevent the build-up of unnecessary
         files on the storage space. Executing at the start of a run ensures that any training code

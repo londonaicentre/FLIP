@@ -25,11 +25,13 @@ trust's identity, credentials, and Hub-shared configuration. `trust_kit_lib.py` 
 in-place-upsert implementation behind the others, so a kit file's operator edits (host-local
 ports, bind dirs) always survive a re-run.
 
-- **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=<stag|true>`; leave
-  `PROD` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
+- **`new_trust.py`** (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=<stag|prod>`; leave
+  `HUB` unset for development) — scaffolds `trust/.env.<CODE>.<env>` from the base template
   (`trust/.env.example`), prepending the trust's identity (`TRUST_NAME` / `TRUST_CODE` /
-  `TRUST_REGION`). Refuses to overwrite an existing kit. The result is ready for
-  `make register-trust KIT=<CODE>` to fill in credentials.
+  `TRUST_REGION`). Refuses to overwrite an existing kit (the root `new-trust` target also
+  refuses beside a kit still under its pre-FLIP#1479 name). The result is ready for
+  registration to fill in credentials (`make -C deploy/providers/AWS register-trusts KIT=<CODE>
+  HUB=<hub>` on a deployed hub, `make register-trust KIT=<CODE>` in development).
 - **`trust_kit_lib.py`** — the single kit-file writer behind `distribute_trust_kits.py`,
   `sync_trust_kit.py`, and the AWS registration path. Merges a kit dict into a kit file while
   preserving operator edits: credentials (`TRUST_API_KEY` / `TRUST_INTERNAL_SERVICE_KEY`) are
@@ -37,19 +39,15 @@ ports, bind dirs) always survive a re-run.
   (`EXPECTED_TRUST_ID` / `FL_KIT_SLOT` / `FL_KIT_SLOT_NUMBER`) and the Hub-shared block are
   upserted unconditionally, the latter under a sentinel header added once on first write. Writes
   every kit file `0600`.
-- **`distribute_trust_kits.py`** — writes trust kit files from `register_trust`'s JSON output.
-  `--target PATH` mode writes a single kit (object or one-element array) to an explicit path; it
-  is what every caller uses — the dev `register-trust` Makefile pipe
-  (`--target trust/.env.<CODE>.<env>`) and `deploy/providers/AWS/scripts/register-trusts.sh` for
-  stag/prod alike. Array mode (the
-  default without `--target`) reads a JSON array of kits on stdin and writes each to the legacy
-  slot-named `trust/.env.<fl_kit_slot>`, seeding a host-local profile from the matching
-  `.example` on first write; nothing in the repo invokes it any more.
-- **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> PROD=<env>`) — refreshes only the
+- **`distribute_trust_kits.py`** — writes a trust kit file from `register_trust`'s JSON output:
+  one kit (object or one-element array) on stdin to the required `--target PATH` — the dev
+  `register-trust` Makefile pipe (`--target trust/.env.<CODE>.<env>`) and
+  `deploy/providers/AWS/scripts/register-trusts.sh` for stag/prod alike.
+- **`sync_trust_kit.py`** (`make sync-trust-kit KIT=<CODE> HUB=<env>`) — refreshes only the
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
   untouched. Portable across dev/stag/prod — no docker compose exec, no ECS round-trip.
-- **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<slot>`) — a readiness checklist
+- **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<CODE>`) — a readiness checklist
   for an on-prem trust host, run as a precheck by `up-onprem-trust`. Diagnoses what's missing
   before `make up-onprem-trust` will succeed: public IP, docker swarm state, kit file presence,
   Hub-shared block, kit credentials, `FL_KIT_DIR` contents, OMOP/Orthanc data dirs, and GPU
@@ -70,7 +68,7 @@ ports, bind dirs) always survive a re-run.
   block. The script **stops before any container is touched**; the Makefile then re-includes the
   updated kit and does the pull / recreate (`_upgrade-trust-apply` on trust; the EC2 twin and
   `make -C trust/deploy/helm upgrade-trust-k8s` do the same for the other shapes). The operator
-  entry points wrap both phases together — `make upgrade-onprem-trust KIT=<slot>` also runs
+  entry points wrap both phases together — `make upgrade-onprem-trust KIT=<CODE>` also runs
   `onboard-onprem-trust --gate` (the readiness checklist implemented by `onboard_onprem_trust.py`,
   above) before the plan phase. Exit codes (the Makefile's contract): 0 pinned, 2 no usable target,
   3 refused downgrade, 4 not confirmed, 5 an image is missing at the target tag, 6 the checkout is
@@ -106,14 +104,14 @@ workflow; the other two are CI-only:
   rewriting `uv.lock` with no warning worth noticing.
 - **`check_fl_api_validation_sync.sh`** (CI: `fl-api-validation-sync.yml`) — verifies that
   `safe_join` and `validate_bundle_url` (the SSRF and path-traversal guards in front of the
-  server-side bundle fetch) stay byte-identical between the NVFLARE and Flower fl-api services.
+  server-side bundle fetch) stay byte-identical between the FLARE and Flower fl-api services.
   They're intentionally separate copies (different Docker build contexts, uv projects, and
   images), so a fix applied to one and not the other would silently leave the second vulnerable.
 - **`check_tutorial_sync.sh`** (CI: `fl-apps-check-tutorial-sync.yml`) — verifies that tutorial
   files kept as byte-identical copies of another file have not drifted. It holds two families of
-  hand-listed pairs: the Ark+ NVFLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
+  hand-listed pairs: the Ark+ FLARE pair (`data_utils.py` and `arkplus_flat_models.py`, shared
   between the two evaluation apps) and the EHR risk-prediction cross-backend pair
-  (`feature_engineering.py`, `models.py`, `query.sql`, with the NVFLARE copy as the reference).
+  (`feature_engineering.py`, `models.py`, `query.sql`, with the FLARE copy as the reference).
   The Flower tutorial-vs-`fl-apps/flower/` template pairs moved to
   `fl-tutorials/tests/test_flower_platform_parity.py`, which derives them from the tree. These
   can't be symlinks — `flwr build` excludes symlinks from the FAB — so each keeps a real copy that
@@ -130,7 +128,7 @@ workflow; the other two are CI-only:
 ## fl_round_metrics/
 
 Tooling for extracting and comparing per-round FL timings (not model metrics) from either a live
-platform run (CloudWatch logs) or a local NVFLARE simulator workspace. See
+platform run (CloudWatch logs) or a local FLARE simulator workspace. See
 [`fl_round_metrics/README.md`](fl_round_metrics/README.md) for the tools and the
 `make round-metrics` / `make reproduce-overhead` wrapper in the arkplus fine-tuning tutorial.
 

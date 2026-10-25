@@ -58,6 +58,10 @@ const trustLabel = (trustId: string, trustName: string): string => {
     return trust?.code || trustName;
 };
 
+// Natural sort: age bands run 10-19, 20-29, …, 100-109 rather than 10-19, 100-109, 20-29.
+const naturalOrder = new Intl.Collator(undefined, { numeric: true });
+const byCategory = (a: unknown, b: unknown): number => naturalOrder.compare(String(a), String(b));
+
 const containerRef = ref<HTMLDivElement | HTMLCanvasElement>();
 
 // The toolbox magicType toggle only flips echarts' internal state; option
@@ -96,7 +100,7 @@ onMounted(() => {
             });
         }).flat();
 
-        const xAxisValues = [...new Set(xAxisData)].sort();
+        const xAxisValues = [...new Set(xAxisData)].sort(byCategory);
 
         const chart = echarts.init(containerRef.value);
 
@@ -245,8 +249,7 @@ onMounted(() => {
                         return {
                             name: trustLabel(element.trustId, element.trustName),
                             type: seriesType.value,
-                            // Plain code-unit sort — same ordering _.sortBy gave the string categories.
-                            data: [...element.data].sort((a, b) => (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
+                            data: [...element.data].sort((a, b) => byCategory(a.value, b.value))
                                 .map(data => {
 
                                     return [data.value, data.count];

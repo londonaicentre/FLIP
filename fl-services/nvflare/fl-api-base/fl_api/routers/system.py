@@ -44,12 +44,12 @@ def check_client_status(
     Checks the status of specified clients or all clients if no specific targets are provided.
 
     Args:
-        targets (Optional[List[str]]): list of client names to check status for. If not specified, the status of all
+        targets (list[str] | None): list of client names to check status for. If not specified, the status of all
         clients will be checked.
         session (FLIP_Session): the FLIP session instance.
 
     Returns:
-        List[ClientInfoModel]: a list of ClientInfoModel objects containing client status information.
+        list[ClientInfoModel]: a list of ClientInfoModel objects containing client status information.
     """
     return session.check_client_status(targets)
 
@@ -73,8 +73,11 @@ def get_connected_client_list(session: FLIP_Session = Depends(get_session)) -> l
     """
     List of the connected clients.
 
+    Args:
+        session (FLIP_Session): the FLIP session instance.
+
     Returns:
-        List[ClientInfoModel]: a list of ClientInfoModel objects.
+        list[ClientInfoModel]: a list of ClientInfoModel objects.
     """
     return session.get_connected_client_list()
 
@@ -86,6 +89,7 @@ def get_working_directory(target: str, session: FLIP_Session = Depends(get_sessi
 
     Args:
         target (str): target (e.g. site-1).
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         str: current working directory of the specified target.
@@ -106,7 +110,7 @@ def restart(
 
     Args:
         target_type (TargetType): type of target to restart. Can be server, client or all.
-        client_names (Optional[List[str]]): if target_type is client, this is a list of client names. If a target
+        client_names (list[str] | None): if target_type is client, this is a list of client names. If a target
         is not in the actual list of clients, it will be ignored.
         session (FLIP_Session): the FLIP session instance.
 
@@ -134,7 +138,7 @@ def shutdown(
 
     Args:
         target_type (TargetType): type of target. Either server, client or all.
-        client_names (Optional[List[str]], optional): for target_type client, this is a list of specific clients you
+        client_names (list[str] | None, optional): for target_type client, this is a list of specific clients you
         want to shut down. If not specified, all clients will be shut down.
         session (FLIP_Session): the FLIP session instance.
 

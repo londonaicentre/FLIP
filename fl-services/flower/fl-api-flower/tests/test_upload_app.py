@@ -170,7 +170,7 @@ accuracy = true
 def test_upload_app_injects_min_clients_from_trust_count(trusts, expected, client, upload_dir, mock_requests_get):
     """flip-min-clients carries the participating-trust count into the Flower run config.
 
-    The NVFLARE adapter already does this (``config["min_clients"] = len(trusts)`` in
+    The FLARE adapter already does this (each workflow's ``min_clients = len(trusts)`` in
     prepare_config.configure_server). Without the Flower equivalent the strategy inherits
     flwr's ``min_*_nodes=2`` default, so a single-trust run waits for a second node that
     never arrives, in an unbounded poll loop that never times out.
@@ -219,7 +219,8 @@ def test_upload_app_rejects_an_empty_trust_list(client, upload_dir, mock_request
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
-    assert "trust" in response.json()["detail"].lower()
+    assert "trust" in response.json()["refusal"].lower()
+    assert response.json()["refusal"] == response.json()["detail"]
 
     # Nothing was written: the refusal lands before the job dir is created.
     assert not (upload_dir / model_id).exists()
@@ -433,6 +434,7 @@ def test_upload_app_rejects_path_traversal_bundle_url(client, upload_dir):
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_upload_app_rejects_non_https_bundle_url(client, upload_dir):
@@ -448,6 +450,7 @@ def test_upload_app_rejects_non_https_bundle_url(client, upload_dir):
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypatch):
@@ -464,6 +467,7 @@ def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypat
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
@@ -493,6 +497,7 @@ def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
+    assert "refusal" not in response.json()
 
 
 def test_startup_reports_empty_bundle_allow_list(monkeypatch):
@@ -509,3 +514,64 @@ def test_startup_refuses_a_malformed_bundle_allow_list(monkeypatch):
     monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
     with pytest.raises(ValueError, match="not a bare scheme://host"), TestClient(app_module.app):
         pass
+
+
+# ── GPU request (FLIP#70) ───────────────────────────────────────────────────────────
+
+
+def _minimal_upload(model_id, mock_requests_get, **extra):
+    pyproject = b'[tool.flwr.app]\npublisher = "test"\n\n[tool.flwr.app.config]\nnum_server_rounds = 3\n'
+    mock_requests_get({f"https://example.com/{model_id}/pyproject.toml": pyproject})
+    return {
+        "project_id": "project-123",
+        "cohort_query": "SELECT * FROM patients",
+        "trusts": ["trust1", "trust2"],
+        "bundle_urls": [f"https://example.com/{model_id}/pyproject.toml"],
+        **extra,
+    }
+
+
+def test_upload_app_records_a_gpu_request_and_says_flower_does_not_enforce_it(client, upload_dir, mock_requests_get):
+    """Flower's deployment runtime places no job by GPU, so the request is echoed as recorded, not applied."""
+    model_id = str(uuid4())
+    body = _minimal_upload(model_id, mock_requests_get, resources={"num_gpus": 1})
+
+    response = client.post(f"/upload_app/{model_id}", json=body)
+
+    assert response.status_code == 200
+    assert response.json()["resources"] == {"num_gpus": 1}
+    assert response.json()["resources_enforced"] is False
+
+
+def test_upload_app_without_a_gpu_request_reports_none(client, upload_dir, mock_requests_get):
+    model_id = str(uuid4())
+
+    response = client.post(f"/upload_app/{model_id}", json=_minimal_upload(model_id, mock_requests_get))
+
+    assert response.status_code == 200
+    assert response.json()["resources"] is None
+    assert response.json()["resources_enforced"] is False
+
+
+def test_upload_app_leaves_config_toml_without_a_gpu_key(client, upload_dir, mock_requests_get):
+    """flwr rejects run-config keys an app does not declare, so a GPU key would break every uploaded app."""
+    model_id = str(uuid4())
+    body = _minimal_upload(model_id, mock_requests_get, resources={"num_gpus": 2})
+
+    client.post(f"/upload_app/{model_id}", json=body)
+
+    assert "gpu" not in (upload_dir / model_id / "app" / "config.toml").read_text().lower()
+
+
+@pytest.mark.parametrize(
+    "resources",
+    [{"num_gpus": -1}, {"num_gpus": "1"}, {"num_gpus": 1, "num_cpus": 2}, {"num_gpus": 1, "mem_per_gpu_gib": 7}],
+)
+def test_upload_app_rejects_a_malformed_gpu_request(client, upload_dir, mock_requests_get, resources):
+    model_id = str(uuid4())
+
+    response = client.post(
+        f"/upload_app/{model_id}", json=_minimal_upload(model_id, mock_requests_get, resources=resources)
+    )
+
+    assert response.status_code == 422

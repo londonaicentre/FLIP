@@ -43,6 +43,7 @@
                 :name="name"
                 :model-value="checked"
                 :data-test="dataTest"
+                :aria-label="ariaLabel"
                 :disabled="disabled"
                 :aria-disabled="disabled || undefined"
                 class="relative inline-flex items-center h-6 transition-colors rounded-full w-11 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 focus:ring-offset-2 dark:ring-offset-dark-canvas"
@@ -86,6 +87,8 @@ interface IAiSwitchProps {
         disabled: string;
     },
     name: string;
+    // Names the switch when there is no label beside it to do so.
+    ariaLabel?: string;
     hint?: string;
     dataTest?: string;
     inputProps?: HTMLInputElement;
@@ -99,6 +102,7 @@ const props = withDefaults(
         required: false,
         error: "",
         label: undefined,
+        ariaLabel: undefined,
         hint: undefined,
         dataTest: "",
         inputProps: undefined,

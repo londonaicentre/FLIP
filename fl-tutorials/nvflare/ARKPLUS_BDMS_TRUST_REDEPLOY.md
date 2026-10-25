@@ -83,7 +83,7 @@ DOCKER_FL_TAG=a3bf6c5bde4fac955d75858e25fc82a353345bec
 ```
 
 **1b. Replace your FL participant-kit slice with the one the FLIP team sends you**
-(`flkit-Trust_2-<date>.tar.gz`). The new `fl-client` runs NVFLARE 2.9.0, which **rejects the old
+(`flkit-Trust_2-<date>.tar.gz`). The new `fl-client` runs FLARE 2.9.0, which **rejects the old
 kit's config format** — without this step it crash-loops with
 `missing 'target' in server config for project 'net-1'; the startup kit may have been provisioned
 with an older HA-based template`. Your certificates/keys are unchanged (byte-identical in the new
@@ -100,10 +100,10 @@ ls "$FL_KIT_DIR/net-1/services/Trust_2/startup/fed_client.json"   # must exist
 sudo (the login user is deliberately not in the docker group; `-E` keeps `$HOME` so root's docker
 reuses your `docker login ghcr.io` credentials):
 ```bash
-sudo -E env PROD=true make up-onprem-trust KIT=<HANDLE>
+sudo -E make up-onprem-trust KIT=<HANDLE>
 ```
 This re-pulls all images at their configured tags and recreates only `fl-client` and `imaging-api`
-(the two whose tags changed). *If you prefer a clean restart:* `sudo -E env PROD=true make
+(the two whose tags changed). *If you prefer a clean restart:* `sudo -E make
 down-onprem-trust KIT=<HANDLE>` first, then the command above. Your data is in persistent volumes
 and is **not** removed.
 

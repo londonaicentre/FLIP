@@ -23,7 +23,7 @@ from fl_api.utils.schemas import ClientInfoModel
 
 @pytest.fixture(autouse=True)
 def override_session(client):
-    """Override get_session with a conditional MagicMock that matches NVFLARE behavior."""
+    """Override get_session with a conditional MagicMock that matches FLARE behavior."""
     fake_session = MagicMock()
 
     def check_server_status_side_effect():

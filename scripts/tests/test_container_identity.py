@@ -17,7 +17,7 @@ is what made published FL images unrunnable for any developer whose host uid was
 1000. Each assertion here pins one half of that separation, and each corresponds to a
 failure that actually happened rather than a hypothetical:
 
-- A dev service that mounts the host-provisioned NVFLARE kit must run as the host uid,
+- A dev service that mounts the host-provisioned FLARE kit must run as the host uid,
   or the entrypoint's ``envsubst`` into the bind-mounted ``local/`` fails and the
   container crash-loops. This was missed once already, in the standalone harness
   (``fl-services/nvflare/compose.dev.yml``), which the deploy composes' fix did not
@@ -26,7 +26,7 @@ failure that actually happened rather than a hypothetical:
   uid is absent from the image's ``/etc/passwd``: ``pwd.getpwuid()`` raises, ``HOME``
   falls back to ``/``, and the symptom surfaces three layers away as torch's
   "Artifact of type=precompile already registered in mega-cache artifact factory".
-- Production composes must not override ``user:`` at all: prod runs as the image's
+- Prod composes must not override ``user:`` at all: prod runs as the image's
   baked user, and EFS access points remap ownership regardless.
 
 Deliberately stdlib-only and executable as a plain script — ``test_trust_kit_scripts.yml``
@@ -50,7 +50,7 @@ PROVISIONED_KIT_MARKERS = ("workspace-dev/", "${FL_PROVISIONED_DIR}")
 
 # ...and specifically by the container path they mount it AT, because only some of the
 # kit is written. The entrypoints envsubst their generated config into `local/`, and
-# NVFLARE stages job payloads through `transfer/`; `startup/` holds the certs and is
+# FLARE stages job payloads through `transfer/`; `startup/` holds the certs and is
 # only read. fl-api in the deploy composes mounts just `admin/local` and
 # `admin/startup`, writes neither, and so legitimately runs as the image's own uid —
 # whereas the standalone harness also gives it `admin/transfer`, which it does write.
@@ -63,8 +63,8 @@ DEV_COMPOSE_FILES = (
 )
 
 PROD_COMPOSE_GLOBS = (
-    "deploy/compose.production*.yml",
-    "trust/deploy/compose_trust.production*.yml",
+    "deploy/compose.prod*.yml",
+    "trust/deploy/compose_trust.prod*.yml",
 )
 
 IDENTITY_ENV_KEYS = ("HOME", "USER", "LOGNAME")
@@ -163,7 +163,7 @@ def check_kit_mounters_run_as_host_uid(failures: list[str]) -> None:
                 continue
             if svc.user is None:
                 failures.append(
-                    f"{svc.where}: mounts a written part of the provisioned NVFLARE kit but sets no `user:`. "
+                    f"{svc.where}: mounts a written part of the provisioned FLARE kit but sets no `user:`. "
                     f"The kit is written by `make provision` as the host user, so a container "
                     f"running as the image's baked uid cannot write it and the entrypoint "
                     f'crash-loops on `local/`. Add: user: "${{UID:-1000}}:1000" (FLIP#1171).'
@@ -214,7 +214,7 @@ def check_production_does_not_override_user(failures: list[str]) -> None:
             for svc in parse_services(path):
                 if svc.user is not None:
                     failures.append(
-                        f"{svc.where}: production compose sets `user: {svc.user}`. "
+                        f"{svc.where}: prod compose sets `user: {svc.user}`. "
                         f"Prod runs as the image's baked non-root user (GHSA-8465) and EFS "
                         f"access points remap ownership regardless; the uid override is a "
                         f"dev-only accommodation for host-owned bind mounts (FLIP#1171)."

@@ -35,9 +35,10 @@ IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 REQUIRED_FILES_MANIFEST_NAME = "required_files.json"
 
 
-# Testing constants. BASE_URL defaults to the local dev stack; override with
-# FLIP_E2E_BASE_URL to run the e2e smoke against a remote hub (stag/prod).
-BASE_URL = os.environ.get("FLIP_E2E_BASE_URL", "http://localhost:8080/api")
+# Testing constants. BASE_URL defaults to the local dev stack on the API_PORT the env file publishes it on,
+# so a second instance's smoke reaches its own hub (FLIP#1604); override with FLIP_E2E_BASE_URL to run
+# the e2e smoke against a remote hub (stag/prod).
+BASE_URL = os.environ.get("FLIP_E2E_BASE_URL") or f"http://localhost:{os.environ.get('API_PORT') or 8080}/api"
 
 # Main user emails - these should match the users created in Cognito and seeded in DB
 ADMIN_EMAIL_1 = "aicentreflip@gmail.com"
@@ -53,3 +54,5 @@ VIEWER_EMAIL = "triayalex@gmail.com"
 # overridable so operators can point the demo at their own accounts.
 DEMO_RESEARCHER_EMAIL = os.environ.get("DEMO_RESEARCHER_EMAIL", "flip-demo-researcher@example.com")
 DEMO_ADMIN_EMAIL = os.environ.get("DEMO_ADMIN_EMAIL", "flip-demo-admin@example.com")
+# Seeded as a Researcher; the recorder makes it a Trust Admin only for its approval segment.
+DEMO_TRUST_ADMIN_EMAIL = os.environ.get("DEMO_TRUST_ADMIN_EMAIL", "flip-demo-trust-admin@example.com")

@@ -73,7 +73,7 @@ COPY flip-utils/flip/ ./flip/
 # The two chmods are deliberately NOT recursive, for that same reason and because
 # nothing more is needed (FLIP#1171). The dev composes run this image as the host
 # user's uid with this image's gid, and the only writes that then need group
-# permission are *new entries* in these two directories: NVFLARE creates /app/pid.fl
+# permission are *new entries* in these two directories: FLARE creates /app/pid.fl
 # and a /app/<job-id>/ workspace per run, and torch creates $HOME/.cache when the
 # model persistor builds its model. Creating an entry needs write on the directory,
 # not on its contents — so `chmod -R` would copy the venv up for no benefit, and

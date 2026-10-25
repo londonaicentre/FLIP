@@ -111,7 +111,7 @@ locals {
     # This ONE access point is mounted at /app/server-checkpoints on BOTH the
     # fl-api-net-1 (writer) and fl-server-net-1 (reader) tasks — mirroring the
     # single `${FL_JOBS_DIR}/net-1:/app/server-checkpoints` bind shared between
-    # the two services in compose.production.nvflare.yml. Both containers run as
+    # the two services in compose.prod.nvflare.yml. Both containers run as
     # uid/gid 1001, which the access point pins, so writer and reader agree on
     # ownership. 0775 lets the group write the per-model subdirs fl-api mkdirs.
     fl_checkpoints = {
@@ -131,7 +131,7 @@ locals {
     # checkpoints) into /app/src/<model_id>/, the SuperLink's ServerApp reads
     # them back via the flip-job-dir run-config. Mounted RW on BOTH
     # fl-api-net-1 and fl-server-net-1 when fl_backend=flower; 0775 for the
-    # same group-write reason as fl_checkpoints. Unused by NVFLARE.
+    # same group-write reason as fl_checkpoints. Unused by FLARE.
     fl_jobs = {
       path  = "/fl-net-1/jobs"
       perms = "0775"

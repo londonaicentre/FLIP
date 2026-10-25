@@ -45,6 +45,11 @@ uvx flwr run . local --format json
 
 It parses the JSON output from Flower and returns the full payload from the API response.
 
+Both pass `flip-job-dir` (the app directory) in a `--run-config` file. `/submit_run` merges the uploaded
+`app/config.toml` into it, which is how a platform run gets its settings. `/submit_tutorial` does not: a tutorial's
+`config.toml` holds the settings it is uploaded to the platform with, so a tutorial run uses the tutorial's own
+`pyproject.toml` values, as the Flower simulator does (FLIP#1432).
+
 The list endpoint runs:
 
 ```bash
@@ -107,7 +112,7 @@ reach the API (a compromised trust container, an SSM port-forward). `validate_bu
    `AWS_ENDPOINT_URL_S3=https://s3.<AWS_REGION>.amazonaws.com`, which makes boto3 presign
    *path-style* URLs — bucket in the path, host exactly `s3.<AWS_REGION>.amazonaws.com` — so
    `https://s3.<AWS_REGION>.amazonaws.com` is the value, set in
-   `deploy/compose.production.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
+   `deploy/compose.prod.<backend>.yml` and, on ECS, in `deploy/providers/AWS/locals.tf` from
    the same local as flip-api's endpoint (a static test in `deploy/providers/AWS/tests/` holds both
    fl-api task families to it); the dev compose lists its RustFS service, `http://object-store:9000`
    (FLIP#1291). Moving the presign endpoint without the allow-list 400s every bundle download, i.e.

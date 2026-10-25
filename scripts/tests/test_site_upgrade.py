@@ -54,9 +54,7 @@ OMOP_DB_PORT=5434
 AES_KEY_BASE64=abc=
 CENTRAL_HUB_API_URL=https://hub.example/api
 DOCKER_TAG={tag}
-DOCKER_REGISTRY=ghcr.io/londonaicentre/
 DOCKER_FL_TAG={fl_tag}
-DOCKER_FL_REGISTRY=ghcr.io/londonaicentre/
 # ── Kit credentials (managed) ──
 TRUST_API_KEY=secret
 """
@@ -268,7 +266,7 @@ class SiteImages(unittest.TestCase):
     """The registry preflight covers exactly what the compose files pull at the kit's tags."""
 
     def test_lists_every_repo_built_image_at_the_target_tag(self):
-        refs = su.site_images({"DOCKER_REGISTRY": "ghcr.io/londonaicentre/"}, "v0.6.1")
+        refs = su.site_images({}, "v0.6.1")
         names = {ref.rsplit("/", 1)[1] for ref in refs}
         assert names == {
             "trust-api:v0.6.1",
@@ -282,6 +280,16 @@ class SiteImages(unittest.TestCase):
             "flare-fl-client:v0.6.1",
         }
         assert all(ref.startswith("ghcr.io/londonaicentre/") for ref in refs)
+
+    def test_monai_label_is_checked_only_on_a_site_that_runs_it(self):
+        assert not any("/monailabel:" in ref for ref in su.site_images({"MONAI_LABEL": "false"}, "v0.6.1"))
+        names = {ref.rsplit("/", 1)[1] for ref in su.site_images({"MONAI_LABEL": "true"}, "v0.6.1")}
+        assert "monailabel:v0.6.1" in names
+
+    def test_ghcr_is_checked_whatever_the_kit_registry(self):
+        """A deployed site pulls from GHCR, so an older kit's hub registry (an LZA ECR cache) is not asked."""
+        refs = su.site_images({"DOCKER_REGISTRY": "111122223333.dkr.ecr.eu-west-2.amazonaws.com/ghcr/x/"}, "v0.6.1")
+        assert all(ref.startswith("ghcr.io/londonaicentre/") for ref in refs), refs
 
     def test_flower_sites_check_the_supernode(self):
         names = {ref.rsplit("/", 1)[1] for ref in su.site_images({"FL_BACKEND": "flower"}, "v0.6.1")}
@@ -307,6 +315,12 @@ class SiteImages(unittest.TestCase):
 
         with mock.patch.object(su, "manifest_exists", side_effect=probe):
             assert su.missing_images({}, "sha-badcff1") == ["ghcr.io/londonaicentre/orthanc:sha-badcff1"]
+
+    def test_a_sha_move_keeps_all_three_xnat_images_at_the_shared_pin(self):
+        for pin in ("v0.6.0", "stag", "prod"):
+            names = {ref.rsplit("/", 1)[1] for ref in su.site_images({"XNAT_TAG": pin}, "sha-1234567")}
+            assert {f"xnat-{image}:{pin}" for image in ("web", "db", "nginx")} <= names
+            assert "trust-api:sha-1234567" in names
 
     def test_manifest_probe_reads_absence_only_from_the_registrys_answer(self):
         ok = mock.Mock(returncode=0, stdout="{}", stderr="")
@@ -443,6 +457,7 @@ class Plan(_PlanHarness):
                 code, out = self._run(kit, "--yes")
             assert code == 0, out
             assert "site v0.5.0 → target v0.6.0 (from the hub)" in out
+            assert "DOCKER_TAG=v0.6.0, DOCKER_FL_TAG=v0.6.0" in out
             assert "DOCKER_TAG=v0.6.0" in kit.read_text()
 
     def test_plan_refuses_a_downgrade_without_force(self):
@@ -496,6 +511,8 @@ class Plan(_PlanHarness):
             code, out = self._run(kit, "--tag", "sha-1234567", "--yes")
             assert code == 5, out
             assert "ghcr.io/londonaicentre/orthanc:sha-1234567" in out
+            assert "XNAT_TAG pins all three XNAT images" in out
+            assert "XNAT_TAG=vX.Y.Z (or stag/prod)" in out
             assert "DOCKER_TAG=sha-badcff1" in kit.read_text()
         self.missing_images.assert_called_once()
         assert self.missing_images.call_args.args[1] == "sha-1234567"

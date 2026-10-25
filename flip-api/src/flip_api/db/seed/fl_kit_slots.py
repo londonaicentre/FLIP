@@ -34,7 +34,7 @@ _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 # Sentinel used as slot_number for names without a trailing integer (e.g. "Trust_K8s").
 # Must be larger than any real slot number so the free-slot query (ORDER BY slot_number ASC)
 # never hands these out before conventional Trust_N slots.  Flower's per-supernode key
-# lookup requires a trailing _<N> suffix; non-numeric names still work for NVFLARE but
+# lookup requires a trailing _<N> suffix; non-numeric names still work for FLARE but
 # should be reserved for purpose-built slots (K8s, staging) that are registered explicitly.
 _NON_NUMERIC_SLOT_NUMBER = 10_000
 
@@ -91,14 +91,14 @@ def resolve_fl_kit_slot_names() -> list[str]:
         if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "ParameterNotFound":
             logger.warning(
                 f"SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' does not exist yet — run "
-                "`make -C deploy/providers/AWS apply-fl-kit-slots` to create it. The kit-slot pool "
+                "`make -C deploy/providers/AWS apply-fl-kit-slots HUB=<stag|prod>` to create it. The kit-slot pool "
                 "cannot grow until then (existing slots and assignments are unaffected)."
             )
             return []
         logger.error(
             f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). The kit-slot pool "
             "cannot grow until this is fixed — new slots applied with "
-            "`make -C deploy/providers/AWS apply-fl-kit-slots` will NOT become claimable "
+            "`make -C deploy/providers/AWS apply-fl-kit-slots HUB=<stag|prod>` will NOT become claimable "
             "(existing slots and assignments are unaffected)."
         )
         return []

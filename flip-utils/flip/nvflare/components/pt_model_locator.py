@@ -34,7 +34,7 @@ class PTModelLocator(ModelLocator):
         Args:
             exclude_vars: Accepted for config compatibility with the stock locators; not applied here.
             model: The server model object, or the ``{"path": ..., "args": ...}`` component config a
-                recipe passes (NVFLARE's ComponentBuilder instantiates it before this locator is
+                recipe passes (FLARE's ComponentBuilder instantiates it before this locator is
                 built at run time). ``None`` builds it from the app's ``models.get_model()``.
         """
         super(PTModelLocator, self).__init__()
@@ -98,7 +98,7 @@ class InitialPTModelLocator(ModelLocator):
         Args:
             exclude_vars: Accepted for config compatibility with the stock locators; not applied here.
             model: The server model object, or the ``{"path": ..., "args": ...}`` component config a
-                recipe passes (NVFLARE's ComponentBuilder instantiates it before this locator is
+                recipe passes (FLARE's ComponentBuilder instantiates it before this locator is
                 built at run time). ``None`` builds it from the app's ``models.get_model()``.
         """
         super(InitialPTModelLocator, self).__init__()
@@ -124,11 +124,7 @@ class InitialPTModelLocator(ModelLocator):
                 self.log_info(fl_ctx, model_path)
                 if not os.path.exists(model_path):
                     self.log_info(fl_ctx, f"Model does not exist at {model_path}")
-                    # Safe house: constant safehouse should be defined. Here we are just getting it directly.
-                    model_path = os.path.join("/safehouse", fl_ctx.get_job_id(), PTConstants.PTFileModelName)
-                    if not os.path.exists(model_path):
-                        self.log_info(fl_ctx, f"Model does not exist at safehouse ({model_path})")
-                        return None
+                    return None
 
                 # Load the torch model
                 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -153,7 +149,6 @@ class InitialPTModelLocator(ModelLocator):
                     self.log_info(fl_ctx, f"Could not load the weights from {model_path} into the model. ")
                     return None
 
-                # Create dxo and return
                 return ml
             except Exception as e:
                 self.log_error(fl_ctx, f"Error in retrieving {model_name}: {e}", fire_event=False)
@@ -173,15 +168,15 @@ class EvaluationModelLocator(ModelLocator):
     Unlike the retired legacy locator (``EvaluationPTModelLocator``, deleted with the Executor
     syntax) — which returned a single ``DataKind.COLLECTION`` DXO for the equally retired
     ``ModelEval`` controller — this exposes the stock ``get_model_names`` + ``locate_model(model_name,
-    fl_ctx)`` contract so it drives NVFLARE's stock ``CrossSiteModelEval`` validate
+    fl_ctx)`` contract so it drives FLARE's stock ``CrossSiteModelEval`` validate
     workflow directly. Each model named in ``config.json['models']`` becomes one ``DataKind.WEIGHTS`` DXO that
     the server broadcasts to clients as a single ``FLModel`` for the Client-API ``is_evaluate()`` path.
 
     The checkpoints are loaded server-side only — from the app's ``custom/`` directory when bundled
     (simulator / legacy bundling), else from the FL API's de-bundled staging volume at
     ``<SERVER_CHECKPOINT_ROOT>/<model_id>/`` (production). Clients never read the ``.pt`` files —
-    they receive the weights over the ``validate`` task. ``model_id`` is resolved lazily from
-    ``meta.json['custom_props']`` (recipe-built job types carry no component args).
+    they receive the weights over the ``validate`` task. ``model_id`` is resolved lazily by
+    ``get_flip_model_id`` (recipe-built job types carry no component args).
     """
 
     def __init__(self) -> None:
@@ -201,7 +196,7 @@ class EvaluationModelLocator(ModelLocator):
                 self.log_error(
                     fl_ctx,
                     f"Checkpoint for model '{name}' not bundled at '{bundled_path}' and no model_id "
-                    "available (meta.json custom_props) to resolve the shared-volume path.",
+                    "available (config.json FLIP_MODEL_ID) to resolve the shared-volume path.",
                     fire_event=True,
                 )
                 return None

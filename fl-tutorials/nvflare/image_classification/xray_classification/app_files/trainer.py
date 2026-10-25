@@ -22,6 +22,7 @@ import torch
 from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label
 from flip import FLIP
 from flip.constants import ResourceType
+from flip.training import skip_degenerate_batch
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from monai.data import DataLoader, Dataset
@@ -41,7 +42,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args,
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args,
     so the SQL query (which can contain spaces) is plumbed via the top-level
     ``query`` key in ``config/config_fed_client.json`` rather than as a CLI flag.
     In dev/simulator mode this is ignored by ``flip.get_dataframe``.
@@ -192,12 +193,8 @@ def epoch_loop(
                     batch_info += f"{lesion.lesion}: all masked; "
             logger.info(batch_info)
 
-            # A fully-masked batch (every label -1) carries no supervision signal: the clamped loss
-            # would be a flat 0.0 that trains nothing and drags the epoch mean down (pre-clamp, the
-            # NaN it produced was excluded from the mean by np.nanmean). Skip it loudly so a
-            # systematic label degeneracy (e.g. a broken label join) stays visible (FLIP#764).
-            if (labels == -1).all():
-                logger.warning(f"{phase} batch {i + 1}/{len(dataloader)}: all labels masked (-1), skipping batch")
+            context = f"{phase} batch {i + 1}/{len(dataloader)}"
+            if skip_degenerate_batch(labels, log=logger.warning, context=context):
                 continue
 
             if is_train:
@@ -205,11 +202,7 @@ def epoch_loop(
             output = model(images)
             loss = get_bce_loss(output, labels)
 
-            # Skip a non-finite batch instead of letting it poison the model: a single NaN/Inf loss
-            # backpropagates into every weight via optimizer.step(), after which every subsequent
-            # batch is NaN and the whole pass reports loss=nan (see FLIP#764).
-            if not torch.isfinite(loss):
-                logger.warning(f"Skipping {phase} batch {i + 1}/{len(dataloader)}: non-finite loss ({loss.item()})")
+            if skip_degenerate_batch(labels, loss, log=logger.warning, context=context):
                 continue
 
             if is_train:
@@ -318,19 +311,14 @@ def cross_site_validate(
             images = batch["image"].to(device)
             labels = get_lesion_label(batch, lesions).to(device)
 
-            # Skip fully-masked batches: with the clamped loss they would contribute a spurious 0.0
-            # to the test mean, where the pre-clamp NaN was excluded by np.nanmean in _safe_mean.
-            if (labels == -1).all():
-                logger.warning(f"Test batch {i + 1}/{len(test_loader)}: all labels masked (-1), skipping batch")
+            context = f"Test batch {i + 1}/{len(test_loader)}"
+            if skip_degenerate_batch(labels, log=logger.warning, context=context):
                 continue
 
             output = model(images)
             loss = get_bce_loss(output, labels)
 
-            # Mirror epoch_loop's guard: np.nanmean already excludes a NaN from the test mean, but
-            # skipping silently would hide the degeneracy behind it — keep it visible (FLIP#764).
-            if not torch.isfinite(loss):
-                logger.warning(f"Skipping test batch {i + 1}/{len(test_loader)}: non-finite loss ({loss.item()})")
+            if skip_degenerate_batch(labels, loss, log=logger.warning, context=context):
                 continue
 
             metrics["loss"].append(loss.item())
@@ -421,18 +409,26 @@ def main() -> None:
     )
     train_items, val_items, test_items = split_datalist(datalist, config["VAL_SPLIT"], config["TEST_SPLIT"])
 
+    num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+; persistent across rounds (FLIP#1434)
     train_loader = DataLoader(
-        Dataset(train_items, transform=get_xray_transforms()), batch_size=config["BATCH_SIZE"], shuffle=True
+        Dataset(train_items, transform=get_xray_transforms()),
+        batch_size=config["BATCH_SIZE"],
+        shuffle=True,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     val_loader = DataLoader(
         Dataset(val_items, transform=get_xray_transforms(is_validation=True)),
         batch_size=config["BATCH_SIZE"],
         shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
     )
     test_loader = DataLoader(
         Dataset(test_items, transform=get_xray_transforms(is_validation=True)),
         batch_size=config["BATCH_SIZE"],
         shuffle=False,
+        num_workers=num_workers,
     )
     log_class_distribution(train_items, "TRAIN", lesions)
     log_class_distribution(val_items, "VAL", lesions)

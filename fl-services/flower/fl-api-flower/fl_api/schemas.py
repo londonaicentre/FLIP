@@ -13,7 +13,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictInt
 
 from fl_api.utils.logger import logger
 
@@ -51,6 +51,23 @@ class NodeRegistrationRequest(BaseModel):
     node_id: str
 
 
+# Sanity cap on a job's GPU count — the same contract as the FLARE fl-api's (FLIP#70).
+MAX_GPUS_PER_SITE = 8
+
+
+class JobResources(BaseModel):
+    """The GPUs a job needs at each participating site — the hub contract shared with the FLARE fl-api (FLIP#70).
+
+    Flower's deployment runtime (SuperLink and SuperNodes) places no job by GPU — ``num-gpus`` is a
+    simulation-backend option only — so this adapter records the request and reports it as not enforced
+    rather than pretending to schedule by it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_gpus: StrictInt = Field(ge=0, le=MAX_GPUS_PER_SITE)
+
+
 class UploadAppRequest(BaseModel):
     """Defines the body of the request to upload an application to the server."""
 
@@ -58,6 +75,8 @@ class UploadAppRequest(BaseModel):
     cohort_query: str
     trusts: list[str]
     bundle_urls: list[str]
+    # The researcher's GPU override at submission, if any (FLIP#70). Recorded, not enforced, on Flower.
+    resources: JobResources | None = None
 
 
 class JobStatus(StrEnum):

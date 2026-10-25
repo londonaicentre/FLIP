@@ -71,14 +71,14 @@ class TestFlipDiffusionRecipe:
         assert recipe.percentile_privacy.off
 
     def test_default_train_args_have_no_whitespace_values(self):
-        """NVFlare's TaskScriptRunner whitespace-splits task_script_args, so the default keeps only
+        """FLARE's TaskScriptRunner whitespace-splits task_script_args, so the default keeps only
         ``--project_id`` (a UUID); the SQL query is plumbed via the client config's top-level ``query``."""
         recipe = FlipDiffusionRecipe()
         assert "--query" not in recipe.train_args
         assert recipe.train_args == "--project_id {project_id}"
 
     def test_export_writes_fed_job_layout(self, tmp_path: Path):
-        """``recipe.export`` produces the standard NVFLARE FedJob layout with the two-phase wiring."""
+        """``recipe.export`` produces the standard FLARE FedJob layout with the two-phase wiring."""
         import torch
 
         sys.modules["models"].get_model = lambda: torch.nn.Linear(1, 1)

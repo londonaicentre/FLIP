@@ -46,6 +46,9 @@ def _origin_from_url(url: str) -> str | None:
 def normalise_origins(urls: Iterable[str]) -> list[str]:
     """Unique normalised origins for ``urls``, in first-seen order, unusable entries dropped.
 
+    Args:
+        urls (Iterable[str]): Candidate URLs to reduce to their origins.
+
     Returns:
         list[str]: Values suitable for ``CORSMiddleware(allow_origins=...)``.
     """

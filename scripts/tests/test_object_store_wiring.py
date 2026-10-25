@@ -18,7 +18,8 @@ Makefile must refuse a value that resolves to the checkout (an empty or ``.`` va
 must be exactly the origin every fl-api admits (``BUNDLE_URL_ALLOWED_ORIGINS``, scheme-and-port exact) and
 the endpoint every fl-server uploads to — a change to one file alone 400s every bundle download, which only
 a live training run would show. The Terraform side has the same guard in
-``deploy/providers/AWS/tests/test_fl_api_bundle_allow_list.py``.
+``deploy/providers/AWS/tests/test_fl_api_bundle_allow_list.py``. Last, the store's image must stay a pinned
+RustFS release no older than the first one whose presigned-POST uploads work (FLIP#1534).
 
 Standard library only and run as a plain script (``python <file>``), like every test in this directory.
 The Makefile is driven with ``make -n`` under a scrubbed environment (``MAKEFLAGS`` from an outer make
@@ -115,6 +116,24 @@ def test_ensure_object_store_dir_guards_the_bucket_names() -> None:
         env_file.unlink()
 
 
+def test_every_bring_up_target_prepares_the_store_dir() -> None:
+    """``restart-fl`` recreates object-store on Flower (register-supernode-keys depends on it), so it
+    needs the host dir as much as ``up`` does; without it make stopped after removing every FL
+    client (FLIP#1402). Asserted on the prerequisite list rather than ``make -n restart-fl``, whose
+    ``$(MAKE) -C trust`` lines still run under ``-n`` and need the trust kits."""
+    print("test_every_bring_up_target_prepares_the_store_dir")
+    makefile = (REPO_ROOT / "Makefile").read_text()
+    for target in ("up", "up-no-trust", "restart-fl"):
+        match = re.search(rf"^{re.escape(target)}:([^\n=]*)$", makefile, re.M)
+        _assert(match is not None, f"{target} is a target in the root Makefile")
+        if match:
+            _assert(
+                "_ensure-object-store-dir" in match.group(1).split(),
+                f"{target} depends on _ensure-object-store-dir",
+                detail=match.group(1).strip(),
+            )
+
+
 def _compose_env(path: Path, service: str, key: str) -> list[str]:
     """Values of ``- KEY=value`` lines inside one service block of a compose file (comments skipped)."""
     text = path.read_text()
@@ -149,20 +168,47 @@ def test_dev_presign_origin_matches_every_fl_api_and_fl_server() -> None:
 
 def test_prod_presign_origin_matches_every_fl_api() -> None:
     print("test_prod_presign_origin_matches_every_fl_api")
-    hub = _compose_env(REPO_ROOT / "deploy/compose.production.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
+    hub = _compose_env(REPO_ROOT / "deploy/compose.prod.yml", "flip-api", "AWS_ENDPOINT_URL_S3")
     _assert(len(hub) == 1, "prod flip-api sets AWS_ENDPOINT_URL_S3 exactly once", detail=str(hub))
     for backend in ("nvflare", "flower"):
         allowed = _compose_env(
-            REPO_ROOT / f"deploy/compose.production.{backend}.yml", "fl-api-net-1", "BUNDLE_URL_ALLOWED_ORIGINS"
+            REPO_ROOT / f"deploy/compose.prod.{backend}.yml", "fl-api-net-1", "BUNDLE_URL_ALLOWED_ORIGINS"
         )
         _assert(allowed == hub, f"prod {backend} fl-api-net-1 admits exactly the presign origin", detail=str(allowed))
+
+
+# RustFS 1.0.0 answered HTTP 500 to most presigned-POST uploads, the path every model file takes
+# (FLIP#1534); 1.0.1 is the first release that passes the probe. The behavioural check is the
+# large-upload step of flip-api/tests/local_storage_smoke.py, which needs a running hub; this one
+# is static, so a downgrade or a floating tag fails even where the smoke does not run.
+FIRST_GOOD_RUSTFS = (1, 0, 1)
+
+
+def test_object_store_image_is_a_fixed_rustfs_release() -> None:
+    print("test_object_store_image_is_a_fixed_rustfs_release")
+    text = (REPO_ROOT / "deploy/compose.development.yml").read_text()
+    block = re.search(r"^  object-store:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|^[a-z]|\Z)", text, re.M | re.S)
+    assert block, "no object-store service in deploy/compose.development.yml"
+    images = re.findall(r"^    image:\s*(\S+)", block.group(1), re.M)
+    _assert(len(images) == 1, "object-store names exactly one image", detail=str(images))
+    pin = re.fullmatch(r"rustfs/rustfs:(\d+)\.(\d+)\.(\d+)", images[0]) if images else None
+    _assert(pin is not None, "object-store pins a RustFS release tag (X.Y.Z, no latest/preview)", detail=str(images))
+    if pin:
+        version = tuple(int(part) for part in pin.groups())
+        _assert(
+            version >= FIRST_GOOD_RUSTFS,
+            "object-store is not RustFS 1.0.0, whose presigned-POST uploads 500 (FLIP#1534)",
+            detail=images[0],
+        )
 
 
 def main() -> None:
     test_clean_object_store_never_targets_the_checkout()
     test_ensure_object_store_dir_guards_the_bucket_names()
+    test_every_bring_up_target_prepares_the_store_dir()
     test_dev_presign_origin_matches_every_fl_api_and_fl_server()
     test_prod_presign_origin_matches_every_fl_api()
+    test_object_store_image_is_a_fixed_rustfs_release()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)

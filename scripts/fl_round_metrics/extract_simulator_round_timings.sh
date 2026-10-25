@@ -13,7 +13,7 @@
 #
 # extract_simulator_round_timings.sh — local-simulator counterpart of extract_platform_round_timings.sh.
 #
-# Parses an NVFLARE SimEnv workspace's logs for the SAME controller events the production
+# Parses a FLARE SimEnv workspace's logs for the SAME controller events the production
 # script pulls from CloudWatch (flip.nvflare.controllers.scatter_and_gather.ScatterAndGather
 # emits identical lines in both settings):
 #     "Round N started." / "Round N finished."
@@ -40,7 +40,7 @@ usage() {
     cat <<EOF
 Usage: ${SCRIPT_NAME} [workspace-dir] [options]
 
-Extract FL round metrics from a local NVFLARE simulator workspace
+Extract FL round metrics from a local FLARE simulator workspace
 (default workspace: /tmp/nvflare/arkplus_finetuning).
 
 Options:
@@ -86,7 +86,7 @@ done
 
 # --------------------------------------------------------------------------------------
 # Locate the log carrying the ScatterAndGather events. The SimEnv layout varies across
-# NVFLARE versions (workspace log.txt, simulate_job/log.txt, per-site logs), so among the
+# FLARE versions (workspace log.txt, simulate_job/log.txt, per-site logs), so among the
 # candidates that contain at least one "Round N started." match, pick the most recently
 # modified one — NOT the one with the most matches. A retained old full-length experiment
 # log (e.g. 50 rounds) would otherwise always beat the 3-round smoke-test log you just ran
@@ -181,7 +181,7 @@ extract_events 'Round [0-9]+ started\.' "${WORK_DIR}/rs.raw"
 extract_events 'Round [0-9]+ finished\.' "${WORK_DIR}/re.raw"
 extract_events 'Start aggregation\.' "${WORK_DIR}/as.raw"
 extract_events 'End aggregation\.' "${WORK_DIR}/ae.raw"
-# Pinned NVFLARE (2.8.0)'s stock ScatterAndGather unconditionally tags this line with the
+# Pinned FLARE (2.8.0)'s stock ScatterAndGather unconditionally tags this line with the
 # round number ("... by the aggregator at round <N>."); the optional group is a defensive
 # fallback for older builds that omitted it, matching extract_platform_round_timings.sh's pattern.
 extract_events 'Contribution from [^ ]+ (ACCEPTED|REJECTED) by the aggregator( at round [0-9]+)?\.' "${WORK_DIR}/co.raw"
@@ -190,7 +190,7 @@ sed -E 's/^([0-9]+)\t.*Round ([0-9]+) started\..*/\2\t\1/' "${WORK_DIR}/rs.raw" 
 sed -E 's/^([0-9]+)\t.*Round ([0-9]+) finished\..*/\2\t\1/' "${WORK_DIR}/re.raw" | sort -n -k1,1 > "$ROUND_ENDS"
 awk -F'\t' '{print $1}' "${WORK_DIR}/as.raw" > "$AGG_STARTS"
 awk -F'\t' '{print $1}' "${WORK_DIR}/ae.raw" > "$AGG_ENDS"
-# Columns: verdict \t round ('-' if the line was untagged — pre-round-tag NVFLARE builds).
+# Columns: verdict \t round ('-' if the line was untagged — pre-round-tag FLARE builds).
 sed -E 's/^[0-9]+\t.*Contribution from [^ ]+ ([A-Z]+) by the aggregator( at round ([0-9]+))?\..*/\1\t\3/' "${WORK_DIR}/co.raw" \
     | sed -E 's/\t$/\t-/' > "$CONTRIBS"
 
@@ -382,11 +382,11 @@ fmt_row() { local IFS=$'\t'; read -r m s n <<<"$1"; echo "| $2 | ${m} | ${s} | $
     echo "- **Workspace**: ${WORKSPACE}"
     echo "- **Log parsed**: ${LOG_FILE}"
     echo "- **Generated**: $(date '+%Y-%m-%dT%H:%M:%S')"
-    echo "- **Backend**: NVFLARE (local SimEnv simulator; FLIP ScatterAndGather controller)"
+    echo "- **Backend**: FLARE (local SimEnv simulator; FLIP ScatterAndGather controller)"
     echo
     echo "## Communication rounds"
     echo
-    echo "**${n_rounds} round(s) executed**; contributions in-log: **${ACCEPTED_TOTAL} accepted**, **${REJECTED_TOTAL} rejected** (per-round breakdown in the table below matches each contribution to its own \`at round <N>\` tag; untagged lines, from pre-round-tag NVFLARE builds, only count towards these totals)."
+    echo "**${n_rounds} round(s) executed**; contributions in-log: **${ACCEPTED_TOTAL} accepted**, **${REJECTED_TOTAL} rejected** (per-round breakdown in the table below matches each contribution to its own \`at round <N>\` tag; untagged lines, from pre-round-tag FLARE builds, only count towards these totals)."
     echo
     echo "Total span (first round start to last round end): **${SPAN_S}**."
     echo

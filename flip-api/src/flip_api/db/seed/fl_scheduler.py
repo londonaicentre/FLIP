@@ -37,7 +37,7 @@ def seed_fl_scheduler(session: Session, nets: list[FLNets]) -> list[FLScheduler]
         existing_scheduler = session.exec(statement).first()
 
         if not existing_scheduler:
-            new_scheduler = FLScheduler(status=NetStatus.AVAILABLE, netid=net.id)
+            new_scheduler = FLScheduler(status=NetStatus.AVAILABLE, net_id=net.id)
             session.add(new_scheduler)
 
     session.commit()

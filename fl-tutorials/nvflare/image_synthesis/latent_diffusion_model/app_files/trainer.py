@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NVFLARE Client API script for the FLIP latent diffusion tutorial.
+"""FLARE Client API script for the FLIP latent diffusion tutorial.
 
 One script serves all four ML task names of the two-phase latent-diffusion job — the two training
 phases (``train_ae``: autoencoder + GAN discriminator; ``train_dm``: diffusion model over the frozen
@@ -23,7 +23,7 @@ stock ``WEIGHT_DIFF`` aggregator untouched, which averages them directly) stampe
 phase actually trains. Validation tasks send back aggregate metrics only.
 
 Ported from the legacy Executor-based ``FLIP_TRAINER`` / ``FLIP_VALIDATOR`` pair — the training and
-validation maths are unchanged; only the NVFLARE plumbing moved to the Client API.
+validation maths are unchanged; only the FLARE plumbing moved to the Client API.
 """
 
 import argparse
@@ -159,7 +159,7 @@ def parse_args() -> argparse.Namespace:
 def load_query() -> str:
     """Read the cohort query from the client app config.
 
-    NVFlare's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
+    FLARE's TaskScriptRunner does a naive whitespace split on task_script_args, so the SQL query
     (which can contain spaces) is plumbed via the top-level ``query`` key in
     ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator mode this is
     ignored by ``flip.get_dataframe``.
@@ -206,6 +206,7 @@ class DiffusionTrainer:
             "epochs": config.get("LOCAL_ROUNDS_AE", 5),
         }
         self.params_diffusion = {"lr": config["LR_DM"], "epochs": config.get("LOCAL_ROUNDS_DM", 5)}
+        self.num_workers = int(config.get("DATALOADER_WORKERS", 4))  # as in Ark+ (FLIP#1434)
 
         # Model creation
         self.model = get_model()
@@ -335,12 +336,14 @@ class DiffusionTrainer:
             logger.info("Resetting perceptual loss to 2D versions due to axial anisotropy.")
 
     def make_loaders(self, batch_size: int, shuffle: bool = True) -> tuple[DataLoader, DataLoader]:
-        train_loader = DataLoader(self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
-        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=1)
+        train_loader = DataLoader(
+            self._train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers
+        )
+        val_loader = DataLoader(self._val_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=self.num_workers)
         return train_loader, val_loader
 
     def val_loader(self, batch_size: int) -> DataLoader:
-        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=1)
+        return DataLoader(self._val_dataset, batch_size=batch_size, shuffle=False, num_workers=self.num_workers)
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights, strict=False)

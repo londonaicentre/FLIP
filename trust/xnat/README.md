@@ -15,9 +15,39 @@
 
 XNAT is the medical imaging archive used by each FLIP trust site. It stores DICOM data imported from the trust's PACS (Orthanc) and makes it available to federated learning pipelines via the Imaging API. This directory contains the Docker configuration for running XNAT locally and on EC2, along with the plugins and setup scripts needed to integrate it with the rest of the FLIP Trust Services layer.
 
-## Version notes (XNAT 1.10.0)
+## Version notes (XNAT 1.10.2.1)
 
-FLIP runs XNAT `1.10.0` (see `XNAT_VERSION` in `.env`). Two things matter for us:
+FLIP runs XNAT `1.10.2.1` (see `XNAT_VERSION` in `.env`), the security hotfix on the 1.10 line. Older
+XNAT has an unauthenticated account-creation flaw, so sites on an older release should upgrade.
+
+### 1.10.2.1, and the 1.10.1 and 1.10.2 releases it includes
+
+- **Security hotfix** ([announcement](https://wiki.xnat.org/news/xnat-security-hotfix-releases-1-10-2-1-1-9-3-9-and-1-8-10-6),
+  FLIP#1648). Earlier releases let an unauthenticated attacker who can reach the web interface obtain
+  an account with privileges up to site administrator. The hotfix changes no plugin compatibility. A
+  trust is fixed only once it runs an `xnat-web` image built from this pin.
+- **The WAR comes from GitHub.** From 1.10.1 XNAT is built from one repository,
+  [NrgXnat/xnat](https://github.com/NrgXnat/xnat/releases). The Bitbucket downloads stop at 1.10.0.
+- **No platform change.** 1.10.1 and 1.10.2 keep the 1.10.0 Java, Tomcat and PostgreSQL
+  requirements, and 1.10.2 makes no database schema change.
+- **Container Service moves to 3.8.2.** The 1.10.2.1 WAR ships snakeyaml 2. Container Service 3.8.1's
+  Kubernetes client calls a constructor snakeyaml 2 removed, so the chart's Kubernetes backend cannot
+  be reached (CS-1058). See [Plugin compatibility](#plugin-compatibility).
+- **DicomEdit 6.10.0.** `anon_script.das` gives the same output on 6.10.0 as on 6.9.0 (see
+  [`tests/README.md`](tests/README.md#when-to-update)). The script uses no `alterPixels`, so the new
+  pixel-redaction engine does not apply.
+- **No OpenCV native library.** 1.10.2 decodes JPEG-family pixel data through a native OpenCV
+  library. XNAT's own image includes it; FLIP's image is built from the WAR and does not. XNAT runs
+  normally without it. JPEG-family scans get no snapshots or thumbnails, as on 1.10.0, and `alterPixels`
+  on such a scan would fail its import. Add it to `xnat/Dockerfile`
+  ([upstream steps](https://github.com/NrgXnat/xnat/blob/1.10.2.1/docs/installing-opencv-native.md))
+  if either is ever needed.
+- **Anonymous paths.** `/xapi/siteConfig/buildInfo` and `/app/template/Login.vm` are still open
+  (`configured-urls.yaml` is unchanged from 1.10.0; `tests/test_anonymous_endpoints.py`).
+
+### 1.10.0
+
+These came with the move to 1.10 and still apply:
 
 - **JDK 21.** 1.10.0 moves from JDK 8 to JDK 21 (for long-term support), so the image's Tomcat base
   moved to a `jdk21` variant. Upstream states there is **no change in the Tomcat or PostgreSQL
@@ -62,12 +92,12 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 **How it works:**
 
 - `make up` / `make down` use `docker stack deploy` / `docker stack rm` under the hood
-- The stack definition uses layered compose files, selected by the `PROD` variable:
+- The stack definition uses layered compose files, selected by the `HUB` variable:
 
   | Environment | Files |
   | --- | --- |
   | Development (default) | `docker-compose-stack.yml` + `docker-compose-stack.development.yml` |
-  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.production.yml` |
+  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.prod.yml` |
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
@@ -76,7 +106,7 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
   In development the reset runs without `sudo` when the invoking user is the container uid (1001)
   and already owns every directory in the tree; any other developer, or a root-created directory,
-  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> PROD=<env>` (driven
+  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
   `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
   container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
@@ -94,36 +124,62 @@ Note you need Orthanc running in order to startup XNAT and configure it properly
 
 ### Build XNAT Docker images for local development
 
-Build the XNAT Docker images locally (requires AWS CLI access for S3 artifacts):
+Build the XNAT Docker images locally (no AWS access needed; the WAR and plugins are public upstream downloads pinned in
+[`artifacts.manifest`](artifacts.manifest)):
 
 ```sh
 make build
 ```
 
-This downloads the XNAT WAR and plugins from S3, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
+This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.manifest` (or copies them from
+`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${XNAT_TAG}`
+(`XNAT_TAG` defaults to `DOCKER_TAG`).
+
+`make up BUILD=true` (from the repo root) runs this build before deploying each trust's stack, at `XNAT_TAG=dev`. The tag
+must be one the registry does not have: the swarm agent re-pulls a tag on every deploy and keeps the local image only
+when that pull fails, so a local `:stag` build would be replaced by the registry's `:stag`. Tags are daemon-wide, so a
+second stack on the same host (a release check) passes its own on the command line, e.g. `XNAT_TAG=rel0130`; an
+`XNAT_TAG` in the kit is a pull pin and is ignored under `BUILD=true`.
+
+On `main`/`develop` pushes, the database and nginx image workflows watch only their own
+`postgres/` and `nginx/` build contexts, plus their workflow files. The web workflow keeps the
+broad `trust/xnat/` filter except for tool-only edits under `dcm2niix/`. A dcm2niix version bump
+still rebuilds the web image because it also updates the baked-in
+`xnat/config/dcm2niix_command.json`. Release tags rebuild every image; a manual dispatch builds
+its own image whatever changed. The three XNAT images share one `XNAT_TAG` pin, but their
+path-filtered builds no longer share `sha-` tags. When moving a site to a `sha-` tag, set
+`XNAT_TAG` to a release tag (or `stag`/`prod`) published for all three images.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
 GitHub workflow). It is referenced by an immutable version tag from
-[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), the K8s init-job's inline
-copy of that command, and imaging-api's `Settings.DCM2NIIX_IMAGE` — bump all three together with the
-Dockerfile's `DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was
-a stale 2021 build that silently dropped slices from valid series).
-[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the four stay in
+[`xnat/config/dcm2niix_command.json`](xnat/config/dcm2niix_command.json), which both deployment
+shapes register (the chart runs `configure-dcm2niix.sh` from the xnat-web image, FLIP#1451), and
+imaging-api's `Settings.DCM2NIIX_IMAGE` — bump both together with the Dockerfile's
+`DCM2NIIX_VERSION` (see FLIP#980: the Docker Hub `xnat/dcm2niix:latest` it replaces was a stale 2021
+build that silently dropped slices from valid series).
+[`dcm2niix/check_image_pin_sync.sh`](dcm2niix/check_image_pin_sync.sh) enforces that the three stay in
 sync — it runs as a pre-commit hook and as the `dcm2niix-pin-sync` CI job — because a half-bumped set
 is otherwise silent: the old immutable tag simply keeps being pulled.
 
 That check compares files in this repository and never calls a running XNAT, so it cannot see the
 *live* registration. An XNAT provisioned before a bump keeps its old command in the XNAT database and
 goes on converting with the superseded image while looking perfectly healthy — both staging trusts sat
-in that state. Confirm a deployment with `GET /xapi/commands` (the `name -> image` pairs it returns are
-what imaging-api reports when nothing matches) and re-register with `configure-dcm2niix.sh`, or the
-`xnat-init` job on Kubernetes, if the image named there is not the current pin.
+in that state. Confirm a deployment with `GET /xapi/commands` (the image imaging-api names when project creation
+refuses a stale registration is the one listed there) and re-run `configure-dcm2niix.sh`, or the
+`xnat-init` job on Kubernetes, if the image named there is not the current pin. Both update the
+existing command in place, so its ids, and every project's trigger, survive the move (FLIP#1451).
 
-#### Operator action: the GHCR package must be public
+MONAI Label trusts also run a fifth image, `ghcr.io/londonaicentre/xnat-export-mask` (built from
+[`export-mask/`](export-mask/), published by `docker_build_xnat_export_mask.yml`): the `export_mask`
+command that turns an OHIF DICOM-SEG assessor into NIfTI. Its version tag lives in the Dockerfile's
+`EXPORT_MASK_VERSION`, and `tests/test_export_mask_image_pin.py` holds
+[`xnat/config/export_mask_command.json`](xnat/config/export_mask_command.json) to it.
 
-**After the first publish, and again after any delete-and-recreate of the package, set
-`ghcr.io/londonaicentre/xnat-dcm2niix` to public.** New org packages default to **private**, and
+#### Operator action: the GHCR packages must be public
+
+**After the first publish, and again after any delete-and-recreate of a package, set
+`ghcr.io/londonaicentre/xnat-dcm2niix` (and `xnat-export-mask`) to public.** New org packages default to **private**, and
 `GITHUB_TOKEN` cannot change a package's visibility, so the publish workflow cannot do this for you:
 
 > github.com/orgs/londonaicentre/packages/container/xnat-dcm2niix/settings → Danger Zone →
@@ -160,12 +216,18 @@ Docker Swarm, and automatically configures both XNAT instances (service account,
 registration, dcm2niix command). The repo-root `make up` follows the same path after registering the example Trusts.
 
 Every configuration call is checked: a rejected XNAT API call (non-2xx) aborts the deploy with the failing request's
-HTTP status and response body (see `configure-xnat-<stack>.log` inside the container), instead of silently skipping
-that step. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
+HTTP status and response body (see `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the
+bring-up — the log is written host-side), instead of silently skipping
+that step. The three configuration scripts share that request handling from one file,
+`xnat/config/xnat-lib.sh`, which also keeps credentials and payloads out of the log. Configuration waits up to 15 minutes for an authenticated DQR plugin endpoint, rather than treating the
 earlier Tomcat login page as proof that plugins are ready. Re-running against an already-configured instance is
-tolerated — the existing service account, PACS registration, and availability intervals are detected and left as-is.
+tolerated and converges it onto the kit: the existing service account is left as-is, the DICOM SCP receiver and the
+PACS registration are each updated in place if a kit-managed field drifted, and the PACS availability schedule is
+brought into line with the kit (see [PACS configuration](#pacs-configuration)).
 
-In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
+When `make` configures XNAT (the `xnat-configure` recipe), that wait also checks XNAT loaded every plugin its jars declare (`GET /xapi/plugins`; see `xnat/config/wait-for-xnat-plugins.sh`).
+
+In development (when `HUB` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
 > XNAT's container service plugin executes Docker commands on the host. `xnat-web` does **not** mount
@@ -179,7 +241,7 @@ In development (when `PROD` is not set), `make up` also mounts the local `xnat/p
 > `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /
 > `./xnat-data-KCH` in the dev examples) — a relative value resolves against `trust/xnat/`. Only
 > when the kit omits the key does `Makefile` fall back to a per-slot default derived from
-> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `PROD=stag|true`,
+> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `HUB=stag|prod`,
 > `./xnat-data-trust<N>` in development. See `docker-compose-stack.development.yml` for the full
 > volume configuration.
 
@@ -215,10 +277,10 @@ rather than silently falling back.
 | `PACS_QR_PORT` | `4242` | The PACS query/retrieve port XNAT dials. Must be reachable **from the XNAT container** — not a host-published port. |
 | `PACS_LABEL` | `Test PACS instance` | Display label for the registration in the DQR UI. |
 | `PACS_SUPPORTS_EXTENDED_NEGOTIATIONS` | `true` | Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a preference — one that does not support it rejects the association outright. Validated as literally `true` or `false` before it reaches `jq`. |
-| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. |
-| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end. |
-| `PACS_THREADS` | `1` | Concurrent retrieval threads. |
-| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use. |
+| `PACS_AVAILABILITY_DAYS` | all seven days | Retrieval window: which days retrieval may run. Comma-separated `MONDAY` … `SUNDAY`, in capitals. |
+| `PACS_AVAILABILITY_START` / `_END` | `00:00` / `24:00` | Retrieval window start/end, `HH:MM` from `00:00` to `23:59`, or `24:00` for the end of the day. The start must come before the end, so the window cannot cross midnight (see below). |
+| `PACS_THREADS` | `1` | Concurrent retrieval threads, from 1. |
+| `PACS_UTILIZATION_PERCENT` | `100` | Share of the window/threads DQR may use, from 1 to 100. |
 | `DQR_MAX_PACS_REQUEST_ATTEMPTS` | `100` | Retries before DQR gives up on a request. |
 | `DQR_RETRY_WAIT_SECONDS` | `300` | Wait between those retries. |
 
@@ -231,45 +293,75 @@ port). Both are host-published — the receiver so a real PACS can complete the 
 a retrieval, and dev keeps the same wiring — so they must differ; `xnat-reset` refuses to deploy if
 they collide or are non-numeric. The dev allocation is 8104/8105 (GSTT) and 8106/8107 (KCH).
 
+Re-running also converges the DICOM SCP receiver onto the kit instead of re-creating it (FLIP#1456).
+A receiver that already matches is not written at all, because XNAT's `PUT /xapi/dicomscp/{id}`
+restarts the port's listener even when nothing changed, dropping the C-STORE return leg of any
+retrieval in flight. A FLIP receiver whose AE title, port or flags drifted is updated in place with
+that PUT and keeps its id. A receiver is created only when FLIP has none: on first boot XNAT's stock
+`XNAT` receiver is deleted and FLIP's POSTed, as before. Any other receiver the script owns (a second
+FLIP one left by a rename, or the stock one) is deleted first, and after any write the script reads
+the receivers back and fails unless exactly one is left, at the kit's values. The PUT skips XNAT's
+own checks, so `XNAT_AETITLE` is validated against XNAT's AE-title rule (1 to 16 printable ASCII
+characters, no backslash, no leading or trailing space) before XNAT is contacted. A receiver an
+operator registered for another DICOM source is left alone, but one on `XNAT_PORT` makes the run
+refuse before anything is written.
+
 `configure-xnat.sh` updates an existing PACS registration in place when any of its kit-managed
-fields drift (host, query/retrieve port, label, extended-negotiation flag), and deletes every
-registration other than the configured one so exactly one survives — which is why imaging-api can
-read the PACS id back from XNAT at runtime rather than assuming `1`. The delete is conditional: if
+fields drift (host, query/retrieve port, label, extended-negotiation flag) or it has lost DQR's
+`defaultQueryRetrievePacs` or `queryable` flag — a PACS registered by hand starts without the
+default flag, which the admin UI's "Default Q/R AE" switch leaves at No — and deletes every
+registration other than the configured one so exactly one survives, flagged as DQR's default
+query/retrieve PACS — which is why imaging-api needs no PACS id: its queries name none, so DQR uses
+that default, and each import reads the default's id back from XNAT. The delete is conditional: if
 foreign registrations exist while `PACS_AETITLE`/`PACS_HOST` are still the mocked-Orthanc defaults,
 the script refuses and exits 1 rather than remove a real PACS the operator never declared (FLIP#993).
 
+**The availability schedule is set from the kit.** Each configure run (`xnat-configure`,
+`upgrade-xnat`, or the chart's `xnat-init` hook on `helm upgrade`) converges DQR's schedule for the
+registered PACS onto the kit's one window per listed day. It updates drifted intervals in place,
+creates missing days, and removes the days no longer listed and any extra interval on a listed day.
+An unchanged schedule is not written. Removals run first, so a run that fails part-way leaves less
+retrieval scheduled than agreed, and the schedule is read back after any write. A change made in
+XNAT's DQR admin page is therefore reverted on the next run, and each overwrite is logged with what
+it replaced, so put a window agreed with the PACS manager in the kit.
+
+**A window cannot cross midnight (FLIP#1465).** DQR runs a window whose start is not before its end
+inverted, during the day (`19:00`–`07:00` retrieves from 07:00 to 19:00), and it only looks at the
+current weekday. So the configure step refuses `PACS_AVAILABILITY_START` ≥ `PACS_AVAILABILITY_END`,
+with an end of `24:00` meaning the end of the day. For out-of-hours retrieval use `19:00`–`24:00`,
+`00:00`–`07:00`, or whole days in `PACS_AVAILABILITY_DAYS`. Like every schedule value, this is checked
+before XNAT is contacted.
+
 ## Plugins
 
-Plugins and the XNAT WAR are stored in S3 as a **version-keyed artifact set**:
-`s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/xnat-web-<version>.war` plus
-`.../xnat-<version>/plugins/*.jar` (e.g. `xnat-1.10.0/`). Each XNAT version needs a matching plugin
-roster, and keying the whole set by version lets branches on different XNAT versions (e.g. `main` vs
-`develop` across an upgrade) build without clobbering each other. The CI workflows and
-`make build` download the set for the `XNAT_VERSION` in `.env` and bake it into the Docker image.
+The XNAT WAR and plugins are third-party, public upstream downloads that FLIP does not redistribute.
+[`artifacts.manifest`](artifacts.manifest) lists each one for the `XNAT_VERSION` in `.env`: its kind
+(`war` or `plugin`), its SHA-256 and its upstream URL. That one file serves every path that needs them:
 
-Development additionally bind-mounts the gitignored `xnat/plugins/` directory over the image's plugins. Therefore a
-fresh checkout must set `FLIP_ARTIFACTS_BUCKET_NAME` to a real bucket (the shipped `<your-...>` placeholder is
-rejected) and have AWS access for its first start. `make up` runs `xnat-plugins-download` before stopping any existing
-XNAT: a complete cache stamped with the current versioned S3 prefix skips AWS, while a missing or mismatched cache is
-downloaded and revalidated. A failed download leaves the currently running XNAT untouched.
+- **Development** bind-mounts the gitignored `xnat/plugins/` directory over the image's plugins, so a dev trust needs
+  that cache filled before its first start. Prepare it once, and again after a pull that changes the manifest:
 
-That automatic fill is **development-only**, because only the development stack mounts the directory. On stag, prod,
-EC2 and on-prem, `make up` neither needs nor fetches the host cache — those stacks run the plugins baked in at image
-build, which is where `make build` (above) puts them. An operator who wants a host-side cache there anyway — to
-inspect the jars, or to build offline later — populates it explicitly with
-`make -C trust/xnat xnat-plugins-download`, which needs `FLIP_ARTIFACTS_BUCKET_NAME` and AWS access.
+  ```bash
+  make -C trust prepare-artifacts                          # downloads from the upstream URLs
+  make -C trust prepare-artifacts ARTIFACTS_DIR=/path/to/dir   # no internet route: copy from a directory
+  ```
 
-> The pre-1.10 flat layout (`xnat/xnat-web-1.9.3.war` + `xnat/plugins/`) is kept as-is while `main`
-> still builds 1.9.3; delete it once this upgrade reaches `main`.
+  Neither needs AWS access, a bucket or the `aws` CLI. `make up` only **checks** the cache (`xnat-plugins-check`),
+  before it stops any running XNAT. A cold cache, a jar with the wrong checksum or a jar the manifest does not list
+  fails there, naming the prep step, and leaves the running stack untouched.
+- **Image builds** (`make build` and the CI workflow `docker_build_xnat_web.yml`) download the WAR and plugins the
+  same way and bake them into the image.
+- **Stag, prod, EC2 and on-prem** stacks run the plugins baked into the image, so `make up` neither needs nor checks
+  the host cache there.
+- **Helm** downloads the same plugin URLs at pod start (`trust/deploy/helm/values.yaml` `xnat.web.plugins.urls`).
+  `tests/test_artifacts.py` fails if the chart and the manifest disagree, or if the WAR line is not the `.env`
+  version.
 
-`xnat-plugins-download` delegates the presence check and the sync to
-[`scripts/ensure_plugins.sh`](scripts/ensure_plugins.sh), which matches plugin *families* by filename
-prefix (versions are whatever the S3 prefix holds) and records the prefix it synced from in a
-`.s3-prefix` stamp beside the jars — a mismatched or absent stamp forces a `--delete` re-sync, so an
-XNAT-version change can never bake a developer's stale jars into the new image.
-`make -C trust/xnat xnat-war-download` is the WAR half of the same idea: it fetches
-`xnat-<version>/xnat-web-<version>.war` into `xnat/build-artifacts/`, skipping S3 when the file is
-already there.
+[`scripts/xnat_artifacts.sh`](scripts/xnat_artifacts.sh) does the work. `fetch` keeps every file whose checksum
+already matches, downloads the rest to a temporary name, verifies the checksum and only then moves the file into
+place. A changed or truncated upstream file therefore fails the fetch instead of landing in the cache or an image.
+For plugins it also removes any jar the manifest does not list: XNAT loads every jar in the directory, so a stale
+version beside the new one would load both. `check` verifies the same rules and never downloads.
 
 ### Other Make targets
 
@@ -279,7 +371,8 @@ already there.
 | `xnat-configure XNAT_PROJECT=xnat<N>` | Re-run `configure-xnat.sh` + `configure-dcm2niix.sh` against a **live** instance, without resetting its data. |
 | `create-xnat-network KIT=<CODE>` | Ensure this trust's attachable overlay network exists (run for you by `up-xnat`). |
 | `xnat-stack-down STACK=<stack>` | `docker stack rm` one stack and **block** until its containers have stopped — `docker stack rm` is asynchronous, and `xnat-reset` must not delete bind-mount sources still held by a running container. Times out at 120s. |
-| `xnat-war-download` / `xnat-plugins-download` | Fill the local build-artifact / plugin caches from S3 (see above). |
+| `xnat-war-download` / `xnat-plugins-download` | Fill the build-context WAR / dev plugin cache from the manifest's upstream URLs (or `ARTIFACTS_DIR=<dir>`), verifying checksums (see above). |
+| `xnat-plugins-check` | Verify the dev plugin cache against the manifest without downloading; run by `up-xnat` in development. |
 | `test` / `unit_test` / `local_test` | The anonymization-script test pack in [`tests/`](./tests/) — pure Python, no XNAT or Docker. |
 
 ### Plugin compatibility
@@ -294,28 +387,38 @@ upgrade changes two plugins for FLIP: DQR (forced by `dcm4che5`) and Container S
 ticks **only 3.8.x** for XNAT 1.10.0 — 3.7.x support stops at 1.9.3.x, even though 3.7.3 happened to
 pass a basic conversion smoke on 1.10.0).
 
-The following table lists the plugin versions for the XNAT version `1.10.0` used in this environment.
+The following table lists the plugin versions for the XNAT version `1.10.2.1` used in this environment.
+The compatibility matrices stop at 1.10.0, so each plugin was also checked against the 1.10.2.1 WAR
+(FLIP#1648). Apart from Container Service 3.8.1's Kubernetes client, no plugin uses a class, method or
+field of XNAT's libraries that 1.10.0 has and 1.10.2.1 lacks. An `xnat-web` image built from this
+manifest loads all four, and imports a study from Orthanc through DQR with the site anonymisation
+applied.
 
-| Plugin                          | Version for XNAT 1.10.0     | Installed | Action for the 1.10 upgrade |
-| ------------------------------- | --------------------------- | --------- | --------------------------- |
-| DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | **Must upgrade** from 2.2.0 — rebuilt on JDK 21 + `dcm4che5`, plus a thread-leakage fix |
-| Container Service Plugin        | 3.8.1 (JDK 8 build)         | Yes       | **Must upgrade** from 3.7.3 — 3.8.x is the only column the compatibility matrix ticks for 1.10.0 |
-| Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10.0 |
-| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | **Install** — 3.8.0 is the plugin's XNAT 1.10 release; it ships in every deployment mode (Swarm image, dev cache, Helm chart) |
+| Plugin                          | Version for XNAT 1.10.2.1   | Installed | Action for 1.10.2.1 |
+| ------------------------------- | --------------------------- | --------- | ------------------- |
+| DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | None — 3.0.0 requires XNAT 1.10.0 or newer (DQR changelog). 3.1.0, built for 1.10.1, marks a C-MOVE that delivers no files `FAILED` instead of leaving it `ISSUED`, a change imaging-api reads, so it is not part of this fix |
+| Container Service Plugin        | 3.8.2 (JDK 8 build)         | Yes       | **Must upgrade** from 3.8.1 — its Kubernetes client cannot load on the 1.10.2.1 WAR (CS-1058). 3.8.2 changes only that client. 3.9.0, built for 1.10.1, is not needed |
+| Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10, and there is no later release |
+| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | None — 3.8.0 is the plugin's XNAT 1.10 release, and there is no later release; the optional MONAI Label server registers through it — see [MONAI Label](../README.md#monai-label-optional) |
+
+On 1.10.0 the move to 1.10 changed DQR (2.2.0 → 3.0.0, rebuilt on JDK 21 and `dcm4che5`, with a
+thread-leakage fix), Container Service (3.7.3 → 3.8.1, the only column the matrix ticks for 1.10.0)
+and added the OHIF viewer.
 
 Not applicable to FLIP, but released alongside 1.10.0: **Distributed Events 2.0.0** (only needed for
 load-balanced multi-node XNAT — each FLIP trust runs a single node) and **MFA 1.6.0** (FLIP does not
 use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a service account).
 
-> **DQR 3.0.0 is a major version bump and imaging-api reads DQR's tables directly.**
-> `imaging_api/db/get_{queued,executed}_pacs_request_by_project.py` query DQR's Hibernate tables
-> (`xhbm_queued_pacs_request`, `xhbm_executed_pacs_request`) and `services/retrieval.py` compares
-> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change
-> table columns or status vocabulary, which would silently misreport in-flight and failed imports.
+> **DQR 3.0.0 is a major version bump, and imaging-api reads DQR's import queue and history.**
+> It reads them through DQR's REST API (`GET /xapi/dqr/import/queue` and `/import/history`, in
+> `imaging_api/services/import_requests.py`), not DQR's tables, and `services/retrieval.py` compares
+> against the literal status `"FAILED"`. A major bump carrying a `dcm4che5` rewrite could change the
+> status vocabulary or the fields imaging-api reads (`id`, `xnatProject`, `accessionNumber`,
+> `status` and the request times), which would silently misreport in-flight and failed imports.
 > **Verified compatible (2026-07-30):** the released 3.0.0 JAR keeps
 > `PacsRequest.FAILED_STATUS_TEXT == "FAILED"` (full vocabulary
-> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED), and the `xhbm_*_pacs_request` columns imaging-api reads
-> were confirmed unchanged on a live 3.0.0 instance during the dev-stack smoke test.
+> QUEUED/PROCESSING/ISSUED/RECEIVED/FAILED). On 2026-10-14 the REST reads returned the same rows as
+> the table reads they replaced, for every project on a live 3.0.0 instance (FLIP#1456).
 >
 > The DQR thread-leakage fix is also worth attention: it is plausibly related to the bulk-import
 > wedging investigated in FLIP#662. What holds that wedge at bay is the directArchive JMS
@@ -323,28 +426,23 @@ use XNAT-side MFA; hub auth is Cognito and imaging-api authenticates as a servic
 > in place on 1.10. Re-test a large cohort pull (thousands of studies) on 1.10 + DQR 3.0.0 before
 > assuming either is no longer needed.
 
-**Staying on 1.9 instead?** Upstream also shipped **XNAT 1.9.3.4** (urgent fixes for JDK 8
-deployments) and **DQR 2.3.2** (the thread-leak fix alone, JDK 8). That is the lower-risk path to the
-DQR fix if this 1.10 upgrade stalls.
+**Staying on 1.9 instead?** The 1.9 line's security hotfix is **XNAT 1.9.3.9**; earlier 1.9
+releases carry the vulnerability 1.10.2.1 fixes. **DQR 2.3.2** is the thread-leak fix alone (JDK 8).
 
-The `xnat-1.10.0/` artifact set (WAR + DQR 3.0.0 + Container Service 3.8.1 + Batch Launch 0.9.0 +
-OHIF viewer 3.8.0) is uploaded and CI-verified. All four upgraded artifacts are public downloads, no
-account needed:
-the WAR from `https://api.bitbucket.org/2.0/repositories/xnatdev/xnat-web/downloads/xnat-web-1.10.0.war`,
-DQR from
-`https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar`
-(the same repo also carries `2.3.2`/`2.4.0` for the JDK 8 fallback), CS from
-`https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar`,
-and the viewer from `https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar` (the
-same URL the Helm chart downloads at pod start).
-Local builds skip S3 when the files already sit in `xnat/build-artifacts/` and `xnat/plugins/`.
+The 1.10.2.1 artifact set (WAR + DQR 3.0.0 + Container Service 3.8.2 + Batch Launch 0.9.0 + OHIF viewer
+3.8.0) is pinned in [`artifacts.manifest`](artifacts.manifest). Every file is a public download that needs no
+account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8 fallback.
 
 ### Adding or updating a plugin
 
-1. Upload the new `.jar` file to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat-<version>/plugins/` for the
-   XNAT version it targets (removing the JAR it replaces — the sync bakes every JAR in the prefix).
-2. Update the plugin compatibility table above.
-3. Trigger the CI workflows (push or `gh workflow run`) to rebuild the image with the new plugin.
+1. Replace the plugin's line in [`artifacts.manifest`](artifacts.manifest) with the new upstream URL and its
+   SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
+   plus `XNAT_VERSION` in `.env`.
+2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
+3. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
+   `trust/deploy/helm/check_status.py`; its test fails until you do.
+4. Update the plugin compatibility table above.
+5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 
@@ -360,7 +458,7 @@ This can also be done manually from XNAT:
 
 ## DICOM Anonymization
 
-XNAT includes a built-in anonymization engine that processes incoming DICOM data to remove Protected Health Information (PHI) from DICOM headers. FLIP replaces the default XNAT anonymization script with a comprehensive site-wide script (`anon_script.das`) that removes patient identifiers, institutional identifiers, physician/operator identifiers, and pseudonymizes UIDs (including Patient ID, Patient Name and SOP/Study/Series Instance UIDs).
+XNAT includes a built-in anonymization engine that processes incoming DICOM data to remove Protected Health Information (PHI) from DICOM headers. FLIP replaces the default XNAT anonymization script with a site-wide script (`anon_script.das`) built from DICOM PS3.15 Table E.1-1: it removes every attribute the Basic Profile acts on wherever it occurs (dates, times, age, sex, size and weight included, since OMOP holds them), removes every vendor private tag, replaces Patient Name and ID with the XNAT subject label, and hashes the top-level UIDs. `configure-xnat.sh` also sets the archive's file-name template, because XNAT's default names every file after its original Study Instance UID. It is not a conformant PS3.15 profile; its limits are listed in the [XNAT component docs](../../docs/source/components/component-xnat.rst) (FLIP#1513).
 
 The anonymization script is configured automatically during XNAT initialization via `configure-xnat.sh`. It is applied to all incoming DICOM data when the SCP receiver has `anonymizationEnabled` set to `true`.
 
@@ -375,6 +473,26 @@ XNAT uses two mechanisms for dcm2niix conversion:
 
 The setup script (`configure-dcm2niix.sh`) intentionally does **not** create a site-wide event subscription. This ensures dcm2niix only auto-triggers for projects that have opted in via the `dicom_to_nifti` flag.
 
+### Re-running the setup keeps every project's trigger (FLIP#1451)
+
+A project's trigger names the dcm2niix **wrapper** by id: its action key is
+`org.nrg.containers.services.CommandActionProvider:<wrapper id>`, which imaging-api takes from
+XNAT's own action listing (`GET /xapi/events/allactions`). So the id must survive a redeploy.
+
+`configure-dcm2niix.sh`, which the chart's xnat-init Job also runs (from the xnat-web image, with
+`XNAT_CS_BACKEND=kubernetes`), **updates** an existing dcm2niix command in place with
+`POST /xapi/commands/{id}`. That keeps the command id and the `dcm2niix-scan` wrapper's id (XNAT
+matches wrappers by name) while taking every field from `dcm2niix_command.json`, the image included;
+on Kubernetes without the resource keys, so conversion pods stay BestEffort (FLIP#1448). A command is
+registered only when none exists, and the step refuses to choose between two.
+
+### Converting scans archived without NIfTI
+
+A trigger fires on new scans only. `make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."]
+[LAUNCH=1]` converts the archived scans that have DICOM and no NIfTI, by Container Service bulk launch
+(report only without `LAUNCH=1`; on-prem prefix `sudo -E`). What it selects, what it leaves alone and
+its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
+
 ## Resource limits
 
 XNAT's container service plugin can launch many containers simultaneously (e.g. multiple dcm2niix conversions during a large import). Without resource limits, this can exhaust host CPU and memory, causing XNAT itself to hang. Docker Swarm's deploy resource constraints (`reservations` and `limits`) prevent this by capping what each service can consume.
@@ -383,12 +501,21 @@ The development overlay (`docker-compose-stack.development.yml`) sets these cons
 
 ## Troubleshooting
 
-- **Missing plugins or an S3/AWS error before startup** — confirm `FLIP_ARTIFACTS_BUCKET_NAME`, renew the selected AWS
-  SSO session, then run `make -C trust/xnat xnat-plugins-download` from the repository root. The command must find the
-  batch-launch, container-service, DICOM Query-Retrieve and OHIF viewer plugin families before startup can continue.
+- **`The XNAT plugin cache ... is not ready` before startup** — run `make -C trust prepare-artifacts` from the
+  repository root (add `ARTIFACTS_DIR=<dir>` on a host with no internet route), then `make up` again. The message lists
+  each file that is missing, has the wrong checksum or is not in the manifest.
+
+- **`Download failed` or a checksum mismatch from `xnat_artifacts.sh`** — the WAR and plugins come straight from
+  their upstream hosts (api.bitbucket.org, xnat.org, GitHub), with no FLIP mirror in between, so an upstream outage or a
+  re-published file stops `prepare-artifacts`, the local image build and the CI `xnat-web` build alike. Open the URL from
+  the message: if the host is down, retry later (in CI, re-run the workflow). Locally, a copy of the files from another
+  machine works now: `make -C trust prepare-artifacts ARTIFACTS_DIR=<dir>`, still checked against the manifest. A
+  checksum mismatch means the upstream file changed; do not edit the manifest to match until the new file is
+  confirmed to be the intended release.
 
 - **XNAT serves its login page but configuration reports plugin-route 404s** — inspect
-  `configure-xnat-<stack>.log` in the container. Once the plugin cache is repaired, rerun the individual Trust with
+  `trust/xnat/xnat/config/configure-xnat-<stack>.log` on the host that ran the bring-up. Once the plugin cache is
+  repaired, rerun the individual Trust with
   `make -C trust/xnat up-xnat KIT=<CODE>`. This target intentionally resets that development XNAT's data. If the
   running instance already has the correct plugins and only configuration needs retrying, use
   `make -C trust/xnat xnat-configure XNAT_PROJECT=xnat<N>` instead.

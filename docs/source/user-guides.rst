@@ -3,7 +3,8 @@ User guides
 ###########
 
 .. toctree::
-   :glob:
    :maxdepth: 2
 
-   ./user-guides/*
+   user-guides/getting-started
+   user-guides/user-common
+   user-guides/user-trust-admin

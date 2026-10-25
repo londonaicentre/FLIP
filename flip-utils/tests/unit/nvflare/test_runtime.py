@@ -18,7 +18,9 @@ from nvflare.apis.fl_constant import FLContextKey
 
 from flip.nvflare.runtime import (
     FLIP_CUSTOM_PROPS_KEY,
+    FLIP_MODEL_ID_CONFIG_KEY,
     FLIP_MODEL_ID_KEY,
+    get_app_config,
     get_flip_model_id,
     get_job_custom_props,
 )
@@ -98,3 +100,63 @@ def test_workspace_fallback_reads_custom_props_from_meta_json(tmp_path):
     assert get_job_custom_props(_ctx_workspace(meta_path=str(meta))) == {FLIP_MODEL_ID_KEY: _VALID}
     # and the full resolve goes through it too
     assert get_flip_model_id(_ctx_workspace(meta_path=str(meta))) == _VALID
+
+
+# ── the app's config.json, where the FLIP-API writes the model id (FLIP#70) ──────────
+
+_OTHER = "00000000-0000-0000-0000-000000000001"  # the placeholder FLIP's recipes leave in custom_props
+
+
+def _ctx_app(tmp_path, config=None, meta=None):
+    """fl_ctx whose run workspace holds the app's custom/config.json (if given) and JOB_META ``meta``."""
+    app_dir = tmp_path / "app_server"
+    (app_dir / "custom").mkdir(parents=True)
+    if config is not None:
+        (app_dir / "custom" / "config.json").write_text(json.dumps(config))
+    ctx = _ctx(meta)
+    ctx.get_engine.return_value.get_workspace.return_value.get_app_dir.return_value = str(app_dir)
+    ctx.get_job_id.return_value = "job-1"
+    return ctx
+
+
+def test_resolves_from_the_apps_config_json(tmp_path):
+    assert FLIP_MODEL_ID_CONFIG_KEY == "FLIP_MODEL_ID"
+    assert get_flip_model_id(_ctx_app(tmp_path, config={"FLIP_MODEL_ID": _VALID})) == _VALID
+
+
+def test_the_apps_config_json_beats_a_placeholder_left_in_custom_props(tmp_path):
+    meta = {FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: _OTHER}}
+
+    assert get_flip_model_id(_ctx_app(tmp_path, config={"FLIP_MODEL_ID": _VALID}, meta=meta)) == _VALID
+
+
+def test_a_valid_component_arg_still_wins(tmp_path):
+    assert get_flip_model_id(_ctx_app(tmp_path, config={"FLIP_MODEL_ID": _OTHER}), fallback=_VALID) == _VALID
+
+
+@pytest.mark.parametrize("config", [None, {}, {"FLIP_MODEL_ID": "not-a-uuid"}, ["FLIP_MODEL_ID"]])
+def test_without_a_usable_config_json_custom_props_still_resolve_it(tmp_path, config):
+    """A SimEnv/PocEnv recipe run, or a job from an FL API that predates FLIP#70."""
+    meta = {FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: _VALID}}
+
+    assert get_flip_model_id(_ctx_app(tmp_path, config=config, meta=meta)) == _VALID
+
+
+def test_the_error_names_every_place_it_looked(tmp_path):
+    with pytest.raises(ValueError, match="FLIP_MODEL_ID.*config.json.*custom_props"):
+        get_flip_model_id(_ctx_app(tmp_path, config={}, meta={}))
+
+
+def test_app_config_is_empty_without_an_engine_or_a_workspace():
+    assert get_app_config(_ctx_workspace(engine=False)) == {}
+    assert get_app_config(_ctx_workspace(workspace=False)) == {}
+
+
+@pytest.mark.parametrize("app_dir", [1, None], ids=["fd-like int", "bare MagicMock"])
+def test_app_config_never_opens_a_non_path_as_a_file_descriptor(app_dir):
+    ctx = _ctx_workspace()
+    if app_dir is not None:
+        ctx.get_engine.return_value.get_workspace.return_value.get_app_dir.return_value = app_dir
+
+    assert get_app_config(ctx) == {}
+    os.fstat(1)  # raises EBADF if the read closed stdout

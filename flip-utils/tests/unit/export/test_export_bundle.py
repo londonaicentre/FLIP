@@ -170,7 +170,7 @@ def app(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def checkpoint(tmp_path: Path) -> Path:
-    """Write an aggregated checkpoint in NVFLARE persistence format, with promoted buffers.
+    """Write an aggregated checkpoint in FLARE persistence format, with promoted buffers.
 
     Returns:
         Path: The checkpoint path.

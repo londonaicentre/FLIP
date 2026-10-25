@@ -18,7 +18,7 @@
 #   test/cypress/docs/flip/create-model.spec.ts  -> docs/source/assets/generated/gifs/flip/create-model.gif
 # The GIFs are not tracked in git (FLIP#1236): generated/ is gitignored, the CI
 # workflow publishes this directory to the aicentreflip/docs-gifs dataset, and the
-# docs build fetches the pinned version into the same directory — so a local
+# docs build fetches the published set into the same directory — so a local
 # recording is previewed with FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs.
 
 set -euo pipefail
@@ -51,7 +51,11 @@ fi
 # stable and authoritative for both the GIF basename and its category subdir,
 # whereas Cypress's video-path prefix varies by version and common-root
 # inference. Each spec's video is then located by its unique filename.
-mapfile -t specs < <(find "${specs_root}" -type f -name "*.spec.ts" | sort)
+# Read loops, not mapfile, so this also runs on macOS's bash 3.2.
+specs=()
+while IFS= read -r spec; do
+    specs+=("${spec}")
+done < <(find "${specs_root}" -type f -name "*.spec.ts" | sort)
 if (( ${#specs[@]} == 0 )); then
     echo "No demo specs under ${specs_root}; nothing to convert." >&2
     exit 0
@@ -67,7 +71,10 @@ for spec in "${specs[@]}"; do
     # different category can't be picked up by mistake, and bail on >1 matches
     # rather than silently pick a stale recording (e.g. left over from a run
     # against a different Cypress version with a different video-path prefix).
-    mapfile -t mp4_matches < <(find "${videos_root}" -type f -path "*/${category}/${name}.spec.ts.mp4" | sort)
+    mp4_matches=()
+    while IFS= read -r match; do
+        mp4_matches+=("${match}")
+    done < <(find "${videos_root}" -type f -path "*/${category}/${name}.spec.ts.mp4" | sort)
     if (( ${#mp4_matches[@]} == 0 )); then
         echo "No video for ${spec}; skipping." >&2
         continue

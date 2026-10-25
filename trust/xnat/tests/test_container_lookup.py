@@ -99,9 +99,13 @@ esac
 
 
 def _recipe(target: str, *variables: str) -> str:
-    """The shell ``make`` would run for ``target``, exactly as the Makefile generates it."""
+    """The shell ``make`` would run for ``target``, exactly as the Makefile generates it.
+
+    ``FLIP_INSTANCE=`` pins the unprefixed stack: a value from the caller's environment (the root
+    Makefile exports ``.env.development``) would otherwise prefix ``XNAT_STACK``.
+    """
     result = subprocess.run(
-        ["make", "-n", "--no-print-directory", target, "KIT=GSTT", *variables],
+        ["make", "-n", "--no-print-directory", target, "KIT=GSTT", "FLIP_INSTANCE=", *variables],
         cwd=XNAT_DIR,
         capture_output=True,
         text=True,
@@ -144,20 +148,32 @@ class _Host:
 class TestConfigureFindsItsOwnStack:
     def test_execs_into_the_unprefixed_stack_only(self, tmp_path: Path) -> None:
         host = _Host(tmp_path, TWO_STACKS)
-        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}"))
+        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
         assert result.returncode == 0, f"xnat-configure failed:\n{result.stdout}{result.stderr}"
         execs = host.execs()
         assert len(execs) == 2, f"expected configure-xnat.sh then configure-dcm2niix.sh, got {execs}"
         for argv in execs:
-            # `docker exec <container> bash -c …` — one container, then the program.
+            # `docker exec [-e K=V] <container> bash -c …` — one container, then the program.
+            while argv[0] == "-e":
+                argv = argv[2:]
             assert argv[0] == WANTED_ID, f"exec'd into {argv[0]!r}, not {STACK}_xnat-web ({WANTED_ID})"
             assert argv[1] == "bash", f"a second container id reached docker exec: {argv[:3]}"
+
+    def test_configure_xnat_runs_with_the_plugin_roster_check(self, tmp_path: Path) -> None:
+        """configure-xnat.sh runs inside xnat-web, where the jars are the ones XNAT loaded."""
+        host = _Host(tmp_path, TWO_STACKS)
+        host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
+
+        configure_xnat, configure_dcm2niix = host.execs()
+        assert configure_xnat[:3] == ["-e", "XNAT_PLUGIN_READINESS_ROSTER=1", WANTED_ID], configure_xnat
+        assert "configure-xnat.sh" in configure_xnat[-1]
+        assert "XNAT_PLUGIN_READINESS_ROSTER=1" not in configure_dcm2niix, "only configure-xnat.sh runs the wait"
 
     def test_refuses_an_ambiguous_match(self, tmp_path: Path) -> None:
         """Two containers of the wanted service is not a lookup to resolve — it is an error to name."""
         host = _Host(tmp_path, ROLLING_UPDATE)
-        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}"))
+        result = host.run(_recipe("xnat-configure", f"XNAT_PROJECT={STACK}", f"XNAT_CONFIGURE_LOG_DIR={tmp_path}"))
 
         assert result.returncode != 0, "xnat-configure went ahead with two candidate containers"
         assert host.execs() == [], f"docker exec ran despite the ambiguity: {host.execs()}"

@@ -14,7 +14,7 @@
 
 Removes the trust row entirely so the slot can be UI-re-registered cleanly
 (name free, FL kit slot free, no archived row left behind). Handles the
-trust.id FK landscape explicitly — the schema has ten tables that reference
+trust.id FK landscape explicitly — the schema has eleven tables that reference
 trust.id and none of them declare ON DELETE CASCADE, so a naive
 ``session.delete(trust)`` would fail with a foreign-key violation. This
 script clears each dependent table in the right order before deleting the
@@ -35,6 +35,7 @@ flip_api.db.models.user_models)::
     | trust_task               | trust_id (NOT NULL)       | DELETE rows     |
     | user_role                | trust_id (nullable)       | DELETE rows     |
     | xnat_project_status      | trust_id (nullable)       | DELETE rows     |
+    | cohort_snapshot_status   | trust_id (NOT NULL)       | DELETE rows     |
 
 For the nullable FKs we could either NULL or DELETE — DELETE makes the
 intent clearer (a metric/log/result tied to a now-gone trust serves no
@@ -70,6 +71,7 @@ from sqlmodel import Session, delete, select
 from flip_api.auth import trust_key_cache
 from flip_api.db.database import get_engine
 from flip_api.db.models.main_models import (
+    CohortSnapshotStatus,
     FLJobTrust,
     FLKitSlot,
     FLLogs,
@@ -98,6 +100,7 @@ _DEPENDENT_TABLES: tuple[tuple[type, str], ...] = (
     (TrustTask, "trust_id"),
     (UserRole, "trust_id"),
     (XNATProjectStatus, "trust_id"),
+    (CohortSnapshotStatus, "trust_id"),
 )
 
 

@@ -12,7 +12,7 @@
 # limitations under the License.
 #
 
-# Provision an NVFLARE federated learning network
+# Provision a FLARE federated learning network
 # Usage: ./fl-services/nvflare/provision/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
 # Normally invoked via `make -C fl-services/nvflare provision` (cwd = fl-services/nvflare).
 
@@ -49,7 +49,7 @@ if [[ -d "${WORKSPACE_DIR}" ]]; then
     rm -rf "${WORKSPACE_DIR}"
 fi
 
-# Run NVFLARE provisioning.
+# Run FLARE provisioning.
 #
 # Run nvflare from a uv project that actually declares it. A bare `uv run nvflare`
 # resolves nothing here — `Failed to spawn: nvflare`. nvflare is declared by the

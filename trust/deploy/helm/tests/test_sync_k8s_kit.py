@@ -20,6 +20,8 @@ IPs that rotate on recreation, so a pinned /32 would go stale. A port-only rule
 is immune to that drift and renders deterministically across runs."""
 
 import importlib.util
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -78,11 +80,41 @@ def test_render_override_is_stable_across_runs():
 
 def test_render_override_uses_kit_fl_server_port():
     """The port is sourced from the kit (FL_SERVER_PORT), not hardcoded — e.g.
-    Flower's 9092 rather than NVFLARE's 8002."""
+    Flower's 9092 rather than FLARE's 8002."""
     kit = {**_FL_KIT, "FL_BACKEND": "flower", "FL_SERVER_PORT": "9092"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     assert "- port: 9092" in out
     assert "- port: 8002" not in out
+
+
+def test_render_override_allows_the_edge_port_the_client_dials():
+    """LZA staging's edge remaps :8003 to the server's :8002, so the egress rule must allow the
+    port the client dials (FL_EDGE_PORT), not the one the server listens on (FLIP#1365)."""
+    kit = {**_FL_KIT, "FL_EDGE_PORT": "8003"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "- port: 8003" in out
+    assert "- port: 8002" not in out
+
+
+def test_render_override_points_a_flower_supernode_at_the_edge():
+    """A Flower trust's SuperNode dials NLB_SUBDOMAIN on the edge port, as the Compose client does."""
+    kit = {**_FL_KIT, "FL_BACKEND": "flower", "FL_EDGE_PORT": "8003"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert 'superlink: "fl.stag.flip.aicentre.co.uk:8003"' in out
+    nvflare = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+    assert "superlink" not in nvflare
+
+
+def test_render_override_blank_edge_port_falls_back_to_server_port():
+    """A blank FL_EDGE_PORT line in the kit must not drop the egress rule."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "FL_EDGE_PORT": "  "}, "Trust_K8s", "eu-west-2")
+    assert "- port: 8002" in out
+
+
+def test_render_override_no_superlink_without_nlb_host():
+    """No NLB_SUBDOMAIN (a dev kit's commented hub-shared block) emits no Flower superlink."""
+    kit = {k: v for k, v in _FL_KIT.items() if k != "NLB_SUBDOMAIN"} | {"FL_BACKEND": "flower"}
+    assert "superlink" not in sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
 
 
 def test_render_override_omits_block_without_fl_port():
@@ -116,6 +148,40 @@ def test_render_override_omits_vocab_load_without_bucket():
     # Not `"omopDb:" not in out` — that would break spuriously the day an unrelated
     # omopDb key joins the override. s3Bucket appears nowhere else: the fl-client
     # section carries only `kitHostPath:` now that the chart never fetches the kit.
+    assert "vocabLoad" not in out
+    assert "s3Bucket" not in out
+
+
+def test_render_override_can_leave_the_vocab_load_off():
+    """A cluster with no AWS route (AKS, FLIP#1390) must not get the S3 vocab-load hook: it would
+    fail, and as a post-install hook it fails the whole release."""
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2", vocab_load=False)
+    assert "vocabLoad" not in out
+
+
+def test_only_the_scaffolding_bucket_outside_development_is_flagged():
+    stag = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipstag-aicentre"}
+    scaffold = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "flipdev-aicentre"}
+    assert not sync_k8s_kit.is_scaffold_bucket(stag, "stag")
+    # #881: .env.example ships the dev bucket, which no other environment can read.
+    assert sync_k8s_kit.is_scaffold_bucket(scaffold, "lza-stag")
+    assert not sync_k8s_kit.is_scaffold_bucket(scaffold, "development")
+
+
+def test_render_override_carries_the_kits_seed_partition():
+    """SOURCE_TRUST names the mock-data partition a trust is seeded with; without it the chart falls
+    back to the slot number, and a trust on Trust_3 finds no third partition (FLIP#1390)."""
+    out = sync_k8s_kit.render_override({**_FL_KIT, "SOURCE_TRUST": "1"}, "Trust_K8s", "eu-west-2")
+    assert '\ntrustData:\n  seed:\n    sourceTrust: "1"\n' in out
+    assert "sourceTrust" not in sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+
+
+def test_render_override_treats_a_placeholder_bucket_as_unset():
+    """An uncommented scaffolding placeholder must not reach the chart: the hook would try to
+    read a bucket literally named ``<...>``, fail, and take the whole release down with it
+    (FLIP#881)."""
+    kit = {**_FL_KIT, "AICENTRE_BUCKET_NAME": "<your-environment-aicentre-bucket>"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
     assert "vocabLoad" not in out
     assert "s3Bucket" not in out
 
@@ -455,3 +521,18 @@ def test_an_interpreter_without_tomllib_is_a_clear_refusal(tmp_path, monkeypatch
         sync_k8s_kit.render_override(
             {**_FL_KIT, "FL_SITE_PRIVACY_POLICY": "percentile"}, "Trust_K8s", "eu-west-2", trust_dir=tmp_path
         )
+
+
+@pytest.mark.parametrize("target", ["sync-kit", "sync-kit-override", "patch-kit-secrets"])
+def test_make_passes_no_vocab_load_through_to_every_sync(target):
+    """NO_VOCAB_LOAD=1 is how an AKS operator keeps the S3 hook out (FLIP#1390); dry-run each target."""
+    if shutil.which("make") is None:
+        pytest.skip("make is not installed")
+    chart = Path(__file__).resolve().parents[1]
+
+    def run(*extra: str) -> str:
+        args = ["make", "-n", "-C", str(chart), target, "KIT=Trust_K8s", "HUB=stag", *extra]
+        return subprocess.run(args, capture_output=True, text=True, timeout=60).stdout
+
+    assert "--no-vocab-load" in run("NO_VOCAB_LOAD=1")
+    assert "--no-vocab-load" not in run()

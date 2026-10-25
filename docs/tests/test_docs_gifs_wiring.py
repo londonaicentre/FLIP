@@ -12,9 +12,9 @@
 """The docs GIFs wiring, checked statically (FLIP#1236).
 
 A build-time gap between the manifest and the rst is deliberately non-fatal (a new GIF is authored in two
-steps: spec + figure first, then the bot publishes and the pin PR merges). This guard catches the drift that
+steps: spec + figure first, then CI records it once the PR reaches develop). This guard catches the drift that
 *is* a bug at PR time: a figure with no spec, a spec with no figure, the recorder and the fetcher disagreeing
-on where the files live, a malformed pin, or a GIF creeping back into git.
+on where the files live, or a GIF creeping back into git.
 """
 
 from __future__ import annotations
@@ -24,7 +24,10 @@ import subprocess
 
 from conftest import DOCS_DIR, REPO_ROOT
 
-RST_FIGURE_RE = re.compile(r"^\.\. figure:: \.\./assets/generated/gifs/(?P<path>[a-z-]+/[a-z0-9-]+\.gif)\s*$", re.M)
+# Relative to the page, so one ../ per directory level below docs/source/.
+RST_FIGURE_RE = re.compile(
+    r"^\.\. figure:: (?:\.\./)+assets/generated/gifs/(?P<path>[a-z-]+/[a-z0-9-]+\.gif)\s*$", re.M
+)
 OLD_FIGURE_RE = re.compile(r"assets/(admin|flip)/[a-z0-9-]+\.gif")
 SPECS_DIR = REPO_ROOT / "flip-ui" / "test" / "cypress" / "docs"
 
@@ -34,6 +37,7 @@ def rst_figures() -> set[str]:
 
 
 def test_every_figure_has_a_spec_and_every_spec_a_figure(publisher):
+    """Specs and docs/scripts/live-recorded-gifs.txt together are the set; each needs exactly one figure."""
     assert rst_figures() == set(publisher.expected_gifs(SPECS_DIR))
 
 
@@ -56,10 +60,6 @@ def test_the_recorder_and_the_fetcher_share_one_destination(fetcher):
     assert REPO_ROOT / match["rel"] == fetcher.DEFAULT_DEST
 
 
-def test_the_pin_is_one_well_formed_tag(fetcher, publisher):
-    assert publisher.TAG_RE.fullmatch(fetcher.pinned_revision())
-
-
 def test_the_card_documents_the_published_contract(publisher, tmp_path):
     """The card is published as the dataset README, so it must describe what the publisher actually writes."""
     (tmp_path / "flip").mkdir()
@@ -75,6 +75,8 @@ def test_the_card_documents_the_published_contract(publisher, tmp_path):
         "admin/<name>.gif",
         "flip/<name>.gif",
         "YYYYMMDDTHHMMSSZ-<sha7>",
+        "`vX.Y.Z` tags",
+        "`pr-<N>` branches",
         "never moved",
         "never deleted",
     ]

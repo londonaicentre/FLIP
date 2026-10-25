@@ -66,11 +66,13 @@ from flip_api.project_services import (
     create_project,
     delete_project,
     edit_project,
+    get_cohort_snapshots,
     get_imaging_project_status,
     get_models,
     get_project,
     get_project_approved_trusts,
     get_projects,
+    requeue_cohort_snapshots,
     stage_project,
     unstage_project,
 )
@@ -120,6 +122,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Args:
         app (FastAPI): The FastAPI application instance being started.
+
+    Yields:
+        None: Control to the running application until shutdown.
     """
     _cors_allowed_origins.extend(build_identity_provider().allowed_origins())
     start_scheduler()
@@ -147,7 +152,7 @@ app = FastAPI(
     swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect" if _docs_enabled else None,
 )
 
-# Rate limiter — keyed by trust_name path parameter (falls back to client IP)
+# Rate limiter — keyed by a hash of the trust API key (falls back to client IP)
 app.state.limiter = limiter
 
 
@@ -216,11 +221,13 @@ ROUTERS: tuple[APIRouter, ...] = (
     create_project.router,
     delete_project.router,
     edit_project.router,
+    get_cohort_snapshots.router,
     get_imaging_project_status.router,
     get_models.router,
     get_project_approved_trusts.router,
     get_project.router,
     get_projects.router,
+    requeue_cohort_snapshots.router,
     stage_project.router,
     unstage_project.router,
     # Roles services

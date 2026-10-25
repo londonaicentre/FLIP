@@ -82,3 +82,37 @@ class AccessionIdsResponse(BaseModel):
         ...,
         description="The accession IDs of the cohort, in query order.",
     )
+
+
+class SnapshotResponse(BaseModel):
+    """What ``POST /cohort/snapshot`` froze — aggregates only, no ids and no row-level data."""
+
+    row_count: int = Field(..., description="Rows the query of record returned at approval")
+    columns: list[str] = Field(..., description="Column names the query of record returned at approval")
+    has_accessions: bool = Field(
+        ...,
+        description="Whether the frozen membership includes accession ids (i.e. the project pulls imaging)",
+    )
+    snapshot_at: str = Field(..., description="ISO-8601 UTC timestamp of snapshot creation")
+    query_hash: str = Field(
+        ...,
+        description="SHA-256 of the normalised query of record (drift detection, not a control)",
+    )
+
+
+class SnapshotCreateRequest(DataframeQuery):
+    """Input for ``POST /cohort/snapshot``: freeze a project's approved cohort membership.
+
+    There is deliberately no way to replace a membership already frozen: a repeated request returns the frozen
+    record's facts, so a re-queued snapshot can never let the cohort grow.
+    """
+
+
+class SnapshotDeleteRequest(BaseModel):
+    """Input for ``POST /cohort/snapshot/delete``."""
+
+    encrypted_project_id: str = Field(
+        ...,
+        description="The encrypted identifier for the central hub project",
+        json_schema_extra={"example": "encrypted_12345"},
+    )

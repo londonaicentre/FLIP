@@ -7,7 +7,7 @@ About flip-utils
 ``flip-utils`` is the pip-installable distribution published from this
 repository. Its Python import package is ``flip``, which contains the shared
 platform logic used by FLIP jobs and services including core training logic,
-NVFLARE components, Flower helpers, and utility helpers.
+FLARE components, Flower helpers, and utility helpers.
 
 The FLIP platform uses this package to power federated learning applications
 across multiple job types: standard federated training, distributed evaluation,
@@ -69,16 +69,28 @@ The ``flip`` package is organized into logical modules:
    - ``Utils`` — General utility functions
    - ``model_weights_handling`` — Model weight aggregation and manipulation
 
+``flip.training``
+   Batch guards for apps using ``flip-utils[full]``:
+
+   - ``skip_degenerate_batch(labels, loss=None, *, log, context)`` — Warn and skip
+     fully masked labels (all ``-1``) or a non-finite scalar loss. Call once before
+     the model forward pass with labels, then again with the computed loss before
+     backward or metric accumulation. ``log`` accepts a warning callback such as
+     ``logger.warning``; ``context`` names the phase and batch position.
+
 ``flip.nvflare``
-   NVFLARE-specific components:
+   FLARE-specific components:
 
    - ``controllers/`` — Workflow controllers (ScatterAndGather, CrossSiteModelEval, etc.)
    - ``components/`` — Event handlers, persistors, privacy filters, model locators, etc.
-   - ``recipes/`` — High-level NVFLARE job recipes
-   - ``runtime.py`` — Runtime helpers for NVFLARE apps
+   - ``recipes/`` — High-level FLARE job recipes
+   - ``runtime.py`` — Runtime helpers for FLARE apps
    - ``metrics.py`` — Metrics collection and reporting
    - ``site_policy.py`` — Renders the trust's site privacy policy at fl-client start
      (``python -m flip.nvflare.site_policy``)
+   - ``server_site_config.py`` — Registers FLIP's server site components at fl-server start
+     (``python -m flip.nvflare.server_site_config``), among them ``JobSchedulingReporter``, which
+     relays FLARE's scheduling verdict to the hub
 
 ``flip.flower``
    Flower-specific helpers:
@@ -124,7 +136,7 @@ Type                         Description
 ``fed_opt``                  Custom federated optimization with flexible aggregation strategies
 ===========================  ====================================================================================
 
-The NVFLARE backend additionally ships a template directory under
+The FLARE backend additionally ships a template directory under
 ``fl-apps/nvflare/`` for each Client-API job type (``standard``,
 ``evaluation``, ``diffusion_model``, ``fed_opt``); the template names match the
 ``JobType`` enum values above. The Flower backend ships its own ``standard`` and
@@ -237,7 +249,7 @@ To test FL applications locally before deploying to production:
    On the platform they are merged onto the matching
    ``fl-apps/nvflare/<template>/app/`` template at submit time.
 
-3. Run one of the shipped tutorials against the NVFLARE simulator from the repository root:
+3. Run one of the shipped tutorials against the FLARE simulator from the repository root:
 
    .. code-block:: bash
 
@@ -246,7 +258,7 @@ To test FL applications locally before deploying to production:
       make -C fl-tutorials list-tutorials
 
    Each tutorial's ``make run`` delegates to ``make sim`` — its ``job.py`` driving a FLIP recipe on
-   the NVFLARE simulator (SimEnv) from the flip-utils venv — configured per-tutorial via that
+   the FLARE simulator (SimEnv) from the flip-utils venv — configured per-tutorial via that
    tutorial's ``.env.app``.
 
 

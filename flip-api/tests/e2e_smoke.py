@@ -18,15 +18,15 @@ flip-api endpoints the UI does, so it covers the API + trust + FL integration
 paths without the fragility of UI selectors.
 
 Backend-agnostic: the script uploads whatever files are in `--model-files-dir`,
-and the FL framework (Flower vs NVFLARE) is decided server-side by `FL_BACKEND`
+and the FL framework (Flower vs FLARE) is decided server-side by `FL_BACKEND`
 in flip-api's bundling code. `make e2e_smoke` picks the chest-xray tutorial
 that matches FL_BACKEND — both tutorials are now in-tree under
-fl-tutorials/<backend>/ (Flower at fl-tutorials/flower/, NVFLARE at
+fl-tutorials/<backend>/ (Flower at fl-tutorials/flower/, FLARE at
 fl-tutorials/nvflare/). Both reuse the same `query.sql` against the trust mock
 OMOP data. Override either path with `--model-files-dir` and `--query-file`.
 
 Usage (preferred):
-    make e2e_smoke                    # NVFLARE tutorial (default backend)
+    make e2e_smoke                    # FLARE tutorial (default backend)
     make e2e_smoke FL_BACKEND=flower  # Flower tutorial
 
 Direct invocation:
@@ -74,10 +74,15 @@ ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
 
 @dataclass(frozen=True)
 class TutorialCopy:
-    """Human-readable copy for one tutorial: its name, and its clinical task in plain language."""
+    """Human-readable copy for one tutorial: its name, and its clinical task in plain language.
+
+    ``nifti`` says whether its app reads the NIfTI that XNAT converts DICOM to, which decides the
+    project's DICOM-to-NIfTI setting. Apps that read DICOM only would trigger conversions nothing uses.
+    """
 
     label: str
     task: str
+    nifti: bool = True
 
 
 # Keyed by the tutorial directory (the parent of app/ or app_files/). The task is what a clinician
@@ -88,6 +93,7 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Chest X-ray classification",
         "Detecting pleural effusion and pulmonary oedema on chest X-rays with an image classifier trained "
         "across the participating trusts' radiographs.",
+        nifti=False,
     ),
     "3d_spleen_segmentation": TutorialCopy(
         "3D spleen segmentation",
@@ -103,22 +109,31 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Ark+ fine-tuning",
         "Adapting the Ark+ chest X-ray foundation model to the participating trusts' own radiographs so it "
         "recognises the chest conditions seen locally.",
+        nifti=False,
     ),
     "arkplus_baseline_classification_evaluation": TutorialCopy(
         "Ark+ baseline classification evaluation",
         "Measuring how well the existing Ark+ chest X-ray model recognises chest conditions on each "
         "participating trust's radiographs, without retraining it.",
+        nifti=False,
+    ),
+    "3d_prostate_segmentation": TutorialCopy(
+        "3D prostate segmentation",
+        "Outlining the prostate gland and its peripheral and transition zones on T2-weighted MRI, with a "
+        "3D segmentation model trained across the participating trusts' scans.",
     ),
     "ehr_risk_prediction": TutorialCopy(
         "EHR risk prediction",
         "Predicting which patients will go on to develop type 2 diabetes from their routine electronic "
         "health records — demographics plus the conditions and hospital visits recorded before diagnosis — "
         "with a model trained across the participating trusts.",
+        nifti=False,
     ),
     "arkplus_multimodel_classification_evaluation": TutorialCopy(
         "Ark+ multi-model classification evaluation",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "
         "see which recognises chest conditions best, without retraining them.",
+        nifti=False,
     ),
 }
 APP_DIR_NAMES = ("app", "app_files")
@@ -210,13 +225,18 @@ def _maybe_refresh(headers: dict[str, str]) -> bool:
     FLIP_E2E_REFRESH_TOKEN, Cognito REFRESH_TOKEN_AUTH) and local Keycloak
     runs, where ``admin_authentication`` leaves the refresh token in
     FLIP_E2E_REFRESH_TOKEN. Returns True if the token was refreshed.
+
+    The provider follows where the token came from, not the local settings: a checkout with
+    .env.development resolves to the Keycloak backend whatever hub the smoke targets, and the
+    dev Keycloak cannot renew a remote hub's Cognito token.
     """
     refresh = os.environ.get("FLIP_E2E_REFRESH_TOKEN")
     if not refresh:
         return False
 
     settings = get_settings()
-    if settings.AUTH_BACKEND == "keycloak" and settings.KEYCLOAK_PUBLIC_URL:
+    supplied = bool(os.environ.get("FLIP_E2E_TOKEN"))
+    if not supplied and settings.AUTH_BACKEND == "keycloak" and settings.KEYCLOAK_PUBLIC_URL:
         from flip_api.auth.identity.keycloak import refresh_grant
 
         try:
@@ -295,7 +315,9 @@ def authenticate() -> dict[str, str]:
     if token:
         _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
         return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
-    _log(f"🔐 Authenticating as admin via {get_settings().AUTH_BACKEND}…")
+    settings = get_settings()
+    via = f" at {settings.KEYCLOAK_PUBLIC_URL}" if settings.AUTH_BACKEND == "keycloak" else ""
+    _log(f"🔐 Authenticating as admin via {settings.AUTH_BACKEND}{via}…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
     return headers
@@ -321,13 +343,6 @@ def create_project_with_query(
     ).model_dump()
     project_id = _ensure_ok(_post(client, "/projects", project_payload, headers), "create project").json()["id"]
     _log(f"  ✅ project_id={project_id}")
-    # A hub predating FLIP#1071 ignores the unknown field and creates an imaging project; fail here
-    # rather than 20 minutes later on an image-pull wait that cannot succeed.
-    if not has_imaging and project_has_imaging(client, headers, project_id):
-        raise SmokeFailure(
-            f"Hub ignored has_imaging=false for project {project_id} (it predates FLIP#1071): the project "
-            "was created WITH imaging — aborting rather than waiting for a pull that cannot succeed."
-        )
 
     _log("📝 Adding cohort query")
     add_resp = _ensure_ok(
@@ -513,7 +528,7 @@ def project_has_imaging(client: requests.Session, headers: dict[str, str], proje
     """Read the project's creation-time ``has_imaging`` flag off the hub (FLIP#1071).
 
     Read back rather than taken from the CLI so ``--project-id`` reuse honours whatever the project
-    was created with. A hub predating the flag omits the key, which means "imaging" (the old behaviour).
+    was created with.
 
     Args:
         client (requests.Session): HTTP session for hub calls.
@@ -522,9 +537,14 @@ def project_has_imaging(client: requests.Session, headers: dict[str, str], proje
 
     Returns:
         bool: True when the project has an imaging stage.
+
+    Raises:
+        SmokeFailure: If the hub's reply carries no ``has_imaging`` field.
     """
-    resp = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project")
-    return bool(resp.json().get("has_imaging", True))
+    project = _ensure_ok(_get(client, f"/projects/{project_id}", headers), "read project").json()
+    if "has_imaging" not in project:
+        raise SmokeFailure(f"Project {project_id} has no has_imaging field in the hub's reply")
+    return bool(project["has_imaging"])
 
 
 def wait_for_image_pull(
@@ -729,14 +749,31 @@ def wait_for_files_scanned(
     )
 
 
+def _parse_gpus(value: str) -> dict[str, int]:
+    """Parse ``--gpus N`` into the hub's ``{num_gpus}`` request."""
+    try:
+        return {"num_gpus": int(value)}
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"expected a whole number of GPUs, got {value!r}") from e
+
+
 def initiate_training(
-    client: requests.Session, headers: dict[str, str], model_id: str, trusts: list[dict[str, Any]]
+    client: requests.Session,
+    headers: dict[str, str],
+    model_id: str,
+    trusts: list[dict[str, Any]],
+    resources: dict[str, int] | None = None,
 ) -> None:
     trust_ids = [t["id"] for t in trusts]
     # Log the human-friendly trust codes (fall back to name, then id) but send the stable ids.
     labels = [t.get("code") or t.get("name") or t["id"] for t in trusts]
     _log(f"🚀 Initiating training across trusts: {labels}")
-    resp = _post(client, f"/fl/initiate/{model_id}", {"trust_ids": trust_ids}, headers)
+    body: dict[str, Any] = {"trust_ids": trust_ids}
+    if resources is not None:
+        # The run's GPU override (FLIP#70); omitted, the job's meta.json or the fl-api default applies.
+        _log(f"  🎛️  GPU request per trust set for this run: {resources}")
+        body["resources"] = resources
+    resp = _post(client, f"/fl/initiate/{model_id}", body, headers)
     if resp.status_code != 204:
         raise SmokeFailure(f"initiate training failed: HTTP {resp.status_code} {resp.text}")
     _log("  ✅ training initiated (model status now INITIATED)")
@@ -769,7 +806,7 @@ def wait_for_model_advanced(client: requests.Session, headers: dict[str, str], m
     raise SmokeFailure(
         f"Model did not advance past INITIATED within {timeout_s}s (last status: {last_status or 'unknown'}). "
         "Check that fl-server + fl-clients are running and that the FL scheduler picked up the job. "
-        "If the job WAS submitted and the server-side job process hung at start-up (on NVFLARE the client log "
+        "If the job WAS submitted and the server-side job process hung at start-up (on FLARE the client log "
         "says 'cannot sync with server Runner'; on Flower the run never issues a round), the usual cause is an "
         "app that downloads weights at run time (pretrained=True, torch.hub, from_pretrained) — which an FL app "
         "must not do, and on a platform-managed estate cannot (FLIP#1206); the net stays BUSY until "
@@ -917,10 +954,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--model-files-dir",
         type=Path,
-        required=True,
+        default=None,
         help="Directory whose files are uploaded to the model. Flower: "
         "../fl-tutorials/flower/xray_classification/app. "
-        "NVFLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files.",
+        "FLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
+        "Required unless --stop-after-enrichment.",
+    )
+    parser.add_argument(
+        "--stop-after-enrichment",
+        action="store_true",
+        help="Run cohort → approval → image pull → data enrichment and stop there, creating no model "
+        "and training nothing: verifies the data path end to end (cohort, pull, labels beside every "
+        "converted image) without the training app.",
     )
     parser.add_argument(
         "--query-file",
@@ -944,7 +989,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reuse an existing approved project: skip cohort submission and approval; jump straight "
         "to model creation + upload + training. Image-pull wait still runs (cheap when already at "
         "100%%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
-        "training code without re-creating the project for every retry.",
+        "training code without re-creating the project for every retry. The project must have been "
+        "approved AFTER the cohort-snapshot feature (FLIP#857): the trusts' row-level routes serve "
+        "only the members frozen at approval, so a pre-snapshot project is refused — queue its "
+        "snapshots first (`make -C flip-api backfill_cohort_snapshots`, or POST "
+        "/projects/{id}/cohort-snapshots).",
     )
     parser.add_argument(
         "--model-name",
@@ -952,11 +1001,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Model name (default: '<tutorial> E2E smoke model').",
     )
     parser.add_argument(
-        "--no-dicom-to-nifti",
-        action="store_true",
-        help="Create the project with dicom_to_nifti=false (apps that read DICOMs directly, e.g. the "
-        "Ark+ tutorials with ResourceType.ALL, skip the XNAT dcm2niix conversion). Set at project "
-        "creation and immutable afterwards; ignored with --project-id.",
+        "--dicom-to-nifti",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="The project's DICOM-to-NIfTI setting (default: on for tutorials whose app reads NIfTI, off "
+        "for the x-ray, Ark+ and EHR tutorials, on for an unknown app). Set at project creation and "
+        "immutable afterwards; ignored with --project-id.",
     )
     parser.add_argument(
         "--no-imaging",
@@ -999,6 +1049,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Seconds to wait for the model to reach RESULTS_UPLOADED (default: %(default)s)",
     )
     parser.add_argument(
+        "--gpus",
+        type=_parse_gpus,
+        default=None,
+        metavar="N",
+        help="Override the run's GPUs per trust (FLIP#70), e.g. --gpus 0 or --gpus 1. "
+        "Omitted, the job's meta.json resource_spec or the FL API's default applies.",
+    )
+    parser.add_argument(
         "--abort-midway",
         action="store_true",
         help="#490 stop-training check: once training is running, POST /fl/stop/{model_id} twice "
@@ -1034,13 +1092,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--data-enrichment-cmd and --data-enrichment-cwd must be used together")
     if args.data_enrichment_cwd is not None and not args.data_enrichment_cwd.exists():
         parser.error(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
+    if args.model_files_dir is None and not args.stop_after_enrichment:
+        parser.error("--model-files-dir is required unless --stop-after-enrichment")
+    # --stop-after-enrichment exists to verify the data path up to the labels; without an enrichment
+    # command there is nothing to verify, and the run would still report "enrichment done".
+    if args.stop_after_enrichment and not args.data_enrichment_cmd:
+        parser.error("--stop-after-enrichment needs --data-enrichment-cmd (and --data-enrichment-cwd)")
 
     return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    tutorial = describe_tutorial(args.model_files_dir)
+    # Under --stop-after-enrichment there is no app dir, so the tutorial is read off the query
+    # file's directory instead (…/<tutorial>/query.sql).
+    tutorial = describe_tutorial(args.model_files_dir or args.query_file.parent)
     project_name = args.project_name or default_project_name(tutorial.label)
     # The description is the tutorial's clinical task in plain language: the projects list is read by
     # clinicians and reviewers, so it says what the project is for, not which harness produced it.
@@ -1051,6 +1117,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     query = args.query_file.read_text()
+    _log(f"🎯 Target hub: {constants.BASE_URL}")
     headers = authenticate()
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})
@@ -1075,8 +1142,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.project_id:
             project_id = args.project_id
             _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
-            if args.no_imaging or args.no_dicom_to_nifti:
-                _log("  ℹ️  --no-imaging / --no-dicom-to-nifti apply at creation only: the project is reused as created")
+            if args.no_imaging or args.dicom_to_nifti is not None:
+                _log("  ℹ️  --no-imaging / --[no-]dicom-to-nifti apply at creation only: the project is reused")
             # The one branch where the flag is not already known locally: some earlier run created
             # this project, so ask the hub.
             has_imaging = project_has_imaging(client, headers, project_id)
@@ -1093,20 +1160,20 @@ def main(argv: list[str] | None = None) -> int:
                 headers,
                 project_name,
                 query,
-                dicom_to_nifti=not args.no_dicom_to_nifti,
+                dicom_to_nifti=tutorial.nifti if args.dicom_to_nifti is None else args.dicom_to_nifti,
                 has_imaging=not args.no_imaging,
                 description=project_description,
             )
-            # What we asked for, which create_project_with_query has just proved the hub honoured.
             has_imaging = not args.no_imaging
             trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
-        model_name = resolve_model_name(args.model_name or default_model_name(tutorial.label), args.abort_midway)
-        model_id = create_model(client, headers, project_id, model_name)
-        upload_files(client, headers, model_id, args.model_files_dir)
+        if not args.stop_after_enrichment:
+            model_name = resolve_model_name(args.model_name or default_model_name(tutorial.label), args.abort_midway)
+            model_id = create_model(client, headers, project_id, model_name)
+            upload_files(client, headers, model_id, args.model_files_dir)
         # Wait for the image pull whenever the project has imaging — including on
         # --project-id reuse: a prior run on this project may have left pulls in
         # flight (aborted midway, failed, or simply queued back-to-back before the
@@ -1128,7 +1195,13 @@ def main(argv: list[str] | None = None) -> int:
             _log("🩻 Project has no imaging: skipping the image-pull wait (nothing was dispatched to XNAT)")
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
-        initiate_training(client, headers, model_id, trusts)
+        if args.stop_after_enrichment:
+            _log("\n" + "=" * 60)
+            _log("🛑 --stop-after-enrichment: cohort, image pull and enrichment done; no model, no training")
+            _log(f"   project_id   = {project_id}")
+            _log("=" * 60)
+            return 0
+        initiate_training(client, headers, model_id, trusts, args.gpus)
         wait_for_model_advanced(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
             # #490: exercise the FL "stop training" path instead of running to completion.

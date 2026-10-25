@@ -120,7 +120,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 20s
+      # A fresh container builds its schema on first boot (start-dev keeps it in the
+      # container), which can take ~3 min on a loaded host — past 20s + 30 x 5s, which
+      # fails flip-api's service_healthy dependency (FLIP#1384). Probes failing inside
+      # start_period don't count and the first passing one ends it, so a fast host waits
+      # no longer.
+      start_period: 300s
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
@@ -147,8 +152,11 @@ services:
   # — a remote dev box is reached through an SSH tunnel, like the debug ports. The console
   # on 9001 (sign in with the two keys) browses objects. `make clean-object-store` empties
   # the directory; `make down` keeps it.
+  # Not 1.0.0: it answered HTTP 500 to most presigned-POST uploads, which is how every model
+  # file reaches the store (FLIP#1534); the large-upload step of
+  # flip-api/tests/local_storage_smoke.py fails on it. 1.0.1 reads a 1.0.0 data directory.
   object-store:
-    image: rustfs/rustfs:1.0.0
+    image: rustfs/rustfs:1.0.1
     user: "${UID}:${GID}"
     ports:
       - "127.0.0.1:${OBJECT_STORE_PORT:-9000}:9000"
@@ -278,6 +286,14 @@ services:
       # Settings.ENFORCE_MFA defaults to True elsewhere. Flip to `true`
       # here (and `make restart`) to test the MFA flow end-to-end locally.
       - ENFORCE_MFA=false
+      # DEMO_*_EMAIL: which identity-provider users (the local Keycloak realm in dev) the boot seed
+      # grants the demo RESEARCHER / ADMIN roles to. flip_api/utils/constants.py reads them from
+      # the environment and the example documents them as overridable; the demo recorder and the
+      # Cypress demo specs read the same override on the host, so the container must see it too
+      # or the recorder signs in as an account the seed never granted.
+      - DEMO_ADMIN_EMAIL=${DEMO_ADMIN_EMAIL:-flip-demo-admin@example.com}
+      - DEMO_RESEARCHER_EMAIL=${DEMO_RESEARCHER_EMAIL:-flip-demo-researcher@example.com}
+      - DEMO_TRUST_ADMIN_EMAIL=${DEMO_TRUST_ADMIN_EMAIL:-flip-demo-trust-admin@example.com}
       # Settings.LOG_LEVEL defaults to INFO so unknown environments emit
       # at INFO. Local dev defaults to DEBUG when LOG_LEVEL is unset
       # (override via LOG_LEVEL in .env.development) so debug-level
@@ -288,7 +304,7 @@ services:
       # rather than at the first presign (botocore InvalidRegionError → 500).
       - AWS_REGION=${AWS_REGION:?AWS_REGION must be set in the env file}
       # Object storage is the RustFS service above (FLIP#1291), reached through boto3's
-      # native endpoint env — the production composes point the same variable at the
+      # native endpoint env — the prod composes point the same variable at the
       # regional S3 endpoint. The fl-api's BUNDLE_URL_ALLOWED_ORIGINS
       # (compose.development.<backend>.yml) names this same origin, because bundle URLs
       # are presigned against it and the fl-api admits nothing else.
@@ -350,12 +366,11 @@ services:
       - FLOWER_KIT_DATE=${FLOWER_KIT_DATE}
       - FLARE_KIT_DATE=${FLARE_KIT_DATE}
       - DOCKER_TAG=${DOCKER_TAG}
-      - DOCKER_REGISTRY=${DOCKER_REGISTRY}
       - DOCKER_FL_TAG=${DOCKER_FL_TAG}
-      - DOCKER_FL_REGISTRY=${DOCKER_FL_REGISTRY}
       - DOCKER_FL_CLIENT_NAME=${DOCKER_FL_CLIENT_NAME}
-      - NLB_SUBDOMAIN=${NLB_SUBDOMAIN}
+      - NLB_SUBDOMAIN=${NLB_SUBDOMAIN:-}
       - FL_SERVER_PORT=${FL_SERVER_PORT}
+      - FL_EDGE_PORT=${FL_EDGE_PORT:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -403,7 +418,7 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
-    # pgadmin (dev-only; not in the production compose) starts as root and drops
+    # pgadmin (dev-only; not in the prod compose) starts as root and drops
     # to the pgadmin user via sudo in its entrypoint. That is incompatible with
     # no-new-privileges + cap_drop:ALL (sudo can't run, the setuid drop fails and
     # the container crash-loops with exit 126). Left unhardened intentionally — it

@@ -23,10 +23,11 @@ Uses [sphinx-autoapi](https://sphinx-autoapi.readthedocs.io/en/latest/) to gener
   ReadTheDocs installs it through `build.apt_packages`; for a text-only build on a host without graphviz,
   set `FLIP_DOCS_SKIP_DIAGRAMS=1` (the two Central Hub deployment pages then warn about their missing images).
 - Network access to `huggingface.co` (and `*.hf.co`) — the user-guide GIFs are not tracked in git (FLIP#1236):
-  `source/conf.py` fetches the version pinned in `.gifs_version` from the public dataset
-  `aicentreflip/docs-gifs` into the gitignored `source/assets/generated/gifs/`, verifying every file, and fails
-  without it. A repeat build fetches nothing. For a text-only build offline set `FLIP_DOCS_SKIP_GIF_FETCH=1`
-  (the user-guide pages then warn about their missing images). `make test` runs the fetcher/publisher suites.
+  `source/conf.py` fetches them from the public dataset `aicentreflip/docs-gifs` (the newest recording, or a
+  release's own set on a release build — FLIP#1547) into the gitignored `source/assets/generated/gifs/`,
+  verifying every file, and fails without it. A repeat build downloads only what changed. For a text-only build
+  offline set `FLIP_DOCS_SKIP_GIF_FETCH=1` (the user-guide pages then warn about their missing images).
+  `make test` runs the fetcher/publisher/release-tagger suites.
 
 To generate the documentation, run (from the repository root):
 

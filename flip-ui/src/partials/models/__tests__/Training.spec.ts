@@ -16,6 +16,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
+import { FileUploadStatus } from "@/interfaces/model/types";
 import Training from "@/partials/models/Training.vue";
 import { ModelStatus } from "@/services/model-service";
 
@@ -54,14 +55,13 @@ interface MountOpts {
     permissions?: string[];
     status?: ModelStatus;
     view?: "prepare" | "run";
-    allFilesUploaded?: boolean;
     requiredFiles?: string[];
-    uploadedFileNames?: string[];
-    jobType?: string;
+    uploadedFiles?: { name: string; status: FileUploadStatus }[];
     flBackendLabel?: string;
     jobTypesError?: boolean;
     jobTypesLoading?: boolean;
     runTrusts?: string[];
+    runResources?: { num_gpus: number } | null;
     formValues?: Record<string, unknown>;
 }
 
@@ -73,16 +73,15 @@ function mountTraining(options: MountOpts = {}) {
     const {
         permissions = ["CanCreateProjects"],
         status = "PENDING",
-        allFilesUploaded = false,
         requiredFiles = ["trainer.py", "config.json"],
-        uploadedFileNames = [],
-        jobType = "standard",
+        uploadedFiles = [],
         flBackendLabel,
         jobTypesError = false,
         jobTypesLoading = false,
         // Mirrors the page default: nothing to watch until the model is dispatched.
         view = status === "PENDING" ? "prepare" : "run",
         runTrusts = [],
+        runResources = null,
         formValues = {}
     } = options;
 
@@ -117,7 +116,8 @@ function mountTraining(options: MountOpts = {}) {
                 AiButton: buttonStub,
                 TrainingActionsMenu: actionsMenuStub,
                 TrainingOptions: {
-                    props: ["disabled"],
+                    name: "TrainingOptions",
+                    props: ["disabled", "requiredFiles"],
                     template: "<div data-test=\"training-options\" :data-disabled=\"disabled\" />"
                 },
                 TrainingMetrics: { template: "<div />" },
@@ -133,15 +133,14 @@ function mountTraining(options: MountOpts = {}) {
         props: {
             canTrain: true,
             status,
-            allFilesUploaded,
             requiredFiles,
-            uploadedFileNames,
-            jobType,
+            uploadedFiles,
             flBackendLabel,
             jobTypesError,
             jobTypesLoading,
             view,
-            runTrusts
+            runTrusts,
+            runResources
         }
     });
 }
@@ -158,63 +157,40 @@ describe("Training viewer-aware rendering", () => {
     });
 });
 
-describe("Training missing-files alert slot", () => {
-    it("lists required files and the missing subset when files are missing", () => {
+describe("Training required files", () => {
+    // The required-files banners were folded into the "Required files" readiness row, which
+    // TrainingOptions renders from what Training hands it.
+    it("passes each required file's upload status to TrainingOptions, with no banner", () => {
         const wrapper = mountTraining({
-            allFilesUploaded: false,
             requiredFiles: ["trainer.py", "config.json"],
-            uploadedFileNames: ["trainer.py"],
-            jobType: "diffusion",
-            flBackendLabel: "Flower"
+            uploadedFiles: [{
+                name: "trainer.py",
+                status: FileUploadStatus.SCANNING
+            }]
         });
 
-        // Two AiAlerts render side-by-side: an info-variant listing the
-        // required files and a warning-variant listing the missing subset.
-        // Both stubs share the data-test, so concat their HTML and assert
-        // against the combined content.
-        const html = wrapper.findAll("[data-test=alert-stub]").map(a => a.html()).join("\n");
+        const options = wrapper.findComponent({ name: "TrainingOptions" });
 
-        expect(html).toContain("Flower");
-        expect(html).toContain("diffusion");
-        expect(html).toContain("trainer.py");
-        expect(html).toContain("config.json");
-        expect(html).toContain("Missing:");
-    });
-
-    it("falls back to the generic message when allFilesUploaded is false but no specific file is missing", () => {
-        const wrapper = mountTraining({
-            allFilesUploaded: false,
-            requiredFiles: [],
-            uploadedFileNames: []
-        });
-
-        const slot = wrapper.find("[data-test=alert-stub]");
-
-        expect(slot.exists()).toBe(true);
-        expect(slot.html()).toContain("All required model files must be uploaded");
-        expect(slot.html()).not.toContain("Missing:");
-    });
-
-    it("hides the alert when allFilesUploaded is true", () => {
-        const wrapper = mountTraining({ allFilesUploaded: true });
-
+        expect(options.props("requiredFiles")).toEqual([
+            {
+                name: "trainer.py",
+                status: FileUploadStatus.SCANNING
+            },
+            {
+                name: "config.json",
+                status: undefined
+            }
+        ]);
         expect(wrapper.find("[data-test=alert-stub]").exists()).toBe(false);
     });
 
-    it("escapes job type and file names so user-controlled values cannot inject HTML", () => {
-        const payload = "<img src=x onerror=alert(1)>";
-
+    it("passes no required files while the job types are unknown", () => {
         const wrapper = mountTraining({
-            allFilesUploaded: false,
-            requiredFiles: [payload],
-            uploadedFileNames: [],
-            jobType: payload
+            jobTypesError: true,
+            requiredFiles: ["trainer.py"]
         });
 
-        const slot = wrapper.find("[data-test=alert-stub]");
-
-        expect(slot.find("img").exists()).toBe(false);
-        expect(slot.html()).toContain("&lt;img");
+        expect(wrapper.findComponent({ name: "TrainingOptions" }).props("requiredFiles")).toEqual([]);
     });
 });
 
@@ -449,6 +425,40 @@ describe("Training options reflect a dispatched run", () => {
 });
 
 
+describe("Training options show a dispatched run's GPU override", () => {
+    const initialValues = (wrapper: ReturnType<typeof mountTraining>) =>
+        JSON.parse(wrapper.get("form").attributes("data-initial-values") ?? "null");
+
+    it("shows the override a run was given, so the record says what it asked for", () => {
+        const wrapper = mountTraining({
+            status: "RUNNING",
+            view: "prepare",
+            runTrusts: ["trust-a"],
+            runResources: { num_gpus: 1 }
+        });
+
+        expect(initialValues(wrapper)).toEqual({
+            enriched: "true",
+            trust_ids: ["trust-a"],
+            gpu_override: "true",
+            num_gpus: 1
+        });
+    });
+
+    it("leaves the override off for a run that kept the job's own request", () => {
+        const wrapper = mountTraining({
+            status: "RUNNING",
+            view: "prepare",
+            runTrusts: ["trust-a"]
+        });
+
+        expect(initialValues(wrapper)).toEqual({
+            enriched: "true",
+            trust_ids: ["trust-a"]
+        });
+    });
+});
+
 describe("Training reports whether the run options are complete", () => {
     const optionsComplete = (formValues: Record<string, unknown>) => {
         const wrapper = mountTraining({
@@ -523,10 +533,8 @@ describe("Training reads the real vee-validate form", () => {
             props: {
                 canTrain: true,
                 status: "PENDING" as const,
-                allFilesUploaded: true,
                 requiredFiles: [],
-                uploadedFileNames: [],
-                jobType: "standard",
+                uploadedFiles: [],
                 view: "prepare" as const
             }
         });
@@ -542,7 +550,8 @@ describe("Training reads the real vee-validate form", () => {
         expect(complete(wrapper)).toBe(false);
 
         const switches = wrapper.findAll("button[role=\"switch\"]");
-        expect(switches.length).toBe(2);
+        // Enrichment, the one trust, and the optional GPU override (FLIP#70).
+        expect(switches.length).toBe(3);
 
         // Enrichment alone is not enough.
         await switches[0].trigger("click");
@@ -582,6 +591,164 @@ describe("Training reads the real vee-validate form", () => {
             expect(wrapper.text()).toContain("You must select a minimum of one trust for training.");
         });
         expect(vi.mocked(initialiseTraining)).not.toHaveBeenCalled();
+    });
+});
+
+describe("Training sends a GPU override only when one is set (FLIP#70)", () => {
+    function mountWithRealForm() {
+        return mount(Training, {
+            global: {
+                plugins: [
+                    createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false,
+                        initialState: {
+                            project: {
+                                project: {
+                                    id: "p-1",
+                                    approvedTrusts: [{
+                                        id: "trust-a",
+                                        name: "KCH",
+                                        status: "APPROVED"
+                                    }]
+                                }
+                            }
+                        }
+                    })
+                ],
+                stubs: {
+                    AiCard: { template: "<div><slot /></div>" },
+                    AiAlert: alertStub
+                }
+            },
+            props: {
+                canTrain: true,
+                status: "PENDING" as const,
+                requiredFiles: [],
+                uploadedFiles: [],
+                view: "prepare" as const
+            }
+        });
+    }
+
+    async function readyToSubmit() {
+        const { initialiseTraining } = await import("@/services/model-service");
+        vi.mocked(initialiseTraining).mockReset();
+        vi.mocked(initialiseTraining).mockResolvedValue(undefined);
+        const wrapper = mountWithRealForm();
+        await flushPromises();
+        const switches = wrapper.findAll("button[role=\"switch\"]");
+        await switches[0].trigger("click");
+        await switches[1].trigger("click");
+        await flushPromises();
+
+        return {
+            wrapper,
+            switches,
+            initialiseTraining: vi.mocked(initialiseTraining)
+        };
+    }
+
+    it("leaves the request out when the override is off, so the job's own request applies", async () => {
+        const { wrapper, initialiseTraining } = await readyToSubmit();
+
+        expect(wrapper.find("[data-test=gpu-count-input]").exists()).toBe(false);
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
+        expect(initialiseTraining.mock.calls[0][1]).toEqual({ trust_ids: ["trust-a"] });
+    });
+
+    it("sends the GPU count when the override is on", async () => {
+        const { wrapper, switches, initialiseTraining } = await readyToSubmit();
+
+        await switches[2].trigger("click");
+        await flushPromises();
+        await wrapper.get("[data-test=gpu-count-input]").setValue("1");
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
+        expect(initialiseTraining.mock.calls[0][1]).toEqual({
+            trust_ids: ["trust-a"],
+            resources: { num_gpus: 1 }
+        });
+    });
+
+    it("sends zero GPUs as an override, not as no override", async () => {
+        const { wrapper, switches, initialiseTraining } = await readyToSubmit();
+
+        await switches[2].trigger("click");
+        await flushPromises();
+        await wrapper.get("[data-test=gpu-count-input]").setValue("0");
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(initialiseTraining).toHaveBeenCalled());
+        expect(initialiseTraining.mock.calls[0][1]).toEqual({
+            trust_ids: ["trust-a"],
+            resources: { num_gpus: 0 }
+        });
+    });
+
+    it.each([
+        ["9", "at most 8"],
+        ["1.5", "whole number"],
+        ["-1", "cannot be negative"]
+    ])("refuses %s GPUs", async (gpus, message) => {
+        const { wrapper, switches, initialiseTraining } = await readyToSubmit();
+
+        await switches[2].trigger("click");
+        await flushPromises();
+        await wrapper.get("[data-test=gpu-count-input]").setValue(gpus);
+        await wrapper.find("form").trigger("submit");
+
+        await vi.waitFor(() => expect(wrapper.text()).toContain(message));
+        expect(initialiseTraining).not.toHaveBeenCalled();
+    });
+});
+
+describe("Training shows a dispatched run's GPU override in the real form", () => {
+    it("fills the locked inputs with what the run asked for, not blanks", async () => {
+        const wrapper = mount(Training, {
+            global: {
+                plugins: [
+                    createTestingPinia({
+                        createSpy: vi.fn,
+                        stubActions: false,
+                        initialState: {
+                            project: {
+                                project: {
+                                    id: "p-1",
+                                    approvedTrusts: [{
+                                        id: "trust-a",
+                                        name: "KCH",
+                                        status: "APPROVED"
+                                    }]
+                                }
+                            }
+                        }
+                    })
+                ],
+                stubs: {
+                    AiCard: { template: "<div><slot /></div>" },
+                    AiAlert: alertStub
+                }
+            },
+            props: {
+                canTrain: true,
+                status: "RUNNING" as const,
+                requiredFiles: [],
+                uploadedFiles: [],
+                view: "prepare" as const,
+                runTrusts: ["trust-a"],
+                runResources: { num_gpus: 1 }
+            }
+        });
+        await flushPromises();
+
+        const gpus = wrapper.get("[data-test=gpu-count-input]").element as HTMLInputElement;
+        expect(gpus.value).toBe("1");
+        expect(gpus.disabled).toBe(true);
+        expect(wrapper.find("[data-test=gpu-mem-input]").exists()).toBe(false);
     });
 });
 

@@ -12,7 +12,7 @@ Use the documented backend-switch trick so the ~6-min DICOM image pull happens o
 pull on the first backend, then reuse the same approved project on the second.
 
 **Preconditions (check first, do not skip):**
-- The stack must be running: `make up` (central hub + trusts + XNAT), trusts registered, Orthanc seeded. If it's not up, stop and tell the user to start it — do not try to `make up` yourself (the trusts' artifact fetches need AWS access, and it is slow).
+- The stack must be running: `make up` (central hub + trusts + XNAT), trusts registered, Orthanc seeded. If it's not up, stop and tell the user to start it — do not try to `make up` yourself (it is slow, and needs the trusts' XNAT plugin cache from `make -C trust prepare-artifacts`).
 - If the user is testing branch code, the running containers must carry it. Remind them that the stack serves published images unless rebuilt (`make build-fl FL_BACKEND=<backend>` or the fast fl-api-only path), and they can confirm with `docker exec deploy-fl-api-net-1-1 cat fl_api/utils/upload.py`.
 
 **Steps:**
@@ -23,13 +23,13 @@ pull on the first backend, then reuse the same approved project on the second.
    ```
    Watch the output for the `project_id=<UUID>` printed near the start — **capture it**; you need it for step 3. Wait for completion and report pass/fail. (Tutorial files default to `fl-tutorials/flower/xray_classification/` for this backend.)
 
-2. **Switch the stack to NVFLARE** without disturbing the pulled DICOM (`restart-fl` leaves Orthanc/XNAT untouched):
+2. **Switch the stack to FLARE** without disturbing the pulled DICOM (`restart-fl` leaves Orthanc/XNAT untouched):
    ```
    make restart-fl FL_BACKEND=nvflare DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
    ```
    (Drop `DOCKER_FL_REGISTRY=`/`DOCKER_FL_TAG=dev` if the user is running published images rather than locally-built `:dev` images — ask if unsure.)
 
-3. **Backend 2 — NVFLARE (reuses the project, skips re-pull).** Run in the background:
+3. **Backend 2 — FLARE (reuses the project, skips re-pull).** Run in the background:
    ```
    make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID-from-step-1>"
    ```

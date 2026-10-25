@@ -26,9 +26,9 @@ from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
 class ScatterAndGatherLDM(ScatterAndGather):
     """Two-phase (autoencoder → diffusion model) FedAvg controller for latent diffusion.
 
-    Subclasses FLIP's :class:`ScatterAndGather` (itself a thin subclass of stock NVFLARE
+    Subclasses FLIP's :class:`ScatterAndGather` (itself a thin subclass of stock FLARE
     ScatterAndGather). Each instance runs a *single* phase — the job wires one controller per phase
-    (``train_task_name`` ``train_ae`` then ``train_dm``) and NVFLARE runs them sequentially — so the
+    (``train_task_name`` ``train_ae`` then ``train_dm``) and FLARE runs them sequentially — so the
     round loop itself is stock's, inherited verbatim (with its per-round ``aggregator.reset``,
     failed-client tracking, ``memory_gc_rounds`` allocator cleanup, and any future upstream fixes),
     alongside all the shared FLIP hooks (``_accept_train_result``, the metrics relay,

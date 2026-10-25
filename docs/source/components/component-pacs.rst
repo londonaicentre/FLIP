@@ -4,27 +4,28 @@
 PACS
 ####
 
-The Picture Archiving and Communication System (PACS) is the clinical system that stores a trust's
-imaging. FLIP does not hold a copy of it: imaging is retrieved from the trust's own PACS, on demand,
-for the studies belonging to an approved project cohort, and lands in that trust's
-:doc:`XNAT <component-xnat>` instance.
+The Picture Archiving and Communication System (PACS) is the clinical system that stores a trust's imaging. FLIP
+holds no copy of it. Imaging is retrieved from the trust's own PACS on demand, only for studies in an approved
+project's cohort, and lands in that trust's :doc:`XNAT <component-xnat>`.
 
-This page describes how that retrieval works, what a trust's PACS and network teams need to
-configure, and how to verify the connection.
+This page is for the operator deploying a trust node and for the trust's PACS and network teams. It covers how
+retrieval works, what each side configures, and how to check the connection.
 
-DICOM Networking in Brief
+.. contents:: On this page
+   :local:
+   :depth: 1
+
+DICOM networking in brief
 =========================
 
-Three ideas are enough to follow the rest of this section.
+Three ideas are enough to follow the rest of the page.
 
-**AE Title.** A DICOM system's *name* on the network — like a hostname, but specific to DICOM, and
-at most 16 characters. When one system connects to another it announces "I am *X*, calling *Y*". The
-receiver checks that *Y* is its own name and that *X* is one it has been told to accept. Names are
-separate from addresses: the IP and port are configured alongside the AE title, not derived from it.
+**AE title.** A DICOM system's name on the network, at most 16 characters. A connecting system announces "I am *X*,
+calling *Y*". The receiver checks that *Y* is its own name and that *X* is one it accepts. The IP and port are
+configured alongside the AE title, not derived from it.
 
-**SCU and SCP.** Client and server. An SCU (Service Class *User*) opens connections; an SCP (Service
-Class *Provider*) listens for them. XNAT is both, at different moments — an SCU when it queries the
-PACS, an SCP when it receives the images.
+**SCU and SCP.** Client and server. An SCU (Service Class *User*) opens connections; an SCP (Service Class
+*Provider*) listens for them. XNAT is an SCU when it queries the PACS and an SCP when it receives the images.
 
 **The four operations**, in the order FLIP uses them:
 
@@ -50,59 +51,60 @@ PACS, an SCP when it receives the images.
 
 .. important::
 
-   C-MOVE does not return the images on the connection that asked for them. XNAT names a
-   destination, the PACS looks that name up in its *own* table to find an address, and opens a
-   **new connection in the opposite direction** to deliver the study.
+   **C-MOVE does not return the images on the connection that asked for them.** XNAT names a destination. The PACS
+   looks that name up in its *own* table and opens a **new connection in the opposite direction** to deliver the
+   study. Each of these consequences has broken a real integration:
 
-   Three consequences follow, and each has caused a failed integration in practice:
+   * The destination must be registered on the PACS in advance. It cannot deliver to a name it does not know.
+   * The AE title and port XNAT advertises must match that registration exactly. XNAT rejects an association
+     addressed to another name, and its query-retrieve plugin will not issue a C-MOVE to a destination that is not
+     one of its own receivers.
+   * The return connection needs its own firewall rule. Every other FLIP connection is outbound, so this one is easy
+     to miss.
 
-   * The destination must be registered on the PACS in advance — a name it does not know cannot be
-     delivered to.
-   * The AE title and port XNAT advertises must match that registration exactly. XNAT rejects an
-     association addressed to a different name, and the DQR plugin refuses to issue a C-MOVE whose
-     destination does not correspond to one of its own configured receivers.
-   * The return connection needs its own firewall rule. Every other FLIP connection is outbound, so
-     this is the one reviewers overlook.
-
-How Retrieval Works
+How retrieval works
 ===================
 
-FLIP **pulls**; the PACS is never configured to push into XNAT. XNAT's
-`DICOM Query-Retrieve (DQR) plugin <https://wiki.xnat.org/xnat-tools/dicom-query-retrieve-plugin>`_
-performs the retrieval, driven over REST by the imaging API:
+FLIP **pulls**: the PACS is never set up to push into XNAT. XNAT's
+`DICOM Query-Retrieve (DQR) plugin <https://wiki.xnat.org/xnat-tools/dicom-query-retrieve-plugin>`_ does the
+retrieval, driven over REST by the trust's imaging API when the project's XNAT project is created:
 
-1. The cohort query is re-run against the trust's OMOP database and returns **accession numbers
-   only**, de-duplicated — a cohort with one row per series names each study once.
-2. For each accession number, XNAT issues a **C-FIND** to the PACS at STUDY level, matching on
-   Accession Number ``(0008,0050)``, to resolve the Study Instance UID.
-3. XNAT issues a **C-MOVE** to the PACS, naming itself as the move destination.
-4. The PACS **C-STOREs** the study back to XNAT's DICOM SCP receiver, where the site-wide
-   anonymisation script runs on receipt, before the session is archived — see
-   :ref:`DICOM Anonymization <dicom-anonymization>`. That script is a denylist, and its limits
-   (vendor private tags, unshifted dates, burned-in annotation) are stated there; read them before
-   connecting a real PACS, since until now the script has only seen synthetic data.
+1. The trust's data access API returns the **accession numbers** of the cohort frozen when the trust approved the
+   project, and nothing else. Each study is named once, even when the cohort has one row per series.
+2. For each accession number, XNAT sends a **C-FIND** to the PACS at STUDY level, matching on Accession Number
+   ``(0008,0050)``, to find the Study Instance UID. An accession number that matches no study, or more than one, is
+   skipped.
+3. The imaging API queues **one import request** for all the studies found. DQR works through it during the PACS's
+   availability window, sending a **C-MOVE** that names XNAT itself as the destination.
+4. The PACS **C-STOREs** each study back to XNAT's DICOM receiver. XNAT's site-wide anonymisation script runs on
+   receipt, and the session goes straight into the project's archive.
 
-Only accession numbers belonging to an approved project cohort are ever requested. There is no
-standing forward rule and no bulk transfer.
+Only accession numbers in an approved project's cohort are ever requested. There is no standing forward rule and no
+bulk transfer.
 
 .. important::
 
-   Step 4 is a connection **from the PACS to XNAT**. It is easy to overlook when specifying firewall
-   rules, because every other FLIP connection is outbound. Without it, queries succeed and
-   retrievals silently time out.
+   Step 4 is a connection **from the PACS to XNAT**. Without a firewall rule for it, queries succeed but retrievals
+   time out without an error.
 
-What the PACS Team Must Register
+.. warning::
+
+   The anonymisation script is based on the DICOM PS3.15 Basic Profile but does not conform to it, and has only been
+   run against synthetic data. Read its limits (nested UIDs, burned-in annotation, faces) in
+   :ref:`DICOM Anonymization <dicom-anonymization>` before connecting a real PACS.
+
+What the PACS team must register
 ================================
 
-The FLIP XNAT instance must be registered on the PACS as a DICOM node, permitted to:
+The PACS team registers FLIP's XNAT as a DICOM node, allowed to:
 
-* issue **C-FIND** (Study Root query/retrieve) as an SCU;
-* act as a **C-MOVE destination**, so retrieved studies can be returned to it;
-* issue and answer **C-ECHO**, for verification in both directions.
+* send **C-FIND** (Study Root query/retrieve) as an SCU;
+* be a **C-MOVE destination**, so retrieved studies can be returned to it;
+* send and answer **C-ECHO**, for testing in both directions.
 
-FLIP supplies its own AE title, host and DICOM port for that registration. In return, the trust
-needs to confirm the following — the first three are required to configure anything at all, the rest
-are the questions that most often turn out to matter:
+FLIP supplies its own AE title, host and DICOM port for the registration. In return, ask the trust for the items
+below. The first three are needed before anything can be configured; the rest are the questions that most often
+turn out to matter.
 
 .. list-table::
    :widths: 32 68
@@ -123,7 +125,7 @@ are the questions that most often turn out to matter:
      - Compressed or transcoded data still has to be readable by XNAT once archived
    * - Any per-connection or per-session limit on how much may be retrieved
      - A production PACS may refuse further associations after a certain volume; see
-       `Scheduling and Throughput`_
+       `Scheduling and throughput`_
    * - Whether DICOM TLS is required
      - FLIP does not currently support TLS on the DIMSE connection, so this needs to be established
        before committing to a design
@@ -131,197 +133,28 @@ are the questions that most often turn out to matter:
      - A port already used for teleradiology may be configured for single studies rather than the
        sustained retrieval FLIP performs
 
-.. note::
+.. tip::
 
-   The AE title FLIP presents is one of many configured on a trust PACS, so it should identify the
-   platform — for example ``FLIPXNAT``. It must match on both sides: the PACS opens the C-STORE
-   association using the AE title it has registered, and XNAT's SCP receiver rejects an association
-   addressed to a different AE title.
-
-.. note::
-
-   Registering a new node is often not something the trust's PACS team can do unaided. Depending on
-   how the PACS is managed, they may need to raise a call with the supplier to have the connection
-   enabled and any credentials issued — worth starting early, as it tends to set the lead time.
-
-   Where FLIP has been connected to this PACS before, ask for any previous FLIP or XNAT node entries
-   to be removed at the same time. Stale registrations pointing at decommissioned hosts are
-   confusing at best, and a retrieval addressed to one silently goes nowhere.
-
-Configuring FLIP
-================
-
-These are FLIP's own settings, applied by the operator deploying the trust node — in the trust's kit
-file for a Compose deployment, or in the Helm values for Kubernetes. They are not something the
-trust's PACS team supplies; what they supply is covered above.
-
-.. important::
-
-   The defaults below describe the **mocked PACS that ships with FLIP for development**, not values
-   a trust should use. Every one of them is replaced with the real details when connecting to a
-   trust PACS.
-
-.. list-table::
-   :widths: 30 45 25
-   :header-rows: 1
-
-   * - Setting
-     - Description
-     - Development default
-   * - ``XNAT_AETITLE``
-     - XNAT's own AE title, used for the DICOM SCP receiver, the DQR calling AE, and the C-MOVE
-       destination
-     - ``XNAT``
-   * - ``XNAT_PORT``
-     - DICOM SCP receiver port
-     - ``8104``
-   * - ``PACS_AETITLE``
-     - AE title of the trust PACS
-     - ``ORTHANC``
-   * - ``PACS_HOST``
-     - Hostname or IP of the trust PACS
-     - ``orthanc``
-   * - ``PACS_QR_PORT``
-     - Query/retrieve port on the trust PACS. Must be reachable *from the XNAT container* — this is
-       not a host-published port
-     - ``4242``
-   * - ``XNAT_WEB_PORT``
-     - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM; the receiver is
-       host-published too, so this must differ from ``XNAT_PORT`` — the deploy refuses a collision
-     - ``8105``
-   * - ``PACS_SUPPORTS_EXTENDED_NEGOTIATIONS``
-     - Whether the PACS supports relational queries / extended negotiation. A capability of the
-       PACS, not a preference — see the table above
-     - ``true``
-   * - ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``
-     - When retrieval may run, as a comma-separated day list and a daily window
-     - all week, ``00:00``–``24:00``
-   * - ``PACS_THREADS`` / ``PACS_UTILIZATION_PERCENT``
-     - How hard to drive the PACS during that window
-     - ``1`` / ``100``
-   * - ``DQR_MAX_PACS_REQUEST_ATTEMPTS`` / ``DQR_RETRY_WAIT_SECONDS``
-     - How many times, and how far apart, to retry a study the PACS did not deliver
-     - ``100`` / ``300``
-
-The mocked PACS those defaults describe is covered below.
-
-Exposing the DICOM Receiver
-===========================
-
-The page has said several times that the receiver must be reachable from the PACS. How it is
-exposed differs by deployment:
-
-**Compose.** The receiver is always published on the host, next to the web UI, so a development
-deployment runs the same wiring a real-PACS trust relies on. ``XNAT_WEB_PORT`` and ``XNAT_PORT``
-must therefore differ; the Makefile refuses to deploy if they collide. The mocked Orthanc does not
-itself need the publication — it reaches the receiver over the container network — but it is
-published there too, on every Compose deployment rather than only where a real PACS is configured.
-
-That publication is **unscoped**: it binds every interface of the host, not the loopback. A Swarm
-service publishes through the routing mesh, which takes no bind address, so there is no way to
-narrow it in the Compose file. What the exposure amounts to therefore depends on the host — the
-AWS-hosted mock trusts sit behind security groups with no ingress rules and so reach no further
-than the instance, while an on-prem trust host or a developer machine publishes the receiver to
-whatever network it is on. Docker's DNAT precedes the host firewall's ``INPUT`` chain, so a
-host-level rule does not close it; scope it at the network the host sits on.
-
-.. warning::
-
-   The receiver accepts an association from **any** calling AE. DIMSE carries no authentication,
-   and the receiver is registered with its calling-AE whitelist off
-   (``whitelistEnabled: false``) and ``directArchive`` on, so what confines C-STORE to the trust's
-   own PACS is the surrounding network rather than anything XNAT checks. Treat the DICOM port as
-   an unauthenticated write path into the archive when specifying firewall rules for it.
-   Making the Compose publication conditional on a real PACS being configured is tracked in
-   FLIP#1142, and deriving the whitelist from the configured PACS in FLIP#1143.
-
-**Kubernetes.** Three values, all off by default:
-
-.. code-block:: yaml
-
-   xnat:
-     web:
-       # The DICOM SCP has its own Service (xnat-web-dicom), separate from the web console's.
-       # Exposing it never exposes the console, which stays ClusterIP — the chart refuses a real
-       # PACS combined with an externally-exposed web.service.type.
-       dicomService:
-         type: NodePort
-       # Pin the port so the PACS has a stable destination. Must be inside the API server's
-       # --service-node-port-range, or that range widened to admit the DICOM port. Where you
-       # cannot change that range, use dicomService.type: LoadBalancer and omit this.
-       dicomNodePort: 8104
-
-   networkPolicies:
-     # The C-STORE return leg. Scope to the PACS itself, never the whole trust network.
-     allowedIngressCIDRsWithPorts:
-       - cidrs: ["10.0.0.10/32"]
-         port: 8104
-     # The outbound query. Without this, C-FIND never leaves the cluster.
-     allowedEgressCIDRsWithPorts:
-       - cidrs: ["10.0.0.10/32"]
-         port: 8059
-
-The chart refuses to render a configured PACS with no egress rule, and equally one with no ingress
-entry on ``xnat.web.dicomPort``: both directions of the retrieval have to be open, and an omitted
-return leg is the failure mode where queries succeed and retrievals silently time out. The port in
-the ingress entry is the pod's container port (``xnat.web.dicomPort``, default 8104), not
-``dicomNodePort`` — a NetworkPolicy matches after the node has undone the NodePort translation. An
-ingress entry with no ``port`` at all is refused too: Kubernetes reads an absent port as *all*
-ports, which would widen the one inbound path into the trust from DICOM to everything.
+   A trust PACS has many AE titles configured, so choose one that names the platform, for example ``FLIPXNAT``. It
+   must be the same on both sides: the PACS opens the C-STORE with the AE title it has registered, and XNAT's
+   receiver rejects any other.
 
 .. note::
 
-   Setting ``dicomService.type`` to ``NodePort`` or ``LoadBalancer`` also sets
-   ``externalTrafficPolicy: Local`` on that Service. Under the default ``Cluster`` policy the
-   PACS's source address is rewritten to the node's before the pod sees it, so the ingress rule
-   above would never match and the C-STORE would be dropped. ``Local`` preserves the source
-   address only on a pass-through load balancer (MetalLB, an AWS NLB); a proxying load balancer
-   SNATs regardless, and the PACS CIDR will never match — scope the rule to the proxy's address
-   in that case. It also means only nodes running the pod answer, which suits the single-pod
-   trust deployment this targets.
+   **Start the registration early.** The PACS team often cannot add a node on their own. Depending on how the PACS
+   is managed, they may need to raise a call with the supplier to enable the connection and issue credentials. This
+   usually sets the lead time.
 
-Development: the Mocked PACS
-============================
-
-FLIP ships an `Orthanc <https://orthanc.uclouvain.be/>`_ DICOM server that stands in for the trust
-PACS during development and testing. It is seeded with synthetic DICOM studies whose accession
-numbers match the mocked OMOP database, so a cohort query resolves to real studies and the full
-retrieval path can be exercised without a hospital PACS.
-
-Orthanc is a genuine DICOM node, so it answers C-FIND and C-MOVE exactly as a production PACS would
-and returns studies by C-STORE. The retrieval path under test is therefore the same one used against
-a trust PACS — only the peer differs. It is why the configuration defaults above name ``orthanc``:
-
-* ``PACS_HOST=orthanc`` — the container name on the FLIP network
-* ``PACS_AETITLE=ORTHANC`` — Orthanc's AE title
-* ``PACS_QR_PORT=4242`` — Orthanc's DICOM port
-
-Because both sit on the same container network, Orthanc reaches XNAT's SCP receiver directly and
-would not itself need the receiver's host port. A real PACS is outside that network — the one
-material difference between the two setups, and the reason the Compose deployment publishes the
-receiver everywhere (see above): the mocked setup then runs the identical wiring, rather than a
-private variant of it.
-
-.. note::
-
-   The mocked PACS is for development and testing only. In a trust deployment the imaging comes from
-   the trust's own PACS, and Orthanc is either absent or confined to the FLIP node — its DICOM port
-   is deliberately not published to the wider network.
-
-.. warning::
-
-   The DICOM port must be **the same number everywhere** — the port XNAT binds, the port recorded on
-   its SCP receiver, the port advertised as the C-MOVE destination, and the port the PACS connects
-   to. DQR matches the C-MOVE destination against a registered SCP receiver by exact AE title and
-   port, so any translation between these layers causes retrieval to fail.
+   If FLIP has been connected to this PACS before, ask for old FLIP or XNAT node entries to be removed at the same
+   time. A retrieval addressed to a stale entry for a decommissioned host goes nowhere, without an error.
 
 Example: Sectra PACS
 ====================
 
-The values below illustrate the shape of the exchange with a Sectra PACS. **They are examples, not
-defaults** — each trust supplies its own.
+These values show the shape of the exchange with a Sectra PACS. **They are examples, not defaults**: each trust
+supplies its own.
 
-Provided by the trust's PACS team:
+From the trust's PACS team:
 
 .. code-block:: text
 
@@ -330,7 +163,7 @@ Provided by the trust's PACS team:
      IP:        10.0.0.10
      Port:      8059
 
-Provided by FLIP, to be registered on the PACS as a destination:
+From FLIP, to register on the PACS as a destination:
 
 .. code-block:: text
 
@@ -339,7 +172,7 @@ Provided by FLIP, to be registered on the PACS as a destination:
      IP:        10.0.0.20
      Port:      8104
 
-Firewall rules required, in both directions:
+Firewall rules, in both directions:
 
 .. list-table::
    :widths: 40 20 40
@@ -357,54 +190,220 @@ Firewall rules required, in both directions:
 
 .. important::
 
-   Where the PACS is vendor-managed, opening the trust's own firewall may not be sufficient. The
-   vendor may operate a separate firewall that must also whitelist the connection, raised through
-   the trust's service desk as a request to the PACS supplier.
+   If the PACS is vendor-managed, opening the trust's own firewall may not be enough. The vendor may run a separate
+   firewall that must also allow the connection; raise it through the trust's service desk as a request to the PACS
+   supplier.
 
-Scheduling and Throughput
-=========================
+Configuring FLIP
+================
 
-A production PACS may limit how much can be retrieved before it refuses further connections, and
-bulk retrieval competes with clinical use. Agree a retrieval schedule with the trust's PACS manager,
-then configure XNAT to match: the DQR settings control retry behaviour, and each registered PACS
-carries an availability schedule with a per-day window, a thread count and a utilisation percentage.
+These are FLIP's own settings. The operator deploying the trust node sets them: in the trust's kit file for a
+Compose deployment, or in the Helm values for Kubernetes. The PACS team supplies the values they feed from (see
+above), not the settings themselves.
 
-Where a trust has a test or pre-production PACS, connecting FLIP to that first is recommended, and
-is usually raised as a separate service request.
+.. important::
+
+   The defaults below describe the **mocked PACS that ships with FLIP for development**. Replace every one with the
+   real details when connecting to a trust PACS.
+
+.. list-table::
+   :widths: 25 22 33 20
+   :header-rows: 1
+
+   * - Kit setting
+     - Helm value
+     - Description
+     - Development default
+   * - ``XNAT_AETITLE``
+     - ``xnat.web.dicomAet``
+     - XNAT's own AE title, used for the DICOM receiver, the DQR calling AE and the C-MOVE destination
+     - ``XNAT``
+   * - ``XNAT_PORT``
+     - ``xnat.web.dicomPort``
+     - DICOM receiver port
+     - ``8104``
+   * - ``PACS_AETITLE``
+     - ``pacs.aeTitle``
+     - AE title of the trust PACS
+     - ``ORTHANC``
+   * - ``PACS_HOST``
+     - ``pacs.host``
+     - Hostname or IP of the trust PACS
+     - ``orthanc``
+   * - ``PACS_QR_PORT``
+     - ``pacs.qrPort``
+     - Query/retrieve port on the trust PACS. Must be reachable *from the XNAT container*; this is not a
+       host-published port
+     - ``4242``
+   * - ``XNAT_WEB_PORT``
+     - none (Compose only)
+     - Host-published port for XNAT's web UI and REST API. Unrelated to DICOM, but it must differ from
+       ``XNAT_PORT`` because the receiver is host-published too. The deploy refuses a collision
+     - none; every kit must set it (``8105`` in the kit template)
+   * - ``PACS_SUPPORTS_EXTENDED_NEGOTIATIONS``
+     - ``pacs.supportsExtendedNegotiations``
+     - Whether the PACS supports relational queries / extended negotiation. A capability of the PACS, not a
+       preference (see the table above)
+     - ``true``
+   * - ``PACS_AVAILABILITY_DAYS`` / ``_START`` / ``_END``
+     - ``pacs.availability.days`` / ``.start`` / ``.end``
+     - When retrieval may run: days as a comma-separated list (``MONDAY`` to ``SUNDAY``, in capitals), and a daily
+       window whose start is before its end (see `Scheduling and throughput`_)
+     - all week, ``00:00``–``24:00``
+   * - ``PACS_THREADS`` / ``PACS_UTILIZATION_PERCENT``
+     - ``pacs.availability.threads`` / ``.utilizationPercent``
+     - How hard to drive the PACS during that window
+     - ``1`` / ``100``
+   * - ``DQR_MAX_PACS_REQUEST_ATTEMPTS`` / ``DQR_RETRY_WAIT_SECONDS``
+     - ``pacs.dqr.maxRequestAttempts`` / ``.retryWaitSeconds``
+     - How many times, and how far apart, to retry a study the PACS did not deliver
+     - ``100`` / ``300``
+
+.. seealso::
+
+   :gh:`trust/xnat/README.md` (PACS configuration) for every PACS setting and how a configure run applies them.
+
+Exposing the DICOM receiver
+===========================
+
+The PACS must be able to reach XNAT's DICOM receiver. How the receiver is exposed depends on the deployment.
 
 .. warning::
 
-   **Verify the window that is actually in force rather than assuming the configured one applied.**
+   **Use the same DICOM port number everywhere:** the port XNAT binds, the port on its receiver, the port advertised
+   as the C-MOVE destination, and the port the PACS connects to. DQR matches the C-MOVE destination to a receiver by
+   exact AE title and port, so any translation between these layers breaks retrieval.
 
-   DQR pre-creates availability intervals when a PACS is registered, and rejects a write to a day
-   that already has one. On a first deployment the configured values are applied; on any XNAT where
-   intervals already exist — including one where the PACS has been re-registered, which leaves the
-   previous intervals behind — the write is rejected and the existing window stands. Changing it
-   then requires deleting the intervals through XNAT's administration UI.
+Compose
+-------
 
-   Confirm with ``GET /xapi/pacs/{id}/availability`` after configuring. Note also that XNAT
-   normalises an end time of ``24:00`` to ``00:00`` when it stores it.
+The receiver is **always published on the host**, next to the web UI, so a development deployment uses the same
+wiring as a trust with a real PACS. That is why ``XNAT_WEB_PORT`` and ``XNAT_PORT`` must differ.
 
-   This matters because the window is usually something a trust's PACS manager has agreed to. If it
-   has not applied, retrieval runs outside it.
+The publication binds **every interface** of the host, not just loopback, and a host firewall rule does not close
+it: XNAT runs as a Docker Swarm service, and Docker forwards the port before the host firewall sees the traffic.
+Restrict the port on the network the host sits on.
+
+- The cloud-hosted mock trusts accept no inbound traffic at all, so the port reaches no further than the instance.
+- An on-prem trust host or a developer machine exposes the receiver to whatever network it is on.
+
+.. warning::
+
+   **The receiver accepts an association from any calling AE.** DICOM networking carries no authentication, and FLIP
+   registers the receiver with its calling-AE whitelist off and archives what it receives directly. Only the
+   surrounding network confines C-STORE to the trust's own PACS. Treat the DICOM port as an unauthenticated write
+   path into the archive when writing its firewall rules.
+
+Kubernetes
+----------
+
+These Helm values are closed by default (a ``ClusterIP`` Service and empty rule lists):
+
+.. code-block:: yaml
+
+   xnat:
+     web:
+       # The DICOM receiver has its own Service (xnat-web-dicom). Exposing it never exposes the
+       # web console, which stays ClusterIP.
+       dicomService:
+         type: NodePort
+       # A fixed port gives the PACS a stable destination. It must be inside the API server's
+       # --service-node-port-range. If you cannot widen that range, use type: LoadBalancer and omit this.
+       dicomNodePort: 8104
+
+   networkPolicies:
+     # The C-STORE return leg. Scope it to the PACS itself, never the whole trust network.
+     allowedIngressCIDRsWithPorts:
+       - cidrs: ["10.0.0.10/32"]
+         port: 8104
+     # The outbound query. Without it, C-FIND never leaves the cluster.
+     allowedEgressCIDRsWithPorts:
+       - cidrs: ["10.0.0.10/32"]
+         port: 8059
+
+When ``pacs.host`` names a real PACS (anything but the mocked ``orthanc``), the chart refuses to render a
+configuration that would leave either direction closed or the inbound path too wide:
+
+- ``dicomService.type`` left at ``ClusterIP``, or ``NodePort`` without ``dicomNodePort``;
+- no egress rule to the PACS's query/retrieve port;
+- no ingress entry on ``xnat.web.dicomPort`` (the failure where queries succeed and retrievals time out);
+- an ingress entry for ``0.0.0.0/0``;
+- an externally exposed web console (``xnat.web.service.type`` other than ``ClusterIP``).
+
+It also refuses any ingress entry with no ``port``, which Kubernetes reads as *all* ports.
+
+The ingress ``port`` is the pod's container port (``xnat.web.dicomPort``, default 8104), not ``dicomNodePort``: a
+NetworkPolicy matches after the node has translated the NodePort back.
+
+.. note::
+
+   Setting ``dicomService.type`` to ``NodePort`` or ``LoadBalancer`` also sets ``externalTrafficPolicy: Local`` on
+   that Service. Under the default ``Cluster`` policy, the node rewrites the PACS's source address before the pod
+   sees it, so the ingress rule would never match and the C-STORE would be dropped.
+
+   ``Local`` keeps the source address only behind a pass-through load balancer (MetalLB, an AWS NLB). A proxying
+   load balancer rewrites it regardless, so scope the rule to the proxy's address instead. ``Local`` also means only
+   nodes running the pod answer, which suits the single-pod trust deployment.
+
+Scheduling and throughput
+=========================
+
+A production PACS may limit how much can be retrieved before it refuses further connections, and bulk retrieval
+competes with clinical use. Agree a retrieval schedule with the trust's PACS manager, then set it in FLIP:
+
+- the DQR retry settings control how failed studies are retried;
+- the PACS's availability schedule sets the days, a daily window, a thread count and a utilisation percentage.
+
+If the trust has a test or pre-production PACS, connect FLIP to that first. This is usually a separate service
+request.
+
+.. important::
+
+   **The kit sets the schedule.** Every configure run (bringing XNAT up or upgrading it, or ``helm upgrade``) makes
+   the registered PACS's schedule match the kit. A change made on XNAT's DQR administration page is reverted, and the
+   log names what it replaced. Put the window agreed with the PACS manager in the kit.
+
+.. warning::
+
+   **A window cannot cross midnight.** DQR would run a ``19:00``–``07:00`` window inverted, during the day, so FLIP
+   refuses it. For out-of-hours retrieval use ``19:00``–``24:00``, ``00:00``–``07:00`` or whole days.
 
 Verification
 ============
 
 Work outwards from the network layer:
 
-1. **C-ECHO in both directions** — from the PACS to the FLIP XNAT AE title and port, and from XNAT
-   to the PACS. This confirms both firewall directions before any DICOM data moves.
-2. **Ping the PACS from XNAT** — ``GET /xapi/pacs/{id}/status`` should report the PACS as reachable
-   and enabled.
-3. **Query a single accession number** — ``POST /xapi/dqr/query/studies`` should return the matching
-   study.
-4. **Import a single study**, and confirm it archives into the expected project with anonymisation
-   applied.
-5. **Run a full project import**, monitoring the import status counts.
+1. **C-ECHO in both directions**: from the PACS to XNAT's AE title and port, and from XNAT to the PACS. This proves
+   both firewall directions before any images move.
+2. **Ping the PACS from XNAT**: ``GET /xapi/pacs/{id}/status`` should report the PACS as reachable and enabled.
+3. **Query one accession number**: ``POST /xapi/dqr/query/studies`` should return the matching study.
+4. **Import one study**, and check it archives into the expected project with anonymisation applied.
+5. **Run a full project import**, watching the import status counts.
 
 .. note::
 
-   XNAT must be restarted for changes to its DICOM configuration to take effect. XNAT also holds the
-   DICOM port while running, so command-line testing with a tool such as ``storescp`` on the same
-   port requires stopping XNAT first.
+   XNAT holds its DICOM port while it runs. To test from the command line with a tool such as ``storescp`` on the
+   same port, stop XNAT first.
+
+Development: the mocked PACS
+============================
+
+FLIP ships an `Orthanc <https://orthanc.uclouvain.be/>`_ DICOM server that stands in for the trust PACS in
+development and testing. It is seeded with synthetic studies whose accession numbers match the mocked OMOP database,
+so a cohort query resolves to real studies and the whole retrieval path can run without a hospital PACS.
+
+Orthanc is a genuine DICOM node: it answers C-FIND and C-MOVE as a production PACS would and returns studies by
+C-STORE. Only the peer differs. That is why the development defaults name it:
+
+* ``PACS_HOST=orthanc``: the container name on the FLIP network
+* ``PACS_AETITLE=ORTHANC``: Orthanc's AE title
+* ``PACS_QR_PORT=4242``: Orthanc's DICOM port
+
+The one material difference is the network. Orthanc shares the container network with XNAT; a real PACS is outside
+it. Publishing the receiver on every Compose deployment (see above) keeps the mocked setup on the same wiring.
+
+.. note::
+
+   The mocked PACS is for development and testing only. In a trust deployment the imaging comes from the trust's own
+   PACS, and Orthanc is either absent or confined to the FLIP node: its DICOM port is not published to the wider
+   network.

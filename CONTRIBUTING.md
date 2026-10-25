@@ -42,7 +42,7 @@ When creating issues, please use the appropriate issue template:
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
-the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
+the federated learning code (base library, FL services, and tutorials) for both FLARE and Flower. Both backends
 are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. See the single canonical
 [repository layout](README.md#repository-layout) in the root README and the README within each area for details.
 
@@ -56,6 +56,11 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `com.docker.compose.project.environment_file` container label (verified live on Compose v5.1.3);
   a Compose too old to record that label does not lose the protection — the guard fails closed,
   refusing the operation with an explicit "the kit that owns them cannot be identified" stop
+- On a **shared host** (one Docker daemon, several developers) set `FLIP_INSTANCE=<name>` before your
+  first `make up` and give the stack its own host ports (see `FLIP_INSTANCE` in
+  [`deploy/AGENTS.md`](deploy/AGENTS.md#multi-instance-environment-variables)). Compose project names are
+  daemon-global, so `make up`, `down` and the other hub targets refuse a project whose containers another
+  checkout created (`ALLOW_FOREIGN_PROJECT=1` skips the check)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   on GPU hosts
 - GNU Make, `jq`, and `curl`
@@ -68,11 +73,13 @@ are provisioned in-tree (gitignored) under `fl-services/<backend>/provision/`. S
   `uv sync`, `uv run --project` or `uv lock` run by hand is unguarded, so keep your uv current rather
   than relying on the check to catch you. (The `uv-lock` pre-commit hook is not a gap here — it pins its
   own uv and runs `uv lock --check`, which verifies and never rewrites.)
-- The AWS CLI configured for SSO access to the development environment — only the two example Trusts need
-  it (`make up` fetches their XNAT artifacts and OMOP vocabulary from AWS buckets). The hub reaches no AWS
-  service: sign-in is the local Keycloak and object storage the local RustFS container (see
-  [Environment variables](#environment-variables)), so `make central-hub` and `make up-no-trust` boot with no
-  AWS account
+- [Node.js 24 LTS](https://nodejs.org/) (npm **>= 11.10**) for flip-ui work outside Docker (`npm ci`, lint, unit
+  tests): earlier npm ignores `flip-ui/.npmrc`'s `min-release-age` without a word, so installs skip the cooldown
+  (see [Dependency cooldown](#dependency-cooldown-supply-chain-protection)). The stack itself builds flip-ui in Docker.
+- No AWS account for `make up`: sign-in is the local Keycloak, object storage the local RustFS container (see
+  [Environment variables](#environment-variables)), and the two example Trusts' XNAT plugins are public upstream
+  downloads that `make -C trust prepare-artifacts` fetches once, checksum-verified. The AWS CLI with SSO is only for
+  the AWS-backed targets: the optional OMOP vocabulary load, FL kit uploads and `deploy/providers/AWS`
 - [act](https://github.com/nektos/act) if you want to run GitHub Actions locally
 - **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
   ```bash
@@ -176,9 +183,8 @@ The policy is enforced through native package-manager configuration:
 - **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
   younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
   workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
-  `flip-ui/package.json`'s `engines` field still permits older Node (`^20.19.0 || >=22.12.0`) for compatibility, but
-  installing on one of those silently drops the cooldown rather than failing — so develop against Node 24 locally
-  to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
+  `flip-ui/package.json`'s `engines` field asks for Node >= 24 and npm >= 11.10, so npm warns (`EBADENGINE`) on an
+  older toolchain instead of dropping the cooldown unnoticed — develop against Node 24 locally to match CI. CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only
   enforces `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
   `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
 
@@ -194,8 +200,18 @@ than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock`
 For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
 
 - **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
-  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
-  the exception is visible in the pull request and `uv lock --check` still passes.
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock --upgrade-package <package>`.
+  The entry is committed, so the exception is visible in the pull request and `uv lock --check` still passes. To
+  keep the exception narrow:
+  - Set the timestamp just after the fixed release's upload time on PyPI, not to "now", so no later, uncooled release
+    can get in.
+  - Add a `constraint-dependencies` floor at the fixed version, so the fix stays in place once the override is gone.
+  - Open an issue to remove the entry when the 72 hours are up. A fixed timestamp freezes the package at that date
+    until someone removes it.
+  - Carry the floor into any install that does not read `[tool.uv]`, such as the `pip install` in
+    `fl-services/flower/fl-base/Dockerfile`.
+
+  The certifi and uv fixes in #1612 (removed in #1618) are a worked example.
 - **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
   command.
 
@@ -219,20 +235,21 @@ Then generate the internal service key (also generated automatically by `make up
 make generate-internal-service-key
 ```
 
-This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
-fl-server-to-hub authentication.
+This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
+(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication.
 
 #### Updating an existing checkout
 
-Three changes affect checkouts created before them. None is picked up automatically, because
+These changes affect checkouts created before them. None is picked up automatically, because
 `.env.development` and the trust kit files are gitignored and never rewritten for you.
 
 | What changed | What to do |
 | --- | --- |
-| `NLB_SUBDOMAIN` is now a live assignment in `.env.development.example` | Add `NLB_SUBDOMAIN=<your-nlb-subdomain>` to your `.env.development`. `scripts/check_env_vars.py` is a pre-commit hook requiring every variable in the example file to be present in yours, and its regex matches real `^KEY=` assignments only — so a still-commented `# NLB_SUBDOMAIN=` fails your next commit, naming the variable. Nothing in a purely local stack resolves the value; it is required because `scripts/trust_kit_lib.py` lists it among the Hub-shared keys. |
-| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the NVFLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
+| `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
+| `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
+| uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
-| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on NVFLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
+| `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
 
 For the full local stack, replace every placeholder in these minimum groups before running `make up`:
 
@@ -242,8 +259,8 @@ For the full local stack, replace every placeholder in these minimum groups befo
 | Central Hub auth | `ADMIN_USER_PASSWORD` — the password of every seeded dev identity (the Keycloak realm imports it). Development signs in through Keycloak, the identity-provider container in `deploy/compose.development.yml`, and nothing else: there is no `AUTH_BACKEND` to set (flip-api pins `keycloak` in development and `cognito` in staging/production) and no AWS account needed to sign in |
 | Local secrets | `POSTGRES_PASSWORD`, a base64-encoded 32-byte `AES_KEY_BASE64` |
 | Object store | Nothing: `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME`, `FLIP_FL_RESULTS_BUCKET_NAME` and `FLIP_APP_BUNDLES_BUCKET_NAME` ship with working names, created in the local store at `make up` |
-| FL kits (AWS) | `AICENTRE_BUCKET_NAME` — the participant kits, read by `make stage-fl-kit`; the two shipped dev kits are provisioned in-tree and never fetch it |
-| XNAT artifacts (AWS) | `FLIP_ARTIFACTS_BUCKET_NAME`, containing the versioned WAR and plugin set described in [`trust/xnat/README.md`](trust/xnat/README.md#plugins) |
+| FL kits (AWS, optional) | `AICENTRE_BUCKET_NAME` — only for staging/production kit uploads and `make stage-fl-kit`; leave it commented out for a local stack, since the two shipped dev kits are provisioned in-tree and never fetch it (see [What still needs AWS in development](#what-still-needs-aws-in-development)) |
+| XNAT plugins | Nothing to set. Run `make -C trust prepare-artifacts` before the first `make up`, and again after a pull that changes `trust/xnat/artifacts.manifest`: it downloads the plugins from their public upstream URLs, checksum-verified, with no AWS access (see [`trust/xnat/README.md`](trust/xnat/README.md#plugins)) |
 
 **Object storage needs no configuration in development** (FLIP#1291). `make up` starts `object-store`, an S3-compatible
 [RustFS](https://github.com/rustfs/rustfs) container whose data directory is `./object-store/` (gitignored): a
@@ -262,11 +279,27 @@ the dev stack holds. Staging and production are unchanged: real S3 buckets, the 
 the public endpoint is unset there, so every audience signs against the one endpoint.
 
 **The dev hub mounts nothing from `~/.aws` and reaches no AWS service** — sign-in (Keycloak), email (console) and
-object storage (RustFS) are all local. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the
-Trusts' artifact fetches — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up`
-no longer runs. Authorised FLIP developers can use the shared development values for the two artifact buckets; other
-deployers should create their own resources with the
+object storage (RustFS) are all local, and so are the Trusts' XNAT plugins once `make -C trust prepare-artifacts` has
+downloaded them from upstream. The AWS-backed *targets* — `deploy/providers/AWS`, FL kit uploads, the optional OMOP
+vocabulary fetch — read `AWS_PROFILE` as before and are guarded by `make check-aws-access`, which `make up` no longer
+runs. Authorised FLIP developers can use the shared development values for those; other deployers should create their own resources with the
 [Central Hub deployment guide](docs/source/deploy-flip/deploy-central-hub.rst).
+
+#### What still needs AWS in development
+
+The step-by-step local-deployment walkthrough is
+[`docs/source/deploy-flip/deploy-local-dev.rst`](docs/source/deploy-flip/deploy-local-dev.rst); this
+table is the capability matrix behind it.
+
+| Capability | Needs | Without AWS |
+| --- | --- | --- |
+| Hub: sign-in, email, model files, FL bundles, training, results | Nothing | Keycloak, the console email backend and RustFS are local |
+| The example Trusts' XNAT plugins (first `make up`) | Nothing | `make -C trust prepare-artifacts` downloads them from upstream, checksum-verified |
+| Building the XNAT images locally (`make -C trust/xnat build`) | Nothing | The build downloads the WAR and plugins from upstream the same way; most developers pull the published `xnat-*` images and never build |
+| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | AI Centre developers: the `dev` AWS profile (`FLIPDeveloperAccess`, see [Setting up AWS access](#setting-up-aws-access)) | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
+| Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<hub>`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
+| Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
+| `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
 
 **Email needs no configuration in development** (FLIP#919). flip-api pins `EMAIL_BACKEND=console` in dev (`DevSettings` rejects `ses` at boot), which
 logs the would-be message (recipient, template name, non-secret payload) instead of calling SES — so the access-request
@@ -300,6 +333,13 @@ Trusts are registered on the **running hub** with `make register-trusts` (shippe
 carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
 automatically once the hub is up.
 
+For an on-prem trust, `make onboard-onprem-trust KIT=<CODE>` checks the same kit
+that `up-onprem-trust` and `upgrade-onprem-trust` use: `trust/.env.<CODE>.<env>`, resolved by
+`deploy/env_mode.mk`'s `kit_file`. These root wrappers default to
+`HUB=prod`; pass `HUB=stag` for the staging hub.
+The checklist delegates to `make -C trust onboard-onprem-trust`, which passes its
+resolved `KIT_FILE` to the script. A direct script invocation can use `--kit-file PATH`.
+
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
 
@@ -324,18 +364,23 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
+- `FL_PROVISIONED_DIR` — path to the FLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): FLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access
 
 Some services (e.g. `flip-api`) interact with AWS via `boto3` in staging and production. In development none
 of them does: sign-in is the local Keycloak, email the console backend and object storage the local RustFS
-container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291). AWS SSO is needed only for the two
-example Trusts' XNAT-artifact and OMOP-vocabulary fetches, FL kit uploads and the `deploy/providers/AWS`
-targets, which `make check-aws-access` guards.
+container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291), and the example Trusts' XNAT plugins
+are public upstream downloads (FLIP#1292). AWS SSO is needed only for the optional OMOP vocabulary fetch, FL kit
+uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
 
-Configure AWS SSO:
+AI Centre developers: the vocabulary needs only the `dev` profile, whose `FLIPDeveloperAccess` role can read the
+vocabulary bucket and nothing else. Add it to `~/.aws/config` as in Step 3 of
+[`deploy-local-dev.rst`](docs/source/deploy-flip/deploy-local-dev.rst), then
+`aws sso login --sso-session FLIP_LZA`.
+
+Otherwise, configure AWS SSO:
 
 ```bash
 aws configure sso
@@ -383,7 +428,7 @@ they would only ever fail trying to reach `londonaicentre`-owned resources — s
 `if: github.repository == 'londonaicentre/FLIP'` and shows up as **skipped** (neutral, not a red failure) on fork
 pushes. These are:
 
-- **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
+- **Image publishing** — `Build and Push FLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
   and `trust-*` GHCR build-and-push workflows.
 - **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
 
@@ -418,8 +463,8 @@ restrictable data-access action, data exfiltration or privilege-escalation shape
 infrastructure-posture checks (IMDSv2-only EC2, module version pinning, HSTS, WAF Log4j rule, SSM/KMS posture).
 No cloud credentials are needed, and checkov already knows which AWS actions support no resource-level scoping
 (e.g. `ssmmessages:*`, `ec2:Describe*`) — those wildcards pass without ceremony. Run it locally with
-`make checkov-lint` from the repo root (deliberately not the `deploy/providers/AWS` Makefile, whose parse-time
-env guard needs the gitignored deploy env files).
+`make checkov-lint`, from the repo root or `-C deploy/providers/AWS`, or with `make -C deploy/providers/AWS lint`,
+which also runs terraform fmt and tflint (both must be installed). None needs the gitignored deploy env files.
 
 Deliberate breadth or posture is acknowledged **in-code, with a rationale**, never by weakening the check list:
 put `# checkov:skip=<CHECK_ID>:<why this is deliberate>` inside the flagged resource/data block. The check
@@ -428,6 +473,35 @@ list — including the classes triaged in FLIP#1058 and deliberately *not* promo
 broken checkov install can never produce a vacuous green. The script's own guards (version pin, unknown check
 IDs, skip rationale, canary) are regression-tested by `deploy/providers/AWS/scripts/tests/test_checkov_lint.sh` with `checkov` stubbed,
 run by the same workflow's `Deploy script tests` job.
+
+### TFLint (Terraform)
+
+`validate_terraform.yml` also runs **tflint** over `deploy/providers/AWS` — the bundled `terraform` ruleset
+(recommended preset) plus the AWS ruleset, configured in `deploy/providers/AWS/.tflint.hcl`. It catches what
+`terraform validate` accepts: a variable nothing reads, a module with no provider version constraint, an AWS
+argument value the API would reject at apply time. Every directory holding `.tf` files is linted on its own, so
+a module is checked even where no root calls it. Run it locally with `make tflint-lint` (repo root or
+`-C deploy/providers/AWS`, or as part of `make -C deploy/providers/AWS lint`); it needs tflint at the version
+pinned in `deploy/providers/AWS/scripts/tflint_lint.sh` (release binaries on GitHub — Homebrew no longer
+packages it) and downloads the pinned AWS ruleset plugin on first run.
+
+A deliberate exception is acknowledged in-code with `# tflint-ignore: <rule_name> # <why>` on the line above the
+flagged block, never by disabling the rule in `.tflint.hcl` (the rationale needs that second `#`: any other
+separator, such as `-- why`, makes tflint ignore the annotation). Removing an unused root variable means
+removing its whole input chain too: the `TF_VAR_` export in `deploy/providers/AWS/Makefile`, the key in
+`scripts/compose-ci-env.sh`, the three Terraform workflows' `env:` lines and `scripts/reconcile_ci_env.py` — and
+deleting the GitHub environment variables only after that PR merges. Like checkov's, the script self-tests
+against a canary fixture, and its guards are regression-tested by `scripts/tests/test_tflint_lint.sh`.
+
+### Azure trust node checks (Terraform)
+
+`deploy/providers/azure` (FLIP#1390) carries its own credential-free checks: `make -C deploy/providers/azure test`
+runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
+`make -C deploy/providers/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
+checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
+rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
+subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
+always behind its own NSG. Deliberate checkov or tflint exceptions are written in-code with a reason, as for AWS.
 
 ### Secret scanning (detect-secrets)
 
@@ -469,7 +543,7 @@ false positive.
 
 ### Running the stack (pull vs. build)
 
-In development (`PROD` unset), `make up` **pulls** the repo-built service images
+In development (`HUB` unset), `make up` **pulls** the repo-built service images
 (`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
 instead of building them — each carries `image:` + `pull_policy: always` in the dev
 compose, and your local `src/` is bind-mounted on top, so editing a `.py` still
@@ -484,7 +558,10 @@ make up BUILD=true     # rebuild the repo-built services from local source inste
 Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
 system packages, or a `Dockerfile` — those live in the image layer, so a plain
 `make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
-no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+no GHCR image). `BUILD=true` also builds `omop-db` and the XNAT images (the latter
+deployed at the local-only `:dev` tag, so the swarm cannot swap them for the registry's;
+a second stack on the same host passes its own with `XNAT_TAG=<tag>`).
+Stag/prod (`HUB=stag|prod`) are unaffected: they run the prod
 compose with baked images and no bind-mounts.
 
 ## The contribution process
@@ -618,11 +695,23 @@ make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>
 
 # Regenerate k8s-trust-<KIT>.yaml from the kit (validates its governance document, FLIP#1259)
 # without patching the cluster Secret; deploy-trust-k8s KIT= runs it first
-make -C trust/deploy/helm sync-kit-override KIT=<CODE> PROD=<env>
+make -C trust/deploy/helm sync-kit-override KIT=<CODE> HUB=<env>
 
 # Against a live cluster: drive a real C-STORE through the PACS and read XNAT's
-# receiver log (a C-ECHO cannot see an importer crash — FLIP#1228)
+# receiver log (a C-ECHO cannot see an importer crash — FLIP#1228). Exits 0 pass, 1 fail,
+# 2 inconclusive (arrival-time-only evidence while received.log exists and stayed silent);
+# the Make target turns 2 into a loud warning rather than a failure.
 make -C trust/deploy/helm smoke-cstore
+
+# On a managed node pool (AKS, FLIP#1390): put the slot's FL kit in a Secret for
+# flClient.kit.source=secret, and layer values-aks.yaml with PLATFORM_VALUES= (or the kit
+# file's K8S_PLATFORM_VALUES, which every deploy and upgrade of that KIT then applies)
+make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir> KUBE_CONTEXT=<ctx>
+
+# The trust self-test against the deployed release (FLIP#1390): release ready, FL kit, API
+# health, OMOP/Orthanc seeded, Orthanc auth, a real C-STORE, a dcm2niix conversion, FL client
+# steady; writes a JSON + markdown report under build/selftest/ and needs no hub
+make -C trust/deploy/helm selftest KUBE_CONTEXT=<ctx>
 ```
 
 `make -C trust/deploy/helm deploy` (and `deploy-trust-k8s`) take `HELM_TIMEOUT` (default
@@ -692,7 +781,7 @@ Two trees sit outside any service and have their own home. `fl-tutorials/tests/`
 
 `flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
-CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `flip-api/tests/local_auth_smoke.py` (sign in as the seeded admin) and `flip-api/tests/local_storage_smoke.py` (a model file through the store: presigned upload, scan promotion, presigned download, delete — FLIP#1291).
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) run against moto's in-process fake through the session-scoped `aws_mock` fixture (`test_cognito_round_trips.py`, `test_s3_round_trips.py`, `test_ses_round_trips.py`), and `test_keycloak_round_trips.py` boots the pinned Keycloak image under Testcontainers with the committed dev realm (`deploy/keycloak/flip-realm.json`), so the Keycloak provider runs end-to-end — a real register and delete, and a token from Keycloak's password grant through `verify_token`. The AWS-free boot path itself is proven by `.github/workflows/local_auth_smoke.yml`, which starts flip-db, keycloak, the RustFS object store and flip-api from the dev compose on a runner with no AWS credentials, then runs `flip-api/tests/local_auth_smoke.py` (sign in as the seeded admin) and `flip-api/tests/local_storage_smoke.py` (a model file through the store: presigned upload, scan promotion, presigned download, delete — FLIP#1291 — then eight presigned POSTs of a 19 MB model-sized file, FLIP#1534).
 
 ##### flip-api: database migrations (Alembic)
 
@@ -740,6 +829,12 @@ The new branch should be based on the latest `develop` branch.
 
 Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
 
+`release.yml` does not finish when the GitHub Release is published. Because the `v<X.Y.Z>` tag is pushed with the workflow's own `GITHUB_TOKEN` — and GitHub starts no workflow for an event created that way — it explicitly dispatches the fourteen image builds *at the tag*, so the `:v<X.Y.Z>` images carry `FLIP_RELEASE=v<X.Y.Z>` rather than the `sha-<short7>` the branch build bakes. It then **waits** for those runs to go green and dispatches `terraform_apply.yml` on `refs/heads/main` with `release_tag: v<X.Y.Z>`, which re-pins production onto the release images (FLIP#1283). The GitHub Release is created **last**, after the apply has been dispatched: everything after the tag is keyed on the Release not existing, so creating it earlier would let a failed dispatch go green on a re-run with production still on the previous release. Three things follow for whoever cuts the release:
+
+- **The release job runs as long as the slowest image build** (xnat-web, ~30 min). A red build, or an expired wait budget, fails the release job and names what to re-run; production stays on the sha pin it got from the push apply. Re-running `release.yml` is safe — everything after the tag is keyed on the GitHub Release not existing, so a re-run re-dispatches the builds and re-tries the apply.
+- **Nothing may merge to `main` during the wait.** The release apply runs `main` as it is when the dispatch fires, so a hotfix merged in that window would have the *release's* images applied over its code — a silent production rollback. Both ends refuse it: `release.yml` checks `main`'s HEAD before dispatching, and `terraform_apply.yml` refuses unless `release_tag` resolves to the very commit it has checked out. Recovery is to cut a release from the newer commit, not to re-run the old one.
+- **The release apply can hold on the FL gate.** Re-pinning changes the FL task-definition tag, which `scripts/check-fl-plan-impact.sh` treats as FL-affecting, so the apply holds for an operator attestation. Quiesce FL and re-dispatch `terraform_apply.yml` with both `fl_quiesced: true` and the same `release_tag` — see [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md#release-applies-pinning-vxyz-instead-of-the-sha-flip1283).
+
 ### Two release trains, two tag namespaces
 
 A push to `main` cuts **two independent releases**, from two independently-versioned artefacts. They must never share a tag namespace: each workflow skips its own release when it finds its tag already present, so a version number claimed by one artefact would silently suppress the other's release — or, for flip-utils, its PyPI publish.
@@ -779,20 +874,34 @@ The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the 
 
 Before opening the release PR from `develop` to `main`:
 
+The mechanical steps are make targets (FLIP#1608), each a script under [`scripts/release/`](scripts/release/):
+
+| Target | Does |
+|---|---|
+| `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; bumps the root, every changed service and (if changed) flip-utils; `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
+| `make release-instance TAG=… PR=<n>` | An isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. `release-gates` runs it; on its own it is for debugging. |
+| `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
+| `make release-gates TAG=… PR=<n>` | On the GPU host, quickest first: `unit_test`, `integration_test` and both tutorial suites on a quiet host, then the instance, both smokes and teardown; one JSON result per gate under `release-gates/<TAG>/`, and every container's log when a stack gate fails. Run it from a dedicated release worktree: the instance writes `trust/.env.<KIT>.development`, the files a developer's own trusts use, so it refuses a checkout whose kits another stack wrote. |
+| `make release-record TAG=… PR=<n> APPLY=1` | Writes *Release checks* from those results, refusing results from another commit. |
+| `make release-main-check TAG=… [OWED=<file>]` | Read-only. Checks the `develop` → `main` PR is MERGEABLE, its branch-origin and (if flip-utils changed) version-bump checks passed and the notes preview is posted, then prints the after-merge checklist; with no PR yet, prints the `gh pr create` command for it. |
+
+The list below is what they check and do, and what stays manual (the notes' prose, Dependabot fixes, the PRs).
+
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
 - Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file listed under [Versioning](#versioning) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
 - If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, **Site upgrade**, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push. The *Site upgrade* section is the prompt trust operators act on (FLIP#1204): say whether the upgrade is required, the ordering (hub first / sites first / one Deployment-Mode window — a flag-day such as FLIP#1179's cipher change or an FL-framework bump is the latter), and whether a **refreshed kit** is needed because the Hub-shared block changed.
-- Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Download each dataset first (`make -C fl-tutorials download-<dataset>-data`; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and build the FL images for the backend you run (`make build-fl`, `make build-fl FL_BACKEND=flower`).
-- Run the **full-platform smoke test, for both backends, against a running deployment**: `make e2e_smoke`, then `make e2e_smoke FL_BACKEND=flower`. It drives the whole path a user sees — create project, trust approval, training, download results — and is likewise out of CI, being heavy and long-running. [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test) carries the flags, the spleen and EHR variants, and how to smoke a remote hub.
+- Run **`/audit-tutorial <name>` over the catalogue** (Claude Code; the `tutorial-contract` skill under `.claude/skills/` reads as Markdown for a manual pass): the guards, the GPU-free NVFLARE export, the registrations and the README checklist (figure, Expected performance, References, demo video) per tutorial. `make -C fl-tutorials test` already carries the catalogue guard (`tests/test_tutorial_catalogue.py`); the audit is for what a test cannot judge.
+- Run the **full tutorial suite, for both backends, on a GPU host**: `make -C fl-tutorials run-all-tutorials`, then `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`. Each target stops on the first failure, so a green pair means every example in the catalogue ran end to end. This is the only check that exercises the tutorials' training behaviour — CI is CPU-only by design ([`fl-tutorials-tests.yml`](.github/workflows/fl-tutorials-tests.yml)) and no GitHub-hosted runner has a GPU — so a release that skips it ships published examples nobody has run. Both run the simulator in the `flip-utils` environment, so no FL image is needed; the FL images are exercised by the smoke test below. Fetch every input first, since a missing one fails its tutorial at once: each dataset (`make -C fl-tutorials download-<dataset>-data`, and `prepare-prostate-local-data NUM_CASES=12` for prostate; see [`fl-tutorials/README.md`](fl-tutorials/README.md)) and the Ark+ checkpoint the three Ark+ tutorials load (`make download-raw-checkpoint` in each, or request access through the Ark+ form; it is not in any dataset download).
+- Run the **full-platform smoke test, for both backends, against a running deployment**: `make e2e_smoke`, then `make e2e_smoke FL_BACKEND=flower`. It drives the whole path a user sees — create project, trust approval, training, download results — and is likewise out of CI, being heavy and long-running. [`flip-api/AGENTS.md`](flip-api/AGENTS.md#end-to-end-smoke-test) carries the flags, the spleen, prostate and EHR variants, and how to smoke a remote hub.
 - Record both runs in the *Release checks* section of [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md). That section is published with the release, so an unticked box is visible on the PR and on the release page.
 - Run `make unit_test` and `make integration_test` locally.
 
 ### Cutting the release
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
-1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop` or, for a hotfix, from a `hotfix/*` branch (see [Hotfixes](#hotfixes)).
    **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
@@ -802,14 +911,14 @@ Before opening the release PR from `develop` to `main`:
    - [`release-pypi.yml`](.github/workflows/release-pypi.yml) reads `flip-utils/flip/__init__.py` and, if that version is not yet tagged, lints + tests + builds the package, publishes it to PyPI via OIDC trusted publishing, tags it, and publishes a GitHub Release named `flip-utils v<X.Y.Z>` with the template header, the generated changelog, and the build artifacts attached.
    - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
    - `release.yml` then **dispatches** every image workflow — `docker_build_*.yml` and both `fl-docker-build-*.yml` — at the new tag (`gh workflow run <wf> --ref v<X.Y.Z>`), building every image at the release commit, unfiltered, and pushing `:v<X.Y.Z>` (FLIP#1204). This is the tag hub and sites deploy: a release is one identity across the whole stack, not a different `sha-` per service. The image workflows also carry a `push.tags: ['v*.*.*']` trigger, but it cannot serve the real release: the tag is pushed with the workflow's own `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way (only `workflow_dispatch` / `repository_dispatch` are exempt) — the push trigger is what a **hand-pushed** tag uses, i.e. a release candidate. `.github/tests/workflows/test_release.py` holds the dispatch roster to the exact set of publishing workflows, so one added without being listed fails CI.
-1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (twelve workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right — the curated header (including *Site upgrade*) now sits above the generated changelog. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that every image carries `:v<X.Y.Z>` (fourteen workflows; `.github/tests/workflows/test_docker_build.py` and `test_fl_docker_build.py` guard the triggers) and that the `:prod` tags were updated. If the package was released, verify it on [PyPI](https://pypi.org/project/flip-utils/).
 
 ### Rolling the release out
 
 The release is not deployed by merging. Two steps, in this order:
 
-1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui PROD=true` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --profile prod --compare .env.production` → `make sync-trust-kits PROD=true` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE>`.
-1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<slot>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui HUB=prod` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
+1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes
 
@@ -818,7 +927,7 @@ There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Releas
 - **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
 - **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
 
-Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
+Both are rendered into the preview comment on the `develop` → `main` PR (and on a hotfix PR), and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
 
 ### flip-utils and the PyPI release path
 
@@ -830,15 +939,17 @@ Full detail — the per-PR gates, the trusted-publishing setup, and the `release
 
 ### Deploying the release
 
-Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
+Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml`, FLIP#962); the hub's ECS services move to the release with `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` and the sites follow on their operators' command — see [Rolling the release out](#rolling-the-release-out) above and [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for the hub-side detail (Deployment Mode, rollback). For staging, no release tag is required: merging to `develop` publishes `:stag` images and applies stag automatically; a stag site can be moved to a specific build with `TAG=sha-<short7>`.
 
 ### Hotfixes
 
-For an urgent fix on `main` without pulling in unrelated `develop` work:
+For an urgent fix, a security fix say, that cannot wait for the next release of everything on `develop`. `main` takes PRs from `develop` and from `hotfix/*` branches only, so a hotfix ships the fix alone:
 
-1. Branch from `main`, apply the fix, bump the patch version in the root `pyproject.toml` (and any affected service).
-1. Open a PR targeting `main`. On merge, the same automation kicks in — `release.yml` tags `v<X.Y.Z+1>` and `docker_build_*.yml` rebuilds `:prod`.
-1. Forward-port the fix to `develop` so the next regular release includes it.
+1. Branch `hotfix/v<X.Y.Z>` from the last release tag, where `<X.Y.Z>` is the next patch version: `git switch -c hotfix/v0.13.2 v0.13.1`.
+1. Add the fix. When it was reviewed on its own PR to `develop`, cherry-pick that PR's commits (`git cherry-pick -x`); otherwise commit it here.
+1. Bump the patch version in the root `pyproject.toml` (and the root `uv.lock`), in any service under [Versioning](#versioning) that the fix touches and, if `flip-utils/**` changed, in `flip-utils/flip/__init__.py`. Fill in `.github/RELEASE_NOTES_TEMPLATE.md` as for any release: *Site upgrade* says whether sites must upgrade, and *Release checks* records the pre-release checks you ran, which are at least the ones that exercise the fix.
+1. Open a PR from `hotfix/v<X.Y.Z>` to `main`. `validate_branch_origin.yml` accepts it and the release-notes preview runs on it; `check-version-bump.yml` does not, so a flip-utils bump (step 3) is yours to check. Merge it with a merge commit: `release.yml` then releases `v<X.Y.Z>` as above, and *Nothing may merge to `main` during the wait* applies.
+1. Merge `main` back into `develop` through a PR, again with a merge commit, so `develop` carries the fix, the new version and the release notes, and the next `develop` → `main` PR does not conflict with the hotfix.
 
 ### Testing a release candidate before merge to main
 
@@ -918,8 +1029,24 @@ To clean up the test data:
 make -C flip-api delete_testing_projects
 ```
 
+Projects approved before FLIP#857 have no frozen cohort membership, so every trust refuses their row-level data.
+Freeze it for all of them from the running dev stack (`EXTRA_ARGS="--dry-run"` previews):
+
+```bash
+make -C flip-api backfill_cohort_snapshots
+```
+
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
+
+To record the MONAI Label demo video against a running trust with MONAI Label on (a spleen CT segmented in the XNAT
+OHIF viewer, exported and converted to NIfTI; it doubles as an end-to-end check), run on the trust host:
+
+```bash
+make -C trust/monailabel-demo demo-video KIT=GSTT XNAT_EXPERIMENT=<CT session ID>
+```
+
+See [`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md) for the prerequisites.
 
 ## Building the documentation
 
@@ -936,16 +1063,16 @@ The ReadTheDocs site is Sphinx over `docs/`; build it locally with `make -C docs
   `TERRAFORM_ADDRESSES` in the script in the same PR, then `make aws-diagram` refreshes the two committed
   copies the AWS README embeds.
 - It needs **network access to huggingface.co** (and `*.hf.co`). The user-guide GIFs are not tracked in git
-  (FLIP#1236): `conf.py` fetches the version pinned in `docs/.gifs_version` from the public dataset
-  `aicentreflip/docs-gifs` into the gitignored `docs/source/assets/generated/gifs/`, verifying every file
-  against the published manifest, and fails loudly if it cannot. A repeat build makes no network request.
+  (FLIP#1236): `conf.py` fetches them from the public dataset `aicentreflip/docs-gifs` into the gitignored
+  `docs/source/assets/generated/gifs/`, verifying every file against the published manifest, and fails loudly
+  if it cannot. A repeat build downloads only what changed.
   `FLIP_DOCS_SKIP_GIF_FETCH=1 make -C docs docs` builds text-only offline (the user-guide pages then warn
   about their missing images). See "Documentation GIFs" below.
 
 
 ## Documentation GIFs
 
-The animated walkthroughs in the user guides (`docs/source/user-guides/user-common.rst` and
+The animated walkthroughs in the user guides (`docs/source/user-guides/*.rst` and
 `docs/source/sys-admin/admin-project-and-user-management.rst`) are Cypress recordings of the UI against a
 fully mocked backend. **They are not tracked in git** (FLIP#1236 — 65 MB that re-recording rewrote on every
 run was 95% of a clone). Instead:
@@ -953,22 +1080,24 @@ run was 95% of a clone). Instead:
 - `.github/workflows/regenerate_docs_gifs.yml` runs on every push to `develop` that touches `flip-ui/src/**`,
   the Cypress docs harness (`flip-ui/test/cypress/docs/**`, `cypress.docs.config.ts`,
   `scripts/videos-to-gifs.sh`) or the workflow itself, or by hand via *Run workflow*: its `record` job mints
-  the version tag, records the demo specs under `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and
-  converts each video to `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its
-  `publish` job — **`develop` only**; a dispatch from a branch records without publishing — publishes that
-  directory to the public Hugging Face dataset
-  [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one commit and one
-  tag** `YYYYMMDDTHHMMSSZ-<sha7>` (`docs/scripts/publish_docs_gifs.py`), verifies the tag resolves
-  anonymously, and opens a PR whose only diff is the pin, `docs/.gifs_version`. A later run opens a fresh PR
-  and closes the superseded one.
-- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches the pinned tag at build time
-  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`) — see "Building the documentation".
-- **Review the pin PR in its ReadTheDocs preview** (the `docs/readthedocs.org:londonaicentreflip` check):
-  RTD builds the PR with the new pin, so the pages show the recordings in context. Re-recording is nondeterministic (frame
-  timing plus the animated demo cursor), so every GIF is new bytes even where the UI didn't change — merge if
-  the genuinely-changed clips look right, otherwise close.
-- **Dataset tags are never moved or deleted**, so `stable` and every historical docs version keep resolving the
-  tag they were built with. A re-recording is always a new tag.
+  the version `YYYYMMDDTHHMMSSZ-<sha7>`, records the demo specs under
+  `flip-ui/test/cypress/docs/<category>/<name>.spec.ts` and converts each video to
+  `docs/source/assets/generated/gifs/<category>/<name>.gif` with `ffmpeg`; its `publish` job — **`develop`
+  only**; a dispatch from a branch records without publishing — publishes that directory to the public Hugging
+  Face dataset [`aicentreflip/docs-gifs`](https://huggingface.co/datasets/aicentreflip/docs-gifs) as **one
+  commit on its `main`** (`docs/scripts/publish_docs_gifs.py`) and checks it resolves anonymously. Nothing
+  comes back to git and nothing needs approving (FLIP#1547).
+- The docs build (`make -C docs docs`, the docs CI job, ReadTheDocs) fetches at build time
+  (`docs/scripts/fetch_docs_gifs.py`, called from `docs/source/conf.py`, see "Building the documentation"):
+  `latest`, PR previews and local builds get the newest recording; a release version gets the set it shipped.
+- **Each release freezes its GIFs**: `release.yml`'s `docs-gifs` job tags the newest recording the release
+  contains as `vX.Y.Z` on the dataset (`docs/scripts/freeze_docs_gifs.py`) before it pushes the git tag, so
+  that release's docs, and git `main`'s, keep showing them. Release tags are never moved or deleted.
+- **GIFs CI cannot record** (the MONAI Label walkthrough needs a live trust) are listed in
+  `docs/scripts/live-recorded-gifs.txt` instead of having a spec. Recorded by hand, they go to the dataset
+  branch of the PR that carries them, which that PR's ReadTheDocs preview then shows (see "Publishing by
+  hand"). When that PR merges, the CI publish takes them from its `pr-<N>`; every later CI publish carries
+  them forward unchanged from `main`. Only CI writes the dataset's `main`; delete `pr-<N>` once the PR merges.
 
 ### Adding a new GIF
 
@@ -980,8 +1109,8 @@ Authoring is two-step, because a PR cannot ship the GIF itself:
    figure `.. figure:: ../assets/generated/gifs/<category>/<name>.gif` in the rst. `make -C docs test` checks
    the two agree. Until the GIF is published, the docs build warns "image file not readable" for that one
    figure — expected, and deliberately not fatal.
-2. Once the PR merges to `develop`, the workflow records and publishes everything and opens the pin PR;
-   merging that makes the new figure render.
+2. Once the PR merges to `develop`, the workflow records and publishes everything, and the next `latest`
+   build renders the new figure.
 
 ### Previewing locally
 
@@ -989,21 +1118,24 @@ Authoring is two-step, because a PR cannot ship the GIF itself:
 cd flip-ui
 npm run docs:record   # records videos under test/cypress/videos/
 npm run docs:gifs     # ffmpeg → docs/source/assets/generated/gifs/<category>/*.gif (requires ffmpeg on PATH)
-FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the pinned ones
+FLIP_DOCS_SKIP_GIF_FETCH=1 make -C ../docs docs   # build on YOUR recordings, not the published ones
 ```
 
-Without the skip flag the build restores the pinned bytes over any file that differs — the pin wins.
+Without the skip flag the build restores the published bytes over any file that differs.
 
 ### Publishing by hand
 
-Rarely needed (the workflow does it), but the same script works from a laptop with an account that can
-write to the dataset:
+Only for GIFs CI cannot record, and only to the dataset branch of your PR (the script refuses `main`). From a
+laptop with an account that can write to the dataset, with the full set under
+`docs/source/assets/generated/gifs/` (fetch the rest with `uv run docs/scripts/fetch_docs_gifs.py`, then add
+yours):
 
 ```bash
 uvx --from 'huggingface_hub>=1.6' hf auth login
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)" --dry-run
-uv run docs/scripts/publish_docs_gifs.py --source-commit "$(git rev-parse origin/develop)"   # then pin the printed tag
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)" --dry-run
+uv run docs/scripts/publish_docs_gifs.py --branch pr-<N> --source-commit "$(git rev-parse HEAD)"
 ```
 
-`--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` / `FLIP_DOCS_GIFS_REVISION` (e.g. `main`) let a
-build read another dataset or an untagged revision, mirroring `HF_TRUST_DATA_REVISION`.
+Then rebuild the PR's ReadTheDocs preview. `--gifs-dir` points at a different tree; `FLIP_DOCS_GIFS_REPO` /
+`FLIP_DOCS_GIFS_REVISION` (e.g. `pr-945`, `v0.12.0`) let a build read another dataset or another ref, mirroring
+`HF_TRUST_DATA_REVISION`.

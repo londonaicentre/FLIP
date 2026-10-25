@@ -27,21 +27,24 @@ WORKDIR /app
 # (torch/MONAI/etc.); flip-utils' readme points at docs/overview.rst and its
 # version at flip/__init__.py, so both are copied.
 #
-# The source is kept at /opt/flip-utils after the install: Flower's runtime
-# dependency installer (`uv sync` on every app launch) resolves the fl-apps
-# templates' `[tool.uv.sources] flip-utils = { path = "/opt/flip-utils" }`
-# against this copy, so FL runs always execute the in-repo flip-utils rather
-# than a PyPI release (#767). Removing this directory fails the launch of
-# every platform app (each fl-apps template pins it).
+# The ServerApp and ClientApps run in this environment: nothing installs an
+# app's dependencies at run time (FLIP#1418), and the install below is not
+# editable, so runs import flip-utils from site-packages, never from
+# /opt/flip-utils. The source is kept there for anything that does `uv sync`
+# an fl-apps template inside this image (Flower's per-run install, were it
+# re-enabled): the templates' `[tool.uv.sources] flip-utils = { path =
+# "/opt/flip-utils" }` resolves against this copy rather than a PyPI release
+# (#767), and fails without it.
 #
 # --extra-index-url points pip at PyTorch's CUDA-13.0 wheel index. Combined with
 # flip-utils' "torch>=2.13,<2.14" pin, pip picks torch 2.13.x+cu130.
 # COPY's default root ownership is deliberate: user-submitted apps execute in
 # this container as the same non-root `app` user that flwr/base runs as, so an
-# app-writable copy could be mutated by app code, poisoning what later runs in
-# the container resolve. Root-owned, the tree is read-only to `app` — enough
-# for the pip install below and the per-run uv builds, which only read it
-# (flip-utils' hatchling backend builds in temp dirs, never the source tree).
+# app-writable copy could be mutated by app code, poisoning anything that later
+# resolves the templates' pin against it. Root-owned, the tree is read-only to
+# `app` — enough for the pip install below and any `uv sync` of a template,
+# which only read it (flip-utils' hatchling backend builds in temp dirs, never
+# the source tree).
 COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
@@ -52,8 +55,10 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 # equivalent, forcing the upgrade past flwr's declared ceiling. Safe for the same reason
 # recorded there: flwr only uses cryptography for TLS cert loading in secure aggregation,
 # a stable surface across majors.
-# pip does not apply flip-utils' UV constraints; carry the setuptools security floor here too.
+# pip does not apply flip-utils' UV constraints; carry its security floors here too: setuptools, and certifi
+# and uv (GHSA-6q48-6c7w-9gw2, GHSA-hq85-5cpj-mr62), which flwr/base ships and flwr pins below the uv fix.
 RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" "setuptools>=83.0.0" \
+      "certifi>=2026.10.19" "uv>=0.13.4" \
       --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to

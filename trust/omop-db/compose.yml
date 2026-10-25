@@ -14,7 +14,7 @@
 # is trust/deploy/compose_trust.<env>.yml). Brings up one empty OMOP database
 # per trust so `make populate` can load each trust's slice of the canonical
 # dataset; the resulting volumes/Trust_<N>/db_data trees are what the trust
-# stack mounts (and what gets exported to the Hugging Face pgdata tarballs).
+# stack mounts.
 # Config comes from .env.build (see .env.build.example).
 services:
   omop-db-trust1:

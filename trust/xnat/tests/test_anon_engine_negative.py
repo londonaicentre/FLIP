@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from anon_engine import UnsupportedRuleError, parse_script
+from anon_engine import RemoveAllPrivateRule, RemoveRule, UnsupportedRuleError, parse_script
 
 
 def _write_script(tmp_path: Path, body: str) -> Path:
@@ -45,6 +45,12 @@ def _write_script(tmp_path: Path, body: str) -> Path:
         ("(0010,0010) := foo()\n", r"unsupported RHS expression"),
         ('(0010,0010) := "ANON" trailing\n', r"unsupported RHS expression"),
         ("(0010,0010) := hashUID[(not,a,tag)]\n", r"unsupported RHS expression"),
+        ("- */( 0010,0030 )\n", r"cannot parse remove rule"),
+        ("- */(60xx,4000)\n", r"cannot parse remove rule"),
+        ("- */(60XX,4000)\n", r"cannot parse remove rule"),
+        ("- */*/(0010,0030)\n", r"cannot parse remove rule"),
+        ("removeallprivatetags\n", r"expected '\(gggg,eeee\)"),
+        ('*/(0010,0030) := "X"\n', r"expected '\(gggg,eeee\)"),
     ],
     ids=[
         "unknown_top_level_directive",
@@ -54,6 +60,12 @@ def _write_script(tmp_path: Path, body: str) -> Path:
         "unsupported_rhs_function_call",
         "literal_with_trailing_garbage",
         "malformed_hashuid_argument",
+        "spaces_inside_tag_brackets",
+        "lowercase_wildcard",
+        "wildcard_in_group_last_digit",
+        "repeated_sequence_wildcard",
+        "lowercase_directive",
+        "assignment_to_a_tag_path",
     ],
 )
 def test_parse_script_rejects_unsupported_syntax(tmp_path: Path, body: str, match: str) -> None:
@@ -85,3 +97,30 @@ def test_parse_script_ignores_comments_and_blank_lines(tmp_path: Path) -> None:
         'version "6.5"\n\n// just a comment\n   // indented comment\n',
     )
     assert parse_script(path) == []
+
+
+@pytest.mark.parametrize(
+    ("body", "scope", "matched", "unmatched"),
+    [
+        ("- (0010,0030)", "top", 0x00100030, 0x00100031),
+        ("- */(0010,0030)", "any", 0x00100030, 0x00100031),
+        ("- * / (0010,0030)", "any", 0x00100030, 0x00100031),
+        ("- +/(0010,0010)", "nested", 0x00100010, 0x00100020),
+        ("- */(60X@,4000)", "any", 0x60024000, 0x60014000),
+        ("- */(50X@,XXXX)", "any", 0x501E0022, 0x50010000),
+    ],
+)
+def test_parse_script_reads_removal_scope_and_tag_pattern(
+    tmp_path: Path, body: str, scope: str, matched: int, unmatched: int
+) -> None:
+    """The removal forms the script uses, as DicomEdit 6.9 reads them (checked against the real engine)."""
+    (rule,) = parse_script(_write_script(tmp_path, body + "    // trailing comment\n"))
+    assert isinstance(rule, RemoveRule)
+    assert rule.scope == scope
+    assert rule.matches(matched)
+    assert not rule.matches(unmatched)
+
+
+def test_parse_script_reads_remove_all_private_tags(tmp_path: Path) -> None:
+    (rule,) = parse_script(_write_script(tmp_path, "removeAllPrivateTags    // trailing comment\n"))
+    assert isinstance(rule, RemoveAllPrivateRule)

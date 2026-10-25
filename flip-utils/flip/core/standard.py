@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 import boto3
 import pandas as pd
 import requests
+from pydantic import ValidationError
 from requests import HTTPError
 
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
@@ -116,7 +117,7 @@ class FLIPStandardProd(FLIPBase):
         - ``add_resource()`` — stage a per-accession resource under the client's images dir
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._name = self.__class__.__name__
         self.logger = logging.getLogger(self._name)
@@ -287,13 +288,16 @@ class FLIPStandardProd(FLIPBase):
         )
 
     @override
-    def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
+    def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
         """
         Updates the model status on the Central Hub.
 
         Args:
             model_id (str): Unique model identifier.
             new_model_status (ModelStatus): New model status value.
+
+        Returns:
+            bool: True if the hub accepted the update, False if it failed (the failure is logged, not raised).
         """
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
@@ -314,6 +318,7 @@ class FLIPStandardProd(FLIPBase):
             response.raise_for_status()
 
             self.logger.info(f"Successfully updated model status to [{new_model_status}]")
+            return True
         except HTTPError as http_err:
             self.logger.error(
                 f"An http error occurred when updating the model status, see exception below | status code "
@@ -323,6 +328,7 @@ class FLIPStandardProd(FLIPBase):
         except Exception as e:
             self.logger.error("Something went wrong when updating the model status, see exception below")
             self.logger.exception(e)
+        return False
 
     @override
     def send_metrics(
@@ -336,7 +342,9 @@ class FLIPStandardProd(FLIPBase):
         x_label: str | None = None,
     ) -> None:
         """
-        Sends a metric value to the Central Hub.
+        Sends a finite metric value to the Central Hub, without interrupting training.
+
+        Invalid metric values/coordinates and reporting failures are logged and dropped.
 
         Args:
             client_name (str): The name of the client.
@@ -346,30 +354,28 @@ class FLIPStandardProd(FLIPBase):
             global_round (int): Provenance — the FL global round the metric is reported in (never the
                 plot coordinate).
             x_value (float | None): The x-coordinate the metric is plotted at; ``None`` plots it at
-                ``global_round`` (the schema backfills it).
+                ``global_round`` (the schema backfills it). A non-finite value drops the whole
+                point here; the backend handlers sanitize it to ``None`` before calling.
             x_label (str | None): Label naming the x-axis; falls back to "Global Rounds" when not given.
         """
-        # model_validate (not kwargs) so a None x_value reaches the schema's backfill validator,
-        # which resolves it to the global round — the schema owns that default, not this call site.
-        # `or` (not an explicit None check) is deliberate for x_label: "" is not a meaningful axis
-        # name and the hub rejects it (min_length=1), so a falsy label coalesces to the default
-        # rather than shipping a guaranteed-reject payload.
-        payload = TrainingMetrics.model_validate(
-            {
-                "fl_client_name": client_name,
-                "global_round": global_round,
-                "label": label,
-                "result": value,
-                "x_value": x_value,
-                "x_label": x_label or DEFAULT_X_AXIS_LABEL,
-            }
-        ).model_dump()
-
-        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
-
-        self.logger.info(f"Attempting to send metrics raised by {client_name}...")
-
         try:
+            # Validation belongs inside the guard: a NaN/Inf raises before HTTP serialization,
+            # and an invalid point must not abort the FL run (FLIP#625).
+            # model_validate lets None x_value reach the schema's global-round backfill.
+            # A falsy x_label still selects the default rather than sending a blank axis title.
+            payload = TrainingMetrics.model_validate(
+                {
+                    "fl_client_name": client_name,
+                    "global_round": global_round,
+                    "label": label,
+                    "result": value,
+                    "x_value": x_value,
+                    "x_label": x_label or DEFAULT_X_AXIS_LABEL,
+                }
+            ).model_dump()
+            endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
+            self.logger.info(f"Attempting to send metrics raised by {client_name}...")
+
             response = requests.post(
                 endpoint,
                 json=payload,
@@ -380,10 +386,14 @@ class FLIPStandardProd(FLIPBase):
             response.raise_for_status()
 
             self.logger.info(f"Successfully sent metrics for {client_name}")
+        except ValidationError as validation_err:
+            self.logger.warning(
+                "Dropping invalid metric %s from %s for model %s: %s", label, client_name, model_id, validation_err
+            )
         except HTTPError as http_err:
             self.logger.error(
                 f"An http error occurred when sending metrics, see exception below | status code "
-                f"{http_err.response.status_code}"
+                f"{getattr(http_err.response, 'status_code', 'unknown')}"
             )
             self.logger.exception(http_err)
         except Exception as e:
@@ -450,7 +460,7 @@ class FLIPStandardProd(FLIPBase):
         self,
         model_id: str,
         event_type: FLLogEvent,
-        global_round: int,
+        global_round: int | None,
         client_name: str | None = None,
         details: dict[str, Any] | None = None,
         success: bool = True,
@@ -466,7 +476,8 @@ class FLIPStandardProd(FLIPBase):
         Args:
             model_id (str): The ID of the model the event belongs to.
             event_type (FLLogEvent): Which round event this is.
-            global_round (int): The 1-based federated round.
+            global_round (int | None): The 1-based federated round; None only for a
+                round-less event (``flip.schemas.ROUND_LESS_EVENTS``).
             client_name (str | None): FL client identity for trust-attributed
                 events; None for hub-attributed ones.
             details (dict[str, Any] | None): Event-specific facts.
@@ -585,7 +596,7 @@ class FLIPStandardProd(FLIPBase):
 class FLIPStandardDev(FLIPBase):
     """Development implementation of FLIP for standard job types."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._name = self.__class__.__name__
         self.logger = logging.getLogger(self._name)
@@ -661,9 +672,10 @@ class FLIPStandardDev(FLIPBase):
         )
 
     @override
-    def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
-        """Log only in dev mode - no actual status update."""
+    def update_status(self, model_id: str, new_model_status: ModelStatus) -> bool:
+        """Log only in dev mode - no actual status update, so there is nothing to fail."""
         self.logger.info("[DEV] Status → %s", new_model_status)
+        return True
 
     @override
     def send_metrics(
@@ -697,13 +709,13 @@ class FLIPStandardDev(FLIPBase):
         self,
         model_id: str,
         event_type: FLLogEvent,
-        global_round: int,
+        global_round: int | None,
         client_name: str | None = None,
         details: dict[str, Any] | None = None,
         success: bool = True,
     ) -> None:
         """Log only in dev mode - no actual event sending."""
-        self.logger.info("[DEV] Event → %s (round %d) from %s", event_type, global_round, client_name or "hub")
+        self.logger.info("[DEV] Event → %s (round %s) from %s", event_type, global_round, client_name or "hub")
 
     @override
     def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:

@@ -66,15 +66,11 @@ describe("Model Dashboard - Pre Training", () => {
         cy.visit(`project/${projectId}/model/${modelId}`);
         cy.wait("@getModel");
 
-        // Training.vue shows the dynamic missingFilesMessage when required
-        // files are defined but not uploaded ("For job type X, required
-        // files are: ... <br/>Missing: ..."), and falls back to this
-        // generic message only when requiredFiles is empty. The fixture
-        // (getModel) declares required files, so we assert on the dynamic
-        // message instead.
-        cy.contains("required files are:").should("be.visible");
-        cy.contains("Missing:").should("be.visible");
-        cy.contains("Complete the following fields to initiate training.").should("be.visible");
+        // The readiness checklist leads with a "Required files" row naming what is
+        // still missing, and the Model Files card shows a placeholder for each.
+        cy.getBySel("required-files-summary").should("be.visible").and("contain", "Missing");
+        cy.getBySel("required-file-placeholder").should("have.length.greaterThan", 0);
+        cy.contains("Complete the following to initiate training.").should("be.visible");
         cy.getBySel("initiate-training-btn").should("be.disabled");
 
         cy.getBySel("data-enrichment-btn").click();
@@ -99,9 +95,8 @@ describe("Model Dashboard - Pre Training", () => {
 
         cy.getBySel("initiate-training-btn").should("be.disabled");
 
-        // The Training.vue alert lists specific missing files in the
-        // form "For job type X, required files are: ... <br/>Missing: a.py".
-        cy.contains("Missing:").should("be.visible");
+        // The "Required files" row names the specific missing files.
+        cy.getBySel("required-files-summary").should("contain", "Missing");
     });
 
     it("does not allow the user to initiate training if the data enrichment button has not been checked", () => {

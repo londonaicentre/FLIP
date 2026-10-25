@@ -54,7 +54,7 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
 
-The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
+The on-prem trust kit (`trust/.env.<CODE>.prod`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
 
 ## Prerequisites
 
@@ -69,7 +69,7 @@ The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_
    - SSH access from the operator workstation (if remote), or local access
    - Internet connectivity (to pull Docker images and packages)
 
-3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs, FL participant kits in S3, and NLB security group configuration). See [`deploy/providers/AWS/`](../../../deploy/providers/AWS/README.md).
+3. **AWS Central Hub deployed** — The Central Hub must be running in AWS (required for Terraform outputs and the FL participant kits in S3). See [`deploy/providers/AWS/`](../../../deploy/providers/AWS/README.md).
 
 ## Quick Start
 
@@ -79,30 +79,23 @@ All commands are run from the `deploy/providers/AWS/` directory since the Makefi
 cd deploy/providers/AWS
 ```
 
-### Recommended end-to-end target (hybrid)
+### Running docker on the trust host
 
-```bash
-make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
-```
-
-This wrapper target runs the full AWS + on-prem trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
-
-You still need to start the on-prem trust stack on the trust host. The playbook
-deliberately does **not** add the SSH login user to the `docker` group (docker
+The playbook deliberately does **not** add the SSH login user to the `docker` group (docker
 group membership is equivalent to root on the host — any member can mount `/`
 into a container and chroot in), so docker commands and `make -C trust up-trust`
 must be run via `sudo`:
 
 ```bash
 cd ../../..
-sudo -E env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
+sudo -E make -C trust up-trust KIT=<CODE> HUB=<stag|prod>
 ```
 
-Use the trust code you registered, whose kit file is `trust/.env.<CODE>.production`.
+Use the trust code you registered, whose kit file is `trust/.env.<CODE>.<stag|prod>`.
 `-E` is load-bearing: it preserves `$HOME`, so root's docker client reuses your
 `~/.docker/config.json` GHCR login for the image pulls — a plain `sudo` looks in
-`/root/.docker` and the pulls fail. (`PROD` needs no preserving; `env PROD=…` sets
-it explicitly for the command.) Any direct `docker`, `docker compose`, or
+`/root/.docker` and the pulls fail. (`HUB` needs no preserving: it is a make argument.)
+Any direct `docker`, `docker compose`, or
 `docker swarm` invocations on the trust host should likewise be prefixed with `sudo`.
 
 > **Hosts provisioned before this change are not remediated by re-running the
@@ -129,40 +122,47 @@ so run it from `deploy/providers/AWS/`:
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 
 cd deploy/providers/AWS       # first time only, if you didn't `cd` earlier
-make provision-local-trust
+make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 ```
 
 ### What `provision-local-trust` does
 
-1. Runs the Ansible playbook (`onprem.yml`) which:
-   - Installs Docker and required system packages
-   - Creates `/opt/flip/` and `/opt/flip/data/images/`, owned by `ubuntu`
-   - Creates the **per-net images bind sources** `/opt/flip/data/images/net-1`
-     and `net-2`. Each fl-client mounts only its own net's slice, and both
-     imaging-api and the fl-client *write* there, so these must exist and be
-     writable before the first `up-trust`. `make up-trust` repairs their ownership
-     itself (`ensure_net_dirs` in `trust/Makefile`, which runs under `sudo` on-prem
-     and fails loudly if it cannot), so the trap is a `net-N` created root-owned by
-     a path that bypasses make: then every image download 500s and training later
-     fails with a misleading `num_samples=0`. Ownership is **backend-aware**, driven by
-     the `fl_backend` extra-var the make target passes: NVFLARE's client shares
-     imaging-api's uid, so `ubuntu:ubuntu` + `0755`; Flower's runs as `app`
-     (uid/gid 49999) on upstream `flwr/base`, so group `49999` + `0775`. Re-run
-     the playbook (or fix by hand) if you switch `FL_BACKEND`.
-   - Creates the **XNAT bind mounts** `/opt/flip/xnat`,
-     `/opt/flip/xnat/xnat-data/{tomcat_logs,archive,build,cache}` and
-     `/opt/flip/xnat/xnat-db-data`, owned by **UID/GID 1001** — the in-image
-     `xnat` user (`trust/xnat/xnat/Dockerfile`), not the login user. See the
-     XNAT-directory warning below.
-   - Creates the **FL participant kit tree** under `/opt/flip/fl-kit` — the
+1. Runs the Ansible playbook (`onprem.yml`), a composition of the shared roles in
+   [`roles/`](roles/README.md) (the EC2 play `deploy/providers/AWS/site.yml` composes the same ones):
+   - Installs Docker and the base packages (`flip_base_packages`, `flip_docker` — no docker-group grant)
+   - Creates the application, images and XNAT directories under `/opt/flip/` (`flip_trust_dirs`):
+     - `/opt/flip/` and `/opt/flip/data/images/`, owned by `ubuntu`
+     - the **per-net images bind sources** `/opt/flip/data/images/net-1`
+       and `net-2`. Each fl-client mounts only its own net's slice, and both
+       imaging-api and the fl-client *write* there, so these must exist and be
+       writable before the first `up-trust`. `make up-trust` repairs their ownership
+       itself (`ensure_net_dirs` in `trust/Makefile`, which runs under `sudo` on-prem
+       and fails loudly if it cannot), so the trap is a `net-N` created root-owned by
+       a path that bypasses make: then every image download 500s and training later
+       fails with a misleading `num_samples=0`. Ownership is **backend-aware**, driven by
+       the `fl_backend` extra-var the make target passes: FLARE's client shares
+       imaging-api's uid, so `ubuntu:ubuntu` + `0755`; Flower's runs as `app`
+       (uid/gid 49999) on upstream `flwr/base`, so group `49999` + `0775`. Re-run
+       the playbook (or fix by hand) if you switch `FL_BACKEND`.
+     - the **XNAT bind mounts** `/opt/flip/xnat`,
+       `/opt/flip/xnat/xnat-data/{tomcat_logs,archive,build,cache}` and
+       `/opt/flip/xnat/xnat-db-data`, owned by **UID/GID 1001** — the in-image
+       `xnat` user (`trust/xnat/xnat/Dockerfile`), not the login user. See the
+       XNAT-directory warning below.
+     - the **approved-cohort membership stores** (FLIP#857) `/opt/flip/cohort-snapshots/trust-1`
+       and `trust-2`, owned by **UID/GID 1000** (data-access-api's in-image user) under a
+       root-owned `/opt/flip/cohort-snapshots`. If data-access-api cannot write there, every
+       project approval fails to freeze its cohort and the trust refuses that project's
+       row-level data. `make up-trust` prepares any other slot's store itself.
+   - Pre-creates the **FL participant kit tree** for the tarball you extract by hand (`flip_fl_kit` with
+     `fl_kit_source: precreate`) under `/opt/flip/fl-kit` — the
      default `FL_KIT_DIR`, matching what the prod trust compose mounts:
-     `${FL_KIT_DIR}/net-1/services/<slot>/{local,startup,transfer}` for NVFLARE
+     `${FL_KIT_DIR}/net-1/services/<slot>/{local,startup,transfer}` for FLARE
      and `${FL_KIT_DIR}/net-1/{certificates,keys}` for Flower. The slot
-     sub-tree is **hard-coded to `Trust_2`** in the playbook's loop. If the hub
-     assigned this trust a different slot (check `FL_KIT_SLOT` in
-     `trust/.env.<CODE>.<env>`), either edit the four `.../services/Trust_2...`
-     entries in the `Create FL participant kit directories` task before running
-     the playbook, or just create the tree yourself afterwards:
+     sub-tree defaults to **`Trust_2`** (`fl_kit_precreate_slot` in the role's defaults).
+     If the hub assigned this trust a different slot (check `FL_KIT_SLOT` in
+     `trust/.env.<CODE>.<env>`), either pass `-e fl_kit_precreate_slot=<slot>` to the
+     playbook, or just create the tree yourself afterwards:
 
      ```bash
      sudo install -d -o ubuntu -g ubuntu -m 0755 \
@@ -171,6 +171,8 @@ make provision-local-trust
 
      An operator who overrides `FL_KIT_DIR` in their kit file owns the whole
      directory tree themselves — the playbook only ever provisions the default.
+   - Copies the Loki/Alloy/Grafana config into `/opt/flip/config/observability`, where the production
+     compose reads it (`flip_observability_config`)
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
 
 > **Warning — the playbook's XNAT directory is not the one XNAT uses.** Both this
@@ -181,7 +183,7 @@ make provision-local-trust
 > `XNAT_DATA_DIR=./xnat-data`, resolved against `trust/xnat/` (so
 > `<checkout>/trust/xnat/xnat-data`). Only when the kit omits the key does the
 > Makefile fall back to the **per-slot** `/opt/flip/xnat-trust$(TRUST_NUM)` under
-> `PROD=stag|true` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
+> `HUB=stag|prod` (`TRUST_NUM` is the kit's `FL_KIT_SLOT_NUMBER`; `./xnat-data-trust<N>`
 > in dev) — a deliberate split so two trusts sharing a host stay isolated. Compose,
 > `xnat-reset` and the ownership check all read that same variable, so the live tree
 > is `<XNAT_DATA_DIR>/xnat-data/{tomcat_logs,archive,build,cache}` plus
@@ -192,8 +194,6 @@ make provision-local-trust
 > in effect, then verifies it and fails naming the exact `chown` when it is wrong — so
 > treat it as destructive, not as a repair tool for a populated archive.
 
-Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
-
 ### Post-provisioning manual steps
 
 1. **Start the trust stack** on the trust host. The login user is intentionally
@@ -202,7 +202,7 @@ Opening the AWS FL-server NLB to the trust's public IP is a **separate** step �
 
    ```bash
    cd ../../..
-   sudo -E env PROD=stag make -C trust up-trust KIT=<CODE>   # the trust code you registered
+   sudo -E make -C trust up-trust KIT=<CODE> HUB=stag   # the trust code you registered
    ```
 
 2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling — `sudo docker compose logs trust-api`).
@@ -225,13 +225,16 @@ Any machine with the correct credentials can act as a trust — the hub identifi
 
 1. The trust must be registered on the hub — run `make register-trusts`, or use the Add-Trust button on the Connection status page. Registration inserts the `trust` row with its `api_key_hash` and claims an FL kit slot. No hub redeploy is needed.
 
-The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust registration automatically (both honour `PROD=stag|true`). When provisioning a trust standalone with `provision-local-trust`, the trust must already be registered.
+`provision-local-trust` does not register the trust: it must already be registered.
 
 ## Ansible Playbook Details
 
 ### `onprem.yml`
 
-The main playbook. It can be run standalone or via the `provision-local-trust` Makefile target.
+The main playbook. It can be run standalone or via the `provision-local-trust` Makefile target. It
+composes the roles in [`roles/`](roles/README.md); the play itself only states what an on-prem host does
+differently from the EC2 trust (no docker-group grant, a pre-created kit tree instead of an S3 sync, one
+images tree). Roles are found beside the play, so no `roles_path` configuration is needed.
 
 **Optional variables:**
 
@@ -239,6 +242,13 @@ The main playbook. It can be run standalone or via the `provision-local-trust` M
 | --- | --- | --- |
 | `flip_dir` | `/opt/flip` | Root application directory |
 | `fl_backend` | `nvflare` | FL backend this trust will run. Sets the group/mode of the per-net images bind sources (`<flip_dir>/data/images/net-N`) — the Flower client runs as uid/gid 49999, not imaging-api's 1000, so it needs group 49999 + `0775` to write there. `provision-local-trust` passes the deployment's `FL_BACKEND` automatically. |
+| `fl_kit_precreate_slot` | `Trust_2` | The FLARE slot whose `net-1/services/<slot>/{local,startup,transfer}` tree is pre-created; must match the kit file's `FL_KIT_SLOT`. |
+
+**Data.** The playbook puts no data on the host. The OMOP and Orthanc stores start empty and
+`make -C trust up-trust` seeds them from the canonical dataset at bring-up (FLIP#1187,
+`ensure-seeded`) — there is no snapshot to restore any more. The licensed core vocabulary is not part
+of that either: its bundle comes from the hub's S3 bucket through an instance role, so on-prem it stays
+`make -C trust/omop-db load-omop-vocab`.
 
 **Direct usage** (without the Makefile):
 
@@ -269,29 +279,23 @@ uv run ansible-galaxy install -r trust/deploy/ansible/requirements.yml
 
 ### Port Forwarding (NAT)
 
-**No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server via the NLB. All communication is trust-initiated.
+**No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server through the networking account's edge NLB. All communication is trust-initiated.
 
 The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
 
-- **`app.flip.aicentre.co.uk`** — the ALB (HTTPS API, port 443).
-- **`fl.app.flip.aicentre.co.uk`** — the NLB (FL gRPC, default port 8002).
+- **`app.flip.aicentre.co.uk`** — the edge CloudFront (HTTPS API, port 443).
+- **`fl.app.flip.aicentre.co.uk`** — the edge NLB (FL gRPC, default port 8002).
 
 ### Dynamic Public IP
 
-The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it. Set `LOCAL_TRUST_PUBLIC_IPS` (an HCL list of every allowlisted IP) in the env file and reconcile with `allow-local-trust-nlb`:
-
-```bash
-LOCAL_TRUST_PUBLIC_IPS='["<new-ip>"]' make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<new-ip>
-```
-
-Re-running with an already-listed IP is a no-op (idempotent).
+The hub keeps no per-trust allowlist, so a changed public IP (common with residential broadband) needs no hub-side change.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
 | Trust not polling hub | Trust stack running? (`sudo docker ps` on trust host). Check trust-api logs for polling errors. |
-| `Connection timed out` (FL) | Trust's public IP changed? Update NLB security group. Host/router firewall blocking outbound on port 8002? |
+| `Connection timed out` (FL) | Host/router firewall blocking outbound on port 8002? |
 | Firewall blocking outbound | Check host/router firewall allows outbound HTTPS (443) and gRPC (8002) |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |
 

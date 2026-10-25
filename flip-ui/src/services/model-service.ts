@@ -32,8 +32,18 @@ export interface IModelMetricData {
     }[]
 }
 
+// Sanity cap on a run's GPU count, matching the hub and both FL APIs (FLIP#70). Not a capacity
+// check: whether a trust can provide the request is decided by the FL server's scheduler.
+export const MAX_GPUS_PER_SITE = 8;
+
+// The GPUs a run needs at each selected trust; overrides the job's meta.json resource_spec.
+export interface IJobResources {
+    num_gpus: number;
+}
+
 export interface IInitTraining {
     trust_ids: string[];
+    resources?: IJobResources;
 }
 
 export interface IModel {
@@ -85,6 +95,8 @@ export interface IModelDashboard {
     resultsUploadedAt?: string | null;
     // The trusts the run was dispatched to. Empty before dispatch.
     trusts?: IModelSummaryTrust[];
+    // The GPU override the run was given at submission; null when it kept the job's own request.
+    resources?: IJobResources | null;
     // The model's 1-based place in the FL training queue (1 = next to be picked
     // up); null/absent unless the model has a queued job waiting for a net.
     queuePosition?: number | null;

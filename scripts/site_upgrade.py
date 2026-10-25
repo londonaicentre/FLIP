@@ -114,12 +114,15 @@ _GITHUB_TIMEOUT_SECONDS = 5.0
 #: A stable platform release. Not `v0.7.0-rc.1`, and not a component release (`flip-utils-v0.10.0`).
 _STABLE_RELEASE = re.compile(r"^v\d+\.\d+\.\d+$")
 
-#: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.production.yml`,
-#: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.production.<backend>.yml`)
+#: Where a deployed site pulls every image from, whatever its kit says: the prod compose
+#: files hardcode it and trust/xnat/Makefile pins it (FLIP#1480).
+_SITE_REGISTRY = "ghcr.io/londonaicentre/"
+
+#: Every repo-built image a compose site pulls (`trust/deploy/compose_trust.prod.yml`,
+#: `trust/xnat/docker-compose-stack.yml`, `trust/deploy/compose_trust.prod.<backend>.yml`)
 #: with the kit key that pins it away from ``DOCKER_TAG`` when set — the compose files'
 #: ``${OMOP_DB_TAG:-${DOCKER_TAG}}`` / ``${ORTHANC_TAG:-…}`` opt-outs and the XNAT Makefile's
 #: ``XNAT_TAG ?= ${DOCKER_TAG}``. A pinned image is checked at its pin, not at the target.
-_DEFAULT_REGISTRY = "ghcr.io/londonaicentre/"
 _SITE_IMAGE_PINS = {
     "trust-api": None,
     "imaging-api": None,
@@ -374,10 +377,13 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
 
 def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
     """Every image reference the site would pull once the kit pins ``tag`` (FL client at ``fl_tag``)."""
-    registry = kit.get("DOCKER_REGISTRY") or _DEFAULT_REGISTRY
-    refs = [f"{registry}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
+    refs = [f"{_SITE_REGISTRY}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
+    # The optional MONAI Label overlay (compose_trust.prod.monailabel.yml) pulls at DOCKER_TAG
+    # too, but only on a kit that turns it on — the same exact-"true" test as trust/Makefile.
+    if kit.get("MONAI_LABEL", "").strip() == "true":
+        refs.append(f"{_SITE_REGISTRY}monailabel:{tag}")
     fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
-    return [*refs, f"{registry}{fl_client}:{fl_tag or tag}"]
+    return [*refs, f"{_SITE_REGISTRY}{fl_client}:{fl_tag or tag}"]
 
 
 class RegistryUnavailable(Exception):
@@ -624,14 +630,16 @@ def plan(args: argparse.Namespace) -> int:
                 print(f"     {ref}")
             print("   A release tag (vX.Y.Z) builds every image; a sha- tag only carries the images that")
             print("   commit changed. Nothing changed — pick a tag that exists for all of them, or hold")
-            print("   the odd one at its own build (FL_TAG=, or OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG in the kit).")
+            print("   the odd one at its own build (FL_TAG=, or OMOP_DB_TAG / ORTHANC_TAG in the kit).")
+            print("   XNAT_TAG pins all three XNAT images, whose builds no longer share sha- tags;")
+            print("   set XNAT_TAG=vX.Y.Z (or stag/prod), published for all three, on a sha- move.")
             return EXIT_MISSING_IMAGES
         print(f"   ✓ all {len(site_images(kit, target, fl_tag))} images are published")
 
     if args.dry_run:
         print("   (dry run — kit not modified)")
         return 0
-    pins = f"DOCKER_TAG={target} DOCKER_FL_TAG={fl_tag}" if fl_tag else f"DOCKER_TAG=DOCKER_FL_TAG={target}"
+    pins = f"DOCKER_TAG={target}, DOCKER_FL_TAG={fl_tag or target}"
     if not _confirm(f"   This pins {pins} in {kit_file}.", args.yes):
         print("❌ Not confirmed — nothing changed.")
         return EXIT_NOT_CONFIRMED

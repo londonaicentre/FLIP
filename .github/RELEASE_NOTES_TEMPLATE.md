@@ -15,63 +15,67 @@
 
 ## :sparkles: Highlights
 
-- **A trust can write its own access rules** (#1297) — an optional governance document, one TOML file per trust (`trust/governance.<CODE>.toml`, worked example `trust/governance.example.toml`), named by `ACCESS_POLICY_FILE` in the kit. `[disclosure]` can raise the trust's cohort floor above `COHORT_QUERY_THRESHOLD` (never lower it); `[access]` permits or denies an operation per project; `[fl_privacy.nvflare]` sets the NVFLARE client's site privacy filter. The document is operator-owned and mounted read-only: the Central Hub cannot set, read or override it. With no document, nothing changes.
-- **Site upgrades say when a newer release exists** (#1332) — the upgrade verbs name a more recent platform release and its date. If the Central Hub already runs it, the operator can stop and move to it; if not, the verb only warns, because a site must not run ahead of the Central Hub.
+- **A security hotfix for XNAT** (#1648). XNAT before 1.10.2.1 lets someone who can reach a trust's XNAT web
+  interface, without logging in, create an account with up to site-administrator rights. Every trust's XNAT moves
+  from 1.10.0 to 1.10.2.1; please upgrade promptly.
+- **The first hotfix release.** v0.13.2 is v0.13.1 plus this fix only, cut from a `hotfix/v0.13.2` branch: PRs to
+  `main` may now come from `hotfix/*` branches as well as `develop` (*CONTRIBUTING.md → Hotfixes*). Everything
+  merged to `develop` since v0.13.1 waits for v0.14.0.
 
 ## :warning: Breaking Changes
 
-None. A trust without a governance document behaves as on v0.10.0, and nothing in this release changes the hub↔site contract.
+- None.
 
 ## :arrows_counterclockwise: Site upgrade
 
 <!-- The prompt to trust operators (FLIP#1204). Sites upgrade on their own schedule and to the
      release their hub runs; this section is how they learn what this release asks of them. -->
 
-<!-- Fill the first three lines in for EVERY release; they are not boilerplate. "Ordering" is where a
-     flag-day is announced: a payload-cipher change or an FL-framework bump means hub AND sites in one
-     Deployment-Mode window, and a site left behind fails every task until it moves. -->
-
-- **Required:** no, if you are on v0.7.0 or later. Upgrade to adopt a governance document (#1297). **Yes, and as a flag day, if you are on v0.6.x or earlier**: you cross v0.7.0's AES-256-GCM change on the way here, and that has no CBC fallback.
-- **Ordering:** sites at their own pace, before or after the hub — the Central Hub is unchanged in this release. From v0.6.x, hub and sites move together in one Deployment-Mode window.
-- **Refreshed kit needed:** no — the Hub-shared block is unchanged.
-- **Adopting a governance document** (optional, after the upgrade): write `trust/governance.<CODE>.toml`, set `ACCESS_POLICY_FILE` in the kit, check it with `make -C trust check-governance KIT=<CODE>`, and apply it with `make -C trust reload-governance KIT=<CODE>` — never `up-trust` / `restart-trust`, which are first-install verbs. `[fl_privacy.nvflare]` and `FL_SITE_PRIVACY_*` together are refused: use one. On Kubernetes, `sync-kit` validates the document and embeds it in the release (`trust/deploy/helm/README.md`). An EC2 trust driven over a remote Docker endpoint refuses a document in this release.
+- **Required: yes, promptly.** The flaw needs only network access to XNAT. Until a site has upgraded, restrict who
+  can reach its XNAT web port (`XNAT_WEB_PORT`, or the `xnat-web` service on Kubernetes). Releases before {{TAG}}
+  are no longer supported.
+- **Ordering:** any order. The hub runs no XNAT. Until the hub reports {{TAG}}, pass `TAG={{TAG}}` to the upgrade
+  verb, which otherwise defaults to the release the hub reports.
+- **Kubernetes trusts:** required, as for on-prem sites. XNAT's Container Service plugin moves to 3.8.2, which the
+  new XNAT needs.
+- **Refreshed kit needed:** no. The Hub-shared block is unchanged. Remove any `XNAT_TAG` (or `xnat.image.pin`) that
+  holds XNAT back.
 - **Operator command**, on the trust host, from your FLIP checkout:
   ```bash
   git fetch --tags origin && git checkout {{TAG}}        # the compose files and the verb come from the checkout, not the images
-  sudo -E make upgrade-onprem-trust KIT=<slot>           # defaults to the release the hub runs; TAG={{TAG}} pins it before the hub moves
+  sudo -E make upgrade-onprem-trust KIT=<CODE> TAG={{TAG}}
   ```
-  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env> TAG={{TAG}}` — both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*. Sites on v0.7.0 or earlier do not have the command until they check out the tag.
-
-## :seedling: New Features
-
-- The trust governance document (#1297): `[disclosure] min_cohort_size`, `[access]` permit/deny rules over project (UUID) and operation — any matching deny denies, otherwise the strictest matching permit applies, and an action the document names but no rule matches is denied — and `[fl_privacy.nvflare]` for the NVFLARE site privacy filter. A denial is answered like a below-threshold cohort, so it reveals nothing about the policy; the rule id goes to the trust's own log. Invalid documents stop the service at startup. `[fl_privacy.flower]` is refused, since nothing enforces it on Flower yet.
-- `make -C trust check-governance` validates a document with the same loader the service uses, and `make -C trust reload-governance` applies an edited one to a live trust without touching its data; data-access-api logs one `[governance] … sha256=…` line at startup, which the reload checks (#1297).
-- The site-upgrade verbs name a newer platform release and its date, and offer it when the Central Hub already runs it. GitHub is advisory: a host that cannot reach it prints one line and carries on (#1332).
+  Kubernetes: `make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG={{TAG}}`; EC2: `make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env> TAG={{TAG}}`, both from a checkout at {{TAG}}. Runbook: *docs → System administrators → Upgrading a site*.
 
 ## :bug: Bug Fixes
 
-<!-- Update this section if a fix lands before the cut. -->
-
-- The Helm chart ships only the chart. It had no `.helmignore`, so each release record carried the chart's tests, scripts and any local caches, and a stray cache could push the record past the 1 MiB Secret limit (`Too long`) and fail the upgrade (#1339).
+- Security: XNAT 1.10.0 → 1.10.2.1, the XNAT security hotfix for unauthenticated account creation (no CVE
+  published yet; [XNAT announcement](https://wiki.xnat.org/news/xnat-security-hotfix-releases-1-10-2-1-1-9-3-9-and-1-8-10-6)).
+  The Container Service plugin moves 3.8.1 → 3.8.2, which the new XNAT requires; DQR, Batch Launch and the OHIF
+  viewer are unchanged (#1648).
 
 ## :white_check_mark: Release checks
 
-<!-- The gates that cannot run in CI: no GitHub-hosted runner has a GPU, and both the suite and the smoke test need real hardware and a full stack. Tick these on the release branch before the tag is cut — this section is the record that the published examples and the platform path were run, and it is shared by both release trains. See *Pre-release checklist* in CONTRIBUTING.md. -->
+<!-- These checks are release evidence and must be run for v0.13.2. Do not carry forward results
+     from an earlier release. Record the host, date and outcome before merging the release PR. -->
 
-Tutorial suite, on a GPU host:
+A hotfix runs the checks that exercise its fix (*CONTRIBUTING.md → Hotfixes*). The fix changes XNAT only; no tutorial
+or FL code changed since v0.13.1, so the tutorial suite is not re-run.
 
-- [ ] NVFLARE — `make -C fl-tutorials run-all-tutorials`
-- [ ] Flower — `make -C fl-tutorials run-all-tutorials FL_BACKEND=flower`
-- [ ] Host and date recorded: <!-- e.g. "RTX 5090 workstation, 24 September 2026" -->
-
-Not run for v0.11.0: the release was cut the same day as its last changes merged, and the suite takes several hours per backend.
-
-Full-platform smoke test, against a running deployment:
-
-- [x] NVFLARE — `make e2e_smoke`
-- [x] Flower — `make e2e_smoke FL_BACKEND=flower`
-
-Both passed on 29 September 2026 on the dev stack on an RTX 5090 workstation, against one trust (`--trusts GSTT`), with the hub, the trust services and the FL images (`sha-968a60d`) all at the release commit: create project, cohort query, trust approval, image pull, training, results uploaded and downloaded. Flower reused the NVFLARE run's project.
+- [x] Full-platform smoke test, FLARE — `make e2e_smoke` (imports DICOM through XNAT 1.10.2.1): passed against the
+  staging hub with two trusts on `v0.13.2-rc.1`, one on Docker Compose and one on Kubernetes. Each pulled the x-ray
+  cohort into its XNAT (300/300 and 289/300); training reached `RESULTS_UPLOADED`. The query was the tutorial's
+  vocabulary-free variant, because the Kubernetes trust has no core vocabulary loaded.
+- [ ] Full-platform smoke test, Flower — not re-run. The staging hub's only FL net runs NVFLARE, and the fix touches
+  XNAT alone: importing studies into XNAT is the same for both backends, and no FL code changed since v0.13.1.
+- [x] Kubernetes trust on XNAT 1.10.2.1 with Container Service 3.8.2 — `make -C trust/deploy/helm status` (plugin
+  roster matches the values and XNAT loaded all four), `smoke-cstore` (a C-STORE from the PACS logged in
+  `received.log`, no importer failure) and one dcm2niix conversion (container `Complete`, NIfTI resource written):
+  all passed.
+- [x] `make unit_test`: passed (flip-api 2220, flip-ui 1600, data-access-api 464, imaging-api 804, omop-db 115,
+  trust-api 174, trust/xnat 511).
+- [x] Host, date, deployment, and results recorded: 23 Oct 2026, both trusts upgraded in place from v0.12.0 with
+  the release's upgrade verbs (`upgrade-onprem-trust`, `upgrade-trust-k8s`); unit tests on an RTX 5090 workstation.
 
 ## :file_folder: PRs merged in this release
 
@@ -82,5 +86,3 @@ Both passed on 29 September 2026 on the dev stack on an RTX 5090 workstation, ag
 A big thank you to the following contributors for their work on this release:
 
 <!-- auto-populated by the release workflow -->
-
----

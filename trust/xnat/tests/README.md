@@ -36,10 +36,19 @@ protect the XNAT database credentials (FLIP-PT-056).
   images ship different ones: dash for xnat-web, busybox ash for xnat-db). The
   reject cases also assert the `psql` stub was *never* called, which is what pins
   the guard ahead of any database contact.
-- **Startup reliability** (`test_startup.py`) — executes the plugin cache/download
-  guard and authenticated plugin-readiness wait with stubbed AWS/curl commands,
+- **Third-party artifacts** (`test_artifacts.py`) — pins `artifacts.manifest` (well-formed
+  lines, the WAR at the `.env` XNAT version, one jar per required plugin family, the same plugin
+  URLs as the Helm chart) and executes `xnat_artifacts.sh` `check`/`fetch` against fixture
+  manifests with a stubbed `curl` and an `aws` stub that must never run.
+- **dcm2niix registration and trigger repair** (`test_dcm2niix_registration.py`, FLIP#1451) —
+  runs `configure-dcm2niix.sh` for both Container Service backends against `fake_xnat.py`, a
+  miniature XNAT behind a stubbed `curl`, and checks what XNAT ends up holding.
+- **Startup reliability** (`test_startup.py`) — executes the dev plugin-cache check ordering
+  and authenticated plugin-readiness wait with stubbed curl commands and fixture jars (`plugin_fixtures.py`),
   checks aggregate Make targets propagate failures, and pins root-relative paths
   passed to the end-to-end smoke test.
+- **Anonymous XNAT paths** (`test_anonymous_endpoints.py`) — fails on an `XNAT_VERSION` bump until
+  the new version's anonymous paths have been checked (the assert message says how).
 
 The tests do not stand up XNAT, DicomEdit, or Postgres. The anonymization tests
 validate the FLIP-authored ruleset against synthetic studies; the guard-behaviour
@@ -59,10 +68,29 @@ Run from `trust/xnat/tests/` or via `make -C trust/xnat/tests unit_test`.
 
 ## When to update
 
-If you add a tag to `anon_script.das`, also add it to the
-`PHI_TAGS_REQUIRED` allowlist in `test_anon_script_static.py` (if it is
-a tag FLIP guarantees handling for) and to the synthetic study fixture
-in `conftest.py`.
+`anon_script.das` handles every row of DICOM PS3.15 Table E.1-1, which is
+copied into `ps315_table_e1_1.csv`; `test_every_table_e1_1_attribute_is_handled`
+fails when a row is not removed at any depth, hashed, or replaced. When a new
+edition of the standard adds rows, refresh the copy with
+`extract_ps315_table.py` (its docstring has the commands) and add a rule per
+new row. Write removals as `- */(gggg,eeee)`: a bare tag matches the top level
+only, and the static tests fail on one. A tag the script replaces at the top
+level needs `- +/(gggg,eeee)` for its nested copies. A tag a test should name
+explicitly also goes in `PHI_TAGS_REQUIRED` in `test_anon_script_static.py`,
+and in the synthetic study fixture in `conftest.py`.
+
+`anon_engine.py` is a stand-in for DicomEdit, so it only proves what it
+models. Its `*/`, `+/`, `X`/`@` tag wildcards, `removeAllPrivateTags`,
+`hashUID` on an absent tag, and `\\` semantics were checked against DicomEdit
+6.9.0 from the `xnat-web` image (FLIP#1513), and the two engines gave the same
+output on the fixture and on real CT, MR, enhanced MR, RT structure set,
+secondary capture, ultrasound and X-ray samples. Check any new construct the
+same way before relying on it. On an XNAT bump, run the script through the new
+WAR's DicomEdit as well: for 1.10.2.1 (FLIP#1648), DicomEdit 6.10.0 gave output
+identical to 6.9.0's on the fixture, with and without a private block, Digital
+Signatures Sequence and padding after Pixel Data. DicomEdit rejects some forms outright (a space
+inside the tag brackets, a lowercase `x`, `removeallprivatetags`), and then
+XNAT cannot parse the script at all.
 
 If you change what counts as a weak XNAT password, change it in **all four**
 places and update `CANONICAL_WEAK_VALUES` in `test_password_guards.py` — the

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
-from fastapi import Request
+import httpx
 from sqlalchemy import Column
 from sqlmodel import Session, col, select
 
@@ -27,15 +27,16 @@ from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
     IClientStatus,
     IJobMetaData,
+    IJobResources,
     IServerStatus,
     IStartTrainingBody,
     JobRequiredFiles,
 )
-from flip_api.domain.schemas.status import FLJobStatus, FLTargets, JobStatus
+from flip_api.domain.schemas.status import FLJobStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
-from flip_api.utils.http import http_delete, http_get, http_post
+from flip_api.utils.http import fl_api_error_message, http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import PresignAudience, S3Client
 
@@ -86,14 +87,14 @@ def _normalise_job_type(job_type: str, fl_backend: FLBackend) -> str:
 
 
 # The app directory of a base template — the only directory that is ever deployed. Everything a
-# job actually needs at a trust lives under it: the NVFLARE ``app/config/*.json`` pair, or the
+# job actually needs at a trust lives under it: the FLARE ``app/config/*.json`` pair, or the
 # Flower ``app/*.py`` modules named by ``[tool.flwr.app.components]``. The researcher's own files
-# are added by the bundler afterwards (into ``app*/custom/`` for NVFLARE, or alongside for Flower)
+# are added by the bundler afterwards (into ``app*/custom/`` for FLARE, or alongside for Flower)
 # and never pass through this walk.
 BUNDLED_APP_DIR_NAME = "app"
 
 # Per-backend name prefixes that make a top-level directory an *additional* app folder beside
-# ``app/``. An NVFLARE job may carry per-site variants — ``app_site1/``, ``app_site-1/``,
+# ``app/``. A FLARE job may carry per-site variants — ``app_site1/``, ``app_site-1/``,
 # ``app_server/`` — each named in ``meta.json``'s ``deploy_map`` and deployed to the sites it
 # lists; ``bundle_nvflare_application`` and fl-api-base's job assembly both handle that layout.
 # A Flower App Bundle has exactly one app package, so nothing but ``app/`` qualifies there.
@@ -103,17 +104,18 @@ BUNDLED_APP_DIR_PREFIXES: dict[str, tuple[str, ...]] = {
 }
 
 # The single root file each backend needs beside the app folder(s):
-#   NVFLARE  meta.json      — the job definition NVFLARE reads to deploy the app.
+#   FLARE  meta.json      — the job definition FLARE reads to deploy the app.
 #   Flower   pyproject.toml — the FAB definition; ``[tool.flwr.app.components]`` resolves
 #                             ``app.server_app:app`` relative to it, so it must sit at the run root.
 #
-# There is deliberately no slot for a lockfile, and no template commits one. Flower resolves
-# dependencies fresh on every app launch at every trust (``uv sync``, see FL_APP_BASE_DIR in
-# AGENTS.md), so a committed ``uv.lock`` would be a resolution for the developer's machine rather
-# than for the trust — which is also why ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to
-# keep one out of an app folder. If reproducible per-run resolution ever becomes a requirement,
-# both halves have to change together: add the lockfile here and stop excluding it there, and the
-# lock then has to be resolved for the FL image's platform, not for whoever ran ``uv sync`` last.
+# There is deliberately no slot for a lockfile, and no template commits one. Nothing installs an
+# app's dependencies at run time (the FL apps run in the image's environment, see FL_APP_BASE_DIR in
+# AGENTS.md), and any ``uv sync`` against a template resolves fresh, so a committed ``uv.lock``
+# would be a resolution for the developer's machine rather than for the FL image — which is also why
+# ``uv.lock`` is named in EXCLUDED_APP_FILE_NAMES below, to keep one out of an app folder. If
+# reproducible per-run resolution ever becomes a requirement, both halves have to change together:
+# add the lockfile here and stop excluding it there, and the lock then has to be resolved for the FL
+# image's platform, not for whoever ran ``uv sync`` last.
 BUNDLED_ROOT_FILES: dict[str, frozenset[str]] = {
     FLBackend.NVFLARE: frozenset({"meta.json"}),
     FLBackend.FLOWER: frozenset({"pyproject.toml"}),
@@ -153,9 +155,9 @@ _assert_backends_have_bundling_rules()
 def is_bundled_app_dir(name: str, fl_backend: FLBackend) -> bool:
     """Whether a top-level template directory is an app folder that this backend deploys.
 
-    One rule shared by the allowlist walk and the NVFLARE bundler's app-folder scan, so the two
+    One rule shared by the allowlist walk and the FLARE bundler's app-folder scan, so the two
     cannot drift: ``app/`` on every backend, plus any :data:`BUNDLED_APP_DIR_PREFIXES` match
-    (``app_*`` on NVFLARE only). Anything else that merely starts with ``app`` — ``apps/``,
+    (``app_*`` on FLARE only). Anything else that merely starts with ``app`` — ``apps/``,
     ``application/`` — is not an app folder.
 
     Args:
@@ -192,7 +194,7 @@ def describe_bundled_app_dirs(fl_backend: FLBackend) -> str:
 # precisely to ignore ``.flwr/``, ``.venv/`` and ``uv.lock`` *inside* an ``app/`` directory. The
 # dot rule catches all but ``uv.lock``, which is named because it is not dot-prefixed: it is a
 # resolved lock for the developer's machine, and the Flower run-root ``pyproject.toml`` is what the
-# per-run ``uv sync`` at a trust resolves from.
+# ``uv sync`` against a template resolves from.
 #
 # So the two halves of the rule are not the same kind of rule, and only one of them is closed. At
 # the template root the allowlist is *positional* — a directory ships because it is an app folder,
@@ -238,7 +240,7 @@ def list_local_base_files(base_dir: Path, fl_backend: FLBackend) -> list[str]:
 
     Selection is a positive allowlist, not a denylist of known junk (FLIP#1008): everything under
     the backend's app folder(s) plus its single root file, and nothing else. The app folders are
-    ``app/`` on both backends, plus NVFLARE's per-site ``app_*/`` variants (see
+    ``app/`` on both backends, plus FLARE's per-site ``app_*/`` variants (see
     :func:`is_bundled_app_dir`). A template directory is also a live uv project root — it is where
     ``pyproject.toml`` sits — so it is exactly where ``uv sync``, ``ruff``, ``pytest`` and friends
     write their caches. In dev that tree is bind-mounted into flip-api, so a denylist would have to
@@ -306,7 +308,7 @@ def _walk_app_dir(app_dir: Path, base_dir: Path, skipped: list[str]) -> list[str
     """Collect deployable files under one of a template's app directories.
 
     Args:
-        app_dir (Path): The app directory (``app/`` or an NVFLARE ``app_*/`` variant).
+        app_dir (Path): The app directory (``app/`` or a FLARE ``app_*/`` variant).
         base_dir (Path): Template root, so returned paths stay relative to it.
         skipped (list[str]): Accumulator for excluded paths, for the caller's debug log.
 
@@ -337,7 +339,7 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     """Reject a malformed base template before anything is written, naming what it must carry.
 
     Three shapes of malformed template, one wording. Each would otherwise bundle cleanly and only
-    fail at the FL server, far from the cause — NVFLARE has no ``meta.json`` job definition to
+    fail at the FL server, far from the cause — FLARE has no ``meta.json`` job definition to
     deploy, fl-api-flower cannot build a FAB without the run-root ``pyproject.toml``, and neither
     can run a job with no app package. The debug log from the walk lists exactly what was excluded,
     so a visibly non-empty template directory reporting "missing" stays diagnosable.
@@ -348,7 +350,7 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
         fl_backend (FLBackend): The backend whose layout applies.
 
     Returns:
-        set[str]: The app folders the walk kept — ``app`` plus NVFLARE's ``app_*`` variants — which
+        set[str]: The app folders the walk kept — ``app`` plus FLARE's ``app_*`` variants — which
         is where the researcher's files are mirrored to.
 
     Raises:
@@ -388,6 +390,9 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
 
     Returns:
         Any: The response from the server after uploading the application.
+
+    Raises:
+        httpx.HTTPStatusError: If the FL API returns an error response.
     """
     url = f"{endpoint}/upload_app/{model_id}"
     # Stopgap timeout: staging a large evaluation checkpoint (S3 download -> shared volume on
@@ -489,13 +494,23 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        IServerStatus | None: The server status, or ``None`` when the FL API does not respond.
+        IServerStatus | None: The server status, or ``None`` when the FL API cannot be reached or
+            answers with an error status.
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
     # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
     # be slower than httpx's 5s default.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Server status response: {response}")
     if not response:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
@@ -512,14 +527,24 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses if available, otherwise None.
+        list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
+            reached or answers with an error status.
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
     # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
     # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
     # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
-    response = http_get(url, timeout=30)
+    try:
+        response = http_get(url, timeout=30)
+    except httpx.HTTPError as e:
+        # HTTPError covers an unreachable FL API (RequestError) and an FL API that answers 4xx/5xx
+        # (HTTPStatusError), e.g. FLARE's FL API returning 500 while the fl-server behind it is down.
+        # Either way there is no status to report, so the caller shows the net offline. http_get has
+        # already logged a RequestError, so only an error response is logged here.
+        if isinstance(e, httpx.HTTPStatusError):
+            logger.error(f"HTTP GET failed for {url}: {e}")
+        return None
     logger.debug(f"Client status response: {response}")
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
@@ -586,7 +611,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the FL API service to check the status of the clients.
-    For NVFLARE, raises ValueError if any client is unavailable.
+    For FLARE, raises ValueError if any client is unavailable.
     For Flower, logs a warning instead — Flower's SuperLink handles client selection at runtime.
 
     Args:
@@ -598,7 +623,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
         None
 
     Raises:
-        ValueError: If any client is unavailable (NVFLARE backend only).
+        ValueError: If any client is unavailable (FLARE backend only).
     """
     is_flower = fl_backend == FLBackend.FLOWER
 
@@ -639,21 +664,93 @@ def abort_job(endpoint: str, job_id: str) -> dict:
 
 def _raise_if_job_aborted(fl_job_id: UUID, session: Session) -> None:
     """
-    Abort gate for the prepare window: raise if the FL job was DELETED mid-prepare.
+    Abort gate for the prepare window: raise if the FL job is no longer IN_PROGRESS.
 
-    Selects the status column (not the entity) so the check bypasses the session identity map
-    and sees the latest committed value from a concurrent abort (READ COMMITTED).
+    A concurrent abort DELETEs the job; the job watchdog (#727) COMPLETEs a job still being prepared past
+    ``FL_JOB_PREPARE_TIMEOUT_MINUTES``, and has by then freed its net. Either way the job must not reach the
+    fl-server. Selects the status column (not the entity) so the check bypasses the session identity map and sees
+    the latest committed value (READ COMMITTED).
 
     Args:
         fl_job_id (UUID): The ID of the FL job to check.
         session (Session): SQLModel session.
 
     Raises:
-        JobAbortedError: If the job no longer exists or was DELETED by a concurrent abort.
+        JobAbortedError: If the job no longer exists or is no longer IN_PROGRESS.
     """
     job_status = session.exec(select(col(FLJob.status)).where(FLJob.id == fl_job_id)).one_or_none()
-    if job_status is None or job_status == JobStatus.DELETED:
+    if job_status != JobStatus.IN_PROGRESS:
         raise JobAbortedError(f"FL job {fl_job_id} was aborted before submission")
+
+
+def _job_gpu_override(fl_job_id: UUID, session: Session) -> IJobResources | None:
+    """The GPU override stored with the run at submission, if any (FLIP#70).
+
+    Args:
+        fl_job_id (UUID): The FL job.
+        session (Session): SQLModel session.
+
+    Returns:
+        IJobResources | None: the override, or None when the researcher set none.
+    """
+    job = session.get(FLJob, fl_job_id)
+    if job is None or job.num_gpus is None:
+        return None
+    return IJobResources(num_gpus=job.num_gpus)
+
+
+_RESOURCE_SOURCES = {
+    "submission": "set for this run",
+    "meta.json": "from the job's meta.json",
+    "default": "the platform default",
+}
+
+
+def _log_applied_gpu_request(
+    model_id: UUID, override: IJobResources | None, upload_reply: Any, session: Session
+) -> None:
+    """Tell the researcher which GPU request the FL API applied, from its upload reply (FLIP#70).
+
+    The FLARE fl-api reports the request it wrote into the job and where it came from; the Flower
+    fl-api reports it recorded but did not enforce it, and reports nothing when no override was sent.
+    An fl-api older than per-job requests reports nothing either, which only matters when an override
+    was sent and silently dropped.
+
+    Args:
+        model_id (UUID): The model being trained.
+        override (IJobResources | None): what was sent as the run's override.
+        upload_reply (Any): the FL API's reply to upload_app.
+        session (Session): SQLModel session.
+    """
+    from flip_api.model_services.services.model_service import add_log
+
+    reported = upload_reply.get("resources") if isinstance(upload_reply, dict) else None
+    if reported is None:
+        if override is not None:
+            add_log(
+                model_id,
+                f"The FL API did not report applying the GPU request set for this run ({override.describe()}); "
+                "it may predate per-job GPU requests.",
+                session,
+                success=False,
+            )
+        return
+    try:
+        described = IJobResources.model_validate(reported).describe()
+    except ValueError:
+        logger.warning(f"Unreadable GPU request in the FL API's upload reply for model {model_id}: {reported}")
+        return
+    if upload_reply.get("resources_enforced") is False:
+        if reported.get("num_gpus"):
+            add_log(
+                model_id,
+                f"GPU request per trust: {described}, recorded but not enforced: Flower does not schedule jobs by GPU",
+                session,
+                success=False,
+            )
+        return
+    source = _RESOURCE_SOURCES.get(str(upload_reply.get("resources_source")))
+    add_log(model_id, f"GPU request per trust: {described}" + (f" ({source})" if source else ""), session)
 
 
 def start_training(
@@ -690,13 +787,15 @@ def start_training(
         cohort_query=required_info.cohort_query,
         trusts=clients,
         bundle_urls=bundle_urls,
+        resources=_job_gpu_override(fl_job_id, session),
     )
 
     # Gate before the (up to 900s) app transfer, and again right before submission: submit_job
     # is the side effect that creates the backend run, so a job aborted mid-prepare (#787) must
     # never reach it.
     _raise_if_job_aborted(fl_job_id, session)
-    upload_app(model_id, training_details, endpoint)
+    upload_reply = upload_app(model_id, training_details, endpoint)
+    _log_applied_gpu_request(model_id, training_details.resources, upload_reply, session)
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
     submit_job(fl_job_id, endpoint, model_id, session)
@@ -877,7 +976,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     #     list), loaded by InitialCheckpointPTModelPersistor and broadcast as the round-0 model.
     # Divert those to a server-only `server_checkpoints/` prefix so they are staged for the
     # fl-server (via the shared checkpoint volume) instead of being bundled into every
-    # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
+    # app*/custom/ and shipped to every client by FLARE's deploy_map (a large bundled file
     # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
     # job_type is already alias-normalised (_normalise_job_type), so the plain name is exhaustive.
@@ -906,7 +1005,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             continue
 
         if rel in server_checkpoints:
-            # Copied once to a non-app prefix; never placed in app*/custom/, so NVFLARE's
+            # Copied once to a non-app prefix; never placed in app*/custom/, so FLARE's
             # deploy_map never ships it to clients. The fl-server reads it off the shared volume.
             dst_key = f"{dest_bucket_s3_path}/server_checkpoints/{rel}"
             logger.debug(f"Copying server-side checkpoint {src_key} -> {dst_key}")
@@ -1212,17 +1311,47 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         raise RuntimeError(error_msg)
 
 
+def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
+    """List every job one net's FL API knows about, whatever its status.
+
+    Unlike ``extract_current_job_data`` (the abort path, which fails loudly), this answers ``None`` when the FL API
+    cannot be reached or replies with something that is not a job list. The job watchdog reads ``None`` as "unknown"
+    and acts on nothing, so a briefly unavailable FL API never fails a model.
+
+    Args:
+        net_endpoint (str): The net's FL API base URL.
+
+    Returns:
+        list[IJobMetaData] | None: The jobs, or ``None`` if the FL API could not say.
+    """
+    url = f"{net_endpoint}/list_jobs"
+    try:
+        # Same timeout as the other FL status calls: the Flower FL API lists runs through the flwr CLI.
+        response = http_get(url, timeout=30)
+        if not isinstance(response, list):
+            raise ValueError(f"expected a list of jobs, got {type(response).__name__}")
+        # pydantic's ValidationError is a ValueError, so an unknown status lands in the except below.
+        return [IJobMetaData.model_validate(job) for job in response]
+    except (httpx.HTTPError, ValueError) as e:
+        logger.warning(f"Could not list the jobs on {url}: {e}")
+        return None
+
+
 def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
     """
-    Extract the currently-running FL job matching ``fl_backend_job_id``.
+    Extract the FL job matching ``fl_backend_job_id`` while it is running or still waiting to start.
+
+    A waiting job counts: the backend can hold a submitted job for a long time (FLARE retries it while a
+    trust lacks the resources it asks for), and an abort that left it queued would let it start later, or
+    report to a model the user has since queued again (FLIP#1390).
 
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The FL job ID to look for.
 
     Returns:
-        IJobMetaData | None: The running job's metadata, or ``None`` if no running job
-            matches ``fl_backend_job_id`` (the job is already terminal or never started).
+        IJobMetaData | None: The job's metadata, or ``None`` if no running or waiting job
+            matches ``fl_backend_job_id`` (the job has already ended).
 
     Raises:
         ValueError: If the FL server response is not a list, or more than one running
@@ -1246,9 +1375,9 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
 
     current_job_data = [IJobMetaData.model_validate(j) for j in current_job_data]
 
-    # Get the running jobs only
-    current_job_data = [j for j in current_job_data if j.status == FLJobStatus.RUNNING]
-    logger.debug(f"Running jobs: {current_job_data}")
+    # Get the jobs that have not ended: running, or still waiting to start
+    current_job_data = [j for j in current_job_data if j.status in (FLJobStatus.RUNNING, FLJobStatus.PENDING)]
+    logger.debug(f"Running or waiting jobs: {current_job_data}")
 
     # Filter the fl_backend_job_id
     current_job_data = [j for j in current_job_data if j.job_id == fl_backend_job_id]
@@ -1256,8 +1385,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
 
     if not current_job_data:
         logger.info(
-            f"No running job with ID {fl_backend_job_id} on FL server {net_endpoint}; "
-            f"it is already terminal or never started."
+            f"No running or waiting job with ID {fl_backend_job_id} on FL server {net_endpoint}; it has already ended."
         )
         return None
 
@@ -1271,19 +1399,29 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     return current_job_data[0]
 
 
-def abort_model_training(request: Request, model_id: UUID, session: Session) -> None:
+def record_fl_api_failure(model_id: UUID, error: httpx.HTTPStatusError, session: Session) -> None:
+    """Log an FL API failure and add its researcher-facing message to the activity feed."""
+    from flip_api.model_services.services.model_service import add_log
+
+    logger.exception("FL API request failed: %s", error)
+    add_log(model_id, fl_api_error_message(error), session, success=False)
+
+
+def abort_model_training(model_id: UUID, session: Session) -> None:
     """
     Check if the model is currently running training, and if it is, send an abort request to the FL server.
 
     Args:
-        request (Request): The FastAPI request object
         model_id (UUID): The ID of the model to abort
         session (Session): SQLModel session object
 
     Raises:
-        ValueError: If the FL server is not running, or if ``target`` is invalid.
+        ValueError: If the FL server is not running, or if its job list is malformed or shows
+            the job more than once.
         DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
             rather than swallowed, so a failed abort is never reported as a success.
+        httpx.HTTPStatusError: If an FL API job-list or abort request fails. The error
+            is recorded in the model activity feed before it is re-raised.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
@@ -1325,31 +1463,31 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # If there is no running job for this model, it is already terminal — abort is an
+    # If the model's job is neither running nor waiting to start, it has already ended — abort is an
     # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
     # leaving it to the stale-BUSY watchdog.
-    if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+    try:
+        current_job = extract_current_job_data(net_endpoint, fl_backend_job_id)
+    except httpx.HTTPStatusError as error:
+        record_fl_api_failure(model_id, error, session)
+        raise
+    if current_job is None:
         fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
-            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); already stopped — nothing to abort."
+            f"No running or waiting FL job for model {model_id} (job ID {fl_backend_job_id}); already ended — "
+            "nothing to abort."
         )
         return
 
-    # Extracting target and clients from the request path parameters
-    path_params = request.path_params
-    target = path_params.get("target")
-    clients = path_params.get("clients")
-
-    # Checking if the target provided is valid
-    if target and target not in FLTargets:
-        logger.error(f"Invalid target: {target}")
-        raise ValueError(f"Invalid target: {target}")
-
     logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
-    response = abort_job(net_endpoint, fl_backend_job_id)
+    try:
+        response = abort_job(net_endpoint, fl_backend_job_id)
+    except httpx.HTTPStatusError as error:
+        record_fl_api_failure(model_id, error, session)
+        raise
 
-    logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+    logger.info(f"Abort job response: {response}")
 
     # The dequeue above DELETEd the model's jobs, so update_fl_scheduler (which only considers
     # non-DELETED jobs) can no longer free the net — release it here now the abort is delivered.
@@ -1357,7 +1495,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.info(f"Released {released} scheduler(s) for model {model_id} after abort")
 
 
-def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
+def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session, resources: IJobResources | None = None) -> None:
     """
     Insert a new FL job into the database with its trust participants.
 
@@ -1367,13 +1505,19 @@ def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
             `fl_job_trust` link table — the relationship gives `job.trusts` direct
             access to full Trust ORM rows without a manual id-to-name lookup.
         session (Session): The SQLModel session to use for the database operation.
+        resources (IJobResources | None): the researcher's GPU override for this run (FLIP#70), sent to
+            the FL API when the job is dispatched. None keeps the job's own request or the default.
 
     Raises:
         Exception: If there is an error during the database operation.
     """
     logger.debug(f"Adding FL job for model ID: {model_id}")
 
-    job = FLJob(model_id=model_id, trusts=trusts)
+    job = FLJob(
+        model_id=model_id,
+        trusts=trusts,
+        num_gpus=resources.num_gpus if resources else None,
+    )
 
     try:
         session.add(job)
@@ -1392,7 +1536,7 @@ def keep_fl_api_session_alive() -> None:
     A periodic function to keep the FL API session alive by making a simple request.
     This is useful to prevent the session from going idle or being shut down by the server.
 
-    TODO This was developed for the NVFLARE backend and might need to be revisited for the Flower backend.
+    TODO This was developed for the FLARE backend and might need to be revisited for the Flower backend.
     See https://github.com/NVIDIA/NVFlare/discussions/3526#discussioncomment-13574644
     """
     from flip_api.fl_services.get_status import fetch_server_status

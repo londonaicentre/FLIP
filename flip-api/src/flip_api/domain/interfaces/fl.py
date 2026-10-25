@@ -15,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, computed_field, field_validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import ClientStatus, FLJobStatus, NetStatus
@@ -74,11 +74,39 @@ def _load_job_types_config(fl_backend: FLBackend) -> dict[str, list[str]]:
         return {}
 
 
+# Sanity cap on a run's GPU count, for fast feedback on a typo; the same value as both fl-apis.
+# It is not a capacity check: the hub never compares a request with a trust's GPUs. On FLARE the
+# FL server's scheduler holds the job until every trust can provide it (FLIP#70).
+MAX_GPUS_PER_SITE = 8
+
+
+class IJobResources(BaseModel):
+    """The GPUs a training run needs at each participating trust (FLIP#70).
+
+    Backend-neutral: the FLARE fl-api writes the count into the job's ``meta.json`` ``resource_spec``,
+    the Flower fl-api records it without enforcing it. It applies to every selected trust and is
+    never lowered to fit one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    num_gpus: StrictInt = Field(ge=0, le=MAX_GPUS_PER_SITE)
+
+    def describe(self) -> str:
+        """The request in words, e.g. "1 GPU"."""
+        if not self.num_gpus:
+            return "no GPU"
+        return f"{self.num_gpus} GPU" if self.num_gpus == 1 else f"{self.num_gpus} GPUs"
+
+
 class IStartTrainingBody(BaseModel):
     project_id: str
     cohort_query: str
     trusts: list[str]
     bundle_urls: list[str]
+    # The run's GPU override, if the researcher set one at submission (FLIP#70). None leaves the
+    # job's own meta.json resource_spec, or the fl-api default, in force.
+    resources: IJobResources | None = None
 
 
 class ISchedulerResponse(BaseModel):
@@ -107,7 +135,7 @@ class IJobMetaData(BaseModel):
     only ``job_id`` + ``status``.
 
     ``job_id`` is the backend-assigned identifier, treated as an opaque string the hub never
-    parses: a UUID-like string for NVFLARE, a stringified integer run-id for Flower. It is
+    parses: a UUID-like string for FLARE, a stringified integer run-id for Flower. It is
     persisted as ``FLJob.fl_backend_job_id``.
     """
 
@@ -137,6 +165,14 @@ class IInitiateTrainingInputPayload(BaseModel):
     trust_ids: list[UUID] = Field(
         min_length=1,
         description="IDs of trusts to participate in training. Must be non-empty and unique.",
+    )
+
+    resources: IJobResources | None = Field(
+        default=None,
+        description=(
+            "GPUs per trust for this run, overriding the job's meta.json resource_spec and the platform "
+            "default. Omit to keep those."
+        ),
     )
 
     @field_validator("trust_ids")

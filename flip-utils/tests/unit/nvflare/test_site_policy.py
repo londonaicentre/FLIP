@@ -70,7 +70,7 @@ class TestGovernanceDocument:
         assert parse_governance_file(path) is None
 
     def test_an_empty_fl_privacy_table_is_none(self, tmp_path):
-        """What --extract writes for a document with no NVFLARE section."""
+        """What --extract writes for a document with no FLARE section."""
         path = _write(tmp_path, "[fl_privacy]\n")
 
         assert parse_governance_file(path) is None
@@ -96,7 +96,7 @@ class TestGovernanceDocument:
         assert parse_governance_file(path) == SitePolicy(percentile=10, gamma=0.01)
 
     def test_a_flat_fl_privacy_section_is_rejected_with_the_new_name(self, tmp_path):
-        """percentile/gamma are NVFLARE's PercentilePrivacy parameters; Flower's knobs (#852) will
+        """percentile/gamma are FLARE's PercentilePrivacy parameters; Flower's knobs (#852) will
         differ. The pre-release flat form is refused, naming where the keys moved."""
         path = _write(tmp_path, '[fl_privacy]\npolicy = "percentile"\n')
 
@@ -313,7 +313,7 @@ def _check_on(backend: str, tmp_path, **env: str) -> int:
 
 
 class TestBackendCheck:
-    """--check --fl-backend: a privacy control only NVFLARE enforces must fail on any other backend.
+    """--check --fl-backend: a privacy control only FLARE enforces must fail on any other backend.
 
     Reporting "site privacy policy ACTIVE ... jobs cannot opt out" on a Flower trust, where no
     client reads the section, is the silent-ignore this feature exists to remove.
@@ -444,7 +444,7 @@ class TestParseEnv:
 
 
 class TestBuildPolicyJson:
-    """The rendered document must match NVFLARE's privacy.json schema: one scope, always a default_scope."""
+    """The rendered document must match FLARE's privacy.json schema: one scope, always a default_scope."""
 
     def test_percentile_document_shape(self):
         policy = parse_env({"FL_SITE_PRIVACY_POLICY": "percentile"})
@@ -609,9 +609,9 @@ class TestModuleEntryPoint:
 
 
 class TestNvflareRoundTrip:
-    """Upgrade canary: NVFLARE's own (private-API) site-policy loader must accept our rendered file.
+    """Upgrade canary: FLARE's own (private-API) site-policy loader must accept our rendered file.
 
-    Deliberately exercises ``nvflare.private`` internals so that an NVFLARE upgrade that changes the
+    Deliberately exercises ``nvflare.private`` internals so that a FLARE upgrade that changes the
     privacy.json contract fails here, in unit tests, rather than at job time on a trust.
     """
 

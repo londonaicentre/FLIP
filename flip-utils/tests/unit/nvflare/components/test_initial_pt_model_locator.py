@@ -74,7 +74,7 @@ class TestInitialPTModelLocator:
         mock_torch.load.assert_called_once()
 
     @patch("os.path.exists")
-    def test_locate_model_not_found_tries_safehouse(self, mock_exists):
+    def test_locate_model_not_found_returns_none(self, mock_exists):
         locator = InitialPTModelLocator(model=MagicMock())
         locator.log_info = MagicMock()
 
@@ -85,14 +85,12 @@ class TestInitialPTModelLocator:
         fl_ctx.get_engine.return_value.get_workspace.return_value = mock_workspace
         fl_ctx.get_job_id.return_value = "job-123"
 
-        # Both primary and safehouse paths don't exist
         mock_exists.return_value = False
 
         result = locator.locate_model(PTConstants.PTServerName, fl_ctx)
 
         assert result is None
-        # Should have checked both primary and safehouse paths
-        assert mock_exists.call_count == 2
+        mock_exists.assert_called_once_with("/test/dir/" + PTConstants.PTFileModelName)
 
     @patch("flip.nvflare.components.pt_model_locator.torch")
     @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
