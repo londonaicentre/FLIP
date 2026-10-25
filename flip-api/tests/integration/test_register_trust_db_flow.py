@@ -19,7 +19,6 @@ same open transaction — are only exercised here. Rotation is here for the same
 the hub really refuses the old key afterwards is a property of the committed row, not of a mock.
 """
 
-import hashlib
 from unittest.mock import patch
 
 import pytest
@@ -81,6 +80,10 @@ def test_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve
     registered = register_trust(name="Rotating Trust", code="ROT", region=None, session=session)
     trust_id, slot_name = registered.trust.id, registered.fl_kit_slot.slot_name
     old_key = registered.trust_api_key
+    # The committed hash of the old key, read before the rotation moves it. Taking it from the
+    # row rather than re-hashing here keeps the cache-seeding below on the production hash.
+    old_key_hash = session.exec(select(Trust).where(Trust.id == trust_id)).one().api_key_hash
+    assert old_key_hash is not None
     # Warm the auth cache on the old key: a cache hit must not survive the rotation either.
     assert authenticate_trust(api_key=old_key, db=session).id == trust_id
 
@@ -96,7 +99,7 @@ def test_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve
         # reaches the cache-hit branch. Every other hub worker keeps its warm entry, and the
         # live-hash re-check inside that branch is the only thing refusing the old key there.
         # Seed the entry the way another worker would still hold it, and retry.
-        trust_key_cache.remember(hashlib.sha256(old_key.encode()).hexdigest(), trust_id)
+        trust_key_cache.remember(old_key_hash, trust_id)
         with pytest.raises(HTTPException) as cached_excinfo:
             authenticate_trust(api_key=old_key, db=session)
         assert cached_excinfo.value.status_code == 401
