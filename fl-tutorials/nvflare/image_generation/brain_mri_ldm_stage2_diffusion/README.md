@@ -138,6 +138,13 @@ cross-attention (`app_files/modality.py`), so one model generates any of the fou
 Keep `MODALITIES` in the autoencoder tutorial's order too: the index is the one-hot position.
 `fl-tutorials/tests/test_image_generation_config_parity.py` checks both rules.
 
+Do not expect T1Gd. Trained as in *Training for real*, the model returns volumes that read as T1w
+when asked for T1Gd, because it generates no tumours, and T1Gd differs from T1w mainly in the
+enhancing tumour rim. Every training scan has a tumour and the frozen autoencoder reconstructs it,
+but tumours differ in place, size and shape from patient to patient, and the diffusion model learns
+the brain without them: a real tumour latent noised three quarters of the way comes back healthy.
+MONAI's brain MRI diffusion examples sidestep this by generating FLAIR only.
+
 The frozen autoencoder is MONAI `AutoencoderKL`, built from `autoencoder_config.yaml` rather than
 `config.json`, on a submodule named `autoencoder` so the checkpoint's `autoencoder.*` keys land on
 it. It has no gradients and stays in eval mode; its decoder only turns samples into images.
