@@ -154,7 +154,7 @@ demo_video:
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
 #     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
 #     make e2e_smoke QUERY_FILE=/path/to/your_cohort.sql
-# The x-ray query is picked automatically from PROD (see XRAY_QUERY_NAME below): a test trust
+# The x-ray query is picked automatically from HUB (see XRAY_QUERY_NAME below): a test trust
 # deployed without the OMOP vocabulary (the Helm chart's NO_VOCAB_LOAD=1, FLIP#1390) gets the
 # vocabulary-free copy, because there query.sql's concept joins return nothing and staging refuses
 # the project. Pass QUERY_FILE explicitly to override.
@@ -167,11 +167,11 @@ demo_video:
 # silently dropped enrichment and died at the zero-pairs guard minutes later.
 # TARGET_ARGS is the same idea for any other flag a variant target must pin (e.g. --no-imaging).
 FL_BACKEND ?= nvflare
-# A development stack (PROD unset) smokes the vocabulary-free copy of the cohort query: its trusts
+# A development stack (HUB unset) smokes the vocabulary-free copy of the cohort query: its trusts
 # carry only the DICOM vocabulary unless the licensed core vocabulary was loaded by hand, and
 # query.sql looks every concept up in omop.concept. Where the vocabulary is loaded the two return
-# the same rows. A deployed hub (PROD set) smokes query.sql.
-XRAY_QUERY_NAME := $(if $(strip $(PROD)),query.sql,query_novocab.sql)
+# the same rows. A deployed hub (HUB set) smokes query.sql.
+XRAY_QUERY_NAME := $(if $(strip $(HUB)),query.sql,query_novocab.sql)
 ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../fl-tutorials/flower/xray_classification/app
 QUERY_FILE ?= ../fl-tutorials/flower/xray_classification/$(XRAY_QUERY_NAME)

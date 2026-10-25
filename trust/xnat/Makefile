@@ -12,6 +12,7 @@
 
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
+	xnat-configure-export-mask \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
@@ -47,20 +48,20 @@ export XNAT_TAG
 
 # ── Per-trust XNAT stack ──────────────────────────────────────────────────
 # KIT selects the trust — now the trust CODE; the kit file is
-# trust/.env.<CODE>.<env> (ENV derived from PROD, mirroring trust/Makefile),
-# with a legacy fallback to trust/.env.<KIT> for the not-yet-migrated
-# EC2/on-prem path (KIT=<slot>, no env suffix). That kit file carries this
+# trust/.env.<CODE>.<env> (ENV derived from HUB, mirroring trust/Makefile), or an
+# old name resolved by env_mode.mk's kit_file. That kit file carries this
 # trust's XNAT_PORT / PACS_UI_PORT (unsuffixed) and its hub-assigned
 # FL_KIT_SLOT_NUMBER — the same host-local profile trust/Makefile reads. KIT
 # has no default so non-KIT targets (build, test) don't spuriously -include a
 # file. The XNAT swarm stack name and overlay network are derived from the
 # assigned slot NUMBER (not the CODE), so XNAT co-resides on the same
 # deploy_trust-network-<N> as the slot-numbered trust core services.
-# ENV (the kit suffix) and IS_DEPLOYED (non-empty for every PROD value except
-# unset — the LZA pair takes the stag/prod paths and stack files below, with its
-# own kit suffix) come from the shared table in ../../deploy/env_mode.mk.
+# ENV (the kit suffix) and IS_DEPLOYED (non-empty whenever HUB is set) come from
+# the shared table in ../../deploy/env_mode.mk.
 include ../../deploy/env_mode.mk
-KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env.$(KIT))
+ifeq ($(origin KIT_FILE),undefined)
+KIT_FILE := $(call kit_file,../,$(KIT))
+endif
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
 # deploy (unlike docker compose) has no --env-file flag; it substitutes
@@ -76,12 +77,30 @@ ifneq ("$(wildcard $(KIT_FILE))","")
 export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(KIT_FILE))
 endif
 
+# BUILD=true (propagated from `make up BUILD=true`): up-xnat builds the XNAT images from this
+# checkout and deploys them, at an unpublished tag rather than DOCKER_TAG: the swarm agent re-pulls
+# a tag on every deploy and keeps a local image only when that pull fails, so a local `stag` build
+# would be replaced by the registry's `stag` — built from another commit. The tag is `dev`, or
+# XNAT_TAG when given on the command line (a command-line value beats this assignment): tags are
+# daemon-wide, so a second stack on the host (FLIP_INSTANCE, a release check) passes its own, e.g.
+# `make up BUILD=true XNAT_TAG=rel0130`. An XNAT_TAG from the kit or the environment is a pull
+# pin, not a build tag, and is ignored here — this is set after the kit include for that reason.
+ifeq ($(BUILD),true)
+XNAT_TAG := dev
+endif
+
 # INSTANCE_PREFIX for the per-instance trust network. FLIP_INSTANCE arrives already exported
 # by ../../deploy/instance.mk when trust/Makefile drives this sub-make; on the standalone
 # `make -C trust/xnat ...` path it must come from the environment, which
 # check_network_matches_trust below verifies rather than trusts — an unprefixed XNAT beside a
 # prefixed trust deploys healthily and simply cannot reach imaging-api.
 include ../../deploy/instance.mk
+# Whether this trust runs MONAI Label. Read from the kit file by the -include above, or
+# passed on the command line (which Make forwards to this sub-make automatically). Gates
+# export_mask registration in xnat-configure — see xnat-configure-export-mask. Mirrors the
+# same default in trust/Makefile. (The OHIF viewer plugin MONAI Label registers through ships
+# by default in every mode since #1243, so this no longer gates the plugin download.)
+MONAI_LABEL ?= false
 # Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
 # substring of the CODE. Drives the stack name (xnat<N>) and overlay network
 # ($(INSTANCE_PREFIX)deploy_trust-network-<N>); trust/Makefile derives TRUST_NUM from
@@ -125,8 +144,8 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 #               concurrent Trust_1 / Trust_2 stacks on the same host)
 # Override per-host (e.g. on a box where /opt is small and the XNAT archive
 # lives on a larger /data volume) by setting XNAT_DATA_DIR in
-# trust/.env.<KIT> or exporting it before invoking make. Resolved to an
-# absolute path so docker-compose-stack.{development,production}.yml can
+# trust/.env.<KIT>.<env> or exporting it before invoking make. Resolved to an
+# absolute path so docker-compose-stack.{development,prod}.yml can
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
@@ -204,6 +223,8 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # rejects `-c` — otherwise counts zero and is reported as wrong ownership, which
 # sends the reader after the wrong fault. A missing directory still counts zero
 # and still fires the guard, now with stat naming the path it could not read.
+include ../../deploy/portable.mk
+
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
 	if [ "$$owned" != "$(or $(3),$(words $(XNAT_DATA_DIRS)))" ]; then \
@@ -223,7 +244,7 @@ export XNAT_PATH=$(realpath .)
 # xnat/plugins over the image, so only development needs the host-side plugin cache. Production
 # bakes plugins into the image, so a trust host has no reason to hold or check one.
 ifneq ($(IS_DEPLOYED),)
-STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.production.yml
+STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.prod.yml
 XNAT_PLUGINS_FROM_HOST =
 # A deployed trust pulls XNAT from GHCR like every other image, whatever an older kit or the
 # caller's hub env says: an LZA hub's registry is an ECR cache no site can log in to (FLIP#1480).
@@ -302,17 +323,17 @@ build:
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \
 		--build-arg XNAT_HOME=${XNAT_HOME} \
-		-t ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-web:${XNAT_TAG} \
 		xnat/
 	@echo "🐳 Building xnat-db image..."
 	docker build \
 		--build-arg PG_VERSION=${PG_VERSION} \
-		-t ${DOCKER_REGISTRY}xnat-db:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-db:${XNAT_TAG} \
 		postgres/
 	@echo "🐳 Building xnat-nginx image..."
 	docker build \
 		--build-arg NGINX_VERSION=${NGINX_VERSION} \
-		-t ${DOCKER_REGISTRY}xnat-nginx:${DOCKER_TAG} \
+		-t ${DOCKER_REGISTRY}xnat-nginx:${XNAT_TAG} \
 		nginx/
 	@echo "✅ XNAT Docker images built successfully!"
 
@@ -325,12 +346,10 @@ build:
 # writes broken ("Source ... does not exist") so DICOM import fails on the
 # next boot.
 up:
-	@found=0; for f in ../.env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; found=1; \
+	@$(call old_kits_hint,../)[ -n "$(call kit_codes,../)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	@for kit in $(call kit_codes,../); do \
 	  $(MAKE) up-xnat KIT=$$kit || { echo "❌ Failed to start XNAT for trust $$kit"; exit 1; }; \
-	done; \
-	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
+	done
 
 # Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
 # trust/Makefile's up-trust calls this so a trust comes up complete.
@@ -342,12 +361,16 @@ up:
 up-xnat: create-xnat-network
 	$(require_kit)
 	$(require_xnat_passwords)
+ifeq ($(BUILD),true)
+	$(MAKE) build
+endif
 ifdef XNAT_PLUGINS_FROM_HOST
 	$(MAKE) xnat-plugins-check
 endif
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
+	XNAT_TAG=$(XNAT_TAG) \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
 	XNAT_WEB_PORT=$(XNAT_WEB_PORT_EFFECTIVE) \
 	XNAT_AETITLE=$(XNAT_AETITLE_EFFECTIVE) \
@@ -391,14 +414,11 @@ endif
 # `xnat-configure`, neither of which consumes the value, and on each sub-make the
 # trust/xnat/tests suite spawns.
 XNAT_NODE_ARCH = $(shell docker info --format '{{.Architecture}}' 2>/dev/null)
-XNAT_RESOLVE_IMAGE ?= $(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always)
+# BUILD=true deploys a local-only tag, so there is no registry digest to resolve.
+XNAT_RESOLVE_IMAGE ?= $(if $(filter true,$(BUILD)),never,$(if $(filter-out x86_64 amd64,$(XNAT_NODE_ARCH)),never,always))
 
 down:
-	@for f in ../.env.*.$(ENV); do \
-	  [ -e "$$f" ] || continue; \
-	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; \
-	  $(MAKE) down-xnat KIT=$$kit; \
-	done
+	@$(call old_kits_hint,../)rc=0; for kit in $(call kit_codes,../); do $(MAKE) down-xnat KIT=$$kit || rc=1; done; exit $$rc
 
 down-xnat:
 	$(require_kit)
@@ -456,7 +476,7 @@ upgrade-xnat: create-xnat-network
 	xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
 	case "$$xnat_endpoint" in \
 		ssh://*) $(call check_xnat_dir_owner,ssh "$$xnat_ctx" "stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS)",ssh $$xnat_ctx,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
-		*) $(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
+		*) $(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_WEB_DATA_DIRS),,$(words $(XNAT_WEB_DATA_DIRS))) ;; \
 	esac
 	$(MAKE) xnat-backup KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
@@ -490,7 +510,7 @@ xnat-backup:
 	if docker exec "$$db" sh -c 'set -o pipefail; pg_dumpall -U postgres | gzip -c' \
 	     | docker run --rm -i -v "$(XNAT_DATA_DIR):/x" alpine:3.20 sh -c "set -o pipefail; \
 	         mkdir -p /x/backups && cat > /x/$$dump \
-	         && zcat /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
+	         && gzip -dc /x/$$dump | tail -n 5 | grep -q 'PostgreSQL database cluster dump complete' \
 	         && ls -l /x/$$dump"; then \
 	  exit 0; \
 	fi; \
@@ -548,7 +568,7 @@ xnat-plugins-check:
 # wipes any previous data. Docker Swarm requires host directories to exist
 # before bind-mounting; the wipe avoids stale bind mounts from a prior run
 # (the second xnat-web otherwise crash-loops on a locked SQLite index).
-# Data dir defaults vary by PROD — see the XNAT_DATA_DIR comment above
+# Data dir defaults vary by HUB — see the XNAT_DATA_DIR comment above
 # for the resolution rule and how to override per-host.
 #
 # The two deployed branches provision under sudo. The development branch does too,
@@ -604,7 +624,7 @@ xnat-reset:
 				sudo rm -rf $(XNAT_DATA_DIR); \
 				sudo mkdir -p $(XNAT_DATA_DIRS); \
 				sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
-				$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
+				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 				;; \
 		esac; \
 	else \
@@ -620,7 +640,7 @@ xnat-reset:
 		$$priv rm -rf $(XNAT_DATA_DIR); \
 		$$priv mkdir -p $(XNAT_DATA_DIRS); \
 		$$priv chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
-		$(call check_xnat_dir_owner,stat -c '%u:%g' $(XNAT_DATA_DIRS)); \
+		$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
@@ -653,6 +673,41 @@ xnat-configure:
 	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log" "$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log"; \
 	bash -o pipefail -c "docker exec -e XNAT_PLUGIN_READINESS_ROSTER=1 $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-xnat.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-xnat-$(XNAT_PROJECT).log'" && \
 	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-dcm2niix.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-dcm2niix-$(XNAT_PROJECT).log'"
+	$(MAKE) xnat-configure-export-mask XNAT_PROJECT=$(XNAT_PROJECT)
+
+# export_mask (DICOM-SEG -> NIfTI) is registered ONLY when this trust runs MONAI Label.
+#
+# It is deliberately NOT part of the unconditional chain above. The command it registers
+# launches a converter container, and its subscription is site-wide (a DICOM-SEG can be
+# created in any project by anyone using the OHIF viewer, so there is no per-project opt-in
+# like dcm2niix's dicom_to_nifti flag). A trust that never enables MONAI Label has no OHIF
+# viewer plugin installed, so it can never produce the assessors this reacts to — registering
+# it there would add a converter image and a site-wide event subscription that trust never
+# asked for. Gating also keeps the unconditional bring-up path free of a new failure point:
+# in stag/prod the config dir comes from the image (xnat/Dockerfile `ADD config`) — only the
+# development stack bind-mounts it from the host (docker-compose-stack.development.yml) — so
+# against an xnat-web image predating this feature the script simply does not exist there.
+#
+# Consequence of gating (documented in trust/README.md): a trust that turns MONAI Label on
+# later must re-run `make -C trust/xnat xnat-configure KIT=<CODE>` (or bring XNAT up again)
+# to register the command and subscription.
+xnat-configure-export-mask:
+ifeq ($(strip $(MONAI_LABEL)),true)
+	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
+	@echo "🧠 MONAI_LABEL=true — registering the export_mask (DICOM-SEG → NIfTI) command..."
+	CONTAINER=$$($(call xnat_web_container_ids,$(XNAT_PROJECT))); \
+	[ -n "$$CONTAINER" ] || { echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container not found"; exit 1; }; \
+	$(call require_one_xnat_web_container,$(XNAT_PROJECT)); \
+	docker exec $$CONTAINER bash -c 'test -f /data/xnat/config/configure-export-mask.sh' || { \
+		echo "❌ ERROR: configure-export-mask.sh is not in this xnat-web image."; \
+		echo "   The XNAT config dir is baked into the image, so MONAI_LABEL=true needs an"; \
+		echo "   xnat-web image that carries it — rebuild, or bump XNAT_TAG to a newer tag."; \
+		exit 1; }; \
+	rm -f "$(XNAT_CONFIGURE_LOG_DIR)/configure-export-mask-$(XNAT_PROJECT).log"; \
+	bash -o pipefail -c "docker exec $$CONTAINER bash -c 'cd /data/xnat/config && bash configure-export-mask.sh' 2>&1 | tee '$(XNAT_CONFIGURE_LOG_DIR)/configure-export-mask-$(XNAT_PROJECT).log'"
+else
+	@echo "⏭️  MONAI_LABEL is not true — skipping export_mask registration."
+endif
 
 # Guard: XNAT and the trust core services must share one network. up-trust brings the trust
 # compose up before invoking us, so the trust's real attachment is observable — compare it

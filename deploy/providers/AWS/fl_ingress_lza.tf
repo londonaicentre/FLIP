@@ -12,35 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# LZA-only ingress plumbing (FLIP#749 WP3), the workload-account half of the
+# Ingress plumbing (FLIP#749 WP3), the workload-account half of the
 # two-tier design proven end-to-end by the e2e harness (FLIP#829/#830), from
 # which this file is ported:
 #
 #   FL:  trust FL client → internet-facing edge NLB :{FL_SERVER_PORT}
 #        (networking account) → central firewall → TGW → the INTERNAL NLB
-#        below → fl-server ECS task. The legacy internet-facing
-#        module.fl_server_nlb is impossible in-account (no IGW + VPC BPA) and
-#        stays gated off; this internal NLB exists as the STATIC-IP anchor —
+#        below → fl-server ECS task. An internet-facing NLB is impossible
+#        in-account (no IGW + VPC BPA); this internal NLB is the STATIC-IP anchor —
 #        its per-subnet IPs are assigned (not discovered) via subnet_mapping,
 #        so the networking account registers them once, with no sync
 #        machinery.
 #   Web: CloudFront + WAF → relay NLB (networking account) → firewall → TGW
 #        → the SAME internal NLB below on :{ALB_HTTPS_PORT} → flip-api ECS task.
-#        The ALB (module.alb) is gated off on LZA: ALB IPs rotate, which forced
-#        the networking account to run a target-sync Lambda per environment;
-#        the NLB's assigned IPs do not, so the relay registers them once —
-#        the FL leg's contract, now shared by both legs. Legacy prod/stag keep
-#        the ALB unchanged.
-#
-# Everything in this file is inert on legacy prod/stag (count/create-gated on
-# var.lza_managed_network, list arguments emptied) — the legacy plan is
-# unchanged.
+#        There is no ALB: ALB IPs rotate, which forced the networking account
+#        to run a target-sync Lambda per environment; the NLB's assigned IPs do
+#        not, so the relay registers them once — the FL leg's contract, shared
+#        by both legs.
 
 # Per-subnet detail for the static IP assignment below. Read at plan time
 # (the subnets pre-exist), unlike an ENI-discovery data source, which would
 # defer to apply and break for_each on the first plan.
 data "aws_subnet" "lza_app" {
-  for_each = var.lza_managed_network ? toset(data.aws_subnets.lza_app[0].ids) : toset([])
+  for_each = toset(data.aws_subnets.lza_app.ids)
   id       = each.value
 }
 
@@ -50,11 +44,9 @@ data "aws_subnet" "lza_app" {
 # publishes everything today; the filter keeps a future third AZ from being
 # registered before its attachment subnet lands.
 data "aws_ec2_transit_gateway_vpc_attachment" "lza" {
-  count = var.lza_managed_network ? 1 : 0
-
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.lza[0].id]
+    values = [data.aws_vpc.lza.id]
   }
 
   filter {
@@ -64,7 +56,7 @@ data "aws_ec2_transit_gateway_vpc_attachment" "lza" {
 }
 
 data "aws_subnet" "lza_tgw_attachment" {
-  for_each = var.lza_managed_network ? toset(data.aws_ec2_transit_gateway_vpc_attachment.lza[0].subnet_ids) : toset([])
+  for_each = toset(data.aws_ec2_transit_gateway_vpc_attachment.lza.subnet_ids)
   id       = each.value
 }
 
@@ -75,15 +67,15 @@ locals {
   # One map is the static-IP contract with the networking account; the
   # subnet_mapping and both published lists derive from it, so the address a
   # subnet gets is written in exactly one place.
-  lza_fl_nlb_ip_by_subnet = var.lza_managed_network ? {
+  lza_fl_nlb_ip_by_subnet = {
     for id in local.app_subnet_ids : id => cidrhost(data.aws_subnet.lza_app[id].cidr_block, var.lza_fl_nlb_host_num)
-  } : {}
+  }
 
   lza_fl_nlb_private_ips = values(local.lza_fl_nlb_ip_by_subnet)
 
-  lza_tgw_attachment_azs = var.lza_managed_network ? distinct([
+  lza_tgw_attachment_azs = distinct([
     for s in values(data.aws_subnet.lza_tgw_attachment) : s.availability_zone
-  ]) : []
+  ])
 
   lza_fl_nlb_published_ips = [
     for id, ip in local.lza_fl_nlb_ip_by_subnet : ip
@@ -92,7 +84,6 @@ locals {
 }
 
 module "fl_internal_nlb_security_group" {
-  count       = var.lza_managed_network ? 1 : 0
   source      = "./modules/secgroup"
   name        = "flip-fl-internal-nlb-sg"
   vpc_id      = local.vpc_id
@@ -119,11 +110,8 @@ module "fl_internal_nlb_security_group" {
 }
 
 module "fl_server_internal_nlb" {
-  source  = "terraform-aws-modules/alb/aws"
-  version = "~> 10.0"
-  # LZA counterpart of the legacy module.fl_server_nlb above — created on
-  # exactly the opposite gate, so precisely one FL NLB exists per environment.
-  create             = var.lza_managed_network
+  source             = "terraform-aws-modules/alb/aws"
+  version            = "~> 10.0"
   name               = "flip-fl-internal-nlb"
   load_balancer_type = "network"
   vpc_id             = local.vpc_id
@@ -138,11 +126,11 @@ module "fl_server_internal_nlb" {
   ]
 
   create_security_group      = false
-  security_groups            = var.lza_managed_network ? [module.fl_internal_nlb_security_group[0].security_group.id] : []
+  security_groups            = [module.fl_internal_nlb_security_group.security_group.id]
   enable_deletion_protection = false
 
-  # Forwards to the standalone Fargate TGs in main.tf (shared with the legacy
-  # front doors), not the module's target_groups map — same rationale as
+  # Forwards to the standalone Fargate TGs in main.tf, not the module's
+  # target_groups map — same rationale as
   # aws_lb_target_group.ecs_fl_server_tcp there.
   listeners = {
     "fl-server-tcp-listener" = {
@@ -153,8 +141,8 @@ module "fl_server_internal_nlb" {
       }
     }
 
-    # Web leg (FLIP#749): CloudFront's relay dials this listener; the ALB is
-    # gated off on LZA. Protocol mirrors the ALB's zone-less gating — an
+    # Web leg (FLIP#749): CloudFront's relay dials this listener. Protocol
+    # follows DNS availability — an
     # ISSUED cert is impossible without a hosted zone (var.manage_dns=false),
     # so the listener is plain TCP until the zone lands, then TLS on the
     # DNS-validated cert. Same port either way so the relay never changes.
@@ -180,7 +168,6 @@ module "fl_server_internal_nlb" {
 # /flip-e2e/networking/ prefix with the real one.
 resource "aws_ssm_parameter" "lza_fl_nlb_private_ips" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
-  count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/fl_nlb_private_ips"
   description = "Internal NLB static private IPs (comma-separated, assigned via subnet_mapping so they are stable by construction; TGW-reachable AZs only) - registered ONCE as IP targets on the networking account's edge NLB FL listener AND its web relay target group"
   type        = "StringList"
@@ -189,7 +176,6 @@ resource "aws_ssm_parameter" "lza_fl_nlb_private_ips" {
 
 resource "aws_ssm_parameter" "lza_fl_port" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
-  count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/fl_port"
   description = "Workload-side FL ingress port (internal NLB listener) - consumed by the networking account's edge configuration"
   type        = "String"
@@ -198,7 +184,6 @@ resource "aws_ssm_parameter" "lza_fl_port" {
 
 resource "aws_ssm_parameter" "lza_web_nlb_dns_name" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
-  count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/web_nlb_dns_name"
   description = "Internal NLB DNS name - informational (in-VPC verification, e.g. curl from a task); the networking-account edge does not consume it - it targets the static IPs in fl_nlb_private_ips"
   type        = "String"
@@ -207,20 +192,16 @@ resource "aws_ssm_parameter" "lza_web_nlb_dns_name" {
 
 resource "aws_ssm_parameter" "lza_web_port" {
   # checkov:skip=CKV2_AWS_34:non-secret networking value read CROSS-ACCOUNT by the networking account's edge stack (aicentre-lza-iac) — an AWS-managed CMK cannot be decrypted from another account
-  count       = var.lza_managed_network ? 1 : 0
   name        = "/flip/networking/web_port"
   description = "Workload-side web ingress port (the internal NLB's web listener; plain TCP on the zone-less bring-up, TLS once manage_dns is true) - the relay NLB's target port on the networking side"
   type        = "String"
   value       = tostring(var.ALB_HTTPS_PORT)
 }
 
-# Task-side admission for the internal NLB: the legacy
-# ecs_fl_server_ingress_nlb_grpc rule (ecs_sg.tf) references the legacy NLB's
-# SG and is gated off on LZA, which left the fl-server task admitting nothing
-# on its FL port -- the NLB's health checks parked the target at unhealthy and
-# ECS churned replacements forever.
+# Task-side admission for the internal NLB: without it the fl-server task admits
+# nothing on its FL port -- the NLB's health checks park the target at unhealthy
+# and ECS churns replacements forever.
 resource "aws_security_group_rule" "ecs_fl_server_ingress_internal_nlb" {
-  count       = var.lza_managed_network ? 1 : 0
   type        = "ingress"
   description = "gRPC from the internal FL NLB (edge-relayed FL clients + health checks)"
   # Backend-dependent container port (Flower: SuperLink Fleet 9092) -- the
@@ -228,7 +209,7 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_internal_nlb" {
   from_port                = local.fl_server_container_port
   to_port                  = local.fl_server_container_port
   protocol                 = "tcp"
-  source_security_group_id = module.fl_internal_nlb_security_group[0].security_group.id
+  source_security_group_id = module.fl_internal_nlb_security_group.security_group.id
   security_group_id        = aws_security_group.ecs_fl_server.id
 }
 
@@ -237,26 +218,23 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_internal_nlb" {
 # port. Without it the TG parks the task unhealthy exactly as the fl-server
 # rule above describes.
 resource "aws_security_group_rule" "ecs_flip_api_ingress_internal_nlb" {
-  count                    = var.lza_managed_network ? 1 : 0
   type                     = "ingress"
   description              = "HTTP from the internal NLB web listener (edge-relayed CloudFront traffic + health checks)"
   from_port                = local.api_container_port
   to_port                  = local.api_container_port
   protocol                 = "tcp"
-  source_security_group_id = module.fl_internal_nlb_security_group[0].security_group.id
+  source_security_group_id = module.fl_internal_nlb_security_group.security_group.id
   security_group_id        = aws_security_group.ecs_flip_api.id
 }
 
 # The FLARE admin kit (provisioned from net-1_project_prod.yml) targets the
 # bare host `fl-server-net-1` — a SAN on the server cert alongside the public
-# FQDN. Legacy resolves it through the flip.local DHCP search domain
-# (dhcp.tf), which the LZA-managed VPC cannot carry, and Fargate's awsvpc
+# FQDN. The LZA-managed VPC cannot carry a flip.local DHCP search domain, and Fargate's awsvpc
 # network mode rejects extraHosts — so publish the bare name as a
 # single-label private hosted zone whose apex A records are the internal FL
 # NLB's deterministic static IPs. A bare-name lookup exhausts the VPC search
 # domains and then matches this zone's apex, landing on the NLB → fl-server.
 resource "aws_route53_zone" "fl_server_bare_name" {
-  count   = var.lza_managed_network ? 1 : 0
   name    = "fl-server-net-1"
   comment = "LZA: resolve the NVFLARE admin kit's bare fl-server host inside the workload VPC (FLIP#749)"
 
@@ -266,10 +244,56 @@ resource "aws_route53_zone" "fl_server_bare_name" {
 }
 
 resource "aws_route53_record" "fl_server_bare_name_apex" {
-  count   = var.lza_managed_network ? 1 : 0
-  zone_id = aws_route53_zone.fl_server_bare_name[0].zone_id
+  zone_id = aws_route53_zone.fl_server_bare_name.zone_id
   name    = "fl-server-net-1"
   type    = "A"
   ttl     = 60
   records = local.lza_fl_nlb_private_ips
+}
+
+# FLIP#1479: unconditional now that LZA is the only network, so each address loses
+# its [0]. Safe to remove once both LZA states have been applied.
+moved {
+  from = module.fl_internal_nlb_security_group[0]
+  to   = module.fl_internal_nlb_security_group
+}
+
+moved {
+  from = aws_ssm_parameter.lza_fl_nlb_private_ips[0]
+  to   = aws_ssm_parameter.lza_fl_nlb_private_ips
+}
+
+moved {
+  from = aws_ssm_parameter.lza_fl_port[0]
+  to   = aws_ssm_parameter.lza_fl_port
+}
+
+moved {
+  from = aws_ssm_parameter.lza_web_nlb_dns_name[0]
+  to   = aws_ssm_parameter.lza_web_nlb_dns_name
+}
+
+moved {
+  from = aws_ssm_parameter.lza_web_port[0]
+  to   = aws_ssm_parameter.lza_web_port
+}
+
+moved {
+  from = aws_security_group_rule.ecs_fl_server_ingress_internal_nlb[0]
+  to   = aws_security_group_rule.ecs_fl_server_ingress_internal_nlb
+}
+
+moved {
+  from = aws_security_group_rule.ecs_flip_api_ingress_internal_nlb[0]
+  to   = aws_security_group_rule.ecs_flip_api_ingress_internal_nlb
+}
+
+moved {
+  from = aws_route53_zone.fl_server_bare_name[0]
+  to   = aws_route53_zone.fl_server_bare_name
+}
+
+moved {
+  from = aws_route53_record.fl_server_bare_name_apex[0]
+  to   = aws_route53_record.fl_server_bare_name_apex
 }

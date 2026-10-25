@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   preview:
-    if: github.event.pull_request.head.ref == 'develop'
+    if: github.event.pull_request.head.ref == 'develop' || startsWith(github.event.pull_request.head.ref, 'hotfix/')
     runs-on: ubuntu-latest
     permissions: # override the workflow default: releases/generate-notes needs contents:write
       contents: write

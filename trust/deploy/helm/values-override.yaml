@@ -1,6 +1,6 @@
 # Hand-maintained example override for a staging K8s trust deployment.
 #
-# Prefer the generated per-kit override: `make sync-kit KIT=<CODE> PROD=stag`
+# Prefer the generated per-kit override: `make sync-kit KIT=<CODE> HUB=stag`
 # reads the registered kit (trust/.env.<CODE>.stag) and writes
 # k8s-trust-<CODE>.yaml with these same settings plus the slot-aware fl-client
 # kit path. This file is kept as a worked example / manual fallback.
@@ -12,7 +12,7 @@ trustApi:
     CENTRAL_HUB_API_URL: "https://stag.flip.aicentre.co.uk/api"
 awsRegion: eu-west-2
 flBackend: nvflare
-uploadedFederatedDataBucket: "s3://${FLIP_BUCKET_NAME}/uploaded_federated_data"
+uploadedFederatedDataBucket: "s3://${FLIP_FL_RESULTS_BUCKET_NAME}/results"
 omopDb:
   # The licensed core vocabulary bundle. Chart default is empty; without this the
   # release still installs, but with NO vocabulary (cohort queries joining

@@ -172,7 +172,7 @@ Step 1 — Check out the release and copy in the kit
 *****************************************************
 
 *Who: trust operator.* Run this and every later command from the repo root of a FLIP checkout. ``<env>`` is the
-``PROD`` value the kit was made for (``true``, ``stag``, ``lza`` or ``lza-stag``).
+``HUB`` value the kit was made for (``prod`` or ``stag``).
 
 .. code-block:: shell
 
@@ -244,7 +244,7 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
 .. code-block:: shell
 
    make -C trust/deploy/helm kit-secret KIT_SRC=<slot-kit-dir> KUBE_CONTEXT=<kube-context>
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> \
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> \
      PLATFORM_VALUES=values-aks.yaml KUBE_CONTEXT=<kube-context>
 
 - ``values-aks.yaml`` carries what belongs to a managed cluster rather than to the trust: the kit from the Secret,
@@ -272,7 +272,7 @@ Step 4 — Deploy
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> [KUBE_CONTEXT=<ctx>]
 
 This runs, in order:
 
@@ -288,7 +288,7 @@ This runs, in order:
    command still exits with the install's status.
 
 To check a host before deploying, run the preflight alone:
-``make -C trust/deploy/helm preflight KIT=<CODE> PROD=<env>``.
+``make -C trust/deploy/helm preflight KIT=<CODE> HUB=<env>``.
 
 .. note::
 
@@ -305,7 +305,7 @@ your cluster (``kubectl get job -n flip-trust -w``), then raise it if needed:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
 .. warning::
 
@@ -321,7 +321,7 @@ Step 5 — Verify the DICOM path
 
 *Who: trust operator*
 
-Polling (step 7 of :doc:`onboarding-a-trust`) does not prove imaging works: the two share no code. Run both checks;
+Polling (step 6 of :doc:`onboarding-a-trust`) does not prove imaging works: the two share no code. Run both checks;
 neither implies the other.
 
 .. code-block:: shell
@@ -386,13 +386,13 @@ cap (:ref:`ts-k8s-dcm2niix-jobs-cap`), so run it on an idle trust. It writes
 ``selftest-k8s-<backend>-<stamp>.json`` and ``.md`` (and ``latest-k8s-<backend>.md``) under ``SELFTEST_OUT``
 (default ``build/selftest/`` in the checkout) and exits non-zero on any failure.
 
-Send the node's public (egress) IP to the FLIP admin and continue at step 6 of :doc:`onboarding-a-trust`.
+Continue at step 6 of :doc:`onboarding-a-trust`.
 
 *****************************
 Load the OMOP core vocabulary
 *****************************
 
-*Who: trust operator.* Why the vocabulary is needed, and how to export it, is step 8 of :doc:`onboarding-a-trust`.
+*Who: trust operator.* Why the vocabulary is needed, and how to export it, is step 7 of :doc:`onboarding-a-trust`.
 After a default install, Helm prints a warning that it is not loaded. On Kubernetes you have two ways to load it:
 
 .. list-table::
@@ -417,8 +417,8 @@ On a cluster with no route to AWS, ``values-aks.yaml`` keeps the S3 load out wha
 it the metadata endpoint, which on Azure hands out managed-identity tokens; ``NO_VOCAB_LOAD=1`` does the same for
 ``sync-kit`` on any other cluster. The trust then runs without the vocabulary until one is loaded another way, and
 cohort queries that name concepts through ``omop.concept`` return nothing. The x-ray tutorial ships
-``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``PROD`` unset) smokes such a trust with it.
-With ``PROD`` set, pass it by hand:
+``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``HUB`` unset) smokes such a trust with it.
+With ``HUB`` set, pass it by hand:
 ``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
 ``fl-tutorials/flower/xray_classification/query_novocab.sql``).
 
@@ -489,7 +489,7 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
 
 **Governance policy.** A trust's optional governance document is set through the kit, not as a value: point
 ``ACCESS_POLICY_FILE`` at it in the kit file, validate it with ``make -C trust check-governance KIT=<CODE>
-PROD=<env>``, then re-run Step 4. The chart README's "Trust governance policy" section has the details.
+HUB=<env>``, then re-run Step 4. The chart README's "Trust governance policy" section has the details.
 
 Connect a real PACS
 ===================
@@ -514,7 +514,7 @@ Check out the new release tag first, then:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> PROD=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
+   make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [KUBE_CONTEXT=<ctx>]
 
 ``TAG`` defaults to the release the hub runs. The command pins it in your kit, regenerates the override and Secret
 from the kit, and runs ``helm upgrade``. Volumes survive and the API deployments roll onto the new images.
@@ -579,7 +579,7 @@ Troubleshooting
      - ``orthanc-registered-users`` is empty in ``values-secrets.yaml``: the kit lacks ``ORTHANC_USERNAME`` or
        ``ORTHANC_PASSWORD`` (Step 2).
    * - Deploy refused with ``conflict with "kubectl-patch"``
-     - Run ``make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>`` once, then deploy again. Do not use
+     - Run ``make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> HUB=<env>`` once, then deploy again. Do not use
        ``--force-conflicts``: it would overwrite the live keys.
    * - Cohort queries return no patients, every pod healthy
      - The OMOP vocabulary is not loaded (see above).

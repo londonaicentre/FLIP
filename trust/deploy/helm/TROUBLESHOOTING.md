@@ -500,30 +500,7 @@ Moved to the docs: [A service will not start after a governance edit](https://lo
 
 ---
 
-## 10. Preflight Looks for the Wrong Kit File (PROD tokens)
+## 10. Preflight Looks for the Wrong Kit File
 
-### Symptom
-
-`make -C trust/deploy/helm preflight KIT=<CODE> PROD=lza-stag` fails check 4 with
-`Kit file not found: .../trust/.env.<CODE>.development`, while the Makefile's own targets
-resolve the same kit correctly.
-
-### Cause
-
-`scripts/preflight.sh` carried its own `PROD` → suffix mapping, written before the LZA env
-tokens existed, so `lza` / `lza-stag` fell through to `development`.
-
-### Fix
-
-Fixed in-tree: `deploy/env_mode.mk` is now the only `PROD` → suffix map. The Makefile derives
-the token from it and injects it (`KIT_ENV=` into `preflight.sh`, `--env` into `sync_k8s_kit.py`);
-neither script keeps a copy, and running one bare with `PROD` set but no token is refused with
-a message naming the Makefile target, instead of defaulting to `development`. Expected mapping:
-
-| `PROD` | kit file |
-|---|---|
-| (unset) | `trust/.env.<CODE>.development` |
-| `stag` | `trust/.env.<CODE>.stag` |
-| `true` | `trust/.env.<CODE>.production` |
-| `lza` | `trust/.env.<CODE>.lza-prod` |
-| `lza-stag` | `trust/.env.<CODE>.lza-stag` |
+Pass the hub the site joins (`HUB=prod` or `HUB=stag`): the kit file is `trust/.env.<CODE>.<hub>`, and without
+`HUB` the chart reads the development kit; a kit under its pre-FLIP#1479 name gets a one-line rename hint.
