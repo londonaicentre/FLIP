@@ -41,10 +41,12 @@ Two differences survive that, and they are the actual reasons:
    restrict *which tensors* leave. Flower has no `KeepOnlyVars` / `TrimBroadcastVars` equivalent, so
    "only declared outputs leave" has nothing to bind to.
 
-The dependency model also still differs: `fl-base/Dockerfile` runs `uv sync --frozen` against
-`flip-utils/uv.lock`, so an NVFLARE job cannot introduce a dependency at submission time, while
-Flower's SuperNodes still launch with `--allow-runtime-dependency-installation`
-(`fl-services/flower/compose.dev.yml:121,159`, `compose.secure.yml:146,193`).
+The dependency model is now the same on both backends: `fl-base/Dockerfile` runs `uv sync --frozen`
+against `flip-utils/uv.lock`, so an NVFLARE job cannot introduce a dependency at submission time,
+and since FLIP#1418 the Flower SuperNodes no longer launch with
+`--allow-runtime-dependency-installation` either (`fl-services/flower/compose.dev.yml`,
+`compose.secure.yml`). The two gaps above, enforcement and data minimisation, are untouched by that
+and remain the reason this ADR stands.
 
 We record this as **deleted, not deferred**, because a permanently-unscheduled "Phase 4b" in the
 plan reads as a commitment and invites half-measures: a Flower `required_files.json` stub, a
@@ -59,12 +61,13 @@ prerequisites are scoped as a project of their own.
   paying for `ClientAlgo`/`ExchangeObject`'s backend-neutrality, whose only purpose is portability
   we have decided not to buy. (Which of the two adapter shapes wins is settled by a spike; see the
   implementation plan.)
-- **One finding must outlive this deletion.** Every Flower SuperNode started with
-  `--allow-runtime-dependency-installation` runs `uv sync` against the job's `pyproject.toml` on
-  every run, resolving from PyPI with no allowlist and no hash pinning, inside the trust enclave.
-  Verified still present on `develop` at `261144f52`. That is a live exposure today, entirely
-  independent of MONAI, and it is tracked as its own security issue (FLIP#1121), not as a prerequisite of work
-  we are not doing.
+- **One finding came out of this review and has since been closed.** A Flower SuperNode started
+  with `--allow-runtime-dependency-installation` runs `uv sync` against the job's `pyproject.toml`
+  on every run, resolving from PyPI with no allowlist and no hash pinning, inside the trust
+  enclave. It was live on `develop` when this ADR was written and was removed by FLIP#1418; the
+  compose files now carry a comment saying why the flag must not come back. It was tracked as its
+  own security issue (FLIP#1121), entirely independent of MONAI, not as a prerequisite of work we
+  are not doing.
 - **A second finding, worth raising on its own.** `flip_local_dp_mod` being opt-in from the uploaded
   `client_app.py` means a Flower run today applies no client-side privacy unless the researcher
   remembered to ask for it. That is a gap in the *existing* Flower path, not something the bundle

@@ -12,6 +12,7 @@
 """Unit tests for the monai-flip.yaml v0.1 overlay schema (FLIP#1105)."""
 
 import copy
+import subprocess
 import sys
 from pathlib import Path
 
@@ -108,6 +109,12 @@ def test_load_overlay_from_file(tmp_path: Path):
         ("bundle.configs.train", "train.json", "under configs/"),
         ("bundle.configs.train", "configs/train.py", "configs/train.py"),
         ("bundle.configs.train", "configs/../../etc/passwd.json", "no '..'"),
+        # A path whose PurePosixPath has no parts must still raise OverlayError, not IndexError.
+        ("bundle.configs.train", ".", "under configs/"),
+        ("bundle.configs.train", "./", "under configs/"),
+        ("bundle.configs.train", ["."], "under configs/"),
+        # The version is joined into paths later, so it is constrained like the name.
+        ("bundle.version", "../../x", "bundle.version"),
         ("bundle.configs.evaluate", [], "at least one"),
         # The cohort is the project's approved query, never the bundle's (dropped from v0.1).
         ("flip.query_ref", "query.sql", "flip.query_ref"),
@@ -133,6 +140,25 @@ def test_invalid_overlays_rejected_with_field_path(path, value, fragment):
     message = str(excinfo.value)
     assert message.startswith("test.yaml: invalid monai-flip overlay")
     assert fragment in message
+
+
+def test_placeholder_patterns_refused_when_only_resource_is_filled():
+    """The skeleton's glob placeholders must fail even once `resource` is a real value.
+
+    `<FILL_ME: file glob, e.g. input_*.nii.gz>` holds exactly one `*` and no path separator, so the
+    glob shape check alone accepts it. Without the placeholder check in `_check_pattern` a skeleton
+    with only `resource` filled in would load.
+    """
+    data = _with("flip.imaging.resource", "NIFTI")
+    data["flip"]["imaging"]["keys"] = {
+        "image": {"pattern": "<FILL_ME: file glob, e.g. input_*.nii.gz>"},
+        "label": {"pattern": "<FILL_ME: file glob, e.g. label_*.nii.gz>"},
+    }
+    with pytest.raises(OverlayError) as excinfo:
+        parse_overlay(data)
+    message = str(excinfo.value)
+    assert "skeleton placeholder" in message
+    assert message.count("flip.imaging.keys") >= 2
 
 
 def test_placeholder_is_refused_with_its_own_message():
@@ -175,13 +201,24 @@ def test_load_overlay_uses_safe_loader(tmp_path: Path):
         load_overlay(path)
 
 
-def test_package_imports_without_torch_or_monai():
-    """flip.monai must stay importable in flip-utils' base install (no torch, no MONAI)."""
-    import importlib
+def test_load_overlay_non_utf8_file(tmp_path: Path):
+    """A file saved in a non-UTF-8 encoding must raise OverlayError, not UnicodeDecodeError."""
+    path = tmp_path / "monai-flip.yaml"
+    path.write_bytes("bundle:\n  name: spleen\n  # caf\u00e9\n".encode("latin-1"))
+    with pytest.raises(OverlayError, match="cannot read overlay"):
+        load_overlay(path)
 
-    for mod in [m for m in sys.modules if m == "flip.monai" or m.startswith("flip.monai.")]:
-        del sys.modules[mod]
-    before = {m for m in sys.modules if m.split(".")[0] in {"torch", "monai"} or m.startswith("flip.export")}
-    importlib.import_module("flip.monai")
-    after = {m for m in sys.modules if m.split(".")[0] in {"torch", "monai"} or m.startswith("flip.export")}
-    assert after == before
+
+def test_package_imports_without_torch_or_monai():
+    """flip.monai must stay importable in flip-utils' base install (no torch, no MONAI).
+
+    Run in a fresh interpreter: inside this process torch is already imported by sibling tests (CI
+    installs `--extra full`), so an in-process sys.modules diff can never fail.
+    """
+    probe = (
+        "import sys, flip.monai; "
+        "bad = [m for m in sys.modules "
+        "if m.split('.')[0] in {'torch', 'monai'} or m.startswith('flip.export')]; "
+        "assert not bad, bad"
+    )
+    subprocess.run([sys.executable, "-c", probe], check=True)

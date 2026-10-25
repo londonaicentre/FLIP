@@ -174,7 +174,10 @@ def build_datalist(
     items: list[dict[str, str]] = []
     image_pattern = binding.keys[IMAGE_KEY].pattern
 
-    for accession_id in dataframe["accession_id"]:
+    # One item per accession: a cohort query that joins a one-to-many table repeats an accession_id,
+    # which would duplicate training samples and inflate the counts. NULLs are dropped rather than
+    # sent to imaging-api as the string "None"/"nan".
+    for accession_id in dataframe["accession_id"].dropna().astype(str).unique():
         report.accessions += 1
         try:
             folder = flip.get_by_accession_number(project_id, str(accession_id), resource_type=binding.resource)

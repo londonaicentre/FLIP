@@ -128,7 +128,7 @@ def generate_skeleton(bundle_dir: str | Path, source: BundleSource | str = Bundl
         "",
         "flip:",
         "  imaging:",
-        f'    resource: "{PLACEHOLDER_PREFIX}: NIFTI | SEG | DICOM>"  # EDITABLE (the XNAT resource to read)',
+        f'    resource: "{PLACEHOLDER_PREFIX}: NIFTI>"  # EDITABLE (the only resource the v0.1 datalist reads)',
         "    keys:  # EDITABLE (one entry per datalist key the bundle's configs read; 'image' is required)",
         f'      image: {{pattern: "{PLACEHOLDER_PREFIX}: file glob, e.g. input_*.nii.gz>"}}',
         f'      label: {{pattern: "{PLACEHOLDER_PREFIX}: file glob, e.g. label_*.nii.gz>"}}',

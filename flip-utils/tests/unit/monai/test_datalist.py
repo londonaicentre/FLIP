@@ -88,6 +88,22 @@ def test_spleen_layout_pairs_like_the_tutorial(tmp_path: Path):
     assert report.accessions == 2
 
 
+def test_repeated_and_null_accessions_are_collapsed(tmp_path: Path):
+    """A cohort query joining a one-to-many table repeats an accession; it must still fetch once.
+
+    Duplicates would duplicate training samples and inflate the counts, and a NULL accession would
+    reach imaging-api as the string "None"/"nan".
+    """
+    flip = _flip({"ACC1": _spleen_accession(tmp_path, "ACC1", ["spleen_10"])})
+    cohort = pd.DataFrame({"accession_id": ["ACC1", "ACC1", None, "ACC1"]})
+
+    items, report = build_datalist(flip, "proj", cohort, SPLEEN)
+
+    assert report.accessions == 1
+    assert len(items) == 1
+    flip.get_by_accession_number.assert_called_once_with("proj", "ACC1", resource_type=ResourceType.NIFTI)
+
+
 def test_requests_the_bound_resource(tmp_path: Path):
     flip = _flip({"ACC1": _spleen_accession(tmp_path, "ACC1", ["a"])})
     build_datalist(flip, "proj", _cohort("ACC1"), SPLEEN)

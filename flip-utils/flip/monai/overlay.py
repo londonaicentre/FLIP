@@ -84,7 +84,7 @@ def _relative_path(value: str, field: str) -> str:
 def _config_path(value: str) -> str:
     _relative_path(value, "bundle.configs entry")
     path = PurePosixPath(value)
-    if path.parts[0] != "configs":
+    if not path.parts or path.parts[0] != "configs":
         raise ValueError(f"bundle.configs entries must live under configs/, got {value!r}")
     if path.suffix not in CONFIG_SUFFIXES:
         raise ValueError(f"bundle.configs entries must be one of {', '.join(CONFIG_SUFFIXES)}, got {value!r}")
@@ -125,7 +125,9 @@ class BundleRef(_Strict):
 
     source: BundleSource
     name: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", max_length=128)]
-    version: Annotated[str, Field(min_length=1, max_length=64)]
+    # Constrained like ``name`` (plus '+' for semver build metadata): the version is joined into
+    # paths by later consumers (the hub mirror, FLIP#1126), so "../../x" must never be a valid value.
+    version: Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.+-]*$", max_length=64)]
     configs: BundleConfigs
 
     @field_validator("name", "version", mode="before")
@@ -273,7 +275,7 @@ def load_overlay(path: str | Path) -> MonaiFlipOverlay:
     path = Path(path)
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise OverlayError(f"{path}: cannot read overlay: {exc}") from exc
     except yaml.YAMLError as exc:
         raise OverlayError(f"{path}: not valid YAML: {exc}") from exc
