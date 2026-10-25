@@ -631,6 +631,18 @@ class RotateTrustKeys(unittest.TestCase):
         """Rotation is a flag on the registration CLI; there is no rotate_trust_keys module."""
         assert "rotate_trust_keys" not in dry_run("rotate-trust-keys", subdir=".")
 
+    def test_the_kit_writer_failure_is_fatal(self):
+        """A kit the writer could not save must not be reported as a completed rotation.
+
+        The hub commits the new hash before the kit is written, so an unchecked writer
+        leaves the kit file holding the old, now-refused keys while make exits 0.
+        """
+        out = dry_run("rotate-trust-keys", subdir=".")
+        writer = next((ln for ln in out.splitlines() if "distribute_trust_kits.py" in ln), None)
+        assert writer is not None, out
+        assert writer.rstrip().endswith("\\"), "the writer call must continue into its failure guard"
+        assert "could not be written" in out, out
+
 
 def compose_targets(makefile: str) -> set[str]:
     """The targets whose recipe runs `$(DOCKER_COMMAND)` or its debug-override twin."""

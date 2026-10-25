@@ -74,3 +74,38 @@ def test_image_env_carries_the_runtime_variables() -> None:
     declared = dict(re.findall(r'([A-Z_]+)="?([^"\s]+)"?', env_lines))
     for name, value in IMAGE_ENV.items():
         assert declared.get(name) == value, f"flip-api/Dockerfile no longer declares ENV {name}={value}"
+
+
+def test_the_ecs_waiter_status_is_checked() -> None:
+    """errexit is off inside register_one_kit, so an expired waiter must be caught by hand.
+
+    An unchecked `ecs wait` lets the script read SSM while the task is still running, report
+    the rotation as failed, and delete the parameter the task is about to write the new
+    credentials into.
+    """
+    source = SCRIPT.read_text()
+    assert "if ! aws_cmd ecs wait tasks-stopped" in source, (
+        "the `ecs wait tasks-stopped` call must be status-checked, not fire-and-forget"
+    )
+
+
+def test_a_failed_ssm_read_does_not_delete_the_parameter() -> None:
+    """A transient SSM error must not be read as 'the task wrote no kit'.
+
+    The absent-kit branch deletes the parameter, and on a rotation that parameter holds the
+    only copy of the live new credentials. Only ParameterNotFound may fall through to it.
+    """
+    source = SCRIPT.read_text()
+    assert "--query 'Parameter.Value' --output text 2>/dev/null || true" not in source, (
+        "the SSM read must not swallow its exit status with `|| true`"
+    )
+    assert 'grep -q "ParameterNotFound"' in source, (
+        "only ParameterNotFound may be treated as an absent kit; any other error must keep the parameter"
+    )
+
+
+def test_rotation_refuses_more_than_one_kit_file() -> None:
+    """Rotation is one trust at a time: each new kit has to reach its site before the cutover."""
+    source = SCRIPT.read_text()
+    assert "ROTATE_KEYS=1 requires KIT=<CODE>" in source
+    assert "set -- ${KIT_FILES}" in source, "the guard must count KIT_FILES, the only kit input the Makefile passes"
