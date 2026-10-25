@@ -8,5 +8,5 @@ exclude-newer-span = "P3D"
 
 [[package]]
 name = "flip"
-version = "0.13.1"
+version = "0.13.2"
 source = { editable = "." }
