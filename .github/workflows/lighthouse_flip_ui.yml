@@ -12,9 +12,10 @@
 
 # Re-runs the Lighthouse audit behind #586 in a clean, repeatable environment
 # (headless Chrome on the runner, no browser extensions) — the "clean re-run"
-# the issue's acceptance criteria asks for. Scoped to the pre-auth /auth/login
-# route, which needs only the built UI (no API / trust / FL stack); config +
-# rationale live in flip-ui/lighthouserc.cjs.
+# the issue's acceptance criteria asks for. Audits /auth/login signed out, then
+# the main signed-in pages against the AWS-free hub (flip-db, Keycloak, the
+# object store and flip-api from the dev compose, as local_auth_smoke.yml boots
+# it) — no trust or FL stack; config + rationale live in flip-ui/lighthouserc.cjs.
 #
 # Informational by design: the lhci assertions are all `warn`, so this job
 # never blocks a PR — it publishes a Lighthouse report artifact and surfaces
@@ -48,24 +49,19 @@ concurrency:
 jobs:
   lighthouse:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: ./flip-ui
 
     env:
+      COMPOSE: docker compose -p deploy -f deploy/compose.development.yml
+      # `vite preview`'s origin. The hub env file sets UI_PORT to it, so the dev
+      # realm registers it as a flip-ui redirect URI — which doubles as flip-api's
+      # CORS allowlist and Keycloak's web origins.
+      UI_PORT: "4173"
       # Never build the auth-bypassing bundle (checked by prebuild:deploy).
       VITE_LOCAL: "false"
-      # Dummy Cognito/API config so generate-window-js emits a populated
-      # public/js/window.js and the SPA boots to render the login form. These
-      # match the stub values the Cypress job uses; the login page never calls
-      # the API, and Amplify's pre-auth session probe just fails closed (which
-      # is itself one of the findings, #702) — none of it blocks the audit.
-      CENTRAL_HUB_API_URL: "http://localhost:8080"
-      AUTH_BACKEND: "cognito"
-      AWS_COGNITO_USER_POOL_ID: "eu-west-2_DUMMY1234"
-      AWS_COGNITO_APP_CLIENT_ID: "dummyclientid1234567890ab"
-      AWS_REGION: "eu-west-2"
 
     steps:
       - name: Checkout code
@@ -81,6 +77,39 @@ jobs:
           cache: npm
           cache-dependency-path: flip-ui/package-lock.json
 
+      - name: Hub environment file (no AWS)
+        working-directory: .
+        run: |
+          password="Lh-$(openssl rand -hex 12)-A1!"
+          echo "::add-mask::$password"
+          echo "LHCI_PASSWORD=$password" >> "$GITHUB_ENV"
+          username=$(sed -n 's/^ADMIN_EMAIL_1 = "\(.*\)"$/\1/p' flip-api/src/flip_api/utils/constants.py)
+          test -n "$username" || { echo "::error::ADMIN_EMAIL_1 not found in flip-api constants.py"; exit 1; }
+          echo "LHCI_USERNAME=$username" >> "$GITHUB_ENV"
+          aes_key=$(openssl rand -base64 32)
+          postgres_password=$(openssl rand -hex 16)
+          echo "::add-mask::$aes_key"
+          echo "::add-mask::$postgres_password"
+          cp .env.development.example .env.development
+          sed -i "s/^UI_PORT=.*/UI_PORT=$UI_PORT/" .env.development
+          {
+            echo "ADMIN_USER_PASSWORD=$password"
+            echo "AES_KEY_BASE64=$aes_key"
+            echo "POSTGRES_PASSWORD=$postgres_password"
+            echo "ENV=development"
+            echo "UID=$(id -u)"
+            echo "GID=$(id -g)"
+          } >> .env.development
+
+      - name: Start flip-db, keycloak, the object store and flip-api
+        working-directory: .
+        run: |
+          make create-networks-centralhub
+          make -C trust create-networks-core
+          make _ensure-object-store-dir
+          $COMPOSE --env-file .env.development build flip-api
+          $COMPOSE --env-file .env.development up -d --no-build flip-db keycloak object-store flip-api
+
       - name: Install dependencies
         # Cypress desktop binary isn't needed here; skip its flaky CDN download.
         env:
@@ -88,18 +117,14 @@ jobs:
         run: npm ci
 
       - name: Stub flip-ui/.env.development
-        # Vite's loadEnv reads this file for import.meta.env at build time;
-        # the job-level env block covers generate-window-js's shell reads.
-        # Mirrors the Cypress job's stub, minus the E2E test seams — we want a
-        # production-representative bundle, not the auth-bypassing E2E build.
+        # Vite's loadEnv reads this file for import.meta.env at build time.
+        # No E2E test seams — we want a production-representative bundle, not
+        # the auth-bypassing E2E build.
         run: |
           cat > .env.development <<'EOF'
           VITE_LOCAL=false
-          CENTRAL_HUB_API_URL=http://localhost:8080
-          AUTH_BACKEND=cognito
-          AWS_COGNITO_USER_POOL_ID=eu-west-2_DUMMY1234
-          AWS_COGNITO_APP_CLIENT_ID=dummyclientid1234567890ab
-          AWS_REGION=eu-west-2
+          CENTRAL_HUB_API_URL=http://localhost:8080/api
+          AUTH_BACKEND=keycloak
           EOF
 
       - name: Build production bundle
@@ -107,14 +132,56 @@ jobs:
         # root type errors unrelated to this audit). Perf / unused-JS metrics
         # are only meaningful on the built, code-split, minified bundle — never
         # on the dev server.
+        # postbuild:deploy writes dist/js/window.js from these. Both auth
+        # providers ship in the bundle and window.js picks one at runtime, so
+        # signing in through the dev Keycloak audits the JS prod serves. Set
+        # here, not job-wide: compose interpolates KEYCLOAK_* into flip-api.
+        env:
+          CENTRAL_HUB_API_URL: "http://localhost:8080/api"
+          AUTH_BACKEND: "keycloak"
+          KEYCLOAK_PUBLIC_URL: "http://localhost:8180"
+          KEYCLOAK_REALM: "flip"
+          KEYCLOAK_CLIENT_ID: "flip-ui"
         run: npm run build:deploy
+
+      - name: Wait for the hub and seed a project
+        # One project (and the trust it registers) so the project pages render
+        # a real row; it stays unapproved, which no audited page needs.
+        working-directory: .
+        run: |
+          for _ in $(seq 1 90); do
+            curl -fsS http://localhost:8080/api/health >/dev/null && break
+            sleep 3
+          done
+          ids=$(python3 flip-api/tests/local_storage_smoke.py --create-project \
+            --username "$LHCI_USERNAME" --password "$LHCI_PASSWORD" --ui-origin "http://localhost:$UI_PORT")
+          project_id=$(printf '%s\n' "$ids" | sed -n 's/^project_id=//p')
+          test -n "$project_id" || { echo "::error::--create-project printed no project_id"; exit 1; }
+          echo "LHCI_PROJECT_ID=$project_id" >> "$GITHUB_ENV"
 
       - name: Run Lighthouse CI
         # Pinned, well-aged @lhci/cli run via npx so it stays out of the app's
-        # package-lock (CI-only tool). autorun reads flip-ui/lighthouserc.cjs:
-        # it starts `vite preview`, audits /auth/login, asserts (warn-only),
-        # and writes reports to ./.lighthouseci.
-        run: npx --yes @lhci/cli@0.14.0 autorun
+        # package-lock (CI-only tool), with the puppeteer-core its Lighthouse
+        # (12.1) resolves, driving the runner's own Chrome. autorun reads
+        # flip-ui/lighthouserc.cjs: it starts `vite preview`, audits the pages,
+        # asserts (warn-only), and writes reports to ./.lighthouseci.
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+        run: npx --yes -p @lhci/cli@0.14.0 -p puppeteer-core@22.15.0 lhci autorun
+
+      - name: Check the signed-in audits stayed signed in
+        # A lost session redirects to /auth/login and Lighthouse would quietly
+        # score the login page under a signed-in URL.
+        run: |
+          node -e '
+            const fs = require("fs");
+            const lhrs = fs.readdirSync(".lighthouseci").filter((f) => /^lhr-.*\.json$/.test(f))
+              .map((f) => JSON.parse(fs.readFileSync(`.lighthouseci/${f}`)));
+            const paths = (lhr) => [new URL(lhr.requestedUrl).pathname, new URL(lhr.finalDisplayedUrl).pathname];
+            const bounced = lhrs.filter((lhr) => { const [want, got] = paths(lhr); return want !== "/auth/login" && got === "/auth/login"; });
+            for (const lhr of lhrs) console.log(paths(lhr).join(" -> "));
+            if (bounced.length) { console.log("::error::signed-in audits ended on /auth/login"); process.exit(1); }
+          '
 
       - name: Upload Lighthouse reports
         if: always()
@@ -128,3 +195,13 @@ jobs:
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
+
+      - name: Hub logs on failure
+        if: failure()
+        working-directory: .
+        run: $COMPOSE --env-file .env.development logs --no-color --tail=300
+
+      - name: Tear down
+        if: always()
+        working-directory: .
+        run: $COMPOSE --env-file .env.development down -v --remove-orphans

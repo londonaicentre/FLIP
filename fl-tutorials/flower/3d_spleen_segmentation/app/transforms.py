@@ -34,7 +34,7 @@ def get_train_transforms() -> Compose:
         [
             LoadImaged(keys=["image", "label"]),
             EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="RAS"),
+            Orientationd(keys=["image", "label"], axcodes="RAS", labels=None),
             ScaleIntensityRanged(keys=["image"], a_min=-57, a_max=250, b_min=0.0, b_max=1.0, clip=True),
             CropForegroundd(keys=["image", "label"], source_key="image"),
             Spacingd(
@@ -71,7 +71,7 @@ def get_val_transforms() -> Compose:
         [
             LoadImaged(keys=["image", "label"]),
             EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="RAS"),
+            Orientationd(keys=["image", "label"], axcodes="RAS", labels=None),
             ScaleIntensityRanged(
                 keys=["image"],
                 a_min=-57,

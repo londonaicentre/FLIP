@@ -111,7 +111,7 @@ locals {
     # This ONE access point is mounted at /app/server-checkpoints on BOTH the
     # fl-api-net-1 (writer) and fl-server-net-1 (reader) tasks — mirroring the
     # single `${FL_JOBS_DIR}/net-1:/app/server-checkpoints` bind shared between
-    # the two services in compose.production.nvflare.yml. Both containers run as
+    # the two services in compose.prod.nvflare.yml. Both containers run as
     # uid/gid 1001, which the access point pins, so writer and reader agree on
     # ownership. 0775 lets the group write the per-model subdirs fl-api mkdirs.
     fl_checkpoints = {

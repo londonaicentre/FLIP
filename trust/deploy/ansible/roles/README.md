@@ -25,7 +25,7 @@ cloud play (FLIP#1213, the Azure VM) is another composition of the same roles.
 | `flip_docker` | Docker via `geerlingguy.docker` | `flip_docker_users` — empty by default; **docker group = root**. EC2 opts `ubuntu` in (SSM-only host); on-prem never does |
 | `flip_trust_dirs` | `/opt/flip`, the images trees and their per-net slices (backend-aware ownership), the XNAT bind mounts (uid 1001), the approved-cohort membership stores (uid 1000, FLIP#857), optional Loki/Grafana host dirs | `flip_app_dirs`, `flip_images_base_dirs` (on-prem: one tree; EC2: one per FL kit slot), `flip_cohort_snapshot_dirs` (slots 1 and 2; EC2 adds its registered slot), `fl_backend`, `flip_observability_volume_dirs` |
 | `flip_fl_kit` | `fl_kit_dir`, then by `fl_kit_source`: `s3` syncs this host's slot out of the hub's bucket (the FLIP#965 guards — wipe first, assert the result), `precreate` lays down the tree for a hand-extracted tarball, `none` does nothing more | `fl_kit_source`, `trust_num`, `flip_aicentre_bucket`, `fl_kit_date` |
-| `flip_observability_config` | copies `trust/observability/**` into the dir the production compose mounts (`/opt/flip/config/observability`) | `observability_dest_dir` |
+| `flip_observability_config` | copies `trust/observability/**` into the dir the prod compose mounts (`/opt/flip/config/observability`) | `observability_dest_dir` |
 | `flip_omop_vocab` | streams the licensed core vocabulary into the seeded cluster; bundle from the hub's S3 bucket via an instance role, so EC2-only | `vocab_s3_bucket`, `omop_postgres_*`, `omop_db_tag` |
 
 There is no seed or restore role. Since FLIP#1187 the OMOP and Orthanc stores start empty and are seeded from the
