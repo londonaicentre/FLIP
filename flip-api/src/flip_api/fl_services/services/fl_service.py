@@ -12,7 +12,6 @@
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -37,7 +36,7 @@ from flip_api.domain.schemas.status import FLJobStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
-from flip_api.utils.http import http_delete, http_get, http_post
+from flip_api.utils.http import fl_api_error_message, http_delete, http_get, http_post
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import PresignAudience, S3Client
 
@@ -377,33 +376,6 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     return app_folders
 
 
-_URL = re.compile(r"https?://[^\s'\"]+")
-
-
-def _fl_api_refusal_reason(error: httpx.HTTPStatusError) -> str | None:
-    """The FL API's own reason for refusing a job, for the model log, or None if it gave none (FLIP#70).
-
-    The FL API answers a job it will not run, such as a meta.json key it does not accept or an invalid
-    config.json value, with a 4xx and a ``detail``. httpx's error names only the status and URL, so the
-    researcher saw "400 Bad Request" and not which file to fix. URLs are redacted: a bundle URL is presigned.
-
-    Args:
-        error (httpx.HTTPStatusError): the FL API's error response.
-
-    Returns:
-        str | None: the reason, or None for a server error or a reply without a readable ``detail``.
-    """
-    if not error.response.is_client_error:
-        return None
-    try:
-        detail = error.response.json().get("detail")
-    except (ValueError, AttributeError):
-        return None
-    if not isinstance(detail, str) or not detail.strip():
-        return None
-    return _URL.sub("<url>", detail.strip())
-
-
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
     """
     Upload the application to the FL server.
@@ -420,8 +392,7 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
         Any: The response from the server after uploading the application.
 
     Raises:
-        ValueError: if the FL API refused the job with a reason, carrying that reason for the model log.
-        httpx.HTTPStatusError: for any other error response.
+        httpx.HTTPStatusError: If the FL API returns an error response.
     """
     url = f"{endpoint}/upload_app/{model_id}"
     # Stopgap timeout: staging a large evaluation checkpoint (S3 download -> shared volume on
@@ -431,13 +402,7 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
     # request open for a multi-hundred-MB (up to 5 GB) transfer is fragile by design. The proper
     # fix is to make upload_app async (flip-fl-api returns 202 + a staging-status endpoint that
     # run_jobs polls, then submit_job once staged) rather than bumping the timeout. Tracked separately.
-    try:
-        response = http_post(url=url, data=training_details.model_dump(), timeout=900)
-    except httpx.HTTPStatusError as e:
-        reason = _fl_api_refusal_reason(e)
-        if reason is None:
-            raise
-        raise ValueError(f"The FL API refused the job: {reason}") from e
+    response = http_post(url=url, data=training_details.model_dump(), timeout=900)
     logger.info(f"upload_app response: {response}")
     # TODO There should be some response validation here, and the return type should not be Any
     return response
@@ -1434,6 +1399,14 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     return current_job_data[0]
 
 
+def record_fl_api_failure(model_id: UUID, error: httpx.HTTPStatusError, session: Session) -> None:
+    """Log an FL API failure and add its researcher-facing message to the activity feed."""
+    from flip_api.model_services.services.model_service import add_log
+
+    logger.exception("FL API request failed: %s", error)
+    add_log(model_id, fl_api_error_message(error), session, success=False)
+
+
 def abort_model_training(model_id: UUID, session: Session) -> None:
     """
     Check if the model is currently running training, and if it is, send an abort request to the FL server.
@@ -1447,6 +1420,8 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
             the job more than once.
         DatabaseError: If the dequeue or a scheduler lookup fails at the DB layer — surfaced
             rather than swallowed, so a failed abort is never reported as a success.
+        httpx.HTTPStatusError: If an FL API job-list or abort request fails. The error
+            is recorded in the model activity feed before it is re-raised.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
@@ -1491,7 +1466,12 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
     # If the model's job is neither running nor waiting to start, it has already ended — abort is an
     # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
     # leaving it to the stale-BUSY watchdog.
-    if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+    try:
+        current_job = extract_current_job_data(net_endpoint, fl_backend_job_id)
+    except httpx.HTTPStatusError as error:
+        record_fl_api_failure(model_id, error, session)
+        raise
+    if current_job is None:
         fl_scheduler_service.release_scheduler_for_model(model_id, session)
         logger.info(
             f"No running or waiting FL job for model {model_id} (job ID {fl_backend_job_id}); already ended — "
@@ -1501,7 +1481,11 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
 
     logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
-    response = abort_job(net_endpoint, fl_backend_job_id)
+    try:
+        response = abort_job(net_endpoint, fl_backend_job_id)
+    except httpx.HTTPStatusError as error:
+        record_fl_api_failure(model_id, error, session)
+        raise
 
     logger.info(f"Abort job response: {response}")
 

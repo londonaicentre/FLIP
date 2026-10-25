@@ -37,6 +37,7 @@ To iterate locally **before pushing**, build them tagged `:dev`:
 ```bash
 make -C fl-services/flower build                  # flwr-base first, then superlink/supernode/fl-api
 make -C fl-services/flower build LOCAL_DEV=true   # include dev-only deps
+make -C fl-services/flower build DOCKER_FL_TAG=rc  # tag the whole chain :rc instead — on a shared host :dev is daemon-wide
 make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub stack on local images
 ```
 
@@ -144,10 +145,10 @@ regenerates the CA and invalidates every node already holding credentials. Overr
 make -C fl-services/flower provision NET_NUMBER=1   # → provision/creds/net-1/
 make -C fl-services/flower provision NET_NUMBER=2   # second net for the default dev stack
 
-# A stag/prod kit: PROD selects the env file the slot pool is read from, and the
+# A stag/prod kit: HUB selects the env file the slot pool is read from, and the
 # SuperLink cert needs the hub's own names.
 FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
-  make -C fl-services/flower provision NET_NUMBER=1 PROD=stag
+  make -C fl-services/flower provision NET_NUMBER=1 HUB=stag
 ```
 
 `make generate-tls-certificates-net-1` / `-net-2` are direct shortcuts for `provision

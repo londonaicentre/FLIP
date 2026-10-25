@@ -82,3 +82,7 @@ packages = []
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Security: minimum versions for transitive packages with open CVEs.
+constraint-dependencies = [
+    "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2
+]

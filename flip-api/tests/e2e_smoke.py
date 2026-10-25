@@ -315,7 +315,9 @@ def authenticate() -> dict[str, str]:
     if token:
         _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
         return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
-    _log(f"🔐 Authenticating as admin via {get_settings().AUTH_BACKEND}…")
+    settings = get_settings()
+    via = f" at {settings.KEYCLOAK_PUBLIC_URL}" if settings.AUTH_BACKEND == "keycloak" else ""
+    _log(f"🔐 Authenticating as admin via {settings.AUTH_BACKEND}{via}…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
     return headers
@@ -1115,6 +1117,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     query = args.query_file.read_text()
+    _log(f"🎯 Target hub: {constants.BASE_URL}")
     headers = authenticate()
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})

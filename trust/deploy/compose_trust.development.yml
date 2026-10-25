@@ -24,8 +24,13 @@ services:
   # stack runs a feature-branch tag — omop-db changes rarely, so its branch tag is
   # the one most likely to be missing (branch builds are workflow_dispatch only).
   # Same role XNAT_TAG plays for the XNAT images (trust/xnat/Makefile).
+  # Pull from GHCR by default; `make up BUILD=true` rebuilds from build: below.
   omop-db:
     image: ghcr.io/londonaicentre/omop-db:${OMOP_DB_TAG:-${DOCKER_TAG}}
+    pull_policy: always
+    build:
+      context: ./omop-db
+      dockerfile: Dockerfile
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"

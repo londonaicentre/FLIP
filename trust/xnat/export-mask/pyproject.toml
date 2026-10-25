@@ -1,0 +1,19 @@
+[project]
+name = "xnat-export-mask"
+version = "1.0.0"
+description = "XNAT Container Service command: convert an OHIF DICOM-SEG assessor to NIfTI and upload it back"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "highdicom>=0.28",
+    "numpy>=2",
+    "requests>=2.32",
+    "simpleitk>=2.5.2",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"

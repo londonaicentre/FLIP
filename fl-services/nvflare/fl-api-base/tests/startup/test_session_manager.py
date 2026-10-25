@@ -14,6 +14,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from nvflare.apis.fl_exception import FLCommunicationError
 
 from fl_api.startup.session_manager import create_fl_session
 
@@ -29,6 +30,7 @@ def fake_settings(tmp_path):
         FL_ADMIN_DIRECTORY = str(tmp_path / "admin")
         JOB_RESOURCE_SPEC_NUM_GPUS = 2
         TIMEOUT_SESSION_CONNECT = 5.0
+        TIMEOUT_FL_SERVER_STARTUP = 600.0
 
     os.makedirs(Settings.FL_ADMIN_DIRECTORY, exist_ok=True)
     return Settings()
@@ -64,3 +66,35 @@ def test_create_fl_session_refuses_a_gpu_default_no_job_could_use(fake_settings)
         create_fl_session()
 
     session_cls.assert_not_called()
+
+
+def test_create_fl_session_waits_for_a_server_that_is_still_starting(fake_settings):
+    """A slow FL server start is retried with a fresh session; each failed one is closed so its connector stops."""
+    failed, ok = MagicMock(), MagicMock()
+    failed.try_connect.side_effect = FLCommunicationError("cannot connect to server for 5.0 seconds")
+
+    with (
+        patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
+        patch("fl_api.startup.session_manager.FLIP_Session", side_effect=[failed, failed, ok]) as session_cls,
+    ):
+        assert create_fl_session() is ok
+
+    assert session_cls.call_count == 3
+    assert failed.close.call_count == 2
+    ok.close.assert_not_called()
+
+
+def test_create_fl_session_gives_up_after_the_startup_timeout(fake_settings):
+    """Past TIMEOUT_FL_SERVER_STARTUP the connection error propagates, so the API does not start half-alive."""
+    fake_settings.TIMEOUT_FL_SERVER_STARTUP = 0.0
+    failed = MagicMock()
+    failed.try_connect.side_effect = FLCommunicationError("cannot connect to server for 5.0 seconds")
+
+    with (
+        patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
+        patch("fl_api.startup.session_manager.FLIP_Session", return_value=failed),
+        pytest.raises(FLCommunicationError),
+    ):
+        create_fl_session()
+
+    failed.close.assert_called_once()

@@ -10,6 +10,16 @@
 # limitations under the License.
 
 {{- if .Values.flClient.enabled }}
+{{- $jobPods := and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}
+{{- if and .Values.flClient.nvflare.jobPods.enabled (ne .Values.flBackend "nvflare") }}
+{{- fail "flClient.nvflare.jobPods.enabled starts each job in its own pod through NVFLARE's Kubernetes job launcher, so it needs flBackend: nvflare." }}
+{{- end }}
+{{- if and $jobPods .Values.flClient.gpu.enabled }}
+{{- fail "flClient.nvflare.jobPods.enabled gives GPUs to the job pods, not to the fl-client: set flClient.gpu.enabled=false and size the site's GPU pool with flClient.nvflare.jobPods.maxGpus." }}
+{{- end }}
+{{- if and (eq .Values.flBackend "nvflare") .Values.flClient.gpu.enabled (ne (int .Values.flClient.gpu.count) 1) }}
+{{- fail "flClient.gpu.count must be 1 when GPU mode is enabled on NVFLARE: the pod sees GPU 0 only (CUDA_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES are 0). Set flClient.gpu.count to 1, or disable flClient.gpu.enabled for CPU-only mode." }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -34,8 +44,9 @@ metadata:
     app.kubernetes.io/component: fl-client
 data:
   NET_ID: {{ .Values.flClient.netId | quote }}
-  NUM_AVAILABLE_GPUS: {{ .Values.flClient.gpu.count | quote }}
-  MEMORY_PER_GPU_IN_GIB: "7"
+  # The GPUs the NVFLARE client offers its scheduler: none when the pod is given none.
+  NUM_AVAILABLE_GPUS: {{ ternary .Values.flClient.gpu.count 0 .Values.flClient.gpu.enabled | quote }}
+  MEMORY_PER_GPU_IN_GIB: {{ .Values.flClient.gpu.memoryPerGpuInGiB | quote }}
   LOCAL_DEV: "false"
   IMAGES_DIR: {{ .Values.flClient.imagesDir | quote }}
   DATA_ACCESS_API_URL: "http://data-access-api:8000"
@@ -55,6 +66,14 @@ metadata:
     flip/network: {{ .Values.flClient.netId }}
 spec:
   replicas: 1
+  # One trust, one FL identity (an NVFLARE site, a SuperNode credential). RollingUpdate would start the
+  # new pod before stopping the old: the two evict each other's server connection until the old one
+  # exits, the server drops the site, and a job started in that window is aborted. rollingUpdate is cleared
+  # so an upgrade from the RollingUpdate default applies: the live object keeps the API server's defaults,
+  # which server-side apply would otherwise refuse beside Recreate.
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
@@ -67,10 +86,19 @@ spec:
         app.kubernetes.io/component: fl-client
         flip/network: {{ .Values.flClient.netId }}
       {{- $governed := and .Values.governance.document (eq .Values.flBackend "nvflare") }}
-      {{- if or .Values.flClient.gpu.enabled $governed }}
+      {{- /* NVFLARE mounts a job pod's workspace at the parent's workspace path, so with job pods the parent
+      cannot use /app, where the image keeps its code and virtualenv (FLIP#1428). */}}
+      {{- $ws := ternary "/var/tmp/nvflare/workspace" "/app" $jobPods }}
+      {{- $kitFromSecret := eq .Values.flClient.kit.source "secret" }}
+      {{- if or .Values.flClient.gpu.enabled $governed $jobPods }}
       annotations:
         {{- if .Values.flClient.gpu.enabled }}
         nvidia.com/gpu: {{ .Values.flClient.gpu.count | quote }}
+        {{- end }}
+        {{- if $jobPods }}
+        # The job pod template is copied into the kit when the parent starts, so a change to it must
+        # roll the parent.
+        checksum/fl-job-pod: {{ include "flip-trust.flJobPod" . | sha256sum }}
         {{- end }}
         {{- if $governed }}
         # Editing the client's section of the governance document must roll this pod: a
@@ -108,6 +136,60 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       initContainers:
+        {{- if $kitFromSecret }}
+        # The kit from a Secret (flClient.kit.source: secret; FLIP#1390): a managed node pool
+        # replaces nodes at will, so nothing may live on one. A Secret volume is read-only, and
+        # NVFLARE writes into local/, chmods its startup/ scripts and saves into transfer/, so the
+        # files are copied into the pod's kit volume and handed to the client's user. Keys are
+        # <subdir>__<file> (a Secret key cannot hold a slash); `make kit-secret` builds them.
+        - name: stage-fl-kit
+          image: {{ include "flip-trust.flClientImage" . }}
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+            seccompProfile:
+              type: RuntimeDefault
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              for f in /kit-secret/*; do
+                key="$(basename "$f")"
+                case "$key" in *__*) ;; *) echo "kit Secret key '$key' is not <subdir>__<file>" >&2; exit 1 ;; esac
+                dir="${key%%__*}"
+                file="${key#*__}"
+                case "$dir" in ""|.|..) echo "kit Secret key '$key' names an unsafe directory" >&2; exit 1 ;; esac
+                case "$file" in ""|.|..|*/*) echo "kit Secret key '$key' names an unsafe file" >&2; exit 1 ;; esac
+                mkdir -p "/kit/$dir"
+                cp "$f" "/kit/$dir/$file"
+              done
+              {{- if eq .Values.flBackend "flower" }}
+              chmod 0755 /kit /kit/certificates /kit/keys
+              chmod 0644 /kit/certificates/*
+              chgrp 49999 /kit/keys/*
+              chmod 0640 /kit/keys/*
+              {{- else }}
+              mkdir -p /kit/local /kit/startup /kit/transfer
+              chown -R 1000:1000 /kit
+              chmod -R go-rwx /kit
+              {{- end }}
+              echo "FL kit staged from the Secret:"; ls -lR /kit | sed -n '1,40p'
+          volumeMounts:
+            - name: fl-client-kit-secret
+              mountPath: /kit-secret
+              readOnly: true
+            - name: fl-client-kit
+              mountPath: /kit
+        {{- end }}
         # Pre-create this net's slice of the shared images volume: the fl-client
         # container below mounts only <imagesDir>/<netId> via subPath — least
         # privilege, so training code cannot read another net's cached studies —
@@ -121,8 +203,8 @@ spec:
         # read-only is NOT sufficient for the client). Without this, every
         # imaging-api download would 500 with EACCES and training would die
         # later with a misleading num_samples=0.
-        # This is the pod's only init container: the kit is staged onto the node
-        # out-of-band (`make stage-kit`), never fetched here. Reuses the fl-client's
+        # The kit is never fetched here: it is staged onto the node out-of-band
+        # (`make stage-kit`) or copied from a Secret by stage-fl-kit above. Reuses the fl-client's
         # own image (already required by this pod — no extra registry
         # dependency) with an explicit root securityContext: chown/chmod need
         # root, but privilege is scoped to exactly the three file capabilities.
@@ -205,6 +287,12 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if $jobPods }}
+          ports:
+            # Job pods connect back here (the -parent Service, fl-client-job-pods.yaml).
+            - name: fl-parent
+              containerPort: {{ .Values.flClient.nvflare.jobPods.parentPort }}
+          {{- end }}
           {{- if eq .Values.flBackend "flower" }}
           # args, NOT command: the flags append to the image's flower-supernode
           # ENTRYPOINT (mirroring the compose overlay's `command:` semantics).
@@ -240,25 +328,45 @@ spec:
             - -c
             - |
               set -euo pipefail
-              chmod u+x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
+              chmod u+x {{ $ws }}/startup/sub_start.sh {{ $ws }}/startup/stop_fl.sh 2>/dev/null || true
               export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
-              export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
+              export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-7}
               export LOG_LEVEL=${LOG_LEVEL:-INFO}
-              # Copy .default configs shipped in the kit to the expected runtime paths.
-              # The image bakes resources.template.json/log_config.template.json into
-              # /app/local/, but the kit volume-mount replaces that directory, hiding the
-              # templates. The kit ships *.default equivalents — copy them as-is (no
-              # envsubst needed: the values are already correct for this deployment).
-              cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
-              cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              # Tell NVFLARE's scheduler the GPUs this pod has. The kit ships resources.template.json, the
+              # provisioned resources.json with the GPU count and memory left as ${NUM_AVAILABLE_GPUS} and
+              # ${MEMORY_PER_GPU_IN_GIB} (fl-services/nvflare/provision/scripts/restructure-lib.sh). Fill in those
+              # two, as the Compose client's entrypoint does, from flClient.gpu.count. resources.json.default holds
+              # what provisioning wrote, not this deployment's count, so it is only the fallback for a kit from
+              # before the template existed. A local/ the client cannot write stops the pod.
+              if [ -f {{ $ws }}/local/resources.template.json ]; then
+                envsubst '${NUM_AVAILABLE_GPUS} ${MEMORY_PER_GPU_IN_GIB}' < {{ $ws }}/local/resources.template.json > {{ $ws }}/local/resources.json \
+                  || { echo "cannot write {{ $ws }}/local/resources.json" >&2; exit 1; }
+              else
+                cp {{ $ws }}/local/resources.json.default {{ $ws }}/local/resources.json \
+                  || { echo "cannot copy the kit's local/resources.json.default to {{ $ws }}/local/resources.json" >&2; exit 1; }
+              fi
+              # Render the kit's log level, retaining the default-file path for older kits.
+              if [ -f {{ $ws }}/local/log_config.template.json ]; then
+                envsubst '${LOG_LEVEL}' < {{ $ws }}/local/log_config.template.json > {{ $ws }}/local/log_config.json \
+                  || { echo "cannot write {{ $ws }}/local/log_config.json" >&2; exit 1; }
+              else
+                cp {{ $ws }}/local/log_config.json.default {{ $ws }}/local/log_config.json \
+                  || { echo "cannot copy the kit's local/log_config.json.default to {{ $ws }}/local/log_config.json" >&2; exit 1; }
+              fi
               # Site privacy policy (FLIP#851, FLIP#1259): render or remove /app/local/privacy.json
               # from FL_SITE_PRIVACY_* or the governance document's [fl_privacy.nvflare] section.
               # `set -euo pipefail` above makes an invalid configuration fail the pod (fail
               # closed) rather than run an unfiltered client.
-              python -m flip.nvflare.site_policy /app/local/privacy.json
+              python -m flip.nvflare.site_policy {{ $ws }}/local/privacy.json
+              {{- if $jobPods }}
+              # One Kubernetes pod per job (FLIP#1428): swap the process launcher for NVFLARE's K8s
+              # launcher, declare the GPU pool, point job pods at the -parent Service and give them the
+              # pod template mounted at /app/k8s. Fails the pod rather than start a process-mode client.
+              python -m flip.nvflare.k8s_job_mode {{ $ws }}/local
+              {{- end }}
               pkill -f nvflare 2>/dev/null || true
-              rm -f /app/pid.fl /app/daemon_pid.fl
-              cd /app/startup
+              rm -f {{ $ws }}/pid.fl {{ $ws }}/daemon_pid.fl
+              cd {{ $ws }}/startup
               exec ./sub_start.sh
           {{- end }}
           envFrom:
@@ -281,6 +389,8 @@ spec:
               value: /app/governance/governance.fl_privacy.toml
             {{- end }}
             {{- if eq .Values.flBackend "nvflare" }}
+            - name: LOG_LEVEL
+              value: {{ .Values.logLevel | quote }}
             # Keep policy values in the pod template, rather than only the ConfigMap,
             # so a Helm value change triggers a Deployment rollout.
             - name: FL_SITE_PRIVACY_POLICY
@@ -306,6 +416,25 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
+            {{- if $jobPods }}
+            # Read by flip.nvflare.k8s_job_mode (FLIP#1428).
+            - name: FL_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FL_K8S_PARENT_SERVICE
+              value: {{ include "flip-trust.fullname" . }}-fl-client-{{ .Values.flClient.netId }}-parent
+            - name: FL_K8S_PARENT_PORT
+              value: {{ .Values.flClient.nvflare.jobPods.parentPort | quote }}
+            - name: FL_K8S_JOB_IMAGE
+              value: {{ include "flip-trust.flClientImage" . | quote }}
+            - name: FL_K8S_MAX_GPUS
+              value: {{ .Values.flClient.nvflare.jobPods.maxGpus | quote }}
+            - name: FL_K8S_PENDING_TIMEOUT
+              value: {{ .Values.flClient.nvflare.jobPods.pendingTimeout | quote }}
+            - name: FL_K8S_POD_TEMPLATE
+              value: /app/k8s/job-pod.yaml
+            {{- end }}
           volumeMounts:
             # Only this net's slice of the shared images volume, at the
             # unchanged container path so imaging-api's returned paths still
@@ -316,14 +445,19 @@ spec:
             - name: dshm
               mountPath: /dev/shm
           {{- if eq .Values.flBackend "nvflare" }}
+            {{- if $jobPods }}
+            # Writable root for the per-job directories; the kit's folders mount inside it.
+            - name: fl-workspace
+              mountPath: {{ $ws }}
+            {{- end }}
             - name: fl-client-kit
-              mountPath: /app/local
+              mountPath: {{ $ws }}/local
               subPath: local
             - name: fl-client-kit
-              mountPath: /app/startup
+              mountPath: {{ $ws }}/startup
               subPath: startup
             - name: fl-client-kit
-              mountPath: /app/transfer
+              mountPath: {{ $ws }}/transfer
               subPath: transfer
           {{- else }}
             - name: fl-client-kit
@@ -338,6 +472,11 @@ spec:
             # to rewrite its own privacy policy.
             - name: governance-extract
               mountPath: /app/governance
+              readOnly: true
+          {{- end }}
+          {{- if $jobPods }}
+            - name: fl-job-pod
+              mountPath: /app/k8s
               readOnly: true
           {{- end }}
           resources:
@@ -396,6 +535,15 @@ spec:
           emptyDir:
             medium: Memory
             sizeLimit: {{ .Values.flClient.shmSize }}
+        {{- if $kitFromSecret }}
+        # Filled by stage-fl-kit from the Secret below; lives as long as the pod.
+        - name: fl-client-kit
+          emptyDir: {}
+        - name: fl-client-kit-secret
+          secret:
+            secretName: {{ .Values.flClient.kit.secretName | default (printf "%s-fl-kit" (include "flip-trust.fullname" .)) }}
+            defaultMode: 0400
+        {{- else }}
         - name: fl-client-kit
           # Pre-provisioned on the node. The chart cannot fetch it: a trust holds no
           # FLIP credentials, and the kit arrives out-of-band (see values.yaml).
@@ -404,6 +552,7 @@ spec:
           hostPath:
             path: {{ required "flClient.kitHostPath is required when flClient.enabled — the absolute path ON THE NODE holding this trust's provisioned FL participant kit. Stage it with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then --set flClient.kitHostPath=/opt/flip/fl-kit (stage-kit's default KIT_DEST, and the kit file's FL_KIT_DIR)" .Values.flClient.kitHostPath | quote }}
             type: Directory
+        {{- end }}
         {{- if $governed }}
         - name: governance
           configMap:
@@ -412,5 +561,12 @@ spec:
         - name: governance-extract
           emptyDir:
             sizeLimit: 1Mi
+        {{- end }}
+        {{- if $jobPods }}
+        - name: fl-workspace
+          emptyDir: {}
+        - name: fl-job-pod
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
         {{- end }}
 {{- end }}

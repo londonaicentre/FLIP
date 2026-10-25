@@ -426,8 +426,7 @@ As noted above, it evidences supplier posture only and grants no DSPT exemption.
      - - Trust environments expose no inbound ports and poll outbound only.
        - Services run in private subnets with no public address.
        - A single hardened CloudFront edge fronts the hub, with an internal-only load
-         balancer behind it. In the self-contained AWS deployment, the FL server's load
-         balancer is also public but admits only allowlisted trust IP addresses.
+         balancer behind it.
        - AWS WAF managed rules are deployed.
      - Operational (WAF rules moving from monitoring to enforcement)
    * - **2. Secure configuration**
@@ -685,10 +684,8 @@ Objective B — Protecting against cyber attacks and data breaches
      - —
    * - **B5.b** Design for resilience
      - Hub
-     - Private subnets with no public addresses; a single hardened hub edge (plus, in the
-       self-contained deployment, an FL server endpoint open only to allowlisted trust
-       IPs); account separation and centrally managed guardrails under the AWS Landing
-       Zone Accelerator.
+     - Private subnets with no public addresses; a single hardened hub edge; account
+       separation and centrally managed guardrails under the AWS Landing Zone Accelerator.
      - LZA consolidation is in delivery, not complete.
    * - **B5.c** Backups
      - Shared

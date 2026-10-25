@@ -164,6 +164,9 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
         if isinstance(err, bytes):
             err = err.decode(errors="replace")
         return False, err or str(e)
+    except FileNotFoundError as e:
+        # A tool this host lacks (macOS has no `free`) is a check that cannot run, not a crash.
+        return False, str(e)
 
 
 def kubectl_get_condition(resource_type: str, resource_name: str, condition: str) -> bool:
@@ -1171,7 +1174,7 @@ def main(
         if found:
             # Downgrade to INFO when the only errors are about a missing hub URL —
             # that means CENTRAL_HUB_API_URL hasn't been configured yet (no KIT synced),
-            # not a broken service.  Run 'make sync-kit KIT=<KIT> PROD=<env>' to fix.
+            # not a broken service.  Run 'make sync-kit KIT=<KIT> HUB=<env>' to fix.
             hub_not_configured = all(
                 "Request URL is missing" in line or "hub" in line.lower()
                 for line in logs.splitlines()
@@ -1181,7 +1184,7 @@ def main(
                 print_status(
                     "INFO",
                     f"'{svc_name}' cannot reach hub (CENTRAL_HUB_API_URL not set) — "
-                    "run 'make sync-kit KIT=<KIT> PROD=<env>' to configure",
+                    "run 'make sync-kit KIT=<KIT> HUB=<env>' to configure",
                 )
             else:
                 print_status("WARN", f"'{svc_name}' has errors in logs: {', '.join(found)}")
@@ -1210,7 +1213,9 @@ def main(
 
     print_status("INFO", "Checking memory usage...")
     success, mem = run_command(["free"])
-    if success:
+    if not success:
+        print_status("INFO", "Memory check skipped: `free` is not available on this host")
+    else:
         for line in mem.split("\n"):
             if line.startswith("Mem:"):
                 fields = line.split()

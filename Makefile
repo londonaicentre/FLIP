@@ -17,12 +17,16 @@
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
-		demo-video demo-users seed-demo-projects reset-keycloak
+		demo-video demo-users seed-demo-projects reset-keycloak \
+		_release-tag release-prepare release-instance release-verify release-gates release-record release-main-check
 
-# What PROD means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
-# deploy/env_mode.mk, shared with every other Makefile that reads PROD. The kit-file
+# What HUB means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
+# deploy/env_mode.mk, shared with every other Makefile that reads HUB. The kit-file
 # targets here (new-trust, sync-trust-kit[s]) name trust/.env.<CODE>.$(ENV), the same
-# token the AWS Makefile's KIT_ENV_SUFFIX and register-trusts.sh use.
+# name the AWS Makefile and register-trusts.sh use; KIT= finds a kit under its
+# pre-FLIP#1479 name too (env_mode.mk's kit_file). The hub env-file check runs for every
+# goal but the on-prem trust verbs, which read only the trust's kit.
+READS_HUB_ENV_FILE := $(if $(MAKECMDGOALS),$(filter-out up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust,$(MAKECMDGOALS)),yes)
 include deploy/env_mode.mk
 MAIN_ENV_FILE=$(ENV_FILE_NAME)
 
@@ -42,6 +46,12 @@ $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
+# Staging is the LZA staging account, whose env file names its VPC (the AWS Makefile requires
+# LZA_VPC_NAME too). One without it is the retired self-contained account's .env.stag, and its
+# values must not reach a kit (FLIP#1479).
+ifneq ($(and $(READS_HUB_ENV_FILE),$(filter stag,$(ENV))),)
+$(if $(strip $(LZA_VPC_NAME)),,$(error $(MAIN_ENV_FILE) sets no LZA_VPC_NAME: it is not the LZA staging hub's env file. A .env.stag left from the retired self-contained staging account must be deleted))
+endif
 endif
 
 include deploy/fl_backend.mk
@@ -96,6 +106,12 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+# The pair is exported at parse time, before `up`'s generate-internal-service-key can rewrite it,
+# so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
+KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
+read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
+FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
+	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)"
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
 # Through compose, addressing the service rather than the container: the containers are
 # named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
@@ -105,7 +121,7 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
-# Default: repo-built services (flip-api + trust APIs + orthanc) carry
+# Default: repo-built services (flip-api + trust APIs + orthanc + omop-db) carry
 # `pull_policy: always` in the dev compose, so they always pull from GHCR on
 # their own. This flag only adds the global `--pull always` that keeps FL images
 # fresh — and it's dropped when DOCKER_FL_REGISTRY is empty (local `:dev` FL
@@ -116,6 +132,9 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 # `--build` forces the build; `--pull missing` overrides the per-service
 # `pull_policy: always` for this run so the fresh build isn't immediately
 # re-pulled away, while still fetching any absent FL/infra image.
+# BUILD reaches trust/ and trust/xnat/ through MAKEFLAGS: omop-db builds with the
+# trust compose, and up-xnat builds the XNAT images and deploys them at :dev
+# (or a command-line XNAT_TAG).
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
@@ -133,7 +152,8 @@ build:
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
 
-# Build the FLARE FL service images locally, tagged :dev, for iterating on fl-services/
+# Build the FL service images locally, tagged :dev (or DOCKER_FL_TAG given on the command
+# line — FLIP#1605: :dev is daemon-wide, so an isolated instance builds its own tag), for iterating on fl-services/
 # or the flip-utils `flip` package before pushing. The deploy compose pulls FL images from
 # GHCR (DOCKER_FL_TAG), so they are NOT built by `make build`; this uses the build defs in
 # fl-services/<backend>/compose.dev.yml. fl-base must build first, in its own invocation: a plain
@@ -148,7 +168,7 @@ build:
 # deployments are tested: make -C fl-services/<backend> {build,provision,up,down,submit}.
 build-fl:
 	@$(MAKE) -C fl-services/$(FL_BACKEND) build LOCAL_DEV=$(LOCAL_DEV)
-	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
+	@echo "✅ FL :$(FL_BUILD_TAG) images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=$(FL_BUILD_TAG)"
 
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
@@ -157,7 +177,7 @@ up: _check-compose-project-owner generate-internal-service-key create-networks _
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
@@ -229,7 +249,7 @@ _check-compose-project-owner:
 up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
@@ -239,10 +259,10 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 up-trust-ec2: create-networks
-	@echo "Hey! PROD="$(PROD)
+	@echo "Hey! HUB="$(HUB)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
-	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) HUB=${HUB}
 	@echo "✅ Trust services started successfully!"
 
 central-hub: _check-compose-project-owner create-networks-centralhub _ensure-object-store-dir
@@ -257,54 +277,54 @@ central-hub: _check-compose-project-owner create-networks-centralhub _ensure-obj
 # missing and how to fix it; we exit so the operator doesn't hit a cryptic
 # compose / pydantic failure deeper in the stack.
 up-onprem-trust:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
-	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
 
 # Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
 # trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
 # changed, redeploy XNAT WITHOUT xnat-reset. Never up-trust: that is the first-install
 # verb and wipes the XNAT archive. TAG defaults to the release the hub runs (read from
-# the hub's /health), so a plain `make upgrade-onprem-trust KIT=<slot>` is "catch up
+# the hub's /health), so a plain `make upgrade-onprem-trust KIT=<CODE>` is "catch up
 # with the hub"; FL_TAG= pins the FL client apart (sha- moves only — a release builds every
 # image at one tag); FORCE=1 allows a downgrade, YES=1 skips the confirmation. A release
 # TAG is refused unless this checkout is at that tag — the compose files and this very verb
 # come from the checkout, so `git fetch --tags origin && git checkout vX.Y.Z` comes first;
 # ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
 upgrade-onprem-trust:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
-	$(MAKE) -C trust upgrade-trust KIT=$(KIT) PROD=$(or $(PROD),true) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
+	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
-# so an operator doesn't have to remember the -C trust path or PROD value.
+# so an operator doesn't have to remember the -C trust path or HUB value.
 down-onprem-trust:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	$(MAKE) -C trust down-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
+	$(MAKE) -C trust down-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
 
 # Readiness checklist for an on-prem trust. Prints the operator's public
 # IP + a row per precondition (kit file, swarm, Hub-shared block, Kit
 # credentials, FL_KIT_DIR and its contents) with ✅/❌ and a concrete fix
 # under each failing row. Exits 0 when all checks pass (the operator can
-# then run `make up-onprem-trust KIT=<slot>`), 1 otherwise.
+# then run `make up-onprem-trust KIT=<CODE>`), 1 otherwise.
 #
 # Invoked automatically as a precheck by up-onprem-trust; can also be run
-# standalone (e.g. `make onboard-onprem-trust KIT=Trust_2`).
+# standalone (e.g. `make onboard-onprem-trust KIT=GSTT`).
 #
 # On-prem onboarding splits like this:
 #   - Admin owns: opening the prod NLB to the operator's IP, UI-registering
 #     the trust on the prod hub (Add-Trust modal mints the 5 Kit credentials,
-#     admin pastes into trust/.env.<KIT>), running `make sync-trust-kit-N`
-#     to populate the Hub-shared block in trust/.env.<KIT>, running
+#     admin pastes into trust/.env.<KIT>.prod), running `make sync-trust-kit`
+#     to populate the Hub-shared block in it, running
 #     `make package-onprem-trust-kit` to tarball the populated env file
 #     plus the operator's slice of the FL participant kit S3 bucket.
-#   - Operator owns: extracting the tarball, copying the .env.<KIT> in,
+#   - Operator owns: extracting the tarball, copying the .env.<KIT>.prod in,
 #     setting FL_KIT_DIR + Host-local profile, running `make up-onprem-trust`.
 # The operator never touches the prod UI directly — the admin uses it on
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) PROD=$(or $(PROD),true) ONBOARD_ARGS="$(ONBOARD_ARGS)"
+	@$(MAKE) -C trust onboard-onprem-trust KIT=$(or $(KIT),Trust_2) HUB=$(or $(HUB),prod) ONBOARD_ARGS="$(ONBOARD_ARGS)"
 
 # Stop all containers
 down: _check-compose-project-owner
@@ -400,9 +420,8 @@ checkov-lint:
 # ruleset plugin on first run. Runs the script directly, like checkov-lint.
 tflint-lint:
 	bash deploy/providers/AWS/scripts/tflint_lint.sh
-# Re-render the four committed Central Hub AWS diagrams under deploy/providers/AWS/docs/ — the
-# self-contained pair (central-hub-aws-{network,data}.png) and the LZA pair (-lza-{network,data}) —
-# from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
+# Re-render the two committed Central Hub AWS diagrams under deploy/providers/AWS/docs/
+# (central-hub-aws-lza-{network,data}.png) from deploy/providers/AWS/architecture/central_hub.py (the ReadTheDocs copies are rendered at docs
 # build time instead). Uses the local graphviz when `dot` is installed; the dev hosts have none,
 # so it otherwise runs the identical render in a throwaway python:3.12-slim container. The two
 # paths are not byte-identical: the committed copies are the container render (byte-stable across
@@ -420,19 +439,19 @@ else
 	   python -m architecture.central_hub --out docs && chown -R $(shell id -u):$(shell id -g) docs"
 endif
 ui: _check-compose-project-owner
-ifeq ($(strip $(PROD)),)
+ifeq ($(IS_DEPLOYED),)
 	@echo "🚀 Starting UI..."
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
-	@echo "ℹ️  flip-ui is served from S3 + CloudFront when PROD=$(PROD); no container to start."
-	@echo "    Run \`make -C deploy/providers/AWS deploy-ui PROD=$(PROD)\` to publish the bundle."
+	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
+	@echo "    Run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\` to publish the bundle."
 endif
 ui-off: _check-compose-project-owner
-ifeq ($(strip $(PROD)),)
+ifeq ($(IS_DEPLOYED),)
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
 else
-	@echo "ℹ️  No flip-ui container runs when PROD=$(PROD) (S3 + CloudFront)."
+	@echo "ℹ️  No flip-ui container runs when HUB=$(HUB) (S3 + CloudFront)."
 endif
 tests:
 	$(MAKE) -C flip-ui unit_test
@@ -526,8 +545,34 @@ integration_test:
 	$(MAKE) -C flip-api integration_test
 	$(MAKE) -C trust integration_test
 
+# Release pipeline (FLIP#1608, CONTRIBUTING § Cutting a release). Each step is one script under
+# scripts/release/; TAG=vX.Y.Z throughout, INSTANCE defaults to rel<XYZ>. PR=<n> pins the gates to the
+# release PR's head.
+#   release-prepare   bump versions, make lock, empty Release checks (DRY_RUN=1 previews)
+#   release-instance  isolated instance from this checkout, every image built at :INSTANCE (PORT_OFFSET, FORCE=1)
+#   release-verify    prove the instance runs this commit (images, working dir, /health, AES key)
+#   release-gates     unit, integration, tutorials, then the instance, smokes, teardown -> release-gates/<TAG>/*.json
+#   release-record    render Release checks from those results (APPLY=1 writes the notes template)
+#   release-main-check  read-only: is the develop -> main PR ready; the after-merge checklist (OWED=<file>)
+RELEASE_ARGS = --tag "$(TAG)" $(if $(INSTANCE),--instance "$(INSTANCE)") $(if $(PR),--pr "$(PR)")
+_release-tag:
+	@[ -n "$(TAG)" ] || { echo "❌ TAG=vX.Y.Z required"; exit 1; }
+release-prepare: _release-tag
+	@python3 scripts/release/prepare.py --tag "$(TAG)" $(if $(DRY_RUN),--dry-run)
+release-instance: _release-tag
+	@python3 scripts/release/instance.py $(RELEASE_ARGS) $(if $(PORT_OFFSET),--port-offset $(PORT_OFFSET)) $(if $(FORCE),--force)
+release-verify: _release-tag
+	@python3 scripts/release/verify.py $(RELEASE_ARGS)
+release-gates: _release-tag
+	@python3 scripts/release/gates.py $(RELEASE_ARGS) $(if $(PORT_OFFSET),--port-offset $(PORT_OFFSET)) $(if $(GATES),--gates "$(GATES)") \
+		$(if $(CONTINUE),--continue-on-failure) $(if $(KEEP),--keep)
+release-record: _release-tag
+	@python3 scripts/release/record.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(APPLY),--apply)
+release-main-check: _release-tag
+	@python3 scripts/release/main_check.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(OWED),--owed "$(OWED)")
+
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.
@@ -585,8 +630,10 @@ reset-keycloak: _check-compose-project-owner
 seed-demo-projects:
 	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
+# The key goes into the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE),
+# made absolute here because the sub-make runs in flip-api/ (FLIP#1603).
 generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
+	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
 
 # Poll flip-api /api/health before registering. The entrypoint seeds the DB —
 # including the FL kit-slot pool that register_trust claims from — *before* the
@@ -609,7 +656,7 @@ _wait-for-hub:
 # kit. The hub keeps no trust list — the kit files ARE the list.
 register-trust: _check-compose-project-owner _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
-	@kit="trust/.env.$(KIT).$(ENV)"; ex="$$kit.example"; \
+	@kit='$(call kit_file,trust/,$(KIT))'; ex="trust/.env.$(KIT).$(ENV).example"; \
 	  if [ ! -f "$$kit" ]; then \
 	    [ -f "$$ex" ] || { echo "❌ Neither $$kit nor $$ex exists — run 'make new-trust TRUST_CODE=$(KIT) TRUST_NAME=...' first."; exit 1; }; \
 	    cp "$$ex" "$$kit"; chmod 600 "$$kit"; echo "📋 Seeded $$kit from $$(basename "$$ex")"; \
@@ -643,7 +690,9 @@ rotate-trust-keys: _check-compose-project-owner _wait-for-hub
 	  echo "🔑 Rotating keys for trust '$$name' (KIT=$(KIT))..."; \
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust --rotate --name "$$name")" \
 	    || { echo "❌ key rotation failed for KIT=$(KIT)"; exit 1; }; \
-	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"; \
+	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit" \
+	    || { echo "❌ The hub has already committed the new keys, but $$kit could not be written: it still holds the OLD, now-refused keys."; \
+	         echo "   Fix the write error and re-run 'make rotate-trust-keys KIT=$(KIT)' to mint another pair."; exit 1; }; \
 	  echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit."
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
@@ -659,10 +708,12 @@ register-trusts:
 	exit $$rc
 
 # Scaffold a new trust kit (trust/.env.<CODE>.<env>) from the base template.
-# e.g. make new-trust TRUST_CODE=KCL TRUST_NAME="Kings College" PROD=true
+# e.g. make new-trust TRUST_CODE=KCL TRUST_NAME="Kings College" HUB=prod
 new-trust:
 	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<code> required (e.g. TRUST_CODE=KCL)"; exit 1; }
 	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
+	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || \
+	  { echo "❌ $$old already exists under an old kit name — rename it to trust/.env.$(TRUST_CODE).$(ENV) instead."; exit 1; }
 	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
 		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
 
@@ -680,22 +731,14 @@ new-trust:
 # lookup — just a file→file copy keyed on KIT.
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
-	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(KIT).$(ENV)
+	@:$(call kit_hint,$(call kit_file,trust/,$(KIT)))
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
-# Sync every locally-present kit for this env. Globs trust/.env.*.$(ENV) and
-# drops the .example templates (which don't match the bare-env suffix).
+# Sync every locally-present kit for this env (current names only; the .example
+# templates never match).
 sync-trust-kits:
-	@found=0; \
-	for f in trust/.env.*.$(ENV); do \
-	    case "$$f" in *.example) continue;; esac; \
-	    [ -f "$$f" ] || continue; \
-	    code="$${f#trust/.env.}"; code="$${code%.$(ENV)}"; \
-	    found=$$((found + 1)); \
-	    $(MAKE) sync-trust-kit KIT="$$code"; \
-	done; \
-	if [ "$$found" = "0" ]; then \
-	    echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."; \
-	fi
+	@$(call old_kits_hint,trust/)[ -n "$(call kit_codes,trust/)" ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."
+	@rc=0; for code in $(call kit_codes,trust/); do $(MAKE) sync-trust-kit KIT="$$code" || rc=1; done; exit $$rc
 
 # ---------------------------------------------------------------------------
 # Kubernetes Helm chart targets
@@ -717,10 +760,9 @@ generate-xnat-credentials:
 	@if [ -n "$(ENV_FILE)" ]; then \
 	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(ENV_FILE) $(if $(FORCE),FORCE=$(FORCE)); \
 	elif [ -n "$(KIT)" ]; then \
-	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/trust/.env.$(KIT).$(ENV) $(if $(FORCE),FORCE=$(FORCE)); \
+	  $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$(call kit_file,trust/,$(KIT)) $(if $(FORCE),FORCE=$(FORCE)); \
 	else \
-	  found=0; for kit in trust/.env.*.$(ENV); do \
-	    [ -e "$$kit" ] || continue; case "$$kit" in *.example) continue;; esac; \
+	  found=0; for kit in $(if $(ENV_FILE)$(KIT),,$(call old_kits_hint,trust/))$(sort $(wildcard trust/.env.*.$(ENV))); do \
 	    found=1; $(MAKE) -C flip-api generate-xnat-credentials ENV_FILE=$(CURDIR)/$$kit $(if $(FORCE),FORCE=$(FORCE)) || exit 1; \
 	  done; \
 	  [ "$$found" = 1 ] || echo "ℹ️  No trust/.env.<CODE>.$(ENV) kit files found — run 'make register-trusts' (or 'make register-trust KIT=<CODE>') first."; \

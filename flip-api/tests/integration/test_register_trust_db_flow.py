@@ -19,6 +19,7 @@ same open transaction — are only exercised here. Rotation is here for the same
 the hub really refuses the old key afterwards is a property of the committed row, not of a mock.
 """
 
+import hashlib
 from unittest.mock import patch
 
 import pytest
@@ -83,22 +84,35 @@ def test_rotation_refuses_the_old_key_and_leaves_identity_untouched(mock_resolve
     # Warm the auth cache on the old key: a cache hit must not survive the rotation either.
     assert authenticate_trust(api_key=old_key, db=session).id == trust_id
 
-    rotated = rotate_trust_keys(session, name="Rotating Trust")
+    try:
+        rotated = rotate_trust_keys(session, name="Rotating Trust")
 
-    assert rotated.trust_api_key != old_key
-    with pytest.raises(HTTPException) as excinfo:
-        authenticate_trust(api_key=old_key, db=session)
-    assert excinfo.value.status_code == 401
-    assert authenticate_trust(api_key=rotated.trust_api_key, db=session).id == trust_id
+        assert rotated.trust_api_key != old_key
+        with pytest.raises(HTTPException) as excinfo:
+            authenticate_trust(api_key=old_key, db=session)
+        assert excinfo.value.status_code == 401
 
-    # Identity and the slot assignment are untouched; the audit log is the only new row.
-    assert rotated.trust.id == trust_id
-    assert rotated.fl_kit_slot.slot_name == slot_name
-    session.expire_all()
-    slot = session.exec(select(FLKitSlot).where(FLKitSlot.slot_name == slot_name)).one()
-    assert slot.assigned_to_trust_id == trust_id
-    rotations = session.exec(
-        select(TrustsAudit).where(TrustsAudit.trust_id == trust_id, TrustsAudit.action == TrustAuditAction.ROTATED)
-    ).all()
-    assert len(rotations) == 1
-    trust_key_cache.invalidate()
+        # rotate_trust_keys invalidates this process's cache, so the assertion above never
+        # reaches the cache-hit branch. Every other hub worker keeps its warm entry, and the
+        # live-hash re-check inside that branch is the only thing refusing the old key there.
+        # Seed the entry the way another worker would still hold it, and retry.
+        trust_key_cache.remember(hashlib.sha256(old_key.encode()).hexdigest(), trust_id)
+        with pytest.raises(HTTPException) as cached_excinfo:
+            authenticate_trust(api_key=old_key, db=session)
+        assert cached_excinfo.value.status_code == 401
+
+        assert authenticate_trust(api_key=rotated.trust_api_key, db=session).id == trust_id
+
+        # Identity and the slot assignment are untouched; the audit log is the only new row.
+        assert rotated.trust.id == trust_id
+        assert rotated.fl_kit_slot.slot_name == slot_name
+        session.expire_all()
+        slot = session.exec(select(FLKitSlot).where(FLKitSlot.slot_name == slot_name)).one()
+        assert slot.assigned_to_trust_id == trust_id
+        rotations = session.exec(
+            select(TrustsAudit).where(TrustsAudit.trust_id == trust_id, TrustsAudit.action == TrustAuditAction.ROTATED)
+        ).all()
+        assert len(rotations) == 1
+    finally:
+        # A failed assertion must not leak a warm entry into the tests that follow.
+        trust_key_cache.invalidate()

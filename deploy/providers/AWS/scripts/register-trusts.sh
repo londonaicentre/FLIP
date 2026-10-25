@@ -30,12 +30,13 @@
 # `--rotate`: one named trust, keys reissued in place, and the kit MUST come back with
 # credentials or the rotation is a failure.
 #
-# Usage:
-#   KIT=<CODE> register-trusts.sh   # register one kit (trust/.env.<CODE>.<env>)
-#   register-trusts.sh              # register every live trust/.env.*.<env> kit
-#   KIT=<CODE> ROTATE_KEYS=1 register-trusts.sh   # rotate that one trust's keys
-# PROD=true selects .production kits, PROD=lza selects .lza-prod kits and
-# PROD=lza-stag selects .lza-stag kits (FLIP#749); anything else selects .stag.
+# Usage (via `make register-trusts [KIT=<CODE>] HUB=<env>`):
+#   KIT_FILES="<kit file>..." register-trusts.sh
+# The deploy Makefile resolves KIT_FILES: the one kit for KIT=<CODE> (through
+# deploy/env_mode.mk's kit_file, so a kit still under its pre-FLIP#1479 name is registered
+# in place), else every trust/.env.*.<env> kit under its current name.
+# Rotation (via `make rotate-trust-keys KIT=<CODE> HUB=<env>`) passes the same single
+# kit file plus ROTATE_KEYS=1, and exactly one kit file is allowed.
 
 set -eo pipefail
 # Default file mode 077 so any tempfile / redirect this script (or sourced
@@ -56,11 +57,17 @@ ECS_SERVICE="${ECS_SERVICE:-flip-api}"
 TASK_FAMILY="${TASK_FAMILY:-flip-api}"
 LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 
-# Kit-file env suffix (.production / .stag / .lza-prod / .lza-stag): handed in by
-# the deploy Makefile's register-trusts target as its KIT_ENV_SUFFIX — the same
-# token it reads the written kit back with — rather than re-derived from PROD here,
-# so there is exactly one PROD table (deploy/env_mode.mk).
-ENV_SUFFIX="${KIT_ENV_SUFFIX:?KIT_ENV_SUFFIX is required — run via \`make register-trusts\` / \`make register-trust KIT=<CODE>\`}"
+# No kits: an error, since the next deploy step has a trust to deploy — except on a hub-only
+# deploy (DEPLOY_TRUST_EC2=false), whose on-prem trusts may register later.
+if [ -z "${KIT_FILES:-}" ]; then
+    msg="No trust/.env.<CODE>.${HUB:-<env>} kits found — scaffold one with 'make new-trust TRUST_CODE=<CODE> TRUST_NAME=... HUB=${HUB:-<env>}' first."
+    if [ "${DEPLOY_TRUST_EC2:-true}" = false ]; then
+        log_warn "$msg"
+        exit 0
+    fi
+    log_error "$msg"
+    exit 1
+fi
 
 log_info "Discovering live $ECS_SERVICE service network config..."
 SVC_JSON="$(aws_cmd ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0]')"
@@ -153,7 +160,15 @@ register_one_kit() {
         --network-configuration "$net_cfg" \
         --overrides "$overrides" --query 'tasks[0].taskArn' --output text)"
     task_id="${task_arn##*/}"
-    aws_cmd ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task_id"
+    # errexit is off inside this function (every call site is `... || failed=1`), so the
+    # waiter's status has to be checked by hand. An expired waiter means the task is STILL
+    # RUNNING: it will go on to commit the new hash and PUT the kit, so treating the waiter's
+    # timeout as a failure and deleting the parameter would discard live credentials.
+    if ! aws_cmd ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task_id"; then
+        log_error "Trust '$name': task $task_id did not stop within the waiter's budget — $verb status UNKNOWN."
+        log_error "It may still commit. Check SSM parameter '$ssm_param' (and the task's logs) before re-running; do not assume the old key still works."
+        return 1
+    fi
 
     # Read the kit from SSM (out-of-band). The parameter is deleted only once the kit
     # file has been written: the hub cannot re-emit a kit it has already committed, so
@@ -162,9 +177,22 @@ register_one_kit() {
     # code path or operator runs register_trust without --out-ssm-parameter,
     # or if a logger line accidentally captures a kit field on stderr,
     # this nukes the CloudWatch copy at the earliest opportunity.
-    local kit failure_log
+    local kit failure_log ssm_err ssm_rc
+    ssm_err="$(mktemp)"
+    # `|| true` on the read would make a transient API error (throttling, creds, a 5xx)
+    # indistinguishable from "the task never wrote a kit", and the absent-kit branch below
+    # DELETES the parameter — which on a rotation is the only copy of the live new keys.
+    # Capture the status and stderr instead, and only treat ParameterNotFound as absent.
     kit="$(aws_cmd ssm get-parameter --name "$ssm_param" --with-decryption \
-        --query 'Parameter.Value' --output text 2>/dev/null || true)"
+        --query 'Parameter.Value' --output text 2>"$ssm_err")" && ssm_rc=0 || ssm_rc=$?
+    if [ "$ssm_rc" != 0 ] && ! grep -q "ParameterNotFound" "$ssm_err"; then
+        log_error "Trust '$name': could not read SSM parameter '$ssm_param' — $verb status UNKNOWN."
+        cat "$ssm_err" >&2
+        log_error "The parameter is left in place; it may hold the kit. Read it with 'aws ssm get-parameter --name $ssm_param --with-decryption' before re-running."
+        rm -f "$ssm_err"
+        return 1
+    fi
+    rm -f "$ssm_err"
 
     # The kit (present / empty / absent) is the failure signal — NOT the task's exit
     # code, which Fargate misreports for one-off tasks (a container exiting 7 has been
@@ -218,7 +246,7 @@ register_one_kit() {
     fi
 
     # Write the kit back into its CODE-named file. The target is a
-    # .production/.stag kit, so distribute_trust_kits.py writes the hub-shared
+    # .prod/.stag kit, so distribute_trust_kits.py writes the hub-shared
     # block LIVE (the remote operator has no hub .env). Whatever credentials the
     # kit carries are written; operator host-local edits are preserved.
     #
@@ -236,36 +264,28 @@ register_one_kit() {
     log_success "Wrote kit for '$name' → $kit_file"
 }
 
-# Select kits: explicit KIT=<CODE> registers one; otherwise register every live
-# prod kit (trust/.env.*.<suffix>). .example templates are not matched by the
-# glob (they end in .example, not the env suffix).
+# `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,
+# then the script exits non-zero so a failure can never read as success.
 failed=0
-if [ "${ROTATE_KEYS:-0}" = "1" ] && [ -z "${KIT:-}" ]; then
+if [ "${ROTATE_KEYS:-0}" = "1" ]; then
     # Never rotate every trust in one go: each rotation needs its kit delivered to that site
     # before the old key can be retired, so the loop has to be one operator-chosen trust at a time.
-    log_error "ROTATE_KEYS=1 requires KIT=<CODE> — rotation is one trust at a time."
-    exit 1
+    # shellcheck disable=SC2086 # deliberate word splitting, to count the kit files
+    set -- ${KIT_FILES}
+    if [ "$#" != 1 ]; then
+        log_error "ROTATE_KEYS=1 requires KIT=<CODE> — rotation is one trust at a time."
+        exit 1
+    fi
 fi
-if [ -n "${KIT:-}" ]; then
-    kit_file="$REPO_ROOT/trust/.env.${KIT}.${ENV_SUFFIX}"
+# shellcheck disable=SC2086 # KIT_FILES is a space-separated list of paths. Paths are
+# assumed space-free: the Makefile builds the list with $(wildcard), which splits on spaces.
+for kit_file in ${KIT_FILES}; do
     if [ ! -f "$kit_file" ]; then
-        log_error "Kit $kit_file not found — scaffold it with 'make new-trust TRUST_CODE=${KIT} TRUST_NAME=... PROD=${PROD:-stag}' first."
+        log_error "Kit $kit_file not found — scaffold it with 'make new-trust TRUST_CODE=${KIT} TRUST_NAME=... HUB=${HUB:-<env>}' first."
         exit 1
     fi
     register_one_kit "$kit_file" || failed=1
-else
-    found=0
-    # `|| failed=1` so one bad kit doesn't strand the rest — every kit is attempted,
-    # then the script exits non-zero so a failure can never read as success.
-    for kit_file in "$REPO_ROOT"/trust/.env.*."${ENV_SUFFIX}"; do
-        [ -e "$kit_file" ] || continue
-        found=1
-        register_one_kit "$kit_file" || failed=1
-    done
-    if [ "$found" != 1 ]; then
-        log_warn "No trust/.env.*.${ENV_SUFFIX} kits found — scaffold one with 'make new-trust ... PROD=${PROD:-stag}' first."
-    fi
-fi
+done
 
 if [ "$failed" != 0 ]; then
     log_error "register-trusts FAILED — at least one trust was not registered (see above)."

@@ -116,6 +116,10 @@ receiver port (`8104`/`8106`) and serves no HTTP.
 - Query PACS with an accession number
 - Queue image retrieval from PACS to an XNAT project
 
+DQR responses may omit `studyDescription` and `referringPhysicianName`, as anonymised studies often do.
+Missing values default to empty strings; no placeholder tags need to be added to the source DICOMs.
+The study UID and accession number remain required for import.
+
 There is no PACS id to configure. A query sends no `pacsId`, so DQR runs it against the PACS XNAT
 flags as its default query/retrieve PACS — the one registration `configure-xnat.sh` keeps, with that
 flag set. DQR's import does not default the same way, so each import reads that PACS's id from

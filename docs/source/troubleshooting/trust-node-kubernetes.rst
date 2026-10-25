@@ -139,8 +139,8 @@ leaves those keys alone:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> PROD=<env>
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> HUB=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. warning::
 
@@ -196,7 +196,7 @@ wait budget. Helm has already applied the new spec by then, so the error names H
 .. code-block:: shell
 
    kubectl get job -n flip-trust -w
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
 If the job is wedged rather than slow, set ``xnat.initJob.enabled: false`` in your values file (``VALUES_FILE``, see
 "Key values" on :doc:`../deploy-flip/deploy-flip-node-kubernetes`), deploy, and run
@@ -244,7 +244,7 @@ duration:
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> HELM_TIMEOUT=45m
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> HELM_TIMEOUT=45m
 
 If a stalled pod from reason 2 is still stuck, delete it (``kubectl -n flip-trust delete pod <pod>``) so the new one
 can take the volume. Then confirm the pod was replaced and send a test study:
@@ -378,7 +378,7 @@ account for an hour.
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      curl -s -X DELETE -u admin:<admin-pass> \
      "http://localhost:8080/xapi/users/flipServiceAccount?permanently=true"
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. _ts-k8s-dcm2niix-not-registered:
 
@@ -458,6 +458,46 @@ An XNAT set up before the image was pinned keeps converting with the old one, an
 **Fix.** Deploy again (or run ``make -C trust/deploy/helm xnat-init``). The init job moves the existing command to
 the pinned image in place, so every project's conversion trigger keeps working. On Compose, see
 :ref:`ts-compose-dcm2niix`.
+
+.. _ts-k8s-dcm2niix-jobs-cap:
+
+dcm2niix jobs swamp the node, or wait for a slot
+================================================
+
+**Before the conversion cap (FLIP#1448):** during a cohort pull the namespace fills with Pending pods that are not
+the release's own, one per archived scan, each requesting a whole CPU. The node sits near 100% of its CPU requests
+and nothing else schedules: a restarted trust pod stays Pending, and on AKS ``az aks command invoke`` fails because
+its own pod cannot start.
+
+**Cause.** Each conversion job requested a whole CPU, and they all started at once. The chart now caps them
+(``xnat.containerService.maxConcurrentJobs``, see "Container Service jobs (dcm2niix)" in the
+:gh:`chart README <trust/deploy/helm/README.md#container-service-jobs-dcm2niix>`). The cap applies only to jobs
+created after the ``helm upgrade`` that re-registered dcm2niix: a job keeps the pod spec it was created with, so a
+backlog from before the upgrade still requests a CPU per pod.
+
+**With the cap (expected, not a fault):** jobs with no pod yet, whose events read
+``FailedCreate ... exceeded quota: <release>-flip-trust-xnat-container-jobs``. They start as running conversions
+finish; the job controller retries each at most a minute apart.
+
+**Check:**
+
+.. code-block:: shell
+
+   # Conversions running against the cap
+   kubectl describe resourcequota -n flip-trust -l app.kubernetes.io/component=xnat-container-jobs
+   # The registration carries no resource settings (both print null)
+   kubectl exec -n flip-trust "$XNAT_POD" -c tomcat -- sh -c \
+     'curl -s -u "$XNAT_SERVICE_USER:$XNAT_SERVICE_PASSWORD" "http://localhost:8080/xapi/commands?name=dcm2niix"' \
+     | jq '.[0] | ."reserve-memory", ."limit-cpu"'
+   # Container Service jobs created before the upgrade. Every one carries XNAT_* labels; an old one has a CPU
+   # *limit* in its pod template (the 1-CPU request is added to the pod, not the job), so select on the limit.
+   kubectl get jobs -n flip-trust -l XNAT_PROJECT -o json | jq -r '.items[]
+     | select(.spec.template.spec.containers[0].resources.limits.cpu != null) | .metadata.name'
+
+**Fix.** If the registration still shows ``1000`` / ``1``, run ``helm upgrade`` (it re-runs the ``xnat-init`` hook).
+Then delete the jobs the last command lists (``... | xargs kubectl delete job -n flip-trust``). The scans they were
+for stay unconverted, so relaunch dcm2niix on them (:ref:`ts-k8s-nifti-backlog`); the cap paces them.
+``make -C trust/deploy/helm selftest`` checks that a conversion completes.
 
 .. _ts-k8s-nifti-backlog:
 
@@ -597,7 +637,7 @@ every later upgrade skips it. Force one reload: set ``trustData.seed.forceDicomV
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env> VALUES_FILE=<your values file>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env> VALUES_FILE=<your values file>
 
 .. important::
 
@@ -668,7 +708,7 @@ trust-api heartbeats fail with 401
 
   .. code-block:: shell
 
-     make -C trust/deploy/helm sync-kit KIT=<CODE> PROD=<env>
+     make -C trust/deploy/helm sync-kit KIT=<CODE> HUB=<env>
 
 - **No heartbeat at all:** check that ``CENTRAL_HUB_API_URL`` is right and that the egress policy lets trust-api
   reach it on 443.
@@ -693,7 +733,7 @@ Other pods in the namespace can reach the FL server address.
 
 .. code-block:: shell
 
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 If you manage the values by hand, add the port to ``networkPolicies.allowedEgressPorts``.
 
@@ -729,8 +769,8 @@ silently dropped rule would be worse than none, because the operator would belie
 
 .. code-block:: shell
 
-   make -C trust check-governance KIT=<CODE> PROD=<env>
-   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>
+   make -C trust check-governance KIT=<CODE> HUB=<env>
+   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>
 
 .. _ts-k8s-governance-ignored:
 

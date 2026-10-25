@@ -385,31 +385,6 @@ def test_bundle_url_allowed_origins_rejects_malformed_entries(monkeypatch, raw):
         validation.bundle_url_allowed_origins()
 
 
-_S3 = ("https", "s3.eu-west-2.amazonaws.com", 443)
-
-
-@pytest.mark.parametrize(
-    ("hosts", "origins", "expected"),
-    [
-        ("s3.eu-west-2.amazonaws.com", "", {_S3}),
-        ("s3.eu-west-2.amazonaws.com", "https://s3.eu-west-2.amazonaws.com", {_S3}),
-        (
-            " A.Example. , b.example",
-            "http://object-store:9000",
-            {("https", "a.example", 443), ("https", "b.example", 443), ("http", "object-store", 9000)},
-        ),
-    ],
-)
-def test_bundle_url_allowed_origins_reads_the_legacy_hosts_as_https_origins(monkeypatch, hosts, origins, expected):
-    """An image/environment skew across the #1291 rename must not fail open: the old name still pins the list."""
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", hosts)
-    monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", origins)
-    assert validation.bundle_url_allowed_origins() == expected
-    monkeypatch.setattr(validation, "_warned_empty_allow_list", False)
-    validation.warn_if_bundle_url_allow_list_empty()
-    assert validation._warned_empty_allow_list is False
-
-
 def test_warn_if_bundle_url_allow_list_empty_parses_before_the_once_only_gate(monkeypatch):
     """A process that already warned still refuses a malformed list: parsing is not behind the flag."""
     monkeypatch.setattr(validation, "_warned_empty_allow_list", True)

@@ -81,8 +81,8 @@ def test_scaffolds_kit_with_identity_and_defaults() -> None:
     print("▶ scaffolds trust/.env.<CODE>.<env> with identity + template defaults + placeholders")
     root = _temp_repo()
     try:
-        res = _run(root, "--code", "DEMO", "--name", "DEMO Hospital", "--region", "London", "--env", "production")
-        target = root / "trust" / ".env.DEMO.production"
+        res = _run(root, "--code", "DEMO", "--name", "DEMO Hospital", "--region", "London", "--env", "prod")
+        target = root / "trust" / ".env.DEMO.prod"
         _assert(res.returncode == 0, "exit 0", res.stderr)
         _assert(target.exists(), "kit scaffolded at .env.<CODE>.<env>")
         content = target.read_text() if target.exists() else ""
@@ -103,10 +103,10 @@ def test_refuses_to_overwrite() -> None:
     print("▶ refuses to overwrite an existing kit")
     root = _temp_repo()
     try:
-        (root / "trust" / ".env.DEMO.production").write_text("EXISTING=keep-me\n")
-        res = _run(root, "--code", "DEMO", "--name", "DEMO", "--env", "production")
+        (root / "trust" / ".env.DEMO.prod").write_text("EXISTING=keep-me\n")
+        res = _run(root, "--code", "DEMO", "--name", "DEMO", "--env", "prod")
         _assert(res.returncode != 0, "exit non-zero", res.stdout)
-        _assert("EXISTING=keep-me" in (root / "trust" / ".env.DEMO.production").read_text(), "existing kit untouched")
+        _assert("EXISTING=keep-me" in (root / "trust" / ".env.DEMO.prod").read_text(), "existing kit untouched")
     finally:
         shutil.rmtree(root)
 
@@ -125,16 +125,16 @@ def test_region_optional() -> None:
         shutil.rmtree(root)
 
 
-def test_lza_envs_name_the_kit_and_hint_the_prod_flag() -> None:
-    print("▶ LZA envs scaffold .env.<CODE>.lza-{prod,stag} and hint the PROD flag that reads them back")
-    for env, prod_flag in (("lza-stag", "lza-stag"), ("lza-prod", "lza")):
+def test_deployed_envs_name_the_kit_and_hint_the_hub() -> None:
+    print("▶ stag/prod scaffold .env.<CODE>.{stag,prod} and hint the HUB that reads them back")
+    for env in ("stag", "prod"):
         root = _temp_repo()
         try:
             res = _run(root, "--code", "LZA", "--name", "LZA Trust", "--env", env)
             target = root / "trust" / f".env.LZA.{env}"
             _assert(res.returncode == 0, f"--env {env}: exit 0", res.stderr)
             _assert(target.exists(), f"--env {env}: kit scaffolded at .env.<CODE>.{env}")
-            _assert(f"PROD={prod_flag}" in res.stdout, f"--env {env}: next-step hint says PROD={prod_flag}", res.stdout)
+            _assert(f"HUB={env}" in res.stdout, f"--env {env}: next-step hint says HUB={env}", res.stdout)
         finally:
             shutil.rmtree(root)
 
@@ -145,7 +145,7 @@ def main() -> None:
     test_scaffolds_kit_with_identity_and_defaults()
     test_refuses_to_overwrite()
     test_region_optional()
-    test_lza_envs_name_the_kit_and_hint_the_prod_flag()
+    test_deployed_envs_name_the_kit_and_hint_the_hub()
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
     sys.exit(0 if FAIL == 0 else 1)

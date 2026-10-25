@@ -24,13 +24,13 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_governance.py"
-SERVICE_ROOT = SCRIPT.parents[1]
-EXAMPLE_DOCUMENT = SCRIPT.parents[2] / "governance.example.toml"
+SCRIPT = Path(__file__).resolve().parents[1] / "data_access_api" / "scripts" / "check_governance.py"
+SERVICE_ROOT = SCRIPT.parents[2]
+EXAMPLE_DOCUMENT = SERVICE_ROOT.parent / "governance.example.toml"
 
 
 def _load_script() -> ModuleType:
-    """Import the script by path — it is a pre-flight tool, not part of the package."""
+    """Load the CLI module without executing it."""
     spec = importlib.util.spec_from_file_location("_check_governance_under_test", SCRIPT)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {SCRIPT}")
