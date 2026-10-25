@@ -601,6 +601,6 @@ old state would destroy it. Move the hub instead:
    FL kit all change. On a trust host that is already running, install the new kit and FL kit and upgrade the trust;
    do not use the first-install commands, which re-seed its data and reset XNAT.
 5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
-   (``v0.13.1`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
+   (``v0.13.2`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
    the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
 
