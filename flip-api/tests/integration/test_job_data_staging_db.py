@@ -93,8 +93,12 @@ def test_wait_raises_naming_the_trust_on_a_failed_task(session, staged_model):
     with pytest.raises(JobDataStagingError) as excinfo:
         wait_for_trust_tasks(task_ids, session, timeout_seconds=1, poll_seconds=0.01)
 
-    assert "Trust_1" in str(excinfo.value)
-    assert "Cohort is too small for row-level data to be released." in str(excinfo.value)
+    # Category-only, like a failed cohort snapshot: the model's activity log is read by every project member, so the
+    # trust's own error text never reaches it.
+    message = str(excinfo.value)
+    assert "Trust_1" in message
+    assert "refused by the trust" in message
+    assert "Cohort is too small" not in message
 
 
 def test_wait_times_out_and_cancels_pending_tasks(session, staged_model):

@@ -31,7 +31,13 @@ from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.logger import logger
 
-_REASON_LENGTH = 300
+# Category-only reasons, as for a failed cohort snapshot (cohort_snapshot_service.failure_category): the model's
+# activity log is read by every project member, so a trust's own error text never reaches it.
+REFUSED = "refused by the trust (for example, the cohort is below its disclosure threshold)"
+REJECTED = "rejected by the trust"
+NOT_PICKED_UP = "the trust did not pick the task up in time"
+STILL_RUNNING = "the trust had not finished staging in time"
+TRUST_ERROR = "the trust could not stage the data"
 
 
 class JobDataStagingError(Exception):
@@ -75,11 +81,20 @@ def queue_job_data_tasks(
 
 
 def _reason(task: TrustTask) -> str:
+    if task.status == TaskStatus.PENDING:
+        return NOT_PICKED_UP
+    if task.status == TaskStatus.IN_PROGRESS:
+        return STILL_RUNNING
     try:
-        error = json.loads(task.result or "{}").get("error")
-    except (ValueError, AttributeError):
-        error = None
-    return str(error or task.status.value)[:_REASON_LENGTH]
+        result = json.loads(task.result) if task.result else {}
+    except ValueError:
+        result = {}
+    status_code = result.get("status_code") if isinstance(result, dict) else None
+    if status_code == 403:
+        return REFUSED
+    if status_code in (400, 422):
+        return REJECTED
+    return TRUST_ERROR
 
 
 def _describe(tasks: Sequence[TrustTask], session: Session, what: str) -> str:
@@ -118,13 +133,12 @@ def wait_for_trust_tasks(
         if not waiting and len(tasks) == len(task_ids):
             return
         if time.monotonic() >= deadline:
+            reason = _describe(waiting, session, f"Trusts did not stage the job's data within {timeout_seconds:g}s")
             for task in waiting:
                 if task.status == TaskStatus.PENDING:
                     task.status = TaskStatus.CANCELLED
             session.commit()
-            raise JobDataStagingError(
-                _describe(waiting, session, f"Trusts did not stage the job's data within {timeout_seconds:g}s")
-            )
+            raise JobDataStagingError(reason)
         time.sleep(poll_seconds)
 
 
