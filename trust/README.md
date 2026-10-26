@@ -393,7 +393,7 @@ further consequences on a real trust:
   Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
   is published on loopback only, and the trust host gains no listener reachable from the
   network (the trust deployment model is otherwise strictly outbound — see
-  [Deployment Architecture](../CLAUDE.md)). That default is deliberately *not* browser-usable
+  [Deployment Architecture](../AGENTS.md#deployment-architecture)). That default is deliberately *not* browser-usable
   from another machine. To give clinicians access, pick one:
 
   1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also

@@ -89,7 +89,7 @@ module.exports = {
             // promote accessibility + seo to `error` (they're audit-based and
             // deterministic) to turn the #586 target into an enforced gate.
             // Leave best-practices at `warn`: it's dinged by the known-deferred
-            // console 401s (#702) and CSP (#703). Leave performance at `warn`:
+            // CSP (#703). Leave performance at `warn`:
             // it's timing-based and varies run-to-run on shared CI runners.
             // SEO is asserted on the login page only: robots.txt disallows the
             // signed-in pages, so they fail `is-crawlable` by design.
