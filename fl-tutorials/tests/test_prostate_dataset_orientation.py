@@ -40,7 +40,7 @@ import pytest
 from nibabel.orientations import apply_orientation, inv_ornt_aff
 from tutorial_apps import TUTORIALS_ROOT
 
-DATASET_PY = TUTORIALS_ROOT / "flower" / "3d_prostate_segmentation" / "app" / "dataset.py"
+DATASET_PY = TUTORIALS_ROOT / "flower" / "image_segmentation" / "3d_prostate_segmentation" / "app" / "dataset.py"
 
 PATIENT, STUDY, MODALITY = "10000", "1000000", "t2w"
 ACCESSION = f"{PATIENT}_{STUDY}"
