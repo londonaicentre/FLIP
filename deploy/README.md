@@ -38,7 +38,7 @@ they are filed by two different rules:
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
 | Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
 | Provision an **Azure** trust (VM or AKS) | [`trust/deploy/terraform/azure/`](../trust/deploy/terraform/azure/README.md) |
-| Provision an **AWS EC2** trust in any account | [`trust/deploy/terraform/aws-ec2/`](../trust/deploy/terraform/aws-ec2/README.md) |
+| Provision an **AWS EC2** trust in any account | [`trust/deploy/terraform/aws/ec2/`](../trust/deploy/terraform/aws/ec2/README.md) |
 | Register a trust, sync or package its **kit**, upgrade a site | `make` targets; the scripts are in `trust/deploy/scripts/` |
 | Provision an **on-prem** trust host (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
 | Deploy a trust to **Kubernetes** (Helm) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) (chart: [`trust/deploy/helm/`](../trust/deploy/helm/README.md)) |

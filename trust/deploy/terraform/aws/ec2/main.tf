@@ -17,7 +17,7 @@
 # coupling. trust/deploy/ansible/aws-ec2.yml configures the host this root creates.
 
 module "network" {
-  source             = "./modules/network"
+  source             = "../modules/network"
   name               = var.name
   existing_subnet_id = var.subnet_id
 }

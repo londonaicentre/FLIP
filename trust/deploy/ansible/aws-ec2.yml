@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# aws-ec2.yml — provisions the trust node that trust/deploy/terraform/aws-ec2 created (FLIP#1528).
+# aws-ec2.yml — provisions the trust node that trust/deploy/terraform/aws/ec2 created (FLIP#1528).
 #
-# Run by that root's Makefile (`make -C trust/deploy/terraform/aws-ec2 provision`), never against
+# Run by that root's Makefile (`make -C trust/deploy/terraform/aws/ec2 provision`), never against
 # the hub: the inventory comes from this root's own Terraform outputs, and the host is reached over
 # SSM through the ~/.ssh/config entry the Makefile's ssh-config target writes for node_alias. The
 # host plays themselves are aws-ec2-host.yml, shared with the hub's site.yml.
@@ -26,7 +26,7 @@
   # `always` so the host is in the inventory even when a tag filter selects a later play only.
   tags: always
   vars:
-    aws_ec2_root: "{{ playbook_dir }}/../terraform/aws-ec2"
+    aws_ec2_root: "{{ playbook_dir }}/../terraform/aws/ec2"
   tasks:
     - name: ensure the node's address and the release data version are given
       assert:
@@ -35,7 +35,7 @@
           - trust_data_version is defined and trust_data_version | length > 0
         fail_msg: >-
           node_alias and trust_data_version are required; run this play through
-          `make -C trust/deploy/terraform/aws-ec2 provision`, which passes them.
+          `make -C trust/deploy/terraform/aws/ec2 provision`, which passes them.
 
     - name: ensure the S3 kit source is named
       assert:

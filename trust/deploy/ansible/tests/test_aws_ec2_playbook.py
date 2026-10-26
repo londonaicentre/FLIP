@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Static guards on aws-ec2.yml, the play for a node from trust/deploy/terraform/aws-ec2 (FLIP#1528).
+"""Static guards on aws-ec2.yml, the play for a node from trust/deploy/terraform/aws/ec2 (FLIP#1528).
 
 Its inventory comes from that root's outputs, never the hub's, and the host itself is provisioned by
 aws-ec2-host.yml, the plays the hub's site.yml imports too. How those plays compose the roles is
@@ -36,7 +36,7 @@ def test_inventory_comes_from_the_aws_ec2_roots_outputs_only():
     inventory = _plays()[0]
     assert inventory["hosts"] == "localhost"
     assert inventory["tags"] == "always", "the host must be in the inventory under any --tags filter"
-    assert inventory["vars"]["aws_ec2_root"] == "{{ playbook_dir }}/../terraform/aws-ec2"
+    assert inventory["vars"]["aws_ec2_root"] == "{{ playbook_dir }}/../terraform/aws/ec2"
     text = PLAYBOOK.read_text()
     for hub_only in ("TrustEc2InstanceId", "FLIP_TFSTATE_BUCKET_NAME", "deploy/providers"):
         assert hub_only not in text, f"aws-ec2.yml reads {hub_only}: the node must not depend on the hub"

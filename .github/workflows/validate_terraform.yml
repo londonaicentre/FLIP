@@ -20,7 +20,7 @@ on:
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
       - "trust/deploy/terraform/azure/**"
-      - "trust/deploy/terraform/aws-ec2/**"
+      - "trust/deploy/terraform/aws/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
@@ -40,7 +40,7 @@ on:
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
       - "trust/deploy/terraform/azure/**"
-      - "trust/deploy/terraform/aws-ec2/**"
+      - "trust/deploy/terraform/aws/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
       # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
@@ -325,11 +325,11 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
 
       - name: Terraform tests and Makefile checks
-        working-directory: trust/deploy/terraform/aws-ec2
+        working-directory: trust/deploy/terraform/aws/ec2
         run: make test
 
       - name: Lint
-        working-directory: trust/deploy/terraform/aws-ec2
+        working-directory: trust/deploy/terraform/aws/ec2
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: make lint
@@ -337,4 +337,4 @@ jobs:
       - name: Checkov
         run: |
           pip install checkov==3.3.14
-          checkov -d trust/deploy/terraform/aws-ec2 --framework terraform --skip-download --compact --quiet
+          checkov -d trust/deploy/terraform/aws --framework terraform --skip-download --compact --quiet

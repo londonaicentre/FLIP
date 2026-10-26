@@ -18,7 +18,7 @@
 #   upgrade TAG=vX.Y.Z                               move a live node to a release, data in place
 
 SHELL := /bin/bash
-REPO_ROOT := $(abspath $(CURDIR)/../../../..)
+REPO_ROOT := $(abspath $(CURDIR)/../../../../..)
 # HUB -> ENV and the kit-file names; reads no hub env file.
 include $(REPO_ROOT)/deploy/env_mode.mk
 
@@ -197,13 +197,13 @@ shell: ## Open a shell on the node over SSM
 # The tests get their own data dir: after `make init` the root's .terraform/ names the S3 backend,
 # which `init -backend=false` does not undo, and `terraform test` would then want AWS credentials.
 test: ## Credential-free checks: terraform test in the root and its module, plus pytest
-	@for d in modules/network .; do \
+	@for d in ../modules/network .; do \
 		echo "── $$d"; ( cd $$d && export TF_DATA_DIR=.terraform-test && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
 	done
 	uv run --no-project --with pytest --with diagrams pytest tests/ -q
 
 lint: ## terraform fmt check and tflint over the root
-	$(TF) fmt -check -recursive
+	$(TF) fmt -check -recursive . ../modules
 	tflint --init --config "$(CURDIR)/.tflint.hcl" && tflint --recursive --config "$(CURDIR)/.tflint.hcl"
 
 , := ,

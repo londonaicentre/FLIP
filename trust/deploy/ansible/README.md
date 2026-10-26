@@ -20,7 +20,7 @@
 Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
 `onprem.yml` is the on-prem counterpart of the EC2 plays [`aws-ec2-host.yml`](aws-ec2-host.yml), which
-[`aws-ec2.yml`](aws-ec2.yml) runs against a node from [`../terraform/aws-ec2`](../terraform/aws-ec2/README.md) and
+[`aws-ec2.yml`](aws-ec2.yml) runs against a node from [`../terraform/aws/ec2`](../terraform/aws/ec2/README.md) and
 [`deploy/providers/AWS/site.yml`](../../../deploy/providers/AWS/site.yml) against the hub's own cloud trust. Together they implement the
 [hybrid deployment model](../../../docs/source/deploy-flip.rst).
 

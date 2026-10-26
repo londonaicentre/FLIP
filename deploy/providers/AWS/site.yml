@@ -14,7 +14,7 @@
 #
 # The trust host is provisioned by trust/deploy/ansible/aws-ec2-host.yml, imported below and shared
 # with trust/deploy/ansible/aws-ec2.yml, the play for a trust node from the standalone
-# trust/deploy/terraform/aws-ec2 root (FLIP#1528). Its plays compose the roles under
+# trust/deploy/terraform/aws/ec2 root (FLIP#1528). Its plays compose the roles under
 # trust/deploy/ansible/roles, found via ./ansible.cfg. What stays here is the hub's: the inventory
 # built from this root's Terraform outputs, and the bastion.
 
