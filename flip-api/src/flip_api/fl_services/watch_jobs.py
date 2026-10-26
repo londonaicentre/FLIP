@@ -54,6 +54,8 @@ class WatchedJob:
     started: datetime | None
     net_name: str
     net_endpoint: str
+    # The model's project id: the NVFLARE study its job runs in, which the FL API lists it under.
+    study: str | None = None
 
 
 # A model in one of these was picked up and has not reported a terminal status.
@@ -70,7 +72,7 @@ def find_watched_jobs(session: Session) -> list[WatchedJob]:
         list[WatchedJob]: One entry per running job.
     """
     statement = (
-        select(FLJob, FLNets)
+        select(FLJob, FLNets, Model.project_id)
         .join(FLScheduler, col(FLScheduler.job_id) == FLJob.id)
         .join(FLNets, col(FLNets.id) == FLScheduler.net_id)
         .join(Model, col(Model.id) == FLJob.model_id)
@@ -88,8 +90,9 @@ def find_watched_jobs(session: Session) -> list[WatchedJob]:
             started=job.started,
             net_name=net.name,
             net_endpoint=net.endpoint,
+            study=str(project_id) if project_id is not None else None,
         )
-        for job, net in session.exec(statement).all()
+        for job, net, project_id in session.exec(statement).all()
     ]
 
 
@@ -171,10 +174,10 @@ def _fail_job(job: WatchedJob, reason: str, session: Session) -> bool:
     return True
 
 
-def _list_or_unknown(net_endpoint: str) -> list[IJobMetaData] | None:
+def _list_or_unknown(net_endpoint: str, studies: list[str]) -> list[IJobMetaData] | None:
     """List one net's jobs, or None for any error, so one broken net cannot stop the others being watched."""
     try:
-        return list_backend_jobs(net_endpoint)
+        return list_backend_jobs(net_endpoint, studies)
     except Exception:
         logger.exception(f"Could not list the jobs on {net_endpoint}")
         return None
@@ -205,8 +208,11 @@ class JobWatchdog:
             list[UUID]: The ids of the models this tick set to ERROR.
         """
         jobs = find_watched_jobs(session)
-        endpoints = {job.net_endpoint for job in jobs if job.fl_backend_job_id is not None}
-        backend_jobs = {endpoint: _list_or_unknown(endpoint) for endpoint in endpoints}
+        studies: dict[str, set[str]] = {}
+        for job in jobs:
+            if job.fl_backend_job_id is not None:
+                studies.setdefault(job.net_endpoint, set()).update([job.study] if job.study else [])
+        backend_jobs = {endpoint: _list_or_unknown(endpoint, sorted(named)) for endpoint, named in studies.items()}
 
         failed: list[UUID] = []
         looked_dead: dict[UUID, int] = {}

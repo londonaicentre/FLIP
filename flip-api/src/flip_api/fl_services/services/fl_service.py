@@ -12,6 +12,7 @@
 
 import json
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
@@ -22,7 +23,7 @@ from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.database import get_engine
-from flip_api.db.models.main_models import FLJob, Trust
+from flip_api.db.models.main_models import FLJob, Model, Trust
 from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
     IClientStatus,
@@ -376,6 +377,15 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     return app_folders
 
 
+def _study_params(*studies: str | None) -> list[tuple[str, str]] | None:
+    """The FL API's ``?study=`` query, once per study (FLIP#1678), or None when there is none.
+
+    An NVFLARE job lives in its project's study, and the FL API sees a job only through that study's session.
+    """
+    named = [("study", study) for study in studies if study]
+    return named or None
+
+
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
     """
     Upload the application to the FL server.
@@ -464,7 +474,7 @@ def add_fl_backend_job_id(fl_job_id: UUID, fl_backend_job_id: str, session: Sess
     session.commit()
 
 
-def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session) -> None:
+def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session, study: str) -> None:
     """
     Submits a job to the FL API that is going to kick off training
 
@@ -473,13 +483,14 @@ def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session)
         endpoint (str): The endpoint of the FL API service.
         model_id (UUID): The ID of the model to start submit the job for.
         session (Session): An instance of the database connection.
+        study (str): The model's project id, the NVFLARE study the job runs in.
 
     Raises:
         ValueError: If the backend job ID is not returned in the response.
     """
     url = f"{endpoint}/submit_job/{model_id}"
     # NOTE we increased the timeout here as Flower submit takes slightly longer to return a response compared to FLARE.
-    fl_backend_job_id = http_post(url, timeout=30)
+    fl_backend_job_id = http_post(url, timeout=30, params=_study_params(study))
     # Validate that the fl_backend_job_id is returned and is a string
     if not fl_backend_job_id or not isinstance(fl_backend_job_id, str):
         raise ValueError("No backend job id returned or invalid format")
@@ -646,19 +657,20 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
         raise ValueError(f"Clients unavailable: {', '.join(unavailable)}")
 
 
-def abort_job(endpoint: str, job_id: str) -> dict:
+def abort_job(endpoint: str, job_id: str, study: str | None = None) -> dict:
     """
     Aborts a job on the FL server.
 
     Args:
         endpoint (str): The endpoint of the FL API service.
         job_id (str): The ID of the job to abort.
+        study (str | None): The NVFLARE study the job runs in (its project id).
 
     Returns:
         dict: The response from the server after aborting the job.
     """
     url = f"{endpoint}/abort_job/{job_id}"
-    response = http_delete(url)
+    response = http_delete(url, params=_study_params(study))
     return response
 
 
@@ -798,7 +810,7 @@ def start_training(
     _log_applied_gpu_request(model_id, training_details.resources, upload_reply, session)
     _raise_if_job_aborted(fl_job_id, session)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
-    submit_job(fl_job_id, endpoint, model_id, session)
+    submit_job(fl_job_id, endpoint, model_id, session, study=required_info.project_id)
 
 
 def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) -> str:
@@ -1329,7 +1341,7 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         raise RuntimeError(error_msg)
 
 
-def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
+def list_backend_jobs(net_endpoint: str, studies: Sequence[str] = ()) -> list[IJobMetaData] | None:
     """List every job one net's FL API knows about, whatever its status.
 
     Unlike ``extract_current_job_data`` (the abort path, which fails loudly), this answers ``None`` when the FL API
@@ -1338,6 +1350,7 @@ def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
 
     Args:
         net_endpoint (str): The net's FL API base URL.
+        studies (Sequence[str]): The NVFLARE studies to list besides the default one.
 
     Returns:
         list[IJobMetaData] | None: The jobs, or ``None`` if the FL API could not say.
@@ -1345,7 +1358,7 @@ def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
     url = f"{net_endpoint}/list_jobs"
     try:
         # Same timeout as the other FL status calls: the Flower FL API lists runs through the flwr CLI.
-        response = http_get(url, timeout=30)
+        response = http_get(url, timeout=30, params=_study_params(*studies))
         if not isinstance(response, list):
             raise ValueError(f"expected a list of jobs, got {type(response).__name__}")
         # pydantic's ValidationError is a ValueError, so an unknown status lands in the except below.
@@ -1355,7 +1368,9 @@ def list_backend_jobs(net_endpoint: str) -> list[IJobMetaData] | None:
         return None
 
 
-def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
+def extract_current_job_data(
+    net_endpoint: str, fl_backend_job_id: str, study: str | None = None
+) -> IJobMetaData | None:
     """
     Extract the FL job matching ``fl_backend_job_id`` while it is running or still waiting to start.
 
@@ -1366,6 +1381,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The FL job ID to look for.
+        study (str | None): The NVFLARE study the job runs in (its project id).
 
     Returns:
         IJobMetaData | None: The job's metadata, or ``None`` if no running or waiting job
@@ -1382,7 +1398,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     # Same generous timeout as the other FL status checks: the Flower FL API lists runs from the
     # SuperLink and can exceed httpx's 5s default; this is polled during a run, so a 5s timeout
     # would risk flipping a healthy in-flight model to ERROR.
-    current_job_data = http_get(url, timeout=30)
+    current_job_data = http_get(url, timeout=30, params=_study_params(study))
     logger.debug(f"Current job data: {current_job_data}")
 
     # Validate the response format
@@ -1473,6 +1489,9 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
         add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
+    model = session.get(Model, model_id)
+    study = str(model.project_id) if model is not None and model.project_id is not None else None
+
     server_status = fetch_server_status(net_endpoint)
     logger.debug(f"Server status: {server_status}")
 
@@ -1485,7 +1504,7 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
     # idempotent no-op. The jobs were just dequeued above, so free the net promptly instead of
     # leaving it to the stale-BUSY watchdog.
     try:
-        current_job = extract_current_job_data(net_endpoint, fl_backend_job_id)
+        current_job = extract_current_job_data(net_endpoint, fl_backend_job_id, study=study)
     except httpx.HTTPStatusError as error:
         record_fl_api_failure(model_id, error, session)
         raise
@@ -1500,7 +1519,7 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
     logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
     try:
-        response = abort_job(net_endpoint, fl_backend_job_id)
+        response = abort_job(net_endpoint, fl_backend_job_id, study=study)
     except httpx.HTTPStatusError as error:
         record_fl_api_failure(model_id, error, session)
         raise
