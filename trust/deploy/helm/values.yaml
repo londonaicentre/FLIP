@@ -548,6 +548,27 @@ flClient:
     # only alongside an `exec` probe override under flClient.probes.
     supernodeClientAppIoHost: "0.0.0.0"
     supernodeClientAppIoPort: "9094"
+    # Flower task pods (FLIP#1675): the SuperNode runs with --isolation process and a SuperExec beside it starts one
+    # pod per ClientApp message through Flower's Kubernetes executor, in a namespace of its own. Off by default. See
+    # the README, "Flower task pods", for the trust key handling a trust signs off, and the known limits (FLIP#1673).
+    taskPods:
+      enabled: false
+      # Defaults to <release namespace>-flower-tasks. Grant pod read there to the trust's admins only: each task
+      # pod's spec carries the trust-internal key, since Flower refuses Secret references in task pods.
+      namespace: ""
+      # Task pods running at once; the SuperExec waits for capacity beyond it.
+      activePodBudget: 4
+      # Each task pod runs the researcher's ClientApp: size it like the fl-client used to be. A GPU goes here
+      # (limits: nvidia.com/gpu: 1), not in flClient.gpu.
+      resources:
+        requests:
+          memory: "8Gi"
+          cpu: "4"
+        limits:
+          memory: "32Gi"
+          cpu: "16"
+      tolerations: []
+      nodeSelector: {}
   resources:
     requests:
       memory: "8Gi"

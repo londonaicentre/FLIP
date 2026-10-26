@@ -1,0 +1,226 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- /*
+Flower task pods (FLIP#1675): the SuperNode runs with --isolation process, and the SuperExec container in the
+fl-client pod starts one pod per ClientApp message through Flower's Kubernetes executor. This file renders what
+that needs beside the fl-client Deployment (fl-client.yaml carries the switch and the SuperExec container): the
+task namespace, RBAC there, the Service task pods reach the SuperNode's Runtime API through, the executor config,
+and the NetworkPolicies.
+*/}}
+
+{{- define "flip-trust.flowerTaskNamespace" -}}
+{{- .Values.flClient.flower.taskPods.namespace | default (printf "%s-flower-tasks" (include "flip-trust.namespace" .)) }}
+{{- end }}
+
+{{- define "flip-trust.flowerRuntimeService" -}}
+{{- include "flip-trust.fullname" . }}-fl-client-{{ .Values.flClient.netId }}-runtime
+{{- end }}
+
+{{- /*
+The executor config, without the trust key: the SuperExec container appends it from the chart Secret when it
+starts, so its only copy at rest stays in that Secret. Flower refuses Secret references in task pods (FLIP#1673),
+so each task pod's spec carries it as a literal while the pod exists.
+*/}}
+{{- define "flip-trust.flowerExecutorConfig" -}}
+{{- $ns := include "flip-trust.namespace" . -}}
+{{- $task := .Values.flClient.flower.taskPods -}}
+namespace: {{ include "flip-trust.flowerTaskNamespace" . }}
+image: {{ include "flip-trust.flClientImage" . }}
+image-pull-policy: {{ .Values.flClient.image.pullPolicy }}
+labels:
+  app.kubernetes.io/instance: {{ .Release.Name }}
+  flip/network: {{ .Values.flClient.netId }}
+active-pod-budget: {{ $task.activePodBudget }}
+resources:
+  {{- toYaml $task.resources | nindent 2 }}
+{{- with $task.nodeSelector }}
+node-selector:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $task.tolerations }}
+tolerations:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with .Values.securityContext }}
+container-security-context:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+env:
+  - {name: NET_ID, value: {{ .Values.flClient.netId | quote }}}
+  - {name: LOCAL_DEV, value: "false"}
+  - {name: IMAGES_DIR, value: {{ .Values.flClient.imagesDir | quote }}}
+  - {name: SUPERNODE_NAME, value: {{ .Values.trustName | quote }}}
+  - {name: DATA_ACCESS_API_URL, value: "http://data-access-api.{{ $ns }}.svc:{{ .Values.dataAccessApi.service.port }}"}
+  - {name: IMAGING_API_URL, value: "http://imaging-api.{{ $ns }}.svc:{{ .Values.imagingApi.service.port }}"}
+  {{- with .Values.uploadedFederatedDataBucket }}
+  - {name: UPLOADED_FEDERATED_DATA_BUCKET, value: {{ . | quote }}}
+  {{- end }}
+volumes:
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: {{ .Values.flClient.shmSize }}
+volume-mounts:
+  - name: dshm
+    mountPath: /dev/shm
+{{- end }}
+
+{{- if and .Values.flClient.enabled (eq .Values.flBackend "flower") .Values.flClient.flower.taskPods.enabled }}
+{{- $ns := include "flip-trust.namespace" . }}
+{{- $taskNs := include "flip-trust.flowerTaskNamespace" . }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $taskNs }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    {{- if .Values.podSecurity.enabled }}
+    pod-security.kubernetes.io/enforce: {{ .Values.podSecurity.enforce | quote }}
+    pod-security.kubernetes.io/warn: {{ .Values.podSecurity.warn | quote }}
+    pod-security.kubernetes.io/audit: {{ .Values.podSecurity.audit | quote }}
+    {{- end }}
+---
+# What the Kubernetes executor does in the task namespace: create, list and delete task pods and their per-task
+# credential Secrets (FLIP#1673 found no more is needed; patch and pods/exec serve warm pools, which exclude
+# ClientApps).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec
+  namespace: {{ $taskNs }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "secrets"]
+    verbs: ["create", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec
+  namespace: {{ $taskNs }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "flip-trust.fullname" . }}-fl-client
+    namespace: {{ $ns }}
+---
+# The SuperNode's Runtime API. The SuperExec hands this address to every task pod, so it cannot be loopback.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "flip-trust.flowerRuntimeService" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+spec:
+  type: ClusterIP
+  # The SuperExec in the same pod dials this before the SuperNode's readiness probe passes.
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+    flip/network: {{ .Values.flClient.netId }}
+  ports:
+    - name: runtime-api
+      port: {{ .Values.flClient.flower.supernodeClientAppIoPort | int }}
+      targetPort: {{ .Values.flClient.flower.supernodeClientAppIoPort | int }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-flower-executor-{{ .Values.flClient.netId }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+data:
+  executor-config.yaml: |
+    {{- include "flip-trust.flowerExecutorConfig" . | nindent 4 }}
+{{- if .Values.networkPolicies.enabled }}
+{{- $peers := list
+  (dict "component" "fl-client" "port" (.Values.flClient.flower.supernodeClientAppIoPort | int))
+  (dict "component" "imaging-api" "port" (.Values.imagingApi.service.port | int))
+  (dict "component" "data-access-api" "port" (.Values.dataAccessApi.service.port | int)) }}
+---
+# Task pods run researcher code: they may reach DNS, the SuperNode's Runtime API and the two trust APIs, nothing
+# else (no hub, no FL server, no internet).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-flower-task-pods
+  namespace: {{ $taskNs }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- range $peers }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $ns }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: {{ .component }}
+      ports:
+        - port: {{ .port }}
+          protocol: TCP
+    {{- end }}
+{{- range $peers }}
+---
+# The matching allowance in the release namespace, whose default denies ingress from other namespaces.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "flip-trust.fullname" $ }}-{{ .component }}-from-flower-tasks
+  namespace: {{ $ns }}
+  labels:
+    {{- include "flip-trust.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ .component }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $taskNs }}
+      ports:
+        - port: {{ .port }}
+          protocol: TCP
+{{- end }}
+{{- end }}
+{{- end }}

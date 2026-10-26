@@ -689,13 +689,58 @@ Prerequisites and trade-offs:
   Trust), it fails each job whose pod starts late.
 - **Finished job pods are not deleted** by NVFLARE; clear them with
   `kubectl delete pod -l app.kubernetes.io/component=fl-job --field-selector=status.phase!=Running`.
-- **NVFLARE only.** Flower has no equivalent wired into this chart.
+- **NVFLARE only.** For Flower see "Flower task pods" below.
 - **EKS:** the VPC CNI enforces NetworkPolicy only with `enableNetworkPolicy` set, and GPU scale-from-zero
   needs Karpenter or the cluster autoscaler's node-template tags.
 
 The fl-client Deployment uses `strategy: Recreate` whatever the mode: a trust is one FL identity, and under
 RollingUpdate the old and new pods evict each other's connection to the server until the old one exits.
 `make deploy` moves a release installed before this change across once (`scripts/migrate-strategy.sh`, FLIP#1524).
+
+### Flower task pods: a pod per ClientApp (FLIP#1675)
+
+By default a Flower SuperNode runs every ClientApp as a process in the fl-client pod, with the net's images
+mounted. With task pods the SuperNode runs with `--isolation process`, and a SuperExec container beside it starts
+**one pod per ClientApp message** through Flower's Kubernetes executor, in a namespace of its own. A task pod holds
+only what its ClientApp fetches and is deleted after it finishes.
+
+```yaml
+flClient:
+  gpu:
+    enabled: false          # the GPU belongs to the task pods; the chart refuses both
+  flower:
+    taskPods:
+      enabled: true
+      namespace: ""         # default <release namespace>-flower-tasks
+      activePodBudget: 4
+      resources:            # each task pod runs the researcher's ClientApp
+        limits: {memory: "32Gi", cpu: "16", nvidia.com/gpu: 1}
+```
+
+What the chart adds: the task namespace; a Role there for the fl-client's ServiceAccount (pods and secrets
+`create`, `list`, `delete`, the minimum FLIP#1673 found); a `<release>-fl-client-<net>-runtime` Service the task
+pods reach the SuperNode's Runtime API through; the executor config (ConfigMap `<release>-flower-executor-<net>`);
+and NetworkPolicies that let task pods reach DNS, the Runtime API, imaging-api and data-access-api, and nothing
+else. Only the SuperExec container gets a Kubernetes API token.
+
+**The trust key, which a trust signs off when it turns this on.** Flower refuses Secret references in task pods,
+so `TRUST_INTERNAL_SERVICE_KEY` reaches each task pod as a literal in its spec. The SuperExec adds it to the
+executor config in memory at start; the key is at rest only in the chart Secret, and in a task pod's spec while that
+pod exists (Flower deletes finished pods within about a minute). The researcher's ClientApp holds the key in every
+mode; what changes is that anyone who can read pods in the task namespace can read it too. Grant that only to the
+trust's admins, who can read the Secret anyway.
+
+Limits:
+
+- **Imaging projects need FLIP#1049.** A PVC cannot cross namespaces, so task pods have no images volume. Tabular
+  projects work as they are; imaging ones wait for studies streamed from imaging-api.
+- **Known failures (FLIP#1673).** A ClientApp that runs out of memory makes Flower end the run `completed` with no
+  results. A task pod lost mid-round leaves the run `running` and the SuperNode taking no more messages until the
+  fl-client pod restarts.
+- **Per message, not per run.** A pod starts for every `train` and `evaluate` message: about 0.9 s each with the
+  image cached, plus the ClientApp's own imports.
+- **API server egress.** As for NVFLARE job pods: where the API server listens off 443, add it to
+  `networkPolicies.allowedEgressCIDRsWithPorts`.
 
 ### Container Service jobs (dcm2niix)
 

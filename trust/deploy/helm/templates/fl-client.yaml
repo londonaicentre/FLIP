@@ -20,6 +20,13 @@
 {{- if and (eq .Values.flBackend "nvflare") .Values.flClient.gpu.enabled (ne (int .Values.flClient.gpu.count) 1) }}
 {{- fail "flClient.gpu.count must be 1 when GPU mode is enabled on NVFLARE: the pod sees GPU 0 only (CUDA_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES are 0). Set flClient.gpu.count to 1, or disable flClient.gpu.enabled for CPU-only mode." }}
 {{- end }}
+{{- $taskPods := and (eq .Values.flBackend "flower") .Values.flClient.flower.taskPods.enabled }}
+{{- if and .Values.flClient.flower.taskPods.enabled (ne .Values.flBackend "flower") }}
+{{- fail "flClient.flower.taskPods.enabled starts each ClientApp in its own pod through Flower's Kubernetes executor, so it needs flBackend: flower." }}
+{{- end }}
+{{- if and $taskPods .Values.flClient.gpu.enabled }}
+{{- fail "flClient.flower.taskPods.enabled gives GPUs to the task pods, not to the fl-client: set flClient.gpu.enabled=false and request the GPU in flClient.flower.taskPods.resources." }}
+{{- end }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -90,10 +97,14 @@ spec:
       cannot use /app, where the image keeps its code and virtualenv (FLIP#1428). */}}
       {{- $ws := ternary "/var/tmp/nvflare/workspace" "/app" $jobPods }}
       {{- $kitFromSecret := eq .Values.flClient.kit.source "secret" }}
-      {{- if or .Values.flClient.gpu.enabled $governed $jobPods }}
+      {{- if or .Values.flClient.gpu.enabled $governed $jobPods $taskPods }}
       annotations:
         {{- if .Values.flClient.gpu.enabled }}
         nvidia.com/gpu: {{ .Values.flClient.gpu.count | quote }}
+        {{- end }}
+        {{- if $taskPods }}
+        # The SuperExec reads its executor config once, at start.
+        checksum/flower-executor: {{ include "flip-trust.flowerExecutorConfig" . | sha256sum }}
         {{- end }}
         {{- if $jobPods }}
         # The job pod template is copied into the kit when the parent starts, so a change to it must
@@ -121,6 +132,10 @@ spec:
           {{- end }}
       {{- end }}
       serviceAccountName: {{ include "flip-trust.fullname" . }}-fl-client
+      {{- if $taskPods }}
+      # The SuperExec alone gets the API token (its projected volume below); the SuperNode needs none.
+      automountServiceAccountToken: false
+      {{- end }}
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
@@ -315,6 +330,11 @@ spec:
             - {{ .Values.flClient.flower.supernodeClientAppIoHost | quote }}
             - "--port"
             - {{ .Values.flClient.flower.supernodeClientAppIoPort | quote }}
+            {{- if $taskPods }}
+            # ClientApps run in task pods started by the SuperExec container below (FLIP#1675).
+            - "--isolation"
+            - "process"
+            {{- end }}
             # No --allow-runtime-dependency-installation (FLIP#1418): Flower names the
             # per-run env after the run id, so every ClientApp launch in a run shares it,
             # and each launch's exit handler deletes it -- a later round's `uv sync` then
@@ -406,6 +426,7 @@ spec:
             - name: NVIDIA_VISIBLE_DEVICES
               value: "0"
             {{- end }}
+            {{- if not $taskPods }}
             - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
               valueFrom:
                 secretKeyRef:
@@ -416,6 +437,7 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
+            {{- end }}
             {{- if $jobPods }}
             # Read by flip.nvflare.k8s_job_mode (FLIP#1428).
             - name: FL_K8S_NAMESPACE
@@ -523,6 +545,60 @@ spec:
 {{- if .Values.flClient.probes.readiness.failureThreshold }}
             failureThreshold: {{ .Values.flClient.probes.readiness.failureThreshold }}
 {{- end }}
+        {{- if $taskPods }}
+        # Starts one task pod per ClientApp message (FLIP#1675). It appends the trust key to the executor config
+        # in memory, so the key is at rest only in the chart Secret.
+        - name: superexec
+          image: {{ include "flip-trust.flClientImage" . }}
+          imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              umask 077
+              python -c '
+              import os, yaml
+              cfg = yaml.safe_load(open("/etc/flwr/executor/executor-config.yaml"))
+              keys = ("TRUST_INTERNAL_SERVICE_KEY_HEADER", "TRUST_INTERNAL_SERVICE_KEY")
+              cfg["env"] += [{"name": k, "value": os.environ[k]} for k in keys]
+              yaml.safe_dump(cfg, open("/run/flwr/executor-config.yaml", "w"))
+              '
+              exec flower-superexec --insecure \
+                --runtime-api-address {{ include "flip-trust.flowerRuntimeService" . }}.{{ include "flip-trust.namespace" . }}.svc:{{ .Values.flClient.flower.supernodeClientAppIoPort }} \
+                --executor kubernetes --executor-config /run/flwr/executor-config.yaml
+          env:
+            - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key-header
+            - name: TRUST_INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key
+          volumeMounts:
+            - name: flower-executor
+              mountPath: /etc/flwr/executor
+              readOnly: true
+            - name: flower-executor-run
+              mountPath: /run/flwr
+            - name: superexec-token
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+        {{- end }}
       volumes:
         - name: images
 {{- if .Values.sharedImagesPvc.enabled }}
@@ -568,5 +644,29 @@ spec:
         - name: fl-job-pod
           configMap:
             name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
+        {{- end }}
+        {{- if $taskPods }}
+        - name: flower-executor
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-flower-executor-{{ .Values.flClient.netId }}
+        - name: flower-executor-run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: superexec-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace
         {{- end }}
 {{- end }}
