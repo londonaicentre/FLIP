@@ -498,6 +498,43 @@ flClient:
       policy: ""
       percentile: ""
       gamma: ""
+    # One Kubernetes pod per FL job (FLIP#1428). The fl-client becomes a small parent that keeps the
+    # site registered, and NVFLARE's ClientK8sJobLauncher starts each job in its own pod, asking
+    # Kubernetes for the GPUs in the job's resource_spec (nvidia.com/gpu). With the job pods on a GPU
+    # node pool that scales from zero, a GPU is billed only while a job runs. Leave flClient.gpu off:
+    # the parent holds no GPU (the chart refuses both).
+    #
+    # Job pods mount the shared images volume, so they follow flClient.affinity. On a multi-node
+    # cluster with a separate GPU pool, sharedImagesPvc needs a ReadWriteMany class and
+    # flClient.affinity: {} (an RWO disk attaches to one node only). They inherit the fl-client's
+    # NetworkPolicy reach: every rule in network-policy.yaml is namespace-wide.
+    jobPods:
+      enabled: false
+      # GPUs the site lends to jobs at once. NVFLARE queues a job asking for more, and the hub shows
+      # why (FLIP#1423); 0 keeps every job on CPU. Set it to the GPU pool's maximum node count x GPUs
+      # per node.
+      maxGpus: 1
+      # Seconds a job pod may wait for its node while Kubernetes reports "Insufficient" CPU, memory or
+      # GPU (an autoscaler adding a node) before NVFLARE fails the job. Size it to a cold scale-up.
+      # A pod that can never be scheduled (no matching node at all) fails at once whatever this is.
+      pendingTimeout: 900
+      # The parent's internal port, which job pods connect back to through its Service.
+      parentPort: 8102
+      # Placement of job pods only, e.g. a GPU pool's taint (key: sku, value: gpu, effect:
+      # NoSchedule). Prefer the nvidia.com/gpu request plus a toleration over a nodeSelector aimed at
+      # a pool at zero: Kubernetes reports that pod Unschedulable rather than Insufficient, and
+      # NVFLARE fails it immediately instead of waiting for the node.
+      tolerations: []
+      nodeSelector: {}
+      # The launcher calls the Kubernetes API from the parent. The chart's egress already allows port
+      # 443 to any address (networkPolicies.allowedEgressPorts), which covers an API server reached on
+      # 443 (AKS, EKS). NetworkPolicy matches the API server's real endpoint rather than the kubernetes
+      # Service, so where it listens on another port (minikube 8443, kind 6443) name it here, e.g. from
+      # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`. Without it the
+      # launcher's first call hangs and no job pod is ever created. Only the parent gets this rule.
+      apiServer:
+        cidrs: []
+        port: 443
   flower:
     superlink: ""
     # flwr>=1.36 split --clientappio-api-address into separate --host/--port

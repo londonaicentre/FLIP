@@ -40,7 +40,7 @@ from fl_api.utils.prepare_config import (
 )
 from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
-from fl_api.utils.validation import safe_join, validate_bundle_url
+from fl_api.utils.validation import redact_url, safe_join, validate_bundle_url
 
 # De-bundled evaluation checkpoints are large (hundreds of MB); allow far more time than the
 # code-file default used for the rest of the bundle.
@@ -80,7 +80,7 @@ def _stage_server_checkpoint(url: str, model_id: str, file_name: str) -> None:
         # validate_bundle_url (which only saw the original URL), and raise_for_status() stops an
         # S3 error body from being written out as the checkpoint.
         if resp.is_redirect or resp.is_permanent_redirect:
-            raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+            raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {redact_url(url)!r}.")
         resp.raise_for_status()
         with open(dest_path, "wb") as fh:
             for chunk in resp.iter_content(chunk_size=8 * 1024 * 1024):
@@ -230,7 +230,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     app_folder_names: set[str] = set()
 
     for url in bundle_urls:
-        logger.info(f"Downloading file from {url}")
+        logger.info(f"Downloading file from {redact_url(url)}")
 
         # The FL API fetches each URL server-side, so reject off-origin URLs. With no allow-list set the check
         # also resolves the name; requests resolves it again on connect, and that pair is the DNS-rebinding
@@ -243,21 +243,26 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
         # Server-only evaluation checkpoints are staged on the shared volume for the fl-server
         # to load from disk; they are NOT part of the FLARE job (never deployed to clients).
-        if f"/{SERVER_CHECKPOINTS_PREFIX}" in s3_file_dir:
-            _stage_server_checkpoint(url, model_id, file_name)
-            continue
-
         try:
+            if f"/{SERVER_CHECKPOINTS_PREFIX}" in s3_file_dir:
+                _stage_server_checkpoint(url, model_id, file_name)
+                continue
             resp = requests.get(url, timeout=60, allow_redirects=False)
             # A redirect would dodge validate_bundle_url (which only saw the original URL),
             # reopening the SSRF hole; treat any 3xx as a failure. raise_for_status() also
             # stops an S3 4xx/5xx error body from being written out as the bundle file.
             if resp.is_redirect or resp.is_permanent_redirect:
-                raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+                raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {redact_url(url)!r}.")
             resp.raise_for_status()
             content = resp.content
+        except HTTPException:
+            raise
+        except requests.RequestException as e:
+            message = f"Failed to download file from {redact_url(url)} ({type(e).__name__})."
+            logger.error(message)
+            raise HTTPException(status_code=500, detail=message) from None
         except Exception as e:
-            logger.error(f"Failed to download from URL {url} with error: {e}")
+            logger.error(f"Failed to download file from {redact_url(url)} ({type(e).__name__}).")
             raise
 
         app_folder_name, relative_dir = _relative_dir_for_download(model_id, s3_file_dir, file_name)

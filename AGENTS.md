@@ -495,11 +495,13 @@ manual dispatch). **Per-backend FL API** — `fl-api-test-flower.yml` / `fl-api-
 `fl-services/<backend>/**` images on push to main/develop, or manual dispatch; also triggered
 by `flip-utils/**` since the fl-base image bakes it in). **FL app/tutorial consistency guards**
 — `fl-apps-check-required-files.yml` (CI backstop for the `fl-apps-required-files` pre-commit
-hook), `fl-apps-check-tutorial-sync.yml` (only the FLARE Ark+ evaluation pairs in
-`scripts/check_tutorial_sync.sh`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
+hook), `fl-apps-check-tutorial-sync.yml` (the byte-identical pairs in
+`scripts/check_tutorial_sync.sh`: the two FLARE Ark+ evaluation apps, the EHR nvflare↔flower files and every twin
+pair's `query.sql` / `query_novocab.sql`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
 tree by `fl-tutorials/tests/test_flower_platform_parity.py`, run by `fl-tutorials-tests.yml`),
 `fl-api-validation-sync.yml` (the two backends'
-`fl_api/utils/validation.py` guards stay in sync), `fl_round_metrics_tests.yml` (tests over
+`fl_api/utils/validation.py` guards and their byte-identical `fl_api/utils/refusals.py` researcher-refusal
+contract stay in sync), `fl_round_metrics_tests.yml` (tests over
 `scripts/fl_round_metrics/**`). **Deploy-target tests** — `test_helm_chart.yml`
 (`trust/deploy/helm/**`), `test_local_trust_playbook.yml`
 (`trust/deploy/ansible/**` Ansible). **UI/release/branch hygiene** —

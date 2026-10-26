@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -224,3 +225,28 @@ def test_invalid_operator_gpu_default_is_not_a_researcher_refusal(client):
     assert response.status_code == 400
     assert "JOB_RESOURCE_SPEC_NUM_GPUS" in response.json()["detail"]
     assert "refusal" not in response.json()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        (
+            "https://user:userinfo-sentinel@bucket"  # pragma: allowlist secret (synthetic URL)
+            "\uff0fexample.com/key?X-Amz-Signature=query-sentinel"
+        ),
+        (
+            "https://user:userinfo-sentinel@[invalid/"  # pragma: allowlist secret (synthetic URL)
+            "key?X-Amz-Signature=query-sentinel"
+        ),
+    ],
+)
+def test_upload_rejects_malformed_urls_without_echoing_credentials(client, override_session, tmp_path, caplog, url):
+    caplog.set_level(logging.INFO)
+    override_session.upload_dir = str(tmp_path)
+    with patch("fl_api.utils.upload.requests.get") as fetch:
+        response = client.post(f"/upload_app/{MODEL_ID}", json={**make_upload_payload(), "bundle_urls": [url]})
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Bundle URL is malformed."}
+    assert "userinfo-sentinel" not in response.text + caplog.text
+    assert "query-sentinel" not in response.text + caplog.text
+    fetch.assert_not_called()

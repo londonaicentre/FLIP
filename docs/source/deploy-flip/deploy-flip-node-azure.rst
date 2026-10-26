@@ -130,7 +130,7 @@ Prerequisites
 - On your machine: Azure CLI (logged in with ``az login``), Terraform 1.13 or newer, GNU make,
   ``uv`` and ``yq`` (the self-test kit is provisioned on your machine, never on the node), and an
   SSH public key at ``~/.ssh/id_ed25519.pub``, or pass ``SSH_PUBLIC_KEY_FILE=<path>`` to ``plan``
-  and ``destroy``. Azure requires one, but nothing listens for SSH, so a throwaway key will do.
+  (``destroy`` needs no key). Azure requires one, but nothing listens for SSH, so a throwaway key will do.
 - The FLIP commit you deploy pushed to GitHub: the VM clones it.
 
 **************************
@@ -264,7 +264,7 @@ the Trust's routes and creates no outbound IP, and that subnet needs a route tab
 outbound traffic to the Trust's firewall, which AKS checks before it creates the cluster; without
 ``SUBNET_ID`` it leaves through its own NAT gateway. The API server admits only your IP and the
 nodes' own egress: the NAT gateway's IP, or on the Trust's subnet the firewall's public IPs, which
-you pass as ``NODE_EGRESS_IPS=<ip>[,<ip>]`` to ``aks-plan`` and ``aks-destroy``. A node that cannot
+you pass as ``NODE_EGRESS_IPS=<ip>[,<ip>]`` to ``aks-plan`` (``aks-destroy`` needs no addresses). A node that cannot
 reach its API server never joins the cluster. The trial's 4 vCPUs are the VM's too, so
 ``aks-apply`` refuses while the VM exists: ``make destroy`` first. A running cluster costs roughly
 $0.25 an hour, plus the NAT gateway on a standalone cluster.
@@ -280,8 +280,8 @@ Behind the Trust's firewall the cluster needs more than the VM's list (`Network 
 
 That list was measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
 
-On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq`` and
-``python3``.
+On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
+``python3`` and ``uv``.
 
 .. code-block:: bash
 
@@ -329,7 +329,7 @@ Operate and remove:
 - ``make aks-stop`` stops the node billing; ``make aks-start`` starts it and admits your current
   IP. After your IP changes, ``make aks-allow-ip`` admits the new one.
 - ``make aks-deploy KIT=<CODE> HUB=<env>`` redeploys or upgrades from the installed kit.
-- ``make aks-destroy`` (with the same ``SUBNET_ID`` and ``NODE_EGRESS_IPS``) removes the cluster and its network and keeps
+- ``make aks-destroy`` (with the same ``SUBNET_ID``) removes the cluster and its network and keeps
   the bootstrap layer;
   ``make destroy-bootstrap`` refuses while the cluster or a VM exists.
 

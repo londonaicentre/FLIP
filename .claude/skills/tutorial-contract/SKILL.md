@@ -183,7 +183,8 @@ template, required files present, template files byte-identical), `test_flower_m
   project as *enrichment* between the pull and training (`upload-*-labels`; the e2e target's
   `ENRICHMENT_ARGS`, the recorder's `--data-enrichment-cwd/-cmd` + `--publish-segmentations`). The
   app loads `label_*.nii.gz` beside `input_*.nii.gz`; multi-series studies (prostate) select the
-  series. Not in `DICOM_APPS`. Each FL client sees only its own `net-N` image slice.
+  series. Not in `DICOM_APPS`; register its transform factories in `NIFTI_APPS`
+  (`tests/test_nifti_orientation.py`) instead. Each FL client sees only its own `net-N` image slice.
 - **Tabular / OMOP-only.** `query.sql` projects `person_id`; `get_dataframe` only; project created
   with imaging **off** (FLIP#1071 — left on, the hub dispatches `create_imaging` and the run dies at
   the image-pull wait): the e2e target pins `--no-imaging`, the demo profile `has_imaging: False`.
