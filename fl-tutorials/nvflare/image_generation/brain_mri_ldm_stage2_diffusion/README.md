@@ -9,7 +9,7 @@ The [index](../README.md) lists the other image-generation tutorials.
 
 > **You need an autoencoder before you start, but you don't have to train one.** We trained one with
 > the [autoencoder tutorial](../brain_mri_ldm_stage1_autoencoder/) and published it on Hugging Face
-> ([`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder)),
+> ([`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion)),
 > and `make prepare-checkpoint` fetches it. Or train your own and extract it.
 > [Getting the autoencoder](#getting-the-autoencoder-do-this-first) covers both.
 
@@ -62,9 +62,9 @@ two ways to get them, and `make prepare-checkpoint` writes both files either way
 make prepare-checkpoint   # from this directory
 ```
 
-With no arguments it downloads the autoencoder we trained with the
+With no arguments it downloads the autoencoder (`autoencoder/v3.1`) we trained with the
 [autoencoder tutorial](../brain_mri_ldm_stage1_autoencoder/) and published on Hugging Face
-([`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder)),
+([`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion)),
 checks its hash, and writes both files. It was trained with the autoencoder tutorial's shipped
 configuration, which this tutorial's `config.json` matches. Its model card says how it was trained,
 on which data, and how it scores on held-out patients.
@@ -205,7 +205,8 @@ whose cutoff is computed over the whole update.
 The shipped `config.json` runs 2 rounds of 3 epochs, like the other tutorials: enough to run the
 whole job end to end, not to learn to generate brains. We trained this tutorial for 5 rounds of 60
 epochs on 321 brain MR studies split between two simulated sites, with the learning rate decaying
-over all 300 epochs and validation every 20; the run took 5 h 35 min on one RTX 5090. The settings:
+over all 300 epochs and validation every 20; the run took 5 h 35 min on one RTX 5090. It is published beside its autoencoder as `diffusion/v3.1_ldm`
+in [`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion). The settings:
 
 ```json
 "GLOBAL_ROUNDS": 5,

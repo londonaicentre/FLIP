@@ -16,5 +16,5 @@ FLIP_QUERY=
 # N_CLIENTS=2
 
 # Point at a finished `brain_mri_ldm_stage1_autoencoder` tutorial run to build app_files/pretrained_autoencoder.pt
-# (`make prepare-checkpoint`). Not needed once that file exists.
+# (`make prepare-checkpoint`). Without it, prepare-checkpoint fetches the published autoencoder.
 # RAW_CHECKPOINT=/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/.../FL_global_model.pt

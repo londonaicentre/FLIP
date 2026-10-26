@@ -72,7 +72,7 @@ def test_known_checkpoints_carry_torch_hubs_hash_prefix():
     for arch, checkpoint in fetch_weights.CHECKPOINTS.items():
         assert checkpoint.url.startswith(TRUSTED_HOSTS), arch
         assert len(checkpoint.hash_prefix) == 8, arch
-        assert checkpoint.filename.endswith(f"-{checkpoint.hash_prefix}.pth"), arch
+        assert Path(checkpoint.filename).stem.endswith(f"-{checkpoint.hash_prefix}"), arch
         if not fetch_weights.HASH_REGEX.search(checkpoint.url.rsplit("/", 1)[-1]):
             # Not hash-named upstream, so the digest has to come from the pin, and the staged name
             # has to be an explicit rewrite rather than whatever the publisher happened to call it.

@@ -102,7 +102,8 @@ The shipped `config.json` runs 2 rounds of 3 epochs, like the other tutorials: e
 whole job end to end in minutes, not to learn to generate X-rays. We ran it with 2 rounds of 300
 epochs on Ark+ (about 1.9k images per site), the learning rate decaying over the first 200, and
 sample images saved every 25 epochs: they looked like chest X-rays from about epoch 150, much like
-the ones at the top, and the run took 5 h 05 min on one RTX 5090. The settings:
+the ones at the top, and the run took 5 h 05 min on one RTX 5090. It is published in
+[`aicentreflip/tutorials-xray-diffusion`](https://huggingface.co/aicentreflip/tutorials-xray-diffusion). The settings:
 
 ```json
 "GLOBAL_ROUNDS": 2,

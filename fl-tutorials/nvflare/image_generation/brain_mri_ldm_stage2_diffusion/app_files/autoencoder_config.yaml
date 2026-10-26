@@ -21,4 +21,4 @@ autoencoder:
   norm_eps: 1.0e-06
   with_encoder_nonlocal_attn: false
   with_decoder_nonlocal_attn: false
-autoencoder_sha256: 2dcc577efaa640d76d43a49282ffa497f7114612180931d558d6526151551818  # pragma: allowlist secret
+autoencoder_sha256: b116587ba5f98b011c1450180af827876b10370d924d453a27a87968dff70221  # pragma: allowlist secret

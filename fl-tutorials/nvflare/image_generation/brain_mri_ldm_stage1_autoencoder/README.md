@@ -7,8 +7,8 @@ MRI: the [latent diffusion tutorial](../brain_mri_ldm_stage2_diffusion/README.md
 frozen. The [index](../README.md) lists the other image-generation tutorials.
 
 > **Only want to generate brain MRI? You can skip this tutorial.** We trained an autoencoder with it
-> and published it on Hugging Face, in
-> [`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder),
+> and published it on Hugging Face (`autoencoder/v3.1`), in
+> [`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion),
 > whose model card says how it was trained and how it scores on held-out patients. The latent
 > diffusion tutorial fetches and checks it for you: go straight to its
 > [Getting the autoencoder](../brain_mri_ldm_stage2_diffusion/README.md#getting-the-autoencoder-do-this-first). Train your own
@@ -162,8 +162,8 @@ two simulated sites. To train your own, raise the two counts in `config.json`:
 "LOCAL_ROUNDS": 25
 ```
 
-Its model card, in [`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder),
-gives the full recipe and how the model scores on held-out patients.
+It is `autoencoder/v3.1` in [`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion),
+whose model card gives the full recipe and how it scores on held-out patients.
 
 ## Debugging
 

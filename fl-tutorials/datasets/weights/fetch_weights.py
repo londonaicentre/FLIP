@@ -18,7 +18,8 @@ why). So the download happens HERE, on a developer machine, once, and the result
 tutorial ships beside its code through the ordinary scanned upload.
 
 Today that is MedicalNet (ResNet-50, with ResNet-10 as the lighter option), the 3-D
-perceptual-loss backbone of the autoencoder tutorial, which loads it from beside its code.
+perceptual-loss backbone of the autoencoder tutorial, which loads it from beside its code, and the
+published brain MRI autoencoder the latent diffusion tutorial freezes.
 ``squeezenet1_1`` is torchvision's 2-D LPIPS backbone, which no tutorial ships at present. Add an
 entry to ``CHECKPOINTS`` for the next network.
 
@@ -47,7 +48,7 @@ class Checkpoint:
     #: its entries leave this unset and the digest is read back out of the name instead.
     sha256: str | None = None
     #: Filename to stage under, when the published name carries no hash. The staged name always
-    #: ends up in torch.hub's ``<arch>-<first 8 sha256 hex>.pth`` form, so an app can check a
+    #: ends up in torch.hub's ``<arch>-<first 8 sha256 hex>.<ext>`` form, so an app can check a
     #: checkpoint against its own name without consulting anything else.
     stage_as: str | None = None
 
@@ -82,6 +83,13 @@ CHECKPOINTS: dict[str, Checkpoint] = {
         "https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50/resolve/main/resnet_50_23dataset.pth",
         sha256="ff48a62219073fb977fd3f4ddfb8dc1367f0ec156c8d6f6c37e205bd683a246e",  # pragma: allowlist secret
         stage_as="medicalnet_resnet50_23datasets-ff48a622.pth",
+    ),
+    # The brain MRI autoencoder (v3.1) we trained with the autoencoder tutorial, which the latent diffusion
+    # tutorial freezes (`make prepare-checkpoint`). Its model card is in the same repository.
+    "brain_mri_autoencoder": Checkpoint(
+        "https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion/resolve/main/autoencoder/v3.1/autoencoder.safetensors",
+        sha256="84a3ece437de82b03aea6a35e0bea27273f925647a84f09cb758ab2402d6cf45",  # pragma: allowlist secret
+        stage_as="brain_mri_autoencoder_v3.1-84a3ece4.safetensors",
     ),
 }
 

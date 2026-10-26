@@ -54,6 +54,8 @@ RAW_CHECKPOINT ?=
 # The config.json that run was trained with. Defaults to the autoencoder tutorial's own, so set it
 # whenever the run's uploaded config.json changed the network.
 RAW_CONFIG ?=
+# The published autoencoder, fetched (sha256-pinned in fetch_weights.py) when no RAW_CHECKPOINT is given.
+PUBLISHED_AUTOENCODER := $(FL_TUTORIALS)/data/weights/brain_mri_autoencoder_v3.1-84a3ece4.safetensors
 
 .PHONY: run export sim prepare-checkpoint clean
 
@@ -71,11 +73,9 @@ ifneq ($(RAW_CHECKPOINT),)
 		--dst "$(PROCESSED_CHECKPOINT)" $(if $(RAW_CONFIG),--autoencoder-config "$(RAW_CONFIG)")
 else
 	@test -f "$(PROCESSED_CHECKPOINT)" || { \
-		echo "❌ No $(PROCESSED_CHECKPOINT). This tutorial trains inside a frozen autoencoder's latent space."; \
-		echo "   Train one with the sibling tutorial, then extract it:"; \
-		echo "     make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder"; \
-		echo "     make prepare-checkpoint RAW_CHECKPOINT=/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/flip_fedavg/server/simulate_job/FL_global_model.pt"; \
-		exit 1; }
+		$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=brain_mri_autoencoder && \
+		$(UV_RUN) python process_tools/extract_autoencoder.py --src "$(PUBLISHED_AUTOENCODER)" \
+			--dst "$(PROCESSED_CHECKPOINT)"; }
 endif
 
 # --- Export job config (no GPU needed) ---

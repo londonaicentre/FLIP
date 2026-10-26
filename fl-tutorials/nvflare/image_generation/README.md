@@ -33,7 +33,7 @@ shows how they fit together.
 
 **To generate brain MRI you can skip the first job.** We trained an autoencoder with the autoencoder
 tutorial and published it on Hugging Face
-([`aicentreflip/tutorials-brain-mri-autoencoder`](https://huggingface.co/aicentreflip/tutorials-brain-mri-autoencoder)).
+([`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion)).
 The latent diffusion tutorial starts from it: see
 [Getting the autoencoder](brain_mri_ldm_stage2_diffusion/README.md#getting-the-autoencoder-do-this-first).
 

@@ -12,8 +12,9 @@
 """Extract the autoencoder from a `brain_mri_ldm_stage1_autoencoder` tutorial run, for this tutorial to train against.
 
 A run's ``FL_global_model.pt`` holds the whole training network (autoencoder and discriminator)
-inside FLARE's persistor envelope. This keeps the ``autoencoder.*`` tensors, checks that they load
-into the architecture the run was trained with, and writes the two files the job uploads together:
+inside FLARE's persistor envelope; the published autoencoder is a ``.safetensors`` of the same
+tensors. This keeps the ``autoencoder.*`` tensors, checks that they load into the architecture the
+run was trained with, and writes the two files the job uploads together:
 
 * ``pretrained_autoencoder.pt``: the weights, loaded once on the FL server (``SERVER_CHECKPOINT``);
 * ``autoencoder_config.yaml``: the architecture every client builds, and a fingerprint of the
@@ -33,6 +34,7 @@ from pathlib import Path
 import torch
 import yaml
 from monai.networks.nets import AutoencoderKL
+from safetensors.torch import load_file
 
 TUTORIALS = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(TUTORIALS / "brain_mri_ldm_stage2_diffusion" / "app_files"))
@@ -58,10 +60,13 @@ def autoencoder_kwargs(net_config: dict) -> dict:
 
 def extract(src: Path) -> dict[str, torch.Tensor]:
     """The ``autoencoder.*`` tensors of a run's checkpoint, out of FLARE's persistor envelope."""
-    # weights_only=False: the envelope pickles FLARE metadata beside the tensors. Only point this at
-    # a checkpoint you produced.
-    blob = torch.load(src, map_location="cpu", weights_only=False)
-    state_dict = blob["model"] if isinstance(blob.get("model"), dict) else blob
+    if src.suffix == ".safetensors":
+        state_dict = load_file(src)
+    else:
+        # weights_only=False: the envelope pickles FLARE metadata beside the tensors. Only point this
+        # at a checkpoint you produced.
+        blob = torch.load(src, map_location="cpu", weights_only=False)
+        state_dict = blob["model"] if isinstance(blob.get("model"), dict) else blob
     tensors = {key: value for key, value in state_dict.items() if key.startswith(PREFIX)}
     if not tensors:
         raise KeyError(
