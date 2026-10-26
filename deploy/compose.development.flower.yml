@@ -98,12 +98,23 @@ services:
 
   fl-server-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
-    # keys, which the app user (uid 49999) cannot. The other reason this override
-    # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
-    # object store with static keys (FLIP#1291). Prod uses an ECS task IAM role,
-    # so the override is confined to the dev compose.
-    user: "0:0"
+    # Dev-only: run as the host user rather than root (FLIP#1320). The image user
+    # (app, uid 49999) cannot read the host-provisioned 0640 TLS keys; root can, but
+    # a root SuperLink rewrites every host-owned file it touches as root:root, which
+    # is how the operator's AWS SSO token used to end up unreadable to their own CLI.
+    # That particular mount has since gone (results go to the dev object store with
+    # static keys, FLIP#1291), but the hazard applies to any host-owned bind mount,
+    # and matching flip-api (FLIP#1171) is the honest fix. The uid is the host's, so
+    # the provisioned keys and the bundle dir shared with flip-api are readable and
+    # writable; the gid stays the image's, so the rest of the image tree is readable
+    # as it is for the baked user.
+    # Prod uses an ECS task IAM role and sets no `user:` at all, so this is confined
+    # to the dev compose.
+    user: "${UID:-1000}:49999"
+    # Second route to the 0640 provisioned keys: the host group that owns them, for a
+    # kit provisioned under a different uid from the one running the stack. Same
+    # pattern as the NVFLARE dev compose and the trust Flower client.
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
@@ -113,6 +124,24 @@ services:
       - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - NET_ID=net-1
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises and the
+      # image's own HOME (`/app`, baked into flwr/base) is all that is left: the
+      # SuperLink's ~/.flwr cache and the ServerApp's torch caches then fail far from
+      # the cause (FLIP#1171). /tmp rather than the image user's /app on purpose: /app
+      # is owned by app:app 0755 (and pip has already put /app/.cache there at build
+      # time), so the host uid cannot write it on any SuperLink image, including every
+      # one published before FLIP#1320. /tmp is 1777 in every image, which keeps this
+      # working without a rebuild or a re-pull.
+      - HOME=/tmp
+      - USER=app
+      - LOGNAME=app
+      # Same reason, for the other path the apps write: the SuperLink runs the ServerApp
+      # as a subprocess (`--isolation subprocess` is the default), so it inherits this
+      # uid, and the app templates default WORKING_DIR to /app/runs, which this uid
+      # cannot create. Left unset, every run finishes its rounds and then dies at
+      # `output_dir.mkdir()` with PermissionError, having saved and uploaded nothing
+      # while the hub model stays RUNNING (FLIP#1320).
+      - WORKING_DIR=/tmp/runs
       # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
       # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
@@ -152,12 +181,12 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
-      # the host-owned 0640 TLS key — root's implicit DAC bypass is itself a
-      # capability, and it is dropped here (FLIP#485).
-      - DAC_OVERRIDE
+    # No cap_add. CHOWN and DAC_OVERRIDE were what let the root SuperLink read the
+    # host-owned 0640 TLS key under cap_drop: ALL (FLIP#485); now that it runs as the
+    # host user they would be inert anyway, since Docker gives effective capabilities
+    # only to uid 0. Reading the key is the `user:` and `group_add:` above doing it
+    # through the file's own owner and group, which is the least-privileged route
+    # (FLIP#1320).
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
     # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
     # deliberately not on the FL net — see the networks block in compose.development.yml.
@@ -229,12 +258,11 @@ services:
 
   fl-server-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
-    # keys, which the app user (uid 49999) cannot. The other reason this override
-    # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
-    # object store with static keys (FLIP#1291). Prod uses an ECS task IAM role,
-    # so the override is confined to the dev compose.
-    user: "0:0"
+    # Dev-only: run as the host user rather than root, and take the host gid as a
+    # second route to the 0640 provisioned keys. Rationale in full on fl-server-net-1
+    # above (FLIP#1320).
+    user: "${UID:-1000}:49999"
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
@@ -244,6 +272,11 @@ services:
       - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - NET_ID=net-2
+      # Same HOME and WORKING_DIR rationale as fl-server-net-1 above.
+      - HOME=/tmp
+      - USER=app
+      - LOGNAME=app
+      - WORKING_DIR=/tmp/runs
       # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
       # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
@@ -283,12 +316,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
-      # the host-owned 0640 TLS key — root's implicit DAC bypass is itself a
-      # capability, and it is dropped here (FLIP#485).
-      - DAC_OVERRIDE
+    # No cap_add, for the reasons spelled out on fl-server-net-1 above (FLIP#1320).
     # `default` is the hub-internal network — see fl-server-net-1 above, and for why not `fl-net-2`.
     networks:
       default:
