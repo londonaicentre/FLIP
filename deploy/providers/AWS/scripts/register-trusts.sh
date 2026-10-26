@@ -23,7 +23,7 @@
 #      scripts/distribute_trust_kits.py (whatever credentials the kit carries,
 #      hub-shared refreshed every run; operator host-local edits preserved).
 # Delivery to a host is command-driven, NOT done here: `make upgrade-trust-ec2
-# KIT=<CODE> PROD=<env>` recreates the EC2 host's containers on the new kit;
+# KIT=<CODE> HUB=<env>` recreates the EC2 host's containers on the new kit;
 # `make package-onprem-trust-kit` tarballs it for an on-prem operator.
 #
 # ROTATE_KEYS=1 (set by `make rotate-trust-keys KIT=<CODE>`) runs the same CLI with
@@ -222,6 +222,8 @@ register_one_kit() {
     if [ -z "$kit" ] || [ "$kit" = "None" ]; then
         log_error "Trust '$name': no kit in SSM parameter '$ssm_param' — $verb FAILED."
         [ -n "$failure_log" ] && printf '%s\n' "$failure_log" >&2
+        # The task may have committed the new hash before its SSM write failed.
+        [ "${ROTATE_KEYS:-0}" = "1" ] && log_error "The hub may already refuse the old key; re-run 'make rotate-trust-keys KIT=${KIT}'."
         aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
         return 1
     fi
@@ -268,8 +270,8 @@ register_one_kit() {
 # then the script exits non-zero so a failure can never read as success.
 failed=0
 if [ "${ROTATE_KEYS:-0}" = "1" ]; then
-    # Never rotate every trust in one go: each rotation needs its kit delivered to that site
-    # before the old key can be retired, so the loop has to be one operator-chosen trust at a time.
+    # Never rotate every trust in one go: the hub refuses each trust's old key as soon as its
+    # rotation commits, so every rotated site is offline until its new kit is delivered.
     # shellcheck disable=SC2086 # deliberate word splitting, to count the kit files
     set -- ${KIT_FILES}
     if [ "$#" != 1 ]; then
@@ -288,7 +290,11 @@ for kit_file in ${KIT_FILES}; do
 done
 
 if [ "$failed" != 0 ]; then
-    log_error "register-trusts FAILED — at least one trust was not registered (see above)."
+    if [ "${ROTATE_KEYS:-0}" = "1" ]; then
+        log_error "rotate-trust-keys FAILED (see above)."
+    else
+        log_error "register-trusts FAILED — at least one trust was not registered (see above)."
+    fi
     exit 1
 fi
 
