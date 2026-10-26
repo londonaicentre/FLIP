@@ -131,6 +131,19 @@ class IPersistCohort(BaseModel):
     query_id: UUID | None = None
 
 
+class IJobDataTask(BaseModel):
+    """Payload of the STAGE_JOB_DATA / UNSTAGE_JOB_DATA tasks (FLIP#1678).
+
+    The project id travels in the clear (the trust's logging and directory key) and encrypted (what the trust forwards
+    to data-access-api), like ``IPersistCohort``.
+    """
+
+    project_id: UUID
+    trust_id: UUID
+    model_id: UUID
+    encrypted_project_id: str
+
+
 class ICreatedImagingUser(BaseModel):
     """Represents a user created on XNAT. Used to be called IImageUser in the old repo.
 

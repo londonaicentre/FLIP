@@ -43,7 +43,7 @@ from flip_api.domain.interfaces.model import (
 )
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, ProjectStatus
-from flip_api.fl_services.services import fl_scheduler_service
+from flip_api.fl_services.services import fl_scheduler_service, job_data_staging
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
@@ -154,6 +154,7 @@ def update_model_status(
         and previous_status != status
     ):
         fl_scheduler_service.update_fl_scheduler(model_id, session)
+        job_data_staging.unstage_job_data(model_id, session)
 
     return status
 
