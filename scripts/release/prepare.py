@@ -35,6 +35,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import record  # noqa: E402
@@ -138,7 +139,7 @@ def apply(versions: dict[str, str], repo: Path = REPO) -> None:
             lock.write_text(set_package_lock(lock.read_text(), version))
 
 
-def _gh_json(*args: str):
+def _gh_json(*args: str) -> Any:
     out = subprocess.run(["gh", *args], cwd=REPO, check=True, capture_output=True, text=True).stdout
     return json.loads(out) if out.strip() else []
 

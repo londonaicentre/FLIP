@@ -73,6 +73,7 @@ def test_join_installs_the_kit_then_its_secrets_then_deploys(tmp_path):
         f"--secrets-file {REPO_ROOT}/trust/deploy/helm/values-secrets.yaml",
         "kubectl --context flipaz-aks create namespace flip-trust",
         "make _aks-fl-kit",
+        "s/^FL_KIT_SLOT=//p",
         f'{HELM} kit-secret KIT_SRC="{AZURE_DIR}/{kit_dir}/fl-kit-secret"',
         "make aks-deploy KIT=Trust_3 HUB=stag",
     ]
@@ -102,7 +103,7 @@ def test_a_flower_kit_secret_holds_only_what_the_supernode_reads(tmp_path):
     kit = tmp_path / "kit"
     _kit(kit, FLOWER_TARBALL)
 
-    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), KIT="Trust_3")
+    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), SLOT="Trust_3")
 
     assert result.returncode == 0, result.stdout + result.stderr
     secret = kit / "fl-kit-secret"
@@ -114,11 +115,23 @@ def test_an_nvflare_kit_secret_is_the_slots_directory(tmp_path):
     kit = tmp_path / "kit"
     _kit(kit, {"fl-kit/net-1/services/Trust_3/startup/fed_client.json": "{}", "fl-kit/net-1/services/Trust_1/x": "no"})
 
-    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), KIT="Trust_3")
+    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), SLOT="Trust_3")
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert (kit / "fl-kit-secret/startup/fed_client.json").read_text() == "{}"
     assert not (kit / "fl-kit-secret/x").exists()
+
+
+def test_a_kit_without_a_slot_is_refused(tmp_path):
+    """An empty SLOT would copy the whole services/ tree into the Secret, one level too deep."""
+    kit = tmp_path / "kit"
+    _kit(kit, {"fl-kit/net-1/services/Trust_3/startup/fed_client.json": "{}"})
+
+    result, _ = run_make(tmp_path, "_aks-fl-kit", AKS_KIT_DIR=str(kit), SLOT="")
+
+    assert result.returncode != 0
+    assert "FL_KIT_SLOT" in result.stdout + result.stderr
+    assert not (kit / "fl-kit-secret").exists()
 
 
 def _job(name: str, cpu_limit: str | None) -> dict:

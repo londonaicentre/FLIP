@@ -151,11 +151,16 @@ A waiter timeout warns and proceeds. Then, per kit, it:
    the hub-shared block upserted with whatever the task's environment carried — on ECS only `TRUST_API_KEY_HEADER`
    and `FL_BACKEND` (`AES_KEY_BASE64` is a Secrets Manager value, never in the task env, and the other hub-shared
    keys are not in the task definition at all). That gap is why the manual's `sync-trust-kit` step is mandatory.
+   It then mints the trust's XNAT stack passwords into the kit (`generate-xnat-credentials`), runtime-only
+   trust-side secrets the hub never holds. That step runs locally through flip-api, so it needs flip-api's `uv`
+   environment on the admin's machine.
 
 An already-registered trust returns a metadata-only kit (the hub keeps only the SHA-256 hash of the API key, so
 there is nothing to re-emit); it never re-issues credentials. Delivery to a host is deliberately separate:
 `deploy-trust` drives the Trust EC2's Docker daemon over the `flip-trust` SSH context (`up-trust-ec2`), so the kit
-values reach the host only as container environment.
+values reach the host only as container environment. For an on-prem operator, `make package-onprem-trust-kit
+KIT=<CODE>` tarballs `trust/.env.<CODE>.<hub>` (or the kit named by `KIT_FILE=<path>`) with the FL-kit slice of its
+`FL_KIT_SLOT`, once `sync-trust-kit` has filled it.
 
 #### Troubleshooting
 

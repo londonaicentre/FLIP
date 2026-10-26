@@ -219,7 +219,7 @@ make -C deploy/providers/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<ki
 make -C deploy/providers/azure destroy AZ_SUBSCRIPTION="<name>"
 make -C deploy/providers/azure aks-init aks-plan aks-apply AZ_SUBSCRIPTION="<name>"  # AKS instead of the VM (refused while the VM exists)
 make -C deploy/providers/azure aks-start AZ_SUBSCRIPTION="<name>"     # start, then admit your current IP to the API server (aks-allow-ip after an IP change; aks-stop, aks-destroy)
-make -C deploy/providers/azure aks-join TARBALL=<kit tarball> KIT=<slot> HUB=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then aks-deploy (the chart with values-aks/-small-node, no vocab load); aks-selftest, aks-clear-jobs
+make -C deploy/providers/azure aks-join TARBALL=<kit tarball> KIT=<CODE> HUB=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then aks-deploy (the chart with values-aks/-small-node, no vocab load); aks-selftest, aks-clear-jobs
 make -C deploy/providers/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
 make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
 ```
@@ -341,7 +341,7 @@ Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` ru
 ### Site release upgrades (FLIP#1204)
 
 ```bash
-make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
+make upgrade-onprem-trust KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
 make -C trust upgrade-trust KIT=<CODE> HUB=<env> [TAG=…]                 # the verb itself (pull, recreate, XNAT in place)
 make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
 make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>       # EC2 twin (no re-seed)
@@ -495,11 +495,13 @@ manual dispatch). **Per-backend FL API** — `fl-api-test-flower.yml` / `fl-api-
 `fl-services/<backend>/**` images on push to main/develop, or manual dispatch; also triggered
 by `flip-utils/**` since the fl-base image bakes it in). **FL app/tutorial consistency guards**
 — `fl-apps-check-required-files.yml` (CI backstop for the `fl-apps-required-files` pre-commit
-hook), `fl-apps-check-tutorial-sync.yml` (only the FLARE Ark+ evaluation pairs in
-`scripts/check_tutorial_sync.sh`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
+hook), `fl-apps-check-tutorial-sync.yml` (the byte-identical pairs in
+`scripts/check_tutorial_sync.sh`: the two FLARE Ark+ evaluation apps, the EHR nvflare↔flower files and every twin
+pair's `query.sql` / `query_novocab.sql`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
 tree by `fl-tutorials/tests/test_flower_platform_parity.py`, run by `fl-tutorials-tests.yml`),
 `fl-api-validation-sync.yml` (the two backends'
-`fl_api/utils/validation.py` guards stay in sync), `fl_round_metrics_tests.yml` (tests over
+`fl_api/utils/validation.py` guards and their byte-identical `fl_api/utils/refusals.py` researcher-refusal
+contract stay in sync), `fl_round_metrics_tests.yml` (tests over
 `scripts/fl_round_metrics/**`). **Deploy-target tests** — `test_helm_chart.yml`
 (`trust/deploy/helm/**`), `test_local_trust_playbook.yml`
 (`trust/deploy/ansible/**` Ansible). **UI/release/branch hygiene** —
@@ -507,7 +509,7 @@ tree by `fl-tutorials/tests/test_flower_platform_parity.py`, run by `fl-tutorial
 `check-version-bump.yml` (blocks a PR to `main` from `develop` that doesn't bump the
 flip-utils version), `check-package-metadata.yml` (validates flip-utils package metadata on
 PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must originate from
-`develop`), `release.yml` (creates a GitHub Release on push to `main`), `release-pypi.yml`
+`develop`, or from a `hotfix/*` branch for a hotfix release), `release.yml` (creates a GitHub Release on push to `main`), `release-pypi.yml`
 (publishes flip-utils to PyPI on push to `main`), `pr-release-notes-preview.yml` (previews
 release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the docs GIFs from
 Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —

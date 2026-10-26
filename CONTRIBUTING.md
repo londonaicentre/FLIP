@@ -235,8 +235,8 @@ Then generate the internal service key (also generated automatically by `make up
 make generate-internal-service-key
 ```
 
-This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
-fl-server-to-hub authentication.
+This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
+(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication.
 
 #### Updating an existing checkout
 
@@ -246,6 +246,7 @@ These changes affect checkouts created before them. None is picked up automatica
 | What changed | What to do |
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
+| `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 | `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
@@ -295,7 +296,7 @@ table is the capability matrix behind it.
 | Hub: sign-in, email, model files, FL bundles, training, results | Nothing | Keycloak, the console email backend and RustFS are local |
 | The example Trusts' XNAT plugins (first `make up`) | Nothing | `make -C trust prepare-artifacts` downloads them from upstream, checksum-verified |
 | Building the XNAT images locally (`make -C trust/xnat build`) | Nothing | The build downloads the WAR and plugins from upstream the same way; most developers pull the published `xnat-*` images and never build |
-| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | `VOCAB_S3_BUCKET` + AWS CLI | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
+| OMOP core vocabulary (`make -C trust/omop-db load-omop-vocab`, optional) | AI Centre developers: the `dev` AWS profile (`FLIPDeveloperAccess`, see [Setting up AWS access](#setting-up-aws-access)) | Request an export from [OHDSI Athena](https://athena.ohdsi.org/) under your own licences (UK editions via NHS TRUD) and load it as described in [`trust/omop-db/README.md`](trust/omop-db/README.md#the-core-vocabulary-bundle). `make up` never loads it: seeding loads the public DICOM vocabulary, so the shipped tutorials run, but cohort queries that join `omop.concept` for other vocabularies return nothing |
 | Participant kits for remote or EC2 Trusts (`make -C deploy/providers/AWS stage-fl-kit KIT=<CODE> HUB=<hub>`, the `upload-kits-to-s3` / `upload-creds-to-s3` targets in `fl-services/<backend>/`) | `AICENTRE_BUCKET_NAME` | Not needed on one host: the two dev kits are provisioned in-tree |
 | Testing SES or Cognito themselves | A staging environment | Not testable in development: flip-api pins `EMAIL_BACKEND=console` and `AUTH_BACKEND=keycloak` there |
 | `deploy/providers/AWS` (Terraform, EC2 Trusts, hub deploys) | AWS credentials | — |
@@ -374,7 +375,12 @@ container, so the hub needs no AWS credentials (FLIP#919, FLIP#1291), and the ex
 are public upstream downloads (FLIP#1292). AWS SSO is needed only for the optional OMOP vocabulary fetch, FL kit
 uploads and the `deploy/providers/AWS` targets, which `make check-aws-access` guards.
 
-Configure AWS SSO:
+AI Centre developers: the vocabulary needs only the `dev` profile, whose `FLIPDeveloperAccess` role can read the
+vocabulary bucket and nothing else. Add it to `~/.aws/config` as in Step 3 of
+[`deploy-local-dev.rst`](docs/source/deploy-flip/deploy-local-dev.rst), then
+`aws sso login --sso-session FLIP_LZA`.
+
+Otherwise, configure AWS SSO:
 
 ```bash
 aws configure sso
@@ -895,7 +901,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 ### Cutting the release
 
 1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
-1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`. [`validate_branch_origin.yml`](.github/workflows/validate_branch_origin.yml) rejects any PR to `main` that does not come from `develop` or, for a hotfix, from a `hotfix/*` branch (see [Hotfixes](#hotfixes)).
    **Merge it with a merge commit — never squash or rebase.** A squash leaves `main` with `develop`'s content but none of its history, so the *next* release PR conflicts on every file touched since the previous real merge (v0.5.0 was squashed and v0.6.0 hit 168 spurious conflicts). If that has already happened, reconcile once with `git merge -s ours --no-ff origin/main` on `develop` — it records `main` as an ancestor without changing a file — through a PR into `develop`.
 1. On that PR, check the automated gates before merging:
    - [`pr-release-notes-preview.yml`](.github/workflows/pr-release-notes-preview.yml) posts a **release-notes preview** comment — the rendered template header plus the generated changelog — and updates it in place on every push. Read it as the last check that the notes are right.
@@ -911,8 +917,8 @@ The list below is what they check and do, and what stays manual (the notes' pros
 
 The release is not deployed by merging. Two steps, in this order:
 
-1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`.
-1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<slot>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
+1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes
 
@@ -921,7 +927,7 @@ There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Releas
 - **The generated changelog** — GitHub's release-notes API lists every PR merged since the previous `v*.*.*` tag, plus a contributors section, categorised by PR label according to [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`, then Other Changes. PRs labelled `ignore-for-release` are excluded. Curating this means labelling each PR correctly **before** it merges into `develop` — it cannot be fixed at release time.
 - **The hand-written header** — [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md), with `{{VERSION}}`, `{{TAG}}`, and `{{PREV_TAG}}` substituted. Edit this file on the release branch to fill in Highlights and the Breaking Changes / New Features / Bug Fixes summaries.
 
-Both are rendered into the preview comment on the `develop` → `main` PR, and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
+Both are rendered into the preview comment on the `develop` → `main` PR (and on a hotfix PR), and both go into the releases published by `release.yml` and `release-pypi.yml` — the template header above the generated changelog. (Until FLIP#1204 the platform release carried the generated changelog only, so the curated sections never reached the page trust operators read.)
 
 ### flip-utils and the PyPI release path
 
@@ -937,11 +943,13 @@ Hub infrastructure is applied by CI on the merge to `main` (`terraform_apply.yml
 
 ### Hotfixes
 
-For an urgent fix on `main` without pulling in unrelated `develop` work:
+For an urgent fix, a security fix say, that cannot wait for the next release of everything on `develop`. `main` takes PRs from `develop` and from `hotfix/*` branches only, so a hotfix ships the fix alone:
 
-1. Branch from `main`, apply the fix, bump the patch version in the root `pyproject.toml` (and any affected service).
-1. Open a PR targeting `main`. On merge, the same automation kicks in — `release.yml` tags `v<X.Y.Z+1>` and `docker_build_*.yml` rebuilds `:prod`.
-1. Forward-port the fix to `develop` so the next regular release includes it.
+1. Branch `hotfix/v<X.Y.Z>` from the last release tag, where `<X.Y.Z>` is the next patch version: `git switch -c hotfix/v0.13.2 v0.13.1`.
+1. Add the fix. When it was reviewed on its own PR to `develop`, cherry-pick that PR's commits (`git cherry-pick -x`); otherwise commit it here.
+1. Bump the patch version in the root `pyproject.toml` (and the root `uv.lock`), in any service under [Versioning](#versioning) that the fix touches and, if `flip-utils/**` changed, in `flip-utils/flip/__init__.py`. Fill in `.github/RELEASE_NOTES_TEMPLATE.md` as for any release: *Site upgrade* says whether sites must upgrade, and *Release checks* records the pre-release checks you ran, which are at least the ones that exercise the fix.
+1. Open a PR from `hotfix/v<X.Y.Z>` to `main`. `validate_branch_origin.yml` accepts it and the release-notes preview runs on it; `check-version-bump.yml` does not, so a flip-utils bump (step 3) is yours to check. Merge it with a merge commit: `release.yml` then releases `v<X.Y.Z>` as above, and *Nothing may merge to `main` during the wait* applies.
+1. Merge `main` back into `develop` through a PR, again with a merge commit, so `develop` carries the fix, the new version and the release notes, and the next `develop` → `main` PR does not conflict with the hotfix.
 
 ### Testing a release candidate before merge to main
 

@@ -145,7 +145,8 @@ GPUs
 GPU training needs the `NVIDIA GPU Operator <https://github.com/NVIDIA/gpu-operator>`_ and an NVIDIA driver of
 **580 or newer** on the GPU nodes, because the FL images ship PyTorch built for CUDA 13. The operator installs the
 driver itself, so pin its ``driver.version`` to a 580+ release, or set ``driver.enabled=false`` and pre-install one on
-the node. Then set ``flClient.gpu.enabled: true`` and ``flClient.gpu.count`` (see `Key values`_).
+the node. Then set ``flClient.gpu.enabled: true`` and ``flClient.gpu.count: 1`` (on NVFLARE the chart accepts only 1;
+see `Key values`_).
 
 Extra network egress
 ====================
@@ -445,7 +446,8 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
      - What it does
    * - ``flClient.kitHostPath``
      - ``/opt/flip/fl-kit``
-     - Path **on the node** holding the FL kit. Required whenever the FL client is enabled. The deploy targets set it
+     - Path **on the node** holding the FL kit. Required whenever the FL client is enabled with the default
+       ``flClient.kit.source=hostPath``; unused with ``flClient.kit.source=secret`` (AKS). The deploy targets set it
        from ``KIT_DEST``, over the kit's ``FL_KIT_DIR`` (see Step 3).
    * - ``flBackend``
      - from the kit

@@ -393,7 +393,7 @@ further consequences on a real trust:
   Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
   is published on loopback only, and the trust host gains no listener reachable from the
   network (the trust deployment model is otherwise strictly outbound — see
-  [Deployment Architecture](../CLAUDE.md)). That default is deliberately *not* browser-usable
+  [Deployment Architecture](../AGENTS.md#deployment-architecture)). That default is deliberately *not* browser-usable
   from another machine. To give clinicians access, pick one:
 
   1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also
@@ -526,8 +526,8 @@ Its heading and fix hints name that selected path. Pass `HUB=stag` to the checkl
 
 ```bash
 git fetch --tags origin && git checkout vX.Y.Z              # the checkout first: compose files + this verb come from it
-sudo -E make upgrade-onprem-trust KIT=<slot>              # → the release the hub runs
-sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z   # → a named release
+sudo -E make upgrade-onprem-trust KIT=<CODE>              # → the release the hub runs
+sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z   # → a named release
 ```
 
 Runs the readiness checklist, resolves the target (the hub's `/api/health`
@@ -557,7 +557,7 @@ channel. Replace **only the Hub-shared block** in your local copy (your
 Host-local profile and Trust-local credentials stay yours), then re-apply:
 
 ```bash
-sudo -E make upgrade-onprem-trust KIT=<slot> YES=1
+sudo -E make upgrade-onprem-trust KIT=<CODE> YES=1
 ```
 
 That recreates only the containers whose configuration changed and leaves the

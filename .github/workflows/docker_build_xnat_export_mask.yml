@@ -18,9 +18,8 @@ on:
   push:
     branches: [main, develop]
     tags: ['v*.*.*']
-    # Narrower than the other xnat workflows' trust/xnat/** filter: this image
-    # shares nothing with the xnat-web/db/nginx build contexts, so only its own
-    # directory should trigger a republish.
+    # This image shares nothing with the xnat-web/db/nginx build contexts, so
+    # only its own directory and workflow trigger a republish.
     paths:
       - "trust/xnat/export-mask/**"
       - ".github/workflows/docker_build_xnat_export_mask.yml"
