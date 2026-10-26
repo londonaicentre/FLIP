@@ -173,6 +173,10 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
   host-published — the receiver so a real PACS can complete the C-STORE return leg of a retrieval,
   and dev keeps the same wiring — so they must differ; the Makefile refuses to deploy if they
   collide. Dev allocation: 8104/8105 (GSTT), 8106/8107 (KCH).
+- `XNAT_SITE_URL` — the URL a browser opens XNAT at, written to XNAT's `siteUrl` at bring-up (default
+  `http://127.0.0.1:${XNAT_WEB_PORT}`). Set it on any host whose XNAT is opened from another machine: the
+  OHIF viewer builds its DICOMweb roots from it and fetches them from the browser, so a wrong value renders
+  a whole-slide viewport black with nothing in XNAT's logs. On Helm it is `xnat.web.siteUrl`.
 - `PACS_HOST` / `PACS_AETITLE` / `PACS_QR_PORT` / `PACS_LABEL` — the upstream PACS, defaulting to the
   mocked Orthanc (`orthanc` / `ORTHANC` / `4242`). `PACS_QR_PORT` must be reachable *from the XNAT
   container*, not a host-published port — conflating the two is what the retired `PACS_DICOM_PORT`
