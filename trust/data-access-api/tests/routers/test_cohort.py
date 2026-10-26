@@ -320,6 +320,9 @@ def test_get_accession_ids_rejects_a_project_id_that_fails_authentication(mock_d
     mock_get_snapshot.assert_not_called()
 
 
+_STAGE_PAYLOAD = {"encrypted_project_id": "encrypted-id", "model_id": "1f0b9d1c-7d0a-4c9e-9f49-0b3a3f6f1a22"}
+
+
 # ---------------------------------------------------------------------------
 # Trust-internal service auth — every /cohort route requires the header.
 # Parametrised so the three endpoints stay covered together; if a future
@@ -335,6 +338,8 @@ def test_get_accession_ids_rejects_a_project_id_that_fails_authentication(mock_d
         ("/cohort/accession-ids", sample_dataframe_query),
         ("/cohort/snapshot", sample_dataframe_query),
         ("/cohort/snapshot/delete", {"encrypted_project_id": "encrypted-id"}),
+        ("/cohort/stage", _STAGE_PAYLOAD),
+        ("/cohort/stage/delete", _STAGE_PAYLOAD),
     ],
 )
 def test_cohort_route_rejects_missing_key(path, payload):
@@ -351,6 +356,8 @@ def test_cohort_route_rejects_missing_key(path, payload):
         ("/cohort/accession-ids", sample_dataframe_query),
         ("/cohort/snapshot", sample_dataframe_query),
         ("/cohort/snapshot/delete", {"encrypted_project_id": "encrypted-id"}),
+        ("/cohort/stage", _STAGE_PAYLOAD),
+        ("/cohort/stage/delete", _STAGE_PAYLOAD),
     ],
 )
 def test_cohort_route_rejects_wrong_key(path, payload):
@@ -378,6 +385,9 @@ def test_health_does_not_require_auth():
 _WRITE_ROUTES = [
     ("/cohort/snapshot", sample_dataframe_query),
     ("/cohort/snapshot/delete", {"encrypted_project_id": "encrypted-id"}),
+    # Staging a job's dataframe (FLIP#1678) writes rows to disk: researcher code must not reach it.
+    ("/cohort/stage", _STAGE_PAYLOAD),
+    ("/cohort/stage/delete", _STAGE_PAYLOAD),
 ]
 
 

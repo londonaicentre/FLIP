@@ -35,8 +35,11 @@ from data_access_api.routers.schema import (
     SnapshotCreateRequest,
     SnapshotDeleteRequest,
     SnapshotResponse,
+    StageRequest,
+    StageResponse,
     StatisticsResponse,
 )
+from data_access_api.services import cohort_data
 from data_access_api.services.cohort import (
     ACCESSION_ID_COLUMN,
     SUBJECT_ID_COLUMN,
@@ -460,6 +463,29 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
+    df = _approved_dataframe(project_id, client_query=query_input.query)
+
+    logger.info(f"Serving approved cohort for project {project_id}: {len(df)} rows")
+    return df.to_dict(orient="list")
+
+
+def _approved_dataframe(project_id: str, client_query: str | None = None) -> pd.DataFrame:
+    """The project's approved cohort as served for training: one set of rules for every row-level release.
+
+    Policy, frozen membership, the query of record run live and uncached, and the subject threshold re-counted on
+    what would be released. ``/cohort/dataframe`` and job data staging (FLIP#1678) both go through here.
+
+    Args:
+        project_id (str): The opened hub project id.
+        client_query (str | None): The caller's SQL, logged when it differs from the query of record, never run.
+
+    Returns:
+        pd.DataFrame: The approved cohort.
+
+    Raises:
+        HTTPException: 403 with the fixed refusal on a policy denial, a missing membership or a cohort below the
+            threshold, 500 if the query fails to execute.
+    """
     decision = _evaluate(ACTION_COHORT_DATAFRAME, project_id)
     if not decision.permit:
         _log_denial(decision, project_id, "row-level data")
@@ -469,15 +495,14 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
         raise HTTPException(status_code=403, detail=_BELOW_THRESHOLD_DETAIL)
 
     snapshot = _require_snapshot(project_id)
-    _log_ignored_client_query(project_id, snapshot, query_input.query)
+    if client_query is not None:
+        _log_ignored_client_query(project_id, snapshot, client_query)
 
     # Uncached: a removal from OMOP must reach training on the next fetch, not after
     # CACHE_TTL_DAYS.
     df = _restrict_to_membership(_run_cohort_query(snapshot.query, use_cache=False, what="DataFrame"), snapshot)
     _check_threshold(project_id, _count_subjects_or_zero(df, project_id), decision.effective_threshold)
-
-    logger.info(f"Serving approved cohort for project {project_id}: {len(df)} rows")
-    return df.to_dict(orient="list")
+    return df
 
 
 @read_router.post("/accession-ids", response_model=AccessionIdsResponse)
@@ -724,4 +749,62 @@ def remove_snapshot(query_input: SnapshotDeleteRequest) -> dict[str, bool]:
     project_id = _open_project_id(query_input.encrypted_project_id)
     deleted = delete_snapshot(project_id)
     logger.info(f"Snapshot delete for project {project_id}: {'removed' if deleted else 'nothing to remove'}")
+    return {"deleted": deleted}
+
+
+@write_router.post("/stage", response_model=StageResponse)
+def stage_job_data(request: StageRequest) -> StageResponse:
+    """Stage one job's approved cohort where its pods mount it (FLIP#1678).
+
+    The hub queues this before submitting a job, at each of the job's trusts. The data is exactly what
+    ``/cohort/dataframe`` would serve the job now, so the same refusals apply, with the same fixed text. It sits on the
+    write router: researcher code holds the trust-internal key but not the cohort-admin proof, so it can neither stage
+    another project's rows nor remove a job's.
+
+    Args:
+        request (StageRequest): The encrypted project id and the model id.
+
+    Returns:
+        StageResponse: ``staged`` is False, with nothing written, when this trust does not stage job data.
+
+    Raises:
+        HTTPException: 400 if the project id cannot be opened or is not a UUID, 403 as ``/cohort/dataframe`` refuses,
+            500 if the query fails or the data cannot be written.
+    """
+    if not cohort_data.staging_enabled():
+        return StageResponse(staged=False, rows=0)
+    project_id = _open_project_id(request.encrypted_project_id)
+    df = _approved_dataframe(project_id)
+    try:
+        cohort_data.stage_dataframe(project_id, str(request.model_id), df)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Project id is not a valid UUID.")
+    except OSError:
+        logger.exception(f"Could not stage the cohort data of project {project_id}")
+        raise HTTPException(status_code=500, detail="Could not stage the cohort data.")
+    logger.info(f"Staged {len(df)} rows for project {project_id}, model {request.model_id}")
+    return StageResponse(staged=True, rows=len(df))
+
+
+@write_router.post("/stage/delete")
+def unstage_job_data(request: StageRequest) -> dict[str, bool]:
+    """Remove one job's staged cohort data (FLIP#1678). Idempotent.
+
+    Args:
+        request (StageRequest): The encrypted project id and the model id.
+
+    Returns:
+        dict[str, bool]: ``deleted`` is True when there was data to remove.
+
+    Raises:
+        HTTPException: 400 if the project id cannot be opened or is not a UUID.
+    """
+    if not cohort_data.staging_enabled():
+        return {"deleted": False}
+    project_id = _open_project_id(request.encrypted_project_id)
+    try:
+        deleted = cohort_data.unstage(project_id, str(request.model_id))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Project id is not a valid UUID.")
+    logger.info(f"Unstaged project {project_id}, model {request.model_id}: {deleted}")
     return {"deleted": deleted}

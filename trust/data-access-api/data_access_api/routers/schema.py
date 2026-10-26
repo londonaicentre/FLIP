@@ -11,6 +11,7 @@
 #
 
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -116,3 +117,21 @@ class SnapshotDeleteRequest(BaseModel):
         description="The encrypted identifier for the central hub project",
         json_schema_extra={"example": "encrypted_12345"},
     )
+
+
+class StageRequest(BaseModel):
+    """Input for ``POST /cohort/stage`` and ``/cohort/stage/delete`` (FLIP#1678): one job's cohort data."""
+
+    encrypted_project_id: str = Field(
+        ...,
+        description="The encrypted identifier for the central hub project",
+        json_schema_extra={"example": "encrypted_12345"},
+    )
+    model_id: UUID = Field(..., description="The central hub model whose job the data is for")
+
+
+class StageResponse(BaseModel):
+    """Result of ``POST /cohort/stage``: whether this trust stages job data at all, and how many rows it wrote."""
+
+    staged: bool
+    rows: int

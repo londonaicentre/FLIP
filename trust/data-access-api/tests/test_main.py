@@ -97,3 +97,28 @@ def test_startup_checks_the_snapshot_store():
     """The lifespan hook runs the boot-time snapshot store check (create, sweep, probe)."""
     with patch.object(main, "ensure_store") as mock_ensure_store, TestClient(main.app):
         mock_ensure_store.assert_called_once_with()
+
+
+def test_lifespan_sweeps_staged_cohort_data_when_staging_is_on():
+    # FLIP#1678: staged rows the hub never unstages are removed by the trust itself.
+    import threading
+
+    swept = threading.Event()
+    with (
+        patch("data_access_api.main.cohort_data.staging_enabled", return_value=True),
+        patch("data_access_api.main.cohort_data.ensure_data_dir") as ensure,
+        patch("data_access_api.main.cohort_data.sweep", side_effect=lambda *a, **k: swept.set() or 0),
+        TestClient(main.app),
+    ):
+        assert swept.wait(5)
+    ensure.assert_called_once()
+
+
+def test_lifespan_does_not_sweep_when_staging_is_off():
+    with (
+        patch("data_access_api.main.cohort_data.staging_enabled", return_value=False),
+        patch("data_access_api.main.cohort_data.sweep") as sweep,
+        TestClient(main.app),
+    ):
+        pass
+    sweep.assert_not_called()
