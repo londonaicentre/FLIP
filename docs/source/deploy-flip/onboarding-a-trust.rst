@@ -67,7 +67,8 @@ Step 2 — Register the trust on the hub
    make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod
 
 This registers the trust with the hub and writes the trust's **credentials** into its kit file (API key, internal
-service key, FL slot and expected trust id). No hub redeploy is needed. Most of the **hub-shared settings**,
+service key, FL slot and expected trust id), and mints the trust's XNAT database and message-broker passwords.
+No hub redeploy is needed. Most of the **hub-shared settings**,
 including the encryption key and the hub URL, are still placeholders afterwards; step 3 fills them.
 
 .. important::
@@ -77,24 +78,22 @@ including the encryption key and the hub URL, are still placeholders afterwards;
    (``make -C deploy/providers/AWS delete-trust NAME=<trust name>``, which also removes its history there) and
    registered afresh — see :doc:`/sys-admin/admin-backup-and-restore`.
 
-************************************************************
-Step 3 — Fill in the hub-shared settings and XNAT passwords
-************************************************************
+*******************************************
+Step 3 — Fill in the hub-shared settings
+*******************************************
 
 *Who: FLIP admin, from the repo root with your local* ``.env.prod`` *present*
 
 .. code-block:: shell
 
    make sync-trust-kit KIT=<CODE> HUB=prod
-   make generate-xnat-credentials KIT=<CODE> HUB=prod
 
-The first command copies the hub-shared settings from your local env file into the kit and leaves the credentials
-from step 2 untouched. The second mints the XNAT database and message-broker passwords, which registration on the
-hub does not write.
+This copies the hub-shared settings from your local env file into the kit and leaves the credentials from step 2
+untouched.
 
 .. important::
 
-   Do not skip this step. Without it the kit's encryption key, hub URL and XNAT passwords stay as placeholders: the
+   Do not skip this step. Without it the kit's encryption key and hub URL stay as placeholders: the
    trust can neither reach the hub nor decrypt a task, and the kit can be neither packaged nor started.
 
 .. seealso::
@@ -240,7 +239,9 @@ Optional — set a site privacy policy (FLARE)
 *Who: trust operator*
 
 As the data holder, you can apply your own privacy filter to everything the FL client sends to the FL server,
-whatever the researcher's app configures.
+whatever the researcher's app configures. The filter binds what the researcher's app declares, not what its
+code does: FLARE job code runs in the FL client's job process, so code review remains the control there
+(FLIP#1572).
 
 #. In your kit file, uncomment ``FL_SITE_PRIVACY_POLICY`` and, optionally, its parameters. An invalid combination
    stops the FL client at startup, by design.

@@ -388,6 +388,48 @@ Available services:
 | `observability.loki` | Log aggregation | Yes |
 | `observability.alloy` | Log collection agent | No (DaemonSet) |
 | `observability.grafana` | Metrics dashboard | Yes |
+| `monailabel` | Optional AI-assisted annotation in the XNAT OHIF viewer (off by default) | Yes |
+
+### MONAI Label (optional)
+
+Off by default — needs an NVIDIA GPU node and a ~10.4 GB image. Enable with:
+
+```yaml
+monailabel:
+  enabled: true
+  publicUrl: "http://<node-ip>:30030"   # REQUIRED: the clinician's BROWSER calls this —
+                                        # XNAT stores it and never proxies it
+  allowedIngressCIDRs: ["10.0.0.0/8"]   # REQUIRED with networkPolicies.enabled: who may reach it
+```
+
+Chart-specific notes (the full operational guide, including the stock-viewer quirks, is
+[trust/README.md#monai-label-optional](../../README.md#monai-label-optional)):
+
+- Reads DICOM straight off xnat-web's archive PVC (read-only `archive` subPath). With the
+  default `ReadWriteOnce` storage the pod is pinned to xnat-web's node
+  (`coScheduleWithXnat: true`); only set it `false` on an RWX storage class.
+- Exposed as a `NodePort` (default `30030`) so the browser can reach it. When
+  `service.allowExternalIngress` and `networkPolicies.enabled` are set, a NetworkPolicy opens
+  the **pod** port (`monailabel.port`, default `8030`) through the namespace's default-deny
+  ingress — NodePort traffic is DNAT'd to the pod port before policy evaluation, so that is
+  the port the rule names, not `30030`.
+- **`monailabel.allowedIngressCIDRs` scopes that policy, and the render fails while it is
+  empty.** The API behind it is unauthenticated (`monailabel.authEnable` is upstream's own
+  switch and needs an OAuth realm FLIP does not run) and holds the XNAT service-account
+  credentials, so the chart does not open it to every source by default. List the subnets
+  your clinicians browse from, e.g. `["10.0.0.0/8"]`; `["0.0.0.0/0"]` opens it to every
+  source as a written decision.
+- Pretrained weights (incl. the ~900 MB SAM checkpoint) persist in the
+  `<release>-monailabel-models` PVC; first start on a cold volume takes minutes (the startup
+  probe allows 30).
+- The chart's XNAT already ships the `ohif-viewer` plugin in its roster (`xnat.web.plugins`),
+  as every FLIP XNAT does, so there is no extra plugin step.
+- **No `export_mask` converter here.** The compose trust registers a container-service command
+  that turns saved DICOM-SEG assessors into the NIfTI that FL training consumes
+  (`trust/xnat/xnat/config/configure-export-mask.sh`, run from `xnat-configure`); the chart's
+  `xnat-init-job` has no equivalent. So on Kubernetes the annotation UI works but masks are
+  not auto-converted — the inverse of the compose trust, which has the converter and excludes
+  the viewer.
 
 ### External Service Override
 
@@ -595,6 +637,65 @@ With a count of 1, the client stops at start unless
 The NVFLARE client renders the kit's `log_config.template.json` using `logLevel` (default `INFO`).
 Older kits without that template use `log_config.json.default` unchanged. Missing or unwritable log
 configuration stops the client with an explicit error.
+
+### NVFLARE job pods: a GPU only while a job runs (FLIP#1428)
+
+By default the fl-client runs every job inside its own pod, so a GPU trust holds its GPU around the clock.
+With job pods the fl-client becomes a small parent that keeps the site registered, and NVFLARE's
+`ClientK8sJobLauncher` starts **one pod per job**. The job pod asks Kubernetes for the GPUs in the job's
+`resource_spec` (`nvidia.com/gpu`), so with the job pods on a GPU node pool that scales from zero, a GPU
+node exists only while a job needs it.
+
+```yaml
+flClient:
+  gpu:
+    enabled: false          # the parent holds no GPU; the chart refuses both
+  nvflare:
+    jobPods:
+      enabled: true
+      maxGpus: 1            # GPUs lent to jobs at once; NVFLARE queues beyond it and the hub says why
+      pendingTimeout: 900   # seconds a job pod may wait for its node; size it to a cold scale-up
+      tolerations:          # the GPU pool's taint
+        - {key: sku, operator: Equal, value: gpu, effect: NoSchedule}
+```
+
+What the chart adds: a Role and RoleBinding for the launcher (job pods, their events, and the Secrets it
+mounts into them), a `<release>-fl-client-<net>-parent` Service that job pods connect back through, and the
+job pod template (ConfigMap `<release>-fl-job-pod-<net>`): the client's env and trust-internal key, this
+net's images slice, `/dev/shm` and the FL server's host aliases, since a job pod talks to the FL server
+itself. At start the client runs `python -m flip.nvflare.k8s_job_mode`, which switches the kit's launcher and
+declares the GPU pool. Each job runs in the fl-client image.
+
+Prerequisites and trade-offs:
+
+- **GPU nodes** carry the NVIDIA device plugin (or the GPU Operator), with a 580+ driver as above.
+- **Prefer a toleration to a `nodeSelector`.** NVFLARE waits only while Kubernetes reports the pod
+  `Insufficient` CPU, memory or GPU (what an autoscaler adding a node looks like). A pod no node could ever
+  take is `Unschedulable` and fails at once, which is what a `nodeSelector` aimed at a pool at zero reports.
+- **The images volume must reach the GPU node.** Job pods mount `sharedImagesPvc` and follow
+  `flClient.affinity`. With a separate GPU pool, give the PVC a ReadWriteMany class and set
+  `flClient.affinity: null` (an RWO disk attaches to one node only).
+- **API server egress.** The launcher calls the Kubernetes API from the parent. The default egress allows
+  port 443, which covers AKS and EKS. NetworkPolicy matches the API server's real endpoint, so where it
+  listens elsewhere (minikube 8443, kind 6443) set `flClient.nvflare.jobPods.apiServer.cidrs` and `.port`,
+  or the first launch hangs and no job pod appears. Only the parent gets that rule.
+- **Cold start.** The first job waits for a node to boot and pull the FL image, and an idle GPU node lingers
+  for the autoscaler's scale-down delay (around 10 minutes on AKS by default). The FL server's 20-second
+  wait for a client to start a job does not sink a late pod: tested with a job pod held 3.5 minutes for its
+  GPU, which then joined and completed. The server logs `Started run … for clients:` without a late site, which
+  is expected. If a late pod crashes, the server notices through its dead-client check, not at once: about a
+  minute later (67 s in a test) the run ends as `FINISHED:EXECUTION_EXCEPTION`. Never set NVFLARE's
+  `strict_start_job_reply_check` on a server with job-pod sites: with FLIP's `min_clients` (every selected
+  Trust), it fails each job whose pod starts late.
+- **Finished job pods are not deleted** by NVFLARE; clear them with
+  `kubectl delete pod -l app.kubernetes.io/component=fl-job --field-selector=status.phase!=Running`.
+- **NVFLARE only.** Flower has no equivalent wired into this chart.
+- **EKS:** the VPC CNI enforces NetworkPolicy only with `enableNetworkPolicy` set, and GPU scale-from-zero
+  needs Karpenter or the cluster autoscaler's node-template tags.
+
+The fl-client Deployment uses `strategy: Recreate` whatever the mode: a trust is one FL identity, and under
+RollingUpdate the old and new pods evict each other's connection to the server until the old one exits.
+`make deploy` moves a release installed before this change across once (`scripts/migrate-strategy.sh`, FLIP#1524).
 
 ### Container Service jobs (dcm2niix)
 
@@ -958,13 +1059,14 @@ there; the omop-db image CI asserts every published image carries it.
 - **Pod Security & container hardening**: the chart-created namespace
   carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
   by default — tune via `podSecurity.*`), and the stateless services
-  (trust-api, imaging-api, data-access-api, fl-client)
+  (trust-api, imaging-api, data-access-api, fl-client) plus `monailabel`
   apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
   `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
   `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
-  **Remaining for full `restricted` enforcement:** the stateful images
-  (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
-  containers before they can run non-root, and the fl-client pod's
+  **Remaining for full `restricted` enforcement:** the images that own a
+  PersistentVolume (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`, and `monailabel`
+  — whose weights PVC the server writes at model-load time) need `fsGroup`/chown
+  init containers before they can run non-root, and the fl-client pod's
   `images-init` init container (pre-creates the pod's per-net slice of the shared
   images volume with the ownership imaging-api and the client need) runs as root
   by design: it declares an explicit `securityContext` scoped to

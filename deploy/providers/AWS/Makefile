@@ -71,8 +71,8 @@ FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_K
 # Logical AWS profile names: the short local aliases recommended in README.md for each LZA
 # workload account's Identity Center `FLIPAdminAccess` permission set. Override via the env
 # file or on the command line if your local profile names differ.
-PROD_AWS_PROFILE ?= lza-prod
-STAG_AWS_PROFILE ?= lza-stag
+PROD_AWS_PROFILE ?= prod
+STAG_AWS_PROFILE ?= stag
 
 # The AWS profile each environment expects, checked by the account guard in the env guards
 # below. Profile name is the safety guard because Make has no easy way to read the account ID

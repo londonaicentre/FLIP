@@ -251,7 +251,9 @@ module "flip_db" {
   skip_final_snapshot              = var.environment != "prod"
   deletion_protection              = var.environment == "prod"
   final_snapshot_identifier_prefix = "flip-database-final"
-  family                           = "postgres${split(".", var.postgres_version)[0]}"
+  # Explicit, not the module default (FLIP#1576); kms_key_id would force replacement, see the test.
+  storage_encrypted = true
+  family            = "postgres${split(".", var.postgres_version)[0]}"
 }
 
 ############################

@@ -378,6 +378,10 @@ def _offer_newer_release(target: str, source: str, hub_url: str, can_ask: bool) 
 def site_images(kit: dict[str, str], tag: str, fl_tag: str | None = None) -> list[str]:
     """Every image reference the site would pull once the kit pins ``tag`` (FL client at ``fl_tag``)."""
     refs = [f"{_SITE_REGISTRY}{name}:{(pin and kit.get(pin)) or tag}" for name, pin in _SITE_IMAGE_PINS.items()]
+    # The optional MONAI Label overlay (compose_trust.prod.monailabel.yml) pulls at DOCKER_TAG
+    # too, but only on a kit that turns it on — the same exact-"true" test as trust/Makefile.
+    if kit.get("MONAI_LABEL", "").strip() == "true":
+        refs.append(f"{_SITE_REGISTRY}monailabel:{tag}")
     fl_client = _FL_CLIENT_IMAGE.get(kit.get("FL_BACKEND") or "nvflare", _FL_CLIENT_IMAGE["nvflare"])
     return [*refs, f"{_SITE_REGISTRY}{fl_client}:{fl_tag or tag}"]
 
@@ -626,7 +630,9 @@ def plan(args: argparse.Namespace) -> int:
                 print(f"     {ref}")
             print("   A release tag (vX.Y.Z) builds every image; a sha- tag only carries the images that")
             print("   commit changed. Nothing changed — pick a tag that exists for all of them, or hold")
-            print("   the odd one at its own build (FL_TAG=, or OMOP_DB_TAG / ORTHANC_TAG / XNAT_TAG in the kit).")
+            print("   the odd one at its own build (FL_TAG=, or OMOP_DB_TAG / ORTHANC_TAG in the kit).")
+            print("   XNAT_TAG pins all three XNAT images, whose builds no longer share sha- tags;")
+            print("   set XNAT_TAG=vX.Y.Z (or stag/prod), published for all three, on a sha- move.")
             return EXIT_MISSING_IMAGES
         print(f"   ✓ all {len(site_images(kit, target, fl_tag))} images are published")
 

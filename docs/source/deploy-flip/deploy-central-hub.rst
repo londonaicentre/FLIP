@@ -93,7 +93,7 @@ Prerequisites
 
    .. code-block:: ini
 
-      [profile lza-stag]
+      [profile stag]
       sso_session = <sso-session>
       sso_account_id = <staging-account-id>
       sso_role_name = <sso-role-name>
@@ -126,11 +126,11 @@ Prerequisites
      - Treated as
    * - ``stag``
      - ``.env.stag``
-     - ``lza-stag``
+     - ``stag``
      - staging
    * - ``prod``
      - ``.env.prod``
-     - ``lza-prod``
+     - ``prod``
      - production
 
 Production gets the production-only database safeguards (RDS deletion protection and a final snapshot).
@@ -263,7 +263,8 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
       make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>
 
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
-   **credentials** (API key, trust-internal service key and FL kit slot) into the kit file. Of the hub-shared
+   **credentials** (API key, trust-internal service key and FL kit slot) into the kit file, and mints the trust's
+   XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. Of the hub-shared
    settings, only the API key header name and the FL backend are filled in.
 
 3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<hub>`` present:
@@ -278,12 +279,6 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
 
       Do not skip this step. Without it the kit's encryption key, hub URL, kit dates and image tags stay unfilled,
       and the trust can neither reach the hub nor decrypt a task.
-
-4. **Mint the XNAT passwords.** These are trust-side runtime secrets and are not part of the hub's kit:
-
-   .. code-block:: shell
-
-      make generate-xnat-credentials KIT=<CODE> HUB=<hub>
 
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
 maps onto the matching FLARE participant kit or Flower SuperNode key.
@@ -606,6 +601,6 @@ old state would destroy it. Move the hub instead:
    FL kit all change. On a trust host that is already running, install the new kit and FL kit and upgrade the trust;
    do not use the first-install commands, which re-seed its data and reset XNAT.
 5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
-   (``v0.13.1`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
+   (``v0.13.2`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
    the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
 

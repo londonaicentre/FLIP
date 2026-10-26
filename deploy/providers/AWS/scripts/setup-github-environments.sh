@@ -22,7 +22,7 @@
 #
 # --hub (stag | prod) is the value the workflows read as the TF_HUB variable, and
 # this script writes it. It selects the GitHub environment (aws-stag / aws-prod) and
-# the local AWS profile the estate's roles are reached through (lza-<hub>).
+# the local AWS profile the estate's roles are reached through (the hub name).
 #
 # The secret-vs-variable split is not hard-coded here. It is read out of
 # .github/workflows/terraform_plan.yml, because that workflow is what actually
@@ -92,9 +92,9 @@ PLAN_WORKFLOW="${REPO_ROOT}/.github/workflows/terraform_plan.yml"
 
 GH_ENV="aws-${ENV}"
 # The profile the CI roles of this estate are reached through. Matches the
-# Makefile's PROD_AWS_PROFILE / STAG_AWS_PROFILE defaults (lza-<hub>); override with
+# Makefile's PROD_AWS_PROFILE / STAG_AWS_PROFILE defaults (the hub name); override with
 # AWS_PROFILE_FOR_ENV if your local profile names differ.
-PROFILE_DEFAULT="lza-${HUB}"
+PROFILE_DEFAULT="${HUB}"
 case "${HUB}" in
     stag) PROFILE_DEFAULT="${STAG_AWS_PROFILE:-${PROFILE_DEFAULT}}" ;;
     prod) PROFILE_DEFAULT="${PROD_AWS_PROFILE:-${PROFILE_DEFAULT}}" ;;

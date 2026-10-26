@@ -171,12 +171,11 @@ unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 build_compose = docker compose -f compose.yml
 GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
 OMOP_DB_TAG ?= latest
-# S3 bucket holding the vocab bundle zips under vocab/. No default: the bundle
-# is licensed and lives only in a deploy environment's own aicentre bucket, read
-# with that environment's AWS credentials (FLIP#1371 retired the dev-account
-# copy). Contributors without bucket access self-serve from OHDSI Athena — see
-# README "The core vocabulary bundle".
-VOCAB_S3_BUCKET ?=
+# S3 bucket holding the vocab bundle zips under vocab/. The default is the AI
+# Centre staging bucket, readable by the `dev` profile (FLIPDeveloperAccess,
+# FLIP#1623). The bundle is licensed: contributors without that access
+# self-serve from OHDSI Athena — see README "The core vocabulary bundle".
+VOCAB_S3_BUCKET ?= flip-lza-stag-aicentre
 
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be

@@ -89,6 +89,15 @@ def test_another_trusts_kit_is_refused(tmp_path: Path) -> None:
     assert not _tarballs(tmp_path)
 
 
+def test_a_kit_without_a_code_ships_with_a_warning(tmp_path: Path) -> None:
+    """Nothing can check a kit with no TRUST_CODE against KIT, so the name it ships under is said out loud."""
+    result, _ = _pack(tmp_path, KIT_LINES)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "has no TRUST_CODE; shipping it as .env.AZ1.stag" in result.stdout + result.stderr
+    assert _tarballs(tmp_path)
+
+
 def test_a_kit_without_a_slot_is_refused(tmp_path: Path) -> None:
     result, calls = _pack(
         tmp_path, ["TRUST_CODE=AZ1", *(line for line in KIT_LINES if not line.startswith("FL_KIT_SLOT="))]

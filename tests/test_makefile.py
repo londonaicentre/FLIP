@@ -23,6 +23,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -36,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from make_dry_run import REPO, assert_data_safe, dry_run, main  # noqa: E402
+from make_dry_run import REPO, assert_data_safe, dry_run, main, run_target  # noqa: E402
 
 HUB_ONLY_SERVICES = {"flip-db", "flip-api"}  # what `make central-hub` starts (flip-api/Makefile `up`)
 
@@ -67,6 +68,30 @@ def hub_only_networks() -> set[str]:
         elif section == "networks" and (name := re.match(r"^    name: \$\{FLIP_INSTANCE:[^}]*\}(\S+)", line)):
             names[entry] = name[1]
     return {names[key] for key in keys}
+
+
+def repo_built_services(compose: str) -> dict[str, str]:
+    """Each dev-compose service that runs a repo-built image, mapped to its service block."""
+    blocks = re.findall(r"^  ([\w-]+):\n((?:(?:    .*)?\n)+)", (REPO / compose).read_text(), re.MULTILINE)
+    return {
+        name: body
+        for name, body in blocks
+        if re.search(r"^    image: (?:ghcr\.io/londonaicentre/|\$\{DOCKER_REGISTRY\})", body, re.MULTILINE)
+    }
+
+
+class BuildTrue(unittest.TestCase):
+    """`make up BUILD=true` (`--build --pull missing`) rebuilds only services with a build: block."""
+
+    def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
+        services = {
+            **repo_built_services("deploy/compose.development.yml"),
+            **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
+        }
+        assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
+        for name, body in services.items():
+            assert re.search(r"^    pull_policy: always$", body, re.MULTILINE), f"{name} lacks pull_policy: always"
+            assert re.search(r"^    build:$", body, re.MULTILINE), f"{name} has no build: for BUILD=true"
 
 
 class UpgradeOnpremTrust(unittest.TestCase):
@@ -148,6 +173,7 @@ class MakeKitSelection(unittest.TestCase):
             "deploy/fl_backend.mk",
             "deploy/instance.mk",
             "deploy/providers/AWS/Makefile",
+            "deploy/portable.mk",
             "flip-api/Makefile",  # register-trusts recurses into it to mint the XNAT credentials
             "trust/Makefile",
             "trust/deploy/helm/Makefile",
@@ -673,6 +699,102 @@ class HubProjectOwnerGuard(unittest.TestCase):
                 assert re.search(rf"^{re.escape(target)}: _check-compose-project-owner(\s|$)", makefile, re.M), target
 
 
+class GenerateInternalServiceKey(unittest.TestCase):
+    """The key lands in the env file the stack runs from, not always `.env.development` (FLIP#1603)."""
+
+    def env_file_arg(self, *extra: str) -> str:
+        out = dry_run("generate-internal-service-key", *extra, subdir=".")
+        line = next(line for line in out.splitlines() if "generate_internal_service_key" in line)
+        args = shlex.split(line)
+        return args[args.index("--env-file") + 1]
+
+    def test_it_follows_main_env_file(self):
+        assert self.env_file_arg().endswith("/.env.prod")  # run_target pins HUB=prod
+        assert self.env_file_arg("MAIN_ENV_FILE=.env.b.development").endswith("/.env.b.development")
+
+    def test_it_resolves_against_the_repo_root(self):
+        for extra in ((), ("ENV_FILE=.env.x",)):
+            path = Path(self.env_file_arg(*extra))
+            assert path.is_absolute(), path
+            assert path.parent.name != "flip-api", path
+
+    def test_an_explicit_env_file_wins(self):
+        assert self.env_file_arg("ENV_FILE=/abs/.env.x") == "/abs/.env.x"
+
+
+class FlEnvFile(unittest.TestCase):
+    """The FL Makefiles load MAIN_ENV_FILE from the repo root, like every other Makefile (FLIP#1608).
+
+    A command-line MAIN_ENV_FILE (a bare filename, as the root passes it) used to override the FL
+    Makefiles' absolute path, so the include resolved inside fl-services/<backend>/, matched nothing
+    and was skipped silently: the FL targets of a second instance ran with no env at all.
+    """
+
+    PROBE = "__env_path: ; @echo env_path=[$(MAIN_ENV_PATH)]\n"
+
+    def env_path(self, backend: str, *extra: str) -> str:
+        out = run_target("__env_path", *extra, subdir=f"fl-services/{backend}", probe=self.PROBE)
+        assert out.returncode == 0, out.stdout + out.stderr
+        return re.search(r"env_path=\[(.*)\]", out.stdout).group(1)
+
+    def test_default_is_the_prod_selected_file_in_the_repo_root(self):
+        for backend in ("nvflare", "flower"):
+            path = Path(self.env_path(backend))
+            assert path.name == ".env.prod", path
+            assert "fl-services" not in path.parts, path
+
+    def test_a_command_line_env_file_resolves_against_the_repo_root(self):
+        for backend in ("nvflare", "flower"):
+            path = Path(self.env_path(backend, "MAIN_ENV_FILE=.env.b.development"))
+            assert path.name == ".env.b.development", path
+            assert "fl-services" not in path.parts, path
+
+
+class BuildFl(unittest.TestCase):
+    """`make build-fl` tags the whole FL image chain with DOCKER_FL_TAG from the command line, else :dev (FLIP#1605).
+
+    `:dev` is global to the Docker daemon, so an isolated instance building with its own tag must not
+    overwrite the images other stacks on the host run. The env file's DOCKER_FL_TAG (the GHCR pull tag,
+    exported into the backend Makefile's environment) is not a build tag.
+    """
+
+    COMPOSE_FILES = {
+        "nvflare": ["compose.dev.yml"],
+        "flower": ["compose.dev.yml", "compose.secure.yml"],
+    }
+
+    def build_lines(self, backend: str, *extra: str) -> list[str]:
+        env = {"DOCKER_FL_TAG": "stag"}  # what the env file exports into the backend Makefile
+        out = run_target("build-fl", f"FL_BACKEND={backend}", *extra, subdir=".", dry=True, env=env)
+        assert out.returncode == 0, out.stdout + out.stderr
+        lines = [line for line in out.stdout.splitlines() if "docker compose" in line and " build " in line]
+        assert len(lines) == 2, out.stdout  # fl-base, then the images built FROM it
+        return lines
+
+    def test_default_tag_stays_dev(self):
+        for backend in self.COMPOSE_FILES:
+            for line in self.build_lines(backend):
+                assert "DOCKER_FL_TAG=dev " in line, line
+
+    def test_command_line_tag_reaches_every_build(self):
+        for backend in self.COMPOSE_FILES:
+            for line in self.build_lines(backend, "DOCKER_FL_TAG=rc-check"):
+                assert "DOCKER_FL_TAG=rc-check " in line, line
+
+    def test_compose_images_and_base_follow_the_tag(self):
+        for backend, files in self.COMPOSE_FILES.items():
+            for name in files:
+                text = (REPO / "fl-services" / backend / name).read_text()
+                images = re.findall(r"^\s+image: ((?:flare|flower)-\S+)", text, re.M)
+                bases = re.findall(r"^\s+BASE_REF: (\S+)", text, re.M)
+                assert images, name
+                assert bases, name
+                for ref in images:
+                    assert ref.endswith(":${DOCKER_FL_TAG:-dev}"), f"{backend}/{name}: {ref}"
+                for ref in bases:
+                    assert ref.endswith(":${DOCKER_FL_TAG:-dev}}"), f"{backend}/{name}: {ref}"
+
+
 class E2eSmokeQuery(unittest.TestCase):
     """`make e2e_smoke` picks the x-ray query from HUB: a trust without the OMOP vocabulary (FLIP#1390)
     gets the vocabulary-free copy. dry_run always passes HUB=prod, so the dev-stack cases override it."""
@@ -697,6 +819,107 @@ class E2eSmokeQuery(unittest.TestCase):
 
     def test_an_explicit_query_file_still_wins(self):
         assert self.query_file("HUB=", "QUERY_FILE=/tmp/mine.sql") == "/tmp/mine.sql"
+
+
+HUB_MAKEFILES = ("Makefile", "deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk")
+KEY_PAIR = ("INTERNAL_SERVICE_KEY", "INTERNAL_SERVICE_KEY_HASH")
+
+
+class FirstUpInternalServiceKey(unittest.TestCase):
+    """The first `make up` hands compose the key pair generate-internal-service-key just wrote (FLIP#1501).
+
+    Real generator behind a stub `uv`, a stub `docker` recording compose's env, a non-default MAIN_ENV_FILE.
+    """
+
+    def run_up(self, env_text, *extra, chosen=".env.b.development"):
+        """`make up-no-trust` in a scratch checkout: compose's env, and the pair the generator left in `chosen`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / "checkout"
+            for rel in (*HUB_MAKEFILES, "flip-api/Makefile"):
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy(REPO / rel, root / rel)
+            (root / ".env.b.development").write_bytes(b"INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n")
+            env_file = root / chosen
+            env_file.write_bytes(env_text.encode())
+            bin_dir = base / "bin"
+            bin_dir.mkdir()
+            seen = base / "compose-env.json"
+            (bin_dir / "uv").write_text(  # `uv run python -m <module> <args>` -> the real module, on env_file only
+                f"#!{sys.executable}\nimport runpy, sys\n"
+                f"sys.path.insert(0, {str(REPO / 'flip-api' / 'src')!r})\n"
+                "args = sys.argv[sys.argv.index('-m') + 1:]\n"
+                f"if '--env-file' not in args or args[args.index('--env-file') + 1] != {str(env_file)!r}:\n"
+                "    sys.exit(f'uv stub: unexpected env file in {args}')\n"
+                "sys.argv = args\n"
+                "runpy.run_module(args[0], run_name='__main__')\n"
+            )
+            (bin_dir / "docker").write_text(
+                f"#!{sys.executable}\nimport json, os, sys\n"
+                "if 'compose' in sys.argv and 'up' in sys.argv:\n"
+                f"    keys = {sorted(KEY_PAIR)!r}\n"
+                f"    json.dump({{k: os.environ.get(k) for k in keys}}, open({str(seen)!r}, 'w'))\n"
+            )
+            for stub in bin_dir.iterdir():
+                stub.chmod(0o755)
+            excluded = {"MAKEFLAGS", "PROD", "FLIP_INSTANCE", "FORCE", "ENV_FILE", *KEY_PAIR}
+            env = {key: value for key, value in os.environ.items() if key not in excluded}
+            env["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+            skipped = ("create-networks", "_ensure-fl-jobs-dir", "_ensure-object-store-dir", "_check-fl-provisioned")
+            result = subprocess.run(
+                ["make", "--no-print-directory", "-C", str(root), "up-no-trust", "MAIN_ENV_FILE=.env.b.development"]
+                + list(extra)
+                + [f"--old-file={name}" for name in skipped],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            written: dict[str, str] = {}  # first match, stripped: what the generator's read_env_value sees
+            for line in env_file.read_bytes().decode().splitlines():
+                key, sep, value = line.partition("=")
+                if sep:
+                    written.setdefault(key, value.strip())
+            return json.loads(seen.read_text()), {key: written[key] for key in KEY_PAIR}
+
+    def assert_compose_got_what_was_written(self, seen, written):
+        key, key_hash = written["INTERNAL_SERVICE_KEY"], written["INTERNAL_SERVICE_KEY_HASH"]
+        assert key, written
+        assert key_hash == hashlib.sha256(key.encode()).hexdigest(), written
+        assert seen == written, seen
+
+    def test_compose_gets_the_pair_the_generator_wrote(self):
+        in_sync = hashlib.sha256(b"k").hexdigest()
+        cases = {
+            "generated": "INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n",
+            "hash repaired": "INTERNAL_SERVICE_KEY=k\nINTERNAL_SERVICE_KEY_HASH=stale\n",
+            "duplicate lines": f"INTERNAL_SERVICE_KEY=k\nINTERNAL_SERVICE_KEY_HASH={in_sync}\nINTERNAL_SERVICE_KEY=x\n",
+            "CRLF": f"INTERNAL_SERVICE_KEY=k\r\nINTERNAL_SERVICE_KEY_HASH={in_sync}\r\n",
+        }
+        for name, env_text in cases.items():
+            with self.subTest(case=name):
+                self.assert_compose_got_what_was_written(*self.run_up(env_text))
+
+    def test_an_explicit_env_file_is_both_written_and_read(self):
+        env_text = "INTERNAL_SERVICE_KEY=\nINTERNAL_SERVICE_KEY_HASH=\n"
+        self.assert_compose_got_what_was_written(*self.run_up(env_text, "ENV_FILE=other.env", chosen="other.env"))
+
+    def test_every_target_that_generates_the_key_composes_with_the_fresh_pair(self):
+        makefile = (REPO / "Makefile").read_text()
+        targets = re.findall(r"^([\w-]+):[^=\n]*\bgenerate-internal-service-key\b", makefile, re.M)
+        assert {"up", "up-no-trust"} <= set(targets), targets
+        for target in targets:
+            recipe = re.search(rf"^{re.escape(target)}:.*\n((?:\t.*\n)+)", makefile, re.M)[1]
+            compose = [line for line in recipe.splitlines() if COMPOSE_COMMAND.search(line)]
+            with self.subTest(target=target):
+                assert compose, recipe
+                assert all("$(FRESH_INTERNAL_SERVICE_KEY)" in line for line in compose), recipe
+
+    def test_the_example_ships_no_pair_to_repair(self):
+        example = (REPO / ".env.development.example").read_text()
+        assert re.search(r"^INTERNAL_SERVICE_KEY=$", example, re.M), "the example's key must be empty"
+        assert re.search(r"^INTERNAL_SERVICE_KEY_HASH=$", example, re.M), "the example's hash must be empty"
 
 
 if __name__ == "__main__":

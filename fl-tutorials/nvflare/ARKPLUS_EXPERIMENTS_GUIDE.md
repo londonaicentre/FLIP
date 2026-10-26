@@ -97,7 +97,7 @@ bastion only. From `deploy/providers/AWS/` with the staging profile:
 
 ```bash
 cd deploy/providers/AWS
-export AWS_PROFILE=lza-stag             # must match; the Makefile enforces it
+export AWS_PROFILE=stag             # must match; the Makefile enforces it
 make aws-login                          # SSO
 make plan  HUB=stag DEPLOY_TRUST_EC2=false   # hub-only (trusts run on the desktop)
 make apply HUB=stag DEPLOY_TRUST_EC2=false   # run plan + apply as SEPARATE commands

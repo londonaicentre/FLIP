@@ -604,10 +604,10 @@ class TestMain:
     @pytest.mark.parametrize(
         ("argv", "profile", "bucket"),
         [
-            (("--env", "prod"), "lza-prod", "flip-terraform-state-lza"),
-            (("--env", "stag"), "lza-stag", "flip-terraform-state-lza-stag"),
-            # A self-contained estate points it elsewhere.
-            (("--env", "prod", "--profile", "prod", "--bucket", "own-state"), "prod", "own-state"),
+            (("--env", "prod"), "prod", "flip-terraform-state-lza"),
+            (("--env", "stag"), "stag", "flip-terraform-state-lza-stag"),
+            # Another estate points them elsewhere.
+            (("--env", "prod", "--profile", "own-prod", "--bucket", "own-state"), "own-prod", "own-state"),
         ],
     )
     def test_env_defaults_to_the_lza_estates(self, monkeypatch, argv, profile, bucket):

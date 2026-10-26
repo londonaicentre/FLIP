@@ -154,7 +154,7 @@ Before the first ``plan``, provide:
   from FLIP's ``terraform_ci_bootstrap`` module pinned to a FLIP commit. FLIP's roles carry the accelerator's own
   permissions boundary, ``AICentre-WorkloadRoleBoundary``, which an SCP requires and the Makefile selects by
   default. The module configures the bucket (versioned, public access blocked, TLS only, encrypted).
-- **Operator access:** an Identity Center permission set, with a matching ``lza-prod`` or ``lza-stag`` profile in
+- **Operator access:** an Identity Center permission set, with a matching ``prod`` or ``stag`` profile in
   the operator's ``~/.aws/config``.
 
 This platform layer (Transit Gateway, central firewall, endpoints, NAT and edge) is a shared cost billed to the
@@ -203,7 +203,7 @@ Preparing a workload account
    to about 24 hours stale, which is one reason deploys pin immutable ``sha-`` tags.
 
 3. **Add the operator profile.** Run ``aws configure sso`` against the account's Identity Center permission set and
-   rename the profile ``lza-prod`` or ``lza-stag`` (override with ``PROD_AWS_PROFILE`` / ``STAG_AWS_PROFILE``).
+   rename the profile ``prod`` or ``stag`` (override with ``PROD_AWS_PROFILE`` / ``STAG_AWS_PROFILE``).
 
 The Terraform state bucket comes from the platform's CI bootstrap; there is nothing to create for it here.
 
@@ -350,7 +350,7 @@ Break-glass deploy from a laptop
 .. code-block:: shell
 
    cd deploy/providers/AWS
-   export AWS_PROFILE=lza-stag   # or: lza-prod
+   export AWS_PROFILE=stag   # or: prod
    export HUB=stag               # or: prod
 
    make init
