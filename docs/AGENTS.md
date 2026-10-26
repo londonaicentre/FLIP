@@ -70,3 +70,10 @@ revision. Recordings are published by `.github/workflows/regenerate_docs_gifs.ym
 job tags the recording a release ships (`scripts/freeze_docs_gifs.py`) before it pushes the git tag. The card
 is `scripts/docs_gifs_card.md`. Adding a GIF is a spec + an rst figure in one PR; it renders once that PR
 reaches `develop` and is recorded — `tests/test_docs_gifs_wiring.py` keeps figures and specs in step.
+
+GIFs that need a live trust (the MONAI Label walkthrough: GPU + the real XNAT OHIF viewer) are listed in
+`scripts/live-recorded-gifs.txt` instead of having a spec; `expected_gifs()` joins them to the spec set, so the
+wiring test and the publisher treat them alike. They are cut by `make -C trust/monailabel-demo demo-gifs` and
+published by hand to dataset branch `pr-<N>` of the PR that re-cuts them (its preview shows them); a CI publish,
+which cannot record them, carries each one forward from the merged PR's `pr-<N>`, else from `main`
+(`--carry-from`, sha256-checked against that ref's manifest).

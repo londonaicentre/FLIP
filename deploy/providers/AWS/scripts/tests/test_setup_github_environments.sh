@@ -356,8 +356,8 @@ expect_mentions "--env-file must point at an existing file" "naming the flag"
 #    stop the script before its first GitHub write, not merely before the end.
 run_case "an expired session is refused, with the login command" STUB_STS_FAIL=1 -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip
-# The profile follows the Makefile's defaults: lza-<hub>.
-expect_refused_before_gh "refused" "aws sso login --profile lza-stag" "with the command that fixes it"
+# The profile follows the Makefile's defaults: the hub name.
+expect_refused_before_gh "refused" "aws sso login --profile stag" "with the command that fixes it"
 
 run_case "a state bucket in another account is refused" STUB_BUCKET="flip-terraform-state-prod" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip

@@ -23,10 +23,12 @@ REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 # vars (AICENTRE_BUCKET_NAME, FLOWER_KIT_DATE) used by upload-creds-to-s3.
 READS_HUB_ENV_FILE := yes
 include $(REPO_ROOT)/deploy/env_mode.mk
-MAIN_ENV_FILE := $(REPO_ROOT)/$(ENV_FILE_NAME)
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_FILE))
+# MAIN_ENV_FILE is a bare filename in the repo root, as everywhere else; a second instance passes its own.
+MAIN_ENV_FILE ?= $(ENV_FILE_NAME)
+MAIN_ENV_PATH := $(REPO_ROOT)/$(MAIN_ENV_FILE)
+ifneq ("$(wildcard $(MAIN_ENV_PATH))","")
+include $(MAIN_ENV_PATH)
+export $(shell sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' $(MAIN_ENV_PATH))
 endif
 include $(REPO_ROOT)/deploy/fl_backend.mk
 
@@ -34,8 +36,8 @@ include $(REPO_ROOT)/deploy/fl_backend.mk
 # host user) stay writable. compose reads ${DOCKER_GID} in each service's group_add.
 export DOCKER_GID := $(shell id -g)
 
-DEV_COMPOSE      := docker compose -f $(REPO_ROOT)/fl-services/flower/compose.dev.yml
-SECURE_COMPOSE   := docker compose -f $(REPO_ROOT)/fl-services/flower/compose.secure.yml
+DEV_COMPOSE      := DOCKER_FL_TAG=$(FL_BUILD_TAG) docker compose -f $(REPO_ROOT)/fl-services/flower/compose.dev.yml
+SECURE_COMPOSE   := DOCKER_FL_TAG=$(FL_BUILD_TAG) docker compose -f $(REPO_ROOT)/fl-services/flower/compose.secure.yml
 PROVISION_SCRIPT := $(REPO_ROOT)/fl-services/flower/provision/scripts/generate-tls-certificates.sh
 LOCAL_DEV        ?= false
 NET_NUMBER       ?= 1
@@ -46,12 +48,12 @@ export WORKING_DIR := $(REPO_ROOT)/fl-services/flower/runs
 .PHONY: build provision upload-creds-to-s3 generate-tls-certificates-net-1 generate-tls-certificates-net-2 \
         up up-secure down submit _ensure-dev-dirs
 
-# Build the flower-* :dev images. flwr-base builds first (own invocation) — a plain
+# Build the flower-* images, tagged $(FL_BUILD_TAG) (:dev unless DOCKER_FL_TAG is given). flwr-base builds first (own invocation) — a plain
 # FROM flower-fl-base in the derived Dockerfiles is invisible to Compose's build graph.
 build:
-	@echo "🛠️  Building flower-fl-base:dev (LOCAL_DEV=$(LOCAL_DEV))..."
+	@echo "🛠️  Building flower-fl-base:$(FL_BUILD_TAG) (LOCAL_DEV=$(LOCAL_DEV))..."
 	LOCAL_DEV=$(LOCAL_DEV) $(DEV_COMPOSE) --profile build-only build flwr-base
-	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:dev..."
+	@echo "🛠️  Building flower-{fl-api,superlink,supernode}:$(FL_BUILD_TAG)..."
 	$(DEV_COMPOSE) build fl-api superlink supernode-1
 
 # How many SuperNode credentials a provisioning run mints. Defaults to the size of

@@ -476,7 +476,7 @@ def main() -> None:
     ap.add_argument("--compare", help="report differences against an existing env file")
     args = ap.parse_args()
 
-    profile = args.profile or f"lza-{args.env}"
+    profile = args.profile or args.env
     bucket = args.bucket or LZA_STATE_BUCKETS[args.env]
 
     print(f"🔎 Reading deployed configuration for '{args.env}' (profile {profile})…\n")

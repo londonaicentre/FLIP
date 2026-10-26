@@ -5,7 +5,7 @@ Deploy a FLIP node on AWS EC2
 #############################
 
 A FLIP node on AWS EC2 runs the trust-side stack (trust-api, imaging-api, data-access-api, FL client,
-XNAT, Orthanc, OMOP) on one EC2 instance, built from code in ``trust/deploy/terraform/aws-ec2`` and
+XNAT, Orthanc, OMOP) on one EC2 instance, built from code in ``trust/deploy/terraform/aws/ec2`` and
 configured by ``trust/deploy/ansible/aws-ec2.yml``. It can go in **any AWS account and VPC**, including
 the site's own: it reads nothing from the hub (no remote state, no hub env file, no hub credentials).
 Its only links to a hub are its **kit** and its **registration**, as for any trust. The instance has no
@@ -25,7 +25,7 @@ Architecture
 ************
 
 The diagrams are generated when this documentation is built, by a script kept next to the Terraform
-(``trust/deploy/terraform/aws-ec2/architecture/``). A test in that tree pins every drawn node to a resource
+(``trust/deploy/terraform/aws/ec2/architecture/``). A test in that tree pins every drawn node to a resource
 in the ``.tf`` files, and every load-bearing resource to a drawn node. Dashed boxes are optional: the own-VPC
 network mode, the SSM endpoints, the stop/start schedule and the S3 kit read.
 
@@ -184,7 +184,7 @@ Build the node and join
 
 .. code-block:: bash
 
-   cd trust/deploy/terraform/aws-ec2
+   cd trust/deploy/terraform/aws/ec2
    KIT=<CODE>; HUB=<stag|prod>
 
    make init      KIT=$KIT HUB=$HUB STATE_BUCKET=<your state bucket>

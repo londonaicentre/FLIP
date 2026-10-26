@@ -95,6 +95,8 @@ kit_code="$(get_var TRUST_CODE)"
 if [ -n "$kit_code" ] && [ "$kit_code" != "$KIT" ]; then
     log_error "$KIT_FILE is the kit for TRUST_CODE=$kit_code, not KIT=$KIT."
     exit 1
+elif [ -z "$kit_code" ]; then
+    log_warn "$KIT_FILE has no TRUST_CODE; shipping it as $KIT_NAME."
 fi
 
 fl_backend="$(get_var FL_BACKEND)"

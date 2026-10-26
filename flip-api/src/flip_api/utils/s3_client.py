@@ -309,7 +309,7 @@ class S3Client:
 
     def delete_objects(self, s3_paths: list[str]) -> dict[str, Any]:
         """
-        Delete multiple objects from one or more S3 buckets in grouped batch requests.
+        Delete multiple objects from one or more S3 buckets in batches of at most 1,000 keys.
 
         Args:
             s3_paths: List of full S3 paths (e.g., s3://bucket-name/key)
@@ -333,22 +333,29 @@ class S3Client:
             all_responses = {}
             for bucket, objects in bucket_objects.items():
                 try:
-                    response = self.client.delete_objects(
-                        Bucket=bucket,
-                        Delete={
-                            "Objects": objects,
-                            "Quiet": False,
-                        },
-                    )
-                    deleted = [obj["Key"] for obj in response.get("Deleted", [])]
-                    errors = [f"{err['Key']} - {err['Code']}: {err['Message']}" for err in response.get("Errors", [])]
+                    for start in range(0, len(objects), 1000):
+                        response = self.client.delete_objects(
+                            Bucket=bucket,
+                            Delete={
+                                "Objects": objects[start : start + 1000],
+                                "Quiet": False,
+                            },
+                        )
+                        deleted = [obj["Key"] for obj in response.get("Deleted", [])]
+                        errors = [
+                            f"{err['Key']} - {err['Code']}: {err['Message']}" for err in response.get("Errors", [])
+                        ]
 
-                    if errors:
-                        logger.warning(f"Partial success deleting objects from bucket {bucket}. Errors: {errors}")
-                    else:
-                        logger.info(f"Successfully deleted {len(deleted)} objects from bucket {bucket}")
+                        if errors:
+                            logger.warning(f"Partial success deleting objects from bucket {bucket}. Errors: {errors}")
+                        else:
+                            logger.info(f"Successfully deleted {len(deleted)} objects from bucket {bucket}")
 
-                    all_responses[bucket] = response
+                        if bucket not in all_responses:
+                            all_responses[bucket] = response
+                        else:
+                            for field in ("Deleted", "Errors"):
+                                all_responses[bucket].setdefault(field, []).extend(response.get(field, []))
 
                 except ClientError as e:
                     logger.error(f"Error batch deleting objects from bucket {bucket}: {e}")
@@ -545,7 +552,7 @@ class S3Client:
 
     def list_objects(self, s3_path: str, delimiter: str = "") -> list[str]:
         """
-        List object keys under a given S3 path (non-paginated) and return full S3 paths.
+        List object keys across every page under a given S3 path and return full S3 paths.
 
         Args:
             s3_path: Full S3 path (e.g., s3://bucket-name/prefix/)
@@ -556,6 +563,7 @@ class S3Client:
 
         Raises:
             Exception: If listing objects fails, or if the S3 path is invalid.
+            RuntimeError: If a truncated response has no valid, advancing continuation token.
         """
         try:
             bucket, prefix = parse_s3_path(s3_path)
@@ -569,14 +577,20 @@ class S3Client:
             if delimiter:
                 params["Delimiter"] = delimiter
 
-            response = self.client.list_objects_v2(**params)
-            contents = response.get("Contents", [])
+            full_s3_paths: list[str] = []
+            seen_tokens: set[str] = set()
+            while True:
+                response = self.client.list_objects_v2(**params)
+                contents = response.get("Contents", [])
+                full_s3_paths.extend(f"s3://{bucket}/{obj['Key']}" for obj in contents if not obj["Key"].endswith("/"))
 
-            # Build full s3 paths from client response
-            # Filter out directories (keys ending with '/')
-            full_s3_paths = [f"s3://{bucket}/{obj['Key']}" for obj in contents if not obj["Key"].endswith("/")]
-
-            return full_s3_paths
+                if not response.get("IsTruncated", False):
+                    return full_s3_paths
+                token = response.get("NextContinuationToken")
+                if not isinstance(token, str) or not token or token in seen_tokens:
+                    raise RuntimeError("Incomplete S3 listing: missing, invalid or repeated continuation token")
+                seen_tokens.add(token)
+                params["ContinuationToken"] = token
 
         except ClientError as e:
             error_message = f"Error listing objects under '{s3_path}': {e}"

@@ -267,7 +267,7 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 **Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
 
 ```bash
-aws ec2 reboot-instances --instance-ids <instance-id> --profile lza-stag   # or lza-prod
+aws ec2 reboot-instances --instance-ids <instance-id> --profile stag   # or prod
 ```
 
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).

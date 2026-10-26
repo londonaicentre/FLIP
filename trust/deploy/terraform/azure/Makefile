@@ -320,7 +320,7 @@ aks-join: ## Install a hub-registered kit on the cluster and deploy the trust (T
 	python3 $(HELM_DIR)/scripts/generate_values.py --env-file "$(REPO_ROOT)/trust/.env.$(KIT).$(ENV)" \
 		--output-dir "$(AKS_KIT_DIR)" --secrets-file $(HELM_DIR)/values-secrets.yaml
 	$(KUBECTL) create namespace $(K8S_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
-	$(MAKE) _aks-fl-kit AKS_KIT_DIR="$(AKS_KIT_DIR)" SLOT="$$(sed -n 's/^FL_KIT_SLOT=//p' "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" | tail -1)"
+	$(MAKE) _aks-fl-kit AKS_KIT_DIR="$(AKS_KIT_DIR)" SLOT="$$(sed -n 's/^FL_KIT_SLOT=//p' "$(AKS_KIT_DIR)/.env.$(KIT).$(ENV)" | head -1)"
 	$(CHART) kit-secret KIT_SRC="$(abspath $(AKS_KIT_DIR))/fl-kit-secret"
 	$(MAKE) aks-deploy KIT=$(KIT) HUB=$(HUB)
 

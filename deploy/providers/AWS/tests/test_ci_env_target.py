@@ -188,12 +188,13 @@ def test_ci_runs_must_state_their_class() -> None:
 
 @pytest.mark.parametrize("hub", HUBS)
 def test_the_wrong_profile_is_still_refused(hub: str, tmp_path: Path) -> None:
-    """...and the guard is not vacuous: the retired self-contained staging profile is not accepted."""
+    """...and the guard is not vacuous: the other hub's profile is not accepted."""
+    other = "prod" if hub == "stag" else "stag"
     with pytest.raises(subprocess.CalledProcessError):
         probe_make(
             AWS_DIR,
             ["$(ENV)"],
-            {"HUB": hub, "MAIN_ENV_FILE": str(_env_file(tmp_path, hub)), "AWS_PROFILE": "stag"},
+            {"HUB": hub, "MAIN_ENV_FILE": str(_env_file(tmp_path, hub)), "AWS_PROFILE": other},
             env=_make_env(),
         )
 
@@ -303,6 +304,6 @@ def test_a_real_compose_lands_on_that_default_path() -> None:
         )
         assert target.is_file()
         text = target.read_text()
-        assert "AWS_PROFILE=lza-stag" in text
+        assert "AWS_PROFILE=stag" in text
     finally:
         target.unlink(missing_ok=True)

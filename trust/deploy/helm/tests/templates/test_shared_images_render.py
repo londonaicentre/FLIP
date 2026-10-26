@@ -56,7 +56,7 @@ def test_rwo_holds_both_pods_on_one_node():
     for name, deployment in deployments.items():
         assert deployment["spec"]["template"]["metadata"]["labels"].get("flip/shared-images") == "true", name
         assert TERM in _required(deployment), name
-        assert deployment["spec"]["strategy"] == {"type": "Recreate"}, name
+        assert deployment["spec"]["strategy"]["type"] == "Recreate", name
 
 
 @pytest.mark.parametrize(
@@ -68,7 +68,8 @@ def test_without_an_rwo_volume_nothing_ties_them(setting):
     for name, deployment in deployments.items():
         assert "flip/shared-images" not in deployment["spec"]["template"]["metadata"]["labels"], name
         assert _required(deployment) == [], name
-        assert "strategy" not in deployment["spec"], name
+    # fl-client is Recreate whatever the volume: one trust is one FL identity (test_job_pods_render).
+    assert "strategy" not in deployments["imaging-api"]["spec"]
     # The operator's part of imaging-api's affinity survives.
     assert "podAntiAffinity" in deployments["imaging-api"]["spec"]["template"]["spec"]["affinity"]
 

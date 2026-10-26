@@ -17,7 +17,8 @@
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
-		demo-video demo-users seed-demo-projects reset-keycloak
+		demo-video demo-users seed-demo-projects reset-keycloak \
+		_release-tag release-prepare release-instance release-verify release-gates release-record release-main-check
 
 # What HUB means — ENV, __DCKR_SUFFIX and the env-file name — is derived once in
 # deploy/env_mode.mk, shared with every other Makefile that reads HUB. The kit-file
@@ -58,6 +59,16 @@ include deploy/instance.mk
 
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
+
+# Host uid for the `user:` override on the dev FL containers. The env-file export above
+# covers a .env that carries UID, but bash and zsh keep UID as a shell variable and never
+# export it, so a .env predating that line leaves make with no UID at all: compose then
+# takes the literal `${UID:-1000}` default and every developer whose uid is not 1000 runs
+# those containers as someone else, reaching the provisioned keys through group_add only
+# rather than as their owner (FLIP#1320). `?=` so an explicit .env value still wins.
+# trust/Makefile exports UID for the same reason.
+UID ?= $(shell id -u)
+export UID
 
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
@@ -105,6 +116,12 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+# The pair is exported at parse time, before `up`'s generate-internal-service-key can rewrite it,
+# so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
+KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
+read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
+FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
+	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)"
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
 # Through compose, addressing the service rather than the container: the containers are
 # named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
@@ -114,7 +131,7 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
 #
-# Default: repo-built services (flip-api + trust APIs + orthanc) carry
+# Default: repo-built services (flip-api + trust APIs + orthanc + omop-db) carry
 # `pull_policy: always` in the dev compose, so they always pull from GHCR on
 # their own. This flag only adds the global `--pull always` that keeps FL images
 # fresh — and it's dropped when DOCKER_FL_REGISTRY is empty (local `:dev` FL
@@ -125,6 +142,9 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 # `--build` forces the build; `--pull missing` overrides the per-service
 # `pull_policy: always` for this run so the fresh build isn't immediately
 # re-pulled away, while still fetching any absent FL/infra image.
+# BUILD reaches trust/ and trust/xnat/ through MAKEFLAGS: omop-db builds with the
+# trust compose, and up-xnat builds the XNAT images and deploys them at :dev
+# (or a command-line XNAT_TAG).
 ifeq ($(BUILD),true)
 UP_PULL_FLAGS=--build --pull missing
 else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
@@ -142,7 +162,8 @@ build:
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
 
-# Build the FLARE FL service images locally, tagged :dev, for iterating on fl-services/
+# Build the FL service images locally, tagged :dev (or DOCKER_FL_TAG given on the command
+# line — FLIP#1605: :dev is daemon-wide, so an isolated instance builds its own tag), for iterating on fl-services/
 # or the flip-utils `flip` package before pushing. The deploy compose pulls FL images from
 # GHCR (DOCKER_FL_TAG), so they are NOT built by `make build`; this uses the build defs in
 # fl-services/<backend>/compose.dev.yml. fl-base must build first, in its own invocation: a plain
@@ -157,7 +178,7 @@ build:
 # deployments are tested: make -C fl-services/<backend> {build,provision,up,down,submit}.
 build-fl:
 	@$(MAKE) -C fl-services/$(FL_BACKEND) build LOCAL_DEV=$(LOCAL_DEV)
-	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
+	@echo "✅ FL :$(FL_BUILD_TAG) images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=$(FL_BUILD_TAG)"
 
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
@@ -166,7 +187,7 @@ up: _check-compose-project-owner generate-internal-service-key create-networks _
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
@@ -238,7 +259,7 @@ _check-compose-project-owner:
 up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
@@ -534,8 +555,34 @@ integration_test:
 	$(MAKE) -C flip-api integration_test
 	$(MAKE) -C trust integration_test
 
+# Release pipeline (FLIP#1608, CONTRIBUTING § Cutting a release). Each step is one script under
+# scripts/release/; TAG=vX.Y.Z throughout, INSTANCE defaults to rel<XYZ>. PR=<n> pins the gates to the
+# release PR's head.
+#   release-prepare   bump versions, make lock, empty Release checks (DRY_RUN=1 previews)
+#   release-instance  isolated instance from this checkout, every image built at :INSTANCE (PORT_OFFSET, FORCE=1)
+#   release-verify    prove the instance runs this commit (images, working dir, /health, AES key)
+#   release-gates     unit, integration, tutorials, then the instance, smokes, teardown -> release-gates/<TAG>/*.json
+#   release-record    render Release checks from those results (APPLY=1 writes the notes template)
+#   release-main-check  read-only: is the develop -> main PR ready; the after-merge checklist (OWED=<file>)
+RELEASE_ARGS = --tag "$(TAG)" $(if $(INSTANCE),--instance "$(INSTANCE)") $(if $(PR),--pr "$(PR)")
+_release-tag:
+	@[ -n "$(TAG)" ] || { echo "❌ TAG=vX.Y.Z required"; exit 1; }
+release-prepare: _release-tag
+	@python3 scripts/release/prepare.py --tag "$(TAG)" $(if $(DRY_RUN),--dry-run)
+release-instance: _release-tag
+	@python3 scripts/release/instance.py $(RELEASE_ARGS) $(if $(PORT_OFFSET),--port-offset $(PORT_OFFSET)) $(if $(FORCE),--force)
+release-verify: _release-tag
+	@python3 scripts/release/verify.py $(RELEASE_ARGS)
+release-gates: _release-tag
+	@python3 scripts/release/gates.py $(RELEASE_ARGS) $(if $(PORT_OFFSET),--port-offset $(PORT_OFFSET)) $(if $(GATES),--gates "$(GATES)") \
+		$(if $(CONTINUE),--continue-on-failure) $(if $(KEEP),--keep)
+release-record: _release-tag
+	@python3 scripts/release/record.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(APPLY),--apply)
+release-main-check: _release-tag
+	@python3 scripts/release/main_check.py --tag "$(TAG)" $(if $(PR),--pr "$(PR)") $(if $(OWED),--owed "$(OWED)")
+
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
-UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
+UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/omop-db trust/xnat/tests trust/xnat/export-mask deploy/providers/AWS flip-utils fl-services/flower/fl-api-flower fl-services/nvflare/fl-api-base
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.
@@ -593,8 +640,10 @@ reset-keycloak: _check-compose-project-owner
 seed-demo-projects:
 	$(MAKE) -C flip-api seed_demo_projects $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
+# The key goes into the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE),
+# made absolute here because the sub-make runs in flip-api/ (FLIP#1603).
 generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
+	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
 
 # Poll flip-api /api/health before registering. The entrypoint seeds the DB —
 # including the FL kit-slot pool that register_trust claims from — *before* the

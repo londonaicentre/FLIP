@@ -28,7 +28,7 @@ edges are optional: the network module's own VPC (only without ``subnet_id``), t
 
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render. Run it in docker::
 
-    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws-ec2 python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws/ec2 python:3.12-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.trust_ec2 --out docs"
 """
@@ -64,7 +64,7 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "Central Hub": (),
     "GHCR": (),
     "Hugging Face": (),
-    # ---- network (modules/network) -----------------------------------------------------------------
+    # ---- network (../modules/network) --------------------------------------------------------------
     "VPC": ("module.network", "module.network.data.aws_vpc.existing", "module.network.aws_vpc.this"),
     "Public subnet": ("module.network.aws_subnet.public", "module.network.aws_route_table.public"),
     "Node subnet": (
@@ -120,7 +120,7 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
 }
 
 #: Resource types that are architecture: every resource of one of these types, in this root or in
-#: ``modules/network``, must appear in ``TERRAFORM_ADDRESSES``.
+#: ``../modules/network``, must appear in ``TERRAFORM_ADDRESSES``.
 DRAWN_RESOURCE_TYPES: frozenset[str] = frozenset(
     {
         "aws_instance",

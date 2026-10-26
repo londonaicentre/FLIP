@@ -16,7 +16,7 @@
 
 The counterpart of ``deploy/providers/AWS/tests/test_architecture_diagram.py``. ``architecture/trust_ec2.py`` maps
 each drawn label to Terraform addresses; this suite checks every address exists in the root or in
-``modules/network`` (as ``module.network.<address>``), and that every resource of a load-bearing type there is
+``../modules/network`` (as ``module.network.<address>``), and that every resource of a load-bearing type there is
 drawn. The ``.tf`` files are read as text: no ``terraform`` binary, no state, no credentials. The render smoke test
 needs graphviz and is skipped where ``dot`` is absent.
 """
@@ -32,7 +32,7 @@ from architecture.trust_ec2 import DIAGRAMS, DRAWN_RESOURCE_TYPES, TERRAFORM_ADD
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 #: Root ``module`` name -> its source directory, whose resources are addressed as ``module.<name>.<address>``.
-MODULE_DIRS: dict[str, Path] = {"network": ROOT_DIR / "modules" / "network"}
+MODULE_DIRS: dict[str, Path] = {"network": ROOT_DIR.parent / "modules" / "network"}
 
 _RESOURCE_HEADER = re.compile(r'^resource\s+"([A-Za-z0-9_]+)"\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)
 _DATA_HEADER = re.compile(r'^data\s+"([A-Za-z0-9_]+)"\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)

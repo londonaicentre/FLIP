@@ -90,6 +90,23 @@ class UpgradeTrust(unittest.TestCase):
         assert "up-xnat" in out, out
 
 
+MONAI_KIT = KIT.replace("NUM_AVAILABLE_GPUS=0", "NUM_AVAILABLE_GPUS=1")
+
+
+class MonaiLabelArchive(unittest.TestCase):
+    """up-xnat's xnat-reset recreates the archive under a running monailabel, whose mount keeps the deleted one."""
+
+    def test_up_trust_checks_the_fresh_archive_then_recreates_monailabel_onto_it(self):
+        out = dry_run("up-trust", "MONAI_LABEL=true", kit=MONAI_KIT)
+        reset = out.index("xnat-reset")
+        check = out.index('[ ! -d "/nonexistent/xnat/xnat-data/archive" ]')
+        recreate = out.index("up -d --force-recreate --no-deps monailabel")
+        assert reset < check < recreate, out
+
+    def test_a_trust_without_monai_label_recreates_nothing(self):
+        assert "--force-recreate" not in dry_run("up-trust")
+
+
 GOVERNED_KIT = KIT + "ACCESS_POLICY_FILE=./governance.SCR.toml\n"
 FLOWER_GOVERNED_KIT = GOVERNED_KIT.replace("FL_BACKEND=nvflare", "FL_BACKEND=flower")
 # Also on the command line: CI runs this suite from `make ... FL_BACKEND=nvflare`, whose MAKEFLAGS
@@ -205,11 +222,18 @@ class DevelopmentFlRegistry(unittest.TestCase):
         """DOCKER_FL_REGISTRY as trust/Makefile exports it to its recipes (what compose reads)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for rel in ("deploy/env_mode.mk", "deploy/fl_backend.mk", "deploy/instance.mk", "trust/Makefile"):
+            for rel in (
+                "deploy/env_mode.mk",
+                "deploy/fl_backend.mk",
+                "deploy/instance.mk",
+                "deploy/portable.mk",
+                "trust/Makefile",
+            ):
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text((Path(__file__).resolve().parents[2] / rel).read_text())
             (root / ".env.development").write_text(hub_env)
             (root / "trust" / ".env.SCR.development").write_text(self.DEV_KIT)
+            (root / "probe.mk").write_text("fl-registry: ; @echo [$$DOCKER_FL_REGISTRY]\n")
             # The caller's DOCKER_*/HUB/MAKEFLAGS would pre-empt the scratch env files.
             dropped = {"PROD", "HUB", "MAKEFLAGS"}
             env = {k: v for k, v in os.environ.items() if not k.startswith("DOCKER_") and k not in dropped}
@@ -219,8 +243,11 @@ class DevelopmentFlRegistry(unittest.TestCase):
                     "-s",
                     "-C",
                     str(root / "trust"),
-                    "--eval",
-                    "fl-registry: ; @echo [$$DOCKER_FL_REGISTRY]",
+                    # Read after the Makefile, like --eval, which make 3.81 lacks.
+                    "-f",
+                    "Makefile",
+                    "-f",
+                    str(root / "probe.mk"),
                     "fl-registry",
                     "KIT=SCR",
                     *extra,
