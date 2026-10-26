@@ -110,9 +110,12 @@ The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (p
 `FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
 renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
-(site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
-only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
-`make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
+(site filters run before app filters and a job's configuration cannot opt out or pick a weaker scope). The
+bound object is the job's *configuration*: every FLARE app template runs the Client API `in_process`, so job
+code runs inside the client's job process and is not currently isolated from the filter (FLIP#1572). Unset =
+no site policy (app-level filters only, the previous behavior). Invalid values stop the fl-client at startup
+(fail closed). Apply changes with `make -C trust up-fl-clients-kit KIT=<CODE>`
+(`down-fl-clients-kit KIT=<CODE>` stops and removes
 just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
 this env, leaving the rest of each trust stack up); the fl-client log then shows
 `[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`

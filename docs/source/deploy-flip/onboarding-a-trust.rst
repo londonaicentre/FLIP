@@ -238,7 +238,9 @@ Optional — set a site privacy policy (FLARE)
 *Who: trust operator*
 
 As the data holder, you can apply your own privacy filter to everything the FL client sends to the FL server,
-whatever the researcher's app configures.
+whatever the researcher's app configures. The filter binds what the researcher's app declares, not what its
+code does: FLARE job code runs in the FL client's job process, so code review remains the control there
+(FLIP#1572).
 
 #. In your kit file, uncomment ``FL_SITE_PRIVACY_POLICY`` and, optionally, its parameters. An invalid combination
    stops the FL client at startup, by design.
