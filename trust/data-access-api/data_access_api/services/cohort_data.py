@@ -40,8 +40,10 @@ from data_access_api.utils.logger import logger
 DATAFRAME_FILENAME = "dataframe.parquet"
 _TMP_PREFIX = ".tmp-"
 _DEL_PREFIX = ".del-"
-# Rows of patient data: never readable by others, whatever the process umask.
-_UMASK = 0o027
+# Rows of patient data: never readable by others. Set explicitly rather than through the umask, which is
+# process-wide and would race the other requests the threadpool runs.
+_DIR_MODE = 0o750
+_FILE_MODE = 0o640
 
 
 def staging_enabled() -> bool:
@@ -56,6 +58,11 @@ def _root() -> Path:
 def _canonical(value: str) -> str:
     """The id as a lowercase UUID string, so it is always one safe path component."""
     return str(uuid.UUID(value))
+
+
+def _private_dir(path: Path) -> None:
+    path.mkdir(exist_ok=True)
+    os.chmod(path, _DIR_MODE)
 
 
 def _remove(path: Path) -> None:
@@ -80,22 +87,19 @@ def stage_dataframe(project_id: str, model_id: str, df: pd.DataFrame) -> Path:
         ValueError: if either id is not a UUID.
     """
     project, model = _canonical(project_id), _canonical(model_id)
-    previous_umask = os.umask(_UMASK)
+    project_dir = _root() / project
+    _private_dir(project_dir)
+    work = project_dir / f"{_TMP_PREFIX}{model}-{uuid.uuid4().hex}"
+    _private_dir(work)
     try:
-        project_dir = _root() / project
-        project_dir.mkdir(parents=True, exist_ok=True)
-        work = project_dir / f"{_TMP_PREFIX}{model}-{uuid.uuid4().hex}"
-        work.mkdir()
-        try:
-            df.to_parquet(work / DATAFRAME_FILENAME, index=False)
-            final = project_dir / model
-            if final.exists():
-                _remove(final)
-            os.replace(work, final)
-        finally:
-            shutil.rmtree(work, ignore_errors=True)
+        df.to_parquet(work / DATAFRAME_FILENAME, index=False)
+        os.chmod(work / DATAFRAME_FILENAME, _FILE_MODE)
+        final = project_dir / model
+        if final.exists():
+            _remove(final)
+        os.replace(work, final)
     finally:
-        os.umask(previous_umask)
+        shutil.rmtree(work, ignore_errors=True)
     return final / DATAFRAME_FILENAME
 
 

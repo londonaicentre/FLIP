@@ -131,3 +131,13 @@ def test_ensure_data_dir_creates_the_directory_and_never_raises(tmp_path):
         assert target.is_dir()
         mock_settings.return_value.COHORT_DATA_DIR = "/proc/definitely/not/writable"
         cohort_data.ensure_data_dir()
+
+
+def test_stage_never_touches_the_process_umask(data_dir):
+    # The umask is process-wide and routes run on a threadpool: changing it would race every other request's writes.
+    with patch("data_access_api.services.cohort_data.os.umask", side_effect=AssertionError("umask touched")):
+        path = cohort_data.stage_dataframe(PROJECT, MODEL, pd.DataFrame({"person_id": [1]}))
+
+    assert stat.S_IMODE(path.stat().st_mode) == 0o640
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o750
+    assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o750
