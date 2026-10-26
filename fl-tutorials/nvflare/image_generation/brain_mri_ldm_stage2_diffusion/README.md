@@ -143,6 +143,16 @@ when asked for T1Gd, because it generates no tumours, and T1Gd differs from T1w 
 enhancing tumour rim. Every training scan has a tumour and the frozen autoencoder reconstructs it,
 but tumours differ in place, size and shape from patient to patient, and the diffusion model learns
 the brain without them: a real tumour latent noised three quarters of the way comes back healthy.
+A classifier that tells the four sequences apart on 89 % of real held-out scans read 40 generated
+volumes per sequence as:
+
+| Asked for | FLAIR | T1w | T1Gd | T2w |
+|-----------|------:|----:|-----:|----:|
+| FLAIR     |    23 |  14 |    2 |   1 |
+| T1w       |     1 |  39 |    0 |   0 |
+| T1Gd      |     0 |  34 |    6 |   0 |
+| T2w       |     2 |   2 |    0 |  36 |
+
 This is a limit of the recipe, not of latent diffusion: MONAI's `brats_mri_generative_diffusion`
 bundle, FLAIR only, unconditional and configured for 5,000 epochs, does generate tumours (smaller
 and fainter than real ones).
@@ -195,7 +205,7 @@ whose cutoff is computed over the whole update.
 The shipped `config.json` runs 2 rounds of 3 epochs, like the other tutorials: enough to run the
 whole job end to end, not to learn to generate brains. We trained this tutorial for 5 rounds of 60
 epochs on 321 brain MR studies split between two simulated sites, with the learning rate decaying
-over all 300 epochs and validation every 20; the run took 5 h 15 min on one RTX 5090. The settings:
+over all 300 epochs and validation every 20; the run took 5 h 35 min on one RTX 5090. The settings:
 
 ```json
 "GLOBAL_ROUNDS": 5,
