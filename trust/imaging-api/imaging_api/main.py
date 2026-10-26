@@ -10,6 +10,10 @@
 # limitations under the License.
 #
 
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import FastAPI
 from log_config import LoggingMiddleware
 
@@ -23,6 +27,30 @@ from imaging_api.routers.projects import router as projects_router
 from imaging_api.routers.retrieval import router as retrieval_router
 from imaging_api.routers.upload import router as upload_router
 from imaging_api.routers.users import router as users_router
+from imaging_api.services.cache_retention import SWEEP_TASK_NAME, run_cache_retention_sweeper
+from imaging_api.utils.background import reset_dead_background_tasks, watch_background_task
+from imaging_api.utils.logger import logger
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Runs the image-cache retention sweeper (FLIP#1050) for the app's lifetime.
+
+    Args:
+        app (FastAPI): The FastAPI application instance being started.
+    """
+    reset_dead_background_tasks()
+    if not get_settings().IMAGE_CACHE_RETENTION_ENABLED:
+        logger.info("Image-cache retention sweeper disabled (IMAGE_CACHE_RETENTION_ENABLED=false)")
+        yield
+        return
+    sweeper = asyncio.create_task(run_cache_retention_sweeper(), name=SWEEP_TASK_NAME)
+    sweeper.add_done_callback(watch_background_task)  # a sweeper that ends turns /health degraded
+    yield
+    sweeper.cancel()
+    with suppress(asyncio.CancelledError, Exception):  # a death before shutdown was already logged
+        await sweeper
+
 
 # Disable Swagger / OpenAPI / ReDoc in production. Imaging-api proxies privileged
 # XNAT operations; leaking its full route + schema map to anyone who reaches the
@@ -37,6 +65,7 @@ app = FastAPI(
     docs_url="/docs" if _docs_enabled else None,
     openapi_url="/openapi.json" if _docs_enabled else None,
     redoc_url="/redoc" if _docs_enabled else None,
+    lifespan=lifespan,
 )
 
 app.add_middleware(LoggingMiddleware)

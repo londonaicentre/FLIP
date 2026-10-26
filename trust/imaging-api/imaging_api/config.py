@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # Reimport settings
     REIMPORT_STUDIES_ENABLED: bool = True
 
+    # Image-cache retention (FLIP#1050, services/cache_retention.py). The composes and the chart fall back to these
+    # values; keep them in step. The TTL must far exceed any FL job: NVFLARE reads a study once per job.
+    IMAGE_CACHE_RETENTION_ENABLED: bool = True
+    IMAGE_CACHE_RETENTION_HOURS: float = 168.0  # 7 days since last use
+    IMAGE_CACHE_SWEEP_INTERVAL_MINUTES: float = 60.0
+
 
 # Eager load once (for app use)
 _settings = Settings()  # type: ignore

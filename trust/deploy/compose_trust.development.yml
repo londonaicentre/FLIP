@@ -134,6 +134,10 @@ services:
       DEBUG: ${DEBUG}
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
+      # Image-cache retention (FLIP#1050); the fallbacks match imaging_api/config.py.
+      IMAGE_CACHE_RETENTION_ENABLED: ${IMAGE_CACHE_RETENTION_ENABLED:-true}
+      IMAGE_CACHE_RETENTION_HOURS: ${IMAGE_CACHE_RETENTION_HOURS:-168}
+      IMAGE_CACHE_SWEEP_INTERVAL_MINUTES: ${IMAGE_CACHE_SWEEP_INTERVAL_MINUTES:-60}
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
       # Dev-on-pull (see `user:` above): host-uid process imports the package via
