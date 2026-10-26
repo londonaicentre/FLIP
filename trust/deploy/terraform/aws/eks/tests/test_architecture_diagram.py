@@ -14,9 +14,9 @@
 
 """Drift guard between the Amazon EKS node diagrams and the Terraform they depict.
 
-The counterpart of ``../aws-ec2/tests/test_architecture_diagram.py``. ``architecture/trust_eks.py`` maps each drawn
+The counterpart of ``../ec2/tests/test_architecture_diagram.py``. ``architecture/trust_eks.py`` maps each drawn
 label to Terraform addresses; this suite checks every address exists in the root or in the network module it calls
-(``../aws-ec2/modules/network``, with ``count``, so as ``module.network[0].<address>``), that every address of this
+(``../modules/network``, with ``count``, so as ``module.network[0].<address>``), that every address of this
 root and every resource of a load-bearing type in the module is drawn. The ``.tf`` files are read as text: no
 ``terraform`` binary, no state, no credentials. The render smoke test needs graphviz and is skipped where ``dot`` is
 absent.
@@ -33,7 +33,7 @@ from architecture.trust_eks import DIAGRAMS, DRAWN_RESOURCE_TYPES, TERRAFORM_ADD
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 #: Root ``module`` name -> its source directory, whose resources are addressed as ``module.<name>[0].<address>``.
-MODULE_DIRS: dict[str, Path] = {"network": (ROOT_DIR / ".." / "aws-ec2" / "modules" / "network").resolve()}
+MODULE_DIRS: dict[str, Path] = {"network": (ROOT_DIR / ".." / "modules" / "network").resolve()}
 
 _RESOURCE_HEADER = re.compile(r'^resource\s+"([A-Za-z0-9_]+)"\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)
 _DATA_HEADER = re.compile(r'^data\s+"([A-Za-z0-9_]+)"\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)

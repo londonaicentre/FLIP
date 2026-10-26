@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Dry-run tests for the aws-eks Makefile (FLIP#1439): no target reads the hub, the API endpoint admits
+"""Dry-run tests for the aws/eks Makefile (FLIP#1439): no target reads the hub, the API endpoint admits
 the operator's IP only, and the FL kit Secret never holds the SuperLink's key. No AWS, Terraform,
 kubectl or Helm runs."""
 

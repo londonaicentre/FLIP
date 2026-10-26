@@ -24,7 +24,7 @@ data "aws_availability_zones" "available" {
 # the nodes stay in the first, where the trust's EBS volumes are.
 module "network" {
   count  = length(var.subnet_ids) == 0 ? 1 : 0
-  source = "../aws-ec2/modules/network"
+  source = "../modules/network"
   name   = var.name
 }
 

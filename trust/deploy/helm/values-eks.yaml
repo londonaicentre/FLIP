@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Overlay for an EKS cluster from trust/deploy/terraform/aws-eks (FLIP#1439), with values-small-node.yaml.
+# Overlay for an EKS cluster from trust/deploy/terraform/aws/eks (FLIP#1439), with values-small-node.yaml.
 flClient:
   kit:
     # A managed node group replaces nodes at will: the kit comes from a Secret, never the node.

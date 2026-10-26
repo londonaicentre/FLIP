@@ -14,7 +14,7 @@
 
 """Render the Amazon EKS trust node architecture diagrams from the Terraform in this directory.
 
-Diagram-as-code in the style of ``../aws-ec2/architecture/trust_ec2.py``: nodes, clusters and edges are declared with
+Diagram-as-code in the style of ``../ec2/architecture/trust_ec2.py``: nodes, clusters and edges are declared with
 the ``diagrams`` library and rendered through graphviz, and ``TERRAFORM_ADDRESSES`` maps every drawn label to the
 Terraform addresses it stands for. The network comes from the EC2 root's ``modules/network``, called with ``count``,
 so its resources are addressed ``module.network[0].<address>``. ``tests/test_architecture_diagram.py`` checks that
@@ -28,7 +28,7 @@ subnet, the NAT gateway and the internet gateway.
 
 Graphviz is not installed on the dev hosts; without ``dot`` this module refuses to render. Run it in docker::
 
-    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws-eks python:3.12-slim sh -c \\
+    docker run --rm -v "$PWD:/work" -w /work/trust/deploy/terraform/aws/eks python:3.12-slim sh -c \\
       "apt-get update -qq && apt-get install -y -qq graphviz >/dev/null && \\
        pip -q install diagrams && python -m architecture.trust_eks --out docs"
 """
@@ -65,7 +65,7 @@ TERRAFORM_ADDRESSES: dict[str, tuple[str, ...]] = {
     "Central Hub": (),
     "GHCR": (),
     "Hugging Face": (),
-    # ---- network (../aws-ec2/modules/network, created only without subnet_ids) -----------------------
+    # ---- network (../modules/network, created only without subnet_ids) -------------------------------
     "VPC": (
         "module.network",
         "module.network[0].aws_vpc.this",

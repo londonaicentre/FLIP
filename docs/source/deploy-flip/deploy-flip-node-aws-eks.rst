@@ -5,7 +5,7 @@ Deploy a FLIP node on Amazon EKS
 ################################
 
 A FLIP node on Amazon EKS runs the trust-side stack as the ``flip-trust`` Helm chart on a small EKS
-cluster, built from code in ``trust/deploy/terraform/aws-eks``. It is the AWS twin of the AKS cluster on
+cluster, built from code in ``trust/deploy/terraform/aws/eks``. It is the AWS twin of the AKS cluster on
 :doc:`deploy-flip-node-azure`: a cluster for the chart and nothing else. It can go in **any AWS account and
 VPC**, including the site's own: it reads nothing from the hub (no remote state, no hub env file, no hub
 credentials). Its only links to a hub are its **kit** and its **registration**, as for any trust. The
@@ -24,7 +24,7 @@ Architecture
 ************
 
 The diagrams are generated when this documentation is built, by a script kept next to the Terraform
-(``trust/deploy/terraform/aws-eks/architecture/``). A test in that tree pins every drawn node to a resource
+(``trust/deploy/terraform/aws/eks/architecture/``). A test in that tree pins every drawn node to a resource
 in the ``.tf`` files, and every resource to a drawn node. Dashed boxes exist only when the root creates its
 own network.
 
@@ -144,7 +144,7 @@ On the site's side:
 
 .. code-block:: bash
 
-   cd trust/deploy/terraform/aws-eks
+   cd trust/deploy/terraform/aws/eks
    KIT=<CODE>; HUB=<stag|prod>; REGION=eu-west-2
 
    make init        KIT=$KIT HUB=$HUB REGION=$REGION STATE_BUCKET=<your state bucket>

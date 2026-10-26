@@ -18,7 +18,7 @@
 #   deploy                                                     redeploy from the installed kit
 
 SHELL := /bin/bash
-REPO_ROOT := $(abspath $(CURDIR)/../../../..)
+REPO_ROOT := $(abspath $(CURDIR)/../../../../..)
 include $(REPO_ROOT)/deploy/env_mode.mk
 
 TF := terraform
