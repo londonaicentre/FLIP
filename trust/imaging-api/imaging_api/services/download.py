@@ -22,6 +22,7 @@ from imaging_api.services.image_cache import (
     clear_resource,
     read_sentinel,
     sentinel_path,
+    touch_sentinel,
     write_sentinel,
 )
 from imaging_api.services.projects import (
@@ -69,7 +70,8 @@ async def download_and_unzip_images(
     this once per accession per round, and without the cache each of those calls is a full study
     re-download of bytes already on local disk (FLIP#953). The per-project path segment keeps projects
     that share an accession from being served each other's copies (their XNAT content can differ, e.g.
-    per-project label enrichment).
+    per-project label enrichment). A hit also refreshes the sentinel's mtime, which the TTL retention
+    sweeper (``services/cache_retention.py``) reads as the entry's last-used time (FLIP#1050).
 
     Args:
         central_hub_project_id (str): Central Hub project ID. Corresponds to XNAT secondary ID.
@@ -128,16 +130,16 @@ async def download_and_unzip_images(
     if record is not None:
         if record.resource_stats is None:  # an assessor download: XNAT has no assessor resource listing
             logger.info(f"Cache hit for {context}: reusing {accession_dir_abs} (not checked against XNAT)")
-            return accession_dir_abs
+            return _reuse(accession_dir_abs, assessor_type, resource_type)
         try:
             current = get_resource_stats(record.experiment_id, resource_type, headers)
         except NotFoundError:
             current = None
         except (requests.RequestException, XnatFetchError) as e:
-            return _serve_unchecked(accession_dir_abs, context, e)
+            return _reuse(_serve_unchecked(accession_dir_abs, context, e), assessor_type, resource_type)
         if current == record.resource_stats:
             logger.info(f"Cache hit for {context}: reusing {accession_dir_abs} (unchanged in XNAT)")
-            return accession_dir_abs
+            return _reuse(accession_dir_abs, assessor_type, resource_type)
         stale = f"XNAT stats {record.resource_stats} -> {current}"
 
     # Ensure the per-net/per-project download directory exists before we try to
@@ -268,6 +270,16 @@ def _serve_unchecked(accession_dir_abs: str, context: str, error: Exception) -> 
         f"Cache hit for {context}: could not check XNAT for changes ({type(error).__name__}: {error}); "
         f"serving {accession_dir_abs} unchecked"
     )
+    return accession_dir_abs
+
+
+def _reuse(accession_dir_abs: str, assessor_type: str, resource_type: str) -> str:
+    """Marks a cache hit as used now, so the retention sweeper (FLIP#1050) keeps it, and returns its folder."""
+    try:
+        touch_sentinel(accession_dir_abs, assessor_type, resource_type)
+    except OSError as e:
+        # Never fail a hit over bookkeeping, but warn: an entry whose clock cannot move ages toward the TTL in use.
+        logger.warning(f"Could not refresh the last-used time of {accession_dir_abs} ({resource_type}): {e}")
     return accession_dir_abs
 
 

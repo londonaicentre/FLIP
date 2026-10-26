@@ -211,6 +211,10 @@ The first time an FL client asks for an accession's resources, ``imaging-api`` p
 the Trust host, under that net's own images directory. Later requests are served from disk: the next FL round
 and, on Flower, the next job.
 
+A study unused for seven days is deleted from disk; it is downloaded again from XNAT if a job asks for it later.
+Trust operators can change the period with ``IMAGE_CACHE_RETENTION_HOURS`` in the kit file (``imagingApi.env`` on
+Kubernetes), or turn the clean-up off with ``IMAGE_CACHE_RETENTION_ENABLED=false``.
+
 What this means for training code:
 
 - Call ``flip.get_by_accession_number`` every round; **do not add your own caching**. Each call checks the

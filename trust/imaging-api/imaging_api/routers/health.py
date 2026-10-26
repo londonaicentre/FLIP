@@ -17,6 +17,8 @@ from pathlib import Path
 
 from fastapi import APIRouter
 
+from imaging_api.utils.background import dead_background_tasks
+
 router = APIRouter(prefix="/health", tags=["Health"])
 
 # The service is a uv "virtual" project (never installed as a distribution), so the
@@ -41,13 +43,20 @@ def _service_version() -> str | None:
 
 
 @router.get("")
-async def health_check() -> dict[str, str | None]:
+async def health_check() -> dict[str, object]:
     """
     Health check endpoint for the Imaging API
 
+    Reports ``degraded`` when the image-cache retention sweeper has died or keeps failing, since the cache is then
+    unbounded again. Still HTTP 200: a container restart would not fix it.
+
     Returns:
-        dict[str, str | None]: The status of the service and the build it runs — the
-        CI-baked ``FLIP_RELEASE`` image tag (v<X.Y.Z> or sha-<short7>, FLIP#1204), or the
-        pyproject version for a local build that carries none.
+        dict[str, object]: The status, the build it runs (the CI-baked ``FLIP_RELEASE`` tag, FLIP#1204, else the
+        pyproject version) and the dead background tasks.
     """
-    return {"status": "ok", "version": os.environ.get("FLIP_RELEASE") or _service_version()}
+    dead = dead_background_tasks()
+    return {
+        "status": "degraded" if dead else "ok",
+        "version": os.environ.get("FLIP_RELEASE") or _service_version(),
+        "dead_tasks": sorted(dead),
+    }

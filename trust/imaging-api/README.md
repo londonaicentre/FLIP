@@ -97,6 +97,20 @@ compares them:
 imaging-api changes the accession (see Upload), and — on the FLARE backend — by `CleanupImages`, which empties the
 whole net directory at job start and end.
 
+**Retention (FLIP#1050).** Every cache hit refreshes the sentinel's mtime, the entry's last-used time. An in-process
+sweeper (`services/cache_retention.py`) removes, every `IMAGE_CACHE_SWEEP_INTERVAL_MINUTES` (default `60`):
+
+- accession folders unused for `IMAGE_CACHE_RETENTION_HOURS` (default `168`);
+- folders with no sentinel (invalidated or half-extracted) once they are that old;
+- staging zips left by a crash, and project folders left empty.
+
+It never removes a net folder or its `upload/`. It is what bounds the cache on Flower, and for NVFLARE job pods,
+which read studies through imaging-api rather than the net folder. NVFLARE clients read a study once per job and Flower
+clients every round, so the TTL must be far longer than any job. Each removal runs without yielding on the single-worker event loop,
+so it cannot interleave with a download; the sweep yields between entries. `IMAGE_CACHE_RETENTION_ENABLED=false`
+turns it off. A dead or persistently failing sweeper makes `/health` report `degraded`. An expired study is downloaded
+again from XNAT on its next request.
+
 The download URL pins `structure=default`, XNAT's own default. Every zip member then sits under the session label,
 which FLIP sets to the accession id at import, so a study extracts as
 `<accession_id>/scans/<scan id>-<description>/resources/<resource>/files/…`. FL apps read that layout (the prostate
