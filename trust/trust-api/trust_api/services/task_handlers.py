@@ -16,6 +16,7 @@ Task handlers for processing tasks received from the central hub via polling.
 Each handler processes a specific task type and returns a result dict.
 """
 
+import asyncio
 import datetime
 import hashlib
 import json
@@ -29,6 +30,7 @@ from trust_api.routers.schemas import (
     CohortQueryInput,
     DeleteImagingInput,
     GetImagingStatusInput,
+    JobDataInput,
     PersistCohortInput,
     ReimportStudiesInput,
     UpdateProfileRequest,
@@ -84,6 +86,8 @@ TASK_GET_IMAGING_STATUS = "get_imaging_status"
 TASK_REIMPORT_STUDIES = "reimport_studies"
 TASK_UPDATE_USER_PROFILE = "update_user_profile"
 TASK_PERSIST_COHORT = "persist_cohort"
+TASK_STAGE_JOB_DATA = "stage_job_data"
+TASK_UNSTAGE_JOB_DATA = "unstage_job_data"
 
 
 async def handle_persist_cohort(payload: dict[str, Any]) -> dict[str, Any]:
@@ -386,6 +390,57 @@ async def handle_update_user_profile(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+async def _job_data_request(path: str, payload: dict[str, Any], what: str) -> dict[str, Any]:
+    """POST one job's data request to data-access-api's write router, in the shape every task handler returns."""
+    try:
+        request = JobDataInput(**payload)
+        response = await make_request(
+            method="POST",
+            url=f"{DATA_ACCESS_API_URL}{path}",
+            json_body={"encrypted_project_id": request.encrypted_project_id, "model_id": request.model_id},
+            headers=cohort_admin_headers(),
+            timeout_seconds=get_settings().COHORT_QUERY_TIMEOUT_SECONDS,
+        )
+        logger.info(f"{what} for project {request.project_id}, model {request.model_id}: {response}")
+        return {"success": True, "result": json.dumps(response)}
+    except HTTPException as e:
+        logger.warning(f"{what} failed with status {e.status_code}: {e.detail}")
+        return {"success": False, "error": str(e), "status_code": e.status_code}
+    except Exception as e:
+        logger.exception(f"{what} failed")
+        return {"success": False, "error": str(e)}
+
+
+async def handle_stage_job_data(payload: dict[str, Any]) -> dict[str, Any]:
+    """Stage one job's approved cohort dataframe where its pods mount it (FLIP#1678).
+
+    When data was staged, the reply waits ``STAGE_ACK_DELAY_SECONDS`` first: the fl-client sidecar turns the staged
+    directory into the job's study entry within its sync interval, so the entry exists before the hub submits.
+
+    Args:
+        payload (dict[str, Any]): The task payload (``JobDataInput``).
+
+    Returns:
+        dict[str, Any]: The task result, with data-access-api's reply as ``result``.
+    """
+    result = await _job_data_request("/cohort/stage", payload, "Job data staging")
+    if result["success"] and json.loads(result["result"]).get("staged"):
+        await asyncio.sleep(get_settings().STAGE_ACK_DELAY_SECONDS)
+    return result
+
+
+async def handle_unstage_job_data(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove one job's staged cohort dataframe once its model has ended (FLIP#1678).
+
+    Args:
+        payload (dict[str, Any]): The task payload (``JobDataInput``).
+
+    Returns:
+        dict[str, Any]: The task result, with data-access-api's reply as ``result``.
+    """
+    return await _job_data_request("/cohort/stage/delete", payload, "Job data removal")
+
+
 # Registry mapping task types to their handlers
 TASK_HANDLERS = {
     TASK_COHORT_QUERY: handle_cohort_query,
@@ -395,4 +450,6 @@ TASK_HANDLERS = {
     TASK_REIMPORT_STUDIES: handle_reimport_studies,
     TASK_UPDATE_USER_PROFILE: handle_update_user_profile,
     TASK_PERSIST_COHORT: handle_persist_cohort,
+    TASK_STAGE_JOB_DATA: handle_stage_job_data,
+    TASK_UNSTAGE_JOB_DATA: handle_unstage_job_data,
 }

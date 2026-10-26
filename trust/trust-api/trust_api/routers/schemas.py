@@ -29,6 +29,15 @@ class CohortQueryInput(BaseModel):
     trust_id: str = Field(..., description="The unique identifier for the trust")
 
 
+class JobDataInput(BaseModel):
+    """Payload of the STAGE_JOB_DATA / UNSTAGE_JOB_DATA tasks (FLIP#1678). Mirrors flip-api's ``IJobDataTask``."""
+
+    project_id: str = Field(..., description="The central hub project id (clear, for logging)")
+    trust_id: str = Field(..., description="The unique identifier for the trust")
+    model_id: str = Field(..., description="The central hub model whose job the data is for")
+    encrypted_project_id: str = Field(..., description="The hub project id, encrypted for data-access-api")
+
+
 class PersistCohortInput(BaseModel):
     """Payload of the approval-time PERSIST_COHORT task (FLIP#857).
 

@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     # Timeout for cohort query requests to data-access-api (seconds)
     COHORT_QUERY_TIMEOUT_SECONDS: int = 300
 
+    # How long a staged job's data must have existed before the hub hears it is staged (FLIP#1678): longer than the
+    # fl-client sidecar's sync interval (2 s), so the job's study entry is in place by the time the job is submitted.
+    STAGE_ACK_DELAY_SECONDS: float = 5.0
+
     # Health collector (per-container status attached to the heartbeat, surfaced on
     # the hub's Connection Status page). URLs/ports are fixed by the compose topology —
     # default here instead of being required kit fields.
