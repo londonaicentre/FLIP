@@ -100,6 +100,8 @@ def test_training_refusal_reaches_activity_feed(net, failed_path, body):
         patch.object(fl_scheduler_service, "bundle_nvflare_application", return_value="s3://bundle"),
         patch.object(fl_scheduler_service, "bundle_flower_application", return_value="s3://bundle"),
         patch.object(fl_scheduler_service, "get_bundle_urls", return_value=["http://bundle/app.zip"]),
+        # The trusts' data staging (FLIP#1678) is not what this test covers; it has its own.
+        patch.object(fl_scheduler_service, "stage_job_data"),
         patch.object(
             fl_scheduler_service,
             "get_required_training_details",
