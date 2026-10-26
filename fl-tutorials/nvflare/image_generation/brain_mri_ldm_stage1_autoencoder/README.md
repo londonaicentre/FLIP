@@ -155,7 +155,8 @@ The shipped `config.json` runs 2 rounds of 3 epochs (`GLOBAL_ROUNDS`, `LOCAL_ROU
 other tutorials: enough to run the whole job end to end in minutes, far too little to learn to
 reconstruct a brain. The published autoencoder was trained with this tutorial for 10 rounds of 25
 epochs, at the shipped constant learning rate, on 321 brain MR studies (1,284 volumes) split between
-two simulated sites. To train your own, raise the two counts in `config.json`:
+two simulated sites; the run took 12 h 28 min on one RTX 5090. To train your own, raise the two
+counts in `config.json`:
 
 ```json
 "GLOBAL_ROUNDS": 10,
