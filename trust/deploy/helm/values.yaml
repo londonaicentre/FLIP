@@ -553,8 +553,9 @@ flClient:
     # the README, "Flower task pods", for the trust key handling a trust signs off, and the known limits (FLIP#1673).
     taskPods:
       enabled: false
-      # Defaults to <release namespace>-flower-tasks. Grant pod read there to the trust's admins only: each task
-      # pod's spec carries the trust-internal key, since Flower refuses Secret references in task pods.
+      # Defaults to <release namespace>-flower-tasks-<netId>. Each task pod's spec carries the trust-internal key
+      # (Flower refuses Secret references in task pods), so no binding that reads pods may cover this namespace
+      # except the trust's admins: that includes Kubernetes' built-in `view` and `edit` roles.
       namespace: ""
       # Task pods running at once; the SuperExec waits for capacity beyond it.
       activePodBudget: 4

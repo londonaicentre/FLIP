@@ -25,7 +25,7 @@ import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[2]
 TASK_PODS = "flClient.flower.taskPods"
-TASK_NS = "default-flower-tasks"
+TASK_NS = "default-flower-tasks-net-1"
 KEY = "test-trust-internal-key-1675"  # pragma: allowlist secret
 
 pytestmark = pytest.mark.skipif(shutil.which("helm") is None, reason="helm is not installed")
@@ -131,12 +131,14 @@ def test_task_pods_get_the_trust_apis_by_service_dns_and_no_images_volume():
 
 def test_the_superexec_role_is_the_minimum_flower_needs():
     docs = _enabled()
-    role = next(d for d in _kinds(docs, "Role") if d["metadata"]["name"].endswith("-fl-client-superexec"))
+    role = next(d for d in _kinds(docs, "Role") if d["metadata"]["name"].endswith("-fl-client-superexec-net-1"))
     assert role["metadata"]["namespace"] == TASK_NS
     assert role["rules"] == [
         {"apiGroups": [""], "resources": ["pods", "secrets"], "verbs": ["create", "list", "delete"]}
     ]
-    binding = next(d for d in _kinds(docs, "RoleBinding") if d["metadata"]["name"].endswith("-fl-client-superexec"))
+    binding = next(
+        d for d in _kinds(docs, "RoleBinding") if d["metadata"]["name"].endswith("-fl-client-superexec-net-1")
+    )
     assert binding["subjects"] == [
         {"kind": "ServiceAccount", "name": "trust-release-flip-trust-fl-client", "namespace": "default"}
     ]
@@ -145,18 +147,27 @@ def test_the_superexec_role_is_the_minimum_flower_needs():
 def test_task_pods_reach_only_dns_the_runtime_api_and_the_trust_apis():
     docs = _enabled()
     policies = {d["metadata"]["name"]: d for d in _kinds(docs, "NetworkPolicy")}
-    task = policies["trust-release-flip-trust-flower-task-pods"]
+    task = policies["trust-release-flip-trust-flower-task-pods-net-1"]
     assert task["metadata"]["namespace"] == TASK_NS
     assert task["spec"]["policyTypes"] == ["Ingress", "Egress"]
     assert "ingress" not in task["spec"]
-    reached = {
-        (rule["to"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/component"], rule["ports"][0]["port"])
+    selectors = {
+        rule["to"][0]["podSelector"]["matchLabels"]["app.kubernetes.io/component"]: rule
         for rule in task["spec"]["egress"]
         if "podSelector" in rule["to"][0]
     }
+    reached = {(component, rule["ports"][0]["port"]) for component, rule in selectors.items()}
     assert reached == {("fl-client", 9094), ("imaging-api", 8000), ("data-access-api", 8000)}
+    # The Runtime API is this net's SuperNode only, never another net's.
+    assert selectors["fl-client"]["to"][0]["podSelector"]["matchLabels"]["flip/network"] == "net-1"
+    assert (
+        policies["trust-release-flip-trust-fl-client-from-flower-tasks-net-1"]["spec"]["podSelector"]["matchLabels"][
+            "flip/network"
+        ]
+        == "net-1"
+    )
     for component, port in reached:
-        allow = policies[f"trust-release-flip-trust-{component}-from-flower-tasks"]
+        allow = policies[f"trust-release-flip-trust-{component}-from-flower-tasks-net-1"]
         assert allow["spec"]["ingress"] == [
             {
                 "from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": TASK_NS}}}],

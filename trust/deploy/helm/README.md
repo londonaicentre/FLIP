@@ -711,7 +711,7 @@ flClient:
   flower:
     taskPods:
       enabled: true
-      namespace: ""         # default <release namespace>-flower-tasks
+      namespace: ""         # default <release namespace>-flower-tasks-<net>
       activePodBudget: 4
       resources:            # each task pod runs the researcher's ClientApp
         limits: {memory: "32Gi", cpu: "16", nvidia.com/gpu: 1}
@@ -728,7 +728,8 @@ so `TRUST_INTERNAL_SERVICE_KEY` reaches each task pod as a literal in its spec. 
 executor config in memory at start; the key is at rest only in the chart Secret, and in a task pod's spec while that
 pod exists (Flower deletes finished pods within about a minute). The researcher's ClientApp holds the key in every
 mode; what changes is that anyone who can read pods in the task namespace can read it too. Grant that only to the
-trust's admins, who can read the Secret anyway.
+trust's admins, who can read the Secret anyway. Kubernetes' built-in `view` and `edit` roles read pods but not
+Secrets, so no binding of either may cover the task namespace.
 
 Limits:
 
@@ -739,8 +740,9 @@ Limits:
   fl-client pod restarts.
 - **Per message, not per run.** A pod starts for every `train` and `evaluate` message: about 0.9 s each with the
   image cached, plus the ClientApp's own imports.
-- **API server egress.** As for NVFLARE job pods: where the API server listens off 443, add it to
-  `networkPolicies.allowedEgressCIDRsWithPorts`.
+- **API server egress.** Where the API server listens off 443 (kind, minikube), add it to
+  `networkPolicies.allowedEgressCIDRsWithPorts`. That rule covers the release namespace only, so task pods never get
+  it.
 
 ### Container Service jobs (dcm2niix)
 

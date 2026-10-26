@@ -18,7 +18,7 @@ and the NetworkPolicies.
 */}}
 
 {{- define "flip-trust.flowerTaskNamespace" -}}
-{{- .Values.flClient.flower.taskPods.namespace | default (printf "%s-flower-tasks" (include "flip-trust.namespace" .)) }}
+{{- .Values.flClient.flower.taskPods.namespace | default (printf "%s-flower-tasks-%s" (include "flip-trust.namespace" .) .Values.flClient.netId) }}
 {{- end }}
 
 {{- define "flip-trust.flowerRuntimeService" -}}
@@ -96,7 +96,7 @@ metadata:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec
+  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec-{{ .Values.flClient.netId }}
   namespace: {{ $taskNs }}
   labels:
     {{- include "flip-trust.labels" . | nindent 4 }}
@@ -109,7 +109,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec
+  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec-{{ .Values.flClient.netId }}
   namespace: {{ $taskNs }}
   labels:
     {{- include "flip-trust.labels" . | nindent 4 }}
@@ -117,7 +117,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec
+  name: {{ include "flip-trust.fullname" . }}-fl-client-superexec-{{ .Values.flClient.netId }}
 subjects:
   - kind: ServiceAccount
     name: {{ include "flip-trust.fullname" . }}-fl-client
@@ -157,8 +157,9 @@ data:
   executor-config.yaml: |
     {{- include "flip-trust.flowerExecutorConfig" . | nindent 4 }}
 {{- if .Values.networkPolicies.enabled }}
+{{- $netId := .Values.flClient.netId }}
 {{- $peers := list
-  (dict "component" "fl-client" "port" (.Values.flClient.flower.supernodeClientAppIoPort | int))
+  (dict "component" "fl-client" "port" (.Values.flClient.flower.supernodeClientAppIoPort | int) "net" $netId)
   (dict "component" "imaging-api" "port" (.Values.imagingApi.service.port | int))
   (dict "component" "data-access-api" "port" (.Values.dataAccessApi.service.port | int)) }}
 ---
@@ -167,7 +168,7 @@ data:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "flip-trust.fullname" . }}-flower-task-pods
+  name: {{ include "flip-trust.fullname" . }}-flower-task-pods-{{ $netId }}
   namespace: {{ $taskNs }}
   labels:
     {{- include "flip-trust.labels" . | nindent 4 }}
@@ -192,6 +193,9 @@ spec:
           podSelector:
             matchLabels:
               app.kubernetes.io/component: {{ .component }}
+              {{- with .net }}
+              flip/network: {{ . }}
+              {{- end }}
       ports:
         - port: {{ .port }}
           protocol: TCP
@@ -202,7 +206,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "flip-trust.fullname" $ }}-{{ .component }}-from-flower-tasks
+  name: {{ include "flip-trust.fullname" $ }}-{{ .component }}-from-flower-tasks-{{ $netId }}
   namespace: {{ $ns }}
   labels:
     {{- include "flip-trust.labels" $ | nindent 4 }}
@@ -211,6 +215,9 @@ spec:
     matchLabels:
       {{- include "flip-trust.selectorLabels" $ | nindent 6 }}
       app.kubernetes.io/component: {{ .component }}
+      {{- with .net }}
+      flip/network: {{ . }}
+      {{- end }}
   policyTypes:
     - Ingress
   ingress:
