@@ -67,15 +67,19 @@ run: prepare-checkpoint sim
 # --- Autoencoder checkpoint preparation ---
 # This job trains only the diffusion model. The autoencoder arrives frozen: the checkpoint is loaded on
 # the FL server and broadcast in round 0, and every client builds the bare network from the YAML.
-prepare-checkpoint:
 ifneq ($(RAW_CHECKPOINT),)
+prepare-checkpoint:
 	$(UV_RUN) python process_tools/extract_autoencoder.py --src "$(RAW_CHECKPOINT)" \
 		--dst "$(PROCESSED_CHECKPOINT)" $(if $(RAW_CONFIG),--autoencoder-config "$(RAW_CONFIG)")
 else
-	@test -f "$(PROCESSED_CHECKPOINT)" || { \
-		$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=brain_mri_autoencoder && \
-		$(UV_RUN) python process_tools/extract_autoencoder.py --src "$(PUBLISHED_AUTOENCODER)" \
-			--dst "$(PROCESSED_CHECKPOINT)"; }
+# Without a run, the published autoencoder. A checkpoint already in app_files/ is kept.
+prepare-checkpoint: $(PROCESSED_CHECKPOINT)
+
+$(PROCESSED_CHECKPOINT): | $(PUBLISHED_AUTOENCODER)
+	$(UV_RUN) python process_tools/extract_autoencoder.py --src "$(PUBLISHED_AUTOENCODER)" --dst "$@"
+
+$(PUBLISHED_AUTOENCODER):
+	$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=brain_mri_autoencoder
 endif
 
 # --- Export job config (no GPU needed) ---
