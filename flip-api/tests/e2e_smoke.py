@@ -32,8 +32,8 @@ Usage (preferred):
 Direct invocation:
     cd flip-api
     uv run python -m tests.e2e_smoke \\
-        --model-files-dir ../fl-tutorials/flower/xray_classification/app \\
-        --query-file ../fl-tutorials/flower/xray_classification/query.sql
+        --model-files-dir ../fl-tutorials/flower/image_classification/xray_classification/app \\
+        --query-file ../fl-tutorials/flower/image_classification/xray_classification/query.sql
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
@@ -956,7 +956,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Directory whose files are uploaded to the model. Flower: "
-        "../fl-tutorials/flower/xray_classification/app. "
+        "../fl-tutorials/flower/image_classification/xray_classification/app. "
         "FLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
         "Required unless --stop-after-enrichment.",
     )

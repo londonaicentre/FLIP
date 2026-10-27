@@ -421,7 +421,7 @@ cohort queries that name concepts through ``omop.concept`` return nothing. The x
 ``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``HUB`` unset) smokes such a trust with it.
 With ``HUB`` set, pass it by hand:
 ``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
-``fl-tutorials/flower/xray_classification/query_novocab.sql``).
+``fl-tutorials/flower/image_classification/xray_classification/query_novocab.sql``).
 
 .. seealso::
 
