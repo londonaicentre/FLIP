@@ -232,11 +232,14 @@ spec:
             - configMapRef:
                 name: {{ include "flip-trust.fullname" . }}-xnat-web
           env:
+            # For a hand-run of configure-xnat.sh; the xnat-init Job says how the two are used. Without
+            # the optional initial key, a hand-run here must export XNAT_ADMIN_INITIAL_PASSWORD as admin.
             - name: XNAT_ADMIN_INITIAL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: xnat-admin-password
+                  key: xnat-admin-initial-password
+                  optional: true
             - name: XNAT_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
