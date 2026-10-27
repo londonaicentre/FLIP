@@ -99,9 +99,9 @@ class Verdict:
 
 _PLUGIN_REMEDY = (
     "the receiver logged an importer failure. An AbstractMethodError here means an XNAT plugin "
-    "was built against a different core than the one running — compare the pod's "
-    "/data/xnat/home/plugins against trust/xnat/artifacts.manifest (make status), then redeploy with a "
-    "HELM_TIMEOUT above the init job's real duration. See TROUBLESHOOTING.md §2.7."
+    "was built against a different core than the one running — check which xnat-web image the pod "
+    "runs and its plugins (/data/xnat/home/plugins), then redeploy with a HELM_TIMEOUT above the init "
+    "job's real duration. See TROUBLESHOOTING.md §2.7."
 )
 
 _NO_EVIDENCE_REMEDY = (

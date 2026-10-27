@@ -333,9 +333,8 @@ neither implies the other.
 ``status``
    Shows the Helm release and runs the chart's health checks: pod readiness, volumes, HTTP endpoints, and the XNAT
    plugins. XNAT's plugins come with the ``xnat-web`` image, as on every FLIP trust, so the pod downloads none at
-   start and a new plugin version arrives with a new image. The check fails when the plugin files in the running
-   ``xnat-web`` pod differ from the plugin list of your FLIP checkout (the pod runs an older image), or when XNAT did
-   not load one of them.
+   start and a new plugin version arrives with a new image. The check fails when XNAT in a running ``xnat-web`` pod
+   did not load one of them.
 
 ``smoke-cstore``
    Sends a real DICOM C-STORE from Orthanc to XNAT and checks XNAT received it. It needs an Orthanc that already

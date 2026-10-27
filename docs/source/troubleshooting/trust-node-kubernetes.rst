@@ -221,9 +221,9 @@ crashing:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
 
-**Cause.** The running ``xnat-web`` pod has older plugin jars than your FLIP checkout lists. A C-ECHO never reaches
-XNAT's importer, so it cannot detect this. The plugins come with the ``xnat-web`` image, so wrong jars mean the pod
-runs an older image: no deploy has replaced it since the plugins changed. Three reasons are common:
+**Cause.** A plugin in the running ``xnat-web`` pod was built for a different XNAT core. A C-ECHO never reaches XNAT's
+importer, so it cannot detect this. The plugins and the core come in one image, so wrong jars mean the pod runs an
+older image: no deploy has replaced it since the plugins changed. Three reasons are common:
 
 #. **The deploy never carried the new image**: an older checkout, an image pinned in your overrides or kit file, or
    a tag such as ``stag`` that was rebuilt after the pod pulled it. Check which image the pod runs with
@@ -239,7 +239,6 @@ runs an older image: no deploy has replaced it since the plugins changed. Three 
 .. code-block:: shell
 
    kubectl exec -n flip-trust "$XNAT_POD" -- ls -la /data/xnat/home/plugins   # the jars the pod carries
-   make -C trust/deploy/helm status          # fails naming both versions when the roster drifted
 
 **Fix.** Get one deploy to complete, from a current checkout, with a wait budget above the init job's real
 duration:
@@ -254,7 +253,6 @@ can take the volume. Then confirm the pod was replaced and send a test study:
 .. code-block:: shell
 
    kubectl -n flip-trust get pods -l app.kubernetes.io/component=xnat-web       # a new pod
-   make -C trust/deploy/helm status          # the roster matches
    make -C trust/deploy/helm smoke-cstore
 
 If ``smoke-cstore`` finds no receipt line and no new prearchive object, the study went to something other than

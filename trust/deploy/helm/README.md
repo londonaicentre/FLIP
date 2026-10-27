@@ -152,19 +152,15 @@ unaffected either way; the chart needs no version switch.
 How `make status` and `make smoke-cstore` decide. Polling green does not mean imaging works: the two
 share no code, so the operator guide has operators run both.
 
-`status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
-against the plugin lines of `trust/xnat/artifacts.manifest`, failing with both versions named
-when they disagree. The chart mounts nothing there, so the jars are the `xnat-web` image's own,
-built from that manifest: a mismatch means the pod runs an image built from another one (an
-old pull of a rebuilt tag, an image pin, a rollout that never replaced the pod), or the
-checkout is not the release's. It then asks XNAT which plugins it **loaded** (`GET
+`status` asks XNAT in every running `xnat-web` pod which plugins it **loaded** (`GET
 /xapi/plugins`, inside the pod as the service account, the credential on curl's stdin) and
-fails a jar that is **present on disk but not loaded**; see the `tomcat` container's startup
-log. XNAT lists plugins by id, not by file name (`container-service` is `containers`), hence
-`XNAT_PLUGIN_IDS` in `check_status.py`; when XNAT cannot be asked, `status` warns and checks
-the jars alone. This is the chart's only check of what XNAT loaded: the `xnat-init` readiness
-wait runs in its own pod, so it waits for the DQR route alone. A plugin built for a
-different XNAT core loads and then aborts every C-STORE in the importer, which is why
+fails each plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) it did not; see the `tomcat`
+container's startup log. XNAT lists plugins by id, not by file name (`container-service` is
+`containers`), hence the map; a test keeps it in step with the manifest the image is built from.
+When XNAT cannot be asked, `status` warns. This is the chart's only check of what XNAT loaded:
+the `xnat-init` readiness wait runs in its own pod, so it waits for the DQR route alone. The
+jars and the XNAT core ship in one image, so a plugin cannot outlive its core, but a plugin
+built for a different XNAT core loads and then aborts every C-STORE in the importer, which is why
 `smoke-cstore` stores a real object through the PACS rather than trusting `status` or a C-ECHO:
 C-ECHO never reaches the importer and passes throughout.
 
@@ -289,7 +285,7 @@ reached the node leaves the pod `Pending` on a `hostPath type check failed` even
 and the `emptyDir` it filled. XNAT runs the plugins built into the `xnat-web` image, from the same
 manifest the chart's list matched, so the upgrade replaces the pod once and changes no plugin
 version. A release that pins an older `xnat-web` image (`xnat.image.pin`) now runs that image's
-plugins, and `make status` names any difference. Helm ignores the retired keys, so delete them
+own plugins, which match its core. Helm ignores the retired keys, so delete them
 from your overrides; a plugin version now changes only with the image (`trust/xnat/README.md`,
 "Adding or updating a plugin").
 

@@ -352,8 +352,8 @@ The XNAT WAR and plugins are third-party, public upstream downloads that FLIP do
 - **Image builds** (`make build` and the CI workflow `docker_build_xnat_web.yml`) download the WAR and plugins the
   same way and bake them into the image.
 - **Stag, prod, EC2, on-prem and Helm** run the plugins baked into the image, so `make up` neither needs nor checks
-  the host cache there, and a Kubernetes pod downloads nothing at start. `make -C trust/deploy/helm status` checks a
-  running pod's jars against the manifest. `tests/test_artifacts.py` fails if the WAR line is not the `.env` version.
+  the host cache there, and a Kubernetes pod downloads nothing at start. `tests/test_artifacts.py` fails if the WAR
+  line is not the `.env` version.
 
 [`scripts/xnat_artifacts.sh`](scripts/xnat_artifacts.sh) does the work. `fetch` keeps every file whose checksum
 already matches, downloads the rest to a temporary name, verifies the checksum and only then moves the file into

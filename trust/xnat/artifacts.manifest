@@ -14,8 +14,7 @@
 # the public upstream download and the SHA-256 the file must have. scripts/xnat_artifacts.sh reads
 # this file for the dev plugin cache (`make -C trust prepare-artifacts`), the local image build and
 # the CI image build (.github/workflows/docker_build_xnat_web.yml). Compose and the Helm chart both
-# run the plugins built into that image; `make -C trust/deploy/helm status` checks a running pod
-# against the plugin lines here. trust/xnat/tests pins the WAR line to XNAT_VERSION.
+# run the plugins built into that image. trust/xnat/tests pins the WAR line to XNAT_VERSION.
 #
 # Bumping a version: replace the URL and the checksum (`sha256sum <file>` on the new download); the
 # next xnat-web image carries it everywhere. Check the plugin compatibility table in README.md.

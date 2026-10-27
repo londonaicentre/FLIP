@@ -27,7 +27,7 @@ WHAT IT CHECKS:
   ✓ Pod readiness (all trust-side services)
   ✓ GPU allocation (fl-client)
   ✓ PersistentVolumeClaims
-  ✓ XNAT plugin roster (running pod's jars, and what XNAT loaded, vs trust/xnat/artifacts.manifest)
+  ✓ XNAT plugins (XNAT on every running xnat-web pod loaded each one)
   ✓ HTTP endpoints (trust-api, imaging-api, data-access-api, Orthanc)
   ✓ MinIO S3 store (FL participant kits)
   ✓ System resources (disk, memory on the node)
@@ -40,14 +40,11 @@ EXIT CODES:
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import time
 import urllib.request
-from dataclasses import dataclass, field
-from enum import StrEnum
-from pathlib import Path
+from dataclasses import dataclass
 
 
 # Color codes for terminal output
@@ -298,100 +295,10 @@ def _fl_client_kit_missing(pod: str, namespace: str) -> bool:
     return success and "hostPath type check failed" in events
 
 
-# Where the xnat-web image carries its plugins (trust/xnat/xnat/Dockerfile). The chart mounts
-# nothing over it, so these are the jars the running XNAT loads.
-XNAT_PLUGIN_DIR = "/data/xnat/home/plugins"
-
-# The one plugin roster: the xnat-web image is built from its plugin lines.
-ARTIFACTS_MANIFEST = Path(__file__).resolve().parents[2] / "xnat" / "artifacts.manifest"
-
-
-def manifest_plugin_jars() -> dict[str, str]:
-    """Read the manifest's plugins as ``{plugin key: jar filename}``.
-
-    The filename is the URL's last segment, the name ``trust/xnat/scripts/xnat_artifacts.sh`` builds
-    into the image, so the versions live only in the manifest. The key is the jar's name up to its
-    version (``container-service-3.8.2-fat.jar`` is ``container-service``).
-
-    Returns:
-        One entry per ``plugin`` line of ``ARTIFACTS_MANIFEST``.
-    """
-    jars: dict[str, str] = {}
-    for line in ARTIFACTS_MANIFEST.read_text().splitlines():
-        fields = line.split()
-        if len(fields) >= 3 and fields[0] == "plugin":
-            jar = fields[2].rsplit("/", 1)[-1]
-            version = re.search(r"-\d", jar)
-            jars[jar[: version.start()] if version else jar] = jar
-    return jars
-
-
-def _is_build_of(key: str, jar: str) -> bool:
-    """Is ``jar`` a build of the plugin named ``key``?
-
-    A bare ``startswith(f"{key}-")`` is not enough: ``container-service-`` also prefixes
-    ``container-service-extras-1.0.jar``, so an image without container-service would be
-    reported as carrying a *stale* one named after the extras jar — pointing the operator at
-    a file they must not touch. The match therefore requires a digit immediately after
-    ``<key>-``, which is where every plugin in the roster carries its version.
-
-    Args:
-        key: Plugin key from the manifest.
-        jar: A filename found in the pod's plugin directory.
-
-    Returns:
-        True if ``jar`` is a versioned build of ``key``.
-    """
-    if not jar.endswith(".jar"):
-        return False
-    prefix = f"{key}-"
-    return jar.startswith(prefix) and jar[len(prefix) : len(prefix) + 1].isdigit()
-
-
-def compare_plugin_roster(
-    expected: dict[str, str], found: list[str]
-) -> tuple[list[tuple[str, str]], list[tuple[str, str, str]]]:
-    """Diff the jars a pod is running against the ones the manifest lists.
-
-    Args:
-        expected: ``{plugin key: jar filename}`` from the manifest.
-        found: Filenames actually present in the pod's plugin directory.
-
-    Returns:
-        ``(missing, stale)``. ``missing`` is ``(key, expected jar)`` for a plugin with
-        nothing of its name on disk. ``stale`` is ``(key, expected jar, found jar)`` where
-        a DIFFERENT version of that same plugin is present — the signal that matters here,
-        because the pod is then running a jar the manifest no longer lists, which is how a
-        1.9.x DQR plugin survived on an XNAT 1.10.0 pod and aborted every C-STORE with
-        AbstractMethodError (FLIP#1228).
-
-        Only a versioned build of the key itself counts as stale (see ``_is_build_of``),
-        and never a jar the roster expects under another key: a plugin whose name merely
-        starts with another's stays *missing*.
-    """
-    found_set = set(found)
-    # A jar the roster expects under some other key belongs to that key, and is never this
-    # plugin's stale copy however its name reads. (The loop skips any key whose own jar is
-    # present, so a jar left in here is always another key's.)
-    spoken_for = set(expected.values())
-    missing: list[tuple[str, str]] = []
-    stale: list[tuple[str, str, str]] = []
-
-    for key, jar in sorted(expected.items()):
-        if jar in found_set:
-            continue
-        others = sorted(f for f in found_set if _is_build_of(key, f) and f not in spoken_for)
-        if others:
-            stale.append((key, jar, ", ".join(others)))
-        else:
-            missing.append((key, jar))
-
-    return missing, stale
-
-
-# The id GET /xapi/plugins lists each manifest plugin under — the `id=` in the jar's
-# META-INF/xnat/*-plugin.properties, read from the jars and the API on XNAT 1.10.0. A new plugin
-# needs an entry; tests/test_plugin_roster_and_timeout.py fails until it has one.
+# The id GET /xapi/plugins lists each plugin under — the `id=` in the jar's
+# META-INF/xnat/*-plugin.properties, read from the jars and the API on XNAT 1.10.0. Every xnat-web
+# pod must load all of them: the image is built from trust/xnat/artifacts.manifest, and
+# tests/test_plugin_roster_and_timeout.py keeps the two in step.
 XNAT_PLUGIN_IDS = {
     "batch-launch": "batchLaunchPlugin",
     "container-service": "containers",
@@ -440,114 +347,57 @@ def loaded_plugin_ids(pod: str, namespace: str) -> tuple[set[str] | None, str]:
     return set(listing), ""
 
 
-class RosterLookup(StrEnum):
-    """Outcome of reading the plugin roster for the live release.
-
-    ``DISABLED`` and ``UNREADABLE`` are deliberately distinct. "XNAT is off in this
-    release" means there is nothing to check and the run is fine; "helm errored, timed out
-    or returned something unparseable" means the one check that catches FLIP#1228 did NOT
-    run. Collapsing the two into a single "skipped" lets a slow or broken helm turn this
-    check off while ``make status`` still exits green.
-    """
-
-    OK = "ok"
-    DISABLED = "disabled"
-    UNREADABLE = "unreadable"
-
-
-@dataclass(frozen=True)
-class PluginRoster:
-    """The jars the pod should carry, and why it might be nothing.
-
-    Attributes:
-        status: Whether the roster was read, is switched off, or could not be read.
-        jars: ``{plugin key: jar filename}`` when ``status`` is OK.
-        detail: Human-readable reason, for the DISABLED and UNREADABLE cases.
-    """
-
-    status: RosterLookup
-    jars: dict[str, str] = field(default_factory=dict)
-    detail: str = ""
-
-
-def expected_plugin_jars(helm_release: str, namespace: str) -> PluginRoster:
-    """Read the manifest's plugin roster, if the live release runs XNAT.
-
-    Whether XNAT is on comes from ``helm get values --all``, the live release rather than
-    the checkout's values.yaml. The jars come from the manifest the xnat-web image is built
-    from, so a pod that carries others runs an image built from another manifest.
+def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
+    """Ask the live release whether it runs XNAT (``helm get values --all``).
 
     Args:
         helm_release: Helm release name.
         namespace: Kubernetes namespace.
 
     Returns:
-        A :class:`PluginRoster`. A failure to read is reported as UNREADABLE rather than
-        as an empty roster, so the caller can say the check did not run instead of passing.
+        ``(enabled, "")``, or ``(None, why not)`` when the values could not be read. That stays
+        distinct from "off", so a slow or broken helm cannot turn the check off while
+        ``make status`` still exits green.
     """
     if not check_command("helm"):
-        return PluginRoster(RosterLookup.UNREADABLE, detail="helm is not on PATH")
+        return None, "helm is not on PATH"
     success, output = run_command(
         ["helm", "get", "values", helm_release, "-n", namespace, "--all", "-o", "json"],
         timeout=30,
     )
     if not success:
-        return PluginRoster(
-            RosterLookup.UNREADABLE,
-            detail=f"`helm get values {helm_release} -n {namespace}` failed or timed out: {output.strip()[:200]}",
-        )
-    if not output.strip():
-        return PluginRoster(RosterLookup.UNREADABLE, detail="helm returned no values for this release")
+        return None, f"`helm get values {helm_release} -n {namespace}` failed or timed out: {output.strip()[:200]}"
     try:
         values = json.loads(output)
     except json.JSONDecodeError as exc:
-        return PluginRoster(RosterLookup.UNREADABLE, detail=f"helm's values are not valid JSON: {exc}")
-
-    xnat = values.get("xnat") or {}
-    if not xnat.get("enabled", False):
-        return PluginRoster(RosterLookup.DISABLED, detail="xnat.enabled is false in this release")
-    try:
-        jars = manifest_plugin_jars()
-    except OSError as exc:
-        return PluginRoster(RosterLookup.UNREADABLE, detail=f"cannot read {ARTIFACTS_MANIFEST}: {exc}")
-    if not jars:
-        return PluginRoster(RosterLookup.UNREADABLE, detail=f"{ARTIFACTS_MANIFEST} lists no plugins")
-    return PluginRoster(RosterLookup.OK, jars=jars)
+        return None, f"helm's values are not valid JSON: {exc}"
+    if not isinstance(values, dict):
+        return None, "helm returned no values for this release"
+    return bool((values.get("xnat") or {}).get("enabled", False)), ""
 
 
-_OTHER_IMAGE = (
-    "Its xnat-web image was built from another manifest: run this check from the release's checkout, "
-    "then replace the pod (make deploy-trust-k8s KIT=<KIT> HELM_TIMEOUT=45m, or kubectl rollout restart "
-    "for a tag rebuilt since the pod pulled it)."
-)
+def check_xnat_plugins(helm_release: str, namespace: str) -> None:
+    """Assert XNAT on every running xnat-web pod loaded every plugin in ``XNAT_PLUGIN_IDS``.
 
-
-def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
-    """Assert the running xnat-web pod carries the manifest's plugin jars, and XNAT loaded them.
-
-    The plugins are the xnat-web image's own, so a pod whose jars differ from the manifest
-    runs an image built from another one: a tag pulled before the image was rebuilt, an
-    image pin, or a checkout other than the release's. Nothing else in this script can see
-    that: the release reports deployed, the pod reports Ready, and XNAT answers HTTP. It
-    only surfaces on the DICOM path.
-    A plugin that loads can still fail at run time (one built for another XNAT core aborts
-    every C-STORE, FLIP#1228), so this does not replace ``make smoke-cstore``.
+    The jars and the XNAT core ship in one image built from one manifest, so a plugin can no
+    longer outlive its core (FLIP#1228); what is left to catch is a jar XNAT did not load. A
+    loaded plugin can still fail at run time (one built for another XNAT core aborts every
+    C-STORE), which is what ``make smoke-cstore`` covers.
 
     Args:
         helm_release: Helm release name.
         namespace: Kubernetes namespace.
     """
-    roster = expected_plugin_jars(helm_release, namespace)
-    if roster.status is RosterLookup.UNREADABLE:
+    enabled, why = xnat_enabled(helm_release, namespace)
+    if enabled is None:
         print_status(
             "WARN",
-            f"Could NOT read the plugin roster ({roster.detail}) — this check did not run. It is the "
-            "one that catches a stale-plugin pod, so do not read the rest of this report as clearing "
-            "the DICOM path.",
+            f"Could NOT read the release's values ({why}) — the XNAT plugin check did not run, so do "
+            "not read the rest of this report as clearing the DICOM path.",
         )
         return
-    if roster.status is RosterLookup.DISABLED:
-        print_status("INFO", f"Skipping XNAT plugin roster check ({roster.detail})")
+    if not enabled:
+        print_status("INFO", "Skipping the XNAT plugin check (xnat.enabled is false in this release)")
         return
 
     pods = kubectl_list(
@@ -565,78 +415,33 @@ def check_xnat_plugin_roster(helm_release: str, namespace: str) -> None:
             namespace,
         )
     if not pods:
-        print_status("WARN", "No running xnat-web pod — cannot verify the plugin roster")
+        print_status("WARN", "No running xnat-web pod — cannot verify its plugins")
         return
 
     # EVERY Running pod, not pods[0]. Running is not Ready: during a rollout — and
     # indefinitely if one stalls — a new pod sits Running beside the old one while the
-    # Service still routes to the old. Checking whichever sorted first would report the
-    # new pod's correct jars and PASS while every C-STORE still lands on the stale one,
-    # which is exactly the false confidence FLIP#1228 was made of.
+    # Service still routes to the old. Checking whichever sorted first could PASS the new
+    # pod while every C-STORE still lands on the old one.
     if len(pods) > 1:
         print_status(
             "WARN",
             f"{len(pods)} xnat-web pods are Running ({', '.join(pods)}) — a rollout is in progress or "
             "stalled. Each is checked below, but note the Service may still be routing stores to the "
-            "OLD pod, so a correct roster on the new one does not mean stores are landing on it.",
+            "OLD pod, so a clean result on the new one does not mean stores are landing on it.",
         )
 
-    inspected: list[str] = []
-    clean: list[str] = []
-    unasked: list[str] = []
     for pod in pods:
-        success, listing = run_command(
-            ["kubectl", "exec", pod, "-n", namespace, "--", "ls", "-1", XNAT_PLUGIN_DIR],
-            timeout=30,
-        )
-        if not success:
-            print_status("WARN", f"Could not list {XNAT_PLUGIN_DIR} in '{pod}' — its roster is unverified")
-            continue
-
-        inspected.append(pod)
-        found = [line.strip() for line in listing.splitlines() if line.strip().endswith(".jar")]
-        missing, stale = compare_plugin_roster(roster.jars, found)
-
-        for key, jar, present in stale:
-            print_status(
-                "FAIL",
-                f"XNAT plugin '{key}' on '{pod}': the manifest lists {jar}, the pod carries {present}. "
-                f"{_OTHER_IMAGE} A plugin/core mismatch aborts every C-STORE while C-ECHO still passes.",
-            )
-        for key, jar in missing:
-            print_status(
-                "FAIL",
-                f"XNAT plugin '{key}': {jar} is not in {XNAT_PLUGIN_DIR} on '{pod}'. {_OTHER_IMAGE}",
-            )
-
-        # The one thing the filenames cannot show: a jar on disk that XNAT did not load.
         loaded, why = loaded_plugin_ids(pod, namespace)
-        unloaded = []
         if loaded is None:
-            print_status("WARN", f"Could not ask XNAT on '{pod}' which plugins it loaded ({why}) — jars on disk only")
-            unasked.append(pod)
-        else:
-            for key, jar in sorted(roster.jars.items()):
-                plugin_id = XNAT_PLUGIN_IDS.get(key)
-                if plugin_id is None:
-                    print_status("WARN", f"XNAT plugin '{key}': no plugin id known (add it to XNAT_PLUGIN_IDS)")
-                elif jar in found and plugin_id not in loaded:
-                    unloaded.append(key)
-                    print_status(
-                        "FAIL",
-                        f"XNAT plugin '{key}' on '{pod}': {jar} is present on disk but not loaded "
-                        f"(GET /xapi/plugins lists no '{plugin_id}') — see the tomcat container's startup log.",
-                    )
-        if not missing and not stale and not unloaded:
-            clean.append(pod)
-
-    if inspected and len(clean) == len(inspected):
-        jars = ", ".join(sorted(roster.jars.values()))
-        where = clean[0] if len(clean) == 1 else f"all {len(clean)} running pods"
-        loaded_too = "" if unasked else ", and XNAT loaded them all"
-        print_status(
-            "PASS", f"XNAT plugin roster matches the manifest on {where} ({len(roster.jars)} jars: {jars}){loaded_too}"
-        )
+            print_status("WARN", f"Could not ask XNAT on '{pod}' which plugins it loaded ({why})")
+            continue
+        unloaded = [key for key, plugin_id in sorted(XNAT_PLUGIN_IDS.items()) if plugin_id not in loaded]
+        for key in unloaded:
+            print_status(
+                "FAIL", f"XNAT on '{pod}' did not load the {key} plugin: see the tomcat container's startup log"
+            )
+        if not unloaded:
+            print_status("PASS", f"XNAT on '{pod}' loaded all {len(XNAT_PLUGIN_IDS)} plugins")
 
 
 def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:
@@ -1009,10 +814,10 @@ def main(
         else:
             print_status("WARN", f"Init job '{job_name}' ({label}) has not completed yet (still running?)")
 
-    # ── XNAT plugin roster ────────────────────────────────────────────────
-    print_section("XNAT Plugin Roster")
+    # ── XNAT plugins ──────────────────────────────────────────────────────
+    print_section("XNAT Plugins")
 
-    check_xnat_plugin_roster(helm_release, namespace)
+    check_xnat_plugins(helm_release, namespace)
 
     # ── HTTP endpoint checks (via port-forward) ───────────────────────────
     if not skip_endpoints:
