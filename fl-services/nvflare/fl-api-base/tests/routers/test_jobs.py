@@ -10,14 +10,16 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import status
-from nvflare.fuel.flare_api.api_spec import JobNotFound
+from nvflare.fuel.flare_api.api_spec import AuthenticationError, JobNotFound
 
 from fl_api.app import app
-from fl_api.core.dependencies import get_session
+from fl_api.core.dependencies import get_session, get_studies
+from fl_api.utils.study_sessions import StudySessions
 
 
 @pytest.fixture(autouse=True)
@@ -61,6 +63,22 @@ def override_session(client):
     app.dependency_overrides[get_session] = lambda: fake_session
     yield fake_session  # ✅ yield it so tests can access it
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def study_sessions():
+    """The study sessions the routes open, by study (FLIP#1678)."""
+    return {}
+
+
+@pytest.fixture(autouse=True)
+def override_studies(override_session, study_sessions):
+    """The real StudySessions around the fake default session; each study session is a MagicMock."""
+    studies = StudySessions(
+        override_session, lambda study: study_sessions.setdefault(study, MagicMock()), Path("/nope")
+    )
+    app.dependency_overrides[get_studies] = lambda: studies
+    return studies  # override_session clears the overrides
 
 
 def test_list_jobs_success(client):
@@ -144,3 +162,86 @@ def test_submit_job_accepts_uuid(client, override_session):
 
     assert response.status_code == status.HTTP_200_OK
     override_session.submit_job.assert_called_once_with(model_id)
+
+
+# --- NVFLARE studies: one per project (FLIP#1678) ------------------------------------------------
+
+MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
+
+
+def test_submit_with_study_registers_then_submits_in_the_study_session(client, override_studies, study_sessions):
+    order = MagicMock()
+    with (
+        patch("fl_api.routers.jobs.job_sites", return_value=["Trust_1"]),
+        patch.object(override_studies, "register", side_effect=lambda *a: order.register(*a)),
+    ):
+        study_sessions["p1"] = MagicMock()
+        study_sessions["p1"].submit_job.side_effect = lambda folder: (order.submit(folder), "job-1")[1]
+
+        response = client.post(f"/submit_job/{MODEL_ID}", params={"study": "p1"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == "job-1"
+    assert [c[0] for c in order.mock_calls] == ["register", "submit"]
+    order.register.assert_called_once_with("p1", ["Trust_1"])
+    order.submit.assert_called_once_with(MODEL_ID)
+
+
+def test_submit_without_study_uses_the_default_session(client, override_session, study_sessions):
+    override_session.submit_job.return_value = "job-0"
+
+    response = client.post(f"/submit_job/{MODEL_ID}")
+
+    assert response.json() == "job-0"
+    assert study_sessions == {}
+
+
+def test_list_jobs_merges_default_and_named_studies(client, study_sessions):
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].list_jobs.return_value = [{"job_id": "s1", "status": "RUNNING"}]
+
+    response = client.get("/list_jobs", params=[("study", "p1")])
+
+    assert response.status_code == status.HTTP_200_OK
+    assert [j["job_id"] for j in response.json()] == ["1234", "5678", "s1"]
+
+
+def test_list_jobs_skips_an_unknown_study(client, override_studies):
+    with patch.object(
+        override_studies,
+        "_factory",
+        side_effect=AuthenticationError("unknown study", auth_code="AUTH_UNKNOWN_STUDY"),
+    ):
+        response = client.get("/list_jobs", params=[("study", "gone")])
+
+    assert response.status_code == status.HTTP_200_OK
+    assert [j["job_id"] for j in response.json()] == ["1234", "5678"]
+
+
+def test_list_jobs_fails_on_any_other_error(client, study_sessions):
+    # A partial list would read as "the job is gone" to the hub's watchdog, which then fails a live model.
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].list_jobs.side_effect = Exception("server unreachable")
+
+    response = client.get("/list_jobs", params=[("study", "p1")])
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+def test_abort_job_uses_the_named_study_session(client, override_session, study_sessions):
+    study_sessions["p1"] = MagicMock()
+
+    response = client.delete("/abort_job/s1", params={"study": "p1"})
+
+    assert response.status_code == status.HTTP_200_OK
+    study_sessions["p1"].abort_job.assert_called_once_with("s1")
+    override_session.abort_job.assert_not_called()
+
+
+def test_download_job_uses_the_named_study_session(client, study_sessions):
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].download_job_result.return_value = "/tmp/result"
+
+    response = client.get("/download_job/s1", params={"study": "p1"})
+
+    assert response.json() == "/tmp/result"

@@ -59,3 +59,32 @@ def create_fl_session() -> FLIP_Session:
     logger.info(f"Download directory set to: {session.download_dir}")
 
     return session
+
+
+def open_study_session(study: str) -> FLIP_Session:
+    """Open an admin session in one NVFLARE study (FLIP#1678), connecting once.
+
+    The default session already waited for the server at boot; a study session is opened during a request, so it
+    fails fast rather than holding the request for ``TIMEOUT_FL_SERVER_STARTUP``.
+
+    Args:
+        study (str): The study, a project id.
+
+    Returns:
+        FLIP_Session: A connected session in that study.
+    """
+    settings = get_settings()
+    session = FLIP_Session(
+        username=settings.USERNAME,
+        startup_path=settings.FL_ADMIN_DIRECTORY,
+        secure_mode=settings.SECURE_MODE,
+        debug=settings.LOG_LEVEL == "DEBUG",
+        study=study,
+    )
+    try:
+        session.try_connect(settings.TIMEOUT_SESSION_CONNECT)
+    except Exception:
+        with contextlib.suppress(Exception):
+            session.close()
+        raise
+    return session
