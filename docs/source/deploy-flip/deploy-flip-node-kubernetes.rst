@@ -211,14 +211,15 @@ XNAT's admin password
 
 XNAT starts with the login ``admin`` / ``admin``. After every deploy, the ``xnat-init`` job signs in with the kit's
 ``XNAT_ADMIN_INITIAL_PASSWORD`` while XNAT still accepts it, and changes it to the kit's ``XNAT_ADMIN_PASSWORD``.
-From then on it signs in with ``XNAT_ADMIN_PASSWORD``. So before the first deploy, set ``XNAT_ADMIN_PASSWORD`` to the
+From then on XNAT refuses ``admin``, which is expected and shows as refused sign-ins in XNAT's log, and the job
+signs in with ``XNAT_ADMIN_PASSWORD``. So before the first deploy, set ``XNAT_ADMIN_PASSWORD`` to the
 trust's own password (for example from ``openssl rand -hex 24``) and leave ``XNAT_ADMIN_INITIAL_PASSWORD=admin``.
 
 **A trust still on** ``admin``. Earlier charts could not change the password, so a trust they installed still signs
 in with ``admin``. Set a new ``XNAT_ADMIN_PASSWORD`` in the kit, generate the secrets file again and deploy (Step 4).
 XNAT still accepts ``admin``, so the job changes the password without a failed sign-in.
 
-**Changing it later.** Change it in XNAT first, signed in as ``admin``. Then put the same value in the kit's
+**Changing it later.** Change it in XNAT first, signed in as the admin user with the current password. Then put the same value in the kit's
 ``XNAT_ADMIN_PASSWORD``, generate the secrets file again and deploy.
 
 .. warning::

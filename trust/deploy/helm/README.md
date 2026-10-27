@@ -800,7 +800,7 @@ not deploy. `sync-kit` patches the per-trust keys on top without touching the ot
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
 | `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated by `scripts/generate_values.py` from `ORTHANC_REGISTERED_USERS`, else from the kit's `ORTHANC_USERNAME` / `ORTHANC_PASSWORD` |
-| `xnat-admin-initial-password` | xnat-web, xnat-init | XNAT's factory admin password, from the kit's `XNAT_ADMIN_INITIAL_PASSWORD`. The one optional key: absent, the chart uses `admin` (see [XNAT admin password](#xnat-admin-password)) |
+| `xnat-admin-initial-password` | xnat-web, xnat-init | XNAT's factory admin password, from the kit's `XNAT_ADMIN_INITIAL_PASSWORD`. Optional: absent, the chart uses `admin` (see [XNAT admin password](#xnat-admin-password)) |
 | `xnat-admin-password` | xnat-web, xnat-init | This trust's XNAT admin password, from the kit's `XNAT_ADMIN_PASSWORD` |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
@@ -816,15 +816,16 @@ sync secrets from AWS Secrets Manager or HashiCorp Vault.
 XNAT installs with the login `admin` / `admin`. The `xnat-init` hook runs `configure-xnat.sh` on
 every install and upgrade: while XNAT still accepts `xnat-admin-initial-password` it signs in with
 it and changes it to `xnat-admin-password`, and once XNAT refuses it, it signs in with
-`xnat-admin-password` and changes nothing (FLIP#1692). Kits keep `XNAT_ADMIN_INITIAL_PASSWORD=admin`.
+`xnat-admin-password` and leaves the password as it is (FLIP#1692). So every later run has
+`admin` refused at least twice first; that is expected. Kits keep `XNAT_ADMIN_INITIAL_PASSWORD=admin`.
 
 - **A trust still on `admin`** (installed by an earlier chart, which fed one key to both): set a new
   `XNAT_ADMIN_PASSWORD` in the kit, rerun `scripts/generate_values.py`, then
   `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>`. XNAT still accepts `admin`, so
   the hook changes it with no refused login.
 - **Changing it later:** change it in XNAT first, then put the same value in the kit, rerun
-  `scripts/generate_values.py` and deploy. A kit-only change fails the hook with `neither admin
-  password authenticates`, and each retry counts towards XNAT's lockout after about 20 refused logins.
+  `scripts/generate_values.py` and deploy. A kit-only change fails the hook and counts towards
+  XNAT's lockout.
 
 ### xnat-db roles and credential rotation
 

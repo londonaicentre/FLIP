@@ -213,8 +213,8 @@ secrets:
     # env var by scripts/generate_values.py.
     orthanc-registered-users: ""
     xnat-admin-user: ""
-    # XNAT's factory admin password, which xnat-init changes to xnat-admin-password on first
-    # install. Optional: left empty (or absent from an existing Secret), it is `admin`.
+    # XNAT's factory admin password, which xnat-init changes to xnat-admin-password while XNAT
+    # still accepts it. Optional: left empty (or absent from an existing Secret), it is `admin`.
     xnat-admin-initial-password: ""
     xnat-admin-password: ""
     xnat-service-user: ""

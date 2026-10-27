@@ -92,7 +92,7 @@ def _run_init_command(tmp_path: Path, env: dict[str, str]) -> str:
     [
         ({}, "admin|own"),  # a Secret without the key: XNAT's factory password
         ({"XNAT_ADMIN_INITIAL_PASSWORD": "factory"}, "factory|own"),  # pragma: allowlist secret
-        # Empty stays empty, so configure-xnat.sh refuses it rather than guessing.
+        # A Secret holding the key empty: it stays empty, so configure-xnat.sh refuses it rather than guessing.
         ({"XNAT_ADMIN_INITIAL_PASSWORD": ""}, "|own"),
     ],
 )
@@ -111,3 +111,10 @@ def test_the_chart_secret_carries_both_passwords() -> None:
 
     assert data["xnat-admin-initial-password"] == "factory"  # pragma: allowlist secret
     assert data["xnat-admin-password"] == "own"  # pragma: allowlist secret
+
+
+def test_an_empty_initial_password_leaves_its_key_out_of_the_chart_secret() -> None:
+    """An empty key would reach the pods set but empty, which the `admin` default does not cover."""
+    (secret,) = _render("secrets.yaml", "secrets.create=true", "secrets.data.xnat-admin-password=own")
+
+    assert "xnat-admin-initial-password" not in secret["data"]

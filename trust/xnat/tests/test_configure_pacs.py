@@ -1352,7 +1352,8 @@ def test_a_configured_site_still_on_the_initial_password_moves_to_the_kits(tmp_p
     assert code == 0, output
     assert "converging" in output
     assert held.read_text() == "rotated"
-    # As on Compose: the mode probe and the plugin wait each try the initial password first.
+    # As on Compose: the mode probe and the plugin wait each try the initial password first (at least
+    # twice; more while the plugins are still loading).
     assert refused.read_text().splitlines() == ["admin:initial"] * 2
 
 

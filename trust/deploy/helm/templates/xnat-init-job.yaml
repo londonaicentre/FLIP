@@ -115,10 +115,7 @@ spec:
               value: "1"
             - name: XNAT_ADMIN_USER
               value: {{ .Values.xnat.web.adminUser | quote }}
-            # XNAT installs with its factory password, `admin`. While XNAT still accepts the initial
-            # password, configure-xnat.sh signs in with it and changes it to XNAT_ADMIN_PASSWORD; after
-            # that it signs in with XNAT_ADMIN_PASSWORD (FLIP#1692). Optional, so a Secret without the
-            # key keeps working: the command above then uses `admin`.
+            # Optional: absent, the command above uses `admin` (FLIP#1692).
             - name: XNAT_ADMIN_INITIAL_PASSWORD
               valueFrom:
                 secretKeyRef:
