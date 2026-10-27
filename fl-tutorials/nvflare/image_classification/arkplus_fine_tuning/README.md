@@ -21,6 +21,26 @@ legacy Executor API to the Client API. The job is defined entirely in Python via
 [`FlipFedAvgRecipe`](../../../../flip-utils/flip/nvflare/recipes/flip_fedavg_recipe.py) in
 [`job.py`](job.py) — no hand-written server/client JSON.
 
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the files in `app_files/` (`trainer.py`, `models.py`, `arkplus_flat_models.py`, `data_utils.py`, `loss_and_metrics.py`, `config.json`, `meta.json`) plus the `pretrained_weights.pt` that `make prepare-checkpoint` derives — the server loads it (`SERVER_CHECKPOINT`); clients receive the weights at round 0, never the file |
+| Job type | `standard` (`job_type` in `app_files/config.json`; `FlipFedAvgRecipe` with `aggregate_only_regex`) |
+| Imaging | **on**, with **DICOM to NIfTI off** — the cohort projects `accession_id` and the app reads the pulled DICOMs |
+| Cohort query | `query.sql` (saved on the project, not uploaded) |
+| Dataset | `make -C fl-tutorials download-arkplus-finetuning-data`; the raw Ark+ checkpoint `make download-raw-checkpoint` here (access-gated, see *Checkpoint setup*) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_fine_tuning` (GPU; `MAX_SAMPLES=128` smoke by default); `make export` here builds the job config without a GPU |
+
+```mermaid
+flowchart LR
+    CK["pretrained_weights.pt<br/>backbone only, from make prepare-checkpoint"] -- "SERVER_CHECKPOINT seeds round 0" --> S["FL server<br/>InitialCheckpointPTModelPersistor"]
+    S -- "round 0: full model<br/>later rounds: head only (TrimBroadcastVars)" --> C["each trust client<br/>ReconstructFullModel → backbone frozen,<br/>omni_heads trained (teacher/student EMA)"]
+    C -- "KeepOnlyVars: the omni_heads diff" --> AGG["FedAvg over the head only<br/>(AGGREGATE_ONLY_REGEX = omni_heads)"]
+    AGG --> S
+    C -. "is_evaluate(): per-lesion AUC on the local split" .-> H["hub metrics, best model"]
+```
+
 ## Compatible job type
 
 `config.json["job_type"] = "standard"`. Each client runs [`app_files/trainer.py`](app_files/trainer.py)
