@@ -84,6 +84,7 @@ def _run(
     no_kit: bool = False,
     abort_in_sleep: bool = False,
     keep_up: bool = False,
+    seed: str = "",
 ) -> tuple[subprocess.CompletedProcess, dict | None, Path, Path]:
     tmp = Path(tempfile.mkdtemp(prefix=f"selftest-{case}-"))
     bin_dir, out, data = tmp / "bin", tmp / "out", tmp / "data"
@@ -159,6 +160,8 @@ def _run(
     }
     if keep_up:
         env["SELFTEST_KEEP_UP"] = "1"
+    if seed:
+        env["SELFTEST_TRUST_DATA_SEED"] = seed
     if bad_template:
         template = tmp / "template"
         template.write_text("SOMETHING_NEW=<run-make-register-trust>\n")
@@ -271,6 +274,16 @@ def main() -> int:
     )
     _assert("up-trust" not in calls.read_text(), "and the stack is not started")
     _assert("down-trust" not in calls.read_text(), "so there is nothing to tear down")
+
+    print("sample_data_off_skips_what_needs_it")
+    result, report, calls, tmp = _run("noseed", seed="false", write_markers=False)
+    _assert(result.returncode == 0 and report is not None and report["ok"] is True, "passes", result.stdout)
+    _assert("TRUST_DATA_SEED=false" in (tmp / ".env.SELFTEST.prod").read_text(), "the kit turns the seed off")
+    for name in ("omop seeded", "orthanc seeded", "xnat c-store"):
+        detail = _check(report, name).get("detail", "")
+        _assert(detail.startswith("skipped: TRUST_DATA_SEED=false"), f"'{name}' says why it is skipped", detail)
+    _assert(_check(report, "orthanc requires auth").get("ok") is True, "orthanc auth is still checked")
+    _assert("/modalities/XNAT/store" not in calls.read_text(), "no store is attempted")
 
     print("health_failure_fails_run")
     result, report, _, _ = _run("health", failing_port="8010")

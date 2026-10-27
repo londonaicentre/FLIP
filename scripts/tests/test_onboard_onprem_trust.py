@@ -616,6 +616,17 @@ def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
         _assert(check.status == status, f"{status.name}: {check.detail}", str(check))
 
 
+def test_32_empty_dir_with_sample_data_off_says_nothing_is_seeded() -> None:
+    """TRUST_DATA_SEED=false: an empty store is still a WARN, but the hint no longer promises a seed (FLIP#1687)."""
+    print("\n[32] empty data dir with TRUST_DATA_SEED=false -> WARN, no seed promised")
+    with tempfile.TemporaryDirectory() as td:
+        kit_vars = {"OMOP_DATA_DIR": td, "TRUST_DATA_SEED": "false"}
+        result = mod.check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, True, SCRIPTS_DIR.parent)
+        _assert(result.status == mod.Status.WARN, "status is WARN", result.detail)
+        _assert(any("TRUST_DATA_SEED=false" in h for h in result.hints), "hint says the sample data is off")
+        _assert(not any("seeds it" in h for h in result.hints), "and does not say up-trust seeds it", str(result))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -651,6 +662,7 @@ def main() -> None:
     test_29_ready_command_preserves_and_quotes_the_selected_kit()
     test_30_governance_action_preserves_and_quotes_the_selected_kit()
     test_31_unrotated_passwords_compare_against_the_kit_template()
+    test_32_empty_dir_with_sample_data_off_says_nothing_is_seeded()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

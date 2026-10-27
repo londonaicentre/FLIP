@@ -51,6 +51,10 @@ record() { # <name> <ok:true|false> <detail>
     printf '%s\t%s\t%s\n' "$1" "$2" "${3//$'\t'/ }" >> "${CHECKS_FILE}"
     if [ "$2" = true ]; then echo "  ✅ $1"; else echo "  ❌ $1: $3"; fi
 }
+skip() { # <name> <reason>: a pass that says why the check did not run
+    record "$1" true "skipped: $2" >/dev/null
+    echo "  ⏭️  $1: skipped, $2"
+}
 
 if [ "${BACKEND}" = nvflare ]; then
     DEV_KIT_DIR="${SELFTEST_DEV_KIT_DIR:-${REPO_ROOT}/fl-services/nvflare/provision/workspace-dev}"
@@ -114,6 +118,10 @@ KIT_ARGS=(--backend "${BACKEND}" --fl-kit-dir "${FL_KIT_DIR}" --data-root "${DAT
 if [ -n "${SELFTEST_KIT_TEMPLATE:-}" ]; then
     KIT_ARGS+=(--template "${SELFTEST_KIT_TEMPLATE}")
 fi
+# false: no sample data, for a node with no route to Hugging Face or PyPI.
+if [ -n "${SELFTEST_TRUST_DATA_SEED:-}" ]; then
+    KIT_ARGS+=(--trust-data-seed "${SELFTEST_TRUST_DATA_SEED}")
+fi
 if python3 "${REPO_ROOT}/scripts/selftest_kit.py" "${KIT_ARGS[@]}" >/dev/null; then
     record "kit file" true "${KIT_OUT}"
 else
@@ -148,8 +156,15 @@ marker() { # <name> <path>
         record "$1 seeded" false "missing or empty seed marker $2"
     fi
 }
-marker omop "${DATA_ROOT}/omop/.seeded"
-marker orthanc "${DATA_ROOT}/.orthanc-storage.seeded"
+NO_SAMPLE_DATA=""
+if [ "$(sed -n 's/^TRUST_DATA_SEED=//p' "${KIT_OUT}" 2>/dev/null | tail -1)" = false ]; then
+    NO_SAMPLE_DATA="TRUST_DATA_SEED=false, so the stack holds no sample data"
+    skip "omop seeded" "${NO_SAMPLE_DATA}"
+    skip "orthanc seeded" "${NO_SAMPLE_DATA}"
+else
+    marker omop "${DATA_ROOT}/omop/.seeded"
+    marker orthanc "${DATA_ROOT}/.orthanc-storage.seeded"
+fi
 
 code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://127.0.0.1:8042/" 2>/dev/null || true)"
 if [ "${code}" = 401 ]; then
@@ -180,32 +195,36 @@ log_lines() {
     count="$(docker exec "${XNAT_CTR}" sh -c "wc -l < $1 2>/dev/null || echo 0" 2>/dev/null | tr -dc '0-9')"
     echo "${count:-0}"
 }
-before="$(log_lines "${RECEIVED_LOG}")"
-dicom_before="$(log_lines "${DICOM_LOG}")"
-instance="$(orthanc_curl "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
-store="$(orthanc_curl -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
-    -d "{\"Resources\":[\"${instance}\"],\"Synchronous\":true}" 2>/dev/null || true)"
-# XNAT records the receipt after the store has returned, so poll for it rather than read once
-# (the Helm smoke sleeps a fixed SETTLE_SECONDS for the same reason).
-after="$(log_lines "${RECEIVED_LOG}")"
-for ((waited = 0; waited < ${SELFTEST_CSTORE_SETTLE_SECONDS:-30} && after <= before; waited++)); do
-    sleep 1
-    after="$(log_lines "${RECEIVED_LOG}")"
-done
-errors="$(docker exec "${XNAT_CTR}" sh -c "tail -n +$((dicom_before + 1)) ${DICOM_LOG} 2>/dev/null" 2>/dev/null |
-    grep -cE 'AbstractMethodError|NoSuchMethodError|unable to read DICOM object null' || true)"
-if [ -z "${XNAT_CTR}" ]; then
-    record "xnat c-store" false "no running xnat-web container"
-elif [ -z "${instance}" ]; then
-    record "xnat c-store" false "Orthanc has no instance to send (did seeding run?)"
-elif [[ "${store}" != *'"FailedInstancesCount" : 0'* && "${store}" != *'"FailedInstancesCount":0'* ]]; then
-    record "xnat c-store" false "Orthanc's store to XNAT did not succeed: ${store:0:160}"
-elif [ "${errors:-0}" -gt 0 ]; then
-    record "xnat c-store" false "XNAT's importer logged ${errors} failure(s) in dicom.log"
-elif [ "${after}" -le "${before}" ]; then
-    record "xnat c-store" false "XNAT never recorded the object: received.log stayed at ${before} lines"
+if [ -n "${NO_SAMPLE_DATA}" ]; then
+    skip "xnat c-store" "${NO_SAMPLE_DATA}, so Orthanc has no instance to send"
 else
-    record "xnat c-store" true "1 instance received (received.log ${before}->${after}); no importer error in dicom.log"
+    before="$(log_lines "${RECEIVED_LOG}")"
+    dicom_before="$(log_lines "${DICOM_LOG}")"
+    instance="$(orthanc_curl "http://127.0.0.1:8042/instances?since=0&limit=1" 2>/dev/null | tr -d '[]" \n')"
+    store="$(orthanc_curl -X POST "http://127.0.0.1:8042/modalities/XNAT/store" \
+        -d "{\"Resources\":[\"${instance}\"],\"Synchronous\":true}" 2>/dev/null || true)"
+    # XNAT records the receipt after the store has returned, so poll for it rather than read once
+    # (the Helm smoke sleeps a fixed SETTLE_SECONDS for the same reason).
+    after="$(log_lines "${RECEIVED_LOG}")"
+    for ((waited = 0; waited < ${SELFTEST_CSTORE_SETTLE_SECONDS:-30} && after <= before; waited++)); do
+        sleep 1
+        after="$(log_lines "${RECEIVED_LOG}")"
+    done
+    errors="$(docker exec "${XNAT_CTR}" sh -c "tail -n +$((dicom_before + 1)) ${DICOM_LOG} 2>/dev/null" 2>/dev/null |
+        grep -cE 'AbstractMethodError|NoSuchMethodError|unable to read DICOM object null' || true)"
+    if [ -z "${XNAT_CTR}" ]; then
+        record "xnat c-store" false "no running xnat-web container"
+    elif [ -z "${instance}" ]; then
+        record "xnat c-store" false "Orthanc has no instance to send (did seeding run?)"
+    elif [[ "${store}" != *'"FailedInstancesCount" : 0'* && "${store}" != *'"FailedInstancesCount":0'* ]]; then
+        record "xnat c-store" false "Orthanc's store to XNAT did not succeed: ${store:0:160}"
+    elif [ "${errors:-0}" -gt 0 ]; then
+        record "xnat c-store" false "XNAT's importer logged ${errors} failure(s) in dicom.log"
+    elif [ "${after}" -le "${before}" ]; then
+        record "xnat c-store" false "XNAT never recorded the object: received.log stayed at ${before} lines"
+    else
+        record "xnat c-store" true "1 instance received (received.log ${before}->${after}); no importer error in dicom.log"
+    fi
 fi
 
 # A container on `restart: unless-stopped` is briefly "running" between crashes, so one look
