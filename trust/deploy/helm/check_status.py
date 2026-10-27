@@ -329,7 +329,7 @@ class XnatAnswer:
 
     Attributes:
         plugins: ``{plugin id: version}`` from GET /xapi/plugins. The version is XNAT's own: the
-            plugin's declared one, else empty.
+            plugin's declared one, else its jar name's suffix (``3.8.2-fat``).
         dqr_status: The HTTP status GET /xapi/dqr/settings answered.
         problem: Why the plugin list is unusable; empty when it is usable.
         answered: Whether XNAT replied at all. A wrong reply is a FAIL, no reply a WARN.
