@@ -164,7 +164,7 @@ The ServerApp writes `FL_global_model.pt` under `$WORKING_DIR/<model-id>/trainin
 (`fl-services/flower/runs/` by default); read it with
 
 ```bash
-cd fl-tutorials/flower/biomarker_causal_discovery
+cd fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery
 uv run --project ../../../../flip-utils --extra full --group dev python summarise_results.py \
     ../../../../fl-services/flower/runs/<model-id>/training_outputs/FL_global_model.pt --figure docs/recovered_pag.png
 ```
