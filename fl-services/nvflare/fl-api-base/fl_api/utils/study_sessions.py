@@ -38,6 +38,11 @@ class UnknownStudy(Exception):
     """The FL server has no such study, so it holds no jobs in it."""
 
 
+def is_unknown_study(error: AuthenticationError) -> bool:
+    """Whether the server refused a login because it has no such study."""
+    return error.auth_code in _UNKNOWN_STUDY_CODES
+
+
 def admin_org(startup_dir: Path) -> str:
     """The organisation of this admin's certificate.
 
@@ -100,7 +105,7 @@ class StudySessions:
             try:
                 session = self._factory(study)
             except AuthenticationError as e:
-                if e.auth_code in _UNKNOWN_STUDY_CODES:
+                if is_unknown_study(e):
                     raise UnknownStudy(study) from e
                 raise
             self._sessions[study] = session
@@ -108,6 +113,13 @@ class StudySessions:
                 _, evicted = self._sessions.popitem(last=False)
                 evicted.close()
             return session
+
+    def forget(self, study: str) -> None:
+        """Close and drop a study's session: the server has lost the study, so its next use logs in afresh."""
+        with self._lock:
+            session = self._sessions.pop(study, None)
+        if session is not None:
+            session.close()
 
     def register(self, study: str, sites: Sequence[str]) -> None:
         """Create the study with these sites, or add them to it. Safe to repeat: NVFLARE merges."""

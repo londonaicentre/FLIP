@@ -218,6 +218,24 @@ def test_list_jobs_skips_an_unknown_study(client, override_studies):
     assert [j["job_id"] for j in response.json()] == ["1234", "5678"]
 
 
+def test_list_jobs_forgets_a_cached_study_the_server_has_lost(client, study_sessions):
+    # Final review #3: a server restarted without its study registry rejects the cached session's re-login. The study
+    # holds no jobs any more; the next list must log in afresh rather than fail on the dead session for good.
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].list_jobs.side_effect = AuthenticationError("unknown study", auth_code="AUTH_UNKNOWN_STUDY")
+
+    first = client.get("/list_jobs", params=[("study", "p1")])
+    lost = study_sessions.pop("p1")
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].list_jobs.return_value = [{"job_id": "s1", "status": "RUNNING"}]
+    second = client.get("/list_jobs", params=[("study", "p1")])
+
+    assert first.status_code == status.HTTP_200_OK
+    assert [j["job_id"] for j in first.json()] == ["1234", "5678"]
+    lost.close.assert_called()
+    assert [j["job_id"] for j in second.json()] == ["1234", "5678", "s1"]
+
+
 def test_list_jobs_fails_on_any_other_error(client, study_sessions):
     # A partial list would read as "the job is gone" to the hub's watchdog, which then fails a live model.
     study_sessions["p1"] = MagicMock()

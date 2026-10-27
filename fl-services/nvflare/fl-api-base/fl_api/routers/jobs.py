@@ -14,11 +14,12 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from nvflare.fuel.flare_api.api_spec import AuthenticationError
 
 from fl_api.core.dependencies import get_studies
 from fl_api.utils.logger import logger
 from fl_api.utils.schemas import JobMetadata, JobStatus, TargetType, normalize_status
-from fl_api.utils.study_sessions import StudySessions, UnknownStudy
+from fl_api.utils.study_sessions import StudySessions, UnknownStudy, is_unknown_study
 from fl_api.utils.upload import job_sites
 
 router = APIRouter()
@@ -104,11 +105,18 @@ def list_jobs(
         except UnknownStudy:
             logger.warning(f"The FL server has no study {name}; listing no jobs for it")
             continue
-        raw_jobs.extend(
-            session.list_jobs(
+        try:
+            jobs = session.list_jobs(
                 detailed=detailed, limit=limit, id_prefix=id_prefix, name_prefix=name_prefix, reverse=reverse
             )
-        )
+        except AuthenticationError as e:
+            # A restarted server that lost the study refuses the cached session's re-login.
+            if name is None or not is_unknown_study(e):
+                raise
+            logger.warning(f"The FL server has lost study {name}; listing no jobs for it")
+            studies.forget(name)
+            continue
+        raw_jobs.extend(jobs)
     if limit:
         raw_jobs = raw_jobs[:limit]
     # FLARE's list_jobs always includes job_id + status on every entry (verified against

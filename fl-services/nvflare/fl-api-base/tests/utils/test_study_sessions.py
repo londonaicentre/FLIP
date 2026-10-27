@@ -119,6 +119,21 @@ def test_get_reraises_any_other_login_failure(tmp_path):
         StudySessions(MagicMock(), factory, tmp_path).get("p1")
 
 
+def test_forget_closes_the_session_and_the_next_get_opens_a_new_one(studies, opened):
+    first = studies.get("p1")
+
+    studies.forget("p1")
+    opened.clear()
+
+    first.close.assert_called_once()
+    assert studies.get("p1") is not first
+    assert list(opened) == ["p1"]
+
+
+def test_forget_of_a_study_without_a_session_does_nothing(studies):
+    studies.forget("p1")
+
+
 def test_register_uses_site_org_pairs_from_the_admin_certificate(studies):
     studies.register("p1", ["Trust_1", "Trust_2"])
 
