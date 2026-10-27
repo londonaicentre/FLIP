@@ -33,9 +33,10 @@ query.sql                # the OMOP cohort query (identical to the FLARE copy)
 
 `server_app.py` and `strategy.py` are copied byte-for-byte from the
 [`fl-apps/flower/standard`](../../../../fl-apps/flower/standard) template (CI enforces this via
-`scripts/check_tutorial_sync.sh`), so all the platform telemetry, best-model selection and
-`min_clients` wiring come from the shared template — this tutorial only supplies `client_app.py`,
-`task.py` and the shared feature/model code.
+`fl-tutorials/tests/test_flower_platform_parity.py`; `scripts/check_tutorial_sync.sh` pins the three
+files shared with the FLARE twin — `feature_engineering.py`, `models.py`, `query.sql`), so all the
+platform telemetry, best-model selection and `min_clients` wiring come from the shared template — this
+tutorial only supplies `client_app.py`, `task.py` and the shared feature/model code.
 
 ## Configuration: two files
 
@@ -94,7 +95,9 @@ rounds only — `@app.evaluate` is untouched.
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app: `flwr run . --run-config "dp-enabled=false"`.
+Override per run without editing the app — `sim-tutorial.sh` (what `make run-tutorial` runs) passes
+everything after the tutorial name through to `flwr run`, so there is no need for a raw `flwr run`:
+`bash fl-tutorials/flower/sim-tutorial.sh ehr_risk_prediction --run-config "dp-enabled=false"`.
 
 > ⚠️ The DP defaults are **demonstration values, chosen utility-first** so the tutorial still
 > converges with the mechanism live; they are not a defensible privacy budget (no cross-round
