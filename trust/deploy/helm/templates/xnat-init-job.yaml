@@ -101,6 +101,8 @@ spec:
             - -c
             - |
               set -euo pipefail
+              # XNAT's factory password when the Secret has no xnat-admin-initial-password key.
+              export XNAT_ADMIN_INITIAL_PASSWORD="${XNAT_ADMIN_INITIAL_PASSWORD-admin}"
               cd /data/xnat/config
               bash configure-xnat.sh
           env:
@@ -113,13 +115,16 @@ spec:
               value: "1"
             - name: XNAT_ADMIN_USER
               value: {{ .Values.xnat.web.adminUser | quote }}
-            # Both map to the same secret key, matching the xnat-web deployment: on a fresh install
-            # XNAT is seeded with this password, and configure-xnat.sh rotates from it to itself.
+            # XNAT installs with its factory password, `admin`. While XNAT still accepts the initial
+            # password, configure-xnat.sh signs in with it and changes it to XNAT_ADMIN_PASSWORD; after
+            # that it signs in with XNAT_ADMIN_PASSWORD (FLIP#1692). Optional, so a Secret without the
+            # key keeps working: the command above then uses `admin`.
             - name: XNAT_ADMIN_INITIAL_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: xnat-admin-password
+                  key: xnat-admin-initial-password
+                  optional: true
             - name: XNAT_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
