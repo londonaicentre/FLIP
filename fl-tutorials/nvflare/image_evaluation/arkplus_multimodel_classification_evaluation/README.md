@@ -40,6 +40,29 @@ legacy tutorial.
 > enough to name its evaluation broadcasts (`EvaluationModelLocator` stamping `flip_eval_model_name`);
 > the evaluator fails with that remedy if the meta is absent.
 
+```mermaid
+flowchart LR
+    U["Uploaded app_files/<br/>incl. arkplus_pretrained_weights.pt<br/>and arkplus_finetuned_weights.pt"] --> S["FL server<br/>EvaluationModelLocator loads every config['models'] entry"]
+    S -- "validate task 1: pretrained<br/>(flip_eval_model_name in the DXO meta)" --> C["each trust client<br/>scores the broadcast on its hold-out cohort,<br/>caches per-sample scores across tasks"]
+    S -- "validate task 2: finetuned" --> C
+    C -- "reply = every model scored so far:<br/>per-lesion AUROC + pairwise DeLong p / BH q" --> R["EvaluationJsonGenerator (last reply wins)<br/>evaluation_results.json per site → hub plots<br/>&lt;MODEL&gt;/AUROC_&lt;LESION&gt;"]
+```
+
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the files in `app_files/` (`evaluator.py`, `models.py`, `arkplus_flat_models.py`, `data_utils.py`, `metrics_utils.py`, `config.json`, `meta.json`) plus the two checkpoints `make prepare-checkpoint` places there — the server loads them; clients never open a `.pt` |
+| Job type | `evaluation` (`job_type` in `app_files/config.json`; `FlipEvalRecipe`, one validate task per entry of `config.json["models"]`) |
+| Imaging | **on**, with **DICOM to NIfTI off** — the cohort projects `accession_id` and the evaluator reads the pulled DICOMs |
+| Cohort query | `query.sql` (the hold-out chest X-ray set; saved on the project, not uploaded) |
+| Dataset | `make -C fl-tutorials download-arkplus-eval-data`; the raw Ark+ checkpoint `make download-raw-checkpoint` here (access-gated); the fine-tuned one is fetched by `make prepare-checkpoint` |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_multimodel_classification_evaluation` (GPU, both models resident; `MAX_SAMPLES=128` smoke by default); `make export` here builds the job config without a GPU |
+
+Example radiographs, one per target lesion, are in the fine-tuning tutorial's
+[`docs/dataset_examples.png`](../../image_classification/arkplus_fine_tuning/docs/dataset_examples.png)
+(same dataset family; this tutorial scores the hold-out splits).
+
 ## Compatible job type
 
 This tutorial is designed for `JOB_TYPE=evaluation`.
@@ -104,7 +127,8 @@ both models are scored against.
 
 The app evaluates two models, so it needs two clean `.pt` checkpoints in `app_files/`: the foundation
 model `arkplus_pretrained_weights.pt` and the fine-tuned model `arkplus_finetuned_weights.pt`. Both are
-loaded by every client's evaluator. `make run`/`make export` prepare both automatically (they run
+loaded **server-side** by `EvaluationModelLocator` and broadcast as weights; no client ever opens a
+`.pt` (see *Scope* above). `make run`/`make export` prepare both automatically (they run
 `prepare-checkpoint` first).
 
 ### Foundation model (arkplus_pretrained)
