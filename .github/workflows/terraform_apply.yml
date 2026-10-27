@@ -112,7 +112,11 @@ jobs:
     # estate that was torn down on purpose. It is a repository variable rather
     # than an aws-stag one because a job-level `if` is evaluated before the job's
     # environment is loaded. Production (main) never reads it.
-    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
+    # Outside londonaicentre/FLIP, plan, apply and drift all skip unless the
+    # repository variable TF_CI_ON_FORK is `true` (adopters:
+    # deploy/providers/AWS/ci/README.md). A fork has no aws-* environments, so each
+    # run would fail and mail whoever pushed, or for drift whoever last edited it.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
     permissions:
