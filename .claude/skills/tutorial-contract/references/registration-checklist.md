@@ -22,6 +22,7 @@ min-clients / import-path / offline-apps / catalogue guards, ruff. Hand-maintain
 | `fl-tutorials/Makefile` `DATASET_TARGETS`, `DATASET_TEST_PROJECTS` | New dataset target / dataset test project |
 | `fl-tutorials/datasets/Makefile` + `datasets/README.md` | New dataset |
 | `fl-tutorials/tests/tutorial_apps.py` `DICOM_APPS` | App reads 2-D DICOM through MONAI `LoadImaged` |
+| `fl-tutorials/tests/test_nifti_orientation.py` `NIFTI_APPS` | App loads 3-D NIfTI through MONAI `LoadImaged` (each top-level transform factory; tested) |
 | `scripts/check_tutorial_sync.sh` `PAIRS` + `.github/workflows/fl-apps-check-tutorial-sync.yml` `paths:` | Files shared byte-for-byte between tutorials; every twin pair's `query.sql` (`tests/test_tutorial_catalogue.py` checks it) |
 | `fl-tutorials/AGENTS.md` path table; `fl-tutorials/README.md` backend table and dataset-download sentence | Every tutorial |
 | `AGENTS.md` (root) `fl-tutorials/` line in the repo-structure block | Every tutorial (it enumerates them) |

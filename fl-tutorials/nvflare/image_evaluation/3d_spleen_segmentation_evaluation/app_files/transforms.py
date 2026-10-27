@@ -29,7 +29,7 @@ def get_eval_transforms() -> Compose:
         [
             LoadImaged(keys=["image", "label"]),
             EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="RAS"),
+            Orientationd(keys=["image", "label"], axcodes="RAS", labels=None),
             ScaleIntensityRanged(
                 keys=["image"],
                 a_min=-57,

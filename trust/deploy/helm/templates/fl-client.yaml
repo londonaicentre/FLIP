@@ -10,6 +10,13 @@
 # limitations under the License.
 
 {{- if .Values.flClient.enabled }}
+{{- $jobPods := and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled }}
+{{- if and .Values.flClient.nvflare.jobPods.enabled (ne .Values.flBackend "nvflare") }}
+{{- fail "flClient.nvflare.jobPods.enabled starts each job in its own pod through NVFLARE's Kubernetes job launcher, so it needs flBackend: nvflare." }}
+{{- end }}
+{{- if and $jobPods .Values.flClient.gpu.enabled }}
+{{- fail "flClient.nvflare.jobPods.enabled gives GPUs to the job pods, not to the fl-client: set flClient.gpu.enabled=false and size the site's GPU pool with flClient.nvflare.jobPods.maxGpus." }}
+{{- end }}
 {{- if and (eq .Values.flBackend "nvflare") .Values.flClient.gpu.enabled (ne (int .Values.flClient.gpu.count) 1) }}
 {{- fail "flClient.gpu.count must be 1 when GPU mode is enabled on NVFLARE: the pod sees GPU 0 only (CUDA_VISIBLE_DEVICES and NVIDIA_VISIBLE_DEVICES are 0). Set flClient.gpu.count to 1, or disable flClient.gpu.enabled for CPU-only mode." }}
 {{- end }}
@@ -59,6 +66,14 @@ metadata:
     flip/network: {{ .Values.flClient.netId }}
 spec:
   replicas: 1
+  # One trust, one FL identity (an NVFLARE site, a SuperNode credential). RollingUpdate would start the
+  # new pod before stopping the old: the two evict each other's server connection until the old one
+  # exits, the server drops the site, and a job started in that window is aborted. rollingUpdate is cleared
+  # so an upgrade from the RollingUpdate default applies: the live object keeps the API server's defaults,
+  # which server-side apply would otherwise refuse beside Recreate.
+  strategy:
+    type: Recreate
+    rollingUpdate: null
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
@@ -71,11 +86,19 @@ spec:
         app.kubernetes.io/component: fl-client
         flip/network: {{ .Values.flClient.netId }}
       {{- $governed := and .Values.governance.document (eq .Values.flBackend "nvflare") }}
+      {{- /* NVFLARE mounts a job pod's workspace at the parent's workspace path, so with job pods the parent
+      cannot use /app, where the image keeps its code and virtualenv (FLIP#1428). */}}
+      {{- $ws := ternary "/var/tmp/nvflare/workspace" "/app" $jobPods }}
       {{- $kitFromSecret := eq .Values.flClient.kit.source "secret" }}
-      {{- if or .Values.flClient.gpu.enabled $governed }}
+      {{- if or .Values.flClient.gpu.enabled $governed $jobPods }}
       annotations:
         {{- if .Values.flClient.gpu.enabled }}
         nvidia.com/gpu: {{ .Values.flClient.gpu.count | quote }}
+        {{- end }}
+        {{- if $jobPods }}
+        # The job pod template is copied into the kit when the parent starts, so a change to it must
+        # roll the parent.
+        checksum/fl-job-pod: {{ include "flip-trust.flJobPod" . | sha256sum }}
         {{- end }}
         {{- if $governed }}
         # Editing the client's section of the governance document must roll this pod: a
@@ -264,6 +287,12 @@ spec:
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if $jobPods }}
+          ports:
+            # Job pods connect back here (the -parent Service, fl-client-job-pods.yaml).
+            - name: fl-parent
+              containerPort: {{ .Values.flClient.nvflare.jobPods.parentPort }}
+          {{- end }}
           {{- if eq .Values.flBackend "flower" }}
           # args, NOT command: the flags append to the image's flower-supernode
           # ENTRYPOINT (mirroring the compose overlay's `command:` semantics).
@@ -299,7 +328,7 @@ spec:
             - -c
             - |
               set -euo pipefail
-              chmod u+x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
+              chmod u+x {{ $ws }}/startup/sub_start.sh {{ $ws }}/startup/stop_fl.sh 2>/dev/null || true
               export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
               export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-7}
               export LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -309,29 +338,35 @@ spec:
               # two, as the Compose client's entrypoint does, from flClient.gpu.count. resources.json.default holds
               # what provisioning wrote, not this deployment's count, so it is only the fallback for a kit from
               # before the template existed. A local/ the client cannot write stops the pod.
-              if [ -f /app/local/resources.template.json ]; then
-                envsubst '${NUM_AVAILABLE_GPUS} ${MEMORY_PER_GPU_IN_GIB}' < /app/local/resources.template.json > /app/local/resources.json \
-                  || { echo "cannot write /app/local/resources.json" >&2; exit 1; }
+              if [ -f {{ $ws }}/local/resources.template.json ]; then
+                envsubst '${NUM_AVAILABLE_GPUS} ${MEMORY_PER_GPU_IN_GIB}' < {{ $ws }}/local/resources.template.json > {{ $ws }}/local/resources.json \
+                  || { echo "cannot write {{ $ws }}/local/resources.json" >&2; exit 1; }
               else
-                cp /app/local/resources.json.default /app/local/resources.json \
-                  || { echo "cannot copy the kit's local/resources.json.default to /app/local/resources.json" >&2; exit 1; }
+                cp {{ $ws }}/local/resources.json.default {{ $ws }}/local/resources.json \
+                  || { echo "cannot copy the kit's local/resources.json.default to {{ $ws }}/local/resources.json" >&2; exit 1; }
               fi
               # Render the kit's log level, retaining the default-file path for older kits.
-              if [ -f /app/local/log_config.template.json ]; then
-                envsubst '${LOG_LEVEL}' < /app/local/log_config.template.json > /app/local/log_config.json \
-                  || { echo "cannot write /app/local/log_config.json" >&2; exit 1; }
+              if [ -f {{ $ws }}/local/log_config.template.json ]; then
+                envsubst '${LOG_LEVEL}' < {{ $ws }}/local/log_config.template.json > {{ $ws }}/local/log_config.json \
+                  || { echo "cannot write {{ $ws }}/local/log_config.json" >&2; exit 1; }
               else
-                cp /app/local/log_config.json.default /app/local/log_config.json \
-                  || { echo "cannot copy the kit's local/log_config.json.default to /app/local/log_config.json" >&2; exit 1; }
+                cp {{ $ws }}/local/log_config.json.default {{ $ws }}/local/log_config.json \
+                  || { echo "cannot copy the kit's local/log_config.json.default to {{ $ws }}/local/log_config.json" >&2; exit 1; }
               fi
               # Site privacy policy (FLIP#851, FLIP#1259): render or remove /app/local/privacy.json
               # from FL_SITE_PRIVACY_* or the governance document's [fl_privacy.nvflare] section.
               # `set -euo pipefail` above makes an invalid configuration fail the pod (fail
               # closed) rather than run an unfiltered client.
-              python -m flip.nvflare.site_policy /app/local/privacy.json
+              python -m flip.nvflare.site_policy {{ $ws }}/local/privacy.json
+              {{- if $jobPods }}
+              # One Kubernetes pod per job (FLIP#1428): swap the process launcher for NVFLARE's K8s
+              # launcher, declare the GPU pool, point job pods at the -parent Service and give them the
+              # pod template mounted at /app/k8s. Fails the pod rather than start a process-mode client.
+              python -m flip.nvflare.k8s_job_mode {{ $ws }}/local
+              {{- end }}
               pkill -f nvflare 2>/dev/null || true
-              rm -f /app/pid.fl /app/daemon_pid.fl
-              cd /app/startup
+              rm -f {{ $ws }}/pid.fl {{ $ws }}/daemon_pid.fl
+              cd {{ $ws }}/startup
               exec ./sub_start.sh
           {{- end }}
           envFrom:
@@ -386,6 +421,25 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: trust-internal-service-key
+            {{- if $jobPods }}
+            # Read by flip.nvflare.k8s_job_mode (FLIP#1428).
+            - name: FL_K8S_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FL_K8S_PARENT_SERVICE
+              value: {{ include "flip-trust.fullname" . }}-fl-client-{{ .Values.flClient.netId }}-parent
+            - name: FL_K8S_PARENT_PORT
+              value: {{ .Values.flClient.nvflare.jobPods.parentPort | quote }}
+            - name: FL_K8S_JOB_IMAGE
+              value: {{ include "flip-trust.flClientImage" . | quote }}
+            - name: FL_K8S_MAX_GPUS
+              value: {{ .Values.flClient.nvflare.jobPods.maxGpus | quote }}
+            - name: FL_K8S_PENDING_TIMEOUT
+              value: {{ .Values.flClient.nvflare.jobPods.pendingTimeout | quote }}
+            - name: FL_K8S_POD_TEMPLATE
+              value: /app/k8s/job-pod.yaml
+            {{- end }}
           volumeMounts:
             # Only this net's slice of the shared images volume, at the
             # unchanged container path so imaging-api's returned paths still
@@ -396,14 +450,19 @@ spec:
             - name: dshm
               mountPath: /dev/shm
           {{- if eq .Values.flBackend "nvflare" }}
+            {{- if $jobPods }}
+            # Writable root for the per-job directories; the kit's folders mount inside it.
+            - name: fl-workspace
+              mountPath: {{ $ws }}
+            {{- end }}
             - name: fl-client-kit
-              mountPath: /app/local
+              mountPath: {{ $ws }}/local
               subPath: local
             - name: fl-client-kit
-              mountPath: /app/startup
+              mountPath: {{ $ws }}/startup
               subPath: startup
             - name: fl-client-kit
-              mountPath: /app/transfer
+              mountPath: {{ $ws }}/transfer
               subPath: transfer
           {{- else }}
             - name: fl-client-kit
@@ -418,6 +477,11 @@ spec:
             # to rewrite its own privacy policy.
             - name: governance-extract
               mountPath: /app/governance
+              readOnly: true
+          {{- end }}
+          {{- if $jobPods }}
+            - name: fl-job-pod
+              mountPath: /app/k8s
               readOnly: true
           {{- end }}
           resources:
@@ -502,5 +566,12 @@ spec:
         - name: governance-extract
           emptyDir:
             sizeLimit: 1Mi
+        {{- end }}
+        {{- if $jobPods }}
+        - name: fl-workspace
+          emptyDir: {}
+        - name: fl-job-pod
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
         {{- end }}
 {{- end }}

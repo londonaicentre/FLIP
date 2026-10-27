@@ -415,10 +415,10 @@ licensed, so each environment loads the bundle it is licensed to use into its ow
 ``load-omop-vocab`` needs the bundle unpacked in ``trust/omop-db/data/vocab_aicentre_core_20240916/``. Get it
 first, in one of two ways:
 
-- **AI Centre nodes** (FLIP developers with organisation AWS access):
-  ``make -C trust/omop-db fetch-vocab-core VOCAB_S3_BUCKET=<bucket>``, naming a bucket your AWS profile can read
-  (there is no default). ``load-omop-vocab`` runs this for you when given the same variable; it skips the
-  download if the directory exists, and fails without the bucket and AWS access if it does not.
+- **AI Centre developers**: ``AWS_PROFILE=dev make -C trust/omop-db fetch-vocab-core``, with the ``dev`` profile
+  set up as in Step 3 of :doc:`/deploy-flip/deploy-local-dev`. It reads the AI Centre staging bucket by default
+  (``VOCAB_S3_BUCKET`` names another). ``load-omop-vocab`` runs this for you; it skips the download if the
+  directory exists, and fails without AWS access if it does not.
 - **Every other site**: build an equivalent export from `OHDSI Athena <https://athena.ohdsi.org/>`_ under your
   own licences and unpack it into that directory, as :ref:`onprem-core-vocabulary` describes.
 

@@ -9,9 +9,9 @@ built on the templates in `fl-apps/`; the images they run on are built from
 | `nvflare/image_*` | FLARE imaging tutorials — all Client-API apps |
 | `nvflare/tabular_classification` | FLARE tabular (OMOP-only) EHR risk-prediction tutorial |
 | `nvflare/tabular_causal_discovery` | FLARE tabular (OMOP-only) biomarker causal-discovery tutorial: bootstrapped FCI federated through the ordinary FedAvg job (`federated_fci.py` — pooled sufficient statistics, or FedPC-style layer voting); the cohort is real ADNI data the user obtains under their own licence and converts with `datasets/ad_biomarkers/make_adni_cohort.py` (`convert-adni-cohort`) — ADNI is access-controlled, so the repo ships the converter, never rows |
-| `flower/{xray_classification,3d_spleen_segmentation*,3d_prostate_segmentation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |
-| `flower/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
-| `flower/biomarker_causal_discovery` | Flower twin of the causal-discovery tutorial (shared module, model, config and query byte-identical with the NVFLARE copy via `scripts/check_tutorial_sync.sh`) |
+| `flower/{image_classification/xray_classification,image_segmentation/{3d_spleen_segmentation,3d_prostate_segmentation},image_evaluation/3d_spleen_segmentation_evaluation}` | Flower imaging tutorials (prostate: nnU-Net-planned DynUNet on PI-CAI, three scans per study, masks as enrichment — `prepare-prostate-local-data` for the simulator) |
+| `flower/tabular_classification/ehr_risk_prediction` | Flower tabular (OMOP-only) EHR risk-prediction tutorial |
+| `flower/tabular_causal_discovery/biomarker_causal_discovery` | Flower twin of the causal-discovery tutorial (shared module, model, config and query byte-identical with the NVFLARE copy via `scripts/check_tutorial_sync.sh`) |
 | `datasets/` | Shared dataset tooling (download/derive/enrich), one copy for both backends |
 | `datasets/utils/` | The OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, per-project surrogate-key blocks (`omop_ids.py`), and the one verification gate (`verify_omop_tables.py --project <name>`) |
 | `data/` | Gitignored output of the dataset targets |

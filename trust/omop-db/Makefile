@@ -82,7 +82,7 @@ load-dicom-vocab: fetch-vocab-dicom
 
 # Load the public Synthea-in-OMOP EHR cohort (person + conditions + visits) into a RUNNING trust
 # omop-db — the populate side of the EHR risk-prediction tutorial
-# (fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction). The shipped mock OMOP
+# (fl-tutorials/{nvflare,flower}/tabular_classification/ehr_risk_prediction). The shipped mock OMOP
 # carries no condition rows, so that tutorial's query.sql returns nothing until this runs. Downloads
 # ~5 MB from the AWS Open Data Registry at run time (anonymous HTTPS, cached under data/synthea-ehr/,
 # never committed) and appends a per-trust person_id-modulo slice (ids shifted clear of the imaging
@@ -185,12 +185,11 @@ unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 build_compose = docker compose -f compose.yml
 GHCR_IMAGE = ghcr.io/londonaicentre/omop-db
 OMOP_DB_TAG ?= latest
-# S3 bucket holding the vocab bundle zips under vocab/. No default: the bundle
-# is licensed and lives only in a deploy environment's own aicentre bucket, read
-# with that environment's AWS credentials (FLIP#1371 retired the dev-account
-# copy). Contributors without bucket access self-serve from OHDSI Athena — see
-# README "The core vocabulary bundle".
-VOCAB_S3_BUCKET ?=
+# S3 bucket holding the vocab bundle zips under vocab/. The default is the AI
+# Centre staging bucket, readable by the `dev` profile (FLIPDeveloperAccess,
+# FLIP#1623). The bundle is licensed: contributors without that access
+# self-serve from OHDSI Athena — see README "The core vocabulary bundle".
+VOCAB_S3_BUCKET ?= flip-lza-stag-aicentre
 
 # Fetched inputs (all gitignored under data/). The core vocab bundle contains
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be

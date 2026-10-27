@@ -73,6 +73,11 @@ Issues = "https://github.com/londonaicentre/FLIP/issues"
 full = [
     "einops==0.8.1",
     "gdown>=5.2.2",
+    # NVFLARE's ClientK8sJobLauncher (FLIP#1428 job pods) imports it. Capped below 36: NVFLARE 2.9.0
+    # passes the GPU count as an int, and the 37.x client validates request bodies and rejects a
+    # non-string nvidia.com/gpu quantity, failing every GPU job at pod creation (NVFLARE itself
+    # excludes 36.0.0).
+    "kubernetes>=33.1.0,<36",
     "lpips==0.1.4",
     # monai[skimage,scipy,pyyaml] declares scikit-image / scipy / pyyaml at
     # MONAI-compatible versions (MONAI 1.5.x extras: skimage>=0.14.2,
@@ -104,10 +109,6 @@ full = [
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
-# Emergency cooldown override (CONTRIBUTING.md, "Emergency override"): admit the critical-advisory fixes
-# certifi 2026.10.19 and uv 0.13.4 before the 3-day cooldown does. Each cutoff is that release's upload time, so
-# nothing newer gets in, and it also freezes the package: remove it after 2026-10-23T15:13Z (#1618).
-exclude-newer-package = { certifi = "2026-10-20T02:25:00Z", uv = "2026-10-20T15:13:00Z" }
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     # GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3, GHSA-494j-54xm-rwp3; prior hardening: CVE-2026-47265,
@@ -117,7 +118,7 @@ constraint-dependencies = [
     "certifi>=2026.10.19",       # GHSA-6q48-6c7w-9gw2
     "click>=8.3.3",              # CVE-2026-7246
     "cryptography>=50.0.0",      # CVE-2026-26007, CVE-2026-39892, CVE-2026-34073
-    "filelock>=3.20.3",          # CVE-2025-68146, CVE-2026-22701
+    "filelock>=4.2.1",           # GHSA-v4x8-3wr5-3wq8, GHSA-567q-5qvw-pf92, GHSA-9vhv-jxww-xfm5, CVE-2025-68146, CVE-2026-22701
     "fonttools>=4.62.0",         # arbitrary code execution (dev-only, via matplotlib)
     "idna>=3.15",                # CVE-2026-45409
     # GHSA-58r4-6rv3-gfh8, GHSA-8g5g-8vmr-9782, GHSA-pchr-8j38-3x4p, GHSA-vx6w-vv9f-6gvg, GHSA-q45j-58j2-45rg,
@@ -129,7 +130,7 @@ constraint-dependencies = [
     "pyjwt>=2.15.0",             # GHSA-42vr-xj54-vc7v, GHSA-x33g-cr3x-6449, CVE-2026-32597
     "python-dotenv>=1.2.2",      # CVE-2026-28684
     "requests>=2.33.0",          # CVE-2026-25645
-    "setuptools>=83.0.0",        # CVE-2026-59890
+    "setuptools>=84.1.0",        # GHSA-xmj3-9gf7-h52w, CVE-2026-59890
     "soupsieve>=2.9.0",          # CVE-2026-85999, CVE-2026-86000
     "urllib3>=2.8.0",            # GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw, CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.9",           # GHSA-g6x2-hccm-hh4m, CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766

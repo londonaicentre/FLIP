@@ -21,7 +21,7 @@ DICOM (so they can be pulled into a trust's PACS the same way any other study wo
 NIfTI, and partitions the converted data by acquiring center for the `3d_prostate_segmentation`
 tutorial (Flower). Download + preprocessing only — the `PicaiDataset` class that reads this
 partitioned data lives with the tutorial itself, at
-[`../../flower/3d_prostate_segmentation/app/dataset.py`](../../flower/3d_prostate_segmentation/app/dataset.py),
+[`../../flower/image_segmentation/3d_prostate_segmentation/app/dataset.py`](../../flower/image_segmentation/3d_prostate_segmentation/app/dataset.py),
 as does the nnU-Net planning step described [below](#nnu-net-plans).
 
 Dedicated uv project (`pyproject.toml` — SimpleITK, tqdm; `uv.lock` is gitignored), the same
@@ -162,7 +162,7 @@ rather than copied. A study is skipped (and counted) if its scans or either labe
 present locally yet, e.g. a partial download via `FOLDS`. The site folders are only used by
 `make plan` and by the standalone reference trainer (`nnunet_train.py` / `nnunet_infer.py`, via
 `PicaiDataset` in
-[`../../flower/3d_prostate_segmentation/app/dataset.py`](../../flower/3d_prostate_segmentation/app/dataset.py)).
+[`../../flower/image_segmentation/3d_prostate_segmentation/app/dataset.py`](../../flower/image_segmentation/3d_prostate_segmentation/app/dataset.py)).
 The Flower app doesn't use them, in the simulator or on the platform.
 
 ## The `prostate_project` seed dataset (platform path)
@@ -201,7 +201,7 @@ accession `<patient>_<study>`), the DICOM-attribute `image_feature`/`measurement
 publishes too, and the marksheet as rows a cohort query can select on — PSA, PSA density and
 prostate volume as `measurement`; ISUP grade group, clinically significant cancer (yes/no) and
 the highest lesion PI-RADS as `observation`
-(`../../flower/3d_prostate_segmentation/query.sql` joins them). `person_id` is PI-CAI's numeric
+(`../../flower/image_segmentation/3d_prostate_segmentation/query.sql` joins them). `person_id` is PI-CAI's numeric
 `patient_id`, clear of every other cohort's ids; surrogate keys use `prostate_project`'s reserved
 3,000,000 block. The masks are **not** in OMOP — a segmentation has nowhere to live in a cohort
 query — which is what the uploader below is for.
@@ -234,16 +234,16 @@ Training is configured by a pair of JSON files: a **dataset fingerprint** (per-c
 spacing, shape after cropping to the non-zero region, and foreground intensity statistics) and
 an **experiment plan** derived from it (target spacing, patch and batch size, normalization
 scheme, and the U-Net topology). Both come out of
-[`calculate_dataset_fingerprint_segmentation.py`](../../flower/3d_prostate_segmentation/calculate_dataset_fingerprint_segmentation.py),
+[`calculate_dataset_fingerprint_segmentation.py`](../../flower/image_segmentation/3d_prostate_segmentation/calculate_dataset_fingerprint_segmentation.py),
 which lives with the tutorial because it reads the partitioned data through `PicaiDataset`. The
 tutorial's `make plan` runs it pooled over every site and copies the plan into
 `app/nnUNetPlans_segmentation.json`, the file the federated app builds its network from — why the
 plan must be pooled, the measured per-center figures and how a plan is generated without Docker are
 in the tutorial's README:
-[`../../flower/3d_prostate_segmentation/README.md`](../../flower/3d_prostate_segmentation/README.md#nnu-net-plans).
+[`../../flower/image_segmentation/3d_prostate_segmentation/README.md`](../../flower/image_segmentation/3d_prostate_segmentation/README.md#nnu-net-plans).
 
 ```bash
-cd fl-tutorials/flower/3d_prostate_segmentation
+cd fl-tutorials/flower/image_segmentation/3d_prostate_segmentation
 uv sync --group planning
 make plan                                                 # pooled over sites/{ZGT,PCNN,RUMC}
 make plan PLAN_SITES=../../data/prostate/sites/RUMC       # one site, for comparison

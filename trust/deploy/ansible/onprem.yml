@@ -57,6 +57,6 @@
     - flip_docker
     - flip_trust_dirs
     - flip_fl_kit
-    # The production compose reads Loki/Alloy/Grafana config from
+    # The prod compose reads Loki/Alloy/Grafana config from
     # /opt/flip/config/observability by default (OBSERVABILITY_CONFIG_DIR).
     - flip_observability_config

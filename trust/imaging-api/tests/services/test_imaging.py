@@ -102,8 +102,18 @@ def test_ping_pacs_not_found(mock_get):
     assert f"PACS with ID '{pacs_id}' not found." in str(excinfo.value)
 
 
+@pytest.mark.parametrize(
+    "descriptive_tags",
+    [
+        {"studyDescription": "Test Study", "referringPhysicianName": "Dr. Smith"},
+        {"studyDescription": "Test Study"},
+        {"referringPhysicianName": "Dr. Smith"},
+        {},
+    ],
+    ids=["complete", "no-referrer", "no-description", "no-descriptive-tags"],
+)
 @patch("imaging_api.services.imaging.requests.post")
-def test_query_by_accession_number(mock_post, headers):
+def test_query_by_accession_number(mock_post, headers, descriptive_tags):
     accession_number = "FAK57777617"
 
     # Define the mock response data
@@ -112,10 +122,9 @@ def test_query_by_accession_number(mock_post, headers):
             "accessionNumber": accession_number,
             "studyInstanceUid": "1.2.3.4",
             "studyDate": "2023-01-01",
-            "studyDescription": "Test Study",
             "modalitiesInStudy": ["CT", "MR"],
-            "referringPhysicianName": "Dr. Smith",
             "patient": {"id": "12345", "name": "John Doe", "sex": "M"},
+            **descriptive_tags,
         }
     ]
 
@@ -135,6 +144,9 @@ def test_query_by_accession_number(mock_post, headers):
     # Assertions
     assert len(studies) == 1
     assert studies[0].accession_number == accession_number
+    assert studies[0].study_instance_uid == "1.2.3.4"
+    assert studies[0].study_description == descriptive_tags.get("studyDescription", "")
+    assert studies[0].referring_physician_name == descriptive_tags.get("referringPhysicianName", "")
     # Bounded, so a wedged XNAT fails the query instead of hanging the import path
     assert mock_post.call_args.kwargs["timeout"] == XNAT_DQR_REQUEST_TIMEOUT
 

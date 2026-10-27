@@ -49,7 +49,7 @@ the **nnU-Net experiment plan** derived from it (target spacing, patch and batch
 normalisation, U-Net topology). `make plan` in the tutorial directory runs the planner pooled over
 every site and copies the plan into `app/nnUNetPlans_segmentation.json`, from which the app builds
 its network — see
-[`../flower/3d_prostate_segmentation/README.md`](../flower/3d_prostate_segmentation/README.md#nnu-net-plans)
+[`../flower/image_segmentation/3d_prostate_segmentation/README.md`](../flower/image_segmentation/3d_prostate_segmentation/README.md#nnu-net-plans)
 for why the plan is pooled and the measured per-center figures.
 
 | Dataset | Source | Output under `fl-tutorials/data/` | Consumed by |
@@ -140,7 +140,7 @@ form — so there is no download target and no synthetic stand-in: the user appl
 
 [`prostate/`](prostate/) owns the prostate download/preprocessing scripts. The dataset class that
 reads this data lives with the tutorial instead, at
-`../flower/3d_prostate_segmentation/app/dataset.py`, as does the nnU-Net planning step above:
+`../flower/image_segmentation/3d_prostate_segmentation/app/dataset.py`, as does the nnU-Net planning step above:
 
 - `download_data.py` — fetch the PI-CAI bpMRI images + whole-gland/zonal labels + clinical
   marksheet from Zenodo/GitHub (`FOLDS` narrows which of the 5 ~5GB fold zips to fetch).

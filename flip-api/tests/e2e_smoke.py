@@ -32,8 +32,8 @@ Usage (preferred):
 Direct invocation:
     cd flip-api
     uv run python -m tests.e2e_smoke \\
-        --model-files-dir ../fl-tutorials/flower/xray_classification/app \\
-        --query-file ../fl-tutorials/flower/xray_classification/query.sql
+        --model-files-dir ../fl-tutorials/flower/image_classification/xray_classification/app \\
+        --query-file ../fl-tutorials/flower/image_classification/xray_classification/query.sql
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
@@ -322,7 +322,9 @@ def authenticate() -> dict[str, str]:
     if token:
         _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
         return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
-    _log(f"🔐 Authenticating as admin via {get_settings().AUTH_BACKEND}…")
+    settings = get_settings()
+    via = f" at {settings.KEYCLOAK_PUBLIC_URL}" if settings.AUTH_BACKEND == "keycloak" else ""
+    _log(f"🔐 Authenticating as admin via {settings.AUTH_BACKEND}{via}…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
     return headers
@@ -961,7 +963,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Directory whose files are uploaded to the model. Flower: "
-        "../fl-tutorials/flower/xray_classification/app. "
+        "../fl-tutorials/flower/image_classification/xray_classification/app. "
         "FLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
         "Required unless --stop-after-enrichment.",
     )
@@ -1122,6 +1124,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     query = args.query_file.read_text()
+    _log(f"🎯 Target hub: {constants.BASE_URL}")
     headers = authenticate()
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})

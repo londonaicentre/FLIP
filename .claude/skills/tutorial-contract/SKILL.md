@@ -125,9 +125,14 @@ category dir — a package named `nvflare` shadows the real one.
 ## 4. Flower: the file set and its traps
 
 A flwr app: `pyproject.toml` for the local simulator plus an `app/` package that is **exactly what
-the user uploads**. Layout `fl-tutorials/flower/<name>/` (flat; #1500 moves it to
-`<category>/<name>/`); discovery is a direct subdirectory carrying `app/`. Same `<name>` as the
-NVFLARE twin.
+the user uploads**. Layout `fl-tutorials/flower/<category>/<name>/`, the NVFLARE layout (#1500):
+discovery is `$(wildcard */*/app/.)`, a directory two levels down carrying `app/`, and
+`run-tutorial TUTORIAL=<name>` / `sim-tutorial.sh` resolve the bare name to its directory, refusing a
+name found in two categories. Use the NVFLARE twin's `<category>/<name>` (the catalogue guard checks
+it); a Flower-only tutorial takes the category its job type and modality imply (prostate:
+`image_segmentation`). Depth is exactly two: a checkout that pulled the move keeps ignored caches at
+the old flat `fl-tutorials/flower/<name>/`, which the harness reports as stale leftovers
+(`git clean -fdX`), never as tutorials.
 
 Two files in `app/` are not the tutorial's own: `server_app.py` and `strategy.py` are byte-for-byte
 copies of `fl-apps/flower/<job_type>/app/` (`cp`, never symlink — `flwr build` drops symlinks),
@@ -184,7 +189,8 @@ template, required files present, template files byte-identical), `test_flower_m
   project as *enrichment* between the pull and training (`upload-*-labels`; the e2e target's
   `ENRICHMENT_ARGS`, the recorder's `--data-enrichment-cwd/-cmd` + `--publish-segmentations`). The
   app loads `label_*.nii.gz` beside `input_*.nii.gz`; multi-series studies (prostate) select the
-  series. Not in `DICOM_APPS`. Each FL client sees only its own `net-N` image slice.
+  series. Not in `DICOM_APPS`; register its transform factories in `NIFTI_APPS`
+  (`tests/test_nifti_orientation.py`) instead. Each FL client sees only its own `net-N` image slice.
 - **Tabular / OMOP-only.** `query.sql` projects `person_id`; `get_dataframe` only; project created
   with imaging **off** (FLIP#1071 — left on, the hub dispatches `create_imaging` and the run dies at
   the image-pull wait): the e2e target pins `--no-imaging`, the demo profile `has_imaging: False`.
