@@ -248,7 +248,7 @@ e2e_smoke_ehr: e2e_smoke
 # `make -C trust load-adni-cohort TRUST_INDEX=<1|2> OMOP_DB_PORT=<5434|5436>` (after
 # `make -C fl-tutorials convert-adni-cohort`); the FL images must carry causal-learn
 # (flip-utils' `full` extra — build them from this tree: `make build-fl`, run with DOCKER_FL_TAG=dev).
-CAUSAL_FLOWER_DIR := ../fl-tutorials/flower/biomarker_causal_discovery
+CAUSAL_FLOWER_DIR := ../fl-tutorials/flower/tabular_causal_discovery/biomarker_causal_discovery
 CAUSAL_NVFLARE_DIR := ../fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
 e2e_smoke_causal: MODEL_FILES_DIR := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/app,$(CAUSAL_NVFLARE_DIR)/app_files)
 e2e_smoke_causal: QUERY_FILE := $(if $(filter flower,$(FL_BACKEND)),$(CAUSAL_FLOWER_DIR)/query.sql,$(CAUSAL_NVFLARE_DIR)/query.sql)

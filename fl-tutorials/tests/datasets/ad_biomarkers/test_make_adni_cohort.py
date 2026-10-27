@@ -36,7 +36,7 @@ FL_TUTORIALS_DIR = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = FL_TUTORIALS_DIR / "datasets" / "ad_biomarkers" / "make_adni_cohort.py"
 QUERY_FILES = {
     "nvflare": FL_TUTORIALS_DIR / "nvflare" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "query.sql",
-    "flower": FL_TUTORIALS_DIR / "flower" / "biomarker_causal_discovery" / "query.sql",
+    "flower": FL_TUTORIALS_DIR / "flower" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "query.sql",
 }
 
 

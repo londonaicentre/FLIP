@@ -21,7 +21,7 @@ conditional-independence test — or, in the second mode, their votes on the gra
 the template's FedAvg turns those into the pooled analysis. The result is a partial ancestral
 graph with a bootstrap frequency on every edge. This is the Flower twin of the NVFLARE tutorial
 of the same name; the method, the data and the results are documented once, in
-[its README](../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md), and
+[its README](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md), and
 this page covers what differs on Flower.
 
 ![Recovered PAG from the federated run on the ADNI cohort](docs/recovered_pag.png)
@@ -114,7 +114,7 @@ it in `context.state`, so a trust logs one row-level egress per run, not one per
 
 The cohort is real ADNI data, which you obtain under your own licence: apply for access, download
 the five IDA tables and convert them exactly as the NVFLARE README's
-["Running on real ADNI data"](../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md#running-on-real-adni-data)
+["Running on real ADNI data"](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md#running-on-real-adni-data)
 describes. `make -C fl-tutorials convert-adni-cohort ADNI_DIR=~/adni_tables` writes
 `dataframe.csv` to the gitignored `fl-tutorials/data/ad_biomarkers/`, which is where
 `sim-tutorial.sh` maps `DEV_DATAFRAME` (`<data root>/ad_biomarkers/dataframe.csv`). To keep the
@@ -165,8 +165,8 @@ The ServerApp writes `FL_global_model.pt` under `$WORKING_DIR/<model-id>/trainin
 
 ```bash
 cd fl-tutorials/flower/biomarker_causal_discovery
-uv run --project ../../../flip-utils --extra full --group dev python summarise_results.py \
-    ../../../fl-services/flower/runs/<model-id>/training_outputs/FL_global_model.pt --figure docs/recovered_pag.png
+uv run --project ../../../../flip-utils --extra full --group dev python summarise_results.py \
+    ../../../../fl-services/flower/runs/<model-id>/training_outputs/FL_global_model.pt --figure docs/recovered_pag.png
 ```
 
 ### On the platform (or `make e2e_smoke`)
@@ -182,7 +182,7 @@ summarises to the same 16 stable edges, with identical frequencies, as the simul
 
 ## References
 
-As in the [NVFLARE README](../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md#references):
+As in the [NVFLARE README](../../../nvflare/tabular_causal_discovery/biomarker_causal_discovery/README.md#references):
 FCI (Spirtes, Glymour & Scheines 2000; Zhang 2008; causal-learn), FedPC (Huang et al., *IEEE TBD*
 2023 — the `layer_voting` mode), FedC²SL (Wang, Ma & Wang, *ECML PKDD* 2023 — the pooled-statistics
 idea), and the centralised ADNI analysis this federates (N. Glazman, `adni_fci`, 2026). ADNI data

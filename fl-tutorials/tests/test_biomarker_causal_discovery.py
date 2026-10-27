@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -39,6 +38,7 @@ import pytest
 from tutorial_apps import TUTORIALS_ROOT, load_module
 
 APP_FILES = TUTORIALS_ROOT / "nvflare" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "app_files"
+FLOWER_APP = TUTORIALS_ROOT / "flower" / "tabular_causal_discovery" / "biomarker_causal_discovery" / "app"
 VARIABLES = ["a_root", "b_root", "x_fluid", "y_fluid", "u_mri", "v_mri", "z_sink"]
 TRUE_EDGES = {
     ("a_root", "x_fluid"),
@@ -639,5 +639,4 @@ def test_get_model_buffers_match_the_wire_format():
 
 
 def test_the_flower_copy_is_the_same_module():
-    flower = Path(TUTORIALS_ROOT / "flower" / "biomarker_causal_discovery" / "app" / "federated_fci.py")
-    assert flower.read_bytes() == (APP_FILES / "federated_fci.py").read_bytes()
+    assert (FLOWER_APP / "federated_fci.py").read_bytes() == (APP_FILES / "federated_fci.py").read_bytes()
