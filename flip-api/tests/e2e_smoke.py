@@ -135,6 +135,12 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "see which recognises chest conditions best, without retraining them.",
         nifti=False,
     ),
+    "latent_diffusion_model": TutorialCopy(
+        "Latent diffusion model",
+        "Learning to generate synthetic CT volumes that look like the participating trusts' scans, in two "
+        "stages trained across the trusts: an autoencoder that compresses each scan, then a diffusion model "
+        "over that compressed space.",
+    ),
 }
 APP_DIR_NAMES = ("app", "app_files")
 
