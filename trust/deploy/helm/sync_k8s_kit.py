@@ -730,6 +730,7 @@ def render_override(
         GovernanceDocumentError: If the kit's governance configuration cannot be deployed — an
             ``ACCESS_POLICY_FILE`` that cannot be read or is invalid, or a site privacy filter
             that is invalid or would be ignored by this trust's backend.
+        ValueError: If ``TRUST_DATA_SEED`` is neither ``true`` nor ``false``.
     """
     trust_name = kit.get("TRUST_NAME", code)
     slot_number = kit.get("FL_KIT_SLOT_NUMBER", "").strip()
@@ -813,9 +814,17 @@ def render_override(
     # The mock-data partition the seed hook loads (trustData.seed.sourceTrust). The chart falls back
     # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
     # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
+    # A real trust turns the hook off with the kit's TRUST_DATA_SEED=false, as on Compose (FLIP#1687);
+    # unset or true leaves the chart's value.
+    seed = kit.get("TRUST_DATA_SEED", "").strip()
+    if seed not in ("", "true", "false"):
+        raise ValueError(f"TRUST_DATA_SEED must be true or false, not {seed!r}")
     source_trust = kit.get("SOURCE_TRUST", "").strip()
-    if source_trust:
-        lines += ["trustData:", "  seed:", f'    sourceTrust: "{source_trust}"', ""]
+    seed_values = (["    enabled: false"] if seed == "false" else []) + (
+        [f'    sourceTrust: "{source_trust}"'] if source_trust else []
+    )
+    if seed_values:
+        lines += ["trustData:", "  seed:", *seed_values, ""]
 
     if kit_bucket and vocab_load:
         lines += [
@@ -1035,6 +1044,9 @@ def main(
             print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
             print("   Compose stack's --project-directory trust does. `make -C trust check-governance")
             print(f"   KIT={code}{hub}` validates the document and the kit's FL_SITE_PRIVACY_* in full.")
+            sys.exit(1)
+        except ValueError as e:
+            print(f"❌ {e} (in {kit_path.name}). Nothing was deployed.")
             sys.exit(1)
         override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")

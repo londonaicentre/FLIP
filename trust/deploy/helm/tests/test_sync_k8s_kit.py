@@ -176,6 +176,21 @@ def test_render_override_carries_the_kits_seed_partition():
     assert "sourceTrust" not in sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
 
 
+def test_render_override_turns_the_seed_hook_off_for_a_trust_without_sample_data():
+    """The kit's TRUST_DATA_SEED=false is the one switch on both shapes (FLIP#1687)."""
+    kit = {**_FL_KIT, "TRUST_DATA_SEED": "false", "SOURCE_TRUST": "1"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert '\ntrustData:\n  seed:\n    enabled: false\n    sourceTrust: "1"\n' in out
+    for value in ("", "true"):
+        out = sync_k8s_kit.render_override({**_FL_KIT, "TRUST_DATA_SEED": value}, "Trust_K8s", "eu-west-2")
+        assert "trustData" not in out, "unset or true leaves the chart's value"
+
+
+def test_render_override_refuses_a_seed_setting_it_would_read_as_true():
+    with pytest.raises(ValueError, match="TRUST_DATA_SEED must be true or false"):
+        sync_k8s_kit.render_override({**_FL_KIT, "TRUST_DATA_SEED": "no"}, "Trust_K8s", "eu-west-2")
+
+
 def test_render_override_treats_a_placeholder_bucket_as_unset():
     """An uncommented scaffolding placeholder must not reach the chart: the hook would try to
     read a bucket literally named ``<...>``, fail, and take the whole release down with it

@@ -519,9 +519,9 @@ prepare-artifacts:
 # is created or fetched.
 #
 # FIRST-INSTALL VERB. Its ensure-seeded step (re-)seeds the data volumes whenever the
-# seed markers differ from the kit's PROJECTS / data version, and its up-xnat step runs
-# xnat-reset, which wipes the XNAT archive and database — never run it, or
-# restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
+# seed markers differ from the kit's PROJECTS / data version (never with TRUST_DATA_SEED=false),
+# and its up-xnat step runs xnat-reset, which wipes the XNAT archive and database — never run
+# it, or restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
 up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
@@ -897,8 +897,17 @@ wait-pacs:
 # there is no FORCE, because nothing here can clobber data a seed did not put there.
 # Run by up-trust; safe to call on its own after changing PROJECTS or the pin:
 #   make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project prostate_project"
-ensure-seeded: wait-omop-db wait-pacs
+# A real trust, whose OMOP and PACS hold its own data, sets TRUST_DATA_SEED=false in its kit:
+# nothing is then fetched, loaded or marked, whatever the markers or the pin say. Any value but
+# true or false is refused rather than read as true, which would seed a real trust.
+TRUST_DATA_SEED_EFFECTIVE = $(or $(strip $(TRUST_DATA_SEED)),true)
+ensure-seeded: $(if $(filter true,$(TRUST_DATA_SEED_EFFECTIVE)),wait-omop-db wait-pacs)
 	$(require_kit)
+ifeq ($(TRUST_DATA_SEED_EFFECTIVE),false)
+	@echo "⏭️  Sample data is off for $(KIT) (TRUST_DATA_SEED=false): nothing loaded into OMOP or the PACS."
+else ifneq ($(TRUST_DATA_SEED_EFFECTIVE),true)
+	@echo "❌ TRUST_DATA_SEED must be true or false in $(KIT_FILE_LABEL), not '$(TRUST_DATA_SEED)'."; exit 1
+else
 	@want=$$(printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(TRUST_DATA_REVISION)"); \
 	if [ "$$(cat '$(OMOP_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
 	  echo "✅ OMOP ($(KIT)) already seeded: $(PROJECTS) @ $(TRUST_DATA_REVISION)"; \
@@ -911,6 +920,7 @@ ensure-seeded: wait-omop-db wait-pacs
 	  clear=$$([ -f '$(ORTHANC_SEED_MARKER)' ] && echo 1); \
 	  $(MAKE) seed-orthanc KIT=$(KIT) HUB=$(HUB) PROJECTS="$(PROJECTS)" SOURCE_TRUST=$(SOURCE_TRUST) $${clear:+CLEAR=1} || exit 1; \
 	fi
+endif
 
 # Load the public Synthea-in-OMOP EHR cohort into a running trust omop-db — the populate step for
 # the EHR risk-prediction tutorial (fl-tutorials/.../ehr_risk_prediction; the shipped mock OMOP has
