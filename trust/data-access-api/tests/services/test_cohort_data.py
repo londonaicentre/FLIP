@@ -25,6 +25,7 @@ from data_access_api.services import cohort_data
 PROJECT = "8b2e9d6e-5a53-4f2e-9c37-2c8f4f0f2d11"
 MODEL = "1f0b9d1c-7d0a-4c9e-9f49-0b3a3f6f1a22"
 OTHER_MODEL = "2a1c8e2d-6e1b-4d8f-8a38-1c4b4e7e2b33"
+OTHER_PROJECT = "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
 
 
 @pytest.fixture
@@ -121,6 +122,37 @@ def test_sweep_removes_a_project_dir_it_empties(data_dir):
     cohort_data.sweep(max_age_hours=168)
 
     assert list(data_dir.iterdir()) == []
+
+
+def test_sweep_leaves_a_directory_that_is_not_a_project_alone(data_dir):
+    # Final review #8: a volume's lost+found, or anything an operator keeps beside the projects, is not the sweep's.
+    lost = data_dir / "lost+found"
+    (lost / "old").mkdir(parents=True)
+    ten_days_ago = time.time() - 10 * 24 * 3600
+    os.utime(lost / "old", (ten_days_ago, ten_days_ago))
+
+    assert cohort_data.sweep(max_age_hours=168) == 0
+    assert (lost / "old").is_dir()
+
+
+def test_sweep_goes_on_past_a_project_it_cannot_read(data_dir):
+    unreadable = data_dir / OTHER_PROJECT
+    unreadable.mkdir()
+    old = cohort_data.stage_dataframe(PROJECT, MODEL, pd.DataFrame({"person_id": [1]})).parent
+    ten_days_ago = time.time() - 10 * 24 * 3600
+    os.utime(old, (ten_days_ago, ten_days_ago))
+    real_iterdir = cohort_data.Path.iterdir
+
+    def iterdir(path):
+        if path == unreadable:
+            raise PermissionError(13, "Permission denied", str(path))
+        return real_iterdir(path)
+
+    with patch.object(cohort_data.Path, "iterdir", iterdir):
+        removed = cohort_data.sweep(max_age_hours=168)
+
+    assert removed == 1
+    assert not old.exists()
 
 
 def test_ensure_data_dir_creates_the_directory_and_never_raises(tmp_path):

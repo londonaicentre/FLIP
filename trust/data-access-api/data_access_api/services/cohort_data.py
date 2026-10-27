@@ -60,6 +60,13 @@ def _canonical(value: str) -> str:
     return str(uuid.UUID(value))
 
 
+def _is_project(name: str) -> bool:
+    try:
+        return _canonical(name) == name
+    except ValueError:
+        return False
+
+
 def _private_dir(path: Path) -> None:
     path.mkdir(exist_ok=True)
     os.chmod(path, _DIR_MODE)
@@ -148,15 +155,19 @@ def sweep(max_age_hours: int, now: float | None = None) -> int:
     cutoff = (time.time() if now is None else now) - max_age_hours * 3600
     removed = 0
     for project_dir in root.iterdir():
-        if not project_dir.is_dir():
+        if not _is_project(project_dir.name) or not project_dir.is_dir():
+            continue  # Not ours: a volume's lost+found, say.
+        try:
+            for entry in project_dir.iterdir():
+                try:
+                    if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                        shutil.rmtree(entry)
+                        removed += 1
+                except FileNotFoundError:
+                    continue
+        except OSError:
+            logger.exception(f"Cohort data sweep could not clear {project_dir.name}; trying again next sweep")
             continue
-        for entry in project_dir.iterdir():
-            try:
-                if entry.is_dir() and entry.stat().st_mtime < cutoff:
-                    shutil.rmtree(entry)
-                    removed += 1
-            except FileNotFoundError:
-                continue
         _remove_if_empty(project_dir)
     if removed:
         logger.info(f"Cohort data sweep removed {removed} director{'y' if removed == 1 else 'ies'}")
