@@ -826,7 +826,8 @@ def check_data_dir(
         resolved = Path(raw)
     else:
         resolved = repo_root / "trust" / raw.removeprefix("./")
-    if kit_vars.get("TRUST_DATA_SEED", "").strip() == "false":
+    # Read as trust/Makefile reads it: a trailing `# comment` and surrounding quotes dropped.
+    if kit_vars.get("TRUST_DATA_SEED", "").split("#", 1)[0].strip().strip("\"'") == "false":
         seed_hint = "Sample data is off (TRUST_DATA_SEED=false): `make -C trust up-trust` loads nothing into it."
     else:
         seed_hint = "Mocked test data: `make -C trust up-trust KIT=<CODE>` creates and seeds it, nothing to do."

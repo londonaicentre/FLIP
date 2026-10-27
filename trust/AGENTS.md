@@ -250,11 +250,12 @@ path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no tru
 **A real trust turns seeding off (FLIP#1687).** `TRUST_DATA_SEED=false` in the kit (unset = `true`) makes
 `ensure-seeded`, so every first-install verb, fetch, load and mark nothing whatever the markers or the pin say
 (no Hugging Face or PyPI request either); any other value is refused, since read as true it would seed a real
-OMOP. `sync-kit` maps it onto `trustData.seed.enabled: false`, below a platform overlay or `--set`. The onboarding
-checklist's data-dir hints and the node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker and C-STORE
+OMOP, and `up-trust` checks it before starting a container. `sync-kit` maps it onto `trustData.seed.enabled:
+false`, below a platform overlay or `--set`. The onboarding checklist's data-dir hints and the
+node self-test (`SELFTEST_TRUST_DATA_SEED=false`: the seed-marker and C-STORE
 checks are skipped with the reason) follow it, as does the Kubernetes self-test (`selftest_k8s.py`, from the release's
 `trustData.seed` values, so it also skips the Orthanc checks under the chart default `seed.orthanc: false`). The
-explicit `seed*` verbs still write. The DICOM vocabulary
+explicit `seed*` / `unseed*` verbs refuse such a trust unless `FORCE=1`. The DICOM vocabulary
 then loads on its own (`make -C trust/omop-db load-dicom-vocab` with the kit's `OMOP_*` values); no trust
 service needs it at run time (data-access-api's modality chart LEFT JOINs `omop.concept`), only OMOP rows that
 reference DICOM attribute concepts.

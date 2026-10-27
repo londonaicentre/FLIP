@@ -278,7 +278,7 @@ make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # 
 
 A real trust, whose OMOP and PACS hold its own data, sets `TRUST_DATA_SEED=false` in its kit:
 `ensure-seeded` then fetches, loads and marks nothing, and on Kubernetes `sync-kit` turns
-`trustData.seed.enabled` off. If that trust's OMOP lacks the DICOM vocabulary, load it on its own with
+`trustData.seed.enabled` off. The explicit `seed*` / `unseed*` targets refuse that trust unless `FORCE=1`. If that trust's OMOP lacks the DICOM vocabulary, load it on its own with
 `make -C trust/omop-db load-dicom-vocab` and the kit's `OMOP_*` values.
 
 **A host seeded before FLIP#1187 re-seeds once.** The PACS marker used to live *inside* the

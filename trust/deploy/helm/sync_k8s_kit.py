@@ -815,8 +815,8 @@ def render_override(
     # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
     # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
     # A real trust turns the hook off with the kit's TRUST_DATA_SEED=false, as on Compose (FLIP#1687);
-    # unset or true leaves the chart's value.
-    seed = kit.get("TRUST_DATA_SEED", "").strip()
+    # unset or true leaves the chart's value. A trailing `# comment` is dropped, as make drops it.
+    seed = kit.get("TRUST_DATA_SEED", "").split("#", 1)[0].strip().strip("\"'")
     if seed not in ("", "true", "false"):
         raise ValueError(f"TRUST_DATA_SEED must be true or false, not {seed!r}")
     source_trust = kit.get("SOURCE_TRUST", "").strip()

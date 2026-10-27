@@ -379,6 +379,25 @@ define require_kit
 	fi
 endef
 
+# The kit's TRUST_DATA_SEED (FLIP#1687): unset is true, and surrounding quotes are dropped as
+# sync-kit drops them, so both shapes read one kit line alike.
+TRUST_DATA_SEED_EFFECTIVE = $(or $(strip $(subst ",,$(subst ',,$(TRUST_DATA_SEED)))),true)
+
+# Guard: any other value is refused before a container starts, rather than read as true.
+define require_trust_data_seed
+	@case "$(TRUST_DATA_SEED_EFFECTIVE)" in true|false) ;; *) \
+	    echo "❌ TRUST_DATA_SEED must be true or false in $(KIT_FILE_LABEL), not '$(TRUST_DATA_SEED_EFFECTIVE)'."; exit 1;; \
+	esac
+endef
+
+# Guard: the explicit (un)seed verbs refuse a trust whose kit turns the sample data off, unless FORCE=1.
+define refuse_seed_when_off
+	@if [ "$(TRUST_DATA_SEED_EFFECTIVE)" = false ] && [ -z "$(FORCE)" ]; then \
+	    echo "❌ $(KIT) has TRUST_DATA_SEED=false: its OMOP and PACS hold its own data, which $@ would change. FORCE=1 runs it anyway."; \
+	    exit 1; \
+	fi
+endef
+
 # Guard: bringing a trust UP additionally needs its kit file (ports + credentials).
 # Teardown (down-trust) only needs the project name, so it uses require_kit instead.
 # Placeholder check: refuse to start a stack with `<run-make-…>` placeholders still
@@ -524,6 +543,7 @@ prepare-artifacts:
 # it, or restart-trust, to move a live site to a release; that is upgrade-trust (FLIP#1204).
 up-trust: require-xnat-aetitle create-networks create-trust-network
 	$(require_kit_file)
+	$(require_trust_data_seed)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file $(KIT_FILE_LABEL)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -900,13 +920,11 @@ wait-pacs:
 # A real trust, whose OMOP and PACS hold its own data, sets TRUST_DATA_SEED=false in its kit:
 # nothing is then fetched, loaded or marked, whatever the markers or the pin say. Any value but
 # true or false is refused rather than read as true, which would seed a real trust.
-TRUST_DATA_SEED_EFFECTIVE = $(or $(strip $(TRUST_DATA_SEED)),true)
 ensure-seeded: $(if $(filter true,$(TRUST_DATA_SEED_EFFECTIVE)),wait-omop-db wait-pacs)
 	$(require_kit)
+	$(require_trust_data_seed)
 ifeq ($(TRUST_DATA_SEED_EFFECTIVE),false)
 	@echo "⏭️  Sample data is off for $(KIT) (TRUST_DATA_SEED=false): nothing loaded into OMOP or the PACS."
-else ifneq ($(TRUST_DATA_SEED_EFFECTIVE),true)
-	@echo "❌ TRUST_DATA_SEED must be true or false in $(KIT_FILE_LABEL), not '$(TRUST_DATA_SEED)'."; exit 1
 else
 	@want=$$(printf 'projects=%s\nsource_trust=%s\nversion=%s\n' "$(PROJECTS)" "$(SOURCE_TRUST)" "$(TRUST_DATA_REVISION)"); \
 	if [ "$$(cat '$(OMOP_SEED_MARKER)' 2>/dev/null)" = "$$want" ]; then \
@@ -967,6 +985,7 @@ SOURCE_TRUST ?= $(TRUST_NUM)
 #   make -C trust seed-omop KIT=GSTT PROJECTS="cxr_project spleen_project" CLEAN=all CANONICAL_DIR=…
 seed-omop:
 	$(require_kit)
+	$(refuse_seed_when_off)
 	$(OMOP_DB_CMD) seed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
@@ -984,6 +1003,7 @@ seed-omop:
 #   make -C trust seed-orthanc KIT=GSTT PROJECTS=brain_mri_project DICOM_SOURCE=/abs/dicom TABLES_DIR=/abs/canonical
 seed-orthanc:
 	$(require_kit)
+	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) seed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
@@ -1010,6 +1030,7 @@ seed-trusts:
 #   make -C fl-tutorials seed-spleen KIT=GSTT
 unseed-omop:
 	$(require_kit)
+	$(refuse_seed_when_off)
 	$(OMOP_DB_CMD) unseed-omop TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  OMOP_DB_PORT=$(OMOP_DB_PORT) \
 	  OMOP_POSTGRES_USER=$(OMOP_POSTGRES_USER) OMOP_POSTGRES_PASSWORD='$(OMOP_POSTGRES_PASSWORD)' \
@@ -1019,6 +1040,7 @@ unseed-omop:
 
 unseed-orthanc:
 	$(require_kit)
+	$(refuse_seed_when_off)
 	$(ORTHANC_CMD) unseed-orthanc TRUST_INDEX=$(TRUST_NUM) SOURCE_TRUST=$(SOURCE_TRUST) \
 	  PACS_UI_PORT=$(PACS_UI_PORT) \
 	  ORTHANC_USERNAME=$(ORTHANC_USERNAME) ORTHANC_PASSWORD='$(ORTHANC_PASSWORD)' \
