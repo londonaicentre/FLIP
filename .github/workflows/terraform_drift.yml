@@ -66,10 +66,15 @@ concurrency:
 jobs:
   drift:
     name: Drift (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    # Both jobs skip outside londonaicentre/FLIP unless the repository variable
+    # TF_DRIFT_ON_FORK is `true` (adopters: deploy/providers/AWS/ci/README.md). A
+    # fork with Actions on would otherwise fail here nightly, lacking the aws-*
+    # environments, and GitHub mails a scheduled run's failure to whoever last
+    # edited this file upstream.
     # TF_STAG_DISABLED pauses the staging leg only; see terraform_apply.yml.
     # dispatch-prod below does not depend on this job, so production drift still
     # runs from the develop schedule.
-    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_DRIFT_ON_FORK == 'true') && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
     runs-on: ubuntu-latest
     # No matrix: a run can only reach the one environment its ref is trusted for,
     # so there is exactly one leg. The same `github.ref_name == 'main'` ternary
@@ -344,7 +349,8 @@ jobs:
   # error can never be mistaken for "absent" and skip production silently.
   dispatch-prod:
     name: Dispatch the production drift run on main
-    if: github.ref_name != 'main'
+    # Same fork skip as the drift job.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_DRIFT_ON_FORK == 'true') && github.ref_name != 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
