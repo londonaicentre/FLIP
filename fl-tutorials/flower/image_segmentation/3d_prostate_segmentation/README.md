@@ -34,6 +34,17 @@ The training recipe is nnU-Net's (deep-supervised Dice + binary cross-entropy, S
 patch-based training with nnU-Net's augmentations), ported from the standalone trainer this tutorial
 grew out of — see [Where the reference trainer went](#where-the-reference-trainer-went).
 
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the `app/` package (flat; every file listed below, the committed plan JSON included) |
+| Job type | `standard` (`job_type` in `app/config.json`; the `fl-apps/flower/standard` template — plain FedAvg over the planned DynUNet) |
+| Imaging | **on**, with **DICOM to NIfTI on** — three series per study; the whole-gland and zonal masks reach every trust's XNAT as data enrichment (`upload-prostate-labels`) |
+| Cohort query | `query.sql` (saved on the project, not uploaded; one row per series) |
+| Dataset | `make -C fl-tutorials prepare-prostate-local-data NUM_CASES=12` for the simulator; `download-prostate-data FOLDS=0` for the platform path |
+| Simulator | `make -C fl-tutorials sim-tutorial TUTORIAL=3d_prostate_segmentation FL_BACKEND=flower` (GPU; Flower only) |
+
 ## Folder structure
 
 ```shell
