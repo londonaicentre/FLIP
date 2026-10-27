@@ -79,6 +79,11 @@ Every GitHub Release has a *Site upgrade* section. It says:
 
 If the hub goes first, wait for the FLIP admin to confirm the hub is on the release.
 
+A site running NVFLARE job pods on Kubernetes (``flClient.nvflare.jobPods.enabled``) upgrades **with or before the
+hub** from the release that runs each job in its project's NVFLARE study (FLIP#1678). Such a hub submits every job
+under its project's study, and a job-pod site on an older release has no entry for that study, so the job does not
+start there.
+
 Step 2 — Replace the Hub-shared block (refreshed kit only)
 ==========================================================
 

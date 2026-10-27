@@ -69,6 +69,8 @@ Key environment variables. Most come from the trust kit file — template at [`.
 | `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
 | `COHORT_SNAPSHOT_DIR` | Container path of the approved-cohort membership store (the compose files fix it to `/snapshots` and bind-mount the kit's host-side `COHORT_SNAPSHOT_STORAGE_DIR` there). Empty = store disabled, so row-level routes refuse every project — fail-closed. |
 | `SNAPSHOT_MAX_BYTES` | Hard cap on one serialized membership record (default 512 MiB). An over-cap cohort is refused, never truncated. |
+| `COHORT_DATA_DIR` | Where each NVFLARE job's approved dataframe is staged for its job pods (FLIP#1678; the Helm chart sets `/cohort-data` with job pods). Empty = staging disabled: the stage routes answer `{"staged": false}` and write nothing, as on Compose trusts. |
+| `COHORT_DATA_MAX_AGE_HOURS` | Staged data older than this is swept hourly (default `168`), in case the hub never asks for it to be removed. Must exceed the longest job. |
 | `COHORT_QUERY_THRESHOLD` | The trust's minimum cohort size in distinct subjects (default `10`; see below) |
 | `ACCESS_POLICY_FILE` | Optional path to the trust's governance document (FLIP#1259, see below). Unset = platform defaults |
 | `CACHE_TTL_DAYS` | Age (days, default `60`) at which a cached result is treated as expired and dropped on the next lookup |
@@ -159,6 +161,23 @@ tabular project's empty accession list: `/cohort/accession-ids` never runs the c
 accessions to resolve, so it applies the live threshold to the subject count frozen at approval.
 Snapshot creation reads OMOP (and counts its subjects) with the query cache bypassed, so it freezes
 the live cohort, never a result cached at submission.
+
+## Per-job cohort data (FLIP#1678)
+
+On a Kubernetes trust running NVFLARE job pods, each job is handed its cohort data before it starts. Before submitting
+a job, the hub has each of its trusts stage it: trust-api forwards `POST /cohort/stage` with the encrypted project id
+and the model id, and this service writes
+
+`COHORT_DATA_DIR/<hub-project-uuid>/<model-uuid>/dataframe.parquet`
+
+with exactly the rules `/cohort/dataframe` serves by: the query of record run live, the frozen membership, the access
+policy and the subject threshold, with the same fixed refusal. The fl-client's study-sync sidecar then gives that
+project's job pods its directory, read-only. `POST /cohort/stage/delete` removes a model's data when it ends, and an
+hourly sweep removes anything older than `COHORT_DATA_MAX_AGE_HOURS`.
+
+Unlike the snapshot store, this holds **clinical rows**, for as long as a job runs. Files are `0640` and directories
+`0750`, set explicitly. Both routes sit on the write router, so they need the cohort-admin proof: researcher code holds
+the trust-internal key but not the AES key, so it can neither stage another project's rows nor remove a job's.
 
 ## Authentication
 
