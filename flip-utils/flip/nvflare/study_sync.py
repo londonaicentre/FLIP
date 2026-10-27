@@ -99,15 +99,18 @@ def _is_project(name: str) -> bool:
         return False
 
 
+def _has_model(project_dir: Path) -> bool:
+    try:
+        return any(m.is_dir() and not m.name.startswith(".") for m in project_dir.iterdir())
+    except FileNotFoundError:
+        return False  # Its last model was unstaged while we looked.
+
+
 def staged_projects(cohort_data_dir: Path) -> list[str]:
     """The projects with at least one staged model. A model directory being written or removed starts with a dot."""
     if not cohort_data_dir.is_dir():
         return []
-    return sorted(
-        p.name
-        for p in cohort_data_dir.iterdir()
-        if p.is_dir() and _is_project(p.name) and any(m.is_dir() and not m.name.startswith(".") for m in p.iterdir())
-    )
+    return sorted(p.name for p in cohort_data_dir.iterdir() if p.is_dir() and _is_project(p.name) and _has_model(p))
 
 
 def _main_container(spec: dict[str, Any]) -> dict[str, Any]:
@@ -196,7 +199,9 @@ def xnat_archives(cfg: SyncConfig, projects: list[str]) -> dict[str, str]:
     return archives
 
 
-def sync_once(cfg: SyncConfig, last_archives: dict[str, str], refresh_archives: bool = True) -> dict[str, str]:
+def sync_once(
+    cfg: SyncConfig, last_archives: dict[str, str], refresh_archives: bool = True
+) -> tuple[dict[str, str], bool]:
     """Write the study entries once. Rewrites the file only when its content changes.
 
     Args:
@@ -205,21 +210,23 @@ def sync_once(cfg: SyncConfig, last_archives: dict[str, str], refresh_archives: 
         refresh_archives (bool): Whether to ask imaging-api again.
 
     Returns:
-        dict[str, str]: The XNAT archives this sync used: the last ones when imaging-api could not answer.
+        tuple[dict[str, str], bool]: The XNAT archives this sync used (the last ones when imaging-api could not
+        answer), and whether the file was written from a refresh that succeeded.
     """
     template_path = cfg.local_dir / POD_TEMPLATE
     if not template_path.is_file():
         print(f"study sync: waiting for {template_path}", file=sys.stderr)
-        return last_archives
+        return last_archives, False
     template = yaml.safe_load(template_path.read_text()) or {}
     projects = staged_projects(cfg.cohort_data_dir)
 
-    archives = last_archives
+    archives, refreshed = last_archives, refresh_archives
     if cfg.xnat_archive_pvc and cfg.imaging_api_url and refresh_archives and projects:
         try:
             archives = xnat_archives(cfg, projects)
         except (requests.RequestException, ValueError) as e:
             print(f"study sync: imaging-api did not answer ({e}); keeping the last imaging mounts", file=sys.stderr)
+            refreshed = False
 
     studies = {
         p: study_entry(
@@ -232,14 +239,14 @@ def sync_once(cfg: SyncConfig, last_archives: dict[str, str], refresh_archives: 
     if not target.is_file() or json.loads(target.read_text() or "null") != document:
         _write_json(target, document)
         print(f"study sync: {len(studies)} project stud{'y' if len(studies) == 1 else 'ies'}: {sorted(studies)}")
-    return archives
+    return archives, refreshed
 
 
 def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) -> int:
     """CLI entry point: ``python -m flip.nvflare.study_sync <local_dir> [--once]``.
 
     Returns:
-        ``1`` on an invalid setting; otherwise ``0`` after ``--once``, and never while looping.
+        ``1`` on an invalid setting or a failed ``--once``; otherwise ``0`` after ``--once``, and never while looping.
     """
     parser = argparse.ArgumentParser(prog="flip.nvflare.study_sync", description=__doc__)
     parser.add_argument("local_dir", type=Path, help="The client kit's local/ directory")
@@ -255,12 +262,18 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     known: list[str] = []
     refreshed_at = 0.0
     while True:
-        staged = staged_projects(cfg.cohort_data_dir)
-        # A newly staged project is looked up at once: its job is submitted a few seconds after staging.
-        refresh = staged != known or time.monotonic() - refreshed_at >= ARCHIVE_REFRESH_SECONDS
-        archives = sync_once(cfg, archives, refresh_archives=refresh)
-        if refresh:
-            known, refreshed_at = staged, time.monotonic()
+        try:
+            staged = staged_projects(cfg.cohort_data_dir)
+            # A newly staged project is looked up at once, and every tick until imaging-api answers: its job is
+            # submitted a few seconds after staging.
+            refresh = staged != known or time.monotonic() - refreshed_at >= ARCHIVE_REFRESH_SECONDS
+            archives, refreshed = sync_once(cfg, archives, refresh_archives=refresh)
+            if refreshed:
+                known, refreshed_at = staged, time.monotonic()
+        except Exception as e:  # One bad tick must not end the sidecar; the next one retries.
+            print(f"study sync: this sync failed ({e!r}); retrying", file=sys.stderr)
+            if parsed.once:
+                return 1
         if parsed.once:
             return 0
         time.sleep(cfg.interval)

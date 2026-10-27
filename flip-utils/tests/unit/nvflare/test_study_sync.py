@@ -198,7 +198,7 @@ def test_sync_gives_an_imaging_project_its_archive(cfg):
     projects = [{"ID": XNAT_ID, "secondary_ID": P1}, {"ID": "other", "secondary_ID": P2}]
 
     with patch("flip.nvflare.study_sync.requests.get", side_effect=_imaging_api(projects, {XNAT_ID: [{"ID": "e"}]})):
-        archives = sync_once(cfg, {})
+        archives, _ = sync_once(cfg, {})
 
     assert archives == {P1: XNAT_ID}
     mounts = _main(_runtime(cfg)["studies"][P1]["pod_template"]["spec"])["volumeMounts"]
@@ -211,7 +211,7 @@ def test_no_imaging_mount_without_archived_experiments(cfg):
     projects = [{"ID": XNAT_ID, "secondary_ID": P1}]
 
     with patch("flip.nvflare.study_sync.requests.get", side_effect=_imaging_api(projects, {XNAT_ID: []})):
-        archives = sync_once(cfg, {})
+        archives, _ = sync_once(cfg, {})
 
     assert archives == {}
     volumes = {v["name"] for v in _runtime(cfg)["studies"][P1]["pod_template"]["spec"]["volumes"]}
@@ -235,7 +235,7 @@ def test_sync_keeps_the_last_archives_when_imaging_api_is_unreachable(cfg):
     _stage(cfg.cohort_data_dir, P1)
 
     with patch("flip.nvflare.study_sync.requests.get", side_effect=requests.ConnectionError("down")):
-        archives = sync_once(cfg, {P1: XNAT_ID})
+        archives, _ = sync_once(cfg, {P1: XNAT_ID})
 
     assert archives == {P1: XNAT_ID}
     mounts = _main(_runtime(cfg)["studies"][P1]["pod_template"]["spec"])["volumeMounts"]
@@ -259,7 +259,7 @@ def test_sync_skips_a_tick_until_the_pod_template_exists(cfg):
     (cfg.local_dir / "pod_specs" / "job-pod.yaml").unlink()
     _stage(cfg.cohort_data_dir, P1)
 
-    assert sync_once(cfg, {P1: XNAT_ID}) == {P1: XNAT_ID}
+    assert sync_once(cfg, {P1: XNAT_ID}) == ({P1: XNAT_ID}, False)
     assert not (cfg.local_dir / "study_runtime.yaml").exists()
 
 
@@ -300,9 +300,98 @@ def test_an_ambiguous_xnat_project_gets_no_imaging_mount(cfg, capsys):
     experiments = {XNAT_ID: [{"ID": "e"}], "b2222222-2222-4222-8222-222222222222": [{"ID": "f"}]}
 
     with patch("flip.nvflare.study_sync.requests.get", side_effect=_imaging_api(projects, experiments)):
-        archives = sync_once(cfg, {})
+        archives, _ = sync_once(cfg, {})
 
     assert archives == {}
     assert P1 in capsys.readouterr().err
     volumes = {v["name"] for v in _runtime(cfg)["studies"][P1]["pod_template"]["spec"]["volumes"]}
     assert "flip-xnat-archive" not in volumes
+
+
+# --- the sidecar loop (final review #7) -----------------------------------------------------------
+
+
+class _Stop(Exception):
+    """Ends main's loop after a number of ticks."""
+
+
+def _loop_env(cfg):
+    return {
+        "FL_K8S_JOB_IMAGE": IMAGE,
+        "FL_STUDY_COHORT_DATA_DIR": str(cfg.cohort_data_dir),
+        "FL_STUDY_COHORT_DATA_PVC": COHORT_PVC,
+        "FL_STUDY_XNAT_ARCHIVE_PVC": XNAT_PVC,
+        "IMAGING_API_URL": "http://imaging-api:8000",
+    }
+
+
+def _run_ticks(cfg, n):
+    calls = iter(range(n - 1))
+
+    def sleep(_seconds):
+        if next(calls, None) is None:
+            raise _Stop
+
+    with patch("flip.nvflare.study_sync.time.sleep", side_effect=sleep), pytest.raises(_Stop):
+        study_sync.main([str(cfg.local_dir)], env=_loop_env(cfg))
+
+
+def test_a_new_project_is_looked_up_again_until_imaging_api_answers(cfg):
+    # Its job is submitted seconds after staging: waiting for the 30 s refresh would launch it without its images.
+    _stage(cfg.cohort_data_dir, P1)
+    answers = iter([requests.ConnectionError("down")])
+    projects = _imaging_api([{"ID": XNAT_ID, "secondary_ID": P1}], {XNAT_ID: [{"ID": "e"}]})
+
+    def get(url, headers=None, timeout=None):
+        failure = next(answers, None)
+        if failure:
+            raise failure
+        return projects(url, headers, timeout)
+
+    with patch("flip.nvflare.study_sync.requests.get", side_effect=get):
+        _run_ticks(cfg, 2)
+
+    mounts = _main(_runtime(cfg)["studies"][P1]["pod_template"]["spec"])["volumeMounts"]
+    assert f"archive/{XNAT_ID}" in {m.get("subPath") for m in mounts}
+
+
+def test_a_failed_tick_does_not_stop_the_sync(cfg, capsys):
+    _stage(cfg.cohort_data_dir, P1)
+    real_sync = study_sync.sync_once
+    ticks = iter([OSError("disk full")])
+
+    def flaky(*args, **kwargs):
+        failure = next(ticks, None)
+        if failure:
+            raise failure
+        return real_sync(*args, **kwargs)
+
+    with (
+        patch("flip.nvflare.study_sync.sync_once", side_effect=flaky),
+        patch("flip.nvflare.study_sync.requests.get", side_effect=_imaging_api([], {})),
+    ):
+        _run_ticks(cfg, 2)
+
+    assert "disk full" in capsys.readouterr().err
+    assert P1 in _runtime(cfg)["studies"]
+
+
+def test_staged_projects_skips_a_project_removed_while_listing(cfg):
+    _stage(cfg.cohort_data_dir, P1)
+    _stage(cfg.cohort_data_dir, P2)
+    real_iterdir = study_sync.Path.iterdir
+
+    def iterdir(path):
+        if path.name == P1:
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        return real_iterdir(path)
+
+    with patch.object(study_sync.Path, "iterdir", iterdir):
+        assert staged_projects(cfg.cohort_data_dir) == [P2]
+
+
+def test_main_once_reports_a_failed_sync(cfg, capsys):
+    with patch("flip.nvflare.study_sync.sync_once", side_effect=OSError("disk full")):
+        assert study_sync.main([str(cfg.local_dir), "--once"], env=_loop_env(cfg)) == 1
+
+    assert "disk full" in capsys.readouterr().err
