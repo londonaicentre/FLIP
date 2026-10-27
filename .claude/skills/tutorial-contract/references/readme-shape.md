@@ -95,7 +95,8 @@ adding a profile there — `project_name`, `model_name`, `model_description`, `h
 for tabular cohorts (skips the XNAT/OHIF segment), and per-backend `app_dir` / `query_file`
 pointing at the tutorial. `flip-api/tests/unit/test_demo_video_helpers.py` parametrises over
 `APPS`, so the new profile's paths are checked by `make -C flip-api unit_test`.
-`platform.demo_profile` names the profile;  checks it points at this tutorial.
+The `APPS` entry is the only registration there is (no tutorial file names its profile);
+`test_demo_video_helpers.py` checks every profile's `app_dir` / `query_file` points at an existing tutorial.
 
 ```bash
 make demo-video DEMO_ARGS="--app <name>"                      # NVFLARE, ~30–45 min, needs the dev stack up + cohort seeded
