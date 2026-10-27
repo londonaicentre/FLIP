@@ -218,6 +218,24 @@ For a genuine same-day patch of an active CVE, the cooldown can be bypassed for 
 Any override must be justified in the pull-request description. Use it only for security patches that genuinely
 cannot wait 72 hours.
 
+#### Security floors
+
+Upgrading the lockfile clears a Dependabot alert; a floor keeps it cleared. Without one, a later `uv lock` that has to
+re-resolve the package (because a new dependency caps it, say) can quietly pick a vulnerable release again. With one,
+that `uv lock` fails instead. When you fix an alert:
+
+- **Raise any floor the package already has** to the fixed version: a dependency specifier, a `[tool.uv]
+  constraint-dependencies` entry, or an `overrides` entry in `flip-ui/package.json`.
+- **Add one in any project that ships**, meaning a service image, an FL image, `flip-utils`, `flip-ui` or
+  `trust/xnat/export-mask`. A transitive Python fix goes in `constraint-dependencies` with the advisory IDs beside it;
+  a transitive npm fix goes in `overrides`.
+- **Leave dev and docs tooling lock-only** (`docs/`, `deploy/providers/AWS/`, dev-only groups) unless the first rule
+  applies. None of it ships.
+
+`constraint-dependencies` is read only by uv. It guards this repo's lockfiles, not a downstream `pip install
+flip-utils`, so carry the floor by hand into any install that skips `[tool.uv]`, such as the `pip install` in
+`fl-services/flower/fl-base/Dockerfile`.
+
 ### Environment variables
 
 Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses
