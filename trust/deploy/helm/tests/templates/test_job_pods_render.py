@@ -335,6 +335,8 @@ def test_job_pods_never_mount_a_service_account_token():
 def test_without_job_pods_nothing_stages_job_data():
     docs = _docs()
 
-    assert [d for d in docs if d["kind"] == "PersistentVolumeClaim" and d["metadata"]["name"].endswith("-cohort-data")] == []
+    assert [
+        d for d in docs if d["kind"] == "PersistentVolumeClaim" and d["metadata"]["name"].endswith("-cohort-data")
+    ] == []
     assert "COHORT_DATA_DIR" not in _one(docs, "ConfigMap", "-data-access-api")["data"]
     assert [c["name"] for c in _client(docs)["spec"]["template"]["spec"]["containers"]] == ["fl-client"]
