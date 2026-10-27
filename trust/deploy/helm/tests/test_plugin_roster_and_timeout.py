@@ -22,9 +22,9 @@ Three things therefore have to stay true, and none is visible in a rendered char
   cannot surge a second pod, so under RollingUpdate the rollout stalls and the old pod
   serves on with the old jars however long the deploy waits;
 * the deploy timeout is ONE knob an operator can raise, not a literal per wait site;
-* the roster check derives its expected filenames from the same URLs the chart
-  downloads, so it cannot agree with a stale pod by carrying its own copy of the
-  versions.
+* the roster check derives its expected filenames from the manifest the xnat-web
+  image is built from, so it cannot agree with a stale pod by carrying its own copy of
+  the versions.
 """
 
 import base64
@@ -36,7 +36,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
 
 CHART_DIR = Path(__file__).resolve().parents[1]
 MAKEFILE = CHART_DIR / "Makefile"
@@ -101,52 +100,45 @@ def test_the_rollout_waits_are_not_swept_up_by_the_same_knob() -> None:
     )
 
 
-# ── Filename derivation ──────────────────────────────────────────────────────────────
+# ── The roster: the manifest's plugin lines ──────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    ("url", "expected"),
-    [
-        (
-            "https://github.com/NrgXnat/container-service/releases/download/3.8.1/container-service-3.8.1-fat.jar",
-            "container-service-3.8.1-fat.jar",
-        ),
-        (
-            "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/"
-            "dicom-query-retrieve-3.0.0-xpl.jar",
-            "dicom-query-retrieve-3.0.0-xpl.jar",
-        ),
-        ("https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar", "ohif-viewer-3.7.2.jar"),
-        # A query string is not part of the filename the chart writes.
-        ("https://example.org/downloads/batch-launch-0.9.0-xpl.jar?token=abc", "batch-launch-0.9.0-xpl.jar"),
-    ],
-)
-def test_plugin_jar_name_matches_the_charts_own_derivation(url: str, expected: str) -> None:
-    """The template takes the basename of the URL path; so must this."""
-    assert check_status.plugin_jar_name(url) == expected
+def test_the_roster_is_the_manifests_plugin_lines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """One jar per ``plugin`` line, named as the image build names it and keyed by the name before its version."""
+    manifest = tmp_path / "artifacts.manifest"
+    manifest.write_text(
+        "# <kind>  <sha256>  <url>\n"
+        f"war     {'0' * 64}  https://example.org/1.10.2.1/xnat-web-1.10.2.1.war\n"
+        f"plugin  {'1' * 64}  https://example.org/3.8.2/container-service-3.8.2-fat.jar\n"
+        f"plugin  {'2' * 64}  https://example.org/downloads/dicom-query-retrieve-3.0.0-xpl.jar\n"
+    )
+    monkeypatch.setattr(check_status, "ARTIFACTS_MANIFEST", manifest)
+
+    assert check_status.manifest_plugin_jars() == {
+        "container-service": "container-service-3.8.2-fat.jar",
+        "dicom-query-retrieve": "dicom-query-retrieve-3.0.0-xpl.jar",
+    }
 
 
-@pytest.mark.parametrize(
-    "url",
-    [
-        # A redirect-to-asset URL: the downloaded filename is decided by the server, so the
-        # expected name cannot be derived here. Guessing one would fail a correct pod.
-        "https://github.com/NrgXnat/container-service/releases/latest/download",
-        "https://example.org/plugins/",
-        "",
-        None,
-    ],
-)
-def test_plugin_jar_name_declines_what_it_cannot_derive(url: object) -> None:
-    """Return None rather than a guess — a wrong expectation reads as a stale pod."""
-    assert check_status.plugin_jar_name(url) is None
+def test_every_manifest_plugin_has_its_xnat_plugin_id() -> None:
+    """The ids are not the keys, so the pairing is written down — and must cover the roster."""
+    assert set(check_status.manifest_plugin_jars()) == set(check_status.XNAT_PLUGIN_IDS), (
+        "add the new plugin's `id=` to XNAT_PLUGIN_IDS"
+    )
+    # As read from each jar's META-INF/xnat/*-plugin.properties and from /xapi/plugins (XNAT 1.10.0).
+    assert check_status.XNAT_PLUGIN_IDS == {
+        "batch-launch": "batchLaunchPlugin",
+        "container-service": "containers",
+        "dicom-query-retrieve": "dicom-query-retrieve",
+        "ohif-viewer": "ohifViewerPlugin",
+    }
 
 
 # ── The comparison ───────────────────────────────────────────────────────────────────
 
 
 def test_a_matching_roster_reports_nothing() -> None:
-    """Extra jars the values do not name are not the pod's fault (an operator may add one)."""
+    """Only the manifest's plugins are compared; a jar it does not name is not reported here."""
     expected = {"dicom-query-retrieve": "dicom-query-retrieve-3.0.0-xpl.jar"}
     found = ["dicom-query-retrieve-3.0.0-xpl.jar", "some-site-plugin-1.0.jar"]
 
@@ -156,9 +148,8 @@ def test_a_matching_roster_reports_nothing() -> None:
 def test_a_different_version_of_the_same_plugin_is_stale_not_missing() -> None:
     """This is the FLIP#1228 signal, and the message has to name both versions.
 
-    "expected jar absent" and "wrong jar present" are different diagnoses: the first is a
-    failed download, the second is a pod spec older than the values. Reporting the second
-    as the first sends the operator to the init container's logs, which are clean.
+    "expected jar absent" and "wrong jar present" are different diagnoses: the first is an
+    image without that plugin, the second an image with an older build of it.
     """
     expected = {
         "dicom-query-retrieve": "dicom-query-retrieve-3.0.0-xpl.jar",
@@ -176,7 +167,7 @@ def test_a_different_version_of_the_same_plugin_is_stale_not_missing() -> None:
 
 
 def test_an_absent_plugin_is_missing_not_stale() -> None:
-    """Nothing of that name on disk means the download failed, not that the spec is old."""
+    """Nothing of that name on disk is an image without the plugin, not an older build of it."""
     expected = {"ohif-viewer": "ohif-viewer-3.7.2.jar"}
 
     missing, stale = check_status.compare_plugin_roster(expected, ["container-service-3.8.1-fat.jar"])
@@ -189,9 +180,9 @@ def test_a_plugin_whose_name_prefixes_another_is_not_mistaken_for_it() -> None:
     """``container-service`` must not claim ``container-service-extras-*`` as its stale copy.
 
     ``container-service-`` prefixes ``container-service-extras-1.0.jar``, so a bare
-    ``startswith`` reports a container-service that never downloaded as *stale*, naming a
-    jar the operator must not touch and hiding the failed download. The expected jar is
-    deliberately absent here, so the prefix branch really is the one under test.
+    ``startswith`` reports a missing container-service as *stale*, naming a jar the
+    operator must not touch. The expected jar is deliberately absent here, so the prefix
+    branch really is the one under test.
     """
     expected = {"container-service": "container-service-3.8.1-fat.jar"}
 
@@ -216,7 +207,7 @@ def test_a_jar_another_key_expects_is_never_reported_as_this_plugins_stale_copy(
     assert missing == [("foo", "foo-2.0.jar")]
 
 
-# ── Reading the roster from the live release ─────────────────────────────────────────
+# ── Reading the roster for the live release ──────────────────────────────────────────
 
 
 def test_expected_plugin_jars_ignores_a_release_with_xnat_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -225,34 +216,12 @@ def test_expected_plugin_jars_ignores_a_release_with_xnat_disabled(monkeypatch: 
     monkeypatch.setattr(
         check_status,
         "run_command",
-        lambda *_a, **_k: (True, '{"xnat": {"enabled": false, "web": {"plugins": {"urls": {"a": "x/a-1.jar"}}}}}'),
+        lambda *_a, **_k: (True, '{"xnat": {"enabled": false}}'),
     )
 
     roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
 
     assert roster.status is check_status.RosterLookup.DISABLED
-
-
-def test_expected_plugin_jars_skips_a_release_with_plugins_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """plugins.enabled=false means no download container and legitimately no jars.
-
-    Comparing anyway FAILs every plugin and sends the operator to the logs of a container
-    that was never created.
-    """
-    monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
-    monkeypatch.setattr(
-        check_status,
-        "run_command",
-        lambda *_a, **_k: (
-            True,
-            '{"xnat": {"enabled": true, "web": {"plugins": {"enabled": false, "urls": {"a": "x/a-1.jar"}}}}}',
-        ),
-    )
-
-    roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
-
-    assert roster.status is check_status.RosterLookup.DISABLED
-    assert "plugins.enabled" in roster.detail
 
 
 @pytest.mark.parametrize(
@@ -282,26 +251,14 @@ def test_a_roster_that_cannot_be_read_is_not_reported_as_disabled(
     assert roster.detail, "an unreadable roster must say why, or the operator cannot act on it"
 
 
-def test_expected_plugin_jars_reads_the_live_values_not_the_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``helm get values`` is the source: a checkout can be ahead of what is deployed.
-
-    Reading values.yaml off disk would have called the roster correct for the whole of
-    FLIP#1228 — the file was right, the release was not.
-    """
+def test_a_release_running_xnat_is_checked_against_the_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The live release says whether XNAT runs; the manifest says which jars its image carries."""
     seen: dict[str, list[str]] = {}
 
     def fake_run(args: list[str], **_kwargs: object) -> tuple[bool, str]:
         seen["args"] = args
-        return True, (
-            # `--all` renders chart defaults too, so plugins.enabled is present in real
-            # output; the check mirrors the template's own `and .Values…enabled`, which
-            # treats an absent key as off.
-            '{"xnat": {"enabled": true, "web": {"plugins": {"enabled": true, "urls": {'
-            '"container-service": "https://x/container-service-3.8.1-fat.jar",'
-            '"dicom-query-retrieve": "https://y/dicom-query-retrieve-3.0.0-xpl.jar",'
-            '"broken": "https://z/no-extension"'
-            "}}}}}"
-        )
+        # A leftover plugin list in an old overrides file is ignored: nothing deploys it any more.
+        return True, '{"xnat": {"enabled": true, "web": {"plugins": {"urls": {"old": "https://x/old-1.0.jar"}}}}}'
 
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
     monkeypatch.setattr(check_status, "run_command", fake_run)
@@ -309,20 +266,31 @@ def test_expected_plugin_jars_reads_the_live_values_not_the_checkout(monkeypatch
     roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
 
     assert roster.status is check_status.RosterLookup.OK
-    assert roster.jars == {
-        "container-service": "container-service-3.8.1-fat.jar",
-        "dicom-query-retrieve": "dicom-query-retrieve-3.0.0-xpl.jar",
-    }, "a URL with no derivable jar name must be dropped, not compared as an empty filename"
-    assert roster.undrivable == ("broken",), (
-        "a URL the chart's own download-plugins would SystemExit on must be reported, not "
-        "silently dropped — that release cannot start a pod at all"
-    )
+    assert roster.jars == check_status.manifest_plugin_jars()
     assert seen["args"][:4] == ["helm", "get", "values", "trust-release"]
-    assert "--all" in seen["args"], "without --all, chart defaults are absent and every plugin looks unconfigured"
+    assert "--all" in seen["args"], "without --all, chart defaults are absent and xnat.enabled looks off"
+
+
+@pytest.mark.parametrize("manifest", [None, "# no plugin lines\n"], ids=["missing", "no-plugins"])
+def test_a_manifest_that_cannot_be_read_leaves_the_check_unrun(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, manifest: str | None
+) -> None:
+    """Run from outside a checkout, or with a broken manifest, there is nothing to compare against."""
+    path = tmp_path / "artifacts.manifest"
+    if manifest is not None:
+        path.write_text(manifest)
+    monkeypatch.setattr(check_status, "ARTIFACTS_MANIFEST", path)
+    monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
+    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (True, '{"xnat": {"enabled": true}}'))
+
+    roster = check_status.expected_plugin_jars("trust-release", "flip-trust")
+
+    assert roster.status is check_status.RosterLookup.UNREADABLE
+    assert str(path) in roster.detail
 
 
 def test_expected_plugin_jars_declines_without_helm(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No helm means no live values; skip rather than fall back to the checkout."""
+    """No helm means no telling whether the release runs XNAT; unreadable, not assumed."""
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: False)
 
     assert check_status.expected_plugin_jars("trust-release", "flip-trust").status is (
@@ -489,19 +457,6 @@ def test_a_disabled_release_is_skipped_without_a_warning(
     assert [status for status, _ in reported] == ["INFO"]
 
 
-def test_an_undrivable_url_is_reported_rather_than_dropped(
-    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
-) -> None:
-    """The chart's own download container SystemExits on it, so no pod can start."""
-    monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster(undrivable=("broken",)))
-    monkeypatch.setattr(check_status, "kubectl_list", lambda *_a, **_k: ["pod/xnat-1"])
-    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (True, "dicom-query-retrieve-3.0.0-xpl.jar"))
-
-    check_status.check_xnat_plugin_roster("trust-release", "flip-trust")
-
-    assert any(status == "WARN" and "broken" in message for status, message in reported)
-
-
 def test_no_running_pod_warns(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
     """Nothing to inspect is unverified, not verified."""
     monkeypatch.setattr(check_status, "expected_plugin_jars", lambda *_a: _roster())
@@ -561,20 +516,6 @@ def test_a_single_matching_pod_passes(monkeypatch: pytest.MonkeyPatch, reported:
 # ── What XNAT loaded: GET /xapi/plugins ──────────────────────────────────────────────
 
 
-def test_every_plugin_in_the_values_has_its_xnat_plugin_id() -> None:
-    """The ids are not the keys, so the pairing is written down — and must cover the roster."""
-    urls = yaml.safe_load((CHART_DIR / "values.yaml").read_text())["xnat"]["web"]["plugins"]["urls"]
-
-    assert set(urls) == set(check_status.XNAT_PLUGIN_IDS), "add the new plugin's `id=` to XNAT_PLUGIN_IDS"
-    # As read from each jar's META-INF/xnat/*-plugin.properties and from /xapi/plugins (XNAT 1.10.0).
-    assert check_status.XNAT_PLUGIN_IDS == {
-        "batch-launch": "batchLaunchPlugin",
-        "container-service": "containers",
-        "dicom-query-retrieve": "dicom-query-retrieve",
-        "ohif-viewer": "ohifViewerPlugin",
-    }
-
-
 def test_a_jar_on_disk_that_xnat_did_not_load_fails(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
@@ -626,7 +567,10 @@ def test_a_pass_without_xnats_answer_does_not_claim_it_loaded_anything(
 
 def test_a_failed_exec_keeps_the_error_not_kubectls_container_notice(monkeypatch: pytest.MonkeyPatch) -> None:
     """kubectl names the defaulted container on every exec into xnat-web; that is not the failure."""
-    stderr = 'Defaulted container "tomcat" out of: tomcat, download-plugins (init)\nerror: container not found\n'
+    stderr = (
+        'Defaulted container "tomcat" out of: tomcat, prepare-data-dirs (init), wait-for-xnat-db (init)\n'
+        "error: container not found\n"
+    )
     monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (False, stderr))
 
     assert check_status.loaded_plugin_ids("pod/xnat-1", "flip-trust") == (None, "error: container not found")

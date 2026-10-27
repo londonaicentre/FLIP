@@ -30,6 +30,8 @@ on:
       - "trust/seed_trust.sh"
       # The pin trustData.version must match (tests/test_trust_data_pin.py).
       - "trust/.data_version"
+      # The plugin roster `make status` checks against (tests/test_plugin_roster_and_timeout.py).
+      - "trust/xnat/artifacts.manifest"
       # The seed tools that same hook installs from that ref and runs (TOOLS_SPEC's
       # `#subdirectory=trust/omop-db`), so a change here can break the kind E2E job.
       - "trust/omop-db/**"
@@ -47,6 +49,7 @@ on:
       - "trust/seed_trust.sh"
       # The pin trustData.version must match (tests/test_trust_data_pin.py).
       - "trust/.data_version"
+      - "trust/xnat/artifacts.manifest"
       - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
