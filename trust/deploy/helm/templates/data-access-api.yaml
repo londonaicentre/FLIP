@@ -10,6 +10,7 @@
 # limitations under the License.
 
 {{- if .Values.dataAccessApi.enabled }}
+{{- $stagesJobData := include "flip-trust.stagesJobData" . }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -39,6 +40,10 @@ data:
   # fail-closed without it.
   COHORT_SNAPSHOT_DIR: "/snapshots"
   {{- end }}
+  {{- if $stagesJobData }}
+  # Per-job cohort data (FLIP#1678): each job's approved dataframe, staged here for its job pods.
+  COHORT_DATA_DIR: "/cohort-data"
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -50,7 +55,7 @@ metadata:
     app.kubernetes.io/component: data-access-api
 spec:
   replicas: {{ .Values.dataAccessApi.replicas }}
-  {{- if and .Values.dataAccessApi.snapshots.enabled (eq .Values.dataAccessApi.snapshots.accessMode "ReadWriteOnce") }}
+  {{- if or (and .Values.dataAccessApi.snapshots.enabled (eq .Values.dataAccessApi.snapshots.accessMode "ReadWriteOnce")) (and $stagesJobData (eq .Values.dataAccessApi.cohortData.accessMode "ReadWriteOnce")) }}
   # A ReadWriteOnce store attaches to one node: a surge pod scheduled elsewhere would wait on the
   # volume forever and stall the rollout, so the old pod goes first.
   strategy:
@@ -76,7 +81,7 @@ spec:
     spec:
       enableServiceLinks: false
       serviceAccountName: {{ include "flip-trust.fullname" . }}-data-access-api
-      {{- if .Values.dataAccessApi.snapshots.enabled }}
+      {{- if or .Values.dataAccessApi.snapshots.enabled $stagesJobData }}
       securityContext:
         # Makes the snapshot PVC group-writable for the image's non-root user — without it a
         # fresh volume mounts root-owned, every freeze fails, and fail-closed serving refuses
@@ -140,11 +145,15 @@ spec:
             - name: ACCESS_POLICY_FILE
               value: /app/governance.toml
             {{- end }}
-          {{- if or .Values.dataAccessApi.snapshots.enabled .Values.governance.document }}
+          {{- if or .Values.dataAccessApi.snapshots.enabled .Values.governance.document $stagesJobData }}
           volumeMounts:
             {{- if .Values.dataAccessApi.snapshots.enabled }}
             - name: cohort-snapshots
               mountPath: /snapshots
+            {{- end }}
+            {{- if $stagesJobData }}
+            - name: cohort-data
+              mountPath: /cohort-data
             {{- end }}
             {{- if .Values.governance.document }}
             - name: governance
@@ -172,12 +181,17 @@ spec:
             initialDelaySeconds: {{ .Values.dataAccessApi.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.dataAccessApi.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.dataAccessApi.probes.readiness.timeoutSeconds }}
-      {{- if or .Values.dataAccessApi.snapshots.enabled .Values.governance.document }}
+      {{- if or .Values.dataAccessApi.snapshots.enabled .Values.governance.document $stagesJobData }}
       volumes:
         {{- if .Values.dataAccessApi.snapshots.enabled }}
         - name: cohort-snapshots
           persistentVolumeClaim:
             claimName: {{ include "flip-trust.fullname" . }}-cohort-snapshots
+        {{- end }}
+        {{- if $stagesJobData }}
+        - name: cohort-data
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-cohort-data
         {{- end }}
         {{- if .Values.governance.document }}
         # /app/governance.toml is the filename the Compose stack mounts, so one document
@@ -208,6 +222,28 @@ spec:
   resources:
     requests:
       storage: {{ .Values.dataAccessApi.snapshots.size }}
+{{- end }}
+{{- if $stagesJobData }}
+---
+# Per-job cohort data (FLIP#1678): each NVFLARE job's approved dataframe, written by data-access-api before the job
+# starts and removed when its model ends. The project's job pods mount their project's directory read-only.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-cohort-data
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+spec:
+  accessModes:
+    - {{ .Values.dataAccessApi.cohortData.accessMode }}
+  {{- if .Values.dataAccessApi.cohortData.storageClassName }}
+  storageClassName: {{ .Values.dataAccessApi.cohortData.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.dataAccessApi.cohortData.size }}
 {{- end }}
 ---
 apiVersion: v1

@@ -263,3 +263,78 @@ def test_process_mode_keeps_the_app_workspace():
     assert {"/app/local", "/app/startup", "/app/transfer"} <= mount_paths
     assert WORKSPACE not in mount_paths
     assert "cd /app/startup" in container["command"][-1]
+
+
+# --- project studies: each job pod mounts only its project's data (FLIP#1678) ---------------------
+
+
+def _sidecar(docs: list[dict]) -> dict:
+    return next(c for c in _client(docs)["spec"]["template"]["spec"]["containers"] if c["name"] == "study-sync")
+
+
+def _volume(pod_spec: dict, name: str) -> dict:
+    return next(v for v in pod_spec["volumes"] if v["name"] == name)
+
+
+def test_job_pods_add_a_study_sync_sidecar():
+    sidecar = _sidecar(_enabled())
+
+    assert sidecar["command"][-2:] == ["flip.nvflare.study_sync", f"{WORKSPACE}/local"]
+    assert sidecar["image"] == _client_container(_enabled())["image"]
+
+
+def test_the_sidecar_writes_local_and_reads_cohort_data_read_only():
+    docs = _enabled()
+    sidecar = _sidecar(docs)
+    mounts = {m["mountPath"]: m for m in sidecar["volumeMounts"]}
+
+    assert mounts[f"{WORKSPACE}/local"]["subPath"] == "local"
+    assert mounts["/cohort-data"]["readOnly"] is True
+    pod = _client(docs)["spec"]["template"]["spec"]
+    claim = _volume(pod, mounts["/cohort-data"]["name"])["persistentVolumeClaim"]
+    assert claim["claimName"].endswith("-cohort-data")
+    assert claim["readOnly"] is True
+
+
+def test_the_sidecar_env_names_the_pvcs_and_the_xnat_group():
+    env = _env(_sidecar(_enabled()))
+
+    assert env["FL_STUDY_COHORT_DATA_DIR"]["value"] == "/cohort-data"
+    assert env["FL_STUDY_COHORT_DATA_PVC"]["value"].endswith("-cohort-data")
+    assert env["FL_STUDY_XNAT_ARCHIVE_PVC"]["value"].endswith("-xnat-web")
+    assert env["FL_STUDY_XNAT_GID"]["value"] == "1001"
+    assert env["FL_K8S_JOB_IMAGE"]["value"] == _env(_client_container(_enabled()))["FL_K8S_JOB_IMAGE"]["value"]
+    assert env["TRUST_INTERNAL_SERVICE_KEY"]["valueFrom"]["secretKeyRef"]["key"] == "trust-internal-service-key"
+
+
+@pytest.mark.parametrize("off", [f"{JOB_PODS}.xnatArchive.enabled=false", "xnat.enabled=false"])
+def test_the_xnat_archive_mount_is_off_when_disabled_or_without_an_in_cluster_xnat(off):
+    env = _env(_sidecar(_enabled("--set", off)))
+
+    assert env["FL_STUDY_XNAT_ARCHIVE_PVC"]["value"] == ""
+
+
+def test_data_access_api_stages_into_the_cohort_data_pvc():
+    docs = _enabled()
+    config = _one(docs, "ConfigMap", "-data-access-api")
+    deployment = _one(docs, "Deployment", "-data-access-api")
+    pod = deployment["spec"]["template"]["spec"]
+    mount = next(m for m in pod["containers"][0]["volumeMounts"] if m["mountPath"] == "/cohort-data")
+
+    assert config["data"]["COHORT_DATA_DIR"] == "/cohort-data"
+    assert _volume(pod, mount["name"])["persistentVolumeClaim"]["claimName"].endswith("-cohort-data")
+    assert pod["securityContext"]["fsGroup"] == 1000
+    pvc = _one(docs, "PersistentVolumeClaim", "-cohort-data")
+    assert pvc["spec"]["accessModes"] == ["ReadWriteOnce"]
+
+
+def test_job_pods_never_mount_a_service_account_token():
+    assert _job_pod(_enabled())["spec"]["automountServiceAccountToken"] is False
+
+
+def test_without_job_pods_nothing_stages_job_data():
+    docs = _docs()
+
+    assert [d for d in docs if d["kind"] == "PersistentVolumeClaim" and d["metadata"]["name"].endswith("-cohort-data")] == []
+    assert "COHORT_DATA_DIR" not in _one(docs, "ConfigMap", "-data-access-api")["data"]
+    assert [c["name"] for c in _client(docs)["spec"]["template"]["spec"]["containers"]] == ["fl-client"]

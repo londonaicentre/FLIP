@@ -137,6 +137,14 @@ different database than the loader writes to.
 {{- end }}
 
 {{/*
+Whether the trust stages each FL job's cohort data for its job pods (FLIP#1678): NVFLARE job pods only.
+Renders "true" or nothing, for use in an if.
+*/}}
+{{- define "flip-trust.stagesJobData" -}}
+{{- if and .Values.flClient.enabled (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.jobPods.enabled -}}true{{- end -}}
+{{- end }}
+
+{{/*
 FL client image name based on backend selection
 */}}
 {{- define "flip-trust.flClientImage" -}}

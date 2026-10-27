@@ -523,6 +523,54 @@ spec:
 {{- if .Values.flClient.probes.readiness.failureThreshold }}
             failureThreshold: {{ .Values.flClient.probes.readiness.failureThreshold }}
 {{- end }}
+        {{- if $jobPods }}
+        # Each FLIP project is an NVFLARE study (FLIP#1678): this writes one local/study_runtime.yaml entry per
+        # project with staged cohort data, so a project's job pods mount, read-only, only that project's data.
+        - name: study-sync
+          image: {{ include "flip-trust.flClientImage" . }}
+          imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command: ["python", "-m", "flip.nvflare.study_sync", "{{ $ws }}/local"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-fl-client
+          env:
+            - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key-header
+            - name: TRUST_INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key
+            - name: FL_K8S_JOB_IMAGE
+              value: {{ include "flip-trust.flClientImage" . | quote }}
+            - name: FL_STUDY_COHORT_DATA_DIR
+              value: /cohort-data
+            - name: FL_STUDY_COHORT_DATA_PVC
+              value: {{ include "flip-trust.fullname" . }}-cohort-data
+            - name: FL_STUDY_XNAT_ARCHIVE_PVC
+              # Empty switches the imaging mount off: an external XNAT, or XNAT disabled.
+              value: "{{ if and .Values.xnat.enabled .Values.flClient.nvflare.jobPods.xnatArchive.enabled }}{{ include "flip-trust.fullname" . }}-xnat-web{{ end }}"
+            - name: FL_STUDY_XNAT_GID
+              value: {{ .Values.flClient.nvflare.jobPods.xnatArchive.gid | quote }}
+            - name: FL_STUDY_SYNC_INTERVAL
+              value: {{ .Values.flClient.nvflare.jobPods.studySync.interval | quote }}
+          volumeMounts:
+            - name: fl-client-kit
+              mountPath: {{ $ws }}/local
+              subPath: local
+            - name: cohort-data
+              mountPath: /cohort-data
+              readOnly: true
+          resources:
+            {{- toYaml .Values.flClient.nvflare.jobPods.studySync.resources | nindent 12 }}
+        {{- end }}
       volumes:
         - name: images
 {{- if .Values.sharedImagesPvc.enabled }}
@@ -568,5 +616,9 @@ spec:
         - name: fl-job-pod
           configMap:
             name: {{ include "flip-trust.fullname" . }}-fl-job-pod-{{ .Values.flClient.netId }}
+        - name: cohort-data
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-cohort-data
+            readOnly: true
         {{- end }}
 {{- end }}
