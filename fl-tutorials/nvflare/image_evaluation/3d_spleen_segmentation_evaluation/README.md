@@ -16,6 +16,28 @@ The recipe loads the uploaded checkpoint on the server and broadcasts it to ever
 `FLModel`; the client's `is_evaluate()` branch scores it on the local cohort and returns aggregate
 metrics. The `evaluation_results.json` output is unchanged.
 
+```mermaid
+flowchart LR
+    U["Uploaded app_files/<br/>(evaluator, models, transforms, config, model.pt)"] --> S["FL server<br/>FlipEvalRecipe loads model.pt"]
+    S -- "one FLModel per entry in config['models']" --> A["Trust A client<br/>is_evaluate(): local cohort,<br/>input_/label_ NIfTI pairs"]
+    S -- "same model" --> B["Trust B client<br/>is_evaluate()"]
+    A -- "aggregate metrics only" --> R["evaluation_results.json<br/>per-trust mean_dice, hausdorff_95,<br/>surface_dice, iou → hub model page"]
+    B -- "aggregate metrics only" --> R
+```
+
+Nothing is trained and no weights are aggregated: the one round is a validate task per checkpoint.
+
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the files in `app_files/` (`evaluator.py`, `models.py`, `transforms.py`, `config.json`) plus the `model.pt` that `make download-checkpoints` places there |
+| Job type | `evaluation` (`job_type` in `app_files/config.json`; `FlipEvalRecipe`) |
+| Imaging | **on**, with **DICOM to NIfTI on** — the evaluator pairs each converted `input_*.nii.gz` with the `label_*.nii.gz` uploaded as data enrichment and refuses to run when no pair exists (see the training tutorial's *data enrichment* section) |
+| Cohort query | none of its own: the project uses the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
+| Dataset | `make -C fl-tutorials download-spleen-data`; checkpoint `make download-checkpoints` here (`make run` / `make export` do it for you) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation` (GPU); `make export` here builds the job config without one |
+
 ## Compatible job type
 
 This tutorial is designed for `JOB_TYPE=evaluation`.
