@@ -351,11 +351,9 @@ The XNAT WAR and plugins are third-party, public upstream downloads that FLIP do
   fails there, naming the prep step, and leaves the running stack untouched.
 - **Image builds** (`make build` and the CI workflow `docker_build_xnat_web.yml`) download the WAR and plugins the
   same way and bake them into the image.
-- **Stag, prod, EC2 and on-prem** stacks run the plugins baked into the image, so `make up` neither needs nor checks
-  the host cache there.
-- **Helm** downloads the same plugin URLs at pod start (`trust/deploy/helm/values.yaml` `xnat.web.plugins.urls`).
-  `tests/test_artifacts.py` fails if the chart and the manifest disagree, or if the WAR line is not the `.env`
-  version.
+- **Stag, prod, EC2, on-prem and Helm** run the plugins baked into the image, so `make up` neither needs nor checks
+  the host cache there, and a Kubernetes pod downloads nothing at start. `make -C trust/deploy/helm status` checks a
+  running pod's jars against the manifest. `tests/test_artifacts.py` fails if the WAR line is not the `.env` version.
 
 [`scripts/xnat_artifacts.sh`](scripts/xnat_artifacts.sh) does the work. `fetch` keeps every file whose checksum
 already matches, downloads the rest to a temporary name, verifies the checksum and only then moves the file into
@@ -435,14 +433,16 @@ account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8
 
 ### Adding or updating a plugin
 
+One change covers every platform: the manifest, then a new `xnat-web` image.
+
 1. Replace the plugin's line in [`artifacts.manifest`](artifacts.manifest) with the new upstream URL and its
    SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
    plus `XNAT_VERSION` in `.env`.
-2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
-3. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
+2. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
    `trust/deploy/helm/check_status.py`; its test fails until you do.
-4. Update the plugin compatibility table above.
-5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
+3. Update the plugin compatibility table above.
+4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI, and Compose and
+   Kubernetes trusts pick the plugins up with that image.
 
 ## Importing data
 

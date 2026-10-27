@@ -747,7 +747,7 @@ see "Upgrading an install that fetched its kit from S3" in the K8s README for th
 removed values.
 
 The chart has a `check_status.py` smoke test script (which also compares the running xnat-web
-pod's plugin jars against `xnat.web.plugins.urls`), a `scripts/smoke-cstore.sh` DICOM ingest
+pod's plugin jars against `trust/xnat/artifacts.manifest`), a `scripts/smoke-cstore.sh` DICOM ingest
 smoke, and a `sync_k8s_kit.py` script that syncs a registered trust's kit file (hub registration
 itself still goes through `register_trust` / `make register-trusts`) into the chart's Kubernetes
 Secret and a Helm values override. See the [K8s README](trust/deploy/helm/README.md) for details.

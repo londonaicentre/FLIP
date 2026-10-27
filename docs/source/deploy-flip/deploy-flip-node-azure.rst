@@ -274,9 +274,6 @@ Behind the Trust's firewall the cluster needs more than the VM's list (`Network 
 - **AKS itself:** the outbound rules Microsoft documents for AKS ("Outbound network and FQDN
   rules for AKS clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag,
   and the region's ``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
-- **XNAT plugins:** the chart downloads them at every pod start, from ``xnat.org``,
-  ``api.bitbucket.org`` (served from ``bbuseruploads.s3.amazonaws.com``) and ``github.com``
-  (served from ``release-assets.githubusercontent.com``). The VM's image carries them instead.
 
 That list was measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
 

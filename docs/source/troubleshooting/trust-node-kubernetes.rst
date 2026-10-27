@@ -221,12 +221,14 @@ crashing:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
 
-**Cause.** The running ``xnat-web`` pod has older plugin jars than the chart lists. A C-ECHO never reaches XNAT's
-importer, so it cannot detect this. The pod downloads its plugins afresh every time it is created, so wrong jars
-mean the pod itself is old: no deploy has replaced it since the plugin list changed. Three reasons are common:
+**Cause.** The running ``xnat-web`` pod has older plugin jars than your FLIP checkout lists. A C-ECHO never reaches
+XNAT's importer, so it cannot detect this. The plugins come with the ``xnat-web`` image, so wrong jars mean the pod
+runs an older image: no deploy has replaced it since the plugins changed. Three reasons are common:
 
-#. **The deploy never carried the new list**: an older checkout, or an overrides file pinning old versions. Check
-   with ``helm get values trust-release -n flip-trust --revision <N> --all | grep -A5 urls``.
+#. **The deploy never carried the new image**: an older checkout, an image pinned in your overrides or kit file, or
+   a tag such as ``stag`` that was rebuilt after the pod pulled it. Check which image the pod runs with
+   ``kubectl -n flip-trust get pod "$XNAT_POD" -o jsonpath='{.spec.containers[0].image}'``. A rebuilt tag needs the
+   pod replaced: ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-xnat-web``.
 #. **The rollout stalled.** Releases deployed before the chart switched ``xnat-web`` to the ``Recreate`` strategy
    start the new pod beside the old one; it never gets the volume and the old pod keeps serving. Two ReplicaSets
    with a stuck pod in ``kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web`` show this.
@@ -251,7 +253,8 @@ can take the volume. Then confirm the pod was replaced and send a test study:
 
 .. code-block:: shell
 
-   kubectl exec -n flip-trust "$XNAT_POD" -- ls -la /data/xnat/home/plugins   # dated today
+   kubectl -n flip-trust get pods -l app.kubernetes.io/component=xnat-web       # a new pod
+   make -C trust/deploy/helm status          # the roster matches
    make -C trust/deploy/helm smoke-cstore
 
 If ``smoke-cstore`` finds no receipt line and no new prearchive object, the study went to something other than
