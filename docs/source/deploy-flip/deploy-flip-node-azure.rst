@@ -267,11 +267,9 @@ Behind the Trust's firewall the cluster needs, on top of :ref:`deploy-trust-node
 - **AKS itself:** the outbound rules Microsoft documents for AKS ("Outbound network and FQDN
   rules for AKS clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag,
   and the region's ``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
-- **The Helm chart's own:** XNAT's plugins and the mock-data seed job, listed in
-  :doc:`deploy-flip-node-kubernetes`.
+- **The Helm chart's own:** the sample-data seed job, listed in :doc:`deploy-flip-node-kubernetes`.
 
-The AKS rules and XNAT's plugin hosts were measured on 17 Oct by running this chapter behind a
-deny-all Azure Firewall Basic.
+The AKS rules were measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
 
 On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
 ``python3`` and ``uv``.

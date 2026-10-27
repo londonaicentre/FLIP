@@ -161,13 +161,9 @@ On top of :ref:`deploy-trust-node-network`:
      - Needed for
    * - FL server, the kit's FL port
      - ``sync-kit`` adds this port to the chart's egress policy for you.
-   * - ``xnat.org``; ``api.bitbucket.org`` **and** ``bbuseruploads.s3.amazonaws.com``; ``github.com`` **and**
-       ``release-assets.githubusercontent.com``
-     - XNAT's plugins, downloaded at every XNAT start; each second host serves the files. Measured behind a
-       firewall on AKS, October 2026. A Docker Compose node's XNAT image carries them instead.
    * - ``github.com``, ``codeload.github.com``, ``raw.githubusercontent.com``
-     - The mock-data seed job (``trustData.seed``) fetches its scripts from FLIP's repository, on install and on
-       every upgrade while it is enabled. It also needs the mock-data hosts in the general table.
+     - The sample-data seed job (``trustData.seed``) fetches its scripts from FLIP's repository, on install and on
+       every upgrade while it is enabled. It also needs the sample-data hosts in the general table.
    * - Your S3 vocabulary bucket
      - The OMOP vocabulary load job, only if ``omopDb.vocabLoad.s3Bucket`` is set.
 
