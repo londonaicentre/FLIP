@@ -162,7 +162,8 @@ On top of the hub endpoints every node needs:
    * - FL server, the kit's FL port
      - ``sync-kit`` adds this port to the chart's egress policy for you.
    * - ``huggingface.co``, ``github.com``, ``raw.githubusercontent.com`` and PyPI
-     - The mock-data seed job (``trustData.seed``), on install and on every upgrade while it is enabled.
+     - The mock-data seed job (``trustData.seed``), on install and on every upgrade while it is enabled. Not needed
+       with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
    * - Your S3 vocabulary bucket
      - The OMOP vocabulary load job, only if ``omopDb.vocabLoad.s3Bucket`` is set.
 
@@ -182,6 +183,11 @@ Step 1 — Check out the release and copy in the kit
 
 The chart templates come from the checkout, so never deploy from a branch tip. The chart never registers anything
 itself: the kit file ``trust/.env.<CODE>.<env>`` is what the admin's registration produced.
+
+**A trust with real data:** add ``TRUST_DATA_SEED=false`` to the kit file before the first deploy. Every deploy and
+upgrade then turns the chart's mock-data seed job off (``trustData.seed.enabled``), so FLIP's sample data never
+reaches your OMOP database or PACS. Leave it unset on a test trust. For the DICOM vocabulary that normally comes
+with the sample data, see :ref:`onprem-core-vocabulary`.
 
 **********************************
 Step 2 — Generate the secrets file
@@ -278,8 +284,8 @@ Step 4 — Deploy
 This runs, in order:
 
 #. **Override.** Regenerates ``trust/deploy/helm/k8s-trust-<CODE>.yaml`` from the kit: hub URL, FL backend, image
-   tag, kit path and the FL server's egress port. The file holds no secrets and is rewritten on every deploy, so
-   **do not edit it by hand**.
+   tag, kit path, the FL server's egress port and whether the mock-data seed runs. The file holds no secrets and is
+   rewritten on every deploy, so **do not edit it by hand**.
 #. **Preflight.** Checks tools and versions, cluster access, a default StorageClass, the chart files and the kit, and
    runs ``helm lint``. A failed required check stops the deploy; a missing default StorageClass is only a warning.
 #. **Install.** ``helm upgrade --install`` of release ``trust-release`` into namespace ``flip-trust``, with the
@@ -461,8 +467,8 @@ chart defaults, and the generated override still wins for the keys it sets. Do n
      - Request GPUs for the FL client. Needs the GPU Operator (see `GPUs`_).
    * - ``trustData.seed.enabled``
      - ``true``
-     - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. **Turn it off** for a site
-       whose stores hold real data only.
+     - Loads the **mock** projects into OMOP (and Orthanc) on install and every upgrade. A site whose stores hold
+       real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit (see Step 1).
    * - ``trustData.seed.orthanc``
      - ``false``
      - Also load the mock DICOM studies into Orthanc (about 2 GB per trust). ``smoke-cstore`` needs it.
@@ -526,8 +532,8 @@ When the admin refreshes your kit's hub-shared settings, see "Later — rotate h
 
 .. warning::
 
-   While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. Turn it off for a site whose
-   stores hold real data only.
+   While ``trustData.seed.enabled`` is on, every upgrade re-applies the mock projects. A site whose stores hold real
+   data only sets ``TRUST_DATA_SEED=false`` in the kit, which the upgrade carries into the release.
 
 .. seealso::
 

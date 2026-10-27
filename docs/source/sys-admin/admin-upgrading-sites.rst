@@ -286,8 +286,8 @@ populated data, and the API deployments roll onto the new images.
 .. warning::
 
    Unlike Compose, the chart's mock-data seed also runs on upgrade. While ``trustData.seed.enabled`` is on, every
-   upgrade re-applies the listed mock projects (only those projects' rows are replaced). **Turn it off in the
-   override for a site whose stores hold real data only.**
+   upgrade re-applies the listed mock projects (only those projects' rows are replaced). For a site whose stores
+   hold real data only, set ``TRUST_DATA_SEED=false`` in the kit; ``sync-kit`` carries it into the release.
 
 **Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image
 (or all three XNAT images for ``xnat.image.pin``):

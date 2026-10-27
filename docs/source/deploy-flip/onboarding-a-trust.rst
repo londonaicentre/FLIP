@@ -227,6 +227,26 @@ the AI Centre cannot hand on its copy, because the licences do not clearly allow
       * - Kubernetes
         - ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-data-access-api``
 
+.. note::
+
+   **The DICOM vocabulary, on a trust without FLIP's sample data** (``TRUST_DATA_SEED=false``). The sample data
+   normally brings the free DICOM vocabulary with it. FLIP's services do not need it, but imaging rows that refer to
+   DICOM attributes do. If your OMOP database lacks it, load it once, after the core vocabulary, with the same four
+   values (on Kubernetes, over the same port-forward):
+
+   .. code-block:: shell
+
+      make -C trust/omop-db load-dicom-vocab OMOP_DB_PORT=<OMOP_DB_PORT> OMOP_POSTGRES_DB=<OMOP_POSTGRES_DB> \
+        OMOP_POSTGRES_USER=<OMOP_POSTGRES_USER> OMOP_POSTGRES_PASSWORD='<OMOP_POSTGRES_PASSWORD>'
+
+   It skips itself when the vocabulary is already there. It needs ``uv`` and access to PyPI, and downloads the bundle
+   from Hugging Face; on a host that cannot reach Hugging Face, fetch ``vocab_dicom_paulnagy_20260109.zip`` from the
+   ``aicentreflip/trust-data`` dataset elsewhere and copy it in first:
+
+   .. code-block:: shell
+
+      mkdir -p trust/omop-db/data && cp vocab_dicom_paulnagy_20260109.zip trust/omop-db/data/
+
 The trust is now onboarded. The sections below are for later.
 
 .. _onprem-site-privacy-policy:

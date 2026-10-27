@@ -276,6 +276,11 @@ make -C trust ensure-seeded KIT=GSTT PROJECTS="cxr_project"                   # 
 make -C trust seed KIT=GSTT PROJECTS="prostate_project"                       # add a project, unconditionally
 ```
 
+A real trust, whose OMOP and PACS hold its own data, sets `TRUST_DATA_SEED=false` in its kit:
+`ensure-seeded` then fetches, loads and marks nothing, and on Kubernetes `sync-kit` turns
+`trustData.seed.enabled` off. If that trust's OMOP lacks the DICOM vocabulary, load it on its own with
+`make -C trust/omop-db load-dicom-vocab` and the kit's `OMOP_*` values.
+
 **A host seeded before FLIP#1187 re-seeds once.** The PACS marker used to live *inside* the
 storage directory (`<storage dir>/.seeded`) and now sits beside it, because the directory
 itself is owned by Orthanc's uid. The new reader does not look at the old path, so the first
