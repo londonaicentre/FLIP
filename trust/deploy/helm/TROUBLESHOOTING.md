@@ -128,7 +128,7 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
 | `smoke-cstore.sh` | Drive a real C-STORE through the PACS and verify XNAT received it (§2.7) |
 | `cstore_verdict.py` | The smoke's verdict logic, unit-tested without a cluster (§2.7) |
-| `check_status.py` | Full deployment smoke, including the check that XNAT loaded every plugin |
+| `check_status.py` | Full deployment smoke, including XNAT's plugins and DQR route |
 
 ### Available Tools on DCMTK Pod
 

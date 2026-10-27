@@ -152,18 +152,18 @@ unaffected either way; the chart needs no version switch.
 How `make status` and `make smoke-cstore` decide. Polling green does not mean imaging works: the two
 share no code, so the operator guide has operators run both.
 
-`status` asks XNAT in every running `xnat-web` pod which plugins it **loaded** (`GET
-/xapi/plugins`, inside the pod as the service account, the credential on curl's stdin) and
-fails each plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) it did not; see the `tomcat`
+`status` asks XNAT in every running `xnat-web` pod, as the service account (the credential on
+curl's stdin), which plugins it lists (`GET /xapi/plugins`) and whether its DQR route answers
+(`GET /xapi/dqr/settings`). It fails each plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) that
+XNAT does not list, a DQR route that answers 404 (XNAT lists a plugin whose configuration failed
+to load), and an XNAT that answers wrongly (not 200, or not a JSON object); see the `tomcat`
 container's startup log. XNAT lists plugins by id, not by file name (`container-service` is
 `containers`), hence the map; a test keeps it in step with the manifest the image is built from.
-A pass lists each plugin's version as XNAT reports it, for reading only: nothing is compared.
-When XNAT cannot be asked, `status` warns. This is the chart's only check of what XNAT loaded:
-the `xnat-init` readiness wait runs in its own pod, so it waits for the DQR route alone. The
-jars and the XNAT core ship in one image, so a plugin cannot outlive its core, but a plugin
-built for a different XNAT core loads and then aborts every C-STORE in the importer, which is why
-`smoke-cstore` stores a real object through the PACS rather than trusting `status` or a C-ECHO:
-C-ECHO never reaches the importer and passes throughout.
+A pod nothing answers on is a warning, which does not fail `status`. A pass names each plugin's
+version as XNAT reports it. A plugin can load and still abort every C-STORE in the importer (a
+manifest that pairs it with the wrong XNAT core), which is why `smoke-cstore` stores a real
+object through the PACS rather than trusting `status` or a C-ECHO: C-ECHO never reaches the
+importer and passes throughout.
 
 `smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
 evidence that the object landed — polled, strongest first: a new prearchive object carrying the

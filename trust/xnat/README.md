@@ -351,9 +351,8 @@ The XNAT WAR and plugins are third-party, public upstream downloads that FLIP do
   fails there, naming the prep step, and leaves the running stack untouched.
 - **Image builds** (`make build` and the CI workflow `docker_build_xnat_web.yml`) download the WAR and plugins the
   same way and bake them into the image.
-- **Stag, prod, EC2, on-prem and Helm** run the plugins baked into the image, so `make up` neither needs nor checks
-  the host cache there, and a Kubernetes pod downloads nothing at start. `tests/test_artifacts.py` fails if the WAR
-  line is not the `.env` version.
+- **Deployed trusts** (Compose on stag, prod, EC2 or on-prem, and Helm) run the plugins baked into the image, so
+  `make up` neither needs nor checks the host cache there.
 
 [`scripts/xnat_artifacts.sh`](scripts/xnat_artifacts.sh) does the work. `fetch` keeps every file whose checksum
 already matches, downloads the rest to a temporary name, verifies the checksum and only then moves the file into
@@ -441,8 +440,7 @@ One change covers every platform: the manifest, then a new `xnat-web` image.
 2. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
    `trust/deploy/helm/check_status.py`; its test fails until you do.
 3. Update the plugin compatibility table above.
-4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI, and Compose and
-   Kubernetes trusts pick the plugins up with that image.
+4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 

@@ -331,10 +331,8 @@ neither implies the other.
    make -C trust/deploy/helm smoke-cstore
 
 ``status``
-   Shows the Helm release and runs the chart's health checks: pod readiness, volumes, HTTP endpoints, and the XNAT
-   plugins. XNAT's plugins come with the ``xnat-web`` image, as on every FLIP trust, so the pod downloads none at
-   start and a new plugin version arrives with a new image. The check fails when XNAT in a running ``xnat-web`` pod
-   did not load one of them.
+   Shows the Helm release and runs the chart's health checks: pod readiness, volumes, HTTP endpoints, and that XNAT
+   in each running ``xnat-web`` pod lists every plugin and answers its DQR route.
 
 ``smoke-cstore``
    Sends a real DICOM C-STORE from Orthanc to XNAT and checks XNAT received it. It needs an Orthanc that already

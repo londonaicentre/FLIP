@@ -250,7 +250,7 @@ def test_readiness_probe_authenticates_against_both_routes(tmp_path: Path) -> No
 
 
 def test_without_the_flag_the_wait_takes_the_dqr_route_alone(tmp_path: Path) -> None:
-    """The xnat-init pod's disk is not the running XNAT's, so without the flag no jar is read at all.
+    """The xnat-init pod's jars may be a newer pull than the running XNAT's, so without the flag none is read.
 
     A roster read from a disk XNAT never loaded would wait out the whole budget for a plugin XNAT
     does not have, on every install and upgrade — an unreadable jar included.
@@ -275,7 +275,7 @@ def test_without_the_flag_the_dqr_wait_stays_bounded_and_fail_loud(tmp_path: Pat
 
 
 def test_the_charts_init_job_does_not_ask_for_the_roster() -> None:
-    """Its pod is not the xnat-web pod, so its jars are not proof of what XNAT loaded (see the script header).
+    """A mutable tag can be rebuilt between its pull and xnat-web's (see the script header).
 
     The Compose recipe that does set the flag is pinned by test_container_lookup.py.
     """

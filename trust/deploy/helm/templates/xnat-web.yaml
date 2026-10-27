@@ -232,7 +232,6 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-datasource-password
-          # Nothing is mounted over /data/xnat/home/plugins: XNAT runs the plugins built into the image.
           volumeMounts:
             - name: data
               mountPath: /data/xnat/home/logs

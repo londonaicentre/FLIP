@@ -22,8 +22,8 @@ Three things therefore have to stay true, and none is visible in a rendered char
   cannot surge a second pod, so under RollingUpdate the rollout stalls and the old pod
   serves on with the old jars however long the deploy waits;
 * the deploy timeout is ONE knob an operator can raise, not a literal per wait site;
-* the plugin check asks XNAT on EVERY running xnat-web pod which plugins it loaded, so
-  a surged pod cannot hide the one still serving.
+* the plugin check asks XNAT on EVERY running xnat-web pod, and warns when more than
+  one runs, so a surged pod cannot hide the one still serving.
 """
 
 import base64
@@ -111,31 +111,26 @@ def test_xnat_plugin_ids_cover_exactly_the_manifests_plugins() -> None:
     keys = {re.match(r"(.+?)-\d", jar).group(1) for jar in jars}
 
     assert keys == set(check_status.XNAT_PLUGIN_IDS), "add the new plugin's `id=` to XNAT_PLUGIN_IDS"
-    # As read from each jar's META-INF/xnat/*-plugin.properties and from /xapi/plugins (XNAT 1.10.0).
-    assert check_status.XNAT_PLUGIN_IDS == {
-        "batch-launch": "batchLaunchPlugin",
-        "container-service": "containers",
-        "dicom-query-retrieve": "dicom-query-retrieve",
-        "ohif-viewer": "ohifViewerPlugin",
-    }
 
 
 # ── Reading the live release ─────────────────────────────────────────────────────────
 
 
-def test_a_release_with_xnat_off_reads_as_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """kind CI deploys with xnat.enabled=false; the check must skip, not fail."""
+@pytest.mark.parametrize("enabled", [True, False])
+def test_xnat_enabled_reads_the_live_release(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
+    """kind CI deploys with xnat.enabled=false; the check must skip there, and run everywhere else."""
     seen: dict[str, list[str]] = {}
 
     def fake_run(args: list[str], **_kwargs: object) -> tuple[bool, str]:
         seen["args"] = args
-        return True, '{"xnat": {"enabled": false}}'
+        return True, json.dumps({"xnat": {"enabled": enabled}})
 
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: True)
     monkeypatch.setattr(check_status, "run_command", fake_run)
 
-    assert check_status.xnat_enabled("trust-release", "flip-trust") == (False, "")
+    assert check_status.xnat_enabled("trust-release", "flip-trust") == (enabled, "")
     assert seen["args"][:4] == ["helm", "get", "values", "trust-release"]
+    assert seen["args"][4:6] == ["-n", "flip-trust"]
     assert "--all" in seen["args"], "without --all, chart defaults are absent and xnat.enabled looks off"
 
 
@@ -146,17 +141,14 @@ def test_a_release_with_xnat_off_reads_as_off(monkeypatch: pytest.MonkeyPatch) -
         (True, (True, "   "), "helm returned nothing"),
         (True, (True, "{not json"), "helm returned unparseable JSON"),
         (True, (True, "null"), "helm returned no values"),
+        (True, (True, '{"xnat": {}}'), "the values carry no xnat.enabled"),
         (False, (True, "{}"), "helm is not installed"),
     ],
 )
 def test_values_that_cannot_be_read_are_not_reported_as_off(
     monkeypatch: pytest.MonkeyPatch, command_ok: bool, result: tuple[bool, str], because: str
 ) -> None:
-    """Unreadable, never off — otherwise a broken helm silently turns this check off.
-
-    The caller prints "off" as INFO, which does not touch the warning counter, so
-    collapsing the two lets ``make status`` exit green with the check never having run.
-    """
+    """Unreadable, never off: off skips the check, unreadable warns and still checks the pods."""
     monkeypatch.setattr(check_status, "check_command", lambda _cmd: command_ok)
     monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: result)
 
@@ -228,7 +220,7 @@ def test_xnat_web_replaces_its_pod_rather_than_surging_a_second_one() -> None:
     one. The second XNAT is refused the volume on another node and shares one data
     directory and one database on the same node, so it never goes Ready — the rollout
     never completes and the old pod serves on with the old plugin jars, which is a
-    corrected roster that never reaches the cluster no matter how long the deploy waits.
+    new image that never reaches the cluster no matter how long the deploy waits.
     orthanc.yaml carries the same declaration for the same reason.
     """
     spec = (TEMPLATES_DIR / "xnat-web.yaml").read_text()
@@ -255,13 +247,13 @@ def reported(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     return calls
 
 
-def _xapi_plugins(*plugin_ids: str, status: str = "200") -> str:
-    """What the in-pod fetch prints: the GET /xapi/plugins body, a newline, the HTTP status."""
-    return json.dumps({pid: {"id": pid, "version": "1.0"} for pid in plugin_ids}) + f"\n{status}"
+def _xapi_plugins(*plugin_ids: str, status: str = "200", dqr: str = "200") -> str:
+    """What the in-pod fetch prints: the GET /xapi/plugins body and status, then the DQR route's status."""
+    return json.dumps({pid: {"id": pid, "version": "1.0"} for pid in plugin_ids}) + f"\n{status}\n{dqr}"
 
 
 def _pods(monkeypatch: pytest.MonkeyPatch, fetched: dict[str, str | None]) -> None:
-    """Running xnat-web pods and what each one's /xapi/plugins fetch prints (None: the exec fails)."""
+    """Running xnat-web pods and what each one's in-pod fetch prints (None: the exec fails)."""
 
     def fake_run(args: list[str], **_kwargs: object) -> tuple[bool, str]:
         out = fetched[args[2]]
@@ -293,15 +285,29 @@ def test_every_running_pod_is_checked_so_a_surge_cannot_mask_a_broken_one(
     )
 
 
-def test_values_that_could_not_be_read_warn_rather_than_skipping_quietly(
+def test_a_pod_xnat_cannot_be_asked_on_does_not_end_the_check(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
-    """INFO does not touch the warning counter, so a broken helm would exit green."""
-    monkeypatch.setattr(check_status, "xnat_enabled", lambda *_a: (None, "helm timed out"))
+    _pods(monkeypatch, {"pod/xnat-a": None, "pod/xnat-b": _xapi_plugins("containers")})
 
     check_status.check_xnat_plugins("trust-release", "flip-trust")
 
-    assert [status for status, _ in reported] == ["WARN"]
+    assert any(status == "WARN" and "xnat-a" in message for status, message in reported)
+    assert any(status == "FAIL" and "xnat-b" in message for status, message in reported), (
+        "the second pod was never checked"
+    )
+
+
+def test_unreadable_values_warn_and_the_pods_are_still_checked(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
+) -> None:
+    """helm is only asked whether XNAT is on; not knowing is no reason to skip the pods."""
+    monkeypatch.setattr(check_status, "xnat_enabled", lambda *_a: (None, "helm timed out"))
+    _pods(monkeypatch, {"pod/xnat-1": _xapi_plugins(*ALL_IDS)})
+
+    check_status.check_xnat_plugins("trust-release", "flip-trust")
+
+    assert [status for status, _ in reported] == ["WARN", "PASS"]
     assert "helm timed out" in reported[0][1]
 
 
@@ -325,20 +331,28 @@ def test_no_running_pod_warns(monkeypatch: pytest.MonkeyPatch, reported: list[tu
     assert [status for status, _ in reported] == ["WARN"]
 
 
-def test_a_pod_that_loaded_every_plugin_passes_naming_each_version(
+def test_a_pod_with_every_plugin_and_the_dqr_route_passes_naming_each_version(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
-    """Each plugin's own version is shown; one XNAT reports none for, and a site extra, are not."""
-    body = {pid: {"id": pid, "version": f"{n}.0"} for n, pid in enumerate(ALL_IDS)}
-    del body[ALL_IDS[0]]["version"]
-    body["someSitePlugin"] = {"id": "someSitePlugin", "version": "9.9"}
-    _pods(monkeypatch, {"pod/xnat-1": json.dumps(body) + "\n200"})
+    """A plugin XNAT reports no version for says so; a site extra, even a malformed one, is ignored."""
+    body = {
+        "batchLaunchPlugin": {"id": "batchLaunchPlugin"},
+        "containers": {"version": "3.8.2-fat"},
+        "dicom-query-retrieve": {"version": "3.0.0-xpl"},
+        "ohifViewerPlugin": {"version": "3.8.0"},
+        "someSitePlugin": "not a plugin bean",
+    }
+    _pods(monkeypatch, {"pod/xnat-1": json.dumps(body) + "\n200\n200"})
 
     check_status.check_xnat_plugins("trust-release", "flip-trust")
 
-    version = {pid: f"{n}.0" if n else "(no version)" for n, pid in enumerate(ALL_IDS)}
-    expected = ", ".join(f"{pid} {version[pid]}" for pid in sorted(ALL_IDS))
-    assert reported == [("PASS", f"XNAT on 'pod/xnat-1' loaded all {len(ALL_IDS)} plugins: {expected}")]
+    assert reported == [
+        (
+            "PASS",
+            "XNAT on 'pod/xnat-1' lists all 4 plugins and its DQR route answers: batchLaunchPlugin (no version), "
+            "containers 3.8.2-fat, dicom-query-retrieve 3.0.0-xpl, ohifViewerPlugin 3.8.0",
+        )
+    ]
 
 
 def test_each_plugin_xnat_did_not_load_fails(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:
@@ -349,28 +363,47 @@ def test_each_plugin_xnat_did_not_load_fails(monkeypatch: pytest.MonkeyPatch, re
     assert [status for status, _ in reported] == ["FAIL", "FAIL"]
     assert "did not load the batch-launch plugin" in reported[0][1]
     assert "did not load the dicom-query-retrieve plugin" in reported[1][1]
-    assert "tomcat container's startup log" in reported[0][1]
+    assert "not in this image, or it failed at startup: see the tomcat log" in reported[0][1]
 
 
 @pytest.mark.parametrize(
-    ("fetched", "reason"),
+    ("fetched", "status", "reason"),
     [
-        (_xapi_plugins(status="401"), "HTTP 401"),
-        ("<html>ok</html>\n200", "JSON object"),
-        ('["containers"]\n200', "JSON object"),
-        (None, "unable to upgrade connection"),
+        (_xapi_plugins(status="401"), "FAIL", "HTTP 401"),
+        (_xapi_plugins(status="503"), "FAIL", "HTTP 503"),
+        ("<html>ok</html>\n200\n200", "FAIL", "JSON object"),
+        ('["containers"]\n200\n200', "FAIL", "JSON object"),
+        ("\n000\n000", "WARN", "no HTTP answer"),
+        (None, "WARN", "unable to upgrade connection"),
     ],
+    ids=["401", "503", "html", "list", "no-answer", "exec-failed"],
 )
-def test_when_xnat_cannot_be_asked_the_pod_is_unverified_not_passed(
-    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]], fetched: str | None, reason: str
+def test_a_wrong_answer_fails_and_no_answer_warns(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]], fetched: str | None, status: str, reason: str
 ) -> None:
-    """Unreadable is never "nothing loaded" (a FAIL) nor "all loaded" (a PASS)."""
+    """XNAT replying wrongly is a broken XNAT; nothing replying leaves the pod unverified."""
     _pods(monkeypatch, {"pod/xnat-1": fetched})
 
     check_status.check_xnat_plugins("trust-release", "flip-trust")
 
-    assert [status for status, _ in reported] == ["WARN"], reported
+    assert [s for s, _ in reported] == [status], reported
     assert reason in reported[0][1]
+
+
+@pytest.mark.parametrize(
+    ("dqr", "statuses"),
+    [("404", ["FAIL"]), ("403", ["PASS"]), ("000", ["WARN"])],
+    ids=["unregistered", "no-admin-rights", "no-answer"],
+)
+def test_the_dqr_route_must_exist(
+    monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]], dqr: str, statuses: list[str]
+) -> None:
+    """XNAT lists a plugin whose configuration failed to load; its route 404s. Any other answer means it exists."""
+    _pods(monkeypatch, {"pod/xnat-1": _xapi_plugins(*ALL_IDS, dqr=dqr)})
+
+    check_status.check_xnat_plugins("trust-release", "flip-trust")
+
+    assert [s for s, _ in reported] == statuses, reported
 
 
 def test_a_failed_exec_keeps_the_error_not_kubectls_container_notice(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -381,7 +414,9 @@ def test_a_failed_exec_keeps_the_error_not_kubectls_container_notice(monkeypatch
     )
     monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (False, stderr))
 
-    assert check_status.loaded_plugin_ids("pod/xnat-1", "flip-trust") == (None, "error: container not found")
+    answer = check_status.ask_xnat_plugins("pod/xnat-1", "flip-trust")
+
+    assert (answer.problem, answer.answered) == ("error: container not found", False)
 
 
 @pytest.mark.parametrize("stderr", [None, b"partial \xff stderr"], ids=["none", "bytes"])
@@ -390,8 +425,8 @@ def test_a_timed_out_command_reports_text_rather_than_crashing(
 ) -> None:
     """On a timeout ``e.stderr`` is None or bytes even with text=True; a wedged cluster must get a WARN.
 
-    Driven through the real ``run_command``: the /xapi/plugins exec times out — the path that
-    used to raise on ``None.splitlines()`` / ``bytes.startswith(str)``.
+    Driven through the real ``run_command``: the in-pod exec times out — the path that used to
+    raise on ``None.splitlines()`` / ``bytes.startswith(str)``.
     """
 
     def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -403,7 +438,17 @@ def test_a_timed_out_command_reports_text_rather_than_crashing(
     check_status.check_xnat_plugins("trust-release", "flip-trust")
 
     assert [status for status, _ in reported] == ["WARN"], reported
-    assert "Could not ask XNAT" in reported[0][1]
+    assert "timed out after 45s" in reported[0][1]
+    assert "XNAT_SERVICE" not in reported[0][1], "the in-pod script leaked into the message"
+
+
+def test_a_failed_command_reports_its_exit_code_not_its_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(3, args, output="", stderr="")
+
+    monkeypatch.setattr(check_status.subprocess, "run", run)
+
+    assert check_status.run_command(["sh", "-c", "a long in-pod script"]) == (False, "exit 3")
 
 
 def test_a_real_timeout_is_reported_as_text() -> None:
@@ -422,13 +467,14 @@ def test_the_fetch_puts_no_credential_in_any_argv(monkeypatch: pytest.MonkeyPatc
     """
     seen: list[list[str]] = []
     monkeypatch.setattr(check_status, "run_command", lambda args, **_k: (seen.append(args), (True, _xapi_plugins()))[1])
-    check_status.loaded_plugin_ids("pod/xnat-1", "flip-trust")
+    check_status.ask_xnat_plugins("pod/xnat-1", "flip-trust")
     (argv,) = seen
     assert argv[:7] == ["kubectl", "exec", "pod/xnat-1", "-n", "flip-trust", "--", "sh"]
 
     stub = tmp_path / "curl"
     stub.write_text(
-        f'#!/bin/sh\nprintf \'%s\\n\' "$*" > "{tmp_path}/argv"\ncat > "{tmp_path}/stdin"\nprintf \'{{}}\\n200\'\n'
+        f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "{tmp_path}/argv"\ncat >> "{tmp_path}/stdin"\n'
+        'case "$*" in *dqr*) printf 403 ;; *) printf \'{"containers": {"version": "3.8.2"}}\\n200\\n\' ;; esac\n'
     )
     stub.chmod(0o755)
     secret = "s3cret-pass"  # pragma: allowlist secret
@@ -448,12 +494,18 @@ def test_the_fetch_puts_no_credential_in_any_argv(monkeypatch: pytest.MonkeyPatc
 
     assert result.returncode == 0, result.stderr
     assert not any(secret in arg for arg in argv)
-    curl_argv = (tmp_path / "argv").read_text()
-    assert secret not in curl_argv, "the password reached curl's argv"
-    assert "-K -" in curl_argv, "curl no longer reads its config (the credential) from stdin"
-    header = re.search(r'Authorization: Basic ([A-Za-z0-9+/=]+)"', (tmp_path / "stdin").read_text())
-    assert header, "curl was not handed the credential on stdin"
-    assert base64.b64decode(header.group(1)).decode() == f"svc:{secret}"
+    calls = (tmp_path / "argv").read_text().splitlines()
+    assert [call.rsplit("/xapi/", 1)[-1] for call in calls] == ["plugins", "dqr/settings"], calls
+    assert secret not in "".join(calls), "the password reached curl's argv"
+    assert all("-K -" in call for call in calls), "curl no longer reads its config (the credential) from stdin"
+    headers = re.findall(r'Authorization: Basic ([A-Za-z0-9+/=]+)"', (tmp_path / "stdin").read_text())
+    assert len(headers) == 2, "curl was not handed the credential on stdin for each request"
+    assert {base64.b64decode(h).decode() for h in headers} == {f"svc:{secret}"}
+
+    # What the script printed is what the parser reads.
+    monkeypatch.setattr(check_status, "run_command", lambda *_a, **_k: (True, result.stdout.strip()))
+    answer = check_status.ask_xnat_plugins("pod/xnat-1", "flip-trust")
+    assert (answer.plugins, answer.dqr_status) == ({"containers": "3.8.2"}, "403")
 
 
 def test_the_fetch_refuses_without_the_pods_service_credential(tmp_path: Path) -> None:

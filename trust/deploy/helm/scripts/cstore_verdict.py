@@ -99,8 +99,10 @@ class Verdict:
 
 _PLUGIN_REMEDY = (
     "the receiver logged an importer failure. An AbstractMethodError here means an XNAT plugin "
-    "was built against a different core than the one running — check which xnat-web image the pod "
-    "runs and its plugins (/data/xnat/home/plugins), then redeploy with a HELM_TIMEOUT above the init "
+    "was built against a different core than the one running — check the image digest the xnat-web "
+    "pod runs (.status.containerStatuses[0].imageID) and its plugins (/data/xnat/home/plugins). A "
+    "rebuilt mutable tag (e.g. stag) needs kubectl rollout restart deployment/<release>-flip-trust-xnat-web, "
+    "since a redeploy does not replace the pod; otherwise redeploy with a HELM_TIMEOUT above the init "
     "job's real duration. See TROUBLESHOOTING.md §2.7."
 )
 

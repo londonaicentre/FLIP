@@ -270,12 +270,11 @@ reach its API server never joins the cluster. The trial's 4 vCPUs are the VM's t
 $0.25 an hour, plus the NAT gateway on a standalone cluster.
 
 Behind the Trust's firewall the cluster needs more than the VM's list (`Network and security`_):
+the outbound rules Microsoft documents for AKS ("Outbound network and FQDN rules for AKS
+clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag, and the region's
+``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
 
-- **AKS itself:** the outbound rules Microsoft documents for AKS ("Outbound network and FQDN
-  rules for AKS clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag,
-  and the region's ``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
-
-That list was measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
+They were measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
 
 On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
 ``python3`` and ``uv``.

@@ -39,7 +39,7 @@ Quick checks, in order
    kubectl get pods -n flip-trust
    helm list -n flip-trust
 
-   # 2. The chart's own checks: release status, XNAT plugin roster, smoke tests
+   # 2. The chart's own checks: release status, XNAT plugins, smoke tests
    make -C trust/deploy/helm status
    make -C trust/deploy/helm smoke-cstore     # a real C-STORE through the PACS into XNAT
 
@@ -221,23 +221,26 @@ crashing:
    kubectl exec -n flip-trust "$XNAT_POD" -- \
      grep -E 'AbstractMethodError|unable to read DICOM object null' /data/xnat/home/logs/dicom.log
 
-**Cause.** A plugin in the running ``xnat-web`` pod was built for a different XNAT core. A C-ECHO never reaches XNAT's
-importer, so it cannot detect this. The plugins and the core come in one image, so wrong jars mean the pod runs an
-older image: no deploy has replaced it since the plugins changed. Three reasons are common:
+**Cause.** The image the pod runs pairs a plugin with the wrong XNAT core. A C-ECHO never reaches XNAT's importer, so
+it cannot detect this. Three reasons are common:
 
-#. **The deploy never carried the new image**: an older checkout, an image pinned in your overrides or kit file, or
-   a tag such as ``stag`` that was rebuilt after the pod pulled it. Check which image the pod runs with
-   ``kubectl -n flip-trust get pod "$XNAT_POD" -o jsonpath='{.spec.containers[0].image}'``. A rebuilt tag needs the
-   pod replaced: ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-xnat-web``.
-#. **The rollout stalled.** Releases deployed before the chart switched ``xnat-web`` to the ``Recreate`` strategy
-   start the new pod beside the old one; it never gets the volume and the old pod keeps serving. Two ReplicaSets
-   with a stuck pod in ``kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web`` show this.
-#. **The deploy never finished**, because the ``xnat-init`` job outran the wait: :ref:`ts-k8s-xnat-init-timeout`.
+#. **The pod runs an image built before the fix**: one pinned in your overrides or kit file, or a tag such as
+   ``stag`` that was rebuilt after the pod pulled it. A redeploy does not replace the pod while its tag is
+   unchanged; restart it to pull the rebuilt image:
+   ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-xnat-web``.
+#. **The new pod never replaced the old one.** Releases deployed before the chart switched ``xnat-web`` to the
+   ``Recreate`` strategy start the new pod beside the old one; it never gets the volume and the old pod keeps
+   serving. Two ReplicaSets with a stuck pod in
+   ``kubectl -n flip-trust get rs,pods -l app.kubernetes.io/component=xnat-web`` show this. A deploy whose
+   ``xnat-init`` job outran the wait stops short the same way: :ref:`ts-k8s-xnat-init-timeout`.
+#. **The plugin list FLIP builds the image from pairs them wrongly**, so every image built from it does. Report it to
+   the FLIP team: the fix is a new image.
 
 **Check.**
 
 .. code-block:: shell
 
+   kubectl -n flip-trust get pod "$XNAT_POD" -o jsonpath='{.status.containerStatuses[0].imageID}'   # the digest it runs
    kubectl exec -n flip-trust "$XNAT_POD" -- ls -la /data/xnat/home/plugins   # the jars the pod carries
 
 **Fix.** Get one deploy to complete, from a current checkout, with a wait budget above the init job's real

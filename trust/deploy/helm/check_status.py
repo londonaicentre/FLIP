@@ -157,11 +157,12 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
         return True, result.stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
         # A timeout carries None or bytes here even with text=True, so normalise before callers
-        # treat it as text — a wedged cluster is exactly when this script must not crash.
-        err = e.stderr
-        if isinstance(err, bytes):
-            err = err.decode(errors="replace")
-        return False, err or str(e)
+        # treat it as text — a wedged cluster is exactly when this script must not crash. The
+        # reason, never str(e): that is the whole argv, an in-pod script included.
+        err = (e.stderr.decode(errors="replace") if isinstance(e.stderr, bytes) else e.stderr or "").strip()
+        if isinstance(e, subprocess.TimeoutExpired):
+            return False, f"timed out after {e.timeout:g}s" + (f": {err}" if err else "")
+        return False, err or f"exit {e.returncode}"
     except FileNotFoundError as e:
         # A tool this host lacks (macOS has no `free`) is a check that cannot run, not a crash.
         return False, str(e)
@@ -296,9 +297,9 @@ def _fl_client_kit_missing(pod: str, namespace: str) -> bool:
 
 
 # The id GET /xapi/plugins lists each plugin under — the `id=` in the jar's
-# META-INF/xnat/*-plugin.properties, read from the jars and the API on XNAT 1.10.0. Every xnat-web
-# pod must load all of them: the image is built from trust/xnat/artifacts.manifest, and
-# tests/test_plugin_roster_and_timeout.py keeps the two in step.
+# META-INF/xnat/*-plugin.properties, read from the jars and the API on XNAT 1.10.0. The image is
+# built from trust/xnat/artifacts.manifest; tests/test_plugin_roster_and_timeout.py keeps the two
+# in step.
 XNAT_PLUGIN_IDS = {
     "batch-launch": "batchLaunchPlugin",
     "container-service": "containers",
@@ -308,26 +309,47 @@ XNAT_PLUGIN_IDS = {
 
 # Runs in the xnat-web pod as the FLIP service account. The credential is the pod's own
 # (XNAT_SERVICE_USER/PASSWORD from the release Secret) and reaches curl on stdin (`-K -`), so it is
-# in no argv here or in the pod. Prints the body, then the HTTP status on its own line.
+# in no argv here or in the pod. Prints the plugin list's body and HTTP status, then the DQR
+# settings route's status, each on its own line. XNAT lists a plugin whose configuration failed to
+# load, so only the route shows the plugins registered (wait-for-xnat-plugins.sh).
 _FETCH_LOADED_PLUGINS = r"""
 [ -n "${XNAT_SERVICE_USER:-}" ] && [ -n "${XNAT_SERVICE_PASSWORD:-}" ] || {
   echo "XNAT_SERVICE_USER / XNAT_SERVICE_PASSWORD are not set in this container" >&2; exit 3; }
 token=$(printf '%s:%s' "$XNAT_SERVICE_USER" "$XNAT_SERVICE_PASSWORD" | base64 | tr -d '\n')
-printf 'header = "Authorization: Basic %s"\n' "$token" \
-  | curl -sS --connect-timeout 5 --max-time 20 -K - -w '\n%{http_code}' http://localhost:8080/xapi/plugins
+ask() { printf 'header = "Authorization: Basic %s"\n' "$token" \
+  | curl -sS --connect-timeout 5 --max-time 20 -K - "$@"; }
+ask -w '\n%{http_code}\n' http://localhost:8080/xapi/plugins
+ask -o /dev/null -w '%{http_code}' http://localhost:8080/xapi/dqr/settings
 """
 
 
-def loaded_plugin_ids(pod: str, namespace: str) -> tuple[dict[str, str] | None, str]:
-    """Ask a pod's XNAT which plugins it loaded (GET /xapi/plugins).
+@dataclass(frozen=True)
+class XnatAnswer:
+    """What one pod's XNAT answered.
+
+    Attributes:
+        plugins: ``{plugin id: version}`` from GET /xapi/plugins. The version is XNAT's own: the
+            plugin's declared one, else empty.
+        dqr_status: The HTTP status GET /xapi/dqr/settings answered.
+        problem: Why the plugin list is unusable; empty when it is usable.
+        answered: Whether XNAT replied at all. A wrong reply is a FAIL, no reply a WARN.
+    """
+
+    plugins: dict[str, str] | None = None
+    dqr_status: str = ""
+    problem: str = ""
+    answered: bool = True
+
+
+def ask_xnat_plugins(pod: str, namespace: str) -> XnatAnswer:
+    """Ask a pod's XNAT which plugins it lists, and whether its DQR route answers.
 
     Args:
         pod: Pod resource name.
         namespace: Kubernetes namespace.
 
     Returns:
-        ``({plugin id: version}, "")``, or ``(None, why not)`` when XNAT could not be asked. The
-        version is XNAT's own: the plugin's declared one, else its jar name's suffix (``3.8.2-fat``).
+        An :class:`XnatAnswer`.
     """
     success, output = run_command(
         ["kubectl", "exec", pod, "-n", namespace, "--", "sh", "-c", _FETCH_LOADED_PLUGINS], timeout=45
@@ -335,17 +357,22 @@ def loaded_plugin_ids(pod: str, namespace: str) -> tuple[dict[str, str] | None, 
     if not success:
         # kubectl names the defaulted container on every exec into xnat-web; that is not the error.
         lines = [line for line in output.splitlines() if line.strip() and not line.startswith("Defaulted container")]
-        return None, " ".join(lines)[:200]
-    body, _, status = output.rpartition("\n")
-    if status.strip() != "200":
-        return None, f"GET /xapi/plugins answered HTTP {status.strip() or '(none)'}"
+        return XnatAnswer(problem=" ".join(lines)[:200], answered=False)
+    head, _, dqr_status = output.rpartition("\n")
+    body, _, status = head.rpartition("\n")
+    status = status.strip()
+    if status in ("", "000"):
+        return XnatAnswer(problem="GET /xapi/plugins got no HTTP answer", answered=False)
+    if status != "200":
+        return XnatAnswer(problem=f"GET /xapi/plugins answered HTTP {status}")
     try:
         listing = json.loads(body)
     except json.JSONDecodeError:
         listing = None
     if not isinstance(listing, dict):
-        return None, "GET /xapi/plugins did not answer a JSON object"
-    return {pid: (bean.get("version") or "") if isinstance(bean, dict) else "" for pid, bean in listing.items()}, ""
+        return XnatAnswer(problem="GET /xapi/plugins did not answer a JSON object")
+    plugins = {pid: (bean.get("version") or "") if isinstance(bean, dict) else "" for pid, bean in listing.items()}
+    return XnatAnswer(plugins=plugins, dqr_status=dqr_status.strip())
 
 
 def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
@@ -356,9 +383,9 @@ def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
         namespace: Kubernetes namespace.
 
     Returns:
-        ``(enabled, "")``, or ``(None, why not)`` when the values could not be read. That stays
-        distinct from "off", so a slow or broken helm cannot turn the check off while
-        ``make status`` still exits green.
+        ``(enabled, "")``, or ``(None, why not)`` when the values cannot tell. That stays distinct
+        from "off", which skips the check: values that cannot be read warn, and the pods are still
+        checked.
     """
     if not check_command("helm"):
         return None, "helm is not on PATH"
@@ -367,39 +394,35 @@ def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
         timeout=30,
     )
     if not success:
-        return None, f"`helm get values {helm_release} -n {namespace}` failed or timed out: {output.strip()[:200]}"
+        return None, f"`helm get values {helm_release} -n {namespace}` failed: {output.strip()[:200]}"
     try:
         values = json.loads(output)
     except json.JSONDecodeError as exc:
         return None, f"helm's values are not valid JSON: {exc}"
-    if not isinstance(values, dict):
-        return None, "helm returned no values for this release"
-    return bool((values.get("xnat") or {}).get("enabled", False)), ""
+    xnat = values.get("xnat") if isinstance(values, dict) else None
+    enabled = xnat.get("enabled") if isinstance(xnat, dict) else None
+    if not isinstance(enabled, bool):
+        return None, "the release's values carry no xnat.enabled"
+    return enabled, ""
 
 
 def check_xnat_plugins(helm_release: str, namespace: str) -> None:
-    """Assert XNAT on every running xnat-web pod loaded every plugin in ``XNAT_PLUGIN_IDS``.
+    """Assert XNAT on every running xnat-web pod lists every plugin and answers its DQR route.
 
-    The jars and the XNAT core ship in one image built from one manifest, so a plugin can no
-    longer outlive its core (FLIP#1228); what is left to catch is a jar XNAT did not load. A
-    loaded plugin can still fail at run time (one built for another XNAT core aborts every
-    C-STORE), which is what ``make smoke-cstore`` covers.
+    XNAT that answers wrongly, or lists a plugin short, FAILs; a pod XNAT cannot be asked on WARNs.
+    A plugin that loads can still abort every C-STORE at run time (a manifest pairing it with the
+    wrong XNAT core), which ``make smoke-cstore`` covers.
 
     Args:
         helm_release: Helm release name.
         namespace: Kubernetes namespace.
     """
     enabled, why = xnat_enabled(helm_release, namespace)
-    if enabled is None:
-        print_status(
-            "WARN",
-            f"Could NOT read the release's values ({why}) — the XNAT plugin check did not run, so do "
-            "not read the rest of this report as clearing the DICOM path.",
-        )
-        return
-    if not enabled:
+    if enabled is False:
         print_status("INFO", "Skipping the XNAT plugin check (xnat.enabled is false in this release)")
         return
+    if enabled is None:
+        print_status("WARN", f"Cannot tell whether this release runs XNAT ({why}); checking any xnat-web pod anyway")
 
     pods = kubectl_list(
         [
@@ -432,18 +455,38 @@ def check_xnat_plugins(helm_release: str, namespace: str) -> None:
         )
 
     for pod in pods:
-        loaded, why = loaded_plugin_ids(pod, namespace)
-        if loaded is None:
-            print_status("WARN", f"Could not ask XNAT on '{pod}' which plugins it loaded ({why})")
+        answer = ask_xnat_plugins(pod, namespace)
+        if answer.plugins is None:
+            if answer.answered:
+                print_status("FAIL", f"XNAT on '{pod}': {answer.problem}")
+            else:
+                print_status("WARN", f"Could not ask XNAT on '{pod}' which plugins it loaded ({answer.problem})")
             continue
-        unloaded = [key for key, plugin_id in sorted(XNAT_PLUGIN_IDS.items()) if plugin_id not in loaded]
+        unloaded = [key for key, plugin_id in sorted(XNAT_PLUGIN_IDS.items()) if plugin_id not in answer.plugins]
         for key in unloaded:
             print_status(
-                "FAIL", f"XNAT on '{pod}' did not load the {key} plugin: see the tomcat container's startup log"
+                "FAIL",
+                f"XNAT on '{pod}' did not load the {key} plugin (not in this image, or it failed at startup: "
+                "see the tomcat log)",
             )
-        if not unloaded:
-            versions = ", ".join(f"{pid} {loaded[pid] or '(no version)'}" for pid in sorted(XNAT_PLUGIN_IDS.values()))
-            print_status("PASS", f"XNAT on '{pod}' loaded all {len(XNAT_PLUGIN_IDS)} plugins: {versions}")
+        # 404 is an unregistered route; any other answer means it exists (the service account may
+        # lack DQR admin rights).
+        if answer.dqr_status == "404":
+            print_status(
+                "FAIL",
+                f"XNAT on '{pod}' has no DQR route (GET /xapi/dqr/settings answered 404): a plugin's "
+                "configuration failed to load, see the tomcat log",
+            )
+        elif answer.dqr_status in ("", "000"):
+            print_status("WARN", f"Could not reach XNAT's DQR route on '{pod}' (no HTTP answer)")
+        elif not unloaded:
+            versions = ", ".join(
+                f"{pid} {answer.plugins[pid] or '(no version)'}" for pid in sorted(XNAT_PLUGIN_IDS.values())
+            )
+            print_status(
+                "PASS",
+                f"XNAT on '{pod}' lists all {len(XNAT_PLUGIN_IDS)} plugins and its DQR route answers: {versions}",
+            )
 
 
 def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:
