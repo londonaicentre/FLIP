@@ -310,7 +310,8 @@ SuperLink's ``server.key``, which never belongs on a trust. It then deploys the 
 ``values-aks.yaml`` and ``values-small-node.yaml``, and records them in the kit file as
 ``K8S_PLATFORM_VALUES``, so a later deploy or upgrade of that slot keeps them. The first install takes up to half an
 hour, most of it XNAT's first start. ``MOCK_PACS=1`` seeds the published mock studies into the
-chart's Orthanc, which a test node needs for an imaging pull and for the self-test.
+chart's Orthanc, which a test node needs for an imaging pull and for the self-test's C-STORE and conversion
+checks (skipped without it).
 
 The chart loads no OMOP core vocabulary: it is licensed, so each site loads its own copy, as
 :ref:`onprem-core-vocabulary` describes. Until then, cohort queries that name concepts through
