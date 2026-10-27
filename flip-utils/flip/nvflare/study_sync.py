@@ -174,17 +174,25 @@ def xnat_archives(cfg: SyncConfig, projects: list[str]) -> dict[str, str]:
     response = requests.get(f"{cfg.imaging_api_url}/projects/", headers=dict(cfg.headers), timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
     wanted = set(projects)
-    archives = {}
+    claims: dict[str, list[str]] = {}
     for project in response.json():
         hub_id, xnat_id = project.get("secondary_ID"), project.get("ID")
-        if hub_id not in wanted or not xnat_id:
+        if hub_id in wanted and xnat_id:
+            claims.setdefault(hub_id, []).append(xnat_id)
+    archives = {}
+    for hub_id, xnat_ids in claims.items():
+        if len(xnat_ids) > 1:
+            # Mounting either could hand the job another project's archive.
+            print(f"study sync: XNAT projects {xnat_ids} all claim project {hub_id}; mounting none", file=sys.stderr)
             continue
         experiments = requests.get(
-            f"{cfg.imaging_api_url}/projects/{xnat_id}/experiments", headers=dict(cfg.headers), timeout=REQUEST_TIMEOUT
+            f"{cfg.imaging_api_url}/projects/{xnat_ids[0]}/experiments",
+            headers=dict(cfg.headers),
+            timeout=REQUEST_TIMEOUT,
         )
         experiments.raise_for_status()
         if experiments.json():
-            archives[hub_id] = xnat_id
+            archives[hub_id] = xnat_ids[0]
     return archives
 
 

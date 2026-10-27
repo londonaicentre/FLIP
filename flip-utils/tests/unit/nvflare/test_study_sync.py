@@ -291,3 +291,18 @@ def test_main_once_syncs_from_the_environment(tmp_path, cfg):
 def test_main_refuses_a_missing_setting(cfg, capsys):
     assert study_sync.main([str(cfg.local_dir), "--once"], env={}) == 1
     assert "FL_K8S_JOB_IMAGE" in capsys.readouterr().err
+
+
+def test_an_ambiguous_xnat_project_gets_no_imaging_mount(cfg, capsys):
+    # Two XNAT projects claiming one hub project: mounting either could hand a job another project's archive.
+    _stage(cfg.cohort_data_dir, P1)
+    projects = [{"ID": XNAT_ID, "secondary_ID": P1}, {"ID": "b2222222-2222-4222-8222-222222222222", "secondary_ID": P1}]
+    experiments = {XNAT_ID: [{"ID": "e"}], "b2222222-2222-4222-8222-222222222222": [{"ID": "f"}]}
+
+    with patch("flip.nvflare.study_sync.requests.get", side_effect=_imaging_api(projects, experiments)):
+        archives = sync_once(cfg, {})
+
+    assert archives == {}
+    assert P1 in capsys.readouterr().err
+    volumes = {v["name"] for v in _runtime(cfg)["studies"][P1]["pod_template"]["spec"]["volumes"]}
+    assert "flip-xnat-archive" not in volumes
