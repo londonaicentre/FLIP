@@ -708,7 +708,9 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
 
         validate_client_availability(slot_names, net_details.endpoint, fl_backend)
         # Each trust writes the job's cohort data before the job exists (FLIP#1678); a trust that cannot fails it.
-        stage_job_data(model_id, trust_ids, session)
+        # Only an NVFLARE job pod mounts it, so a Flower job stages nothing.
+        if fl_backend == FLBackend.NVFLARE:
+            stage_job_data(model_id, trust_ids, session)
 
         # Get presigned URLs from the files in the destination bucket on S3
         bundle_urls = get_bundle_urls(dest_bucket_s3_path)

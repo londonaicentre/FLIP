@@ -885,3 +885,26 @@ def test_prepare_and_start_training_fails_the_model_when_staging_fails(fake_sess
     mock_start.assert_not_called()
     mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
     assert "Trust_1" in mock_log.call_args.args[1]
+
+
+def test_prepare_and_start_training_does_not_stage_on_a_flower_net(fake_session, model_id, fl_job_id, staging):
+    # Final review #1: only an NVFLARE job pod reads staged data. A Flower trust would stage rows nothing mounts.
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_flower_application",
+            return_value="s3://dest/model",
+        ),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id",
+            return_value=INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.FLOWER),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url"]),
+        patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log"),
+    ):
+        assert fl_scheduler_service.prepare_and_start_training(model_id, fl_job_id, [uuid4()], fake_session) is True
+
+    staging.assert_not_called()
+    mock_start.assert_called_once()

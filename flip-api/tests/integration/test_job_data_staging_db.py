@@ -38,6 +38,7 @@ def staged_model(session, project_factory, model_factory, trust_factory):
     trusts = [
         _add_trust(session, trust_factory, name="Trust_1", code="T1"),
         _add_trust(session, trust_factory, name="Trust_2", code="T2"),
+        _add_trust(session, trust_factory, name="Trust_3", code="T3"),
     ]
     return {"project": project, "model": model, "trusts": trusts}
 
@@ -107,6 +108,9 @@ def test_wait_times_out_and_cancels_pending_tasks(session, staged_model):
     model, project, trusts = staged_model["model"], staged_model["project"], staged_model["trusts"]
     task_ids = queue_job_data_tasks(TaskType.STAGE_JOB_DATA, model.id, project.id, [t.id for t in trusts], session)
     _set_status(session, task_ids[0], TaskStatus.COMPLETED)
+    # A trust that picked the task up but never reported: stale-task recovery would hand it back as PENDING after the
+    # model has ended, and the trust would stage rows nobody unstages.
+    _set_status(session, task_ids[2], TaskStatus.IN_PROGRESS)
 
     with pytest.raises(JobDataStagingError) as excinfo:
         wait_for_trust_tasks(task_ids, session, timeout_seconds=0.05, poll_seconds=0.01)
@@ -114,6 +118,7 @@ def test_wait_times_out_and_cancels_pending_tasks(session, staged_model):
     statuses = {t.trust_id: t.status for t in _tasks(session, task_ids)}
     assert statuses[trusts[0].id] == TaskStatus.COMPLETED
     assert statuses[trusts[1].id] == TaskStatus.CANCELLED
+    assert statuses[trusts[2].id] == TaskStatus.CANCELLED
     assert "Trust_2" in str(excinfo.value)
 
 
@@ -134,3 +139,14 @@ def test_unstage_without_a_job_queues_nothing(session, staged_model):
     unstage_job_data(staged_model["model"].id, session)
 
     assert session.exec(select(TrustTask)).all() == []
+
+
+def test_a_trust_that_does_not_know_the_task_is_one_that_does_not_stage(session, staged_model):
+    # Final review #1: a trust on an older release answers "Unknown task type". It has no study sync either, so a
+    # job-pod trust among them still refuses the job at launch; a Compose trust runs it as before.
+    model, project, trusts = staged_model["model"], staged_model["project"], staged_model["trusts"]
+    task_ids = queue_job_data_tasks(TaskType.STAGE_JOB_DATA, model.id, project.id, [t.id for t in trusts[:2]], session)
+    _set_status(session, task_ids[0], TaskStatus.COMPLETED)
+    _set_status(session, task_ids[1], TaskStatus.FAILED, json.dumps({"error": "Unknown task type: stage_job_data"}))
+
+    wait_for_trust_tasks(task_ids, session, timeout_seconds=1, poll_seconds=0.01)

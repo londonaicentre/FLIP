@@ -105,13 +105,28 @@ def _describe(tasks: Sequence[TrustTask], session: Session, what: str) -> str:
     return f"{what} ({'; '.join(names)})"
 
 
+def _does_not_stage(task: TrustTask) -> bool:
+    """A trust on a release before job data staging answers that it does not know the task.
+
+    Such a trust has no study sync either, so treating it as "does not stage" stays closed: a job-pod trust among them
+    has no study entry and refuses the job at launch, and a Compose trust runs it from the APIs as before.
+    """
+    if task.status != TaskStatus.FAILED:
+        return False
+    try:
+        result = json.loads(task.result) if task.result else {}
+    except ValueError:
+        return False
+    return isinstance(result, dict) and str(result.get("error", "")).startswith("Unknown task type")
+
+
 def wait_for_trust_tasks(
     task_ids: Sequence[UUID], session: Session, timeout_seconds: float, poll_seconds: float = 2.0
 ) -> None:
     """Block until every task has completed.
 
-    On a timeout the tasks no trust has picked up yet are cancelled, so a trust that comes back later never acts on
-    them.
+    A trust that does not know the task (an older release) counts as done. On a timeout every unfinished task is
+    cancelled, so neither a trust that comes back later nor stale-task recovery acts on it after the model has ended.
 
     Args:
         task_ids (Sequence[UUID]): The tasks to wait for.
@@ -126,17 +141,19 @@ def wait_for_trust_tasks(
     while True:
         session.expire_all()
         tasks = session.exec(select(TrustTask).where(col(TrustTask.id).in_(task_ids))).all()
-        failed = [t for t in tasks if t.status in (TaskStatus.FAILED, TaskStatus.CANCELLED)]
+        older = [t for t in tasks if _does_not_stage(t)]
+        failed = [t for t in tasks if t.status in (TaskStatus.FAILED, TaskStatus.CANCELLED) and t not in older]
         if failed:
             raise JobDataStagingError(_describe(failed, session, "A trust could not stage the job's data"))
-        waiting = [t for t in tasks if t.status != TaskStatus.COMPLETED]
+        waiting = [t for t in tasks if t.status != TaskStatus.COMPLETED and t not in older]
         if not waiting and len(tasks) == len(task_ids):
+            for task in older:
+                logger.warning(f"Trust {task.trust_id} does not stage job data (an older release); not staged there")
             return
         if time.monotonic() >= deadline:
             reason = _describe(waiting, session, f"Trusts did not stage the job's data within {timeout_seconds:g}s")
             for task in waiting:
-                if task.status == TaskStatus.PENDING:
-                    task.status = TaskStatus.CANCELLED
+                task.status = TaskStatus.CANCELLED
             session.commit()
             raise JobDataStagingError(reason)
         time.sleep(poll_seconds)
