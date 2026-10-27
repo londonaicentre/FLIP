@@ -26,8 +26,8 @@ min-clients / import-path / offline-apps / catalogue guards, ruff. Hand-maintain
 | `scripts/check_tutorial_sync.sh` `PAIRS` + `.github/workflows/fl-apps-check-tutorial-sync.yml` `paths:` | Files shared byte-for-byte between tutorials; every twin pair's `query.sql` (`tests/test_tutorial_catalogue.py` checks it) |
 | `fl-tutorials/AGENTS.md` path table; `fl-tutorials/README.md` backend table and dataset-download sentence | Every tutorial |
 | `AGENTS.md` (root) `fl-tutorials/` line in the repo-structure block | Every tutorial (it enumerates them) |
-| `docs/source/components/component-fl-nets.rst` "The NVFLARE tutorials" list (name, link, job type) | Every NVFLARE tutorial |
-| `docs/source/working-with-flip-apps/create-flip-app-from-{flare,flower}.rst` worked-example bullets; `package-model-as-map.rst` transforms table | When the tutorial is a better worked example / ships `transforms.py` + `export/metadata.json` |
+| `docs/source/components/component-fl-jobs.rst` (the job-types page; the catalogue itself is `make -C fl-tutorials list-tutorials`, nothing in the docs lists the tutorials by name) | When the tutorial shows a job type in a new way |
+| `docs/source/working-with-flip-apps/create-flip-app-from-{flare,flower}.rst` worked-example bullets; `wrap-model-for-deployment.rst` transforms table | When the tutorial is a better worked example / ships `transforms.py` + `export/metadata.json` |
 | `docs/source/components/component-omop-database.rst` "Sample cohort queries" | New `query.sql` worth showing |
 | `flip-api/Makefile` `e2e_smoke_<name>` target (+ `flip-api/AGENTS.md`, root `AGENTS.md` smoke section); `flip-api/tests/e2e_smoke.py` `TUTORIALS` label map | When the tutorial should be drivable end to end against the dev stack (needs its cohort seeded on the trusts) |
 | `flip-api/tests/demo_video.py` `APPS` profile (+ `flip-ui/test/cypress/demo/README.md` example when enrichment flags are needed) | Every tutorial that gets a demo video (`make demo-video DEMO_ARGS="--app <name>"`); same seeded-cohort prerequisite as e2e |
