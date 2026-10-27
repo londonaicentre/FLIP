@@ -103,8 +103,9 @@ firewall narrows that to these names.
      - the AWS CLI, installed once at provisioning
    * - AWS: SSM (``ssm``, ``ssmmessages``, ``ec2messages``), CloudWatch, and S3 in the node's region
      - 443
-     - access, logs and metrics; the kit and vocabulary when they come from a bucket. On a subnet with
-       no internet route to SSM, set ``SSM_ENDPOINTS=true`` for interface endpoints (~$24/month per AZ)
+     - access, logs and metrics; the CloudWatch agent package at provisioning; the kit and vocabulary
+       when they come from a bucket. On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true``
+       for interface endpoints (~$24/month per AZ)
 
 Neither row has been measured behind a firewall yet.
 
