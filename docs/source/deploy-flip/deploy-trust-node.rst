@@ -192,23 +192,24 @@ different load balancers, so allow both. This is everything a node connects out 
      - Yes, Oct 2026
    * - ``huggingface.co`` **and** ``*.hf.co``
      - 443
-     - Mock data only
-     - The published mock trust data. Downloads redirect to ``*.hf.co``, so ``huggingface.co`` alone fails
+     - First install
+     - FLIP's sample trust data, which the first install loads by default. Downloads redirect to ``*.hf.co``, so
+       ``huggingface.co`` alone fails
      - Not yet
    * - ``pypi.org``, ``files.pythonhosted.org``
      - 443
-     - Mock data only
-     - The Python packages the mock-data loaders run
+     - First install
+     - The Python packages the sample-data loaders run
      - Not yet
    * - Ubuntu's package mirrors, or your own
      - 80
-     - Provisioning only
-     - OS packages. ``esm.ubuntu.com`` is not expected to be needed
+     - Provisioning and updates
+     - OS packages and their security updates. ``esm.ubuntu.com`` is not expected to be needed
      - Not yet
    * - ``download.docker.com``
      - 443
-     - Provisioning only
-     - Docker Engine, where FLIP's provisioning installs it
+     - Provisioning and updates
+     - Docker Engine and its updates, where FLIP's provisioning installs it
      - Not yet
 
 *Measured* means a node ran behind a firewall that denied everything not listed (an Azure node, October 2026).
