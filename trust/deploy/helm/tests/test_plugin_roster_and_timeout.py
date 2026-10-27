@@ -325,14 +325,20 @@ def test_no_running_pod_warns(monkeypatch: pytest.MonkeyPatch, reported: list[tu
     assert [status for status, _ in reported] == ["WARN"]
 
 
-def test_a_pod_that_loaded_every_plugin_passes(
+def test_a_pod_that_loaded_every_plugin_passes_naming_each_version(
     monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]
 ) -> None:
-    _pods(monkeypatch, {"pod/xnat-1": _xapi_plugins(*ALL_IDS, "someSitePlugin")})
+    """Each plugin's own version is shown; one XNAT reports none for, and a site extra, are not."""
+    body = {pid: {"id": pid, "version": f"{n}.0"} for n, pid in enumerate(ALL_IDS)}
+    del body[ALL_IDS[0]]["version"]
+    body["someSitePlugin"] = {"id": "someSitePlugin", "version": "9.9"}
+    _pods(monkeypatch, {"pod/xnat-1": json.dumps(body) + "\n200"})
 
     check_status.check_xnat_plugins("trust-release", "flip-trust")
 
-    assert reported == [("PASS", f"XNAT on 'pod/xnat-1' loaded all {len(ALL_IDS)} plugins")]
+    version = {pid: f"{n}.0" if n else "(no version)" for n, pid in enumerate(ALL_IDS)}
+    expected = ", ".join(f"{pid} {version[pid]}" for pid in sorted(ALL_IDS))
+    assert reported == [("PASS", f"XNAT on 'pod/xnat-1' loaded all {len(ALL_IDS)} plugins: {expected}")]
 
 
 def test_each_plugin_xnat_did_not_load_fails(monkeypatch: pytest.MonkeyPatch, reported: list[tuple[str, str]]) -> None:

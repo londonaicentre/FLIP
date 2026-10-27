@@ -318,7 +318,7 @@ printf 'header = "Authorization: Basic %s"\n' "$token" \
 """
 
 
-def loaded_plugin_ids(pod: str, namespace: str) -> tuple[set[str] | None, str]:
+def loaded_plugin_ids(pod: str, namespace: str) -> tuple[dict[str, str] | None, str]:
     """Ask a pod's XNAT which plugins it loaded (GET /xapi/plugins).
 
     Args:
@@ -326,7 +326,8 @@ def loaded_plugin_ids(pod: str, namespace: str) -> tuple[set[str] | None, str]:
         namespace: Kubernetes namespace.
 
     Returns:
-        ``(plugin ids, "")``, or ``(None, why not)`` when XNAT could not be asked.
+        ``({plugin id: version}, "")``, or ``(None, why not)`` when XNAT could not be asked. The
+        version is XNAT's own: the plugin's declared one, else its jar name's suffix (``3.8.2-fat``).
     """
     success, output = run_command(
         ["kubectl", "exec", pod, "-n", namespace, "--", "sh", "-c", _FETCH_LOADED_PLUGINS], timeout=45
@@ -344,7 +345,7 @@ def loaded_plugin_ids(pod: str, namespace: str) -> tuple[set[str] | None, str]:
         listing = None
     if not isinstance(listing, dict):
         return None, "GET /xapi/plugins did not answer a JSON object"
-    return set(listing), ""
+    return {pid: (bean.get("version") or "") if isinstance(bean, dict) else "" for pid, bean in listing.items()}, ""
 
 
 def xnat_enabled(helm_release: str, namespace: str) -> tuple[bool | None, str]:
@@ -441,7 +442,8 @@ def check_xnat_plugins(helm_release: str, namespace: str) -> None:
                 "FAIL", f"XNAT on '{pod}' did not load the {key} plugin: see the tomcat container's startup log"
             )
         if not unloaded:
-            print_status("PASS", f"XNAT on '{pod}' loaded all {len(XNAT_PLUGIN_IDS)} plugins")
+            versions = ", ".join(f"{pid} {loaded[pid] or '(no version)'}" for pid in sorted(XNAT_PLUGIN_IDS.values()))
+            print_status("PASS", f"XNAT on '{pod}' loaded all {len(XNAT_PLUGIN_IDS)} plugins: {versions}")
 
 
 def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:

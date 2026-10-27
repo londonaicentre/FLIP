@@ -157,6 +157,7 @@ share no code, so the operator guide has operators run both.
 fails each plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) it did not; see the `tomcat`
 container's startup log. XNAT lists plugins by id, not by file name (`container-service` is
 `containers`), hence the map; a test keeps it in step with the manifest the image is built from.
+A pass lists each plugin's version as XNAT reports it, for reading only: nothing is compared.
 When XNAT cannot be asked, `status` warns. This is the chart's only check of what XNAT loaded:
 the `xnat-init` readiness wait runs in its own pod, so it waits for the DQR route alone. The
 jars and the XNAT core ship in one image, so a plugin cannot outlive its core, but a plugin
