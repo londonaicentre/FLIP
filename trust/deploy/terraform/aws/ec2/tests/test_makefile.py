@@ -36,7 +36,9 @@ def kit(tmp_path: Path) -> Path:
 
 
 def make(target: str, kit: Path, *extra: str, dry: bool = True) -> subprocess.CompletedProcess[str]:
-    args = ["make", *(["-n"] if dry else []), "-C", str(ROOT), target, "KIT=TEST", "HUB=stag", f"KIT_FILE={kit}"]
+    # GNU make 4 prints "Entering directory '…/terraform/aws/ec2'" for -C; keep stdout to the recipes.
+    args = ["make", "--no-print-directory", *(["-n"] if dry else []), "-C", str(ROOT), target]
+    args += ["KIT=TEST", "HUB=stag", f"KIT_FILE={kit}"]
     return subprocess.run([*args, *extra], capture_output=True, text=True, timeout=60)
 
 
