@@ -84,35 +84,11 @@ gave its AWS trust one for allowlisting and removed it, because it protected not
   through a NAT gateway. The gateway's IP is created and destroyed with the node, and no address
   outlives it.
 
-**What the Trust's firewall must allow, outbound only.** Measured behind a deny-all Azure
-Firewall: each registry serves its image layers from a second host, so allowing the registry
-name alone makes every pull fail.
+**What the Trust's firewall must allow, outbound only.** Everything in
+:ref:`deploy-trust-node-network`, plus two first-boot extras on the VM:
 
-+------------------------------------------+---------------------------------------------------+
-| Destination                              | Why                                               |
-+==========================================+===================================================+
-| The hub's URL, port 443                  | Task polling, heartbeats, results (HTTPS, API     |
-|                                          | key)                                              |
-+------------------------------------------+---------------------------------------------------+
-| The hub's FL endpoint, port 8002 (8003   | Federated training. It has a fixed IP, so a       |
-| on staging)                              | firewall without FQDN network rules (Azure        |
-|                                          | Firewall Basic) can allow it by address. **Exempt |
-|                                          | it from TLS inspection**: a proxy that re-signs   |
-|                                          | the traffic breaks its certificate check          |
-+------------------------------------------+---------------------------------------------------+
-| ``ghcr.io``,                             | FLIP's container images and their layers          |
-| ``pkg-containers.githubusercontent.com`` |                                                   |
-+------------------------------------------+---------------------------------------------------+
-| ``registry-1.docker.io``,                | The observability images (Grafana, Loki, Alloy)   |
-| ``auth.docker.io``,                      | and XNAT's Docker socket proxy, from Docker Hub   |
-| ``production.cloudfront.docker.com``     |                                                   |
-+------------------------------------------+---------------------------------------------------+
-| ``github.com``                           | First boot clones FLIP at a pinned commit         |
-+------------------------------------------+---------------------------------------------------+
-| ``huggingface.co``                       | First install loads the published mock trust data |
-+------------------------------------------+---------------------------------------------------+
-| The OS, Docker and uv package sources    | First-boot installs                               |
-+------------------------------------------+---------------------------------------------------+
+- ``github.com``: first boot clones FLIP at a pinned commit.
+- ``astral.sh`` and ``releases.astral.sh``: first boot installs uv.
 
 **What leaves the site.** Model updates during training, and aggregate results. Patient records,
 images and OMOP rows stay on the node.
@@ -286,16 +262,16 @@ $0.25 an hour, plus the NAT gateway on a standalone cluster.
 
    The one-node AKS cluster running the ``flip-trust`` chart.
 
-Behind the Trust's firewall the cluster needs more than the VM's list (`Network and security`_):
+Behind the Trust's firewall the cluster needs, on top of :ref:`deploy-trust-node-network`:
 
 - **AKS itself:** the outbound rules Microsoft documents for AKS ("Outbound network and FQDN
   rules for AKS clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag,
   and the region's ``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
-- **XNAT plugins:** the chart downloads them at every pod start, from ``xnat.org``,
-  ``api.bitbucket.org`` (served from ``bbuseruploads.s3.amazonaws.com``) and ``github.com``
-  (served from ``release-assets.githubusercontent.com``). The VM's image carries them instead.
+- **The Helm chart's own:** XNAT's plugins and the mock-data seed job, listed in
+  :doc:`deploy-flip-node-kubernetes`.
 
-That list was measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
+The AKS rules and XNAT's plugin hosts were measured on 17 Oct by running this chapter behind a
+deny-all Azure Firewall Basic.
 
 On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
 ``python3`` and ``uv``.
