@@ -190,36 +190,6 @@ spec:
                 sleep 3
               done
               echo "xnat-db is ready."
-{{- if and .Values.xnat.web.plugins.enabled }}
-        - name: download-plugins
-          image: "{{ .Values.xnat.web.plugins.image }}"
-          command:
-            - python3
-            - -c
-            - |
-              import urllib.parse, urllib.request, os
-              # Each jar's filename is derived from its URL so the version lives
-              # in exactly one place (values.yaml xnat.web.plugins.urls).
-              urls = [
-              {{- range $name, $url := .Values.xnat.web.plugins.urls }}
-                  {{ $url | quote }},
-              {{- end }}
-              ]
-              os.makedirs("/plugins", exist_ok=True)
-              for url in urls:
-                  name = os.path.basename(urllib.parse.urlsplit(url).path)
-                  if not name.endswith(".jar"):
-                      raise SystemExit("Plugin URL does not end in a .jar filename: " + url)
-                  dest = os.path.join("/plugins", name)
-                  print("Downloading " + name + "...")
-                  urllib.request.urlretrieve(url, dest)
-                  sz = os.path.getsize(dest)
-                  print("  Done: " + str(sz // 1024 // 1024) + " MB")
-              print("All plugins downloaded successfully!")
-          volumeMounts:
-            - name: plugins
-              mountPath: /plugins
-{{- end }}
       containers:
         - name: tomcat
           image: "{{ .Values.xnat.web.image.repository }}:{{ include "flip-trust.imageTag" (dict "pin" .Values.xnat.image.pin "global" .Values.global.image.tag "own" .Values.xnat.web.image.tag) }}"
@@ -281,8 +251,6 @@ spec:
             - name: data
               mountPath: /data/xnat/prearchive
               subPath: prearchive
-            - name: plugins
-              mountPath: /data/xnat/home/plugins
           # XNAT is Tomcat's ROOT webapp, so the old /xnat/ path only reached the login redirect.
           # Readiness: anonymous GET /xapi/siteConfig/buildInfo (as trust-api's health check), so Ready
           # means XAPI is serving, not that first boot is done (FLIP#1384). Liveness: `/`, redirected to
@@ -308,8 +276,6 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "flip-trust.fullname" . }}-xnat-web
-        - name: plugins
-          emptyDir: {}
 {{- if .Values.xnat.web.persistence.enabled }}
 ---
 apiVersion: v1
