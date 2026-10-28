@@ -125,6 +125,17 @@ def test_values_do_reach_snowflake_on_stdin(fake_snow, kit_file: Path, tmp_path:
         assert value in sql[0]["stdin"]
 
 
+def test_snow_templating_is_off_so_values_arrive_unaltered(fake_snow, kit_file: Path, tmp_path: Path) -> None:
+    """``snow sql`` resolves ``&name`` / ``&{name}`` and rewrites ``&&`` to ``&`` unless told
+    not to, so a secret holding ``&`` would be stored altered with no error (seen live: a
+    service command lost a ``&&``)."""
+    run_sync(fake_snow, kit_file, tmp_path)
+    for record in _records(fake_snow[1]):
+        if record["argv"][:1] == ["sql"]:
+            argv = record["argv"]
+            assert argv[argv.index("--enable-templating") + 1] == "NONE"
+
+
 def test_dry_run_prints_redacted_sql_and_runs_nothing(fake_snow, kit_file: Path, tmp_path: Path) -> None:
     result = run_sync(fake_snow, kit_file, tmp_path, "--dry-run")
     assert result.returncode == 0, result.stderr

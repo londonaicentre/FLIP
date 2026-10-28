@@ -56,7 +56,8 @@ ifeq ($(strip $(DRY_RUN)),true)
 RUN_SQL = cat
 SQL_MODE = (dry run - not executed)
 else
-RUN_SQL = $(SNOW) sql --stdin --connection $(SNOW_CONNECTION)
+# --enable-templating NONE: snow otherwise rewrites & / &{..} in specs and SQL (&& becomes &).
+RUN_SQL = $(SNOW) sql --stdin --enable-templating NONE --connection $(SNOW_CONNECTION)
 SQL_MODE =
 endif
 

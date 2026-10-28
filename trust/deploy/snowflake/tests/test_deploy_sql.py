@@ -140,7 +140,7 @@ def test_dry_run_prints_instead_of_running() -> None:
     """The offline-testable deploy path: DRY_RUN swaps the snow pipe for `cat`."""
     assert "ifeq ($(strip $(DRY_RUN)),true)" in MAKEFILE
     assert "RUN_SQL = cat" in MAKEFILE
-    assert "RUN_SQL = $(SNOW) sql --stdin --connection $(SNOW_CONNECTION)" in MAKEFILE
+    assert "RUN_SQL = $(SNOW) sql --stdin --enable-templating NONE --connection $(SNOW_CONNECTION)" in MAKEFILE
 
 
 def test_prod_maps_to_the_kit_env_through_env_mode_mk() -> None:
@@ -164,3 +164,11 @@ def test_targets_requiring_a_kit_refuse_without_one() -> None:
 
 def test_the_connection_name_is_a_variable_defaulting_to_the_test_account() -> None:
     assert "SNOW_CONNECTION ?= flip-test" in MAKEFILE
+
+
+def test_no_tooling_emits_stop_all():
+    """``ALTER COMPUTE POOL ... STOP ALL`` deletes every service in the pool, block volumes
+    included, bypassing ``snapshotOnDelete`` (seen live: it dropped a Postgres service whose own
+    DROP had just been refused). Suspend services, then the pool; never STOP ALL."""
+    for path in [*SNOWFLAKE_DIR.glob("*.py"), SNOWFLAKE_DIR / "Makefile"]:
+        assert "STOP ALL" not in path.read_text().upper(), path.name

@@ -142,7 +142,7 @@ def redacted_statements(names: Names, present: list[str]) -> list[str]:
 def print_sql(snow: str, connection: str, statements: list[str]) -> None:
     """Show what a dry run would pipe to ``snow``. Callers pass only redacted statements."""
     print("ⓘ  --dry-run: the SQL below would be piped to:")
-    print(f"     {snow} sql --stdin --connection {connection}")
+    print(f"     {snow} sql --stdin --enable-templating NONE --connection {connection}")
     for statement in statements:
         print(f"     {statement}")
 
@@ -154,8 +154,13 @@ def run_sql(snow: str, connection: str, statements: list[str]) -> None:
     is recorded by any command-logging the operator's shell or their CI runner does.
     On failure ``snow``'s output is not echoed: it can quote the failing statement, which
     can carry a value. The operator reruns with ``--dry-run`` to see the SQL.
+
+    ``--enable-templating NONE``: by default ``snow sql`` resolves its own variable syntax
+    (``&name``, ``&{name}``) before sending, and rewrites ``&&`` to ``&``. A secret value
+    containing ``&`` would be stored silently altered; the first live spike lost a ``&&`` in a
+    service command this way.
     """
-    command = [snow, "sql", "--stdin", "--connection", connection]
+    command = [snow, "sql", "--stdin", "--enable-templating", "NONE", "--connection", connection]
     result = subprocess.run(command, input="\n".join(statements) + "\n", text=True, capture_output=True)
     if result.returncode != 0:
         raise SyncError(
