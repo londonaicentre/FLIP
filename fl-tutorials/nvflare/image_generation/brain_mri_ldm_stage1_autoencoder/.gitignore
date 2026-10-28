@@ -1,4 +1,6 @@
 fl_job/
-# The perceptual loss's backbone, MedicalNet ResNet-50 (185 MB): staged by `make weights` from the
-# shared download and uploaded with the app, never committed (FLIP#1206).
+# The perceptual loss's backbone, MedicalNet ResNet-50 (185 MB): converted by `make weights` from the
+# shared download and uploaded with the app as its SERVER_CHECKPOINT, never committed (FLIP#1206).
+app_files/medicalnet_perceptual.pt
+# Where earlier versions of `make weights` staged the raw file.
 app_files/medicalnet_resnet*_23datasets-*.pth

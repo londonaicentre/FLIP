@@ -46,21 +46,23 @@ DEBUG_SAMPLES_DIR ?= $(FL_TUTORIALS)/data/debug_samples/brain_mri_ldm_stage1_aut
 # --- Shipped weights (FLIP#1206) ---
 # The perceptual loss's MedicalNet ResNet-50 backbone. FL apps never download at run time, so the
 # tutorial ships it: the download is shared (`make -C fl-tutorials download-weights
-# ARCH=medicalnet_resnet50`, sha256-pinned) and `weights` copies the checkpoint flat into
-# app_files/, which is what gets uploaded with the code and what job.py bundles into every site's
-# custom/ for the simulator and `export`. Gitignored. The filename must be MEDICALNET_CHECKPOINT in
-# app_files/medicalnet_perceptual.py, which checks its hash prefix at load time.
+# ARCH=medicalnet_resnet50`, sha256-pinned) and `weights` converts it into app_files/$(PERCEPTUAL_CHECKPOINT),
+# keyed for the model's `perceptual` submodule. config.json names that file SERVER_CHECKPOINT: it is
+# uploaded with the code but stays on the FL server, which loads it into the round-0 global model
+# (185 MB in the job bundle fails FLARE's deploy). Gitignored. The names must be MEDICALNET_CHECKPOINT
+# and PERCEPTUAL_CHECKPOINT in app_files/medicalnet_perceptual.py.
 # This tutorial owns it because this is where the perceptual loss is: the diffusion tutorials
 # score in latent/noise space and construct no PerceptualLoss at all.
 HUB_CHECKPOINT := medicalnet_resnet50_23datasets-ff48a622.pth
 SHARED_CHECKPOINT := $(FL_TUTORIALS)/data/weights/$(HUB_CHECKPOINT)
+PERCEPTUAL_CHECKPOINT := medicalnet_perceptual.pt
 
 .PHONY: run export sim clean weights
 
-weights: app_files/$(HUB_CHECKPOINT)
+weights: app_files/$(PERCEPTUAL_CHECKPOINT)
 
-app_files/$(HUB_CHECKPOINT): $(SHARED_CHECKPOINT)
-	cp "$<" "$@"
+app_files/$(PERCEPTUAL_CHECKPOINT): | $(SHARED_CHECKPOINT)
+	$(UV_RUN) python process_tools/convert_medicalnet.py --src "$(SHARED_CHECKPOINT)" --dst "$@"
 
 $(SHARED_CHECKPOINT):
 	$(MAKE) --no-print-directory -C $(FL_TUTORIALS)/datasets download-weights ARCH=medicalnet_resnet50

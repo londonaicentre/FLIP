@@ -139,15 +139,19 @@ Cite the paper if you publish results that use this loss.
 
 An FL app never downloads at run time (FLIP#1206): the FL server and a trust host may have no
 internet route, and a downloaded file bypasses the scanned upload path. So the weights ship as an
-uploaded file, staged by:
+uploaded file, prepared by:
 
 ```bash
-make weights   # -> app_files/medicalnet_resnet50_23datasets-ff48a622.pth (gitignored)
+make weights   # -> app_files/medicalnet_perceptual.pt (gitignored)
 ```
 
-`make export` and `make sim` run it for you. **Upload the file with the other app files.**
-`app_files/medicalnet_perceptual.py` builds the network from MONAI's `ResNetFeatures` and loads that
-file, checking its hash and refusing a partial load.
+`make export` and `make sim` run it for you. **Upload the file with the other app files.** At 185 MB
+it is too big to travel in the job bundle (FLARE gives each trust 10 s to acknowledge a deploy), so
+`config.json` names it `SERVER_CHECKPOINT`, as the latent diffusion tutorial does its autoencoder: it
+stays on the FL server, which loads it into the model's frozen `perceptual` submodule in the round-0
+global model, and `AGGREGATE_ONLY_REGEX` leaves it out of aggregation. `make weights` checks the
+published file's hash and converts it; each trust checks the weights it receives against
+`MEDICALNET_FINGERPRINT` in `app_files/medicalnet_perceptual.py` before training.
 
 ## Training for real
 
@@ -229,7 +233,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder NUM_
 
 Run `make weights`, then upload through the FLIP UI, as a model with job type `standard`, every file
 in `app_files/` (`trainer.py`, `config.json`, `models.py`, `transforms.py`, `modality.py`,
-`medicalnet_perceptual.py`) **plus** the staged `medicalnet_resnet50_23datasets-ff48a622.pth`. Use
+`medicalnet_perceptual.py`) **plus** the prepared `medicalnet_perceptual.pt`. Use
 `query.sql` as the cohort query. The standalone FLARE submit path
 (`make -C fl-services/nvflare submit`) is not wired, so the UI is the way in.
 

@@ -21,10 +21,20 @@ FedAvg job, using :class:`FlipFedAvgRecipe`. It supports two execution modes:
     This is the primary, fully-local-verifiable path — no GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the FLARE simulator. Requires a GPU and the reference dataset
-    (``make -C fl-tutorials download-brain-mri-data``). FLIP-specific values are injected via
-    environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL
-    queries contain spaces that don't survive argparse whitespace-splitting.
+    Runs a local simulation under the FLARE simulator. Requires a GPU, the reference dataset
+    (``make -C fl-tutorials download-brain-mri-data``) and the converted perceptual backbone
+    (``make weights``). FLIP-specific values are injected via environment variables
+    (``FLIP_PROJECT_ID``, ``FLIP_QUERY``) rather than CLI flags because SQL queries contain spaces
+    that don't survive argparse whitespace-splitting.
+
+Frozen-backbone specifics, driven by ``app_files/config.json``:
+
+* ``SERVER_CHECKPOINT``: the MedicalNet backbone is staged to the server only and loaded into the
+  round-0 global model by ``InitialCheckpointPTModelPersistor``; clients receive it in the broadcast.
+* ``AGGREGATE_ONLY_REGEX``: the recipe wires ``KeepOnlyVars`` (clients return only the autoencoder
+  and discriminator), ``TrimBroadcastVars`` (the server broadcasts only those after round 0) and
+  ``ReconstructFullModel`` (each client rebuilds the full model from its round-0 copy), as the
+  fl-server does from the same key on the platform.
 
 Both modes go through FLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
 from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
@@ -34,13 +44,14 @@ Usage:
     # Export job config for review or Docker deployment (no GPU needed)
     python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 1
 
-    # SimEnv local simulation (requires GPU + data)
+    # SimEnv local simulation (requires GPU + data + backbone)
     python job.py --n_clients 2 --num_rounds 1
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -58,29 +69,37 @@ from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402
 from nvflare import FedJob  # noqa: E402
 from nvflare.recipe import SimEnv  # noqa: E402
 
+# The perceptual backbone's filename, matching config.json's SERVER_CHECKPOINT. Staged server-side
+# only. Kept as a constant here (rather than read from the config) so the two are checked against
+# each other by fl-tutorials/tests/test_image_generation_config_parity.py.
+_CHECKPOINT_NAME = "medicalnet_perceptual.pt"
+
 
 def stage_app_files(job: FedJob) -> None:
-    """Bundle every file in ``app_files/`` into the job's server + client ``custom/`` directories.
+    """Bundle every file in ``app_files/`` into the job's ``custom/`` directories.
 
-    The recipe wires only the FLARE components; the user-supplied app files (``trainer.py``,
-    ``models.py``, ``config.json``, ``transforms.py``) must be added to the job explicitly so they
-    land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}`` registers them
-    with the job's file sources, so they are bundled for **both** the SimEnv/simulator run
-    (``recipe.execute``) and ``--export`` — unlike a post-export filesystem copy, which the SimEnv
-    path never triggered.
-
-    The ``dev/`` helpers go to the clients as well, so a simulator run can write debug images; they
-    are not app files, and an upload to the platform never includes them.
+    Everything goes to the server and the clients except the backbone checkpoint, which goes to the
+    server only: clients receive the backbone in the round-0 broadcast. On the platform the checkpoint
+    never enters the job bundle (flip-api diverts the file ``SERVER_CHECKPOINT`` names to a hub-only
+    location). The shared ``dev/`` helpers go to the clients too, for local debug images.
 
     Args:
         job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).
     """
     for src in sorted(_APP_FILES_DIR.iterdir()):
-        if src.is_file():
-            job.add_file_to_server(str(src))
+        if not src.is_file():
+            continue
+        job.add_file_to_server(str(src))
+        if src.name != _CHECKPOINT_NAME:
             job.add_file_to_clients(str(src))
     for src in sorted(_DEV_FILES_DIR.glob("*.py")):
         job.add_file_to_clients(str(src))
+
+
+def _load_aggregate_only_regex() -> str:
+    """Read ``AGGREGATE_ONLY_REGEX`` from the app config so the recipe can wire the trained-only filters."""
+    cfg = json.loads((_APP_FILES_DIR / "config.json").read_text())
+    return cfg.get("AGGREGATE_ONLY_REGEX", "") or ""
 
 
 def main() -> None:
@@ -115,6 +134,7 @@ def main() -> None:
         train_args="--project_id {project_id}",
         project_id=project_id,
         query=query,
+        aggregate_only_regex=_load_aggregate_only_regex(),
     )
 
     # Stage the user app files into the job's custom/ dirs *before* execute() — this is what makes the

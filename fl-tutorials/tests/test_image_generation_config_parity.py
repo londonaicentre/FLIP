@@ -186,6 +186,12 @@ def latent_state_dict_keys() -> list[str]:
     return list(_load_app_module(_LATENT_DIFFUSION, "models").get_model().state_dict())
 
 
+@pytest.fixture(scope="module")
+def autoencoder_state_dict_keys() -> list[str]:
+    """Parameter names of the autoencoder network, built from its shipped config."""
+    return list(_load_app_module(_AUTOENCODER, "models").get_model().state_dict())
+
+
 @pytest.mark.parametrize("tutorial", _ALL_TUTORIALS, ids=lambda p: p.name)
 def test_declares_standard_job_type(tutorial: Path) -> None:
     """All three are single-stage FedAvg jobs, so all three declare ``job_type: standard``."""
@@ -459,28 +465,48 @@ def test_latent_grid_survives_both_downsampling_ladders() -> None:
     )
 
 
-def test_latent_server_checkpoint_matches_job_py_constant() -> None:
+@pytest.mark.parametrize("tutorial", _BRAIN_MRI_TUTORIALS, ids=lambda p: p.name)
+def test_server_checkpoint_matches_job_py_constant(tutorial: Path) -> None:
     """``SERVER_CHECKPOINT`` names the same file ``job.py`` stages server-side.
 
     They are declared in two places on purpose — ``job.py`` needs the literal to exclude the file
     from the client bundle, before any config is read — so they have to be checked against each
     other. A drift means the persistor hunts for a file nobody staged.
     """
-    declared = _config(_LATENT_DIFFUSION)["SERVER_CHECKPOINT"]
-    job_py = (_LATENT_DIFFUSION / "job.py").read_text()
+    declared = _config(tutorial)["SERVER_CHECKPOINT"]
+    job_py = (tutorial / "job.py").read_text()
     staged = re.search(r'^_CHECKPOINT_NAME\s*=\s*"([^"]+)"', job_py, re.MULTILINE)
-    assert staged is not None, "brain_mri_ldm_stage2_diffusion/job.py declares no _CHECKPOINT_NAME"
+    assert staged is not None, f"{tutorial.name}/job.py declares no _CHECKPOINT_NAME"
     assert staged.group(1) == declared, (
         f"job.py stages {staged.group(1)!r} but config.json declares SERVER_CHECKPOINT="
         f"{declared!r}; the persistor would look for a file that was never staged."
     )
 
 
-def test_latent_checkpoint_is_gitignored() -> None:
+@pytest.mark.parametrize("tutorial", _BRAIN_MRI_TUTORIALS, ids=lambda p: p.name)
+def test_server_checkpoint_is_gitignored(tutorial: Path) -> None:
     """The prepared checkpoint is a local build artefact, never committed."""
-    declared = _config(_LATENT_DIFFUSION)["SERVER_CHECKPOINT"]
-    ignored = (_LATENT_DIFFUSION / ".gitignore").read_text().split()
+    declared = _config(tutorial)["SERVER_CHECKPOINT"]
+    ignored = (tutorial / ".gitignore").read_text().split()
     assert f"app_files/{declared}" in ignored
+
+
+def test_autoencoder_aggregate_only_regex_leaves_out_exactly_the_perceptual_backbone(
+    autoencoder_state_dict_keys: list[str],
+) -> None:
+    """The regex keeps every trained parameter and none of the frozen MedicalNet backbone.
+
+    The backbone is in the model only to carry its weights to the trusts in round 0. Aggregating its
+    exact-zero diffs would flatten ``PercentilePrivacy``'s cutoff, as it would the latent diffusion
+    tutorial's frozen autoencoder; missing a trained key would leave it unaggregated.
+    """
+    pattern = re.compile(_config(_AUTOENCODER)["AGGREGATE_ONLY_REGEX"])
+    frozen = [key for key in autoencoder_state_dict_keys if key.startswith("perceptual.")]
+    trained = [key for key in autoencoder_state_dict_keys if not key.startswith("perceptual.")]
+    assert frozen
+    assert trained
+    assert not [key for key in frozen if pattern.search(key)]
+    assert all(pattern.search(key) for key in trained)
 
 
 def test_latent_aggregate_only_regex_selects_exactly_the_diffusion_model(

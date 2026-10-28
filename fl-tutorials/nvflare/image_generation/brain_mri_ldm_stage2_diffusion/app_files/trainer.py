@@ -362,9 +362,9 @@ class LatentDiffusionTrainer:
         logger.info(f"Found {found} volume(s) across {len(by_accession)} accession(s), modalities {modalities}.")
         if not by_accession:
             raise RuntimeError(
-                f"No volumes matched MODALITIES={modalities}. The cohort's files are named "
-                "input_<modality>_<case>.nii.gz — check that the configured labels are the ones "
-                "the data actually carries."
+                f"No volumes matched MODALITIES={modalities}. A volume's sequence is read from its "
+                "file name (input_<modality>_<case>.nii.gz) or its XNAT scan folder (scans/<1-4>-*/) "
+                "— check that the configured labels are the ones the data actually carries."
             )
 
         accessions = list(by_accession)

@@ -1,5 +1,7 @@
 {
     "job_type": "standard",
+    "SERVER_CHECKPOINT": "medicalnet_perceptual.pt",
+    "AGGREGATE_ONLY_REGEX": "^(autoencoder|discriminator)\\.",
     "GLOBAL_ROUNDS": 2,
     "LOCAL_ROUNDS": 3,
     "LR_START": 0.0001,

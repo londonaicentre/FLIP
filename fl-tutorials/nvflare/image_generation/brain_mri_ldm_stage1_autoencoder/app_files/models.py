@@ -9,11 +9,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Autoencoder network for the FLIP autoencoder tutorial: a KL autoencoder and a patch discriminator.
+"""Autoencoder network for the FLIP autoencoder tutorial: a KL autoencoder, a patch discriminator, and
+the frozen MedicalNet backbone of the perceptual loss.
 
-Both are trained and aggregated together. The autoencoder submodule must stay named ``autoencoder``:
-the latent diffusion tutorial loads this run's ``autoencoder.*`` weights by that prefix, and its
-server loads with ``strict=False``, so a renamed submodule would load nothing.
+The autoencoder and discriminator are trained and aggregated together (``AGGREGATE_ONLY_REGEX``). The
+backbone is not trained: the FL server loads it from ``SERVER_CHECKPOINT`` into the round-0 global
+model, which is how its weights reach the clients. The autoencoder submodule must stay named
+``autoencoder``: the latent diffusion tutorial loads this run's ``autoencoder.*`` weights by that
+prefix, and its server loads with ``strict=False``, so a renamed submodule would load nothing.
 """
 
 import json
@@ -21,6 +24,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from medicalnet_perceptual import build_backbone
 from monai.networks.nets import AutoencoderKL, PatchDiscriminator
 from torch import nn
 
@@ -63,6 +67,7 @@ class AutoencoderNetwork(nn.Module):
 
     - Variational Autoencoder (compresses inputs into a latent space and reconstructs them)
     - Discriminator (adversarially trains the autoencoder)
+    - Perceptual backbone (MedicalNet, frozen; scores reconstructions for the perceptual loss)
     """
 
     def __init__(self):
@@ -77,6 +82,7 @@ class AutoencoderNetwork(nn.Module):
             out_channels=net_config["discriminator"]["out_channels"],
             num_layers_d=net_config["discriminator"]["num_layers_d"],
         )
+        self.perceptual = build_backbone()
 
 
 _net = AutoencoderNetwork()

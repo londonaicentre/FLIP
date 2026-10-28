@@ -17,8 +17,9 @@ MRI, as an ordinary FedAvg job. On a ``train`` task the client trains the receiv
 aggregated model on its held-out split.
 
 Every MR sequence in ``MODALITIES`` is a training sample, so one autoencoder serves all of them; the
-latent diffusion tutorial reuses it, frozen. The generator loss is L1 + perceptual (MedicalNet, see
-``medicalnet_perceptual.py``) + KL + adversarial, under mixed precision, with gradients accumulated
+latent diffusion tutorial reuses it, frozen. The generator loss is L1 + perceptual (MedicalNet, whose
+frozen weights arrive in the global model; see ``medicalnet_perceptual.py``) + KL + adversarial, under
+mixed precision, with gradients accumulated
 to an effective batch of ``EFFECTIVE_BATCH_SIZE``. Validation reports L1 and foreground SSIM.
 """
 
@@ -34,7 +35,7 @@ import nvflare.client as flare
 import torch
 from flip import FLIP
 from flip.constants import ResourceType
-from medicalnet_perceptual import load_medicalnet_perceptual
+from medicalnet_perceptual import MedicalNetPerceptualLoss, verify_backbone
 from modality import modality_of
 from models import get_model
 from monai.data import DataLoader, Dataset
@@ -265,7 +266,7 @@ class AutoencoderTrainer:
 
         self.model = get_model()
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        self.perceptual_loss = load_medicalnet_perceptual(Path(__file__).parent.resolve()).to(self.device)
+        self.perceptual_loss = MedicalNetPerceptualLoss(self.model.perceptual)
         self.adversarial_loss = PatchAdversarialLoss(criterion="least_squares")
         self.kl_loss = KLDivergenceLoss()
         self.w_reconstruction = config["W_RECONSTRUCTION"]
@@ -339,9 +340,9 @@ class AutoencoderTrainer:
         logger.info(f"Found {found} volume(s) across {len(by_accession)} accession(s), modalities {modalities}.")
         if not by_accession:
             raise RuntimeError(
-                f"No volumes matched MODALITIES={modalities}. The cohort's files are named "
-                "input_<modality>_<case>.nii.gz — check that the configured labels are the ones "
-                "the data actually carries."
+                f"No volumes matched MODALITIES={modalities}. A volume's sequence is read from its "
+                "file name (input_<modality>_<case>.nii.gz) or its XNAT scan folder (scans/<1-4>-*/) "
+                "— check that the configured labels are the ones the data actually carries."
             )
 
         accessions = list(by_accession)
@@ -354,6 +355,7 @@ class AutoencoderTrainer:
 
     def load_weights(self, weights: dict[str, torch.Tensor]) -> None:
         self.model.load_state_dict(state_dict=weights)
+        verify_backbone(self.model.perceptual)
         self.model.to(self.device)
 
     def discriminator_logits(self, volume: torch.Tensor, slice_indices: np.ndarray) -> torch.Tensor:

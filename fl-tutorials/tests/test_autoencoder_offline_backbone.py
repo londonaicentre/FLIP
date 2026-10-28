@@ -20,15 +20,17 @@ trust host sits behind a hospital firewall, and a run-time fetch bypasses the sc
 entirely, so the file a Trust inspected is no longer the file that runs.
 
 ``app_files/medicalnet_perceptual.py`` therefore builds the same architecture from MONAI's own
-``ResNetFeatures`` — which takes an architecture *name*, never a URL — and loads a checkpoint staged
-beside the training script by ``make weights``. These tests pin the three ways that arrangement can
-rot silently: the staged filename drifting from the one the module looks for, a partial state-dict
-load leaving a randomly-initialised critic, and the constant-volume NaN that would take the whole
-run down through the trainer's fatal-NaN guard.
+``ResNetFeatures`` — which takes an architecture *name*, never a URL — and ``make weights`` converts
+the published checkpoint into the job's ``SERVER_CHECKPOINT``, which reaches the trusts in the
+round-0 global model. These tests pin the ways that arrangement can rot silently: the file names
+drifting between the fetcher, the Makefile and the module, a partial state-dict load or a missing
+checkpoint leaving a randomly-initialised critic, and the constant-volume NaN that would take the
+whole run down through the trainer's fatal-NaN guard.
 """
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
@@ -39,6 +41,7 @@ from tutorial_apps import TUTORIALS_ROOT, load_module
 # space and construct no perceptual loss at all.
 TUTORIAL_DIR = TUTORIALS_ROOT / "nvflare/image_generation/brain_mri_ldm_stage1_autoencoder"
 APP_DIR = TUTORIAL_DIR / "app_files"
+SHARED_WEIGHTS = TUTORIALS_ROOT / "data" / "weights"
 fetch_weights = load_module("fetch_weights_under_test", TUTORIALS_ROOT / "datasets" / "weights" / "fetch_weights.py")
 
 
@@ -58,16 +61,19 @@ def perceptual():
         sys.path.remove(str(APP_DIR))
 
 
-def test_make_weights_stages_the_file_the_trainer_loads(perceptual):
-    """The shared fetcher's staged name is exactly the one the app module opens.
+def test_make_weights_writes_the_file_the_server_loads(perceptual):
+    """The fetcher's file is the one the converter reads, and the converter writes ``SERVER_CHECKPOINT``.
 
-    A drift here is invisible until a job runs: the module raises FileNotFoundError on a trust,
-    after upload, rather than in the tutorial directory.
+    A drift here is invisible until a job runs: the server loads nothing into the backbone, and every
+    trust then refuses the random weights it receives, after upload, rather than in the tutorial directory.
     """
     assert fetch_weights.CHECKPOINTS[_arch(perceptual)].filename == perceptual.MEDICALNET_CHECKPOINT
     makefile = (TUTORIAL_DIR / "Makefile").read_text()
     assert f"HUB_CHECKPOINT := {perceptual.MEDICALNET_CHECKPOINT}" in makefile
+    assert f"PERCEPTUAL_CHECKPOINT := {perceptual.PERCEPTUAL_CHECKPOINT}" in makefile
     assert f"download-weights ARCH={_arch(perceptual)}" in makefile
+    config = json.loads((APP_DIR / "config.json").read_text())
+    assert config["SERVER_CHECKPOINT"] == perceptual.PERCEPTUAL_CHECKPOINT
 
 
 def test_staged_name_carries_the_digest_the_module_verifies(perceptual):
@@ -91,20 +97,32 @@ def test_the_backbone_builds_without_touching_the_network(perceptual):
     assert len(outs) == 5
 
 
-def test_missing_checkpoint_fails_loudly_and_names_the_remedy(perceptual, tmp_path):
-    """No silent fallback to a download, and the message says how to fix it."""
-    with pytest.raises(FileNotFoundError) as excinfo:
-        perceptual.load_medicalnet_perceptual(tmp_path)
+def test_a_backbone_the_server_did_not_fill_is_refused_with_the_remedy(perceptual):
+    """No silent training against random weights, and the message says how to fix it.
+
+    The server loads ``SERVER_CHECKPOINT`` with ``strict=False``: a checkpoint it never found leaves
+    the backbone as built, and that is what a trust would receive.
+    """
+    with pytest.raises(RuntimeError) as excinfo:
+        perceptual.verify_backbone(perceptual.build_backbone())
     message = str(excinfo.value)
     assert "make weights" in message
+    assert perceptual.PERCEPTUAL_CHECKPOINT in message
     assert "FLIP#1206" in message
 
 
-def test_a_corrupt_shipped_file_is_refused_with_the_remedy(perceptual, tmp_path):
-    """A file under the right name but the wrong content raises instead of loading."""
+def test_the_backbone_is_built_frozen(perceptual):
+    """The trainer never switches it to training mode, so it has to start in eval with no gradients."""
+    backbone = perceptual.build_backbone()
+    assert not backbone.training
+    assert not any(parameter.requires_grad for parameter in backbone.parameters())
+
+
+def test_a_corrupt_published_file_is_refused_with_the_remedy(perceptual, tmp_path):
+    """A file under the right name but the wrong content raises instead of converting."""
     (tmp_path / perceptual.MEDICALNET_CHECKPOINT).write_bytes(b"not a checkpoint")
     with pytest.raises(RuntimeError, match="expected"):
-        perceptual.load_medicalnet_perceptual(tmp_path)
+        perceptual.read_published_checkpoint(tmp_path / perceptual.MEDICALNET_CHECKPOINT)
 
 
 def test_a_partial_state_dict_is_refused_rather_than_half_loaded(perceptual, tmp_path, monkeypatch):
@@ -122,7 +140,7 @@ def test_a_partial_state_dict_is_refused_rather_than_half_loaded(perceptual, tmp
     partial = {f"module.{k}": v for k, v in list(reference.state_dict().items())[:5]}
     torch.save({"state_dict": partial}, tmp_path / perceptual.MEDICALNET_CHECKPOINT)
     with pytest.raises(RuntimeError, match="missing"):
-        perceptual.load_medicalnet_perceptual(tmp_path)
+        perceptual.read_published_checkpoint(tmp_path / perceptual.MEDICALNET_CHECKPOINT)
 
 
 def test_a_constant_volume_does_not_produce_nan(perceptual):
@@ -144,10 +162,14 @@ def test_scoring_ranks_a_flat_fill_worse_than_a_blur(perceptual):
     phantom is deliberately structured rather than random: blurring noise changes it more than
     flattening does, so noise would assert the opposite of what real anatomy gives.
     """
-    checkpoint = APP_DIR / perceptual.MEDICALNET_CHECKPOINT
+    checkpoint = SHARED_WEIGHTS / perceptual.MEDICALNET_CHECKPOINT
     if not checkpoint.is_file():
-        pytest.skip("MedicalNet checkpoint not staged; run `make weights` in the tutorial directory")
-    loss = perceptual.load_medicalnet_perceptual(APP_DIR)
+        pytest.skip("MedicalNet checkpoint not downloaded; run `make weights` in the tutorial directory")
+    backbone = perceptual.build_backbone()
+    backbone.load_state_dict(perceptual.read_published_checkpoint(checkpoint))
+    # The fingerprint the trusts check is the one these published weights carry.
+    perceptual.verify_backbone(backbone)
+    loss = perceptual.MedicalNetPerceptualLoss(backbone)
 
     volume = torch.zeros(1, 1, 64, 64, 64)
     volume[:, :, 10:54, 10:54, 10:54] = 0.4  # tissue

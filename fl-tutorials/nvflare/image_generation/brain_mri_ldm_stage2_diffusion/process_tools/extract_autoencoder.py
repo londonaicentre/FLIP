@@ -50,8 +50,11 @@ HEADER = (
 
 def autoencoder_kwargs(net_config: dict) -> dict:
     """The `brain_mri_ldm_stage1_autoencoder` tutorial's own mapping from its config to ``AutoencoderKL`` arguments."""
-    # Loaded under its own name: this tutorial has a models.py too.
-    models_py = TUTORIALS / "brain_mri_ldm_stage1_autoencoder" / "app_files" / "models.py"
+    # Loaded under its own name: this tutorial has a models.py too. Its app dir goes last on the path,
+    # for the sibling it imports (medicalnet_perceptual), behind this tutorial's own modules.
+    app_files = TUTORIALS / "brain_mri_ldm_stage1_autoencoder" / "app_files"
+    sys.path.append(str(app_files))
+    models_py = app_files / "models.py"
     spec = importlib.util.spec_from_file_location("autoencoder_models", models_py)
     models = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(models)
