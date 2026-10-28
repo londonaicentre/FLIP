@@ -116,6 +116,10 @@ class LatentDiffusionModelNetwork(nn.Module):
             channels=net_config["diffusion_model"]["channels"],
             num_res_blocks=net_config["diffusion_model"]["num_res_blocks"],
             attention_levels=net_config["diffusion_model"]["attention_levels"],
+            # torch's scaled_dot_product_attention, not MONAI's einsum. With a single condition token
+            # the einsum is a bmm with inner dimension 1, which torch 2.13 sends to a Triton kernel the
+            # FL images cannot compile (FLIP#1700); it also needs less memory. Same weights either way.
+            use_flash_attention=True,
         )
 
 
