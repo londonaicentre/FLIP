@@ -381,7 +381,7 @@ def test_modality_parse_matches_the_cohort_filenames() -> None:
     ``T1w`` is a prefix of nothing but a substring of ``T1Gd``-adjacent spellings, and the case ids
     carry underscores of their own (``BRATS_001``), so a naive ``split("_")[1]`` or an ``in``
     substring test both go wrong on real data. Pinned against the names
-    ``prepare_brain_mri_local_data.py`` writes and dcm2niix reproduces.
+    ``prepare_brain_mri_local_data.py`` writes.
     """
     modality = _load_app_module(_AUTOENCODER, "modality")
     modalities = _config(_AUTOENCODER)["MODALITIES"]
@@ -395,6 +395,26 @@ def test_modality_parse_matches_the_cohort_filenames() -> None:
     assert modality.modality_of("input_FLAIR_BRATS_T2w.nii.gz", modalities) is None
     # And the non-input files in the same directory are never claimed.
     assert modality.modality_of("label_BRATS_001.nii.gz", modalities) is None
+
+
+def test_modality_parse_reads_the_scan_folder_of_a_platform_pull() -> None:
+    """A platform pull names no sequence in the file, so the XNAT scan folder decides.
+
+    The layout is the one a dev-stack pull of ``brain_mri_project`` produced: the scan id is the DICOM
+    ``SeriesNumber`` ``convert_brain_mri_to_dicom.py`` writes, 1–4 in MSD's channel order.
+    """
+    modality = _load_app_module(_AUTOENCODER, "modality")
+    modalities = _config(_AUTOENCODER)["MODALITIES"]
+
+    def pulled(scan_id: int) -> str:
+        scan = f"/data/00000003-8faf/FAK04075799/scans/{scan_id}-unknown"
+        return f"{scan}/resources/NIFTI/files/input_000000_{scan_id}.nii.gz"
+
+    assert [modality.modality_of(pulled(n), modalities) for n in (1, 2, 3, 4)] == ["FLAIR", "T1w", "T1Gd", "T2w"]
+    assert modality.modality_of(pulled(2), ["FLAIR"]) is None
+    # A scan id that is no sequence, and a digit-led folder outside scans/, select nothing.
+    assert modality.modality_of(pulled(5), modalities) is None
+    assert modality.modality_of("/data/3-x/FAK04075799/input_000000_1.nii.gz", modalities) is None
 
 
 def test_one_hot_condition_has_the_shape_cross_attention_expects() -> None:

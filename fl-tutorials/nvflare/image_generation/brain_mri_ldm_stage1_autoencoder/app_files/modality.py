@@ -12,15 +12,16 @@
 """Which MR sequence a file holds, and how to hand that to a conditioned network.
 
 A brain-MRI study is four co-registered series — FLAIR, T1w, T1Gd, T2w — and each reaches the app
-as its own single-channel NIfTI. The sequence label is in the **filename**, and by the same route on
-both paths a tutorial ever sees data on:
+as its own single-channel NIfTI. The two paths a tutorial sees data on say which is which in
+different places:
 
-* the simulator layout writes ``input_<label>_<case>.nii.gz``
+* the simulator layout names the file ``input_<label>_<case>.nii.gz``
   (``fl-tutorials/datasets/brain_mri/prepare_brain_mri_local_data.py``);
-* a platform pull comes through dcm2niix, which names the file from ``ProtocolName`` — and the
-  converter sets ``ProtocolName`` to that same label.
+* a platform pull does not: XNAT's conversion names it ``input_<n>_<scan>.nii.gz``, under
+  ``scans/<scan id>-<type>/``. The scan id is the DICOM ``SeriesNumber``, which the converter
+  (``convert_brain_mri_to_dicom.py``) writes as 1–4 in MSD's channel order, ``SERIES_NUMBER``.
 
-So one token match works in the simulator and in production, with nothing to configure per site.
+So the filename is read first and the scan folder second, with nothing to configure per site.
 The match is against ``MODALITIES`` from ``config.json`` rather than a hard-coded list, because that
 list is also the switch between the single-sequence and all-sequences forms of these tutorials: set
 it to ``["T1w"]`` and every other series is left out of the cohort entirely.
@@ -33,6 +34,7 @@ a "T1w" model on two different sequences.
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import torch
@@ -40,6 +42,9 @@ import torch
 logger = logging.getLogger(__name__)
 
 VOLUME_SUFFIX = ".nii.gz"
+# The DICOM SeriesNumber each sequence was written with, the scan id XNAT files it under.
+SERIES_NUMBER = {"FLAIR": 1, "T1w": 2, "T1Gd": 3, "T2w": 4}
+_SCAN_DIR = re.compile(r"^(\d+)-")
 
 
 def modality_of(path: Path | str, modalities: list[str]) -> str | None:
@@ -50,19 +55,24 @@ def modality_of(path: Path | str, modalities: list[str]) -> str | None:
         modalities (list[str]): ``MODALITIES`` from ``config.json``.
 
     Returns:
-        str | None: The matching label, or None when the filename names no configured modality (a
-        sequence the run deliberately excludes) or more than one (an ambiguous name — refused rather
-        than guessed, so a mislabelled file never silently trains as the wrong sequence).
+        str | None: The matching label, or None when neither the filename nor the scan folder names
+        a configured modality (a sequence the run deliberately excludes), or the filename names more
+        than one (an ambiguous name — refused rather than guessed, so a mislabelled file never
+        silently trains as the wrong sequence).
     """
-    name = Path(path).name
-    stem = name[: -len(VOLUME_SUFFIX)] if name.endswith(VOLUME_SUFFIX) else Path(name).stem
+    path = Path(path)
+    name = path.name
+    stem = name[: -len(VOLUME_SUFFIX)] if name.endswith(VOLUME_SUFFIX) else path.stem
     tokens = set(stem.split("_"))
     matched = [modality for modality in modalities if modality in tokens]
     if len(matched) == 1:
         return matched[0]
     if len(matched) > 1:
         logger.warning(f"{name} names more than one configured modality ({matched}); skipping it.")
-    return None
+        return None
+    parts = path.parent.parts
+    scan_ids = {int(m.group(1)) for up, part in zip(parts, parts[1:]) if up == "scans" and (m := _SCAN_DIR.match(part))}
+    return next((modality for modality in modalities if SERIES_NUMBER.get(modality) in scan_ids), None)
 
 
 def one_hot_condition(modality_index: torch.Tensor, num_modalities: int, device: torch.device) -> torch.Tensor:
