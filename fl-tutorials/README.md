@@ -20,13 +20,13 @@ the model-file contract, run an application locally, or provide the inputs to th
 
 | Backend | Examples |
 | --- | --- |
-| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, EHR risk prediction (tabular/OMOP-only), and template tests |
+| [`nvflare/`](nvflare/) | Chest X-ray classification, Ark+ fine-tuning and the two Ark+ evaluations (baseline and multi-model), spleen segmentation and evaluation, latent diffusion, EHR risk prediction (tabular/OMOP-only), and template tests |
 | [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, prostate zonal segmentation (PI-CAI, nnU-Net-planned), EHR risk prediction (tabular/OMOP-only) |
 
 Both trees are laid out `fl-tutorials/<backend>/<category>/<name>/` (#1500): a tutorial's two copies sit at the
 same relative path, the category names the task family (`image_classification`, `image_segmentation`,
 `image_evaluation`, `image_synthesis`, `tabular_classification`, …), and every `make` target addresses a tutorial by
-`<name>` alone. The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower
+`<name>` alone. `fl-tutorials/Makefile` forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower
 explicitly with `FL_BACKEND=flower`.
 
 ## Run an example
@@ -50,7 +50,11 @@ make -C fl-tutorials run-tutorial TUTORIAL=xray_classification FL_BACKEND=flower
 package set the FL images install), so it needs no FL image; the images are exercised by `make e2e_smoke` against
 the dev stack. The spleen examples take `download-spleen-data` in place of
 `download-xray-data`; the EHR risk-prediction example (the tabular/OMOP-only one — no imaging, CPU is enough)
-takes `download-synthea-data`. The prostate example is Flower-only and takes `prepare-prostate-local-data
+takes `download-synthea-data`. The Ark+ fine-tuning example takes `download-arkplus-finetuning-data` and the two
+Ark+ evaluation examples `download-arkplus-eval-data`; all three are FLARE-only and also need the access-gated
+Ark+ checkpoint (`make download-raw-checkpoint` in the tutorial directory, see its README). The latent-diffusion
+example (FLARE-only) reads the spleen volumes and stages its perceptual-loss weights with
+`download-weights ARCH=squeezenet1_1`. The prostate example is Flower-only and takes `prepare-prostate-local-data
 NUM_CASES=12` for the simulator; see its [README](flower/image_segmentation/3d_prostate_segmentation/README.md) for the full
 PI-CAI setup and the nnU-Net plan.
 

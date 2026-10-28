@@ -11,9 +11,28 @@
     limitations under the License.
 -->
 
-# Federated Learning with MONAI and Flower (Quickstart Example)
+# 3D spleen segmentation (Flower)
 
-This example of Flower uses a small MONAI UNet based on FLIP's implementation and a training-only `ClientApp`. It reads NIfTI data from the local `./data` folder and does not write any outputs.
+Flower port of the spleen-segmentation tutorial that lives at
+`fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation`, adapted from Flower's MONAI
+quickstart example. It trains the same MONAI 3D UNet (`app/models.py`) with DiceCE loss on CT volumes
+from the [Medical Segmentation Decathlon](http://medicaldecathlon.com/), reading each
+`input_*.nii.gz` with its sibling `label_*.nii.gz`; under `LOCAL_DEV` the data comes from the shared
+`fl-tutorials/data/spleen/` tree (see *Data Location*), deployed it is the NIfTI XNAT converted plus
+the labels uploaded as data enrichment. The `ClientApp` trains and evaluates; the template
+`ServerApp` writes the final and best global models and `cross_val_results.json` under `WORKING_DIR`.
+The cohort query (`query.sql`) is copied verbatim from the FLARE tutorial.
+
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the `app/` package (every file listed below) |
+| Job type | `standard` (`job_type` in `app/config.json`; the `fl-apps/flower/standard` template) |
+| Imaging | **on**, with **DICOM to NIfTI on** — the cohort projects `accession_id`, XNAT converts the pulled CT and the app reads `input_*.nii.gz` next to the `label_*.nii.gz` you upload as data enrichment (below) |
+| Cohort query | `query.sql` (saved on the project, not uploaded) |
+| Dataset | `make -C fl-tutorials download-spleen-data` (`NUM_CASES=41` before enriching a platform project; shared with the FLARE tutorial) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation FL_BACKEND=flower` (GPU) |
 
 ## Set up the project
 
@@ -23,12 +42,17 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 3d_spleen_segmentation
 ├── app
 │   ├── __init__.py
-│   ├── client_app.py   # Defines your ClientApp
-│   ├── data_loading.py # MONAI transforms + datalist
-│   ├── get_data.py     # Placeholder function for FLIP API, reads local data
-│   ├── server_app.py   # Defines your ServerApp
-│   └── task.py         # Defines model creation
-├── pyproject.toml      # Project metadata like dependencies and configs
+│   ├── client_app.py   # @app.train + @app.evaluate
+│   ├── task.py         # train / validate / test loops
+│   ├── data_loading.py # FLIP_BASE: cohort dataframe + NIfTI pairs, local or via flip
+│   ├── transforms.py   # MONAI transforms + the sliding-window inferer
+│   ├── models.py       # get_model(): the MONAI UNet
+│   ├── config.json     # job_type + per-tutorial hyperparameters
+│   ├── config.toml     # run-config overrides fl-api applies on a platform submit
+│   ├── server_app.py   # copy of fl-apps/flower/standard/app/server_app.py
+│   └── strategy.py     # copy of fl-apps/flower/standard/app/strategy.py
+├── pyproject.toml      # flwr app definition + run-config defaults (local simulator only)
+├── query.sql           # Cohort SQL — verbatim from the FLARE tutorial
 └── README.md
 ```
 
@@ -186,11 +210,13 @@ percentile and adds no noise, while this is a real (epsilon, delta) mechanism bu
 | `dp-epsilon`       | `10.0`  | Privacy budget — smaller means more privacy and more noise |
 | `dp-delta`         | `1e-5`  | Probability the guarantee fails outright |
 
-Override per run without editing the app:
+Override per run without editing the app. `sim-tutorial.sh` (what `make run-tutorial` runs) passes
+everything after the tutorial name through to `flwr run`, and a later `--run-config` overrides the same
+keys, so call it directly rather than a raw `flwr run` (the five edges above):
 
 ```bash
-flwr run . --run-config "dp-enabled=false"
-flwr run . --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
+bash fl-tutorials/flower/sim-tutorial.sh 3d_spleen_segmentation --run-config "dp-enabled=false"
+bash fl-tutorials/flower/sim-tutorial.sh 3d_spleen_segmentation --run-config "dp-epsilon=1.0 dp-clipping-norm=0.5"
 ```
 
 > ⚠️ **The defaults are demonstration values, chosen utility-first** so this tutorial still

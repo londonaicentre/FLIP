@@ -25,6 +25,31 @@ flow; what changed is the FLARE plumbing — noted here for anyone migrating an 
 Validation provides L1 loss and SSIM for stage 1 and the noise-prediction loss for the diffusion
 model.
 
+```mermaid
+flowchart TB
+    subgraph S1["Stage 1 — GLOBAL_ROUNDS_AE rounds (ScatterAndGatherLDM)"]
+        B1["server broadcasts autoencoder + discriminator"] --> T1["each trust: train_ae<br/>LOCAL_ROUNDS_AE epochs of VAE + GAN + perceptual loss"]
+        T1 -- "update stamped STAGE=autoencoder+discriminator<br/>→ StagePercentilePrivacy" --> G1["FedAvg aggregate"]
+        G1 --> V1["validate_ae (cross-site): L1, SSIM"]
+    end
+    V1 --> F["autoencoder frozen"]
+    subgraph S2["Stage 2 — GLOBAL_ROUNDS_DM rounds"]
+        F --> B2["server broadcasts the diffusion model"] --> T2["each trust: train_dm on the frozen AE's latents<br/>LOCAL_ROUNDS_DM epochs"]
+        T2 -- "update stamped STAGE=diffusion_model" --> G2["FedAvg aggregate"] --> V2["validate_dm (cross-site): noise-prediction loss"]
+    end
+```
+
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the files in `app_files/` (`trainer.py`, `validator.py`, `models.py`, `transforms.py`, `config.json`, `requirements.txt`) plus the `squeezenet1_1-b8a52dc0.pth` that `make weights` places there |
+| Job type | `diffusion_model` (`job_type` in `app_files/config.json`; `FlipDiffusionRecipe`, NVFLARE only) |
+| Imaging | **on**, with **DICOM to NIfTI on** — the app reads the converted 3-D CT volumes; labels are not used, so no data enrichment |
+| Cohort query | none of its own: any cohort of 3-D CT studies that projects `accession_id` (on the dev stack, the spleen tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql)) |
+| Dataset | `make -C fl-tutorials download-spleen-data` (the volumes only) and `make -C fl-tutorials download-weights ARCH=squeezenet1_1` (`make weights` here copies it in) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=latent_diffusion_model` (GPU); `make export` here builds the job config without one |
+
 ## Compatible job type
 
 These files are compatible with `JOB_TYPE=diffusion_model` in the base application

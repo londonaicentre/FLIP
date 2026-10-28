@@ -11,9 +11,35 @@
     limitations under the License.
 -->
 
-# Federated Evaluation with MONAI and Flower
+# 3D spleen segmentation evaluation (Flower)
 
-This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only mode. It loads a pre-trained model checkpoint and performs federated evaluation across multiple client nodes.
+Flower twin of the FLARE evaluation tutorial at
+`fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation`. It scores a pre-trained
+MONAI UNet (the model the [3D spleen segmentation](../../image_segmentation/3d_spleen_segmentation)
+tutorial trains) on each trust's cohort without training it: the `ServerApp` loads the checkpoint,
+every `ClientApp` evaluates it on its own `input_`/`label_` NIfTI pairs, and the strategy averages the
+metrics.
+
+```mermaid
+flowchart LR
+    U["Uploaded app/ incl. model.pt"] --> S["ServerApp opens<br/>&lt;flip-job-dir&gt;/&lt;checkpoint&gt;"]
+    S -- "1 evaluate round, same weights" --> A["Trust A ClientApp<br/>mean_dice, mean_iou on its cohort"]
+    S -- "1 evaluate round, same weights" --> B["Trust B ClientApp"]
+    A -- "MetricRecord + num-examples" --> E["EvaluationStrategy<br/>weighted mean by num-examples<br/>+ per-client breakdown → hub"]
+    B -- "MetricRecord + num-examples" --> E
+    E --> R["WORKING_DIR/&lt;model_id&gt;/evaluation_outputs/<br/>evaluation_results.json (S3 unless LOCAL_DEV)"]
+```
+
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the `app/` package, with the `model.pt` that `make download-checkpoints` places in it (the e2e smoke uploads it as one of the model files) |
+| Job type | `evaluation` (`job_type` in `app/config.json`; the `fl-apps/flower/evaluation` template) |
+| Imaging | **on**, with **DICOM to NIfTI on** — the app pairs each converted `input_*.nii.gz` with the `label_*.nii.gz` uploaded as data enrichment and refuses to run when no pair exists (see the training tutorial's *data enrichment* section) |
+| Cohort query | none of its own: the project uses the training tutorial's [`query.sql`](../../image_segmentation/3d_spleen_segmentation/query.sql) |
+| Dataset | `make -C fl-tutorials download-spleen-data` (MSD images + the checkpoint, into `fl-tutorials/data/`) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation FL_BACKEND=flower` (GPU) |
 
 ## Key Features
 
@@ -32,6 +58,7 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 │   ├── __init__.py
 │   ├── client_app.py   # Defines your ClientApp (evaluation-only)
 │   ├── config.json     # Configuration for evaluation job
+│   ├── config.toml     # run-config overrides fl-api applies on a platform submit (the checkpoint name)
 │   ├── data_loading.py # MONAI transforms + datalist (test data only)
 │   ├── models.py       # Defines model creation
 │   ├── server_app.py   # Defines your ServerApp with checkpoint loading
@@ -42,13 +69,12 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 └── README.md
 ```
 
-### Install dependencies and project
+### Dependencies
 
-Install the dependencies defined in `pyproject.toml` as well as the `monai` package.
-
-```bash
-pip install -e .
-```
+Nothing to install by hand: the simulator path below runs in the `flip-utils` environment (the
+package set the FL images install) and `flwr run` builds a per-run environment from `pyproject.toml`
+on top of it. `flip-utils` is deliberately not declared there (FLIP#767: a local `flwr run` would
+install a PyPI release over the checkout).
 
 ## Running this tutorial
 

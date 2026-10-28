@@ -30,6 +30,30 @@ per-lesion AUROC. The numerical pipeline (model, transforms, head inference, lab
 identical to the previous implementation's, so the reported metrics match — only the FL transport
 differs. The `evaluation_results.json` output contract is unchanged.
 
+```mermaid
+flowchart LR
+    U["Uploaded app_files/<br/>incl. arkplus_pretrained_weights.pt"] --> S["FL server<br/>EvaluationModelLocator loads the .pt"]
+    S -- "one FLModel, broadcast as a validate task" --> A["Trust A client<br/>is_evaluate(): local hold-out cohort,<br/>DICOM → Ark+ heads → DECAF lesion mapping"]
+    S -- "same model" --> B["Trust B client<br/>is_evaluate()"]
+    A -- "aggregate per-lesion AUROC only" --> R["evaluation_results.json<br/>per site → hub model page (AUROC_&lt;LESION&gt;)"]
+    B -- "aggregate per-lesion AUROC only" --> R
+```
+
+## At a glance
+
+| | |
+|---|---|
+| What you upload | the files in `app_files/` (`evaluator.py`, `models.py`, `arkplus_flat_models.py`, `data_utils.py`, `metrics_utils.py`, `config.json`, `meta.json`) plus the `arkplus_pretrained_weights.pt` that `make prepare-checkpoint` derives — the server loads it; clients never open the file |
+| Job type | `evaluation` (`job_type` in `app_files/config.json`; `FlipEvalRecipe`) |
+| Imaging | **on**, with **DICOM to NIfTI off** — the cohort projects `accession_id` and the evaluator reads the pulled DICOMs |
+| Cohort query | `query.sql` (the hold-out chest X-ray set; saved on the project, not uploaded) |
+| Dataset | `make -C fl-tutorials download-arkplus-eval-data`; the raw Ark+ checkpoint `make download-raw-checkpoint` here (access-gated, see *Checkpoint setup*) |
+| Simulator | `make -C fl-tutorials run-tutorial TUTORIAL=arkplus_baseline_classification_evaluation` (GPU; `MAX_SAMPLES=128` smoke by default); `make export` here builds the job config without a GPU |
+
+Example radiographs, one per target lesion, are in the fine-tuning tutorial's
+[`docs/dataset_examples.png`](../../image_classification/arkplus_fine_tuning/docs/dataset_examples.png)
+(same dataset family; this tutorial scores the hold-out splits).
+
 ## Compatible job type
 
 This tutorial is designed for `JOB_TYPE=evaluation`.
@@ -191,6 +215,16 @@ only) is left out:
 
 (Values above are **real measured scores**, not a fabricated example: the pretrained checkpoint over one
 hold-out cohort. Treat them as one cohort's result, not a target to reproduce.)
+
+## Expected performance
+
+There is nothing to converge here — one evaluate round, no training — so "expected" is the range the
+zero-shot checkpoint scores on the published hold-out splits: the per-lesion AUROCs listed above
+(0.86 for Infiltration up to 0.998 for Effusion on one site's cohort). A lesion with a single class in
+a site's cohort reports `NaN` and is left out of the hub plots rather than pulling the others down,
+which is the first thing to check when a lesion is missing. With the default `MAX_SAMPLES=128` cap a
+simulator run is a smoke test of the round-trip, not a measurement; `MAX_SAMPLES=0` scores the full
+~470 studies per site.
 
 ### Fields
 

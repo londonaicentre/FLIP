@@ -160,7 +160,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction
 Each simulated site resolves its own split via `SITE{N}_DATAFRAME` from `.env.app` (falling back to
 slicing the shared `DEV_DATAFRAME` by `person_id` modulo), so the run stays genuinely federated even
 off a single file. Override the round/client counts inline, e.g.
-`make run-tutorial TUTORIAL=ehr_risk_prediction NUM_ROUNDS=10`.
+`make -C fl-tutorials run-tutorial TUTORIAL=ehr_risk_prediction NUM_ROUNDS=10`.
 
 ### On the platform (or `make e2e_smoke`)
 
