@@ -210,6 +210,24 @@ admin_curl -X PUT "$XNAT_URL/xapi/events/prefs" \
 # controlled by the dicom_to_nifti flag. This ensures dcm2niix only auto-triggers
 # for projects that have opted in to DICOM-to-NIfTI conversion.
 
+# This script deliberately DELETES NO EVENT SUBSCRIPTIONS. Do not add a cleanup step here.
+#
+# It used to carry one, to remove the site-wide subscription that earlier versions of this
+# script created. That subscription stopped being created in 88adb78b (2026-03-24), when
+# dcm2niix moved to per-project subscriptions — so the cleanup had nothing legitimate left to
+# find, while remaining perfectly capable of deleting the wrong thing.
+#
+# And it did. XNAT does not echo a top-level `project-id` for imaging-api's per-project
+# subscriptions (the key is absent entirely), and imaging-api names them "DICOM-NIfTI
+# Conversion" — one of the two names the cleanup matched. So both of its tests for "is this the
+# old site-wide one?" answered yes for live, in-use subscriptions. Checked against four running
+# trusts: it selected 12 of 12, every one of them a project's live conversion rule, and not one
+# genuine site-wide leftover among them. Deleting one is silent — imports keep succeeding and
+# simply never convert, surfacing much later as training with no data.
+#
+# Removed rather than repaired: a cleanup for a thing nothing creates can only ever misfire.
+# Pinned by trust/xnat/tests/test_dcm2niix_subscription_cleanup.py.
+
 # ----------------------------------------------------------------
 # VALIDATION
 # ----------------------------------------------------------------

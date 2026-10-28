@@ -162,7 +162,7 @@ def test_approve_project_with_failure_in_trust(
     async def failing_start(*args, **kwargs):
         trust = kwargs["trust"]
         if trust.name == "Trust 2":
-            raise Exception("Imaging failed")
+            raise Exception("Imaging failed: XNAT at http://xnat-web:8080 said 500")
         return None
 
     mock_approve_project.return_value = mock_trusts
@@ -177,6 +177,9 @@ def test_approve_project_with_failure_in_trust(
     assert data["trusts"]["processed"] == 2
     assert data["trusts"]["failed"] == 1
     assert data["trusts"]["succeeded"] == 1
+    # The exception text stays in the hub log, out of the response (FLIP#1614).
+    assert "xnat-web" not in response.text
+    assert [d["message"] for d in data["details"] if not d["success"]] == ["Could not start imaging; see the hub log"]
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
@@ -296,7 +299,7 @@ def test_a_trust_whose_cohort_cannot_be_frozen_is_reported_as_failed(
     """A tabular-only project's snapshot dispatch reports per trust, as imaging does, so a failure is not silent."""
     mock_approve_project.return_value = mock_trusts
     mock_project_row.return_value = SimpleNamespace(has_imaging=False)
-    mock_freeze_cohort.side_effect = [None, HTTPException(status_code=500, detail="Internal server error")]
+    mock_freeze_cohort.side_effect = [None, RuntimeError("psycopg2: connection to 10.0.3.7:5432 refused")]
 
     response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
 
@@ -305,6 +308,9 @@ def test_a_trust_whose_cohort_cannot_be_frozen_is_reported_as_failed(
     assert data["successful"] is False
     assert data["trusts"] == {"processed": 2, "succeeded": 1, "failed": 1}
     assert [detail["success"] for detail in data["details"]] == [True, False]
+    # The exception text stays in the hub log, out of the response (FLIP#1614).
+    assert "10.0.3.7" not in response.text
+    assert data["details"][1]["message"] == "Could not queue the cohort snapshot; see the hub log"
 
 
 @patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")

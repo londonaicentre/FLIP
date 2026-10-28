@@ -17,7 +17,7 @@
 > **This README is maintainer notes** for the deployment layer: where things live, the hub's production
 > container config, container hardening and the service-authentication design. **To deploy or operate FLIP, use the
 > operator manual on ReadTheDocs:** [Deploy the Central Hub](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html) (prerequisites, registering trusts, deploys,
-> email, MFA recovery), [on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html), [a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) and [a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
+> email, MFA recovery), [on AWS (LZA)](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws-lza.html), [a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) and [a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html).
 
 ## Where things live
 
@@ -130,7 +130,7 @@ SMS MFA is intentionally disabled — it would introduce an SNS dependency and r
 
 The MFA gate is controlled by `flip-api`'s `ENFORCE_MFA` setting. The Settings default is `true` — when active, `verify_token` returns 403 for any signed-in user without an active TOTP and the UI's router guard redirects them through enrolment.
 
-The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.production.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.production` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
+The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator. **The flag is intentionally not exposed in `.env.development.example` or AWS Secrets Manager** — the Settings default (`true`) is the canonical secure anchor. `deploy/compose.prod.yml` passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so operators can override it from `.env.stag`/`.env.prod` for testing (e.g. `ENFORCE_MFA=false`), but it falls back to the secure `true` default when unset — do not commit an override into either env file for a real deployment.
 
 Only `false`, `0`, `no` or `off` (trimmed, any case) turn the gate off. `true`, `1`, `yes`, `on`, empty and unset keep it on, and so does any other value — a typo fails closed, with a warning naming the value in the flip-api log.
 
@@ -158,13 +158,11 @@ without FLIP's audit log.
 
 The Central Hub has **one supported production deployment**: ECS Fargate via the Terraform root in
 [`deploy/providers/AWS/`](providers/AWS/README.md). The task definitions in `ecs_tasks.tf` (env maps in
-`locals.tf`) are the **canonical definition of production container config**. That root offers **two
-deployment modes**, both permanently supported: the default **self-contained single-account** shape
-(`PROD=stag`/`PROD=true`), where FLIP creates its own VPC and edge; and the **platform-managed** shape
-(`PROD=lza`, or `PROD=lza-stag` for a staging estate) for an AWS Landing Zone Accelerator estate, where the
-network and edge are owned by the accelerator. The second is an env-gated mode of the same root, not a separate path — see
-[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate-prodlza)
-([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). What each mode costs to run — hub only,
+`locals.tf`) are the **canonical definition of production container config**. That root deploys onto an
+AWS Landing Zone Accelerator estate, where the network and edge are owned by the accelerator — see
+[Deploying onto an LZA estate](providers/AWS/README.md#deploying-onto-an-lza-estate)
+([FLIP#749](https://github.com/londonaicentre/FLIP/issues/749)). The self-contained single-account mode is no
+longer supported and has been removed (FLIP#1479). What the hub costs to run — hub only,
 trust hosts excluded because their GPU sizing is a per-trust decision — is on the docs site's
 [Deploy the Central Hub → Running costs](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#running-costs)
 section. The ECS FL task definitions serve **both
@@ -175,13 +173,11 @@ additionally needs `FLOWER_KIT_DATE` and provisioned creds uploaded via
 Cloud Map + public FL hostnames).
 
 > **Deprecated — hub on EC2/compose** ([FLIP#936](https://github.com/londonaicentre/FLIP/issues/936)):
-> running the hub via `compose.production*.yml` on an EC2 or self-managed host is no longer a supported
+> running the hub via `compose.prod*.yml` on an EC2 or self-managed host is no longer a supported
 > deployment target (the former hub EC2 host was long since replaced by a minimal SSM bastion). The
-> `compose.production*.yml` files remain maintained **only** as the local prod-image harness
-> (`make up PROD=stag|true` — the baked images, no dev mounts). When changing production config, change
-> Terraform first and update the compose files only as far as the local harness needs. Remaining hub-EC2
-> material is removed once the AI Centre's own legacy account is decommissioned (FLIP#749 WP6) — that
-> retires one *account*, not the self-contained deployment mode, which stays supported.
+> `compose.prod*.yml` files remain maintained **only** as the local prod-image harness
+> (`make up HUB=stag|prod` — the baked images, no dev mounts). When changing production config, change
+> Terraform first and update the compose files only as far as the local harness needs.
 
 ### Trusts
 
@@ -189,7 +185,7 @@ FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
 | ------- | ---------- | --------------- |
-| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [Deploy the Central Hub on AWS](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub-aws.html) ([`providers/AWS/README.md`](providers/AWS/README.md)) |
+| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`providers/AWS/README.md`](providers/AWS/README.md) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [Deploy a trust on-prem](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-on-prem.html) ([`trust/deploy/ansible/README.md`](../trust/deploy/ansible/README.md)) |
 | **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) ([`trust/deploy/helm/README.md`](../trust/deploy/helm/README.md)) |
 
@@ -213,6 +209,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | xnat-socket-proxy | `root` | Upstream `tecnativa/docker-socket-proxy` image — HAProxy connects to the root-owned Docker socket as its owner. Runs under `cap_drop: ALL` with no capabilities added back. |
 | xnat-dcm2niix | `1001:1001` (numeric; no named user in the image) | `USER 1001:1001` in the dcm2niix Dockerfile — xnat-web's uid, so the NIfTIs it writes onto the Container Service's build mount carry the one owner everything else under `xnat-data` has (XNAT reads them back off that mount), and a service the Container Service can hand arbitrary host mounts does not run as root. Not a compose service: a one-shot container the Container Service launches per scan and then reaps, so it sits outside the `cap_drop` regime below, which the compose files impose. |
+| xnat-export-mask | `1001:1001` (numeric) | `USER 1001:1001` in `trust/xnat/export-mask/Dockerfile`, for the same reasons as xnat-dcm2niix. Launched by the Container Service per saved OHIF mask, MONAI Label trusts only. |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
@@ -268,7 +265,7 @@ below. The per-service grants in the compose files are:
 | fl-client-net-* (both backends, production and development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. FLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. In production the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `onprem.yml`; the `DAC_OVERRIDE`/`FOWNER` grant kept for pre-GHSA-8465 root images is gone (FLIP#973). |
 | fl-api (FLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
 | fl-server (FLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
-| fl-server (Flower, development only) | `CHOWN`, `DAC_OVERRIDE` | The dev compose runs the SuperLink as root (see the `user: "0:0"` comment in `compose.development.flower.yml`) to read the host-provisioned 0640 TLS keys and the operator's 0600 SSO token cache; `cap_drop: ALL` strips root's implicit DAC bypass, so `DAC_OVERRIDE` is granted back. Production runs the image's non-root user with instance-role AWS credentials and keeps the `CHOWN` baseline. |
+| fl-server (Flower, development only) | *(none)* | Runs non-root, so capabilities are inert here exactly as for the FLARE fl-server above. The dev compose ran the SuperLink as root until FLIP#1320, with `CHOWN` and `DAC_OVERRIDE` granted back on top of `cap_drop: ALL` so it could read the host-provisioned 0640 TLS keys; a root SuperLink also rewrote any host-owned file it touched as `root:root`, which is how the operator's AWS SSO token used to become unreadable to their own CLI. It now runs as `user: "${UID:-1000}:49999"` with `group_add: ["${DOCKER_GID}"]`, reading the keys through their own owner and group, and sets `HOME=/tmp` so the SuperLink's `~/.flwr` and the ServerApp's torch caches land somewhere the host uid can write on any SuperLink image, rather than in the image user's `/app`. Production runs the image's non-root user with an ECS task IAM role and keeps the `CHOWN` baseline. |
 | flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
 | orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1 (the root-image `DAC_OVERRIDE`/`FOWNER` grant is gone, FLIP#863). The storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps; `CHOWN` is kept as the shared baseline. |
 | xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80 (Docker sets `net.ipv4.ip_unprivileged_port_start=0`, but capabilities are still checked). |
@@ -288,20 +285,21 @@ container.
 > (config/archive/build/cache/plugins), so `make up`'s XNAT configure step fails on both trusts
 > (swarm enforces `cap_drop` even though it ignores `security_opt`). When running this hardening
 > from a branch whose images are not yet published, build the hardened images locally:
-> `make up BUILD=true` covers the compose-built services (including orthanc), and the XNAT stack
-> needs `make -C trust/xnat build DOCKER_REGISTRY= DOCKER_TAG=dev` followed by redeploying the
-> stack with the same `DOCKER_REGISTRY=`/`XNAT_TAG=dev` overrides so `docker stack deploy`
-> resolves the locally built image instead of the GHCR one.
+> `make up BUILD=true` covers the compose-built services (including orthanc and omop-db) and the
+> XNAT stack, which it builds and deploys at the local-only `:dev` tag (or a command-line `XNAT_TAG`) so `docker stack deploy`
+> runs the locally built images instead of the GHCR ones.
 
 ### Docker Socket Isolation (XNAT Container Service)
 
 XNAT's Container Service plugin launches processing containers — currently
 `ghcr.io/londonaicentre/xnat-dcm2niix` (a version-pinned build of dcm2niix; see
 `trust/xnat/dcm2niix/`), which every project created with DICOM→NIfTI conversion enabled
-triggers automatically on scan archive. That GHCR package must be **public** — the Container
-Service pulls it with no credentials, and org packages default to private, so a first publish (or
+triggers automatically on scan archive, and on MONAI Label trusts
+`ghcr.io/londonaicentre/xnat-export-mask` (`trust/xnat/export-mask/`), triggered by every mask
+saved in the OHIF viewer. Those GHCR packages must be **public** — the Container
+Service pulls them with no credentials, and org packages default to private, so a first publish (or
 any package recreate) needs a one-off operator visibility flip; see
-[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-package-must-be-public).
+[`trust/xnat/README.md`](../trust/xnat/README.md#operator-action-the-ghcr-packages-must-be-public).
 It used to do this through `/var/run/docker.sock` mounted straight into `xnat-web`,
 which is a root-equivalent capability: anything that compromises XNAT can exec into any container
 on the host, start privileged containers, or mount arbitrary host paths.

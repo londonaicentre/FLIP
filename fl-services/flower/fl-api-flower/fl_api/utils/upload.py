@@ -1,3 +1,16 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 import shutil
 from pathlib import Path
 from typing import Any
@@ -9,7 +22,8 @@ from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
-from fl_api.utils.validation import safe_join, validate_bundle_url
+from fl_api.utils.refusals import ResearcherRefusal
+from fl_api.utils.validation import redact_url, safe_join, validate_bundle_url
 
 
 def _key_after_model_id(url: str, model_id: str) -> Path:
@@ -84,8 +98,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         (``resources``, None when none) and ``resources_enforced``, always False: Flower places no job by GPU (FLIP#70).
 
     Raises:
-        HTTPException: 400 if the request names no participating trusts, or a bundle URL is
-            rejected; 500 if a bundle file cannot be downloaded.
+        ResearcherRefusal: 400 if the request names no participating trusts.
+        HTTPException: 400 if a bundle URL is rejected; 500 if a bundle file cannot be downloaded.
     """
     logger.info(f"Received request to upload app: {model_id}")
 
@@ -98,9 +112,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # the model, and keeps the previous bundle intact — the job dir is cleared further down.
     if not body.trusts:
         logger.error(f"Upload request for model {model_id} names no participating trusts")
-        raise HTTPException(
-            status_code=400,
-            detail="No participating trusts in the upload request: a run needs at least one trust to train on.",
+        raise ResearcherRefusal(
+            "No participating trusts in the upload request: a run needs at least one trust to train on."
         )
 
     # model_id is the Central Hub model UUID (validated as a UUID by the endpoint); it names
@@ -122,7 +135,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     logger.info(f"Downloading {len(bundle_urls)} files into job directory: {job_dir}")
 
     for url in bundle_urls:
-        logger.info(f"Downloading file from {url}")
+        logger.info(f"Downloading file from {redact_url(url)}")
 
         # The FL API fetches each URL server-side, so reject off-origin URLs. With no allow-list set the check
         # also resolves the name; requests resolves it again on connect, and that pair is the DNS-rebinding
@@ -140,7 +153,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
                 # A redirect would dodge validate_bundle_url (which only saw the original URL),
                 # reopening the SSRF hole; treat any 3xx as a failure.
                 if resp.is_redirect or resp.is_permanent_redirect:
-                    raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+                    raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {redact_url(url)!r}.")
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=1024 * 1024):
@@ -149,8 +162,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         except HTTPException:
             raise  # propagate the 400 redirect rejection unchanged (not a generic download failure)
         except Exception as e:
-            logger.error(f"Failed to download file from {url} with error: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to download file from {url}: {e}")
+            message = f"Failed to download file from {redact_url(url)} ({type(e).__name__})."
+            logger.error(message)
+            raise HTTPException(status_code=500, detail=message) from None
 
         logger.info(f"Downloaded file {dest_path}")
 

@@ -22,8 +22,7 @@ import { IUser } from "@/services/user-service";
 import UsersPage from "../users.vue";
 
 // Store actions run for real here (stubActions: false), so the identity
-// provider behind the store's `resetPassword` / `capabilities` is a bag of
-// spies swapped per test.
+// provider behind the store's `capabilities` is a bag of spies swapped per test.
 const authProvider = vi.hoisted(() => ({ current: null as unknown }));
 vi.mock("@/auth", () => ({ getAuthProvider: () => authProvider.current }));
 const cognitoLike = makeMockAuthProvider();
@@ -76,6 +75,7 @@ const mockUpdateUserProfile = vi.fn();
 const mockUpdateUserRoles = vi.fn();
 const mockUpdateUserDisabledState = vi.fn();
 const mockResetUserMfa = vi.fn();
+const mockResetUserPassword = vi.fn();
 
 vi.mock("@/services/user-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/user-service")>();
@@ -85,7 +85,8 @@ vi.mock("@/services/user-service", async (importOriginal) => {
         updateUserProfile: (...args: unknown[]) => mockUpdateUserProfile(...args),
         updateUserRoles: (...args: unknown[]) => mockUpdateUserRoles(...args),
         updateUserDisabledState: (...args: unknown[]) => mockUpdateUserDisabledState(...args),
-        resetUserMfa: (...args: unknown[]) => mockResetUserMfa(...args)
+        resetUserMfa: (...args: unknown[]) => mockResetUserMfa(...args),
+        resetUserPassword: (...args: unknown[]) => mockResetUserPassword(...args)
     };
 });
 
@@ -233,6 +234,7 @@ beforeEach(() => {
     mockUpdateUserRoles.mockReset();
     mockUpdateUserDisabledState.mockReset();
     mockResetUserMfa.mockReset();
+    mockResetUserPassword.mockReset();
     mockSnackbarSuccess.mockReset();
     mockSnackbarError.mockReset();
     mockRouteChangeViewProjects.mockReset();
@@ -453,7 +455,10 @@ describe("admin/users", () => {
         expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "User not updated" }));
     });
 
-    it("resetPassword closes its dialog, awaits authStore.resetPassword, then reports success", async () => {
+    it("resetPassword asks flip-api to reset by user id, then reports success", async () => {
+        // Server-side, not the browser's Cognito ForgotPassword: that reports
+        // success and sends nothing to a user who never finished signing in.
+        mockResetUserPassword.mockResolvedValue(undefined);
         const wrapper = mountPage();
         await nextTick();
         await wrapper.findAll("[data-test='user']")[0].trigger("click");
@@ -463,10 +468,8 @@ describe("admin/users", () => {
         await cmp.props("continueAction")();
         await flushPromises();
 
-        const { useAuthStore } = await import("@/store/auth");
-        const authStore = useAuthStore();
-        expect(authStore.resetPassword).toHaveBeenCalledWith("alice@example.com");
-        expect(cognitoLike.resetPassword).toHaveBeenCalledWith("alice@example.com");
+        expect(mockResetUserPassword).toHaveBeenCalledWith("u1");
+        expect(cognitoLike.resetPassword).not.toHaveBeenCalled();
         expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Password reset" }));
         expect(mockSnackbarError).not.toHaveBeenCalled();
     });
@@ -474,7 +477,7 @@ describe("admin/users", () => {
     it("resetPassword reports a failure as a failure instead of a success", async () => {
         // The success snackbar used to fire before the reset had even been
         // attempted, so a rejected reset read as done.
-        cognitoLike.resetPassword.mockRejectedValue(new Error("LimitExceededException"));
+        mockResetUserPassword.mockRejectedValue(new Error("LimitExceededException"));
         const wrapper = mountPage();
         await nextTick();
         await wrapper.findAll("[data-test='user']")[0].trigger("click");
@@ -506,7 +509,7 @@ describe("admin/users", () => {
         await disabled.findAll("[data-test='user']")[0].trigger("click");
         const disabledBtn = disabled.find("[data-test='reset-password-btn']");
         expect(disabledBtn.attributes("disabled")).toBeDefined();
-        expect(disabledBtn.attributes("data-tooltip")).toContain("Keycloak console");
+        expect(disabledBtn.attributes("data-tooltip")).toBe("Not available with this sign-in backend");
     });
 
     it("resetMfa success shows the success snackbar", async () => {

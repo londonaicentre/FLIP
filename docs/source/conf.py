@@ -137,6 +137,8 @@ mermaid_init_config = {
 redirects = {
     "components/architecture-overview": "overview.html",
     "components/component-fl-nodes": "component-fl-nets.html",
+    # The self-contained mode's page went with the mode (FLIP#1479).
+    "deploy-flip/deploy-central-hub-aws": "deploy-central-hub-aws-lza.html",
     "user-guides/arkplus-fine-tuning": "../paper/arkplus-fine-tuning.html",
     "user-guides/reproducing-platform-overhead": "../paper/reproducing-platform-overhead.html",
     "working-with-flip-apps/package-model-as-map": "wrap-model-for-deployment.html",
@@ -217,7 +219,7 @@ html_static_path = ["_static"]
 
 
 # -- Generated figures -------------------------------------------------------
-# The Central Hub AWS diagrams (one pair per deployment mode) are diagram-as-code kept beside the Terraform they
+# The Central Hub AWS diagrams (request paths; data services) are diagram-as-code kept beside the Terraform they
 # depict (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). They are rendered
 # here at build time into assets/generated/ (gitignored), so the published deployment pages always show the
 # pictures for the commit they document and no PNG has to be kept in sync by hand. Needs graphviz `dot`:

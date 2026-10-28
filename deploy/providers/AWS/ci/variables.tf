@@ -107,7 +107,6 @@ variable "managed_role_names" {
     "ecs-fl-api-task-role",
     "ecs-fl-server-task-role",
     "flip-rds-proxy-role",
-    "flip-sg-drift-lambda-role",
     "ec2-role",
     "trust-ec2-role",
   ]
@@ -150,15 +149,12 @@ variable "apply_service_prefixes" {
   default = [
     "acm",
     "cloudfront",
-    "cloudwatch",
     "cognito-idp",
     "ec2",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
-    "events",
     "kms",
-    "lambda",
     "logs",
     "rds",
     "route53",
@@ -166,10 +162,7 @@ variable "apply_service_prefixes" {
     "secretsmanager",
     "servicediscovery",
     "ses",
-    "sns",
-    "sqs",
     "ssm",
-    "wafv2",
   ]
 
   validation {
@@ -203,6 +196,24 @@ variable "tags" {
     ManagedBy = "terraform"
     Component = "terraform-ci"
   }
+}
+
+variable "ui_bucket_name" {
+  description = "Name of the flip-ui bucket. Setting it creates the UI-publish role (TF_UI_PUBLISH_ROLE_ARN); empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "ui_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the UI-publish role."
+  type        = string
+  default     = "publish_ui.yml"
+}
+
+variable "ui_publish_role_name" {
+  description = "Name of the UI-publish role."
+  type        = string
+  default     = "AICentre-FLIPUiPublishRole"
 }
 
 variable "manage_state_bucket" {

@@ -148,7 +148,7 @@ def test_trust_dirs_role_creates_the_cohort_membership_stores() -> None:
     assert defaults.get("flip_cohort_snapshot_dirs") == [
         "{{ flip_dir }}/cohort-snapshots/trust-1",
         "{{ flip_dir }}/cohort-snapshots/trust-2",
-    ], "the default stores must be the production compose defaults for slots 1 and 2, under flip_dir"
+    ], "the default stores must be the prod compose defaults for slots 1 and 2, under flip_dir"
     tasks = _load(ROLES_DIR / "flip_trust_dirs" / "tasks" / "main.yml") or []
     [stores] = [task for task in tasks if "flip_cohort_snapshot_dirs" in str(task.get("loop", ""))]
     body = stores["file"]

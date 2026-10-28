@@ -1,0 +1,100 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# ROLE (FLIP#936): local prod-image harness ONLY — `make up HUB=stag|prod` runs the baked images with no
+# dev mounts. This file is NOT a deployment target: the Central Hub deploys on ECS Fargate, and the task
+# definitions in deploy/providers/AWS/ecs_tasks.tf (env maps in locals.tf) are the canonical definition of
+# production container config. When changing production config, change Terraform first; update this file
+# only as far as the local harness needs.
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+# No service here sets `container_name` — same rule as the dev composes (FLIP#957). Container names
+# are left to the compose project (`-p $(COMPOSE_PROJECT)` — see deploy/instance.mk), which yields
+# `deploy-flip-api-1` on the default harness. `container_name` is a global, project-independent name,
+# so it would collide outright between two harnesses on one host.
+#
+# Nothing addresses these containers by name: service-to-service traffic resolves through the compose
+# SERVICE name, which docker registers as a network alias on every network the container joins. That
+# makes the service KEYS below the load-bearing names — renaming one breaks the provisioned FL kits
+# and their TLS (see the overlays), whereas the container names are free to change.
+#
+# None of this touches AWS: production runs on ECS Fargate, where the container names come from the
+# task definitions in deploy/providers/AWS/ecs_tasks.tf and discovery from Cloud Map. This file is
+# only the local prod-image harness described above.
+services:
+  #################### CENTRAL HUB ####################
+
+  # flip-ui is NOT deployed as a container in stag/prod — it's served as a
+  # static bundle from S3 via CloudFront (see deploy/providers/AWS/cloudfront.tf
+  # and deploy/providers/AWS/Makefile's `deploy-ui` target). Dev still runs the
+  # Vite container (deploy/compose.development.yml).
+
+  flip-api:
+    image: ghcr.io/londonaicentre/flip-api:${DOCKER_TAG}
+    ports:
+      - "${API_PORT}:8000"
+    environment:
+      - ENV=production
+      - ENFORCE_MFA=${ENFORCE_MFA:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
+      - AWS_REGION=${AWS_REGION}
+      # Force boto3 to mint presigned URLs against the regional S3 endpoint
+      # (e.g. s3.eu-west-2.amazonaws.com) instead of the legacy global one
+      # (s3.amazonaws.com). DNS for a freshly created bucket in a non-us-east-1
+      # region can take up to ~24h to propagate on the global endpoint — the
+      # bucket-split rollout (FLIP#24) hit a 500 from the global endpoint on
+      # the new uploads bucket until propagation completed. Regional endpoints
+      # never have this lag and are AWS's recommended path for non-us-east-1
+      # buckets anyway.
+      # `:?` makes docker compose abort if AWS_REGION is empty — without the
+      # guard the URL becomes `https://s3..amazonaws.com` and boto3 fails late
+      # at request time with an opaque EndpointConnectionError, which is
+      # exactly the kind of CORS-preflight-failure surprise this env var is
+      # supposed to prevent.
+      # Also the reason the fl-api's BUNDLE_URL_ALLOWED_ORIGINS (compose.prod.<backend>.yml)
+      # is exactly https://s3.<region>.amazonaws.com: this endpoint makes the presigned URLs path-style.
+      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
+      # ProdSettings narrows AUTH_BACKEND to cognito (the dev Keycloak backend
+      # is a boot-time error here); stated so this file reads like the dev one.
+      - AUTH_BACKEND=cognito
+      - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
+      - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
+      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      # in production, INTERNAL_SERVICE_KEY_HASH and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
+      - AWS_SECRET_NAME=${AWS_SECRET_NAME}
+      - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
+      - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
+      - UPLOADED_MODEL_FILES_BUCKET=${UPLOADED_MODEL_FILES_BUCKET}
+      - SCANNED_MODEL_FILES_BUCKET=${SCANNED_MODEL_FILES_BUCKET}
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
+      - NET_ENDPOINTS=${NET_ENDPOINTS}
+      - FL_BACKEND=${FL_BACKEND}
+      # No FL_KIT_SLOT_NAMES here: in production the kit-slot pool's single source
+      # is the /flip/fl_kit_slot_names SSM parameter (read at runtime by
+      # resolve_fl_kit_slot_names) — an env copy would be dead config that
+      # apply-fl-kit-slots never updates.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    restart: unless-stopped

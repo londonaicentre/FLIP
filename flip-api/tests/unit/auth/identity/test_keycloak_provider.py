@@ -437,6 +437,13 @@ def test_delete_unknown_user_is_not_found(provider):
         provider.delete_user("ghost@example.com")
 
 
+def test_reset_password_sends_the_set_password_email(keycloak, provider):
+    keycloak.add_user("alice@example.com")
+    provider.reset_password("alice@example.com")
+    [(_, actions, _)] = keycloak.action_emails
+    assert actions == ["UPDATE_PASSWORD"]
+
+
 def test_a_user_deleted_between_lookup_and_delete_is_not_found(keycloak):
     """Two admins deleting at once: the loser's DELETE 404s, which the router treats as already gone."""
     alice = keycloak.add_user("alice@example.com")

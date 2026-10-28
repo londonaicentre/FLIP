@@ -254,12 +254,14 @@ class Patient(BaseModel):
 
 
 class Study(BaseModel):
+    """A DQR study; anonymised responses may omit descriptive tags."""
+
     study_instance_uid: str = Field(..., alias="studyInstanceUid")
-    study_description: str = Field(..., alias="studyDescription")
+    study_description: str = Field(default="", alias="studyDescription")
     accession_number: str = Field(..., alias="accessionNumber")
     study_date: str = Field(..., alias="studyDate")
     modalities_in_study: list[str] = Field(..., alias="modalitiesInStudy")
-    referring_physician_name: str = Field(..., alias="referringPhysicianName")
+    referring_physician_name: str = Field(default="", alias="referringPhysicianName")
     patient: Patient
 
 
