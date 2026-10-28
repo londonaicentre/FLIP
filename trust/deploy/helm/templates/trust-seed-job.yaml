@@ -26,7 +26,8 @@ The procedure is trust/seed_trust.sh in the repository, and the loaders it runs 
 own (trust/omop-db's omop_db_tools and trust/orthanc/seed_orthanc.py); all three are fetched at run
 time from the FLIP git ref `trustData.seed.sourceRef` (the package as a GitHub source archive — the
 image has no git), so the chart carries no copy of them and needs no extra image. The Job therefore
-needs egress to github.com, huggingface.co and PyPI in addition to the two in-cluster services.
+needs egress to github.com, codeload.github.com (the archive redirects there), raw.githubusercontent.com,
+huggingface.co with *.hf.co, and PyPI, in addition to the two in-cluster services.
 */}}
 {{- if and .Values.trustData.seed.enabled (or (and .Values.omopDb.enabled .Values.trustData.seed.omop) (and .Values.orthanc.enabled .Values.trustData.seed.orthanc)) }}
 ---
