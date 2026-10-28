@@ -202,6 +202,9 @@ Reset password
 2. Click **...**.
 3. Click **Reset Password**.
 
+The user is emailed a code to set a new password. A user who never completed their first sign-in is sent
+their invitation again instead, with a new temporary password.
+
 .. figure:: ../assets/generated/gifs/admin/reset-password.gif
    :align: center
 
