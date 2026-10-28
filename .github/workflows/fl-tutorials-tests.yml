@@ -77,11 +77,12 @@ jobs:
         run: make lint
 
       # Tutorial-app tests run in flip-utils' environment (`flip-utils[full]`), which is what
-      # the FL images give these apps at runtime. Synced as its own step so an environment
+      # the FL images give these apps at runtime, plus the `diffusion` group for the image-generation
+      # tutorials' local plotting helpers. Synced as its own step so an environment
       # failure is distinguishable from a test failure in the log.
       - name: Sync the flip-utils environment
         working-directory: ./flip-utils
-        run: uv sync --extra full --group dev
+        run: uv sync --extra full --group dev --group diffusion
 
       - name: Run the tutorial transform tests
         run: make pytest

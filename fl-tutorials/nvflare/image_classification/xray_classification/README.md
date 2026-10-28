@@ -41,7 +41,7 @@ dense layers' bottleneck `norm2`/`conv2` — matched the ImageNet shapes; the fi
 every growth layer were random either way. On the reference mini dataset (2 clients, 3 rounds ×
 3 local epochs, two runs per setting) the final global-model test F1 was 0.976/0.965 with the
 partial ImageNet init and 0.962/0.966 without, both converging by epoch 5–6. An app that does
-need pretrained weights ships them as an uploaded file; the latent-diffusion tutorial shows the
+need pretrained weights ships them as an uploaded file; the autoencoder tutorial shows the
 pattern (`make weights`).
 
 ## The training logic
