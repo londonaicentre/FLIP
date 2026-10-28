@@ -295,7 +295,8 @@ application role's password is re-synced; on such a site the application role st
 until it is converged (see :ref:`ts-k8s-xnat-db-roles`). One related pre-flight check: a release from the
 ``guard-xnat-db-passwords.sh`` era refuses to start xnat-db when the two XNAT passwords are equal
 (``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD`` in the kit, ``xnat-datasource-password``
-and ``xnat-admin-password`` in ``values-secrets.yaml``), so a site that ever set them to the same value must
+and ``xnat-datasource-admin-password`` in ``values-secrets.yaml``; ``xnat-admin-password`` is a different
+secret, XNAT's web admin password), so a site that ever set them to the same value must
 rotate one of them before the upgrade, or the pod stops for that reason instead.
 
 **Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image

@@ -148,10 +148,21 @@ spec:
                     # let a holder of its *current* credential force exactly that error (e.g.
                     # `ALTER ROLE xnat SET default_transaction_read_only = on`, a USERSET that
                     # needs no CREATEROLE) to leak the *new* password on the next rotation. The
-                    # two SET statements below close that on their own: log_statement=none
-                    # suppresses the statement text on success, and log_min_error_statement=panic
-                    # means nothing short of a server crash logs the erroring statement either,
-                    # which is what makes the fallback below safe when `postgres` is absent.
+                    # four SET statements below close every route the statement text has into the
+                    # log: log_statement=none suppresses it on success, and
+                    # log_min_error_statement=panic means nothing short of a server crash logs the
+                    # erroring statement either. Those two are not enough on their own, because
+                    # log_min_duration_statement and log_transaction_sample_rate log a completed
+                    # statement's text whatever log_statement says, and on the pre-split layout the
+                    # app role is the superuser, so a holder of its current credential can arm
+                    # either of them for the role (`ALTER ROLE xnat SET
+                    # log_min_duration_statement = 0`) and read the next rotation's password out of
+                    # the log. Pinning both off for this session also covers an operator who has
+                    # turned duration logging on server-wide, which would otherwise leak the
+                    # password on the `postgres` path too. Together they are what makes the
+                    # fallback below safe when `postgres` is absent. All four are SUSET, so on a
+                    # current layout a non-superuser app role still fails closed at the first SET
+                    # and the ALTER never runs.
                     #
                     # The outcome is reported by psql rather than by the shell. postStart stdout
                     # goes nowhere (the kubelet surfaces it only in a FailedPostStartHook event)
@@ -196,6 +207,8 @@ spec:
                            -v u="$app_role" <<-'EOSQL'
                     	SET log_statement = none;
                     	SET log_min_error_statement = panic;
+                    	SET log_min_duration_statement = -1;
+                    	SET log_transaction_sample_rate = 0;
                     	\set pw `printenv XNAT_DATASOURCE_PASSWORD`
                     	ALTER ROLE :"u" WITH PASSWORD :'pw';
                     	DO $$ BEGIN RAISE WARNING 'xnat-db postStart: xnat role password synced'; END $$;

@@ -120,9 +120,13 @@ xnat-db crash-loops on upgrade: no ``postgres`` role
 ====================================================
 
 *Symptom.* ``helm upgrade`` reports success, then ``xnat-db-0`` goes ``CrashLoopBackOff``. The pod's events
-carry a ``FailedPostStartHook`` entry and its ``postgres`` container log ends in::
+carry a ``FailedPostStartHook`` entry whose message ends in::
 
    psql: error: could not connect to server: FATAL:  role "postgres" does not exist
+
+The ``postgres`` container log carries the server's own side of the same refusal, timestamped::
+
+   FATAL:  role "postgres" does not exist
 
 ``xnat-web`` then fails its readiness check and every DICOM path stops with it.
 

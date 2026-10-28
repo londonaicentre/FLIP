@@ -23,10 +23,14 @@ it. It now probes both roles over the local socket and connects as whichever ans
 
 Two layers here, because neither is enough on its own:
 
-* Text invariants over the hook body hold the credential-leak guard still: the two ``SET``
-  statements, ``log_statement = none`` and ``log_min_error_statement = panic``, are what stop a
-  holder of the *current* app credential from provoking an error that echoes the *new* password
-  (PG12 does not redact ``ALTER ROLE ... PASSWORD``), so an edit that drops them must fail CI.
+* Text invariants over the hook body hold the credential-leak guard still: the four ``SET``
+  statements are what stop a holder of the *current* app credential from reading the *new*
+  password out of the log (PG12 does not redact ``ALTER ROLE ... PASSWORD``), so an edit that
+  drops any of them must fail CI. ``log_statement = none`` and ``log_min_error_statement =
+  panic`` cover the success and the error path; ``log_min_duration_statement = -1`` and
+  ``log_transaction_sample_rate = 0`` cover the two settings that log a completed statement's
+  text whatever ``log_statement`` says, and that the app role can arm for itself on the pre-split
+  layout, where it is the superuser.
 * The body actually runs, with stub ``psql`` / ``pg_isready`` / ``sleep`` executables on ``PATH``,
   over the three layouts a volume can be in: two roles, the pre-split single role, and neither.
   ``helm template`` cannot do this: the kind CI values disable XNAT, so the render never reaches
@@ -196,11 +200,13 @@ def test_hook_probes_roles_instead_of_assuming_postgres() -> None:
 
 
 def test_credential_leak_guard_survives_the_fallback() -> None:
-    """The two SET statements are what close the log-leak hole, whichever role connects."""
+    """The four SET statements are what close the log-leak hole, whichever role connects."""
     body = _hook_body()
 
     assert "SET log_statement = none;" in body
     assert "SET log_min_error_statement = panic;" in body
+    assert "SET log_min_duration_statement = -1;" in body, "duration logging must not echo the ALTER"
+    assert "SET log_transaction_sample_rate = 0;" in body, "sampled logging must not echo the ALTER"
     assert "-v ON_ERROR_STOP=1" in body
     assert "<<-'EOSQL'" in body
     assert "\n\tEOSQL" in body
