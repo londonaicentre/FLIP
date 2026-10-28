@@ -19,7 +19,7 @@
 # the dcm2niix-converted tree) — or prepare-prostate-local-data's `--site-tree` when there is no
 # Docker to run dcm2niix, which yields the same fingerprint (spacing, cropped shape and foreground
 # intensities do not depend on storage order).
-DATA_ROOT ?= ../../data/prostate
+DATA_ROOT ?= ../../../data/prostate
 PLAN_SITES ?= $(DATA_ROOT)/sites/ZGT $(DATA_ROOT)/sites/PCNN $(DATA_ROOT)/sites/RUMC
 PLAN_MODALITY ?= t2w
 PLAN_GPU_MEMORY_GB ?= 24

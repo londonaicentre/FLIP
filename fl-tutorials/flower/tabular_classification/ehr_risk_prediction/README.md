@@ -5,12 +5,12 @@ Federated training of a small **multi-layer perceptron (MLP)** that predicts **t
 visit history — on the **Flower** backend (`ClientApp` / `ServerApp`).
 
 This is the Flower twin of the FLARE
-[`ehr_risk_prediction`](../../nvflare/tabular_classification/ehr_risk_prediction) tutorial, and
+[`ehr_risk_prediction`](../../../nvflare/tabular_classification/ehr_risk_prediction) tutorial, and
 FLIP's first **tabular / EHR-only** example. The whole cohort arrives through `flip.get_dataframe`
 (arbitrary SQL over each trust's OMOP CDM database); **no imaging is fetched** — no Orthanc, no XNAT,
 no PACS pull, no data-enrichment step — and **CPU is enough** to train it. The data model, features,
 label, preprocessing and network are identical to the FLARE tutorial; see
-[its README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md) for the full
+[its README](../../../nvflare/tabular_classification/ehr_risk_prediction/README.md) for the full
 treatment of those. This page focuses on the **Flower-specific mechanics** and how to run it.
 
 ---
@@ -32,7 +32,7 @@ query.sql                # the OMOP cohort query (identical to the FLARE copy)
 ```
 
 `server_app.py` and `strategy.py` are copied byte-for-byte from the
-[`fl-apps/flower/standard`](../../../fl-apps/flower/standard) template (CI enforces this via
+[`fl-apps/flower/standard`](../../../../fl-apps/flower/standard) template (CI enforces this via
 `scripts/check_tutorial_sync.sh`), so all the platform telemetry, best-model selection and
 `min_clients` wiring come from the shared template — this tutorial only supplies `client_app.py`,
 `task.py` and the shared feature/model code.
@@ -61,7 +61,7 @@ and condition counts), labelled with the first T2DM diagnosis (SNOMED `44054006`
 (median imputation + z-scoring) is fitted on each site's **local training split only**, so no fitted
 state crosses a trust boundary. Full details, including the feature table and the honest caveats of
 this teaching cohort, are in the
-[FLARE README](../../nvflare/tabular_classification/ehr_risk_prediction/README.md#features-and-label).
+[FLARE README](../../../nvflare/tabular_classification/ehr_risk_prediction/README.md#features-and-label).
 
 ## Metrics and best-model selection
 
@@ -81,7 +81,7 @@ LR 0.02 → 0.001) was tuned for this; a narrower layer or fewer rounds plateaus
 ## Differential privacy
 
 Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The
-`flip_local_dp_mod` mod from [`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py)
+`flip_local_dp_mod` mod from [`flip.flower.privacy`](../../../../flip-utils/flip/flower/privacy.py)
 clips the local update to a fixed L2 norm and adds Gaussian noise scaled to the configured budget. It
 is wired in `app/client_app.py` as `@app.train(mods=[flip_local_dp_mod])`, so it covers training
 rounds only — `@app.evaluate` is untouched.
@@ -117,7 +117,7 @@ fetched at run time, never committed).
   make -C trust load-synthea-ehr TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
   ```
   A trust on Kubernetes publishes no host port — use the port-forward form in
-  [`trust/deploy/helm/README.md`](../../../trust/deploy/helm/README.md)
+  [`trust/deploy/helm/README.md`](../../../../trust/deploy/helm/README.md)
   ("Local clusters (kind)"), then restart its data-access-api.
 
 ## How to run

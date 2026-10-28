@@ -60,6 +60,16 @@ include deploy/instance.mk
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
 
+# Host uid for the `user:` override on the dev FL containers. The env-file export above
+# covers a .env that carries UID, but bash and zsh keep UID as a shell variable and never
+# export it, so a .env predating that line leaves make with no UID at all: compose then
+# takes the literal `${UID:-1000}` default and every developer whose uid is not 1000 runs
+# those containers as someone else, reaching the provisioned keys through group_add only
+# rather than as their owner (FLIP#1320). `?=` so an explicit .env value still wins.
+# trust/Makefile exports UID for the same reason.
+UID ?= $(shell id -u)
+export UID
+
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 

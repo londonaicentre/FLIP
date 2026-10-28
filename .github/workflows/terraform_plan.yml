@@ -69,8 +69,9 @@ jobs:
     # confusing credential failure.
     # TF_STAG_DISABLED (repository variable) pauses every staging job while the
     # aws-stag environment points at an account that has been torn down; see
-    # terraform_apply.yml.
-    if: github.event.pull_request.head.repo.full_name == github.repository && vars.TF_STAG_DISABLED != 'true'
+    # terraform_apply.yml, which also explains TF_CI_ON_FORK: a fork sets it to
+    # plan its own PRs.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.event.pull_request.head.repo.full_name == github.repository && vars.TF_STAG_DISABLED != 'true'
     runs-on: ubuntu-latest
     environment: aws-stag
     permissions:

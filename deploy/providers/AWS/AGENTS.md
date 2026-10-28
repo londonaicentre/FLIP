@@ -190,6 +190,11 @@ Things worth knowing before touching any of it:
   it was deleted when `aws-stag` was repointed at LZA staging (2026-10-05), so
   all three staging legs run against LZA staging. The guards remain for the next teardown;
   `.github/tests/workflows/test_terraform_stag_pause.py` pins them.
+- **Terraform CI skips forks.** Outside `londonaicentre/FLIP`, plan, apply and drift
+  skip unless the repository variable `TF_CI_ON_FORK=true` opts in (adopters,
+  `ci/README.md`). A fork has no `aws-*` environments, so each run would otherwise fail
+  and mail whoever pushed or, for the drift schedule, whoever last edited the workflow
+  upstream (FLIP#1679, FLIP#1683).
 - **Every IAM role this root owns carries a permissions boundary**
   (`var.iam_permissions_boundary_name`, the policy declared by
   `modules/terraform_ci_bootstrap`). The CI apply role may only create a role, or

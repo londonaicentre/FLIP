@@ -17,8 +17,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import boto3
 import httpx
 import pytest
+from moto import mock_aws
 
 from flip_api.config import Settings
 from flip_api.db.models.main_models import FLJob, Trust
@@ -34,7 +36,7 @@ from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
-from flip_api.utils.s3_client import PresignAudience
+from flip_api.utils.s3_client import PresignAudience, S3Client
 
 
 @pytest.fixture
@@ -813,6 +815,13 @@ def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid
             f"{model_bucket}/{model_id}/config.json",
         ],
         [],  # Destination bucket (clear check)
+        [
+            f"{dest_bucket}/{model_id}/app/server_app.py",
+            f"{dest_bucket}/{model_id}/pyproject.toml",
+            f"{dest_bucket}/{model_id}/app/client_app.py",
+            f"{dest_bucket}/{model_id}/app/models.py",
+            f"{dest_bucket}/{model_id}/app/config.json",
+        ],
     ]
     mock_client.copy_object.return_value = None
     mock_client.object_exists.return_value = False
@@ -864,6 +873,13 @@ def test_bundle_flower_application_model_files_overwrite(
     mock_client.list_objects.side_effect = [
         model_files,
         [],  # Destination bucket (clear check)
+        [
+            f"{dest_bucket}/{model_id}/app/server_app.py",
+            f"{dest_bucket}/{model_id}/pyproject.toml",
+            f"{dest_bucket}/{model_id}/app/client_app.py",
+            f"{dest_bucket}/{model_id}/app/models.py",
+            f"{dest_bucket}/{model_id}/app/config.json",
+        ],
     ]
     mock_client.copy_object.return_value = None
 
@@ -985,7 +1001,8 @@ def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_se
         _ = fl_service.bundle_flower_application(model_id)
 
 
-def test_verify_bundle_paths_success(model_id, mocked_settings):
+@pytest.mark.parametrize("checkpoint", [None, "weights.pt", "nested/pretrained.pt"])
+def test_verify_bundle_paths_success(model_id, mocked_settings, checkpoint):
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
@@ -1007,6 +1024,8 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
         f"{model_bucket_s3_path}/config.json",
         f"{model_bucket_s3_path}/meta.json",
     ]
+    if checkpoint:
+        model_files.append(f"{model_bucket_s3_path}/{checkpoint}")
 
     app_folders = {"app_site1", "app_site2"}
 
@@ -1025,6 +1044,9 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
         rel = file.replace(f"{model_bucket_s3_path}/", "", 1)
         if rel == "meta.json":
             continue
+        if rel == checkpoint:
+            expected_dest_keys.add(f"{dest_bucket_s3_path}/server_checkpoints/{rel}")
+            continue
         for app in app_folders:
             expected_dest_keys.add(f"{dest_bucket_s3_path}/{app}/custom/{rel}")
 
@@ -1034,14 +1056,111 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
     # Should not raise
     fl_service.verify_bundle_paths(
         s3=mock_s3,
+        fl_backend=FLBackend.NVFLARE,
         base_rel_paths=base_rel_paths,
         model_files=model_files,
         app_folders=app_folders,
         model_bucket_s3_path=model_bucket_s3_path,
         dest_bucket_s3_path=dest_bucket_s3_path,
+        server_checkpoints={checkpoint} if checkpoint else None,
     )
 
     mock_s3.list_objects.assert_called_once_with(dest_bucket_s3_path)
+
+
+@pytest.mark.parametrize(
+    ("backend", "root_file", "model_dir", "meta_path"),
+    [
+        (FLBackend.NVFLARE, "meta.json", "app/custom", "meta.json"),
+        (FLBackend.FLOWER, "pyproject.toml", "app", "app/meta.json"),
+    ],
+)
+@pytest.mark.parametrize("unexpected_path", [None, ".venv/pyvenv.cfg", "server_checkpoints/stale.pt"])
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_application_verifies_exact_destination(
+    mock_s3,
+    mock_required,
+    mock_is_valid,
+    mocked_settings,
+    model_id,
+    backend,
+    root_file,
+    model_dir,
+    meta_path,
+    unexpected_path,
+):
+    """Both bundlers reject leftover objects, including undeclared server checkpoints."""
+    write_base_tree(mocked_settings.FL_APP_BASE_DIR, backend, "standard", ["app/server.py", root_file])
+    source = f"{mocked_settings.SCANNED_MODEL_FILES_BUCKET}/{model_id}"
+    destination = f"{mocked_settings.FL_APP_DESTINATION_BUCKET}/{model_id}"
+    model_files = [f"{source}/{rel}" for rel in ("config.json", "trainer.py", "meta.json")]
+    expected = {
+        f"{destination}/app/server.py",
+        f"{destination}/{root_file}",
+        f"{destination}/{model_dir}/config.json",
+        f"{destination}/{model_dir}/trainer.py",
+        f"{destination}/{meta_path}",
+    }
+    actual = expected | ({f"{destination}/{unexpected_path}"} if unexpected_path else set())
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_client.list_objects.side_effect = [model_files, [], sorted(actual)]
+    mock_client.object_exists.return_value = False
+    mock_required.return_value = ["config.json", "trainer.py"]
+    bundle = (
+        fl_service.bundle_nvflare_application if backend == FLBackend.NVFLARE else fl_service.bundle_flower_application
+    )
+
+    if unexpected_path:
+        with pytest.raises(RuntimeError, match="1 unexpected files") as error:
+            bundle(model_id)
+        assert f"{destination}/{unexpected_path}" in str(error.value)
+        assert "exactly the expected files" in str(error.value)
+    else:
+        assert bundle(model_id) == destination
+
+
+@mock_aws
+def test_bundle_verification_and_cleanup_cover_keys_after_first_s3_page(monkeypatch):
+    """A stale 1,001st key is rejected; a legitimate large bundle can be listed and cleared."""
+    for variable in ("AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_ENDPOINT_URL", "AWS_ENDPOINT_URL_S3"):
+        monkeypatch.delenv(variable, raising=False)
+    boto = boto3.client("s3", region_name="us-east-1")
+    boto.create_bucket(Bucket="large-bundle")
+    base_rel_paths = [f"app/file{i:04d}.py" for i in range(1000)]
+    for rel in base_rel_paths:
+        boto.put_object(Bucket="large-bundle", Key=f"model/{rel}", Body=b"x")
+    settings = MagicMock(AWS_REGION="us-east-1", S3_PUBLIC_ENDPOINT_URL=None)
+    with patch("flip_api.utils.s3_client.get_settings", return_value=settings):
+        s3 = S3Client()
+        destination = "s3://large-bundle/model"
+        verification = {
+            "s3": s3,
+            "fl_backend": FLBackend.NVFLARE,
+            "base_rel_paths": base_rel_paths,
+            "model_files": [],
+            "app_folders": {"app"},
+            "model_bucket_s3_path": "s3://source/model",
+            "dest_bucket_s3_path": destination,
+        }
+        stale_key = "model/zzz-stale.py"
+        boto.put_object(Bucket="large-bundle", Key=stale_key, Body=b"stale")
+        with pytest.raises(RuntimeError, match="1 unexpected files") as error:
+            fl_service.verify_bundle_paths(**verification)
+        assert f"s3://large-bundle/{stale_key}" in str(error.value)
+
+        result = s3.delete_objects(s3.list_objects(destination))
+        assert len(result["large-bundle"]["Deleted"]) == 1001
+        assert s3.list_objects(destination) == []
+        base_rel_paths.append("app/file1000.py")
+        for rel in base_rel_paths:
+            boto.put_object(Bucket="large-bundle", Key=f"model/{rel}", Body=b"rerun")
+        fl_service.verify_bundle_paths(**verification)
+        assert len(fl_service.get_bundle_urls(destination)) == 1001
 
 
 def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
@@ -1086,6 +1205,7 @@ def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
     with pytest.raises(RuntimeError, match=r"missing files"):
         fl_service.verify_bundle_paths(
             s3=mock_s3,
+            fl_backend=FLBackend.NVFLARE,
             base_rel_paths=base_rel_paths,
             model_files=model_files,
             app_folders=app_folders,
@@ -1922,7 +2042,17 @@ def test_bundle_flower_application_clears_existing_dest(
         f"{model_bucket}/{model_id}/models.py",
     ]
     stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
-    mock_client.list_objects.side_effect = [model_files, stale_dest_files]
+    mock_client.list_objects.side_effect = [
+        model_files,
+        stale_dest_files,
+        [
+            f"{dest_bucket}/{model_id}/app/server_app.py",
+            f"{dest_bucket}/{model_id}/pyproject.toml",
+            f"{dest_bucket}/{model_id}/app/client_app.py",
+            f"{dest_bucket}/{model_id}/app/models.py",
+            f"{dest_bucket}/{model_id}/app/config.json",
+        ],
+    ]
     mock_client.object_exists.return_value = False
 
     result = fl_service.bundle_flower_application(model_id)
