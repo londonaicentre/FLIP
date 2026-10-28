@@ -70,8 +70,8 @@ Credentials are correct (they work from the AWS CLI) and ``status`` is green. In
    x-amzn-ErrorMessage: USER_PASSWORD_AUTH flow not enabled for this client
 
 **Cause.** The Cognito app client and the UI bundle are out of step. The app client accepts only SRP sign-in, which
-the current UI uses, but the bundle served from S3 is older. Terraform updates Cognito straight away, while the UI is
-deployed separately and ``full-deploy`` does not rebuild it.
+the current UI uses, but the bundle served from S3 is older. Terraform updates Cognito straight away. CI publishes the
+UI only after its apply succeeds, and a laptop ``apply`` or ``full-deploy`` does not rebuild it at all.
 
 **Fix.** Rebuild and deploy the UI:
 

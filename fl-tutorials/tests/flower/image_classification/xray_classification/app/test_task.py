@@ -25,7 +25,7 @@ def task(monkeypatch):
     displaced = {name: module for name, module in sys.modules.items() if name == "app" or name.startswith("app.")}
     for name in displaced:
         del sys.modules[name]
-    monkeypatch.syspath_prepend(str(TUTORIALS_ROOT / "flower/xray_classification"))
+    monkeypatch.syspath_prepend(str(TUTORIALS_ROOT / "flower/image_classification/xray_classification"))
     try:
         yield importlib.import_module("app.task")
     finally:

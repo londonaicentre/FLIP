@@ -61,6 +61,10 @@ created for.
 `FLIP_TFSTATE_BUCKET_NAME` at the state bucket. `../scripts/setup-github-environments.sh` seeds the environments and
 verifies the roles' trust policies against the mode before it writes anything.
 
+The Terraform workflows (`terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`) only run in
+`londonaicentre/FLIP` unless you opt in: set the repository variable `TF_CI_ON_FORK` to `true` in your fork or copy
+(`gh variable set TF_CI_ON_FORK --body true`).
+
 ## Changing it
 
 The roles are not managed by the pipeline they authorise, so a change reaches AWS only when you apply it: after

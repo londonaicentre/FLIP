@@ -21,7 +21,7 @@ pull on the first backend, then reuse the same approved project on the second.
    ```
    make e2e_smoke FL_BACKEND=flower
    ```
-   Watch the output for the `project_id=<UUID>` printed near the start — **capture it**; you need it for step 3. Wait for completion and report pass/fail. (Tutorial files default to `fl-tutorials/flower/xray_classification/` for this backend.)
+   Watch the output for the `project_id=<UUID>` printed near the start — **capture it**; you need it for step 3. Wait for completion and report pass/fail. (Tutorial files default to `fl-tutorials/flower/image_classification/xray_classification/` for this backend.)
 
 2. **Switch the stack to FLARE** without disturbing the pulled DICOM (`restart-fl` leaves Orthanc/XNAT untouched):
    ```

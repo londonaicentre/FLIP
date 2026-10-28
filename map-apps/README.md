@@ -33,7 +33,7 @@ packaging this way keeps a FLIP model portable rather than tied to one vendor.
 
 A MAP consumes trained **weights**, not federated-learning configuration, so it is *not*
 backend-specific — the same spleen MAP serves both `fl-tutorials/nvflare/…/3d_spleen_segmentation`
-and `fl-tutorials/flower/3d_spleen_segmentation`. Variation falls along two independent axes:
+and `fl-tutorials/flower/image_segmentation/3d_spleen_segmentation`. Variation falls along two independent axes:
 
 | Varies by **output type** — lives here | Varies by **model** — lives with the app |
 | --- | --- |

@@ -52,7 +52,7 @@ xray_classification/
 ```
 
 `server_app.py` and `strategy.py` are copies of the canonical `standard`
-Flower base bundle at [`fl-apps/flower/standard/app/`](../../../fl-apps/flower/standard/app).
+Flower base bundle at [`fl-apps/flower/standard/app/`](../../../../fl-apps/flower/standard/app).
 They live here so that `flwr run` from this tutorial can resolve
 `app.server_app` / `app.strategy` locally — FLIP's
 `bundle_flower_application` overlays the same base files at deploy time, so
@@ -89,7 +89,7 @@ adopts whatever already listens on the local Control API port, so the script ref
 run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
 of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
 it. See the
-[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
+[3D spleen segmentation README](../../image_segmentation/3d_spleen_segmentation/README.md) for the details.
 
 ### On the Flower containers, by hand
 
@@ -187,7 +187,7 @@ Two things worth knowing before you change the metric:
 
 Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The
 `flip_local_dp_mod` mod from
-[`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py) clips the local update to a
+[`flip.flower.privacy`](../../../../flip-utils/flip/flower/privacy.py) clips the local update to a
 fixed L2 norm and adds Gaussian noise scaled to the configured budget:
 
 ```
