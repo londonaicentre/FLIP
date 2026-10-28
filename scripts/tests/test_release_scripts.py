@@ -453,17 +453,15 @@ class Prepare(unittest.TestCase):
         assert not prepare.counts_as_change("trust/trust-api/README.md", "trust/trust-api")
         assert not prepare.counts_as_change("flip-api-other/x.py", "flip-api")
 
-    def test_plan_bumps_changed_services_only(self):
-        changed = ["flip-api/src/a.py", "trust/trust-api/tests/b.py", "flip-utils/flip/c.py", "flip-ui/src/d.vue"]
+    def test_plan_sets_every_service_to_the_release(self):
+        versions = prepare.plan("v9.9.0", "v9.8.0", "flip-utils-v99.0.0", ["flip-api/src/a.py"], ROOT)
+        assert versions == {"pyproject.toml": "9.9.0"} | dict.fromkeys(prepare.SERVICES, "9.9.0")
+
+    def test_plan_bumps_flip_utils_only_when_it_changed(self):
+        changed = ["flip-utils/flip/c.py"]
         versions = prepare.plan("v9.9.0", "v9.8.0", "flip-utils-v99.0.0", changed, ROOT)
-        assert versions["pyproject.toml"] == "9.9.0"
-        assert set(versions) == {
-            "pyproject.toml",
-            "flip-api/pyproject.toml",
-            "flip-ui/package.json",
-            prepare.FLIP_UTILS,
-        }
         assert versions[prepare.FLIP_UTILS] == "99.1.0"  # strictly above the last flip-utils tag
+        assert prepare.FLIP_UTILS not in prepare.plan("v9.9.0", "v9.8.0", None, ["flip-utils/tests/t.py"], ROOT)
 
     def test_unlabelled_prs_start_after_the_previous_tag(self):
         prs = [{"number": 1, "title": "a", "labels": []}, {"number": 2, "title": "b", "labels": [{"name": "x"}]}]
