@@ -144,9 +144,9 @@ def main() -> None:
 
     env = SimEnv(
         num_clients=args.n_clients,
-        # One site at a time: a site peaks at ~20 GB of GPU memory, so two at once overflow a 32 GB
-        # card (seen as CUDNN_STATUS_INTERNAL_ERROR in backward, not as an out-of-memory error).
-        num_threads=1,
+        # A thread per site: with fewer, the simulator rebuilds each client between rounds, which
+        # drops ReconstructFullModel's round-0 copy. At BATCH_SIZE 1 two sites fit one 32 GB card.
+        num_threads=args.n_clients,
         workspace_root=args.workspace,
     )
     run = recipe.execute(env)

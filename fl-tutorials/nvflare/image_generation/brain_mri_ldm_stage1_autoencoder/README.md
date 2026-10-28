@@ -216,8 +216,8 @@ uv run --project ../../../../flip-utils --extra full --group diffusion python jo
 
 With the dataset downloaded (see *Data requirements*), run `make sim` here, or
 `make -C fl-tutorials run-tutorial TUTORIAL=brain_mri_ldm_stage1_autoencoder` from the repository root. The simulator
-runs one site at a time (a site peaks at about 20 GB of GPU memory) and writes its workspace, final
-global model included, under `/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/`.
+runs the sites side by side (at the shipped `BATCH_SIZE` of 1, about 10 GB of GPU memory each) and writes its
+workspace, final global model included, under `/tmp/nvflare/brain_mri_ldm_stage1_autoencoder/`.
 
 ### Overriding rounds and clients
 
