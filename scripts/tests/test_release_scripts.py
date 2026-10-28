@@ -276,7 +276,9 @@ class Gates(unittest.TestCase):
         assert m["tutorials"][0] == {"name": "xray_classification", "passed": True, "seconds": 60}
         assert m["tutorials"][1]["passed"] is False
         assert m["tutorials"][1]["seconds"] == 40
-        flower = gates.tutorial_metrics([(0.0, "🚀 Running Flower tutorial fl-tutorials/flower/xray_classification")])
+        flower = gates.tutorial_metrics(
+            [(0.0, "🚀 Running Flower tutorial fl-tutorials/flower/image_classification/xray_classification")]
+        )
         assert flower["tutorials"][0]["name"] == "xray_classification"
 
     def test_smoke_metrics(self):

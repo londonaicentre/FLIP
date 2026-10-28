@@ -86,14 +86,14 @@ adopts whatever already listens on the local Control API port, so the script ref
 run to a SuperLink another checkout left behind; and `flwr run --stream` returns 0 whatever became
 of the run, so the script's exit status is the run's own terminal status as the SuperLink reports
 it. See the
-[3D spleen segmentation README](../3d_spleen_segmentation/README.md) for the details.
+[3D spleen segmentation README](../../image_segmentation/3d_spleen_segmentation/README.md) for the details.
 
 ### On the Flower containers, by hand
 
 From the repository root:
 
 ```bash
-make -C fl-tutorials/flower/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt into the app
+make -C fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt into the app
 make -C fl-services/flower build   # build the fl-base / superlink / supernode images
 make -C fl-services/flower up      # start fl-api, superlink, supernode-1, supernode-2
 ```
