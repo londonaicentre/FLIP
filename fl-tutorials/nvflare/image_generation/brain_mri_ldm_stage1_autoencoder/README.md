@@ -160,12 +160,17 @@ other tutorials: enough to run the whole job end to end in minutes, far too litt
 reconstruct a brain. The published autoencoder was trained with this tutorial for 10 rounds of 25
 epochs, at the shipped constant learning rate, on 321 brain MR studies (1,284 volumes) split between
 two simulated sites; the run took 12 h 28 min on one RTX 5090. To train your own, raise the two
-counts in `config.json`:
+counts in `config.json`, and set the batch it was trained with:
 
 ```json
 "GLOBAL_ROUNDS": 10,
-"LOCAL_ROUNDS": 25
+"LOCAL_ROUNDS": 25,
+"BATCH_SIZE": 2
 ```
+
+The shipped `BATCH_SIZE` is 1 so that two trusts sharing one 32 GB GPU fit: about 10 GB each, where at
+2 they run out of memory. The optimiser step is unchanged, since gradients accumulate to 8 volumes
+either way; only the discriminator's BatchNorm sees one volume at a time instead of two.
 
 It is `autoencoder/v3.1` in [`aicentreflip/tutorials-brain-mri-latent-diffusion`](https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion),
 whose model card gives the full recipe and how it scores on held-out patients.

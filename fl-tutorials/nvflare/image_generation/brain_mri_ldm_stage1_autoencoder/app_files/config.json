@@ -6,7 +6,7 @@
     "LOCAL_ROUNDS": 3,
     "LR_START": 0.0001,
     "VAL_SPLIT": 0.2,
-    "BATCH_SIZE": 2,
+    "BATCH_SIZE": 1,
     "SAVE_DEBUG_SAMPLES": false,
     "DEBUG_PLOT_EVERY": 100,
     "MODALITIES": [
