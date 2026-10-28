@@ -218,6 +218,24 @@ For a genuine same-day patch of an active CVE, the cooldown can be bypassed for 
 Any override must be justified in the pull-request description. Use it only for security patches that genuinely
 cannot wait 72 hours.
 
+#### Security floors
+
+Upgrading the lockfile clears a Dependabot alert; a floor keeps it cleared. Without one, a later `uv lock` that has to
+re-resolve the package (because a new dependency caps it, say) can quietly pick a vulnerable release again. With one,
+that `uv lock` fails instead. When you fix an alert:
+
+- **Raise any floor the package already has** to the fixed version: a dependency specifier, a `[tool.uv]
+  constraint-dependencies` entry, or an `overrides` entry in `flip-ui/package.json`.
+- **Add one in any project that ships**, meaning a service image, an FL image, `flip-utils`, `flip-ui` or
+  `trust/xnat/export-mask`. A transitive Python fix goes in `constraint-dependencies` with the advisory IDs beside it;
+  a transitive npm fix goes in `overrides`.
+- **Leave dev and docs tooling lock-only** (`docs/`, `deploy/providers/AWS/`, dev-only groups) unless the first rule
+  applies. None of it ships.
+
+`constraint-dependencies` is read only by uv. It guards this repo's lockfiles, not a downstream `pip install
+flip-utils`, so carry the floor by hand into any install that skips `[tool.uv]`, such as the `pip install` in
+`fl-services/flower/fl-base/Dockerfile`.
+
 ### Environment variables
 
 Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses
@@ -728,8 +746,8 @@ The previous `make patch-aws-creds` target is gone along with the chart's in-clu
 see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
 removed values.
 
-The chart has a `check_status.py` smoke test script (which also compares the running xnat-web
-pod's plugin jars against `xnat.web.plugins.urls`), a `scripts/smoke-cstore.sh` DICOM ingest
+The chart has a `check_status.py` smoke test script (which also checks that XNAT on each running
+xnat-web pod lists every plugin and answers its DQR route), a `scripts/smoke-cstore.sh` DICOM ingest
 smoke, and a `sync_k8s_kit.py` script that syncs a registered trust's kit file (hub registration
 itself still goes through `register_trust` / `make register-trusts`) into the chart's Kubernetes
 Secret and a Helm values override. See the [K8s README](trust/deploy/helm/README.md) for details.
@@ -917,7 +935,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 
 The release is not deployed by merging. Two steps, in this order:
 
-1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui HUB=prod` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
 1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes

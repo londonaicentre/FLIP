@@ -64,11 +64,11 @@ NIFTI_APPS = (
         "nvflare/image_evaluation/3d_spleen_segmentation_evaluation/app_files/transforms.py",
         factories=("get_eval_transforms",),
     ),
-    NiftiApp("flower_spleen", "flower/3d_spleen_segmentation/app/transforms.py"),
-    NiftiApp("flower_spleen_eval", "flower/3d_spleen_segmentation_evaluation/app/transforms.py"),
+    NiftiApp("flower_spleen", "flower/image_segmentation/3d_spleen_segmentation/app/transforms.py"),
+    NiftiApp("flower_spleen_eval", "flower/image_evaluation/3d_spleen_segmentation_evaluation/app/transforms.py"),
     NiftiApp(
         "flower_prostate",
-        "flower/3d_prostate_segmentation/app/dataset.py",
+        "flower/image_segmentation/3d_prostate_segmentation/app/dataset.py",
         factories=("build_loader",),
         keys=("image", "whole_gland", "pz_tz"),
     ),
@@ -80,7 +80,7 @@ NIFTI_APPS = (
 )
 _CHAINS = [pytest.param(app, factory, id=f"{app.app_id}/{factory}") for app in NIFTI_APPS for factory in app.factories]
 # This reference-only host script runs inference instead of returning an app transform chain.
-_EXCLUDED_FACTORIES = {("flower/3d_prostate_segmentation/nnunet_infer.py", "infer_loop")}
+_EXCLUDED_FACTORIES = {("flower/image_segmentation/3d_prostate_segmentation/nnunet_infer.py", "infer_loop")}
 
 
 @pytest.fixture(scope="session")

@@ -207,6 +207,27 @@ the kit's ``ORTHANC_USERNAME`` and ``ORTHANC_PASSWORD``, as Compose does; Orthan
    ``values-secrets.yaml`` holds live trust credentials. It is gitignored; never commit it. The tracked
    ``values-secrets.yaml.example`` is only a field reference with every slot empty.
 
+XNAT's admin password
+=====================
+
+XNAT starts with the login ``admin`` / ``admin``. After every deploy, the ``xnat-init`` job signs in with the kit's
+``XNAT_ADMIN_INITIAL_PASSWORD`` while XNAT still accepts it, and changes it to the kit's ``XNAT_ADMIN_PASSWORD``.
+From then on XNAT refuses ``admin``, which is expected and shows as refused sign-ins in XNAT's log, and the job
+signs in with ``XNAT_ADMIN_PASSWORD``. So before the first deploy, set ``XNAT_ADMIN_PASSWORD`` to the
+trust's own password (for example from ``openssl rand -hex 24``) and leave ``XNAT_ADMIN_INITIAL_PASSWORD=admin``.
+
+**A trust still on** ``admin``. Earlier charts could not change the password, so a trust they installed still signs
+in with ``admin``. Set a new ``XNAT_ADMIN_PASSWORD`` in the kit, generate the secrets file again and deploy (Step 4).
+XNAT still accepts ``admin``, so the job changes the password without a failed sign-in.
+
+**Changing it later.** Change it in XNAT first, signed in as the admin user with the current password. Then put the same value in the kit's
+``XNAT_ADMIN_PASSWORD``, generate the secrets file again and deploy.
+
+.. warning::
+
+   Do not change only the kit. XNAT then accepts neither password, the ``xnat-init`` job fails, and every retry
+   counts towards XNAT locking the admin account after about 20 failed sign-ins.
+
 *************************************
 Step 3 — Stage the FL participant kit
 *************************************
@@ -332,10 +353,8 @@ neither implies the other.
    make -C trust/deploy/helm smoke-cstore
 
 ``status``
-   Shows the Helm release and runs the chart's health checks: pod readiness, volumes, HTTP endpoints, and the XNAT
-   plugins. It fails when the plugin files in the running ``xnat-web`` pod differ from the release's
-   ``xnat.web.plugins.urls`` (no upgrade has rolled ``xnat-web`` since the list changed), or when XNAT did not load
-   one of them.
+   Shows the Helm release and runs the chart's health checks: pod readiness, volumes, HTTP endpoints, and that XNAT
+   in each running ``xnat-web`` pod lists every plugin and answers its DQR route.
 
 ``smoke-cstore``
    Sends a real DICOM C-STORE from Orthanc to XNAT and checks XNAT received it. It needs an Orthanc that already
@@ -422,7 +441,7 @@ cohort queries that name concepts through ``omop.concept`` return nothing. The x
 ``query_novocab.sql`` for this, and ``make e2e_smoke`` on a dev stack (``HUB`` unset) smokes such a trust with it.
 With ``HUB`` set, pass it by hand:
 ``QUERY_FILE=fl-tutorials/nvflare/image_classification/xray_classification/query_novocab.sql`` (Flower:
-``fl-tutorials/flower/xray_classification/query_novocab.sql``).
+``fl-tutorials/flower/image_classification/xray_classification/query_novocab.sql``).
 
 .. seealso::
 
@@ -581,6 +600,9 @@ Troubleshooting
    * - Orthanc fails with ``CreateContainerConfigError``
      - ``orthanc-registered-users`` is empty in ``values-secrets.yaml``: the kit lacks ``ORTHANC_USERNAME`` or
        ``ORTHANC_PASSWORD`` (Step 2).
+   * - ``xnat-init`` fails with ``neither admin password authenticates``
+     - XNAT accepts neither the kit's ``XNAT_ADMIN_INITIAL_PASSWORD`` nor its ``XNAT_ADMIN_PASSWORD`` (see
+       `XNAT's admin password`_). Correct the kit before deploying again: every attempt counts towards the lockout.
    * - Deploy refused with ``conflict with "kubectl-patch"``
      - Run ``make -C trust/deploy/helm patch-kit-secrets KIT=<CODE> HUB=<env>`` once, then deploy again. Do not use
        ``--force-conflicts``: it would overwrite the live keys.
