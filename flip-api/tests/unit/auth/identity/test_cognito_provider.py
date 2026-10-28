@@ -1063,6 +1063,42 @@ class TestResetMfa:
             assert fetch.call_count == 2
 
 
+class TestResetPassword:
+    """Tests for ``reset_password`` (re-invite a never-signed-in user, else send a reset code)."""
+
+    USERNAME = "user@example.com"
+
+    def test_invited_user_gets_the_invite_resent(self, provider, cognito_client):
+        """ForgotPassword silently sends nothing for FORCE_CHANGE_PASSWORD; re-send the invite instead."""
+        cognito_client.admin_get_user.return_value = {"UserStatus": "FORCE_CHANGE_PASSWORD"}
+
+        provider.reset_password(self.USERNAME)
+
+        cognito_client.admin_create_user.assert_called_once_with(
+            UserPoolId=USER_POOL_ID, Username=self.USERNAME, MessageAction="RESEND"
+        )
+        cognito_client.forgot_password.assert_not_called()
+
+    def test_confirmed_user_gets_a_reset_code(self, provider, cognito_client):
+        cognito_client.admin_get_user.return_value = {"UserStatus": "CONFIRMED"}
+
+        provider.reset_password(self.USERNAME)
+
+        cognito_client.forgot_password.assert_called_once_with(ClientId=APP_CLIENT_ID, Username=self.USERNAME)
+        cognito_client.admin_create_user.assert_not_called()
+
+    def test_client_error_raises_identity_provider_error(self, provider, cognito_client, cognito_logger):
+        cognito_client.admin_get_user.return_value = {"UserStatus": "CONFIRMED"}
+        cognito_client.forgot_password.side_effect = _client_error("LimitExceededException", "boom", "ForgotPassword")
+
+        with pytest.raises(IdentityProviderError) as exc_info:
+            provider.reset_password(self.USERNAME)
+
+        assert str(exc_info.value) == "Failed to reset user password"
+        assert "boom" not in str(exc_info.value)
+        cognito_logger.exception.assert_called_once()
+
+
 class TestFilterEnabledUsers:
     """Tests for the concrete ``filter_enabled_users`` (base class, over ``list_users``)."""
 
