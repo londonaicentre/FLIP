@@ -287,6 +287,25 @@ def test_the_observer_role_can_read_the_event_table():
     assert "REVOKE SELECT ON EVENT TABLE" in block
 
 
+def test_only_the_observer_and_deploy_roles_can_read_the_logs():
+    """The event table holds every service's logs, so a running service must not read it.
+
+    SPCS services run as FLIP_<CODE>_SVC, which may inherit OMOP_READER and nothing else. OBSERVER,
+    which holds SELECT on the event table, is granted to the deploy role only (so an operator
+    deploying can read logs, as the first live spike did) and never into the service hierarchy.
+    """
+    grants = resource_blocks(all_terraform(), "snowflake_grant_account_role")
+    into_svc = [b for b in grants if "parent_role_name = snowflake_account_role.svc.name" in b]
+    assert len(into_svc) == 1, "SVC must inherit exactly one role"
+    assert "role_name        = snowflake_account_role.omop_reader.name" in into_svc[0]
+
+    for block in grants:
+        if "snowflake_account_role.observer.name" in block and "for_each" not in block:
+            assert "parent_role_name = snowflake_account_role.deploy.name" in block, block
+    event_table_grants = re.findall(r"GRANT SELECT ON EVENT TABLE \S+ TO ROLE \$\{([^}]+)\}", all_terraform())
+    assert event_table_grants == ["snowflake_account_role.observer.name"]
+
+
 def test_a_resource_monitor_caps_warehouse_credits():
     block = hcl_block(source("cost.tf"), 'resource "snowflake_resource_monitor" "trust"')
     assert "credit_quota = var.credit_quota" in block
