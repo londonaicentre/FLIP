@@ -139,7 +139,7 @@ extractor and planner, adapted — produces both from the partitioned site folde
 ```bash
 uv sync --group planning          # nnunetv2 and its dependencies, for the planner only
 make plan                         # pooled over data/prostate/sites/{ZGT,PCNN,RUMC}; copies the plan into app/
-make plan PLAN_SITES=../../data/prostate/sites/RUMC   # one site, for comparison
+make plan PLAN_SITES=../../../data/prostate/sites/RUMC   # one site, for comparison
 ```
 
 `make plan` needs the dcm2niix-converted site tree

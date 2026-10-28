@@ -137,3 +137,19 @@ def test_no_orthanc_users_without_both_halves_of_the_login():
     _, secrets = generate_values.build_values({"ORTHANC_USERNAME": "admin"})
 
     assert "orthanc-registered-users" not in secrets
+
+
+def test_the_two_xnat_admin_passwords_reach_two_keys():
+    """First install changes XNAT's factory password to the trust's own, so the two stay apart (FLIP#1692)."""
+    kit = {"XNAT_ADMIN_INITIAL_PASSWORD": "admin", "XNAT_ADMIN_PASSWORD": "own"}  # pragma: allowlist secret
+    _, secrets = generate_values.build_values(kit)
+
+    assert (secrets["xnat-admin-initial-password"], secrets["xnat-admin-password"]) == ("admin", "own")
+
+
+def test_a_kit_without_the_initial_password_leaves_its_key_out():
+    """The chart then uses XNAT's factory `admin`, as for a Secret made before the key existed."""
+    _, secrets = generate_values.build_values({"XNAT_ADMIN_PASSWORD": "own"})
+
+    assert "xnat-admin-initial-password" not in secrets
+    assert secrets["xnat-admin-password"] == "own"  # pragma: allowlist secret
