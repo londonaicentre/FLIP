@@ -15,8 +15,8 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend (all FLARE ones are Client-API apps): fl-tutorials/nvflare/{image_*,tabular_classification}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,3d_prostate_segmentation,ehr_risk_prediction} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, prostate zonal seg (PI-CAI, nnU-Net-planned, Flower only), diffusion, EHR risk prediction (tabular/OMOP-only, Synthea open data → `make -C trust load-synthea-ehr`). Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels / upload-prostate-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py), the one verification gate (verify_omop_tables.py --project <name>) and, since #1221, the deterministic NIfTI→DICOM writer + synthetic identities (dicom_writer.py, synthetic_identity.py) the converters share. fl-tutorials/datasets/arkplus/ downloads the Ark+ chest X-ray splits (TRAIN + HOLD-OUT) backing the three Ark+ tutorials; fl-tutorials/datasets/xrays_mini_300/ downloads the reference x-ray dataset backing xray_classification (both backends). spleen and brain_mri carry the full chain from a public MSD download (`convert-<dataset>-to-dicom`, `create-<dataset>-metadata-table`, `build-<dataset>-omop-tables`, `build-<dataset>-canonical`, `verify-<dataset>-dicom`, `seed-<dataset> KIT=`, plus the reproducible-path/verification targets); their DICOM sets are regenerated locally and never published (only the OMOP tables + metadata table go to HF). cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,fed_opt} (all Client-API), fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-tutorials/       # FL tutorials per backend (all FLARE ones are Client-API apps): both trees are <backend>/<category>/<name> (#1500): fl-tutorials/nvflare/{image_*,tabular_classification}/…, fl-tutorials/flower/{image_classification/xray_classification,image_segmentation/{3d_spleen_segmentation,3d_prostate_segmentation},image_evaluation/3d_spleen_segmentation_evaluation,tabular_classification/ehr_risk_prediction} (root Makefile forwards by FL_BACKEND; a tutorial is addressed by <name> on both); xray classification, spleen seg/eval, prostate zonal seg (PI-CAI, nnU-Net-planned, Flower only), diffusion, EHR risk prediction (tabular/OMOP-only, Synthea open data → `make -C trust load-synthea-ehr`). Shared dataset tooling in fl-tutorials/datasets/ (download/derive/enrich, single copy for both backends — the download-*-data + upload-spleen-labels / upload-prostate-labels targets), outputs in the shared gitignored fl-tutorials/data/. fl-tutorials/datasets/utils/ holds the OMOP CDM contract shared by the per-dataset generation chains (#1092): schemas, concept mappings, the per-project surrogate-key blocks (omop_ids.py), the one verification gate (verify_omop_tables.py --project <name>) and, since #1221, the deterministic NIfTI→DICOM writer + synthetic identities (dicom_writer.py, synthetic_identity.py) the converters share. fl-tutorials/datasets/arkplus/ downloads the Ark+ chest X-ray splits (TRAIN + HOLD-OUT) backing the three Ark+ tutorials; fl-tutorials/datasets/xrays_mini_300/ downloads the reference x-ray dataset backing xray_classification (both backends). spleen and brain_mri carry the full chain from a public MSD download (`convert-<dataset>-to-dicom`, `create-<dataset>-metadata-table`, `build-<dataset>-omop-tables`, `build-<dataset>-canonical`, `verify-<dataset>-dicom`, `seed-<dataset> KIT=`, plus the reproducible-path/verification targets); their DICOM sets are regenerated locally and never published (only the OMOP tables + metadata table go to HF). cxr carries the OMOP conversion only (`reproduce-cxr-omop`) because image generation lives in the private londonaicentre/xraycat. Plus fl-tutorials/tests/ — CPU-only pytest over the tutorial transform chains (#871) plus a static `min_clients` wiring guard covering fl-apps/flower too, run by `make -C fl-tutorials test`
 ├── map-apps/           # MONAI Application Package (MAP) templates for packaging FLIP-trained models for clinical deployment: map-apps/{classification,segmentation} (DICOM SR / DICOM SEG output templates) + map-apps/tests/
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
@@ -27,12 +27,13 @@ FLIP/
 │   ├── xnat/           # Mocked XNAT medical-imaging archive
 │   ├── observability/  # Grafana + Loki monitoring stack (alloy/grafana/loki)
 │   └── deploy/         # The trust node in its shapes (#1213): compose_trust.*.yml (Compose on a host) plus the three below
-│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled). On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. Verify the DICOM path with `make -C trust/deploy/helm status` (compares the running xnat-web pod's plugin jars against `xnat.web.plugins.urls`, and fails one XNAT did not load) and `smoke-cstore` (a real C-STORE through the mocked PACS, then greps the receiver's `dicom.log`) — a C-ECHO never reaches XNAT's importer and passes while every store aborts
+│       ├── helm/       # The same stack as Helm chart `flip-trust` for Kubernetes. Holds no AWS credentials and never fetches the FL participant kit: stage it onto the node first with `make -C trust/deploy/helm stage-kit KIT_SRC=<kit dir> KUBE_CONTEXT=<ctx>`, then deploy with `flClient.kitHostPath` pointing at it (required whenever flClient.enabled with the default `flClient.kit.source=hostPath`). On a managed node pool (AKS) the kit lives in a Secret instead: `make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir>` (a Flower kit must hold only `ca.crt` and its own credential) and `flClient.kit.source=secret`, which `values-aks.yaml` sets along with Postgres data below `lost+found` and the S3 vocab load off. Platform overlays go in `PLATFORM_VALUES`, or in the kit file's `K8S_PLATFORM_VALUES` so every deploy and upgrade of that trust keeps them. On the AWS side the EC2 equivalent is `make stage-fl-kit KIT=<CODE>`, which re-stages for the trust's REGISTERED slot after `register-trusts`. Deploys carry one wait budget, `HELM_TIMEOUT` (default `30m`), covering both the `xnat-init` Helm hook in `deploy` and the `kubectl wait` in `xnat-init` — set below the job's real duration it fails *after* Helm has applied the new spec, so the error names helm rather than the wait that expired (FLIP#1228). `xnat-web` is `strategy: Recreate` for a related reason: a singleton on a ReadWriteOnce volume cannot surge a second pod, so under the default RollingUpdate the rollout stalls and the old pod keeps serving the old plugin jars however long the deploy waits. XNAT runs the plugins built into the `xnat-web` image and downloads none at start, so a plugin bump is one change on every platform: `trust/xnat/artifacts.manifest`, then a new image. Verify the DICOM path with `make -C trust/deploy/helm status` (checks XNAT on every running xnat-web pod lists every plugin and answers its DQR route) and `smoke-cstore` (a real C-STORE through the mocked PACS, then requires the receiver's own evidence that the object landed — a new `received.log` line or prearchive object — and fails on an importer error in `dicom.log` or the xnat-web log; `dicom.log` is XNAT's error log, so its growth never counts as receipt, FLIP#1411) — a C-ECHO never reaches XNAT's importer and passes while every store aborts. `make -C trust/deploy/helm selftest` runs the trust self-test checklist (the VM node self-test's, FLIP#1406) against the deployed release and writes a JSON + markdown report (FLIP#1390)
 │       ├── snowflake/  # The same stack as Snowpark Container Services specs (epic #1589, #1582): one SPCS service per container, rendered from the kit by `render_specs.py`; `make -C trust/deploy/snowflake render|mirror-images|sync-kit|up|down|suspend|status|selftest KIT=<CODE>` (`DRY_RUN=true` prints the SQL). Object names come from `naming.py`, the same contract the Terraform root uses. Secrets reach Snowflake only through `sync-kit` (SQL on stdin, never argv); services are `CREATE OR ALTER`, never `OR REPLACE`, which would drop the xnat-db / Orthanc block volumes
-│       └── ansible/    # roles/ — ONE set of trust-host roles (base packages, docker, dirs with the uid rules, FL kit by source s3|precreate|none, observability config, S3 vocab) composed by onprem.yml (site-owned host; no data — `make -C trust up-trust` seeds it) and by deploy/providers/AWS/site.yml (EC2; adds inventory/AWS CLI/bastion/CloudWatch and its own seed play, finds the roles via its ansible.cfg). onprem.yml is still driven by `make -C deploy/providers/AWS provision-local-trust` (needs the hub env file — the known exception to "providers = Terraform only")
+│       └── ansible/    # roles/ — ONE set of trust-host roles (base packages, docker, dirs with the uid rules, FL kit by source s3|precreate|none, observability config, S3 vocab) composed by onprem.yml (site-owned host; no data — `make -C trust up-trust` seeds it) and by deploy/providers/AWS/site.yml (EC2; adds inventory/AWS CLI/bastion/CloudWatch and its own seed play, finds the roles via its ansible.cfg). onprem.yml is still driven by `make -C deploy/providers/AWS provision-local-trust KIT=<CODE> HUB=<hub>` (needs the hub env file — the known exception to "providers = Terraform only")
 ├── deploy/             # Central Hub Docker Compose files (dev/prod, flower/nvflare) + deploy/keycloak/ (the dev identity provider's realm, FLIP#919); FL network provisioning lives under fl-services/<backend>/
 │   └── providers/      # Infrastructure provisioning ONLY (Terraform per cloud); node shapes live under trust/deploy/
-│       └── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       ├── AWS/        # Terraform/OpenTofu IaC for the hub + optional trust EC2, plus the EC2 host play site.yml
+│       └── azure/      # Azure trust node (#1390): bootstrap root (state, budget alert; no outbound IP, the node's network owns its egress), modules/network, vm root whose cloud-init installs flip-node (provisions with trust/deploy/ansible/azure.yml, runs the hubless self-test), and aks root (a one-node AKS cluster for the flip-trust chart, instead of the VM); driven by its own Makefile, the VM over Run Command, AZ_SUBSCRIPTION mandatory
 ├── docs/               # Sphinx documentation (ReadTheDocs)
 └── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
 ```
@@ -91,7 +92,7 @@ make restart-no-trust      # Restart flip-api only (forwards DEBUG to `make -C f
 make build                 # Build all Docker images (standalone, --no-cache; does not start)
 make lock                  # Regenerate every uv.lock from its pyproject.toml
 make ui                    # Start UI only
-make ui-off                # Stop the UI container (no-op message when PROD is set — flip-ui runs from S3+CloudFront)
+make ui-off                # Stop the UI container (no-op message when HUB is set — flip-ui runs from S3+CloudFront)
 make up-pgadmin            # Start pgadmin only
 make reset-keycloak        # Recreate the dev identity provider from deploy/keycloak/flip-realm.json (after editing it)
 make clean                 # Remove all stopped containers, networks, and images
@@ -111,20 +112,25 @@ make undeploy-trust-k8s    # Remove trust services from Kubernetes
 
 #### Dev image sourcing: pull-by-default
 
-In development (`PROD` unset), `make up` **pulls** the repo-built services
-(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+In development (`HUB` unset), `make up` **pulls** the repo-built services
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`, `omop-db`) from GHCR
 rather than building them — they carry `image:` + `pull_policy: always` in the dev
 compose, with local `src/` bind-mounted on top so live reload still runs your
 working copy. Pass `BUILD=true` (e.g. `make up BUILD=true`) to rebuild from source
 instead — required after a dependency (`uv.lock`/`pyproject.toml`) or Dockerfile
-change, since those live in the image layer, not the mounted `src/`.
+change, since those live in the image layer, not the mounted `src/`. It also builds the
+XNAT images (`xnat-web`, `xnat-db`, `xnat-nginx`, via `make -C trust/xnat build`, which fetches
+the WAR and plugins) and deploys them at the unpublished `:dev` tag — the swarm agent re-pulls a
+tag on every deploy and would replace a local `:stag` build with the registry's. Tags are
+daemon-wide, so a second stack on the host (a release check) passes its own: `XNAT_TAG=<tag>` on
+the command line (e.g. `make up BUILD=true XNAT_TAG=rel0130`).
 
 - **Prerequisite:** be logged into GHCR (`docker login ghcr.io`) and have the
   `${DOCKER_TAG}` tag published (dev defaults to `:stag`, the `develop` build).
   A failed pull fails the bring-up; it does not fall back to a build.
 - **`flip-ui` is the exception** — it has no published GHCR image, so it always
   builds locally. `make build` remains the standalone `--no-cache` builder.
-- Stag/prod are unchanged: `PROD=stag|true` selects the prod compose (baked
+- Stag/prod are unchanged: `HUB=stag|prod` selects the prod compose (baked
   `image:`-only services, no mounts).
 
 ### Testing
@@ -156,6 +162,7 @@ make e2e_smoke                                  # defaults track FL_BACKEND (def
 make e2e_smoke FL_BACKEND=flower
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>" # reuse an approved project, skip the ~6 min re-pull
 make e2e_smoke EXTRA_ARGS="--no-imaging"        # tabular-only project (has_imaging=false, FLIP#1071)
+make e2e_smoke EXTRA_ARGS="--trusts <CODE>"  # HUB unset: vocabulary-free query_novocab.sql, so a Helm NO_VOCAB_LOAD=1 trust works
 ```
 
 The spleen and prostate tutorials additionally need a **data-enrichment** step (label upload to XNAT)
@@ -199,6 +206,29 @@ make checkov-lint          # Static checkov security lint over deploy/providers/
 make tflint-lint           # Static tflint lint over deploy/providers/AWS (unused declarations, provider constraints, AWS values; credential-free)
 make -C deploy/providers/AWS lint   # Three of validate_terraform.yml's checks over that tree (terraform fmt, TFLint, Checkov); no env file needed (FLIP#1440)
 ```
+
+### Azure trust node (FLIP#1390)
+
+```bash
+make -C deploy/providers/azure help                                   # every target
+make -C deploy/providers/azure bootstrap AZ_SUBSCRIPTION="<name>" STATE_SA=<unique> ALERT_EMAIL=<you>
+make -C deploy/providers/azure init plan apply AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure selftest-kit AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # pack the FL kit HERE, put it in the kit drop
+make -C deploy/providers/azure selftest report AZ_SUBSCRIPTION="<name>" FL_BACKEND=nvflare  # node fetches that kit and self-tests on it
+make -C deploy/providers/azure kit-upload AZ_SUBSCRIPTION="<name>" TARBALL=<flip-trust-kit-….tar.gz>
+make -C deploy/providers/azure join AZ_SUBSCRIPTION="<name>" NAME=<blob> KIT=<kit> HUB=<env>  # install a hub-registered kit + up-onprem-trust
+make -C deploy/providers/azure destroy AZ_SUBSCRIPTION="<name>"
+make -C deploy/providers/azure aks-init aks-plan aks-apply AZ_SUBSCRIPTION="<name>"  # AKS instead of the VM (refused while the VM exists)
+make -C deploy/providers/azure aks-start AZ_SUBSCRIPTION="<name>"     # start, then admit your current IP to the API server (aks-allow-ip after an IP change; aks-stop, aks-destroy)
+make -C deploy/providers/azure aks-join TARBALL=<kit tarball> KIT=<CODE> HUB=<env> [MOCK_PACS=1]  # kit file + values-secrets + kit Secret, then aks-deploy (the chart with values-aks/-small-node, no vocab load); aks-selftest, aks-clear-jobs
+make -C deploy/providers/azure test lint                              # credential-free checks (CI: validate_terraform.yml "Azure node checks")
+make -C trust selftest-node FL_BACKEND=nvflare                        # on the node itself: hubless self-test + report
+```
+
+`AZ_SUBSCRIPTION` is mandatory and never defaults to the CLI's subscription; no target skips
+Terraform's confirmation. The node receives kits only through the **kit drop** (`modules/kit_drop`: shared
+keys off, firewall = node subnet + operator IP, one-day blob expiry), fetched with its managed identity — never
+provisioned on the node and never in a Run Command parameter. Detail: [`deploy/providers/azure/README.md`](deploy/providers/azure/README.md).
 
 ### Debugging
 
@@ -244,6 +274,11 @@ assembles one mp4 (local dev tool, not run in CI; Playwright segments plus off-c
 Prerequisites, the `DEMO_ARGS` flags and the demo users:
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#demo-video-recorder).
 
+`make -C trust/monailabel-demo demo-video KIT=<CODE> XNAT_EXPERIMENT=<session>` records the MONAI Label
+walkthrough on a live trust (Playwright on the trust host: spleen CT segmented in the XNAT OHIF viewer,
+exported, converted by `export_mask`); it fails unless the NIfTI appears. See
+[`trust/monailabel-demo/README.md`](trust/monailabel-demo/README.md).
+
 ### Database migrations (flip-api)
 
 flip-api's PostgreSQL schema is owned by **Alembic** (`flip-api/src/flip_api/db/migrations/`), not `SQLModel.metadata.create_all`. The flip-api entrypoint runs `alembic upgrade head` before seeding at boot (fail-fast). Any schema-affecting change to `flip-api/src/flip_api/db/models/*.py` **must** ship a revision in the same PR — the integration drift guard (`flip-api/tests/integration/test_migrations.py`) fails otherwise.
@@ -271,7 +306,7 @@ docker compose -f deploy/compose.development.yml run --rm <service>
 make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."  # Scaffold trust/.env.<CODE>.<env>
 make register-trusts                  # Register the shipped dev roster (trust/.env.*.development.example)
 make register-trust KIT=<CODE>        # Register one trust + fill its kit (creds + hub-shared block)
-make sync-trust-kit KIT=<CODE> PROD=<env>  # Rotation only: refresh hub-shared values in trust/.env.<CODE>.<env>
+make sync-trust-kit KIT=<CODE> HUB=<env>   # Rotation only: refresh hub-shared values in trust/.env.<CODE>.<env>
 make sync-trust-kits                  # Refresh every locally-present kit file
 make generate-internal-service-key    # Generate fl-server-to-hub key
 ```
@@ -290,14 +325,28 @@ make -C trust reload-governance KIT=<CODE>  # Apply an edited document to a LIVE
 make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_ATTEMPTS=<n>] [RELAUNCH_UNFINISHED=1]  # Convert archived scans with DICOM and no NIfTI by Container Service bulk launch; report only without LAUNCH (trust/deploy/helm/TROUBLESHOOTING.md §2.3e)
 ```
 
+### Release pipeline (FLIP#1608)
+
+```bash
+make release-prepare TAG=vX.Y.Z [DRY_RUN=1]          # version bumps + make lock + empty Release checks; refuses unlabelled merged PRs
+make release-instance TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=10000] [FORCE=1]  # isolated rel<XYZ> instance, every image built here (release-gates runs it)
+make release-verify TAG=vX.Y.Z                       # the instance runs this commit (tags, working dir, /health, AES key)
+make release-gates TAG=vX.Y.Z [PR=<n>] [PORT_OFFSET=…] [GATES=a,b] [CONTINUE=1] [KEEP=1]  # GPU host: unit, integration, tutorials, instance, smokes, teardown -> release-gates/<TAG>/*.json
+make release-record TAG=vX.Y.Z [PR=<n>] [APPLY=1]    # Release checks section of .github/RELEASE_NOTES_TEMPLATE.md from those results
+make release-main-check TAG=vX.Y.Z [PR=<n>] [OWED=<file>]  # read-only: develop->main PR ready? + after-merge checklist (or the gh pr create command)
+```
+
+Scripts in `scripts/release/` (stdlib only, so the GPU host's plain `python3` runs them), tests in
+`scripts/tests/test_release_scripts.py`. The agent procedure on top: `.agents/skills/release/SKILL.md` (`/release`).
+
 ### Site release upgrades (FLIP#1204)
 
 ```bash
-make upgrade-onprem-trust KIT=<slot> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
-make -C trust upgrade-trust KIT=<CODE> PROD=<env> [TAG=…]                # the verb itself (pull, recreate, XNAT in place)
-make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
-make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> PROD=<env>      # EC2 twin (no re-seed)
-make -C deploy/providers/AWS deploy-centralhub PROD=true TAG=vX.Y.Z       # hub; the guard takes sha-<short7> or vX.Y.Z
+make upgrade-onprem-trust KIT=<CODE> [TAG=vX.Y.Z] [FL_TAG=…] [FORCE=1] [YES=1] [ALLOW_CHECKOUT_DRIFT=1]  # operator: readiness checklist → data-safe upgrade; a release TAG is refused unless the checkout is at that tag (exit 6) — `git fetch --tags origin && git checkout vX.Y.Z` first
+make -C trust upgrade-trust KIT=<CODE> HUB=<env> [TAG=…]                 # the verb itself (pull, recreate, XNAT in place)
+make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env> TAG=… [KUBE_CONTEXT=…]  # Helm: sync-kit → global.image.tag
+make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>       # EC2 twin (no re-seed)
+make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z        # hub; the guard takes sha-<short7> or vX.Y.Z
 ```
 
 A release (`v*.*.*` git tag from `release.yml`) rebuilds **every** image unfiltered and pushes `:vX.Y.Z`;
@@ -349,7 +398,7 @@ After changes, evaluate if docs need updating:
 | Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
 | Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
-| Central Hub AWS resources (`deploy/providers/AWS/*.tf`) | `deploy/providers/AWS/architecture/central_hub.py` — the drawn-node map (one superset over both deployment modes; `VARIANT_ONLY_LABELS` for anything gated on `lza_managed_network`); `tests/test_architecture_diagram.py` fails CI when a drawn resource disappears or a load-bearing one is added undrawn. Then `make aws-diagram` for the four README copies; `docs/source/deploy-flip/deploy-central-hub-aws.rst` / `deploy-central-hub-aws-lza.rst` if the prose changes (the components page is deployment-agnostic) |
+| Central Hub AWS resources (`deploy/providers/AWS/*.tf`) | `deploy/providers/AWS/architecture/central_hub.py` — the drawn-node map; `tests/test_architecture_diagram.py` fails CI when a drawn resource disappears or a load-bearing one is added undrawn. Then `make aws-diagram` for the two README copies; `docs/source/deploy-flip/deploy-central-hub-aws-lza.rst` if the prose changes (the components page is deployment-agnostic) |
 | New Make targets | `CONTRIBUTING.md`, this file |
 | User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nets.rst` |
@@ -405,7 +454,7 @@ Cross-cutting keys and URLs live here. The rest are documented where they are co
 `PICKLESCAN_*`, `BANDIT_TIMEOUT_SECONDS`, `SCHEDULER_MALWARE_SCAN_RECONCILE_RATE`, DB auth) in
 [`flip-api/AGENTS.md`](flip-api/AGENTS.md#hub-environment-variables).
 
-- `PROD` — `true` (production), `stag` (staging), `lza` / `lza-stag` (production / staging on an AWS Landing Zone Accelerator estate, FLIP#749 — meaningful for `deploy/providers/AWS` targets, the FL-kit upload targets under `fl-services/<backend>/`, and the kit-file targets here (`new-trust`, `sync-trust-kit[s]`), which must name `trust/.env.<CODE>.lza-prod` / `.lza-stag` the way the AWS side reads them back; select the root `.env.lza-prod` / `.env.lza-stag` and the platform-managed-network Terraform path, see `deploy/providers/AWS/README.md` "Deploying onto an LZA estate"), unset (development). What each value means is derived **once**, in `deploy/env_mode.mk` (`ENV` — the token in `.env.$(ENV)` and `trust/.env.<CODE>.$(ENV)` — plus `ENV_FILE_NAME`, `__DCKR_SUFFIX`, `ENV_CLASS` = `prod|stag`, `IS_LZA`, `IS_DEPLOYED`), included at the top of the root, `deploy/providers/AWS`, `trust`, `trust/xnat`, `trust/deploy/helm` and `fl-services/{nvflare,flower}` Makefiles (`deploy/providers/AWS/ci/Makefile` maps the same four values itself, with unset meaning `stag` and anything else an error; `flip-ui/Makefile`'s dev-only compose helpers load `.env.development` for every value but `true` and `stag`) — so a new value is added in one place and the scripts those Makefiles drive (`register-trusts.sh`, `add_fl_kits.sh`) receive the derived token rather than re-mapping `PROD`; a misspelt `PROD` fails at parse time instead of falling through to the development shape (`deploy/providers/AWS/tests/test_env_mode.py` pins the table)
+- `HUB` — the hub a command targets: `prod`, `stag`, or unset for development (FLIP#1479; it replaced `PROD`, and any `PROD=…` fails at parse time naming the `HUB=` equivalent). It selects the hub env file `.env.<hub>` and the kit file `trust/.env.<CODE>.<hub>`; `deploy/providers/AWS` targets refuse to run without it, and the on-prem trust verbs default to `HUB=prod`. Its meaning is derived **once**, in `deploy/env_mode.mk` (`ENV`, `ENV_FILE_NAME`, `__DCKR_SUFFIX`, `ENV_CLASS` = `prod|stag`, `IS_DEPLOYED`, and `kit_file`, which finds a kit under its pre-#1479 name for one release and prints the rename), included at the top of the root, `deploy/providers/AWS`, `trust`, `trust/xnat`, `trust/deploy/helm`, `fl-services/{nvflare,flower}` and `flip-ui` Makefiles; a misspelt `HUB` fails at parse time instead of falling through to the development shape (`deploy/providers/AWS/tests/test_env_mode.py` pins the table)
 - `AES_KEY_BASE64` — the platform-wide key for the hub↔trust payload envelope: AES-256-GCM since FLIP#1179 (base64 of `{"v":1,"kid":"shared","iv","ct"}`; version, kid and a caller-supplied *context* — `task:<task_type>`, `project_id`, `xnat_setup_path` — bound into the tag, so every `encrypt`/`decrypt` call site passes the same `context=` and a payload sealed for one purpose does not open for another), with **no compatibility for the pre-#1179 CBC format**, so a hub and every trust registered to it upgrade across that change together (Deployment Mode → quiesce → redeploy hub + trusts). Must be byte-identical on the hub and every trust container that decrypts (trust-api, imaging-api, data-access-api) and decode to exactly 32 bytes — every `get_aes_key()` refuses a 16- or 24-byte key rather than silently running AES-128/192; a mismatch fails closed as `Invalid payload: failed authentication` on every task (imaging-api / data-access-api answer the FL client with a 400). On stag/prod the hub's copy is what the CI Terraform apply wrote into Secrets Manager from the GitHub environment — reconcile the operator env file from deployed state (`deploy/providers/AWS/scripts/reconcile_ci_env.py`), never the other way round. Per-trust keys are the FLIP#845 follow-up.
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
   See `trust/README.md` for the standalone-operator quick-start.
@@ -437,7 +486,7 @@ the compose files' container-identity contract, plus the repo-level `tests/` (ro
 `docker_build_*.yml` (per-service GHCR publish; the application images and
 `docker_build_omop_db.yml` are gated on that service's test workflow, while
 `docker_build_orthanc.yml` and `docker_build_xnat_{db,dcm2niix,nginx,web}.yml` publish
-straight from a push — see "Docker image builds" below), `validate_terraform.yml` (fmt/validate + a tflint lint (`make tflint-lint`) + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` from the repo root, or all three static checks with `make -C deploy/providers/AWS lint` (the AWS Makefile's parse-time env guards stand aside when every goal is a static one, FLIP#1440), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `terraform_drift.yml`, `lint_python.yml` (`ruff check` + `ruff format --check` over every tracked Python file — the only lint that reaches the trees outside a service directory (`scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/`) and the only format check covering the whole repo (flip-utils, `trust/orthanc` and the trust data tools also check their own); unfiltered, ruff pinned, files from `git ls-files` so a gitignored path cannot hide a tracked file, no auto-fix; flip-api's generated Alembic revisions are excluded from both, in `flip-api/pyproject.toml`; shape pinned by `.github/tests/workflows/test_lint_python.py` — FLIP#1326), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+straight from a push — see "Docker image builds" below), `validate_terraform.yml` (fmt/validate + a tflint lint (`make tflint-lint`) + a checkov security lint over `deploy/providers/AWS/**` — IAM policy content plus promoted posture checks; static, credential-free; local run `make checkov-lint` from the repo root, or all three static checks with `make -C deploy/providers/AWS lint` (the AWS Makefile's parse-time env guards stand aside when every goal is a static one, FLIP#1440), deliberate breadth/posture suppressed in-code with `# checkov:skip=<ID>:<rationale>` — FLIP#1052, FLIP#1058; plus an `AWS deploy tests` job running the credential-free pytest suite in `deploy/providers/AWS/tests/` over the stack's static artefacts — rendered templates, deploy scripts, and Terraform source itself, including the Cognito `callback_urls` = browser CORS allowlist invariants), `terraform_plan.yml`, `terraform_apply.yml`, `publish_ui.yml` (reusable; the flip-ui publish after an apply, FLIP#1186), `terraform_drift.yml`, `lint_python.yml` (`ruff check` + `ruff format --check` over every tracked Python file — the only lint that reaches the trees outside a service directory (`scripts/`, `deploy/providers/AWS/`, `trust/deploy/`, `.github/tests/`, `docs/`, `fl-apps/`) and the only format check covering the whole repo (flip-utils, `trust/orthanc` and the trust data tools also check their own); unfiltered, ruff pinned, files from `git ls-files` so a gitignored path cannot hide a tracked file, no auto-fix; flip-api's generated Alembic revisions are excluded from both, in `flip-api/pyproject.toml`; shape pinned by `.github/tests/workflows/test_lint_python.py` — FLIP#1326), `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 Further workflows, grouped: **unit tests** — `unit-tests.yml` (flip-utils + the FLARE
 fl-api-base, on push) and `unit-tests-heavy.yml` (flip-utils, GPU-adjacent suite, push or
@@ -447,19 +496,21 @@ manual dispatch). **Per-backend FL API** — `fl-api-test-flower.yml` / `fl-api-
 `fl-services/<backend>/**` images on push to main/develop, or manual dispatch; also triggered
 by `flip-utils/**` since the fl-base image bakes it in). **FL app/tutorial consistency guards**
 — `fl-apps-check-required-files.yml` (CI backstop for the `fl-apps-required-files` pre-commit
-hook), `fl-apps-check-tutorial-sync.yml` (only the FLARE Ark+ evaluation pairs in
-`scripts/check_tutorial_sync.sh`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
+hook), `fl-apps-check-tutorial-sync.yml` (the byte-identical pairs in
+`scripts/check_tutorial_sync.sh`: the two FLARE Ark+ evaluation apps, the EHR nvflare↔flower files and every twin
+pair's `query.sql` / `query_novocab.sql`; Flower `fl-apps/`/`fl-tutorials/` parity is derived from the
 tree by `fl-tutorials/tests/test_flower_platform_parity.py`, run by `fl-tutorials-tests.yml`),
 `fl-api-validation-sync.yml` (the two backends'
-`fl_api/utils/validation.py` guards stay in sync), `fl_round_metrics_tests.yml` (tests over
+`fl_api/utils/validation.py` guards and their byte-identical `fl_api/utils/refusals.py` researcher-refusal
+contract stay in sync), `fl_round_metrics_tests.yml` (tests over
 `scripts/fl_round_metrics/**`). **Deploy-target tests** — `test_helm_chart.yml`
 (`trust/deploy/helm/**`), `test_local_trust_playbook.yml`
 (`trust/deploy/ansible/**` Ansible). **UI/release/branch hygiene** —
-`lighthouse_flip_ui.yml` (Lighthouse perf audit on `flip-ui/**`, push/PR/manual),
+`lighthouse_flip_ui.yml` (Lighthouse audit of the login page and, signed in through the AWS-free hub, the main pages; on `flip-ui/**`, push/PR/manual),
 `check-version-bump.yml` (blocks a PR to `main` from `develop` that doesn't bump the
 flip-utils version), `check-package-metadata.yml` (validates flip-utils package metadata on
 PRs to develop/main), `validate_branch_origin.yml` (PRs targeting `main` must originate from
-`develop`), `release.yml` (creates a GitHub Release on push to `main`), `release-pypi.yml`
+`develop`, or from a `hotfix/*` branch for a hotfix release), `release.yml` (creates a GitHub Release on push to `main`), `release-pypi.yml`
 (publishes flip-utils to PyPI on push to `main`), `pr-release-notes-preview.yml` (previews
 release notes on a PR to `main`), `regenerate_docs_gifs.yml` (re-records the docs GIFs from
 Cypress on push to `develop` touching `flip-ui/src/**` or the Cypress docs harness —
@@ -481,18 +532,21 @@ The eight service test workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the f
 
 `validate_terraform.yml` does the credential-free `fmt`/`validate` pass. On top of that, three
 OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub: `terraform_plan.yml`
-(plan staging on every PR touching `deploy/providers/AWS/**`), `terraform_apply.yml` (push to
-`develop` → stag, push to `main` → **prod**), and `terraform_drift.yml` (nightly plan, one issue per
-environment). **Merging to `main` changes production infrastructure.**
+(plan staging on every PR touching `deploy/providers/AWS/**`), `terraform_apply.yml` (every push to
+`develop` → stag, every push to `main` → **prod**), and `terraform_drift.yml` (nightly plan, one issue per
+environment). **Merging to `main` changes production infrastructure.** After a successful apply the
+`ui` job calls the reusable `publish_ui.yml` (FLIP#1186): a credential-free build job, then a publish
+job under the bootstrap module's bucket-only `AICentre-FLIPUiPublishRole` (`TF_UI_PUBLISH_ROLE_ARN`)
+running `deploy/providers/AWS/scripts/publish-ui.sh`, the same script `make deploy-ui` runs. A held
+apply holds the UI too.
 
 Two guards make the unattended apply safe (`resolve-image-tags.sh` pins this commit's sha tag;
 `check-fl-plan-impact.sh` holds any apply that would kill an in-flight training run), and Terraform
 inputs reach CI through `deploy/providers/AWS/scripts/compose-ci-env.sh` — so **adding an `export TF_VAR_…` line means
 also updating that script's manifest, all three workflow `env:` blocks, and both GitHub
-environments**. Which account and which mode a run targets is the `TF_PROD` variable on the
-GitHub environment — the `deploy/env_mode.mk` token (`stag` | `true` | `lza-stag` | `lza`), which
-selects the env file, the AWS profile and the required key set — so repointing an estate at another
-AWS account is a value change, never a workflow edit (FLIP#1199, "Repointing CI at the LZA
+environments**. Which estate a run targets is the `TF_HUB` variable on the GitHub environment
+(`stag` | `prod`, the `deploy/env_mode.mk` selector, which picks the env file and the AWS profile). It has no
+fallback, so an unset one fails the run — and repointing an estate at another AWS account is a value change, never a workflow edit (FLIP#1199, "Repointing CI at the LZA
 accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#terraform-ci-flip962).
 
 ### Docker image builds: gated on tests, manual trigger for branches
@@ -501,10 +555,12 @@ accounts"). Full detail: [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS
 `trust_data_access_api`, `omop_db`) auto-publish to GHCR only after their service's test workflow
 passes on `develop` or `main`** — they trigger via `workflow_run` and a job-level `if` gates on
 success, so a red test suite never publishes. Path filtering is inherited from the test workflow, so a
-build still only fires when that service changed. (`orthanc` and `xnat_*` keep their direct push
-trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead. `flip-ui`
-is a CI smoke test that never publishes — it is rebuilt locally by `make deploy-ui` and never consumed
-from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
+build still only fires when that service changed. (`orthanc`, `xnat_*` and `monailabel` keep their direct push
+trigger, having no separate test workflow; `orthanc` runs an in-job auth smoke test instead, and
+`monailabel` an in-job import smoke after reclaiming runner disk — its image is ~10.4 GB against
+ubuntu-latest's ~14 GB free. `flip-ui`
+is a CI smoke test that never publishes an image — the UI is built by `publish_ui.yml` after each apply,
+or by `make deploy-ui`, and never consumed from GHCR; the rest are.) Every publish also pushes an immutable **`sha-<short7>`** tag that
 hub ECS deploys pin — see
 [`deploy/providers/AWS/AGENTS.md`](deploy/providers/AWS/AGENTS.md#image-tags-deploys-and-the-fl-quiesce)
 for deploys, rollback and the FL quiesce reminder.
@@ -513,7 +569,7 @@ A run of an image workflow on a `v*.*.*` tag ref builds **every** image at that 
 `:v<X.Y.Z>` (FLIP#1204) — release identity for the sites — and **only** that tag: the `sha-` tags belong to
 the branch build of the same commit and stay immutable (a second push would swap the image under a
 sha-pinned hub, with a different `FLIP_RELEASE` baked in). For a real release `release.yml`
-**dispatches** the twelve builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
+**dispatches** the fourteen builds at the tag it created (`gh workflow run … --ref v<X.Y.Z>`): the tag is
 pushed with `GITHUB_TOKEN`, and GitHub starts no workflow for an event created that way, so the
 workflows' own `push.tags` trigger only ever fires for a hand-pushed tag (a release candidate).
 `.github/tests/workflows/test_release.py` pins the dispatch roster to the publishing workflows. Every

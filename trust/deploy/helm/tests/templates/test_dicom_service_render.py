@@ -216,3 +216,22 @@ def test_the_mocked_orthanc_install_may_still_expose_the_console() -> None:
     rendered = _render("xnat.web.service.type=NodePort")
 
     assert rendered.returncode == 0, f"the web-console guard fired on a mocked-Orthanc install:\n{rendered.stderr}"
+
+
+def test_dicom_service_carries_operator_annotations() -> None:
+    """A managed cluster picks its load balancer by annotation: on AKS an internal one, so the DICOM
+    receiver gets an address on the trust's network rather than a public IP (FLIP#1390)."""
+    annotation = "service.beta.kubernetes.io/azure-load-balancer-internal"
+    services = _services(
+        "xnat.web.dicomService.type=LoadBalancer",
+        f"xnat.web.dicomService.annotations.{annotation.replace('.', chr(92) + '.')}=true",
+    )
+    assert services["xnat-web-dicom"]["metadata"]["annotations"] == {annotation: "true"}
+    assert "annotations" not in _services()["xnat-web-dicom"]["metadata"], "none unless asked for"
+
+
+def test_the_schema_refuses_a_nested_dicom_service_annotation() -> None:
+    """An annotation value is quoted into one string, so only a scalar can mean anything there."""
+    rendered = _render("xnat.web.dicomService.annotations.example\\.com/thing.nested=x")
+    assert rendered.returncode != 0
+    assert "annotations" in rendered.stderr

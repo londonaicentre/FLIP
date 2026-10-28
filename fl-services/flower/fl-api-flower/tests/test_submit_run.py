@@ -65,7 +65,7 @@ def test_production_submit_rejects_non_uuid(client, src_root, endpoint):
 
 
 def test_submit_tutorial_success(client, src_root, mock_flwr_run):
-    (src_root / "numpy").mkdir(parents=True, exist_ok=True)
+    (src_root / "cat" / "numpy").mkdir(parents=True, exist_ok=True)
     mock_flwr_run(stdout=_NUMPY_RUN_OK)
 
     response = client.post("/submit_tutorial/numpy")
@@ -101,7 +101,7 @@ _PLATFORM_CONFIG_TOML = 'num-server-rounds = 30\nlocal-epochs = 5\ncheckpoint = 
 @pytest.mark.parametrize("with_config_toml", [True, False])
 def test_submit_tutorial_runs_on_pyproject_values_not_config_toml(client, src_root, monkeypatch, with_config_toml):
     """A tutorial's config.toml holds its platform settings; the tutorial submit passes only flip-job-dir."""
-    app_dir = src_root / "spleen_app" / "app"
+    app_dir = src_root / "cat" / "spleen_app" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     config_toml = app_dir / "config.toml"
     if with_config_toml:
@@ -155,7 +155,7 @@ def test_platform_submit_without_config_toml_passes_no_run_config(client, src_ro
 
 def test_submit_removes_the_temp_run_config_when_flwr_fails(client, src_root, monkeypatch):
     """The temp --run-config file is deleted on the failure path too, where a leak would go unnoticed."""
-    (src_root / "spleen_app" / "app").mkdir(parents=True, exist_ok=True)
+    (src_root / "cat" / "spleen_app" / "app").mkdir(parents=True, exist_ok=True)
     captured = _capture_run_config(monkeypatch, returncode=1)
 
     response = client.post("/submit_tutorial/spleen_app")
@@ -173,7 +173,7 @@ def test_submit_tutorial_folder_not_found(client, src_root):
 
 
 def test_submit_tutorial_conflict_when_submission_in_progress(client, src_root):
-    (src_root / "numpy").mkdir(parents=True, exist_ok=True)
+    (src_root / "cat" / "numpy").mkdir(parents=True, exist_ok=True)
     app_module._submission_in_progress = True
 
     response = client.post("/submit_tutorial/numpy")
@@ -198,7 +198,7 @@ def test_submit_tutorial_execution_failures(
     stdout,
     stderr,
 ):
-    (src_root / "numpy").mkdir(parents=True, exist_ok=True)
+    (src_root / "cat" / "numpy").mkdir(parents=True, exist_ok=True)
 
     if exception is not None:
         mock_flwr_run(exception=exception)
@@ -219,3 +219,41 @@ def test_validate_tutorial_folder_rejects_traversal(src_root, bad):
     with pytest.raises(HTTPException) as exc:
         app_module._validate_tutorial_folder(bad)
     assert exc.value.status_code == 400
+
+
+# --- Tutorial submit resolves <category>/<name> (FLIP#1500: fl-tutorials/flower mirrors the NVFLARE tree) ---
+
+
+def test_resolve_tutorial_dir_finds_the_categorised_folder(src_root):
+    (src_root / "image_classification" / "numpy").mkdir(parents=True)
+
+    assert app_module._resolve_tutorial_dir("numpy") == src_root / "image_classification" / "numpy"
+
+
+def test_resolve_tutorial_dir_ignores_a_flat_leftover_beside_the_categorised_folder(src_root):
+    """After a pull without `git clean -fdX` the old flat folder survives as ignored caches; it is not a tutorial."""
+    (src_root / "numpy" / "app" / "__pycache__").mkdir(parents=True)
+    (src_root / "cat" / "numpy").mkdir(parents=True)
+
+    assert app_module._resolve_tutorial_dir("numpy") == src_root / "cat" / "numpy"
+
+
+def test_resolve_tutorial_dir_refuses_a_name_in_two_categories(src_root):
+    (src_root / "image_classification" / "numpy").mkdir(parents=True)
+    (src_root / "tabular_classification" / "numpy").mkdir(parents=True)
+
+    with pytest.raises(HTTPException) as exc:
+        app_module._resolve_tutorial_dir("numpy")
+    assert exc.value.status_code == 400
+    assert "exactly once" in str(exc.value.detail)
+    assert "image_classification/numpy, tabular_classification/numpy" in str(exc.value.detail)
+
+
+def test_resolve_tutorial_dir_names_where_it_looked_when_nothing_matches(src_root):
+    (src_root / "image_classification").mkdir(parents=True)
+
+    with pytest.raises(HTTPException) as exc:
+        app_module._resolve_tutorial_dir("numpy")
+    assert exc.value.status_code == 400
+    assert "<category>/" in str(exc.value.detail)
+    assert "found: none" in str(exc.value.detail)

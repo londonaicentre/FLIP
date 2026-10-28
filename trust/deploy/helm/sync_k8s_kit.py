@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["pyyaml>=6.0.3"]
+#
+# [tool.uv]
+# exclude-newer = "3 days"
+# ///
 #
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,8 +26,8 @@ Helm chart. It does NOT register anything with the hub — registration is done
 once, centrally, by the DB-backed `register_trust` CLI:
 
     make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."
-    make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=<env>
-    make sync-trust-kit KIT=<CODE> PROD=<env>      # fills the Hub-shared block
+    make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<env>
+    make sync-trust-kit KIT=<CODE> HUB=<env>       # fills the Hub-shared block
 
 …which mints the per-trust credentials and writes them, together with the
 Hub-shared block (AES key, hub URL, FL settings), into the kit file
@@ -44,12 +51,12 @@ file into the Kubernetes Secret over kubectl's TLS channel. The generated
 override file (``k8s-trust-*.yaml``) is gitignored and contains no secrets.
 
 Usage:
-  python3 sync_k8s_kit.py --kit Trust_K8s --env lza-stag
-  python3 sync_k8s_kit.py --kit Trust_2                 # no PROD set: the development kit
+  python3 sync_k8s_kit.py --kit Trust_K8s --env stag
+  python3 sync_k8s_kit.py --kit Trust_2                 # no HUB set: the development kit
 
-``--env`` is the ``trust/.env.<KIT>.<suffix>`` token. ``deploy/env_mode.mk`` is the only
-place that maps ``PROD`` to it, and the chart Makefile passes the result as ``--env``; with
-``PROD`` set and no ``--env`` this script refuses rather than keep a second copy of the map.
+``--env`` is the ``trust/.env.<KIT>.<suffix>`` token: ``$HUB`` (``deploy/env_mode.mk``), or
+``development`` when HUB is unset. The chart Makefile passes it, and ``--kit-file`` with the
+kit it resolved, which may still carry its pre-FLIP#1479 name.
 """
 
 import argparse
@@ -358,8 +365,9 @@ def _slot_pattern(secret_key: str) -> re.Pattern[str]:
 def _yaml() -> ModuleType:
     """PyYAML, imported on use — the realign is verified by parsing, not by more regex.
 
-    The rest of this script is stdlib-only and runs under a bare ``python3``. This one step
-    needs a real parser: the only trustworthy statement about a hand-edited file is what
+    The Makefile runs this script with ``uv run``, which installs PyYAML from the inline metadata
+    at the top; a bare ``python3`` without it reaches the refusal below. This one step needs a
+    real parser: the only trustworthy statement about a hand-edited file is what
     ``yaml.safe_load`` makes of it, because that is what Helm reads. Without it we cannot
     tell whether the file we are about to write says what we meant, so we refuse rather than
     write an unverified credentials file.
@@ -683,7 +691,28 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     return entries
 
 
-def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None) -> str:
+# The bucket trust/.env.example scaffolded every kit with until it shipped the key commented out
+# (#881): the dev account's, which no other environment can read. A kit outside development still
+# carrying it was never filled in.
+SCAFFOLD_VOCAB_BUCKET = "flipdev-aicentre"
+
+
+def is_scaffold_bucket(kit: dict[str, str], env: str) -> bool:
+    """Whether the kit still names the dev scaffolding bucket outside development (#881).
+
+    Args:
+        kit: The parsed kit file.
+        env: The kit's environment token (development, stag, lza-stag, ...).
+
+    Returns:
+        True when the vocab load would read a bucket this environment cannot.
+    """
+    return kit.get("AICENTRE_BUCKET_NAME", "").strip() == SCAFFOLD_VOCAB_BUCKET and env != "development"
+
+
+def render_override(
+    kit: dict[str, str], code: str, aws_region: str, trust_dir: Path | None = None, vocab_load: bool = True
+) -> str:
     """Render the Helm values override (no secrets) from kit settings.
 
     Args:
@@ -724,7 +753,7 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
         f"# Per-deployment override for trust '{code}' (kit: trust/.env.{code}.<env>).",
         "# Contains no secrets — the per-trust keys live in the Kubernetes Secret,",
         "# patched into the cluster by the same sync-kit run. Regenerate by re-running",
-        "#   make -C trust/deploy/helm sync-kit KIT=" + code + " PROD=<env>",
+        "#   make -C trust/deploy/helm sync-kit KIT=" + code + " HUB=<env>",
         "#",
         "# TRUST_API_KEY_HEADER is intentionally NOT set here: the chart default",
         "# (values.yaml) is 'Authorization', which is the platform default the hub",
@@ -781,7 +810,14 @@ def render_override(kit: dict[str, str], code: str, aws_region: str, trust_dir: 
     # has NO vocabulary (cohort queries joining omop.concept return nothing).
     # Each environment reads its OWN bucket (no cross-account read), which is
     # exactly what AICENTRE_BUCKET_NAME carries.
-    if kit_bucket:
+    # The mock-data partition the seed hook loads (trustData.seed.sourceTrust). The chart falls back
+    # to the slot number, and the published data has only two partitions, so a trust on Trust_3 or
+    # above names one in its kit (SOURCE_TRUST, as for the Compose stack) — FLIP#1390.
+    source_trust = kit.get("SOURCE_TRUST", "").strip()
+    if source_trust:
+        lines += ["trustData:", "  seed:", f'    sourceTrust: "{source_trust}"', ""]
+
+    if kit_bucket and vocab_load:
         lines += [
             "omopDb:",
             "  vocabLoad:",
@@ -903,10 +939,13 @@ def main(
     apply_secret: bool,
     write_override: bool = True,
     release_name: str | None = None,
+    kit_file: Path | None = None,
+    vocab_load: bool = True,
 ) -> None:
     release_name = release_name or derive_release_name(secret_name)
     repo_root = REPO_ROOT
-    kit_path = repo_root / "trust" / f".env.{code}.{env}"
+    kit_path = kit_file or repo_root / "trust" / f".env.{code}.{env}"
+    hub = "" if env == "development" else f" HUB={env}"
 
     print(f"🔧 Syncing K8s trust kit: {code}  (env={env})")
     print(f"   Kit file:  {kit_path}")
@@ -917,8 +956,8 @@ def main(
         print(f"❌ Kit file not found: {kit_path}")
         print("   Register the trust first:")
         print(f'     make new-trust TRUST_CODE={code} TRUST_NAME="..."')
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={code} PROD={env}")
-        print(f"     make sync-trust-kit KIT={code} PROD={env}")
+        print(f"     make -C deploy/providers/AWS register-trusts KIT={code}{hub}")
+        print(f"     make sync-trust-kit KIT={code}{hub}")
         sys.exit(1)
 
     kit = read_env_vars(kit_path)
@@ -927,8 +966,8 @@ def main(
     if missing:
         print(f"❌ Kit {kit_path.name} is missing real values for: {', '.join(missing)}")
         print("   These come from registration + the Hub-shared block. Run:")
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={code} PROD={env}")
-        print(f"     make sync-trust-kit KIT={code} PROD={env}")
+        print(f"     make -C deploy/providers/AWS register-trusts KIT={code}{hub}")
+        print(f"     make sync-trust-kit KIT={code}{hub}")
         sys.exit(1)
 
     # ── 1. Patch the per-trust secrets into the cluster ──────────────────
@@ -983,12 +1022,19 @@ def main(
         output_dir.mkdir(parents=True, exist_ok=True)
         override_path = output_dir / rel_override
         try:
-            override = render_override(kit, code, aws_region, trust_dir=repo_root / "trust")
+            scaffold = vocab_load and is_scaffold_bucket(kit, env)
+            if scaffold:
+                print("⚠️  Skipping the S3 vocabulary load: AICENTRE_BUCKET_NAME is still the dev scaffolding")
+                print(f"   default ({SCAFFOLD_VOCAB_BUCKET}), which {env} cannot read (#881). Set this environment's")
+                print("   bucket in the kit, or load the vocabulary another way (load-omop-vocab).")
+            override = render_override(
+                kit, code, aws_region, trust_dir=repo_root / "trust", vocab_load=vocab_load and not scaffold
+            )
         except GovernanceDocumentError as e:
             print(f"❌ {e}")
             print("   Nothing was deployed. A relative ACCESS_POLICY_FILE resolves against trust/, as the")
             print("   Compose stack's --project-directory trust does. `make -C trust check-governance")
-            print(f"   KIT={code} PROD={env}` validates the document and the kit's FL_SITE_PRIVACY_* in full.")
+            print(f"   KIT={code}{hub}` validates the document and the kit's FL_SITE_PRIVACY_* in full.")
             sys.exit(1)
         override_path.write_text(override)
         print(f"  ✓ Wrote values override: {override_path}")
@@ -1000,9 +1046,6 @@ def main(
     print("─" * 64)
     print("📦 Deploy the chart with the generated override:")
     print(f"     make -C trust/deploy/helm up OVERRIDES_FILE={rel_override}")
-    print()
-    print("   For FL training, also open the FL-server NLB to this node's public IP:")
-    print(f"     make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD={env}")
     print("─" * 64)
 
 
@@ -1012,9 +1055,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--env",
         default=None,
-        help="Deployment env suffix (the trust/.env.<KIT>.<suffix> token, e.g. production, "
-        "lza-stag). Required when PROD is set; the chart Makefile injects it from "
-        "deploy/env_mode.mk. Default without PROD: development.",
+        help="Deployment env suffix (the trust/.env.<KIT>.<suffix> token: stag, prod or "
+        "development). Default: $HUB, else development.",
+    )
+    parser.add_argument(
+        "--kit-file",
+        type=Path,
+        default=None,
+        help="Kit file to read (default: trust/.env.<KIT>.<env>); the chart Makefile passes the one it resolved",
     )
     parser.add_argument("--namespace", default="flip-trust", help="Kubernetes namespace")
     parser.add_argument(
@@ -1051,31 +1099,24 @@ if __name__ == "__main__":
         action="store_false",
         help="Only patch the Kubernetes Secret; do not overwrite the values override file",
     )
+    parser.add_argument(
+        "--no-vocab-load",
+        dest="vocab_load",
+        action="store_false",
+        help="Never turn on the omop-db S3 vocab-load hook (a cluster with no route to AWS, e.g. AKS)",
+    )
     args = parser.parse_args()
     if args.kube_context:
         KUBECTL += ["--context", args.kube_context]
-
-    # The kit-file env token comes from deploy/env_mode.mk via the Makefile, which passes it
-    # as `--env $(ENV)`. That is the only PROD -> token map; this script does not keep a
-    # second copy of it (two copies are how the LZA tokens drifted out of step), so PROD
-    # without --env is an error rather than a guess at a kit file that may not exist.
-    if args.env is None:
-        prod = os.environ.get("PROD", "")
-        if prod:
-            sys.exit(
-                f"❌ PROD={prod!r} is set but --env is not.\n"
-                "   PROD maps to the kit-file token in deploy/env_mode.mk only. Run this through\n"
-                "   the chart Makefile, which injects it:\n"
-                "       make -C trust/deploy/helm sync-kit KIT=<KIT> PROD=" + prod + "\n"
-                "   Or pass the token directly:  --env <token>"
-            )
-        env_suffix = "development"
-    else:
-        env_suffix = args.env
+    # Run directly, nothing else has checked the selector, so refuse what env_mode.mk refuses.
+    if os.environ.get("PROD"):
+        sys.exit("❌ PROD is replaced by HUB (FLIP#1479): unset PROD and pass HUB=prod or HUB=stag.")
+    if os.environ.get("HUB", "") not in ("", "stag", "prod"):
+        sys.exit(f"❌ HUB must be unset, stag or prod — got {os.environ['HUB']!r}.")
 
     main(
         code=args.kit,
-        env=env_suffix,
+        env=args.env or os.environ.get("HUB") or "development",
         namespace=args.namespace,
         secret_name=args.secret_name,
         output_dir=args.output_dir,
@@ -1083,4 +1124,6 @@ if __name__ == "__main__":
         apply_secret=args.apply_secret,
         write_override=args.write_override,
         release_name=args.release_name,
+        kit_file=args.kit_file,
+        vocab_load=args.vocab_load,
     )

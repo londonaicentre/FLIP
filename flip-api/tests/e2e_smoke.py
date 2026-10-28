@@ -32,8 +32,8 @@ Usage (preferred):
 Direct invocation:
     cd flip-api
     uv run python -m tests.e2e_smoke \\
-        --model-files-dir ../fl-tutorials/flower/xray_classification/app \\
-        --query-file ../fl-tutorials/flower/xray_classification/query.sql
+        --model-files-dir ../fl-tutorials/flower/image_classification/xray_classification/app \\
+        --query-file ../fl-tutorials/flower/image_classification/xray_classification/query.sql
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
@@ -133,6 +133,22 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "Ark+ multi-model classification evaluation",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "
         "see which recognises chest conditions best, without retraining them.",
+        nifti=False,
+    ),
+    "brain_mri_ldm_stage1_autoencoder": TutorialCopy(
+        "Brain MRI latent diffusion, stage 1 (autoencoder)",
+        "Learning to compress brain MRI scans and rebuild them faithfully, across the participating trusts' "
+        "scans: the first step towards generating realistic synthetic brain MRI.",
+    ),
+    "brain_mri_ldm_stage2_diffusion": TutorialCopy(
+        "Brain MRI latent diffusion, stage 2 (diffusion)",
+        "Generating realistic synthetic brain MRI scans of a chosen sequence (FLAIR, T1, contrast-enhanced T1 "
+        "or T2) with a generative model trained across the participating trusts' scans.",
+    ),
+    "xray_diffusion": TutorialCopy(
+        "Chest X-ray diffusion",
+        "Generating realistic synthetic chest X-rays with a generative model trained across the participating "
+        "trusts' radiographs.",
         nifti=False,
     ),
 }
@@ -315,7 +331,9 @@ def authenticate() -> dict[str, str]:
     if token:
         _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
         return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
-    _log(f"🔐 Authenticating as admin via {get_settings().AUTH_BACKEND}…")
+    settings = get_settings()
+    via = f" at {settings.KEYCLOAK_PUBLIC_URL}" if settings.AUTH_BACKEND == "keycloak" else ""
+    _log(f"🔐 Authenticating as admin via {settings.AUTH_BACKEND}{via}…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
     return headers
@@ -954,7 +972,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=None,
         help="Directory whose files are uploaded to the model. Flower: "
-        "../fl-tutorials/flower/xray_classification/app. "
+        "../fl-tutorials/flower/image_classification/xray_classification/app. "
         "FLARE: ../fl-tutorials/nvflare/image_classification/xray_classification/app_files. "
         "Required unless --stop-after-enrichment.",
     )
@@ -1115,6 +1133,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     query = args.query_file.read_text()
+    _log(f"🎯 Target hub: {constants.BASE_URL}")
     headers = authenticate()
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})

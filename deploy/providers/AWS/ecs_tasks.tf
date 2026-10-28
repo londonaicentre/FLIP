@@ -14,7 +14,7 @@
 
 # ECS task definitions for the three Central Hub services. Each definition
 # mirrors the env+volume+port configuration from the corresponding
-# compose.production.yml service, adapted for Fargate:
+# compose.prod.yml service, adapted for Fargate:
 #
 #   flip-api         — REST API (container port 8000)
 #   fl-api-net-1     — FL network API (container port 8000)
@@ -39,8 +39,8 @@ locals {
   # fl-server-net-1 — deploy-centralhub addresses services by family) serve
   # both backends; var.fl_backend switches image (via var.fl_*_name from
   # fl_backend.mk), container ports, command, env map and mounts. FLARE
-  # mirrors compose.production.nvflare.yml; Flower mirrors
-  # compose.production.flower.yml.
+  # mirrors compose.prod.nvflare.yml; Flower mirrors
+  # compose.prod.flower.yml.
   flower_superlink_fleet_port   = 9092
   flower_superlink_control_port = 8000
   flower_superlink_health_port  = 9097
@@ -173,12 +173,12 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       ]
 
       # Container paths must match what the fl-api image expects. FLARE
-      # (compose.production.nvflare.yml): /app/admin/{local,startup} — FLARE
+      # (compose.prod.nvflare.yml): /app/admin/{local,startup} — FLARE
       # initialises a Workspace from FL_ADMIN_DIRECTORY/startup at boot; if the
       # dir is missing the lifespan startup raises and the task crashes. The
       # checkpoints mount is the writer side of the shared staging volume
       # (SERVER_CHECKPOINT_ROOT; fl-server reads it back — FLIP#695).
-      # Flower (compose.production.flower.yml): SuperLink certs read-only
+      # Flower (compose.prod.flower.yml): SuperLink certs read-only
       # (only ca.crt is read) + the shared RW jobs volume at FLOWER_SRC_ROOT.
       mountPoints = var.fl_backend == "flower" ? [
         {
@@ -327,14 +327,14 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       ]
 
       # Container paths must match what the fl-server image expects.
-      # FLARE (compose.production.nvflare.yml): /app/{local,startup,
+      # FLARE (compose.prod.nvflare.yml): /app/{local,startup,
       # transfer} — the entrypoint chmods scripts in /app/startup and reads
       # /app/local/log_config.template.json; wrong paths -> crash loop.
       # certs and keys live inside /app/local (FLARE puts them under
       # site-1/ssl-key, ssl-cert), so no separate mount is needed. The
       # checkpoints mount is the reader side of the shared staging volume
       # (SERVER_CHECKPOINT_ROOT — FLIP#695).
-      # Flower (compose.production.flower.yml): SuperLink TLS material
+      # Flower (compose.prod.flower.yml): SuperLink TLS material
       # read-only at /certs (referenced by the command flags below) + the
       # shared RW jobs volume at /app/src (uploaded bundles + eval
       # checkpoints, read via the flip-job-dir run-config).

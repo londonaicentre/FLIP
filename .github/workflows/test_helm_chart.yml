@@ -22,17 +22,22 @@ on:
       # is the premise of the C-STORE smoke's received.log evidence (tests/test_cstore_verdict.py).
       - "trust/xnat/xnat/config/configure-xnat.sh"
       - "trust/xnat/xnat/config/anon_script.das"
+      # The chart's xnat-init ConfigMap carries a copy of it, which
+      # tests/templates/test_container_jobs_quota.py holds equal to the file.
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
       # The procedure the trust-seed hook fetches and runs; tests/test_trust_seed_job.py
       # asserts the Job's env against it.
       - "trust/seed_trust.sh"
       # The pin trustData.version must match (tests/test_trust_data_pin.py).
       - "trust/.data_version"
+      # Read by tests/test_plugin_roster_and_timeout.py.
+      - "trust/xnat/artifacts.manifest"
       # The seed tools that same hook installs from that ref and runs (TOOLS_SPEC's
       # `#subdirectory=trust/omop-db`), so a change here can break the kind E2E job.
       - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
-      # The Makefile derives the kit env token from PROD through it.
+      # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
   push:
     branches: [develop, main]
@@ -40,13 +45,15 @@ on:
       - "trust/deploy/helm/**"
       - "trust/xnat/xnat/config/configure-xnat.sh"
       - "trust/xnat/xnat/config/anon_script.das"
+      - "trust/xnat/xnat/config/dcm2niix_command.json"
       - "trust/seed_trust.sh"
       # The pin trustData.version must match (tests/test_trust_data_pin.py).
       - "trust/.data_version"
+      - "trust/xnat/artifacts.manifest"
       - "trust/omop-db/**"
       - ".gitignore"
       - ".github/workflows/test_helm_chart.yml"
-      # The Makefile derives the kit env token from PROD through it.
+      # The Makefile derives the kit env token from HUB through it.
       - "deploy/env_mode.mk"
   workflow_dispatch:
 
@@ -173,6 +180,36 @@ jobs:
             --set omopDb.enabled=false \
             --set omopDb.external.host=test.example.com \
             > /dev/null
+
+      # monailabel.enabled defaults false, so every other render skips its whole body —
+      # render coverage only: the kind install job must NOT enable it (the image is
+      # ~10.4 GB and needs a GPU, neither of which kind has). Also asserts the
+      # publicUrl `required` guard actually fires, since it is the one setting that
+      # cannot be defaulted (the clinician's browser calls it — see trust/README.md).
+      - name: Render template (monailabel enabled)
+        run: |
+          helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set monailabel.enabled=true \
+            --set monailabel.publicUrl=http://node.example.com:30030 \
+            --set 'monailabel.allowedIngressCIDRs[0]=10.0.0.0/8' > /tmp/monailabel.yaml
+          if ! grep -q "flip-trust.*-monailabel" /tmp/monailabel.yaml; then
+            echo "::error::monailabel resources did not render with monailabel.enabled=true"
+            exit 1
+          fi
+          # Assert the guard fires AND fires for the right reason. Testing only "helm exited
+          # non-zero" would be satisfied by a typo'd chart path, an unrelated schema error, or
+          # any broken sibling template — a vacuous pass of exactly the kind this workflow
+          # calls out elsewhere. Capture stderr and match the guard's own message.
+          if helm template trust-release trust/deploy/helm/ --set flClient.kitHostPath=/opt/flip/fl-kit \
+            --set monailabel.enabled=true > /tmp/monailabel-noguard.out 2>&1; then
+            echo "::error::monailabel rendered without publicUrl — the required guard is gone"
+            exit 1
+          fi
+          if ! grep -q "monailabel.publicUrl is required" /tmp/monailabel-noguard.out; then
+            echo "::error::render without publicUrl failed, but not on the publicUrl guard:"
+            cat /tmp/monailabel-noguard.out
+            exit 1
+          fi
 
       # The real-PACS path is entirely opt-in: with the defaults the chart deploys the mocked
       # Orthanc, keeps the Service ClusterIP and leaves ingress default-denied. None of the
@@ -700,11 +737,12 @@ jobs:
 
       # The trust-seed hook installs its loaders from FLIP at trustData.seed.sourceRef (a GitHub
       # source archive), so the install must point it at the commit under test — the chart
-      # default, `develop`, would seed with whatever loaders develop has, not this PR's. A fork's
-      # head sha is not in this repository's archives, so a fork PR falls back to develop.
+      # default, `develop`, would seed with whatever loaders develop has, not this PR's. The hook
+      # fetches from londonaicentre/FLIP, where a commit made in a fork does not exist, so a fork
+      # PR and any run inside a fork fall back to develop (FLIP#1681).
       - name: Install chart
         env:
-          SEED_REF: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'develop' || (github.event.pull_request.head.sha || github.sha) }}
+          SEED_REF: ${{ (github.repository != 'londonaicentre/FLIP' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork)) && 'develop' || (github.event.pull_request.head.sha || github.sha) }}
         run: |
           echo "trust-seed loaders from FLIP@${SEED_REF}"
           helm install trust-release trust/deploy/helm/ \

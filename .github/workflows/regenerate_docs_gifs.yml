@@ -37,6 +37,8 @@ on:
       - "flip-ui/test/cypress/docs/**"
       - "flip-ui/cypress.docs.config.ts"
       - "flip-ui/scripts/videos-to-gifs.sh"
+      # A PR that adds or re-cuts a live-trust GIF publishes it to dataset branch pr-<N>; its merge brings it to main.
+      - "docs/scripts/live-recorded-gifs.txt"
       - ".github/workflows/regenerate_docs_gifs.yml"
   workflow_dispatch:
 
@@ -142,6 +144,7 @@ jobs:
     environment: flip
     permissions:
       contents: read
+      pull-requests: read # which PR this push merged (see "Find the merged PR")
     # A publish in flight completes; a later one queues behind it, so main's newest
     # commit is always the newest recording.
     concurrency:
@@ -165,14 +168,27 @@ jobs:
           name: docs-gifs
           path: ${{ env.GIFS_DIR }}
 
+      - name: Find the merged PR
+        id: pr
+        # CI cannot record the live-trust GIFs (docs/scripts/live-recorded-gifs.txt); a PR that
+        # re-cut them published them to dataset branch pr-<N>, so the publish takes them from there
+        # first, then carries the rest forward from main.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          number=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" --jq '.[0].number // empty')
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+
       - name: Publish to the dataset
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           VERSION: ${{ needs.record.outputs.version }}
+          PR: ${{ steps.pr.outputs.number }}
         run: |
           uv run docs/scripts/publish_docs_gifs.py \
             --repo "$DATASET" \
             --branch main \
+            ${PR:+--carry-from "pr-$PR"} \
             --version "$VERSION" \
             --source-commit "$GITHUB_SHA" \
             --workflow-run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \

@@ -47,7 +47,7 @@ AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
 CLOUDFRONT_TF = AWS_PROVIDER_DIR / "cloudfront.tf"
 
 # Policies that must ship enforcing, by Terraform resource name.
-ENFORCING_POLICIES = ("flip_ui_spa", "ark_demo_spa")
+ENFORCING_POLICIES = ("flip_ui_spa",)
 
 UNSAFE_TOKENS = ("'unsafe-inline'", "'unsafe-eval'")
 
@@ -124,7 +124,7 @@ def test_hardening_directives_present(hcl: str, resource_name: str, directive: s
 
 @pytest.mark.parametrize("resource_name", ENFORCING_POLICIES)
 def test_form_action_is_not_a_wildcard(hcl: str, resource_name: str) -> None:
-    """'self' (real app) or 'none' (demo) — never a wildcard or an external host."""
+    """'self' or 'none' — never a wildcard or an external host."""
     value = _directive(_policy_block(hcl, resource_name), "form-action")
     assert value in ("'self'", "'none'"), f"{resource_name}: unexpected form-action {value!r}"
 
@@ -146,10 +146,3 @@ def test_app_connect_src_admits_the_model_file_origin(hcl: str) -> None:
     assert not any(source.startswith("https://*.") for source in sources), (
         f"flip_ui_spa: connect-src carries a wildcard host: {sources}"
     )
-
-
-def test_demo_policy_stays_stricter_than_the_app(hcl: str) -> None:
-    """The demo has no CodeMirror dependency, so it must not inherit the app's style-src carve-out."""
-    demo = _policy_block(hcl, "ark_demo_spa")
-    assert "'unsafe-inline'" not in _directive(demo, "style-src")
-    assert _directive(demo, "connect-src") == "'none'"
