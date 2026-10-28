@@ -87,9 +87,9 @@ Step 2 — Unpack the kit
 
    mkdir -p $HOME/flip-trust-kit
    tar -C $HOME/flip-trust-kit -xzf flip-trust-kit-<slot>-<date>.tar.gz
-   cp $HOME/flip-trust-kit/.env.<slot>.prod trust/
+   cp $HOME/flip-trust-kit/.env.<CODE>.prod trust/
 
-The tarball holds the kit file ``.env.<slot>.prod`` (``.stag`` for the staging hub) and an ``fl-kit/`` folder. Keep ``fl-kit/`` exactly as it is: the
+The tarball holds the kit file ``.env.<CODE>.prod`` (``.stag`` for the staging hub) and an ``fl-kit/`` folder. Keep ``fl-kit/`` exactly as it is: the
 stack mounts that layout into the FL client.
 
 ***********************************
@@ -98,7 +98,7 @@ Step 3 — Edit the kit for your host
 
 *Who: trust operator*
 
-In ``trust/.env.<slot>.prod``, change only the settings below. Leave the *Hub-shared* and *Kit credentials* blocks alone;
+In ``trust/.env.<CODE>.prod``, change only the settings below. Leave the *Hub-shared* and *Kit credentials* blocks alone;
 the admin manages them.
 
 .. list-table::
@@ -145,8 +145,8 @@ Step 4 — Run the readiness checklist and start the stack
 
 .. code-block:: shell
 
-   sudo -E make onboard-onprem-trust KIT=<slot>   # readiness checklist
-   sudo -E make up-onprem-trust KIT=<slot>        # starts only if every check passes
+   sudo -E make onboard-onprem-trust KIT=<CODE>   # readiness checklist
+   sudo -E make up-onprem-trust KIT=<CODE>        # starts only if every check passes
 
 Both default to the production hub (``HUB=prod``); add ``HUB=stag`` for staging. The checklist prints a ✅ or ❌ for
 each precondition: the kit file, Docker swarm, the hub-shared settings and credentials being filled in, trust-local

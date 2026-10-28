@@ -60,6 +60,16 @@ include deploy/instance.mk
 # Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
 export DOCKER_GID := $(shell id -g)
 
+# Host uid for the `user:` override on the dev FL containers. The env-file export above
+# covers a .env that carries UID, but bash and zsh keep UID as a shell variable and never
+# export it, so a .env predating that line leaves make with no UID at all: compose then
+# takes the literal `${UID:-1000}` default and every developer whose uid is not 1000 runs
+# those containers as someone else, reaching the provisioned keys through group_add only
+# rather than as their owner (FLIP#1320). `?=` so an explicit .env value still wins.
+# trust/Makefile exports UID for the same reason.
+UID ?= $(shell id -u)
+export UID
+
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
@@ -106,6 +116,12 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+# The pair is exported at parse time, before `up`'s generate-internal-service-key can rewrite it,
+# so `up`/`up-no-trust` re-read it from KEY_ENV_FILE when compose runs (FLIP#1501).
+KEY_ENV_FILE = $(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE)))
+read_key_env = $$(sed -n 's/^$1=//p' '$(KEY_ENV_FILE)' | head -n 1 | tr -d '\r')
+FRESH_INTERNAL_SERVICE_KEY = INTERNAL_SERVICE_KEY="$(call read_key_env,INTERNAL_SERVICE_KEY)" \
+	INTERNAL_SERVICE_KEY_HASH="$(call read_key_env,INTERNAL_SERVICE_KEY_HASH)"
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -p $(COMPOSE_PROJECT) -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
 # Through compose, addressing the service rather than the container: the containers are
 # named by the project (deploy-flip-api-1, or <instance>-deploy-flip-api-1), so a literal
@@ -171,7 +187,7 @@ up: _check-compose-project-owner generate-internal-service-key create-networks _
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
@@ -243,7 +259,7 @@ _check-compose-project-owner:
 up-no-trust: _check-compose-project-owner generate-internal-service-key create-networks _ensure-fl-jobs-dir _ensure-object-store-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
+	$(FRESH_INTERNAL_SERVICE_KEY) ${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
@@ -271,7 +287,7 @@ central-hub: _check-compose-project-owner create-networks-centralhub _ensure-obj
 # missing and how to fix it; we exit so the operator doesn't hit a cryptic
 # compose / pydantic failure deeper in the stack.
 up-onprem-trust:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
 
@@ -279,31 +295,31 @@ up-onprem-trust:
 # trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
 # changed, redeploy XNAT WITHOUT xnat-reset. Never up-trust: that is the first-install
 # verb and wipes the XNAT archive. TAG defaults to the release the hub runs (read from
-# the hub's /health), so a plain `make upgrade-onprem-trust KIT=<slot>` is "catch up
+# the hub's /health), so a plain `make upgrade-onprem-trust KIT=<CODE>` is "catch up
 # with the hub"; FL_TAG= pins the FL client apart (sha- moves only — a release builds every
 # image at one tag); FORCE=1 allows a downgrade, YES=1 skips the confirmation. A release
 # TAG is refused unless this checkout is at that tag — the compose files and this very verb
 # come from the checkout, so `git fetch --tags origin && git checkout vX.Y.Z` comes first;
 # ALLOW_CHECKOUT_DRIFT=1 overrides for a deliberate mismatch (testing a branch).
 upgrade-onprem-trust:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or HUB value.
 down-onprem-trust:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	$(MAKE) -C trust down-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
 
 # Readiness checklist for an on-prem trust. Prints the operator's public
 # IP + a row per precondition (kit file, swarm, Hub-shared block, Kit
 # credentials, FL_KIT_DIR and its contents) with ✅/❌ and a concrete fix
 # under each failing row. Exits 0 when all checks pass (the operator can
-# then run `make up-onprem-trust KIT=<slot>`), 1 otherwise.
+# then run `make up-onprem-trust KIT=<CODE>`), 1 otherwise.
 #
 # Invoked automatically as a precheck by up-onprem-trust; can also be run
-# standalone (e.g. `make onboard-onprem-trust KIT=Trust_2`).
+# standalone (e.g. `make onboard-onprem-trust KIT=GSTT`).
 #
 # On-prem onboarding splits like this:
 #   - Admin owns: opening the prod NLB to the operator's IP, UI-registering
@@ -438,7 +454,7 @@ ifeq ($(IS_DEPLOYED),)
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
-	@echo "    Run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\` to publish the bundle."
+	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\`."
 endif
 ui-off: _check-compose-project-owner
 ifeq ($(IS_DEPLOYED),)
@@ -627,7 +643,7 @@ seed-demo-projects:
 # The key goes into the env file this stack runs from (MAIN_ENV_FILE, or an explicit ENV_FILE),
 # made absolute here because the sub-make runs in flip-api/ (FLIP#1603).
 generate-internal-service-key:
-	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(abspath $(or $(ENV_FILE),$(MAIN_ENV_FILE))) $(if $(FORCE),FORCE=$(FORCE))
+	$(MAKE) -C flip-api generate-internal-service-key ENV_FILE=$(KEY_ENV_FILE) $(if $(FORCE),FORCE=$(FORCE))
 
 # Poll flip-api /api/health before registering. The entrypoint seeds the DB —
 # including the FL kit-slot pool that register_trust claims from — *before* the
@@ -705,7 +721,7 @@ new-trust:
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
 	@:$(call kit_hint,$(call kit_file,trust/,$(KIT)))
-	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
 # Sync every locally-present kit for this env (current names only; the .example
 # templates never match).

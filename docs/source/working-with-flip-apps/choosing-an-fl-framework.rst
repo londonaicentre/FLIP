@@ -51,7 +51,7 @@ Decision table
      - **That framework**
    * - Federated optimisation with a server-side optimiser (``fed_opt`` job type)
      - **NVIDIA FLARE**
-   * - A privacy filter each Trust enforces on its own side, which the app cannot switch off
+   * - A privacy filter each Trust enforces on its own side, which your app's configuration cannot switch off
      - **NVIDIA FLARE** — Flower has no site-side filter hook
    * - Differential-privacy noise on shared updates
      - **Flower** — a per-round Gaussian mechanism, valid only with a calibrated ``dp-sensitivity``; NVIDIA FLARE's
@@ -103,7 +103,7 @@ How the two compare
      - Percentile filter (clip and sparsify, no noise), wired by the template
      - Local differential privacy (clip plus Gaussian noise), registered by your ``client_app.py``
    * - Site-enforced privacy policy
-     - Optional, set by each Trust; the app cannot bypass it
+     - Optional, set by each Trust; your app's configuration cannot opt out
      - Not available
    * - Local run
      - ``job.py`` recipe: ``make export`` / ``make sim``

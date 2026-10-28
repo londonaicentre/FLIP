@@ -252,10 +252,10 @@ Paths below are relative to `../fl-tutorials/` (per-backend subdirectories):
 | nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage1_autoencoder` |
 | nvflare | `standard` | `nvflare/image_generation/xray_diffusion` (pixel-space) |
 | nvflare | `standard` | `nvflare/image_generation/brain_mri_ldm_stage2_diffusion` |
-| flower | `standard` | `flower/xray_classification` |
-| flower | `standard` | `flower/3d_spleen_segmentation` |
-| flower | `standard` | `flower/ehr_risk_prediction` |
-| flower | `evaluation` | `flower/3d_spleen_segmentation_evaluation` |
+| flower | `standard` | `flower/image_classification/xray_classification` |
+| flower | `standard` | `flower/image_segmentation/3d_spleen_segmentation` |
+| flower | `standard` | `flower/tabular_classification/ehr_risk_prediction` |
+| flower | `evaluation` | `flower/image_evaluation/3d_spleen_segmentation_evaluation` |
 
 The plain job-type names (`standard`, `evaluation`, `fed_opt`) are the
 Client-API templates — the legacy Executor syntax (`FLIP_TRAINER`-style classes) is retired and

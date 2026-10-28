@@ -815,36 +815,22 @@ rollback-centralhub: ## Repoint each Central Hub ECS service at its previous ACT
 	@echo "   frontend/backend mismatch."
 
 .PHONY: deploy-ui
-deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
+deploy-ui: ## Build flip-ui from the working tree and publish it to the UI bucket (CI does this after every apply, FLIP#1186)
 	@echo "🖼️  Building flip-ui from working tree..."
 	@# Uses build:deploy (vite build only). The type-checked `npm run build` fails
-	@# on pre-existing TypeScript errors in the repo — tracked separately.
+	@# on pre-existing TypeScript errors in the repo — tracked separately. Its
+	@# postbuild:deploy hook writes dist/js/window.js from $(MAIN_ENV_FILE), which
+	@# this Makefile exports.
 	@cd ../../../flip-ui && npm ci && npm run build:deploy
-	@echo "🔧 Generating window.js from $(MAIN_ENV_FILE)..."
-	@cd ../../../flip-ui && sh scripts/generate-window-js.sh > dist/js/window.js
-	@echo "📦 Syncing static assets to the deployed UI bucket..."
-	@# Hashed bundles are content-addressed and safe to cache forever.
-	@# index.html and window.js must never be cached long — they reference the hashed bundles.
+	@# The sync and its cache-control split are scripts/publish-ui.sh, shared with
+	@# .github/workflows/publish_ui.yml. There is no workload distribution to
+	@# invalidate (the networking account's edge distribution serves the bucket) and
+	@# no cross-account invalidation permission -- BY DESIGN (FLIP#749): the hashed
+	@# bundles are immutable and index.html/window.js carry no-cache metadata, so a
+	@# deploy is visible on the next index.html fetch with no invalidation at all.
 	@UI_BUCKET=$$($(_AWS_ENV) terraform output -raw FlipUiBucketName); \
 	[ -n "$$UI_BUCKET" ] || { echo "❌ Terraform output FlipUiBucketName is empty"; exit 1; }; \
-	echo "   s3://$$UI_BUCKET/"; \
-	$(_AWS_ENV) aws s3 sync ../../../flip-ui/dist/ s3://$$UI_BUCKET/ \
-		--delete \
-		--cache-control "public, max-age=31536000, immutable" \
-		--exclude "index.html" --exclude "js/window.js" --exclude "ark_demo/*"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/index.html s3://$$UI_BUCKET/index.html \
-		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "text/html; charset=utf-8"; \
-	$(_AWS_ENV) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$UI_BUCKET/js/window.js \
-		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "application/javascript; charset=utf-8"
-	@# There is no workload distribution to invalidate (the networking account's edge
-	@# distribution serves the bucket) and no cross-account
-	@# invalidation permission -- BY DESIGN (FLIP#749): the hashed bundles are immutable
-	@# and index.html/window.js carry no-cache metadata, so a deploy is visible on the
-	@# next index.html fetch with no invalidation at all.
-	@echo "🧹 No CloudFront invalidation (the edge distribution honours the Cache-Control metadata)."
-	@echo "✅ deploy-ui complete."
+	$(_AWS_ENV) ./scripts/publish-ui.sh ../../../flip-ui/dist "$$UI_BUCKET"
 
 .PHONY: deploy-ark-demo
 deploy-ark-demo: ## Build the public Ark+ demo SPA from the working tree and deploy it to S3 (ark_demo/ prefix)
@@ -1105,6 +1091,8 @@ generate-internal-service-key: ## Generate a new internal service key (fl-server
 	@echo "🔑 Generating internal service key..."
 	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
 
+REGISTER_KIT_FILES = $(if $(KIT),$(KIT_FILE),$(sort $(wildcard $(REPO_ROOT)/trust/.env.*.$(ENV))))
+
 .PHONY: register-trusts
 register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/.env.<CODE>.<env>
 	## Mirrors the dev `make register-trusts` (same register_trust CLI + kit-writer); the only
@@ -1115,22 +1103,25 @@ register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/
 	##   KIT=<CODE> → register that one kit (trust/.env.<CODE>.<env>)
 	##   (no KIT)   → register every live trust/.env.*.<env> kit (an old-named one only with KIT=);
 	##                 none is an error unless DEPLOY_TRUST_EC2=false (a hub-only deploy may register later)
-	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(if $(KIT),$(KIT_FILE),$(call old_kits_hint,$(REPO_ROOT)/trust/)$(sort $(wildcard $(REPO_ROOT)/trust/.env.*.$(ENV))))" bash scripts/register-trusts.sh
+	@:$(if $(KIT),,$(call old_kits_hint,$(REPO_ROOT)/trust/))
+	@KIT=$(KIT) DEPLOY_TRUST_EC2=$(DEPLOY_TRUST_EC2) KIT_FILES="$(REGISTER_KIT_FILES)" bash scripts/register-trusts.sh
+	@# The XNAT stack passwords are trust-side secrets the hub never mints, as in the dev register-trust.
+	@for kit in $(REGISTER_KIT_FILES); do $(MAKE) -C ../../../flip-api generate-xnat-credentials ENV_FILE="$$kit" FORCE= || exit 1; done
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT>.<env> + FL kit slice for an on-prem operator
 	## Does NOT edit the kit file. The admin prepares it first (from the repo root):
-	##   1. register-trusts, sync-trust-kit and generate-xnat-credentials with KIT=<CODE>
-	##      HUB=prod fill trust/.env.<CODE>.prod;
-	##   2. run this with KIT=<slot> (its FL_KIT_SLOT) KIT_FILE=$$PWD/trust/.env.<CODE>.prod HUB=prod.
+	##   1. register-trusts and sync-trust-kit with KIT=<CODE> HUB=prod fill
+	##      trust/.env.<CODE>.prod (register-trusts also mints its XNAT passwords);
+	##   2. run this with KIT=<CODE> HUB=prod (KIT_FILE=<path> packs a kit kept elsewhere).
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one
 	## supernode_credentials_<N> for flower), and tarballs the kit file + slice
 	## into deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 	## Hand the tarball to the operator over an encrypted channel.
-	## Required: KIT=<slot> (e.g. KIT=Trust_2).
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	## Required: KIT=<CODE> (e.g. KIT=GSTT); the FL kit slice is the kit's FL_KIT_SLOT.
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required (e.g. KIT=GSTT)"; exit 1)
 	@KIT=$(KIT) KIT_FILE=$(KIT_FILE) bash scripts/package-onprem-trust-kit.sh
 
 .PHONY: delete-trust

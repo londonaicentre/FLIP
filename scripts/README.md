@@ -47,7 +47,7 @@ ports, bind dirs) always survive a re-run.
   Hub-shared block in `trust/.env.<CODE>.<env>` from the caller's environment (the root Makefile
   `include`s the right `.env.<env>` and exports it first). Credentials and operator edits are left
   untouched. Portable across dev/stag/prod — no docker compose exec, no ECS round-trip.
-- **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<slot>`) — a readiness checklist
+- **`onboard_onprem_trust.py`** (`make onboard-onprem-trust KIT=<CODE>`) — a readiness checklist
   for an on-prem trust host, run as a precheck by `up-onprem-trust`. Diagnoses what's missing
   before `make up-onprem-trust` will succeed: public IP, docker swarm state, kit file presence,
   Hub-shared block, kit credentials, `FL_KIT_DIR` contents, OMOP/Orthanc data dirs, and GPU
@@ -68,7 +68,7 @@ ports, bind dirs) always survive a re-run.
   block. The script **stops before any container is touched**; the Makefile then re-includes the
   updated kit and does the pull / recreate (`_upgrade-trust-apply` on trust; the EC2 twin and
   `make -C trust/deploy/helm upgrade-trust-k8s` do the same for the other shapes). The operator
-  entry points wrap both phases together — `make upgrade-onprem-trust KIT=<slot>` also runs
+  entry points wrap both phases together — `make upgrade-onprem-trust KIT=<CODE>` also runs
   `onboard-onprem-trust --gate` (the readiness checklist implemented by `onboard_onprem_trust.py`,
   above) before the plan phase. Exit codes (the Makefile's contract): 0 pinned, 2 no usable target,
   3 refused downgrade, 4 not confirmed, 5 an image is missing at the target tag, 6 the checkout is

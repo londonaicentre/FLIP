@@ -75,19 +75,18 @@ workstation (prod AWS creds required):
    on the prod hub and fills the Kit credentials; then
    `make sync-trust-kit KIT=<CODE> HUB=prod` fills the rest of the Hub-shared block.
 
-Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`
-tarballs the populated kit file as-is, as `.env.<slot>.prod` (`<slot>` is its
-`FL_KIT_SLOT`, which the packager is keyed on), + the operator's slice of the FL
-participant kit S3 bucket into
+Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`
+tarballs the populated kit file as-is, as `.env.<CODE>.prod`, + the operator's
+slice of the FL participant kit S3 bucket (its `FL_KIT_SLOT`'s) into
 `deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
 The packager does NOT edit the kit file.
 
-The operator extracts, copies `.env.<slot>.prod` into their checkout,
+The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<slot>`
+the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
 the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<slot>` (both default to `HUB=prod`).
+exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
 Sudo because the provisioned login user is deliberately not in the docker group
 (root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
 GHCR login from `~/.docker/config.json`.
@@ -159,7 +158,7 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
 - `DEBUG`: `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
-- Site-enforced FL privacy policy (FLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's FLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, jobs can't opt out, invalid values fail the fl-client closed. Unset = no site policy. Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
+- Site-enforced FL privacy policy (FLARE only, FLIP#851): `FL_SITE_PRIVACY_POLICY=percentile` (+ optional `FL_SITE_PRIVACY_*` params, see `trust/.env.example`) in the kit's Host-local profile. Rendered into the fl-client's FLARE `local/privacy.json` at container start by `python -m flip.nvflare.site_policy` — composes on top of (runs before) any app-level filter, a job's configuration can't opt out or pick a weaker scope, invalid values fail the fl-client closed. Job code is not isolated from it: every FLARE template runs `"execution_mode": "in_process"`, so job code shares the client process with the filter (FLIP#1572 tracks the fix). Unset = no site policy. Apply with `make -C trust up-fl-clients-kit KIT=<CODE>`.
 - Trust governance document (FLIP#1259): one optional TOML file per trust (`trust/governance.<CODE>.toml`, gitignored; worked example `trust/governance.example.toml`), named by `ACCESS_POLICY_FILE` in the kit as a **host** path relative to `trust/` (the bind-mount source; there is no inline form). `[disclosure]`/`[access]` are data-access-api's: `min_cohort_size` may raise `COHORT_QUERY_THRESHOLD`, never lower it; rules are decided order-independently (any matching deny denies, else the strictest matching permit, else — for an action the document mentions — deny); project ids must be UUIDs and `effect` is required. `cohort.dataframe` is the FL client's own training fetch, so denying it stops FL for that project. `[fl_privacy.nvflare]` is the FLARE site policy above as an **alternative** to `FL_SITE_PRIVACY_*` — both set is a FATAL; `[fl_privacy.flower]` is refused (nothing enforces it, FLIP#852) and `check-governance` fails a site privacy section on a Flower trust. The fl-client never mounts the document: the one-shot `fl-governance-init` service (Compose; `governance-extract` init container on Helm) runs `site_policy --extract` into the client's kit `local/` dir, and every `--no-deps` start of the clients must name it. data-access-api logs one `[governance] … sha256=…` line at startup, which `reload-governance` checks. Validate and apply to a live trust with `make -C trust check-governance` then `make -C trust reload-governance` — **never** `up-trust`/`restart-trust`, which are first-install verbs that can wipe XNAT and re-seed the data volumes. Remotely driven trusts (DOCKER_HOST / DOCKER_CONTEXT at ssh:// or tcp://, i.e. EC2) refuse a document. On Kubernetes `sync-kit` validates and embeds it as `governance.document` (`trust/deploy/helm/README.md`).
 - The two shipped dev trusts (GSTT, KCH) have separate ports, networks, and data dirs. Their FL kit *slots* are still named `Trust_1` / `Trust_2` — those are the pre-provisioned FL participant-kit identities (cert CN for FLARE, supernode number for Flower), assigned to a trust by the hub at registration. A trust (GSTT) claims a slot (Trust_1); they are different things.
 
@@ -245,7 +244,7 @@ both agree before packaging). `prostate_project` (PI-CAI fold 0, 300 bpMRI studi
 with `make -C trust seed-trusts PROJECTS=prostate_project`; its masks reach a project via
 `upload_prostate_labels_to_xnat.py` (`make -C fl-tutorials upload-prostate-labels`), and
 `make -C flip-api e2e_smoke_prostate FL_BACKEND=flower` drives cohort → pull → enrichment → training of the
-`flower/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
+`flower/image_segmentation/3d_prostate_segmentation` app (`EXTRA_ARGS="--stop-after-enrichment"` checks the data path alone). The FL simulator (`make -C fl-tutorials run-tutorial`) is a separate
 path: LOCAL_DEV reads `fl-tutorials/data/` straight from disk and touches no trust service.
 
 **One copy of every artefact; a data version is a git tag.** `aicentreflip/trust-data` holds each

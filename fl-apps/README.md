@@ -89,7 +89,7 @@ file is silently omitted rather than shipped, so a hotfix to a base template shi
 Some tutorial files are kept as byte-identical copies of another file, and two guards police them
 — one derived from the tree, one hand-listed:
 
-- **Flower tutorials vs. the `fl-apps/flower/` templates.** Every `fl-tutorials/flower/*/app` ships
+- **Flower tutorials vs. the `fl-apps/flower/` templates.** Every `fl-tutorials/flower/*/*/app` ships
   its own copy of the platform-owned `app/*.py` (`server_app.py`, `strategy.py`) of the template its
   `config.json` job type selects: `flwr build` excludes symlinks from a FAB, so these have to be
   real copies rather than links, and since the bundler discards an uploaded copy in favour of the
@@ -113,7 +113,7 @@ Some tutorial files are kept as byte-identical copies of another file, and two g
     byte-identical copies (same preprocessing/architecture must train on either backend). The
     FLARE copy is the reference; resync by copying it over the Flower copy. Watched paths
     include `fl-tutorials/nvflare/tabular_classification/**` and
-    `fl-tutorials/flower/ehr_risk_prediction/**`.
+    `fl-tutorials/flower/tabular_classification/ehr_risk_prediction/**`.
 
   Adding another hand-listed pair means extending that workflow's path filters too, or drift
   on the new path goes uncaught.

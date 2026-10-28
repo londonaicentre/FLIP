@@ -56,6 +56,8 @@ IAM_ADDRESSES = {
     ("aws_iam_role_policy", "apply_iam"),
     ("aws_iam_role_policy", "apply_state"),
     ("aws_iam_policy", "apply_boundary"),
+    ("aws_iam_role", "ui_publish"),
+    ("aws_iam_role_policy", "ui_publish"),
 }
 
 # What the old ci/ root declared directly, which the wrapper's moved blocks re-address. Its
@@ -443,7 +445,11 @@ def test_the_apply_role_cannot_escalate_itself() -> None:
     statement = _statement('data "aws_iam_policy_document" "apply_iam"', "NoSelfEscalation")
     arguments = _arguments(statement)
     assert arguments["effect"] == '"Deny"'
-    assert sorted(_list(arguments["resources"])) == ["local.apply_role_arn", "local.plan_role_arn"]
+    assert sorted(_list(arguments["resources"])) == [
+        "local.apply_role_arn",
+        "local.plan_role_arn",
+        "local.ui_publish_role_arn",
+    ]
     assert set(_list(arguments["actions"])) == {
         '"iam:AttachRolePolicy"',
         '"iam:DeleteRole"',
@@ -510,9 +516,11 @@ def test_the_composed_arns_name_the_objects_the_module_creates() -> None:
     assert locals_["plan_role_arn"] == prefix + ':role/${var.plan_role_name}"'
     assert locals_["apply_role_arn"] == prefix + ':role/${var.apply_role_name}"'
     assert locals_["permissions_boundary_arn"] == prefix + ':policy/${var.permissions_boundary_name}"'
+    assert locals_["ui_publish_role_arn"] == prefix + ':role/${var.ui_publish_role_name}"'
     for header, name in (
         ('resource "aws_iam_role" "terraform_plan"', "var.plan_role_name"),
         ('resource "aws_iam_role" "terraform_apply"', "var.apply_role_name"),
+        ('resource "aws_iam_role" "ui_publish"', "var.ui_publish_role_name"),
         ('resource "aws_iam_policy" "apply_boundary"', "var.permissions_boundary_name"),
     ):
         arguments = _arguments(_module_block(header))
@@ -771,6 +779,84 @@ def test_the_plan_role_reads_the_ssm_prefix_the_flip_root_writes() -> None:
 
 
 # --- the ci/ wrapper -----------------------------------------------------------------------------
+
+
+# --- the UI-publish role (FLIP#1186) ---------------------------------------------------------------
+
+
+def test_the_ui_publish_role_exists_only_when_the_bucket_is_named() -> None:
+    """Off by default, so a caller that predates the role is unchanged by a re-pin."""
+    assert _module_locals()["ui_publish"] == _normalise('var.ui_bucket_name != ""')
+    variable = _arguments(_module_block('variable "ui_bucket_name"'))
+    assert variable["default"] == '""'
+    for header in (
+        'data "aws_iam_policy_document" "ui_publish_assume_role"',
+        'resource "aws_iam_role" "ui_publish"',
+        'data "aws_iam_policy_document" "ui_publish"',
+        'resource "aws_iam_role_policy" "ui_publish"',
+    ):
+        assert _arguments(_module_block(header))["count"] == _normalise("local.ui_publish ? 1 : 0"), header
+
+
+def test_the_ui_publish_role_trusts_the_reusable_workflow_at_the_apply_branch() -> None:
+    """A reusable workflow's jobs present its own file as job_workflow_ref, whoever calls it."""
+    assert _module_locals()["ui_publish_workflow_ref"] == (
+        '"${local.workflow_ref_prefix}/${var.ui_publish_workflow_file}@refs/heads/${var.apply_branch}"'
+    )
+    assert _arguments(_module_block('variable "ui_publish_workflow_file"'))["default"] == '"publish_ui.yml"'
+    trust = _block(_module_block('data "aws_iam_policy_document" "ui_publish_assume_role"'), "statement")
+    assert _arguments(_block(trust, "principals")) == {
+        "type": '"Federated"',
+        "identifiers": "[var.oidc_provider_arn]",
+    }
+    assert _conditions(trust) == [
+        {
+            "test": '"StringEquals"',
+            "variable": '"token.actions.githubusercontent.com:aud"',
+            "values": '["sts.amazonaws.com"]',
+        },
+        {
+            "test": '"StringEquals"',
+            "variable": '"token.actions.githubusercontent.com:sub"',
+            "values": "[local.oidc_sub]",
+        },
+        {
+            "test": '"StringEquals"',
+            "variable": '"token.actions.githubusercontent.com:job_workflow_ref"',
+            "values": "[local.ui_publish_workflow_ref]",
+        },
+    ]
+
+
+def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
+    """List the bucket, sync its objects, never write ark_demo/; no KMS, no other service."""
+    document = 'data "aws_iam_policy_document" "ui_publish"'
+    assert _module_locals()["ui_bucket_arn"] == (
+        '"arn:${data.aws_partition.current.partition}:s3:::${var.ui_bucket_name}"'
+    )
+    listing = _arguments(_statement(document, "ListTheUiBucket"))
+    assert (listing["effect"], listing["actions"], listing["resources"]) == (
+        '"Allow"',
+        '["s3:ListBucket"]',
+        "[local.ui_bucket_arn]",
+    )
+    sync = _arguments(_statement(document, "SyncTheUiObjects"))
+    assert sync["effect"] == '"Allow"'
+    assert set(_list(sync["actions"])) == {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'}
+    assert sync["resources"] == '["${local.ui_bucket_arn}/*"]'
+    demo = _arguments(_statement(document, "NeverTouchTheArkDemo"))
+    assert demo["effect"] == '"Deny"'
+    assert set(_list(demo["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
+    assert demo["resources"] == '["${local.ui_bucket_arn}/ark_demo/*"]'
+
+    body = _normalise(_module_block(document))
+    actions = set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body))
+    assert actions == {
+        "s3:ListBucket",
+        "s3:DeleteObject",
+        "s3:GetObject",
+        "s3:PutObject",
+    }
 
 
 def _ci(name: str) -> str:

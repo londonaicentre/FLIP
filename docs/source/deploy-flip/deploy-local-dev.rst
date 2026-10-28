@@ -78,8 +78,8 @@ Prerequisites
   to build every image locally.
 - Optional, AI Centre team only, and only for the vocabulary in Step 7: the
   `AWS CLI v2 <https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html>`_
-  and an AWS IAM Identity Center (SSO) user with read access to the bucket
-  holding the OMOP vocabulary (see above). Nothing else in this guide uses it.
+  and an AWS IAM Identity Center user in the ``FLIPDeveloper`` group (Step 3).
+  Nothing else in this guide uses it.
 - Free host ports for the hub (UI, ``8080`` API, ``5432`` database, ``8180``
   Keycloak, ``9000``/``9001`` object store) and for the two Trusts (their ports
   are listed in ``trust/.env.GSTT.development.example`` and
@@ -155,37 +155,45 @@ Step 3 — (Optional) Set up AWS SSO for the vocabulary
 you are on the AI Centre team and want the licensed vocabulary from its bucket
 (Step 7). Everything up to and including a training run works without it.
 
-1. Configure an SSO profile for the AWS account whose bucket holds the
-   vocabulary. A maintainer tells you the SSO start URL, the account, the role
-   and the bucket name:
+1. Ask a maintainer for an AWS IAM Identity Center user in the ``FLIPDeveloper``
+   group, follow its sign-in email, and set a password and MFA at
+   https://londonaicentre.awsapps.com/start. The group's ``FLIPDeveloperAccess``
+   role can read the vocabulary bucket and nothing else.
+
+2. Add the ``dev`` profile to ``~/.aws/config``, with the staging account ID
+   your maintainer gives you:
+
+   .. code-block:: ini
+
+      [sso-session FLIP_LZA]
+      sso_start_url = https://londonaicentre.awsapps.com/start
+      sso_region = eu-west-2
+      sso_registration_scopes = sso:account:access
+
+      [profile dev]
+      sso_session = FLIP_LZA
+      sso_account_id = <staging-account-id>
+      sso_role_name = FLIPDeveloperAccess
+      region = eu-west-2
+
+3. Sign in (repeat when the session expires, usually after a working day) and
+   check access:
 
    .. code-block:: bash
 
-      aws configure sso
+      aws sso login --sso-session FLIP_LZA
+      aws s3 ls s3://flip-lza-stag-aicentre/vocab/ --profile dev
 
-   Name the profile whatever you like; ``aws configure sso`` writes both the
-   ``[profile …]`` block and the ``[sso-session …]`` block it points at, so
-   don't hand-write them.
-
-2. Sign in (repeat when the session expires, usually after a working day):
+4. Export the profile in your shell:
 
    .. code-block:: bash
 
-      aws sso login --profile <your-profile>
+      export AWS_PROFILE=dev
 
-3. Export the profile and the bucket in your shell, then check access:
-
-   .. code-block:: bash
-
-      export AWS_PROFILE=<your-profile>
-      export VOCAB_S3_BUCKET=<bucket-from-your-maintainer>
-      make check-aws-access
-
-   Export them rather than setting them in ``.env.development``: the root
-   Makefile reads that file, so ``check-aws-access`` would pass, but
-   ``make -C trust/omop-db load-omop-vocab`` never reads it and the vocabulary
-   fetch would fail. There is no default bucket: the development AWS account
-   that used to hold a copy has been retired (FLIP#1371).
+   Export it rather than setting it in ``.env.development``: the root
+   Makefile reads that file, but ``make -C trust/omop-db load-omop-vocab``
+   never does. The vocabulary targets read ``flip-lza-stag-aicentre`` by
+   default; ``VOCAB_S3_BUCKET`` names another bucket.
 
 The containers never see your AWS credentials; only the host-side download
 steps use them.
@@ -304,7 +312,7 @@ queries (see `What you need from AWS: nothing`_). The published OMOP data
 carries only the freely licensed DICOM vocabulary. To add the core vocabulary,
 load it once per Trust, naming each Trust's kit file so the loader uses that
 Trust's port and credentials, then restart the data-access APIs so they drop
-cached results. The first load downloads the bundle from ``VOCAB_S3_BUCKET``
+cached results. The first load downloads the bundle with the ``dev`` profile
 (Step 3) into ``trust/omop-db/data/``; later loads reuse that copy:
 
 .. code-block:: bash
