@@ -51,8 +51,7 @@ What is a kit?
 
 A trust's **kit** is everything it needs to join one FLIP network:
 
-- **The kit file**, ``trust/.env.<CODE>.<hub>`` (``<CODE>`` is the trust's short code). On a Docker Compose host
-  the operator's copy is named after the FL slot instead, ``trust/.env.<slot>.<hub>``. It holds four blocks:
+- **The kit file**, ``trust/.env.<CODE>.<hub>`` (``<CODE>`` is the trust's short code). It holds four blocks:
 
   - *Hub-shared* settings, the same for every trust on the hub (encryption key, hub URL, FL backend, image tags);
   - *Kit credentials*, this trust's own keys and FL slot, written when the trust is registered;

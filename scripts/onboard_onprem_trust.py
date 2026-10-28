@@ -15,7 +15,7 @@
 """On-prem trust readiness checklist.
 
 Diagnoses what's still missing in the operator's setup before `make
-up-onprem-trust KIT=<slot>` will succeed: docker swarm state,
+up-onprem-trust KIT=<CODE>` will succeed: docker swarm state,
 kit file presence, Hub-shared block, Kit credentials, FL_KIT_DIR + its
 on-disk contents, OMOP / Orthanc data dirs.
 
@@ -99,7 +99,6 @@ TRUST_LOCAL_PASSWORD_KEYS: tuple[str, ...] = (
     "ORTHANC_PASSWORD",
     "OMOP_POSTGRES_PASSWORD",
     "DATA_ACCESS_POSTGRES_PASSWORD",
-    "XNAT_ADMIN_INITIAL_PASSWORD",
     "XNAT_ADMIN_PASSWORD",
     "XNAT_SERVICE_PASSWORD",
     "GRAFANA_ADMIN_PASSWORD",
@@ -308,7 +307,7 @@ def check_hub_shared(kit_vars: dict[str, str], kit_present: bool) -> Check:
         "Hub-shared block (10 keys)",
         Status.FAIL,
         f"{len(missing)} unfilled: {', '.join(missing)}",
-        hints=["Ask the FLIP admin to run 'make sync-trust-kit KIT=<slot>' and re-send the kit."],
+        hints=["Ask the FLIP admin to run 'make sync-trust-kit KIT=<CODE>' and re-send the kit."],
     )
 
 
@@ -372,7 +371,7 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
         "The Hub-shared block is stale. Ask the FLIP admin for a refreshed kit:",
         (
             "  make sync-trust-kit KIT=<CODE> HUB=<env>  →  "
-            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env>"
+            "make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>"
         ),
         "then replace ONLY the Hub-shared block in your kit file and re-run the upgrade.",
     ]
@@ -405,7 +404,7 @@ def check_hub_shared_current(kit_vars: dict[str, str], kit_present: bool) -> Che
             label,
             Status.WARN,
             f"key matches the hub; kit pins {pinned}, hub runs {hub_release}",
-            hints=["Move this site to the hub's release: make upgrade-onprem-trust KIT=<slot>"],
+            hints=["Move this site to the hub's release: make upgrade-onprem-trust KIT=<CODE>"],
         )
     return Check(label, Status.PASS, f"key matches the hub (hub runs {hub_release or 'an unreported release'})")
 

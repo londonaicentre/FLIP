@@ -59,7 +59,7 @@ and the render failures and the clean-up of a hand-made Service in
 
 ### 2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)
 
-The symptom, the three reasons an `xnat-web` pod keeps an old plugin roster, and the fix are in the docs:
+The symptom, the three reasons an `xnat-web` pod keeps an old image, and the fix are in the docs:
 [C-ECHO passes, C-STORE aborts](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-cstore-aborts). The deploy timeout behind reason 3 is
 [Deploy fails with resource Job/…/xnat-init not ready](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-xnat-init-timeout).
 
@@ -137,7 +137,7 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
 | `smoke-cstore.sh` | Drive a real C-STORE through the PACS and verify XNAT received it (§2.7) |
 | `cstore_verdict.py` | The smoke's verdict logic, unit-tested without a cluster (§2.7) |
-| `check_status.py` | Full deployment smoke, including the plugin-roster comparison (§2.7) |
+| `check_status.py` | Full deployment smoke, including XNAT's plugins and DQR route |
 
 ### Available Tools on DCMTK Pod
 

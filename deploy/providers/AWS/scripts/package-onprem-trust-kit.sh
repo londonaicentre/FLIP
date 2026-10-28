@@ -20,11 +20,10 @@
 #   1. `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." HUB=prod` writes
 #      trust/.env.<CODE>.prod.
 #   2. `make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=prod`
-#      fills the Kit credentials (incl. FL_KIT_SLOT).
-#   3. `make sync-trust-kit KIT=<CODE> HUB=prod` fills the Hub-shared block, and
-#      `make generate-xnat-credentials KIT=<CODE> HUB=prod` the XNAT passwords.
-#   4. Run this through `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot>
-#      KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod`, <slot> being the kit's FL_KIT_SLOT.
+#      fills the Kit credentials (incl. FL_KIT_SLOT) and the XNAT passwords.
+#   3. `make sync-trust-kit KIT=<CODE> HUB=prod` fills the Hub-shared block.
+#   4. Run this through `make -C deploy/providers/AWS package-onprem-trust-kit
+#      KIT=<CODE> HUB=prod` (KIT_FILE=<path> for a kit kept elsewhere).
 #
 # This script's job (admin runs from deploy/providers/AWS with prod AWS creds):
 #   5. Validate the kit file has no unfilled placeholders.
@@ -40,10 +39,10 @@
 #      deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
 #
 # Operator post-steps (after receiving the tarball over encrypted channel):
-#   9. Extract, copy .env.<slot>.<env> into trust/, edit Host-local profile +
+#   9. Extract, copy .env.<CODE>.<env> into trust/, edit Host-local profile +
 #      Trust-local credentials sections (set FL_KIT_DIR to the extracted
 #      fl-kit/ absolute path, override ports/dirs/passwords as needed for
-#      their host), then `sudo -E make up-onprem-trust KIT=<slot>` (sudo:
+#      their host), then `sudo -E make up-onprem-trust KIT=<CODE>` (sudo:
 #      the provisioned login user is deliberately not in the docker group).
 
 set -eo pipefail
@@ -56,18 +55,17 @@ source "$SCRIPT_DIR/utils.sh"
 check_aws_profile
 
 if [ -z "${KIT:-}" ]; then
-    log_error "KIT=<slot> is required (e.g. KIT=Trust_2)."
+    log_error "KIT=<CODE> is required (e.g. KIT=GSTT)."
     exit 1
 fi
 
 # The kit the deploy Makefile resolved (deploy/env_mode.mk's kit_file: trust/.env.<KIT>.<env>,
 # or the kit's pre-FLIP#1479 name). It ships under the current name either way.
-KIT_NAME=".env.${KIT}.${HUB:?HUB is required — run via make package-onprem-trust-kit KIT=<slot> HUB=<env>}"
+KIT_NAME=".env.${KIT}.${HUB:?HUB is required — run via make package-onprem-trust-kit KIT=<CODE> HUB=<env>}"
 KIT_FILE="${KIT_FILE:-$REPO_ROOT/trust/$KIT_NAME}"
 if [ ! -f "$KIT_FILE" ]; then
-    log_error "Kit file $KIT_FILE not found."
-    log_error "Pass the trust's registered kit by path (KIT is its FL_KIT_SLOT):"
-    log_error "    make package-onprem-trust-kit KIT=${KIT} KIT_FILE=\$PWD/trust/.env.<CODE>.${HUB} HUB=${HUB}"
+    log_error "Kit file $KIT_FILE not found. KIT is the trust's code: create and register its kit first"
+    log_error "(make new-trust, then register-trusts), or pass the kit by path with KIT_FILE=<path>."
     exit 1
 fi
 
@@ -90,6 +88,16 @@ fi
 get_var() {
     sed -n "s/^${1}=//p" "$KIT_FILE" | head -1
 }
+
+# KIT names the kit in the tarball, so a KIT_FILE= for another trust would ship its
+# credentials under this trust's name.
+kit_code="$(get_var TRUST_CODE)"
+if [ -n "$kit_code" ] && [ "$kit_code" != "$KIT" ]; then
+    log_error "$KIT_FILE is the kit for TRUST_CODE=$kit_code, not KIT=$KIT."
+    exit 1
+elif [ -z "$kit_code" ]; then
+    log_warn "$KIT_FILE has no TRUST_CODE; shipping it as $KIT_NAME."
+fi
 
 fl_backend="$(get_var FL_BACKEND)"
 slot="$(get_var FL_KIT_SLOT)"
@@ -118,14 +126,6 @@ else
 fi
 if [ -z "$fl_kit_date" ]; then
     log_error "$date_var is empty in $KIT_FILE — run 'make sync-trust-kit KIT=$KIT HUB=${HUB}' from repo root."
-    exit 1
-fi
-
-# Slot in the kit file must match KIT — the FL kit S3 source is keyed on
-# slot and we'd otherwise package the wrong sub-tree.
-if [ "$slot" != "$KIT" ]; then
-    log_error "FL_KIT_SLOT='$slot' in $KIT_FILE does not match KIT='$KIT'."
-    log_error "Re-run with KIT=$slot (or fix the kit file)."
     exit 1
 fi
 
@@ -252,7 +252,7 @@ cat <<EOF
      not in the docker group; -E keeps your \$HOME so root's docker reuses
      your GHCR login from ~/.docker/config.json):
 
-       sudo -E make up-onprem-trust KIT=${slot} HUB=${HUB}
+       sudo -E make up-onprem-trust KIT=${KIT} HUB=${HUB}
 
 ════════════════════════════════════════════════════════════════════════
 

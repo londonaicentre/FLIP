@@ -165,7 +165,7 @@ What changes when it is set:
 
 Training updates are privatised **on the SuperNode**, before the reply leaves the trust. The
 `flip_local_dp_mod` mod from
-[`flip.flower.privacy`](../../../flip-utils/flip/flower/privacy.py) clips the local update to a
+[`flip.flower.privacy`](../../../../flip-utils/flip/flower/privacy.py) clips the local update to a
 fixed L2 norm and adds Gaussian noise scaled to the configured budget:
 
 ```
@@ -242,9 +242,9 @@ matters because each Trust's XNAT holds only its own studies and a Trust left wi
 
 Enrichment is **backend-agnostic**: the labels live in XNAT, so a project enriched once can be trained by
 either backend. The upload script is a single copy in
-[`fl-tutorials/datasets/spleen/`](../../datasets/spleen), pointed at the one spleen tree both backends
+[`fl-tutorials/datasets/spleen/`](../../../datasets/spleen), pointed at the one spleen tree both backends
 read — see the
-[FLARE spleen tutorial's README](../../nvflare/image_segmentation/3d_spleen_segmentation/README.md) for
+[FLARE spleen tutorial's README](../../../nvflare/image_segmentation/3d_spleen_segmentation/README.md) for
 the full walkthrough and options.
 
 ## Data Location

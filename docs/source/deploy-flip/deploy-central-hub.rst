@@ -263,7 +263,8 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
       make -C deploy/providers/AWS register-trusts KIT=<CODE> HUB=<hub>
 
    Leave out ``KIT`` to register every kit file present for the environment. This writes the trust's
-   **credentials** (API key, trust-internal service key and FL kit slot) into the kit file. Of the hub-shared
+   **credentials** (API key, trust-internal service key and FL kit slot) into the kit file, and mints the trust's
+   XNAT passwords, trust-side runtime secrets that are not part of the hub's kit. Of the hub-shared
    settings, only the API key header name and the FL backend are filled in.
 
 3. **Fill in the hub-shared settings.** From the repository root, with your local ``.env.<hub>`` present:
@@ -279,12 +280,6 @@ A trust's **kit file**, ``trust/.env.<CODE>.<hub>``, is its identity and its con
       Do not skip this step. Without it the kit's encryption key, hub URL, kit dates and image tags stay unfilled,
       and the trust can neither reach the hub nor decrypt a task.
 
-4. **Mint the XNAT passwords.** These are trust-side runtime secrets and are not part of the hub's kit:
-
-   .. code-block:: shell
-
-      make generate-xnat-credentials KIT=<CODE> HUB=<hub>
-
 Registration works the same for both FL backends: the kit takes ``FL_BACKEND`` from the hub, and the slot it claims
 maps onto the matching FLARE participant kit or Flower SuperNode key.
 
@@ -297,13 +292,12 @@ file are kept.
 
 - For the cloud trust EC2, ``make -C deploy/providers/AWS deploy-trust KIT=<CODE> HUB=<hub>`` reads the kit
   locally and passes its values to the containers on the host.
-- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging is keyed on the slot, not the code:
-  pass ``KIT=<slot>`` (for example ``Trust_2``) and the kit above by path; it refuses to run unless the kit's
-  ``FL_KIT_SLOT`` equals ``KIT``, and ships it as ``.env.<slot>.<hub>``:
+- For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging takes the trust's code, packs the FL
+  kit share of the kit's ``FL_KIT_SLOT``, and ships the kit as ``.env.<CODE>.<hub>``:
 
   .. code-block:: shell
 
-     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.<hub> HUB=<hub>
+     make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<hub>
 
 If registration fails
 =====================
@@ -607,6 +601,6 @@ old state would destroy it. Move the hub instead:
    FL kit all change. On a trust host that is already running, install the new kit and FL kit and upgrade the trust;
    do not use the first-install commands, which re-seed its data and reset XNAT.
 5. **Destroy the old account's stack** once no trust points at it, from a checkout of a release that still has that mode
-   (``v0.13.1`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
+   (``v0.13.2`` or earlier) with its ``PROD=`` setting and the old account's AWS profile. ``make destroy`` keeps
    the Cognito pool, the ``FLIP_API`` secret and the S3 buckets: delete them by hand, or close the account.
 
