@@ -705,12 +705,12 @@ const updateUserState = async (disabled: boolean) => {
 };
 
 // flip-api picks the flow: a user who never finished signing in gets their
-// invite re-sent, anyone else a reset code. A backend without admin resets
-// (Keycloak) disables the button and says where to go instead. The tooltip
+// invite re-sent, anyone else a reset email. A backend without admin resets
+// disables the button and says so. The tooltip
 // sits on AiButton's wrapper, so it still shows on the disabled button.
 const resetPasswordTooltip = authStore.capabilities.adminResetPassword
     ? ""
-    : "Not available with the Keycloak dev backend — use the Keycloak console";
+    : "Not available with this sign-in backend";
 
 const resetPassword = async () => {
     if (!selectedUser.value) return;

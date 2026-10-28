@@ -264,8 +264,8 @@ FLIP's own emails (access-request notifications, XNAT credentials) are sent acco
   redacted, so a local stack needs no SES setup.
 
 The identity provider sends its own invitations and password-reset codes. In staging and production, Cognito
-sends them. The development Keycloak has no mail server, so a new user gets the shared dev password
-(``ADMIN_USER_PASSWORD``) as a temporary password and changes it at first sign-in.
+sends them. The development Keycloak has no mail server, so a new user, or one an admin resets, gets the shared dev
+password (``ADMIN_USER_PASSWORD``) as a temporary password and changes it at first sign-in.
 
 ***************
 Further reading

@@ -86,3 +86,22 @@ def test_provider_error_is_500_without_leaking(fake_idp, mock_request, mock_db, 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert exc_info.value.detail == "Failed to reset user password"
     mock_db.add.assert_not_called()
+
+
+def test_audit_commit_failure_after_reset_is_partial_success(fake_idp, mock_request, mock_db, user_id, token_id):
+    """The email went out and the audit write failed: say so, so the admin does not retry and void it."""
+    fake_idp.get_username.return_value = USERNAME
+    mock_db.commit.side_effect = Exception("DB unavailable")
+
+    with (
+        patch("flip_api.user_services.reset_user_password.has_permissions", return_value=True),
+        patch("flip_api.user_services.reset_user_password.logger") as mock_logger,
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            reset_password_for_user(user_id, mock_request, mock_db, token_id, idp=fake_idp)
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert exc_info.value.detail == "Password reset partially succeeded; please verify and contact ops."
+    fake_idp.reset_password.assert_called_once_with(USERNAME)
+    mock_db.rollback.assert_called_once()
+    mock_logger.exception.assert_called_once()

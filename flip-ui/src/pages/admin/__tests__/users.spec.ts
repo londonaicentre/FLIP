@@ -509,7 +509,7 @@ describe("admin/users", () => {
         await disabled.findAll("[data-test='user']")[0].trigger("click");
         const disabledBtn = disabled.find("[data-test='reset-password-btn']");
         expect(disabledBtn.attributes("disabled")).toBeDefined();
-        expect(disabledBtn.attributes("data-tooltip")).toContain("Keycloak console");
+        expect(disabledBtn.attributes("data-tooltip")).toBe("Not available with this sign-in backend");
     });
 
     it("resetMfa success shows the success snackbar", async () => {

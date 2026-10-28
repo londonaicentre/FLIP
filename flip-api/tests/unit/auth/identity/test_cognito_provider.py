@@ -1098,6 +1098,32 @@ class TestResetPassword:
         assert "boom" not in str(exc_info.value)
         cognito_logger.exception.assert_called_once()
 
+    def test_status_lookup_error_sends_nothing(self, provider, cognito_client, cognito_logger):
+        cognito_client.admin_get_user.side_effect = _client_error("UserNotFoundException", "boom", "AdminGetUser")
+
+        with pytest.raises(IdentityProviderError) as exc_info:
+            provider.reset_password(self.USERNAME)
+
+        assert str(exc_info.value) == "Failed to reset user password"
+        assert "boom" not in str(exc_info.value)
+        cognito_client.admin_create_user.assert_not_called()
+        cognito_client.forgot_password.assert_not_called()
+        cognito_logger.exception.assert_called_once()
+
+    def test_invite_resend_error_raises_identity_provider_error(self, provider, cognito_client, cognito_logger):
+        cognito_client.admin_get_user.return_value = {"UserStatus": "FORCE_CHANGE_PASSWORD"}
+        cognito_client.admin_create_user.side_effect = _client_error(
+            "LimitExceededException", "boom", "AdminCreateUser"
+        )
+
+        with pytest.raises(IdentityProviderError) as exc_info:
+            provider.reset_password(self.USERNAME)
+
+        assert str(exc_info.value) == "Failed to reset user password"
+        assert "boom" not in str(exc_info.value)
+        cognito_client.forgot_password.assert_not_called()
+        cognito_logger.exception.assert_called_once()
+
 
 class TestFilterEnabledUsers:
     """Tests for the concrete ``filter_enabled_users`` (base class, over ``list_users``)."""

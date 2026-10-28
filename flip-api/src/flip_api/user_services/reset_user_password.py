@@ -65,8 +65,22 @@ def reset_password_for_user(
 
         idp.reset_password(idp.get_username(user_id))
 
-        db.add(UsersAudit(action="Reset user password", user_id=user_id, modified_by_user_id=token_id))
-        db.commit()
+        # The email has gone out, so an audit failure must not read as "reset failed": a retry
+        # sends another email, and for an invited user a new temporary password voids the first.
+        try:
+            db.add(UsersAudit(action="Reset user password", user_id=user_id, modified_by_user_id=token_id))
+            db.commit()
+        except Exception as audit_err:
+            db.rollback()
+            logger.exception(
+                f"Password reset email sent for user_id={user_id} (initiated by {token_id}) "
+                f"but audit-row write failed; manual audit-log reconciliation required."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Password reset partially succeeded; please verify and contact ops.",
+            ) from audit_err
+
         return {}
 
     except HTTPException:
