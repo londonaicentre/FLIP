@@ -67,13 +67,13 @@ class AISpleenSegApp(Application):
         self._logger = logging.getLogger("{}.{}".format(__name__, type(self).__name__))
         super().__init__(*args, **kwargs)
 
-    def run(self, *args, **kwargs):
+    def run(self, *args, **kwargs) -> None:
         # This method calls the base class to run. Can be omitted if simply calling through.
         self._logger.info(f"Begin {self.run.__name__}")
         super().run(*args, **kwargs)
         self._logger.info(f"End {self.run.__name__}")
 
-    def compose(self):
+    def compose(self) -> None:
         """Creates the app specific operators and chain them up in the processing DAG."""
 
         logging.info(f"Begin {self.compose.__name__}")

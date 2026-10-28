@@ -23,7 +23,7 @@ the two references this command works through.
 **one** `AskUserQuestion` round (skip any answer the user already gave):
 
 1. Backend(s): both / NVFLARE only / Flower only.
-2. Job type: `standard` / `evaluation` / `fed_opt` / `diffusion_model` (the four `fl-apps` templates).
+2. Job type: `standard` / `evaluation` / `fed_opt` (the three `fl-apps` templates).
 3. Data: 2-D DICOM / 3-D NIfTI via XNAT with enrichment labels / tabular (OMOP-only, imaging off).
 4. Dataset: reuse an existing one under `fl-tutorials/datasets/` / new public / new access-controlled.
 

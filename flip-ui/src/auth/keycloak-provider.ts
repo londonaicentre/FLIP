@@ -136,7 +136,7 @@ export class KeycloakAuthProvider implements AuthProvider {
         totpChallenge: false,
         totpEnrolment: false,
         forgotPassword: false,
-        adminResetPassword: false,
+        adminResetPassword: true,
         globalSignOut: false
     };
 

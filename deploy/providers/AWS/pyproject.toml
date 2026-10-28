@@ -34,7 +34,7 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "black>=26.3.1",
+    "black>=26.10.1",  # GHSA-cg8m-r9f2-5wm2
     "frictionless>=5.18.1",
     "ipykernel>=6.29.5",
     "isort>=6.0.1",
@@ -82,10 +82,6 @@ packages = []
 [tool.uv]
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
-# Emergency cooldown override (CONTRIBUTING.md, "Emergency override"): admit the critical-advisory fix
-# certifi 2026.10.19 before the 3-day cooldown does. Each cutoff is that release's upload time, so
-# nothing newer gets in, and it also freezes the package: remove it after 2026-10-23T15:13Z (#1618).
-exclude-newer-package = { certifi = "2026-10-20T02:25:00Z" }
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
     "certifi>=2026.10.19",  # GHSA-6q48-6c7w-9gw2

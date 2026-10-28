@@ -49,7 +49,6 @@ what the bundle *declares*, stays hermetic, and needs no bundle runtime.
 from __future__ import annotations
 
 import json
-import warnings
 from typing import Any
 
 import monai.transforms as mt
@@ -94,16 +93,7 @@ _PINNED_VALUES: dict[str, dict[str, Any]] = {
 def _val_transforms() -> mt.Compose:
     """Return the shipped ``get_val_transforms()`` chain, instantiated."""
     module = _SPLEEN_APP.load_module()
-    with warnings.catch_warnings():
-        # monai 1.6 announces that Orientationd's `labels` default will change, and pytest.ini
-        # escalates MONAI's own FutureWarnings to errors. That notice concerns runtime axis
-        # labelling on meta-tensor spaces, not the declared-parameter parity pinned here — so
-        # ignore exactly this notice, and only this one: any other MONAI deprecation surfacing in
-        # this chain still fails the run, which is the suite's design.
-        warnings.filterwarnings(
-            "ignore", category=FutureWarning, message=r"monai\.transforms.*Orientationd\.__init__:labels"
-        )
-        return module.get_val_transforms()
+    return module.get_val_transforms()
 
 
 def _bundle_preprocessing() -> list[dict[str, Any]]:

@@ -23,10 +23,6 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.0"
     }
-    archive = {
-      source  = "hashicorp/archive"
-      version = "~> 2.0"
-    }
   }
 }
 
@@ -35,36 +31,6 @@ provider "aws" {
 }
 
 provider "null" {
-}
-
-############################
-# VPC
-############################
-
-data "aws_availability_zones" "available" {}
-
-# Cross-stack: aicentre-iac's network_account_flip module reads
-# /flip/networking/vpc_id and /flip/networking/private_subnet_ids from
-# this account's SSM (see parameter_store.tf) to back the cross-account
-# TGW VPC attachment. If you recreate or rename this VPC, plan against
-# aicentre-iac immediately afterwards.
-module "flip_vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 6.0"
-  # On the LZA account the network is platform-managed and VPC creation is
-  # SCP-denied — the module's own create flag empties it there (every internal
-  # resource is gated on it, so no NAT/IGW/EIPs either) without changing its
-  # state address for the legacy envs. Consumers read the network from the
-  # locals in network_lza.tf, which switch to data lookups (FLIP#749).
-  create_vpc           = !var.lza_managed_network
-  name                 = "flip-vpc"
-  azs                  = slice(data.aws_availability_zones.available.names, 0, var.max_azs)
-  cidr                 = var.vpc_cidr
-  public_subnets       = var.public_subnets
-  private_subnets      = var.private_subnets
-  enable_nat_gateway   = true
-  single_nat_gateway   = true
-  enable_dns_hostnames = true
 }
 
 ############################
@@ -152,8 +118,8 @@ removed {
 # See deploy/providers/AWS/README.md for the full rationale per destination.
 locals {
   # Every entry carries the full attribute set (unused selectors explicitly null) so Terraform's
-  # object-type unification across this heterogeneous list — and across the two branches of the
-  # enable_ecs_endpoints ternary below — doesn't choke on "inconsistent conditional result types".
+  # object-type unification across this heterogeneous list doesn't choke on "inconsistent
+  # conditional result types".
   trust_egress_rule_defaults = {
     protocol                 = "tcp"
     cidr_blocks              = null
@@ -161,82 +127,65 @@ locals {
     prefix_list_ids          = null
   }
 
-  trust_egress_rules = concat(
-    [
-      for r in [
-        # The 443 floor. One rule, because every destination behind it is the same AWS tuple:
-        # Central Hub API (CloudFront), GHCR, Docker Hub, Hugging Face seeding, download.docker.com,
-        # awscli.amazonaws.com, apt/esm over HTTPS, PyPI (seed_trust.sh's `uv run`), the
-        # us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
-        # (ssmmessages, ec2messages, monitoring).
-        {
-          port        = 443
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "HTTPS to any destination: hub API (CloudFront), GHCR, Docker Hub, HF seeding, apt/esm, PyPI + download.pytorch.org, install mirrors, and AWS APIs with no VPC endpoint. See the README egress table."
-        },
-        {
-          port        = 80
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "HTTP to any destination: Ubuntu apt mirrors - package install/upgrade"
-        },
-        # Shadowed by the 443 floor above (SG rules are a union) - documentation of intent, not
-        # enforcement. Kept so the intended scope survives if that floor is ever narrowed.
-        {
-          port            = 443
-          prefix_list_ids = [data.aws_ec2_managed_prefix_list.s3.id]
-          description     = "S3 (AI Centre FL kit sync) - AWS-managed prefix list, not a raw CIDR"
-        },
-        # NOT shadowed by anything — this is the one destination the 443 floor does not cover, so
-        # it has to be 0.0.0.0/0 rather than the NLB's peer SG. The FL server NLB is
-        # internet-facing (public subnets, no `internal = true`), so its DNS resolves to PUBLIC IPs
-        # even from inside the VPC, and the trust EC2 (private subnet, no public IP) reaches them
-        # out through the NAT gateway — which is exactly what the NLB's own ingress rule
-        # allowlisting nat_public_ips[0]/32 attests. A peer-SG destination matches only the private
-        # IPs of ENIs carrying that SG, so it would match none of that traffic and silently drop
-        # every FL connection while image pulls, hub polling and SSM all stayed healthy. Narrow
-        # this only once the NLB itself becomes `internal` (see the TODO on that module), or by
-        # giving it static per-AZ EIPs via subnet_mapping and allowlisting those /32s.
-        {
-          port        = var.FL_SERVER_PORT
-          cidr_blocks = ["0.0.0.0/0"]
-          description = "FL server NLB - FL training traffic (internet-facing NLB, reached via NAT)"
-        },
-        # Inert in both directions: AWS documents that security groups cannot filter traffic to the
-        # Route 53 Resolver (the VPC+2 address / AmazonProvidedDNS), so these two neither permit
-        # nor restrict name resolution. Kept as documentation of intent. The control that actually
-        # satisfies #876's DNS criterion is the ABSENCE of a 0.0.0.0/0:53 rule, which does block
-        # third-party resolvers such as 8.8.8.8 — so don't debug a DNS fault against these rules,
-        # and don't "fix" one by widening them.
-        {
-          port        = 53
-          protocol    = "tcp"
-          cidr_blocks = ["${cidrhost(var.vpc_cidr, 2)}/32"]
-          description = "VPC DNS resolver (TCP fallback for large responses)"
-        },
-        {
-          port        = 53
-          protocol    = "udp"
-          cidr_blocks = ["${cidrhost(var.vpc_cidr, 2)}/32"]
-          description = "VPC DNS resolver"
-        },
-      ] : merge(local.trust_egress_rule_defaults, r)
-    ],
-    # ssm and logs share one interface-endpoint SG on one port, so they are a single AWS rule, not
-    # two — and it too is shadowed by the 443 floor (0.0.0.0/0 already matches the endpoint ENIs'
-    # private IPs), so it is documentation of intent rather than a control. When
-    # var.enable_ecs_endpoints is false the endpoints don't exist and this rule is omitted entirely:
-    # the 443 floor already carries that traffic, and re-stating it as a public rule here would
-    # collide with the floor on the same tuple. Same on LZA (the gate mirrors the SG's own count in
-    # vpc_endpoints.tf): endpoints are centralised in the Network account there, so no local
-    # endpoint SG exists to reference.
-    local.create_vpc_endpoints ? [
-      merge(local.trust_egress_rule_defaults, {
-        port                     = 443
-        source_security_group_id = aws_security_group.vpc_endpoints[0].id
-        description              = "SSM control plane (ssm) and CloudWatch Logs (logs) - via the VPC interface endpoints"
-      })
-    ] : []
-  )
+  trust_egress_rules = [
+    for r in [
+      # The 443 floor. One rule, because every destination behind it is the same AWS tuple:
+      # Central Hub API (CloudFront), GHCR, Docker Hub, Hugging Face seeding, download.docker.com,
+      # awscli.amazonaws.com, apt/esm over HTTPS, PyPI (seed_trust.sh's `uv run`), the
+      # us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
+      # (ssmmessages, ec2messages, monitoring).
+      {
+        port        = 443
+        cidr_blocks = ["0.0.0.0/0"]
+        description = "HTTPS to any destination: hub API (CloudFront), GHCR, Docker Hub, HF seeding, apt/esm, PyPI + download.pytorch.org, install mirrors, and AWS APIs with no VPC endpoint. See the README egress table."
+      },
+      {
+        port        = 80
+        cidr_blocks = ["0.0.0.0/0"]
+        description = "HTTP to any destination: Ubuntu apt mirrors - package install/upgrade"
+      },
+      # Shadowed by the 443 floor above (SG rules are a union) - documentation of intent, not
+      # enforcement. Kept so the intended scope survives if that floor is ever narrowed.
+      {
+        port            = 443
+        prefix_list_ids = [data.aws_ec2_managed_prefix_list.s3.id]
+        description     = "S3 (AI Centre FL kit sync) - AWS-managed prefix list, not a raw CIDR"
+      },
+      # NOT shadowed by anything — this is the one destination the 443 floor does not cover, so
+      # it has to be 0.0.0.0/0 rather than the NLB's peer SG. The FL server NLB is
+      # internet-facing (public subnets, no `internal = true`), so its DNS resolves to PUBLIC IPs
+      # even from inside the VPC, and the trust EC2 (private subnet, no public IP) reaches them
+      # out through the NAT gateway — which is exactly what the NLB's own ingress rule
+      # allowlisting nat_public_ips[0]/32 attests. A peer-SG destination matches only the private
+      # IPs of ENIs carrying that SG, so it would match none of that traffic and silently drop
+      # every FL connection while image pulls, hub polling and SSM all stayed healthy. Narrow
+      # this only once the NLB itself becomes `internal` (see the TODO on that module), or by
+      # giving it static per-AZ EIPs via subnet_mapping and allowlisting those /32s.
+      {
+        port        = var.FL_SERVER_PORT
+        cidr_blocks = ["0.0.0.0/0"]
+        description = "FL server NLB - FL training traffic (internet-facing NLB, reached via NAT)"
+      },
+      # Inert in both directions: AWS documents that security groups cannot filter traffic to the
+      # Route 53 Resolver (the VPC+2 address / AmazonProvidedDNS), so these two neither permit
+      # nor restrict name resolution. Kept as documentation of intent. The control that actually
+      # satisfies #876's DNS criterion is the ABSENCE of a 0.0.0.0/0:53 rule, which does block
+      # third-party resolvers such as 8.8.8.8 — so don't debug a DNS fault against these rules,
+      # and don't "fix" one by widening them.
+      {
+        port        = 53
+        protocol    = "tcp"
+        cidr_blocks = ["${cidrhost(var.vpc_cidr, 2)}/32"]
+        description = "VPC DNS resolver (TCP fallback for large responses)"
+      },
+      {
+        port        = 53
+        protocol    = "udp"
+        cidr_blocks = ["${cidrhost(var.vpc_cidr, 2)}/32"]
+        description = "VPC DNS resolver"
+      },
+    ] : merge(local.trust_egress_rule_defaults, r)
+  ]
 }
 
 module "trust_security_group" {
@@ -281,8 +230,7 @@ resource "aws_db_subnet_group" "flip_db_subnet_group" {
   name = "flip-db-subnet-group"
   # Data subnets: on the LZA network these are the fully-isolated (local-routes
   # only) subnets — RDS never initiates outbound traffic, and the proxy /
-  # bastion reach it over intra-VPC routing. On legacy these are the private
-  # subnets, unchanged (see network_lza.tf).
+  # bastion reach it over intra-VPC routing (see network_lza.tf).
   subnet_ids = local.data_subnet_ids
 }
 
@@ -561,24 +509,9 @@ resource "aws_instance" "ec2_instance" {
   }
 }
 
-# Application Load Balancer
-#
-# Internal (no public IP). CloudFront reaches it via aws_cloudfront_vpc_origin
-# (see cloudfront.tf) over an AWS-managed ENI inside this VPC — the ALB has
-# no internet exposure and the prefix-list-based ingress rule of the old
-# public-ALB design is no longer needed.
-#
-# Ingress on 443 is added separately as `aws_security_group_rule.alb_ingress_https_from_cloudfront`
-# in cloudfront.tf, with source = the CloudFront-VPCOrigins-Service-SG that AWS
-# creates after the VPC origin is provisioned (AWS docs Option 2 in
-# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html).
-# We learned the hard way that a vpc_cidr-based rule does NOT permit VPC-origin
-# traffic — AWS scopes VPC-origin SG checks to the service-managed SG (or the
-# CloudFront managed prefix list), not the ENI's source IP. The rule lives
-# outside this module so the chain (ALB SG → ALB → VPC origin → service-SG
-# data source → SG rule) doesn't form a cycle.
-# The HTTP listener still exists as a redirect-to-HTTPS belt-and-braces but
-# the SG denies inbound 80 by default.
+# The ALB went with the self-contained mode (FLIP#1479). Its security group, and the flip-api
+# ingress rule that names it (ecs_sg.tf), still exist on both LZA estates: unused, kept for a
+# separate cleanup.
 module "alb_security_group" {
   source        = "./modules/secgroup"
   name          = "alb-security-group"
@@ -588,145 +521,6 @@ module "alb_security_group" {
   tags          = { FlipSG = "true" }
 }
 
-module "alb" {
-  source  = "terraform-aws-modules/alb/aws"
-  version = "~> 10.0"
-  # LZA (FLIP#749): the web leg terminates on the internal NLB's web listener
-  # (fl_ingress_lza.tf) — static IPs the networking relay registers once —
-  # so no ALB is created there. Legacy prod/stag are unchanged. Module create
-  # flag rather than count, to keep the state address stable on legacy.
-  create                     = !var.lza_managed_network
-  name                       = "flip-alb"
-  vpc_id                     = local.vpc_id
-  internal                   = true
-  subnets                    = local.app_subnet_ids
-  security_groups            = [module.alb_security_group.security_group.id]
-  enable_deletion_protection = false
-
-  # LZA (FLIP#749): the accelerator guardrail enables access logging to the
-  # LogArchive bucket out-of-band; mirror it so Terraform stops reverting it.
-  # The module's access_logs object requires `bucket`, so "no logging" must be
-  # null (its own default) — an empty map fails type conversion on legacy.
-  access_logs = var.lza_elb_access_logs_bucket != "" ? {
-    enabled = true
-    bucket  = var.lza_elb_access_logs_bucket
-    prefix  = "${data.aws_caller_identity.current.account_id}/elb-flip-alb"
-  } : null
-
-  # The main listener's protocol depends on DNS availability (FLIP#749): with a
-  # hosted zone it terminates HTTPS with the DNS-validated ACM cert — the
-  # canonical shape, unchanged for legacy prod/stag. Without one
-  # (var.manage_dns = false, the zone-less first LZA bring-up) an ISSUED cert
-  # is impossible, so the same listener (key kept for state stability) serves
-  # plain HTTP on the same port; that leg only ever carries
-  # CloudFront-VPC-origin traffic over an AWS-managed ENI inside the VPC
-  # (viewers still get HTTPS on the default CloudFront domain), and it reverts
-  # to HTTPS as soon as the zone lands and MANAGE_DNS flips to true.
-  listeners = {
-    # HTTPS default action: return 404. CloudFront is the canonical front door
-    # for user traffic; anything reaching the ALB default action (e.g. direct
-    # ALB DNS probes) gets rejected here. The /api/* listener rule below
-    # forwards API requests to the API target group for both CloudFront's
-    # /api/* behaviour and any direct trust access.
-    "https-listener" = {
-      port            = var.ALB_HTTPS_PORT
-      protocol        = var.manage_dns ? "HTTPS" : "HTTP"
-      certificate_arn = var.manage_dns ? aws_acm_certificate.flip[0].arn : null
-      ssl_policy      = var.manage_dns ? "ELBSecurityPolicy-TLS13-1-3-2021-06" : null
-      fixed_response = {
-        content_type = "text/plain"
-        message_body = "Not Found"
-        status_code  = "404"
-      }
-    },
-    # On the zone-less bring-up this redirect points at what is temporarily a
-    # plain-HTTP listener — dead config there, but nothing dials port 80 (the
-    # VPC origin dials ALB_HTTPS_PORT and the ALB is internal), and keeping the
-    # key avoids a state churn on the flip back to HTTPS.
-    "http-redirect" = {
-      port     = var.ALB_HTTP_PORT
-      protocol = "HTTP"
-      redirect = {
-        port        = tostring(var.ALB_HTTPS_PORT)
-        protocol    = "HTTPS"
-        status_code = "HTTP_301"
-      }
-    }
-  }
-
-  # No EC2-instance target groups — the EC2 host no longer runs application
-  # containers (they run on ECS Fargate). Legacy `api-listener` and
-  # `fl-api-listener` listeners were removed in PR #452 review; the ALB
-  # only routes the https-listener /api/* path to the ECS target group.
-  target_groups = {}
-}
-
-# Network Load Balancer for FL server TCP/TLS pass-through
-module "fl_server_nlb" {
-  source  = "terraform-aws-modules/alb/aws"
-  version = "~> 10.0"
-  # Not created on the LZA account (FLIP#749): no IGW + VPC Block Public Access
-  # make an internet-facing NLB impossible in-account. The LZA FL front door is
-  # the INTERNAL NLB in fl_ingress_lza.tf, reached through the networking
-  # account's edge NLB over the TGW. Using the module's create flag keeps its
-  # state address stable for legacy envs.
-  create                     = !var.lza_managed_network
-  name                       = "flip-fl-server-nlb"
-  load_balancer_type         = "network"
-  vpc_id                     = local.vpc_id
-  subnets                    = module.flip_vpc.public_subnets
-  enable_deletion_protection = false
-  create_security_group      = true
-  security_group_tags        = { FlipSG = "true" }
-
-  # NLB only accepts trusted client sources - allow-list only the trusted client egress IPs
-  # TODO explore 'internal' NLB plus private connectivity instead of an internet-facing NLB
-  security_group_ingress_rules = {
-    fl_server_ingress = {
-      description = "Allow inbound FL server traffic only from trusted FL client IP"
-      ip_protocol = "tcp"
-      from_port   = tostring(var.FL_SERVER_PORT)
-      to_port     = tostring(var.FL_SERVER_PORT)
-      # Guarded because module arguments are evaluated even with create =
-      # false: on LZA the VPC module is empty, so there is no NAT EIP to index.
-      cidr_ipv4 = var.lza_managed_network ? null : "${module.flip_vpc.nat_public_ips[0]}/32"
-    }
-  }
-
-  security_group_egress_rules = {
-    fl_server_egress = {
-      description = "Allow NLB traffic and health checks to FL server targets"
-      ip_protocol = "tcp"
-      # Target-side port — backend-dependent (Flower targets 9092), unlike
-      # the listener/ingress side which stays on FL_SERVER_PORT.
-      from_port = tostring(local.fl_server_container_port)
-      to_port   = tostring(local.fl_server_container_port)
-      cidr_ipv4 = local.vpc_cidr_block
-    }
-  }
-
-  # Listener forwards directly to the ECS Fargate TG defined as a standalone
-  # aws_lb_target_group below. We bypass the module's target_groups map
-  # because that map only supports target_type=instance bound to an EC2 id;
-  # Fargate awsvpc requires target_type=ip with no pre-registered targets.
-  listeners = {
-    "fl-server-tcp-listener" = {
-      port     = var.FL_SERVER_PORT
-      protocol = "TCP"
-      forward = {
-        # Guarded like the ingress rule above: the TG is count-gated on LZA.
-        target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
-      }
-    }
-  }
-
-  # No module-managed target groups - the ECS TG is the standalone resource
-  # below. Leaving the legacy `ec2-instance-fl-server-tcp` definition would
-  # keep the EC2 instance attached as an unhealthy target and contradict the
-  # post-cutover state.
-  target_groups = {}
-}
-
 # Skipped when the account has no hosted zone (var.manage_dns = false — the
 # zone-less first LZA bring-up, FLIP#749): the lookup would hard-fail there.
 data "aws_route53_zone" "subdomain" {
@@ -734,40 +528,13 @@ data "aws_route53_zone" "subdomain" {
   name  = var.flip_alb_subdomain
 }
 
-resource "aws_route53_record" "alb" {
-  count   = var.manage_dns ? 1 : 0
-  zone_id = data.aws_route53_zone.subdomain[0].zone_id
-  name    = var.flip_alb_subdomain
-  type    = "A"
-
-  # Canonical user-facing URL — aliased to the CloudFront distribution.
-  # (Resource is still named "alb" for TF-state backwards compatibility; a
-  # rename would recreate the record. The alias target is now CloudFront.)
-  alias {
-    name                   = aws_cloudfront_distribution.flip_ui[0].domain_name
-    zone_id                = aws_cloudfront_distribution.flip_ui[0].hosted_zone_id
-    evaluate_target_health = false
-  }
-}
-
-# State migration for the count added above (FLIP#749): keeps existing legacy
-# states aligned without a manual `terraform state mv`. Safe to remove once
-# every live state file has been migrated.
-moved {
-  from = aws_route53_record.alb
-  to   = aws_route53_record.alb[0]
-}
-
 # Target group for the fl-server-net-1 ECS Fargate service. Registered by
 # the ECS service via the load_balancer block in ecs_services.tf - we never
 # attach instance/IP targets here. target_type=ip is required for awsvpc
 # Fargate tasks. NLB protocol must be TCP - HTTP/2 gRPC framing is opaque
 # to the NLB and forwarded as-is.
-# One TG serves both front doors: the legacy public NLB (module.fl_server_nlb
-# below) and the LZA internal NLB (fl_ingress_lza.tf) forward their FL
-# listener here, and exactly one of those modules is created per environment.
-# Only the name differs by mode, so each live state keeps the TG it already
-# holds (a name change is ForceNew).
+# The internal NLB (fl_ingress_lza.tf) forwards its FL listener here. The name
+# keeps the `-lza` suffix the live states hold (a name change is ForceNew).
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {
   # Container port per backend (FLARE: FL_SERVER_PORT; Flower: SuperLink
   # Fleet 9092 — see local.fl_server_container_port in ecs_tasks.tf). The
@@ -775,7 +542,7 @@ resource "aws_lb_target_group" "ecs_fl_server_tcp" {
   # switching backend replaces this TG; the name is keyed by backend and
   # create_before_destroy set so the replacement can stand up while the old
   # TG is still attached to the listener (a same-name replace deadlocks).
-  name        = "ecs-fl-server${var.fl_backend == "flower" ? "-flwr" : ""}${var.lza_managed_network ? "-lza" : "-tcp"}"
+  name        = "ecs-fl-server${var.fl_backend == "flower" ? "-flwr" : ""}-lza"
   port        = local.fl_server_container_port
   protocol    = "TCP"
   target_type = "ip"
@@ -799,25 +566,9 @@ resource "aws_lb_target_group" "ecs_fl_server_tcp" {
   deregistration_delay = 30
 }
 
-# Gated off with the NLB on LZA, and with the zone when DNS is unmanaged (FLIP#749).
-resource "aws_route53_record" "fl_server_nlb" {
-  count   = var.manage_dns && !var.lza_managed_network ? 1 : 0
-  zone_id = data.aws_route53_zone.subdomain[0].zone_id
-  name    = var.flip_nlb_subdomain
-  type    = "A"
-
-  alias {
-    name                   = module.fl_server_nlb.dns_name
-    zone_id                = module.fl_server_nlb.zone_id
-    evaluate_target_health = true
-  }
-}
-
 # State migrations (FLIP#749): the LZA states were first applied with their own
-# `_lza` copies of the two target groups, folded into the shared resources above
-# and below; the DNS record gained a count. Both keep existing states aligned
-# without a manual `terraform state mv`. Safe to remove once every live state
-# file has been migrated.
+# `_lza` copies of the two target groups, folded into the resources above and
+# below. Safe to remove once every live state file has been migrated.
 moved {
   from = aws_lb_target_group.ecs_fl_server_tcp_lza[0]
   to   = aws_lb_target_group.ecs_fl_server_tcp
@@ -828,26 +579,18 @@ moved {
   to   = aws_lb_target_group.ecs_flip_api
 }
 
-moved {
-  from = aws_route53_record.fl_server_nlb
-  to   = aws_route53_record.fl_server_nlb[0]
-}
-
 # Target group for the flip-api ECS Fargate service. Registered by the ECS
 # service itself via the load_balancer block in ecs_services.tf - we never
 # attach instance/IP targets here from terraform. target_type=ip is required
 # for awsvpc Fargate tasks (each task gets an ENI; the IP is what ECS
 # registers, not an instance id).
-# One TG for both front doors (FLIP#749): the legacy ALB's listener rule below
-# forwards here over HTTP; on LZA the internal NLB's web listener
-# (fl_ingress_lza.tf) forwards here over TCP — NLB target groups are TCP, but
-# the health check stays HTTP on the API's own liveness route so an unhealthy
-# task is pulled exactly as the ALB did. Protocol is ForceNew but constant per
-# environment, so no live state sees a replacement.
+# The internal NLB's web listener (fl_ingress_lza.tf) forwards here over TCP —
+# NLB target groups are TCP, but the health check stays HTTP on the API's own
+# liveness route. Name and protocol are the ones the live states hold (both ForceNew).
 resource "aws_lb_target_group" "ecs_flip_api" {
-  name        = var.lza_managed_network ? "ecs-flip-api-lza" : "ecs-flip-api"
+  name        = "ecs-flip-api-lza"
   port        = local.api_container_port
-  protocol    = var.lza_managed_network ? "TCP" : "HTTP"
+  protocol    = "TCP"
   target_type = "ip"
   vpc_id      = local.vpc_id
 
@@ -872,82 +615,6 @@ resource "aws_lb_target_group" "ecs_flip_api" {
   deregistration_delay = 30
 }
 
-# Listener rule for path-based routing to the API namespace. Forwards /api/*
-# to the ECS Fargate target group above. The legacy `ec2-instance-api`
-# target group on the EC2 host is kept in module.alb for state continuity
-# but no longer wired to a listener rule.
-moved {
-  from = aws_lb_listener_rule.api_routing
-  to   = aws_lb_listener_rule.api_routing[0]
-}
-
-resource "aws_lb_listener_rule" "api_routing" {
-  count        = var.lza_managed_network ? 0 : 1
-  listener_arn = module.alb.listeners["https-listener"].arn
-  priority     = 98
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/api", "/api/*"]
-    }
-  }
-}
-
-############################
-# On-Premises Trust (optional)
-# Driven by var.local_trust_public_ips — set via LOCAL_TRUST_PUBLIC_IPS in the
-# env file. One ingress rule is created per IP; `make allow-local-trust-nlb`
-# applies them. Because the IPs are real config (not a transient -target var),
-# a normal `terraform apply` reconciles these rules without drift.
-############################
-
-# Allow on-prem trust FL clients to reach the FL server via the NLB.
-# Without this rule the NLB security group drops the connection before it reaches the EC2.
-# Emptied on LZA (FLIP#749): there is no NLB (or NLB security group) to attach to.
-resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
-  for_each          = toset(var.lza_managed_network ? [] : var.local_trust_public_ips)
-  type              = "ingress"
-  from_port         = var.FL_SERVER_PORT
-  to_port           = var.FL_SERVER_PORT
-  protocol          = "tcp"
-  cidr_blocks       = ["${each.value}/32"]
-  security_group_id = module.fl_server_nlb.security_group_id
-  description       = "FL Server/Admin NLB from on-prem Trust (${each.value})"
-}
-
-############################
-# K8s Trust (optional)
-# Driven by var.k8s_trust_public_ips — set via K8S_TRUST_PUBLIC_IPS in the env
-# file. One ingress rule per IP, keyed by the IP itself (for_each), so the set
-# is reconciled by a normal `terraform apply` and re-adding an existing IP is a
-# no-op — fixing the InvalidPermission.Duplicate from the old -target/count path
-# (#596). The legacy scalar K8S_TRUST_IP is merged in for back-compat.
-############################
-
-# Allow K8s-deployed trust FL clients to reach the FL server via the NLB.
-# Same pattern as the on-prem trust rule above.
-resource "aws_security_group_rule" "k8s_trust_fl_server_nlb" {
-  # The deprecated scalar is marked sensitive for backwards compatibility,
-  # but an address used as a resource key is necessarily disclosed in state.
-  # Emptied on LZA (FLIP#749) like the on-prem rule above: no NLB there.
-  for_each = toset(var.lza_managed_network ? [] : concat(
-    var.k8s_trust_public_ips,
-    nonsensitive(var.K8S_TRUST_IP) != "" ? [nonsensitive(var.K8S_TRUST_IP)] : []
-  ))
-  type              = "ingress"
-  from_port         = var.FL_SERVER_PORT
-  to_port           = var.FL_SERVER_PORT
-  protocol          = "tcp"
-  cidr_blocks       = ["${each.value}/32"]
-  security_group_id = module.fl_server_nlb.security_group_id
-  description       = "FL Server/Admin NLB from K8s Trust (${each.value})"
-}
-
 output "Ec2InstanceId" {
   description = "Central Hub SSM bastion instance ID"
   value       = aws_instance.ec2_instance.id
@@ -956,11 +623,6 @@ output "Ec2InstanceId" {
 output "SsmCommand" {
   description = "SSM Session Manager command to connect to the Central Hub"
   value       = "aws ssm start-session --target ${aws_instance.ec2_instance.id}"
-}
-
-output "NatGatewayPublicIp" {
-  description = "NAT Gateway public IP (Central Hub outbound traffic source; null on the LZA platform-managed network, where egress is via the Network account — FLIP#749)"
-  value       = var.lza_managed_network ? null : module.flip_vpc.nat_public_ips[0]
 }
 
 output "TrustEc2InstanceId" {
@@ -1001,11 +663,6 @@ output "CognitoAppClientId" {
 output "FlServerEndpoint" {
   description = "FL server DNS endpoint (NLB pass-through; on LZA the name resolves to the networking account's edge NLB, which relays to the internal NLB in fl_ingress_lza.tf)"
   value       = var.flip_nlb_subdomain
-}
-
-output "FlServerRawNlbDns" {
-  description = "Raw AWS NLB DNS name for FL server debugging (null on LZA — FLIP#749)"
-  value       = module.fl_server_nlb.dns_name
 }
 
 ############################
@@ -1050,7 +707,7 @@ moved {
 module "trust_ec2" {
   # Optional: a hub-only deployment (var.deploy_trust_ec2=false, `make
   # full-deploy-hub-only`) provisions no cloud trust host — every trust then
-  # runs on-prem and joins via register-trusts + allow-local-trust-nlb.
+  # runs on-prem and joins via register-trusts.
   count  = var.deploy_trust_ec2 ? 1 : 0
   source = "./modules/trust_ec2"
 

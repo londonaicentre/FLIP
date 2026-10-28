@@ -69,6 +69,15 @@ The ``flip`` package is organized into logical modules:
    - ``Utils`` — General utility functions
    - ``model_weights_handling`` — Model weight aggregation and manipulation
 
+``flip.training``
+   Batch guards for apps using ``flip-utils[full]``:
+
+   - ``skip_degenerate_batch(labels, loss=None, *, log, context)`` — Warn and skip
+     fully masked labels (all ``-1``) or a non-finite scalar loss. Call once before
+     the model forward pass with labels, then again with the computed loss before
+     backward or metric accumulation. ``log`` accepts a warning callback such as
+     ``logger.warning``; ``context`` names the phase and batch position.
+
 ``flip.nvflare``
    FLARE-specific components:
 
@@ -123,13 +132,12 @@ Type                         Description
 ===========================  ====================================================================================
 ``standard``                 Federated training with FedAvg aggregation (default)
 ``evaluation``               Distributed model evaluation without training
-``diffusion_model``          Two-stage training: VAE encoder followed by diffusion model training
 ``fed_opt``                  Custom federated optimization with flexible aggregation strategies
 ===========================  ====================================================================================
 
 The FLARE backend additionally ships a template directory under
 ``fl-apps/nvflare/`` for each Client-API job type (``standard``,
-``evaluation``, ``diffusion_model``, ``fed_opt``); the template names match the
+``evaluation``, ``fed_opt``); the template names match the
 ``JobType`` enum values above. The Flower backend ships its own ``standard`` and
 ``evaluation`` templates under ``fl-apps/flower/`` — selected at the deploy
 layer by ``FL_BACKEND=flower``.

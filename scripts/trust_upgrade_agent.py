@@ -57,8 +57,9 @@ from zoneinfo import ZoneInfo
 
 # The agent's OWN checkout (plan decision 4): the operator's working tree is never moved under them.
 DEFAULT_CHECKOUT = Path("/opt/flip/releases/FLIP")
-# Kit file name token -> deploy/env_mode.mk PROD value.
-ENV_TOKEN_TO_PROD = {"production": "true", "stag": "stag", "lza-prod": "lza", "lza-stag": "lza-stag"}
+# Kit file name token -> deploy/env_mode.mk HUB value (FLIP#1479 renamed the selector and the
+# kit tokens; the pre-rename names are still accepted for one release, as the Makefiles do).
+ENV_TOKEN_TO_HUB = {"prod": "prod", "stag": "stag", "production": "prod", "lza-prod": "prod", "lza-stag": "stag"}
 LOG_TAIL_BYTES = 6000
 HTTP_TIMEOUT_S = 15
 # Same shape the hub and flip-ui accept as a comparable release identity.
@@ -163,11 +164,11 @@ def run(cmd: list[str], cwd: Path, **kw) -> subprocess.CompletedProcess:
 
 
 def kit_identity(kit_file: Path) -> tuple[str, str]:
-    """``(KIT, PROD)`` from ``.env.<KIT>.<env>``; the kit's name, not its FL slot, is what the Makefiles key on."""
+    """``(KIT, HUB)`` from ``.env.<KIT>.<env>``; the kit's name, not its FL slot, is what the Makefiles key on."""
     parts = kit_file.name.split(".", 3)  # ['', 'env', '<KIT>', '<env-token>']
-    if len(parts) != 4 or parts[3] not in ENV_TOKEN_TO_PROD:
-        raise ValueError(f"{kit_file.name} is not .env.<KIT>.<{'|'.join(ENV_TOKEN_TO_PROD)}>")
-    return parts[2], ENV_TOKEN_TO_PROD[parts[3]]
+    if len(parts) != 4 or parts[3] not in ENV_TOKEN_TO_HUB:
+        raise ValueError(f"{kit_file.name} is not .env.<KIT>.<{'|'.join(ENV_TOKEN_TO_HUB)}>")
+    return parts[2], ENV_TOKEN_TO_HUB[parts[3]]
 
 
 def local_state(kit: dict[str, str], repo: Path) -> Local:
@@ -200,13 +201,13 @@ def upgrade(repo: Path, kit_file: Path, tag: str) -> tuple[bool, str]:
     err = checkout(repo, tag)
     if err:
         return False, f"git checkout {tag} failed:\n{err}"
-    kit_name, prod = kit_identity(kit_file)
+    kit_name, hub = kit_identity(kit_file)
     out = run(
         [
             "make",
             "upgrade-onprem-trust",
             f"KIT={kit_name}",
-            f"PROD={prod}",
+            f"HUB={hub}",
             f"TAG={tag}",
             "YES=1",
             f"KIT_FILE={kit_file}",

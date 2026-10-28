@@ -19,8 +19,8 @@ templates that actually deploy), the EHR risk-prediction tutorial's shared featu
 model contract (`test_ehr_feature_engineering.py` — that app reads no DICOM, so it is deliberately
 absent from `DICOM_APPS`), and a second, dataset-tooling suite over `datasets/**`. No GPU,
 no dataset download, no FL image, no network — fixtures are synthesised in-process (synthetic
-DICOMs and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV fixtures), and
-each suite runs in well under a second.
+DICOMs, NIfTI volumes and dataframes, or for the dataset-tooling tests, small in-memory DICOM/CSV
+fixtures).
 
 ```bash
 make -C fl-tutorials test              # ruff over fl-tutorials/ + both suites below
@@ -44,9 +44,9 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 `trust/imaging-api/tests/routers/test_imaging.py`.
 
 Cross-cutting guards that assert a property across several source files
-(`test_dicom_orientation.py`, `test_flower_min_clients_wiring.py`,
+(`test_dicom_orientation.py`, `test_nifti_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
-`test_flwr_import_paths.py`, `test_offline_apps.py`, `test_ldm_offline_backbone.py`,
+`test_flwr_import_paths.py`, `test_offline_apps.py`, `test_autoencoder_offline_backbone.py`,
 `test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
 `test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
 `test_fl_tutorials_make_targets.py`, `test_sim_tutorial_stale_guard.py`,
@@ -66,6 +66,12 @@ tutorial directory and its `app_files/` carry an `__init__.py`, which makes each
 start at the tutorial (`arkplus_fine_tuning.app_files.test_data_utils`). `nvflare/` and `image_*/`
 deliberately do **not** carry one: a package named `nvflare` would shadow the real FLARE library
 the apps import.
+
+The X-ray `app/test_task.py` (Flower) and `app_files/test_trainer.py` (NVFLARE) share
+`xray_batch_contract.py`. A tiny CPU model exercises all five train/validation/test paths with
+masked labels and NaN/infinite losses, then checks that a partially supervised batch still
+updates weights and contributes metrics. These tests call the real shared batch guard and
+also preserve the existing empty-metric behavior when every batch is skipped.
 
 **Two kinds of environment, split at `tests/datasets/`.** Everything else under `tests/` covers
 the tutorial apps themselves and runs in flip-utils' environment (`flip-utils[full]` — monai,
@@ -114,7 +120,8 @@ radiographs while the model was being fed the transpose.
 ## What it runs
 
 The environment is **flip-utils'** (`flip-utils[full]` — monai, pydicom, torch, timm, sklearn),
-which is what the FL images give these apps at runtime. There is deliberately no `pyproject.toml`
+which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib) for
+the image-generation tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
 here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml`
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
 shared environment matching the runtime is both cheaper and more faithful.
@@ -153,7 +160,7 @@ reconstructed here, so the test asserts on the shipped code.
 | `test_app_loads_checkpoints_weights_only` (in `test_offline_apps.py`) | Every `torch.load` in a shipped app dir passes `weights_only=True` explicitly — an implicit default or `weights_only=False` unpickles arbitrary objects from the checkpoint. Host-side `process_tools/` conversions are outside the walked app dirs and stay exempt. |
 | `test_the_no_vocab_query_hands_the_app_the_same_cohort` (in `test_xray_no_vocab_query.py`) | The x-ray tutorials' `query_novocab.sql` (for a trust deployed with the Helm chart's `NO_VOCAB_LOAD=1`) returns the same studies, findings and `person_id`s as `query.sql`, both run in SQLite against one synthetic OMOP database: with the vocabulary for `query.sql`, without it for the copy. Its neighbours pin that `query.sql` really is empty without a vocabulary, that the two backends ship the same copy, and that the fixture covers Yes, No and an unrecorded answer for every finding. |
 
-Three design points are load-bearing, and each is itself asserted rather than assumed:
+Three design points underpin the DICOM checks, and each is itself asserted rather than assumed:
 
 - **The assertion is on values, never on shape.** `Rotate90d(k=-1)` restores the correct shape and
   is still wrong — upright but mirrored, which swaps the patient's left and right and looks
@@ -169,6 +176,14 @@ The fixture is synthesised, not committed: ~12 KB against ~640 KB for a downsamp
 provenance or PHI question, and the identical code path — the axis order is a property of the
 reader's convention, wholly independent of pixel content. It is parametrised over `MONOCHROME1`,
 `MONOCHROME2` and RLE Lossless, where the array path genuinely differs.
+
+## NIfTI orientation
+
+`test_nifti_orientation.py` checks spleen, prostate and brain MRI transform factories against
+an asymmetric synthetic RAS/LPS image and masks, pinning both known RAS output and agreement after
+deterministic preprocessing. Its registry discovers `LoadImaged` in top-level functions; class
+methods and module constants are outside that guard. Generated `fl_job/` copies are ignored, and
+the standalone prostate inference script is deliberately excluded. See the module docstring for scope.
 
 ## Bundle-export parity
 
@@ -200,9 +215,14 @@ contract, and should not be mistaken for it. Untested here:
 - End-to-end training behaviour, which stays with the GPU simulator harness
   (`make -C fl-tutorials run-tutorial`).
 
-**Out of scope by design:** the spleen and latent-diffusion tutorials. They load 3-D NIfTI through
-`Orientationd`/`Spacingd`, where this correction would be actively wrong. Do not add them to
-`DICOM_APPS`.
+The spleen and brain MRI tutorials have their own NIfTI orientation checks above. They stay
+outside `DICOM_APPS`: the 2-D DICOM reader correction does not apply to their 3-D
+`Orientationd`/`Spacingd` path.
+
+Of the three `image_generation` tutorials, `xray_diffusion` **is** registered: it reads the same 2-D
+DICOM chest X-rays as `xray_classification`, through a copy of its chain, so the same orientation
+guarantees apply. The two brain MRI tutorials read NIfTI and are not. A generative model trained on sideways
+or mirrored radiographs would go on to synthesise them.
 
 Tutorials are copy-and-adapt example code, and a repository test cannot follow a copy out of the
 repository. It can keep the thing being copied correct, which is the point: `fl-apps/` (the

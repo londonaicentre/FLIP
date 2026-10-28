@@ -176,8 +176,8 @@ On an on-prem Trust host, run once, as root:
 
 .. code-block:: bash
 
-   sudo -E make setup-auto-upgrade KIT=<name> PROD=true            # asks, then does everything below
-   sudo -E make setup-auto-upgrade KIT=<name> PROD=true AUTO_UPGRADE=yes   # or no, to answer in advance
+   sudo -E make setup-auto-upgrade KIT=<name> HUB=prod            # asks, then does everything below
+   sudo -E make setup-auto-upgrade KIT=<name> HUB=prod AUTO_UPGRADE=yes   # or no, to answer in advance
 
 ``make up-onprem-trust`` prints this command if it has not been run. The step:
 

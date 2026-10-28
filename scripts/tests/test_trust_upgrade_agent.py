@@ -114,7 +114,7 @@ class Tick(unittest.TestCase):
 
     def setUp(self):
         d = tempfile.mkdtemp()
-        self.kit = Path(d) / ".env.GSTT.production"
+        self.kit = Path(d) / ".env.GSTT.prod"
         self.kit.write_text(
             "CENTRAL_HUB_API_URL=https://hub.example/api\nTRUST_API_KEY_HEADER=X-Trust-API-Key\nTRUST_API_KEY=k\nFL_KIT_SLOT=Trust_1\n"
         )
@@ -169,12 +169,13 @@ class Tick(unittest.TestCase):
 
 
 class KitIdentity(unittest.TestCase):
-    def test_kit_name_and_prod_come_from_the_filename_not_the_fl_slot(self):
+    def test_kit_name_and_hub_come_from_the_filename_not_the_fl_slot(self):
         for name, expected in {
-            ".env.GSTT.production": ("GSTT", "true"),
+            ".env.GSTT.prod": ("GSTT", "prod"),
             ".env.GSTT.stag": ("GSTT", "stag"),
-            ".env.KCH.lza-prod": ("KCH", "lza"),
-            ".env.KCH.lza-stag": ("KCH", "lza-stag"),
+            ".env.KCH.production": ("KCH", "prod"),
+            ".env.KCH.lza-prod": ("KCH", "prod"),
+            ".env.KCH.lza-stag": ("KCH", "stag"),
         }.items():
             self.assertEqual(agent.kit_identity(Path("/etc/flip/trust") / name), expected)
 
@@ -194,14 +195,14 @@ class UpgradeRuns(unittest.TestCase):
             calls.append((cmd, cwd))
             return mock.Mock(returncode=0, stdout="ok", stderr="")
 
-        repo, kit = Path("/opt/flip/releases/FLIP"), Path("/etc/flip/trust/.env.GSTT.production")
+        repo, kit = Path("/opt/flip/releases/FLIP"), Path("/etc/flip/trust/.env.GSTT.prod")
         with mock.patch.object(agent, "run", fake_run):
             ok, _ = agent.upgrade(repo, kit, "v1.3.0")
         self.assertTrue(ok)
         self.assertEqual([c[0][:2] for c in calls[:2]], [["git", "fetch"], ["git", "checkout"]])
         make = calls[-1][0]
         self.assertEqual(make[:2], ["make", "upgrade-onprem-trust"])
-        for arg in ("KIT=GSTT", "PROD=true", "TAG=v1.3.0", "YES=1", f"KIT_FILE={kit}"):
+        for arg in ("KIT=GSTT", "HUB=prod", "TAG=v1.3.0", "YES=1", f"KIT_FILE={kit}"):
             self.assertIn(arg, make)
         self.assertTrue(all(c[1] == repo for c in calls))
 
@@ -213,7 +214,7 @@ class UpgradeRuns(unittest.TestCase):
             return mock.Mock(returncode=1, stdout="", stderr="no such tag")
 
         with mock.patch.object(agent, "run", fake_run):
-            ok, tail = agent.upgrade(Path("/r"), Path("/etc/flip/trust/.env.GSTT.production"), "v9.9.9")
+            ok, tail = agent.upgrade(Path("/r"), Path("/etc/flip/trust/.env.GSTT.prod"), "v9.9.9")
         self.assertFalse(ok)
         self.assertIn("no such tag", tail)
         self.assertNotIn("make", [c[0] for c in calls])

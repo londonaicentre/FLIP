@@ -68,15 +68,22 @@
 # and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any
 # other FL-affecting apply does. That is deliberate: a platform release is an
 # attended event, and the gate is not weakened for it.
+#
+# The UI (FLIP#1186). The `ui` job publishes flip-ui from the same commit once
+# the apply has succeeded (publish_ui.yml), so the UI never reaches users ahead
+# of the API it calls: a held apply holds the UI too, and the re-dispatch that
+# releases the apply publishes it. `make deploy-ui` remains the manual path.
 
 name: Terraform Apply
 
 on:
+  # Every push, not only infrastructure ones (FLIP#1186): the hub's images and
+  # the UI deploy through this workflow, so a path filter left a flip-api or
+  # flip-ui merge undeployed until the next infrastructure change. A push that
+  # changes nothing plans to a no-op, probes GHCR once (see the wait step) and
+  # republishes the same UI.
   push:
     branches: [develop, main]
-    paths:
-      - "deploy/providers/AWS/**"
-      - ".github/workflows/terraform_apply.yml"
   workflow_dispatch:
     inputs:
       fl_quiesced:
@@ -112,7 +119,11 @@ jobs:
     # estate that was torn down on purpose. It is a repository variable rather
     # than an aws-stag one because a job-level `if` is evaluated before the job's
     # environment is loaded. Production (main) never reads it.
-    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
+    # Outside londonaicentre/FLIP, plan, apply and drift all skip unless the
+    # repository variable TF_CI_ON_FORK is `true` (adopters:
+    # deploy/providers/AWS/ci/README.md). A fork has no aws-* environments, so each
+    # run would fail and mail whoever pushed, or for drift whoever last edited it.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
     permissions:
@@ -239,18 +250,13 @@ jobs:
       # `vars` here would override the resolved values and reintroduce hazard A.
       - name: Compose the Terraform env file
         env:
-          # Which mode this run composes for: the deploy/env_mode.mk token, from
-          # the TF_PROD variable on the environment (stag | true | lza-stag | lza).
-          # Unset keeps the legacy pair — `true` on main, `stag` otherwise — so a
-          # repository that has not set it behaves exactly as before, and a
-          # repointed estate only has to set one variable. The script derives the
-          # env-file name, the AWS_PROFILE the Makefile's guard expects and which
-          # keys are required, from this one token.
-          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+          # The estate: TF_HUB (stag | prod) on the environment. No fallback, so an
+          # unset TF_HUB fails this step instead of composing some default estate.
+          HUB: ${{ vars.TF_HUB }}
           # The class this run is allowed to compose, asserted by the script. The
-          # ref says which class the *branch* deploys; TF_PROD says which estate to
+          # ref says which class the *branch* deploys; TF_HUB says which estate to
           # deploy it into, and nothing else checks the two agree. They must:
-          # TF_PROD=stag (or lza-stag) on aws-prod composes a prod-sized plan whose
+          # TF_HUB=stag on aws-prod composes a prod-sized plan whose
           # RDS is refreshed as deletion_protection = false, skip_final_snapshot =
           # true — then applies it unattended on main. With this, that is a red
           # compose step instead of a plan someone has to read closely.
@@ -262,7 +268,6 @@ jobs:
           FLIP_FL_RESULTS_BUCKET_NAME: ${{ vars.FLIP_FL_RESULTS_BUCKET_NAME }}
           FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME: ${{ vars.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME }}
           FLIP_UI_BUCKET_NAME: ${{ vars.FLIP_UI_BUCKET_NAME }}
-          FLIP_BUCKET_NAME: ${{ vars.FLIP_BUCKET_NAME }}
           FL_SERVER_PORT: ${{ vars.FL_SERVER_PORT }}
           ENFORCE_MFA: ${{ vars.ENFORCE_MFA }}
           DEMO_ASSETS_BUCKET_NAME: ${{ vars.DEMO_ASSETS_BUCKET_NAME }}
@@ -278,30 +283,19 @@ jobs:
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
           DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
-          LOCAL_TRUST_PUBLIC_IPS: ${{ vars.LOCAL_TRUST_PUBLIC_IPS }}
-          K8S_TRUST_PUBLIC_IPS: ${{ vars.K8S_TRUST_PUBLIC_IPS }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
-          # The LZA keys (FLIP#749). Required when TF_PROD selects a
-          # platform-managed estate (lza-stag / lza), expected absent on the
-          # legacy tokens — see compose-ci-env.sh, which is the one place that
-          # decides. The last four have no `export TF_VAR_…` line in the Makefile,
-          # so the script writes them into the env file as raw exports. The two
-          # web-edge values are optional on purpose: the edge is built from this
-          # stack's outputs, so they are legitimately empty on a first apply.
+          # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
+          # `export TF_VAR_…` line in the Makefile, so the script writes them into
+          # the env file as raw exports. The two web-edge values are optional on
+          # purpose: the edge is built from this stack's outputs, so they are
+          # legitimately empty on a first apply.
           ACCESS_LOGS_BUCKET_NAME: ${{ vars.ACCESS_LOGS_BUCKET_NAME }}
           EFS_PROVISION_IMAGE: ${{ vars.EFS_PROVISION_IMAGE }}
           LZA_VPC_NAME: ${{ vars.LZA_VPC_NAME }}
           MANAGE_DNS: ${{ vars.MANAGE_DNS }}
           NETWORKING_INGRESS_CIDRS: ${{ vars.NETWORKING_INGRESS_CIDRS }}
-          LZA_ELB_ACCESS_LOGS_BUCKET: ${{ vars.LZA_ELB_ACCESS_LOGS_BUCKET }}
           LZA_WEB_EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
           LZA_WEB_EDGE_DISTRIBUTION_ARN: ${{ vars.LZA_WEB_EDGE_DISTRIBUTION_ARN }}
-          # NOT one of the LZA keys above: this one is for a self-contained
-          # account, set to "true" on aws-prod (or aws-stag) for the single apply
-          # that hands the public web name to another estate's edge. Unset is the
-          # everyday value — see compose-ci-env.sh and README, "Handing the public
-          # name over".
-          RELEASE_WEB_ALIAS: ${{ vars.RELEASE_WEB_ALIAS }}
           ADMIN_USER_PASSWORD: ${{ secrets.ADMIN_USER_PASSWORD }}
           AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}
           INTERNAL_SERVICE_KEY: ${{ secrets.INTERNAL_SERVICE_KEY }}
@@ -332,10 +326,9 @@ jobs:
       - name: Export the Terraform variables
         working-directory: deploy/providers/AWS
         env:
-          # Same token as the compose step above, for the same reason: `make` is
-          # what resolves the env file (env_mode.mk) and the TF_VAR_* mapping, and
-          # it has to be looking at the environment this run composed for.
-          PROD: ${{ vars.TF_PROD || (github.ref_name == 'main' && 'true' || 'stag') }}
+          # The compose step's HUB, so `make` reads the env file it wrote and maps
+          # it onto TF_VAR_* exactly as a laptop plan would.
+          HUB: ${{ vars.TF_HUB }}
         run: make --no-print-directory print-tf-env >> "$GITHUB_ENV"
 
       # Plan first and apply *that file*, never `apply -auto-approve` against a
@@ -422,3 +415,33 @@ jobs:
           # consequence is severe enough on a public repo that it should not
           # depend on that staying true. The harness requires it on every step.
           upload-plan: false
+
+      # The UI build reads the Cognito ids from environment variables, because it
+      # runs without the credentials to read Terraform state. They change only if
+      # the pool or client is replaced; this is the run that would replace them,
+      # so it says so.
+      - name: Check the UI's Cognito ids against Terraform
+        working-directory: deploy/providers/AWS
+        env:
+          UI_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
+          UI_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
+        run: |
+          set -uo pipefail
+          pool="$(terraform output -raw CognitoUserPoolId 2>/dev/null)" || pool=""
+          client="$(terraform output -raw CognitoAppClientId 2>/dev/null)" || client=""
+          if [[ "${pool}" != "${UI_POOL_ID}" || "${client}" != "${UI_CLIENT_ID}" ]]; then
+            echo "::warning title=UI Cognito ids differ::AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID on this environment do not match terraform output CognitoUserPoolId / CognitoAppClientId. The published UI signs in against the variables: update them and re-run the ui job."
+          fi
+
+  ui:
+    name: Publish flip-ui (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    needs: apply
+    uses: ./.github/workflows/publish_ui.yml
+    # The ceiling for publish_ui.yml's jobs: its build job narrows to
+    # contents: read, so only the publish job can mint a token.
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
+      release_tag: ${{ inputs.release_tag }}

@@ -59,7 +59,7 @@ and the render failures and the clean-up of a hand-made Service in
 
 ### 2.7 C-ECHO Passes, C-STORE Aborts (`AbstractMethodError` in dicom.log)
 
-The symptom, the three reasons an `xnat-web` pod keeps an old plugin roster, and the fix are in the docs:
+The symptom, the three reasons an `xnat-web` pod keeps an old image, and the fix are in the docs:
 [C-ECHO passes, C-STORE aborts](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-cstore-aborts). The deploy timeout behind reason 3 is
 [Deploy fails with resource Job/…/xnat-init not ready](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-xnat-init-timeout).
 
@@ -116,6 +116,15 @@ A failing run that names *no received.log line and no new prearchive object* mea
 association went somewhere that is not this XNAT — check the SCP receiver Orthanc dialled
 (§2.1) before suspecting the plugins.
 
+### 2.8 xnat-db Crash-Loops on Upgrade (no `postgres` role)
+
+Moved to the docs: [xnat-db crash-loops on upgrade: no postgres role](https://londonaicentreflip.readthedocs.io/en/latest/troubleshooting/trust-node-kubernetes.html#ts-k8s-xnat-db-roles).
+
+The postStart hook connects as `postgres` or, on a volume first initialised by a chart that rendered
+`POSTGRES_USER`, as the application role itself (FLIP#1658). The behaviour is pinned by
+`tests/test_xnat_db_poststart_roles.py`, which runs the rendered hook body against stubbed psql clients for
+both layouts.
+
 ---
 
 ## 6. Debug Scripts
@@ -128,7 +137,7 @@ machine and in `trust/deploy/helm/scripts/`. Key scripts:
 | `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
 | `smoke-cstore.sh` | Drive a real C-STORE through the PACS and verify XNAT received it (§2.7) |
 | `cstore_verdict.py` | The smoke's verdict logic, unit-tested without a cluster (§2.7) |
-| `check_status.py` | Full deployment smoke, including the plugin-roster comparison (§2.7) |
+| `check_status.py` | Full deployment smoke, including XNAT's plugins and DQR route |
 
 ### Available Tools on DCMTK Pod
 
@@ -500,30 +509,7 @@ Moved to the docs: [A service will not start after a governance edit](https://lo
 
 ---
 
-## 10. Preflight Looks for the Wrong Kit File (PROD tokens)
+## 10. Preflight Looks for the Wrong Kit File
 
-### Symptom
-
-`make -C trust/deploy/helm preflight KIT=<CODE> PROD=lza-stag` fails check 4 with
-`Kit file not found: .../trust/.env.<CODE>.development`, while the Makefile's own targets
-resolve the same kit correctly.
-
-### Cause
-
-`scripts/preflight.sh` carried its own `PROD` → suffix mapping, written before the LZA env
-tokens existed, so `lza` / `lza-stag` fell through to `development`.
-
-### Fix
-
-Fixed in-tree: `deploy/env_mode.mk` is now the only `PROD` → suffix map. The Makefile derives
-the token from it and injects it (`KIT_ENV=` into `preflight.sh`, `--env` into `sync_k8s_kit.py`);
-neither script keeps a copy, and running one bare with `PROD` set but no token is refused with
-a message naming the Makefile target, instead of defaulting to `development`. Expected mapping:
-
-| `PROD` | kit file |
-|---|---|
-| (unset) | `trust/.env.<CODE>.development` |
-| `stag` | `trust/.env.<CODE>.stag` |
-| `true` | `trust/.env.<CODE>.production` |
-| `lza` | `trust/.env.<CODE>.lza-prod` |
-| `lza-stag` | `trust/.env.<CODE>.lza-stag` |
+Pass the hub the site joins (`HUB=prod` or `HUB=stag`): the kit file is `trust/.env.<CODE>.<hub>`, and without
+`HUB` the chart reads the development kit; a kit under its pre-FLIP#1479 name gets a one-line rename hint.

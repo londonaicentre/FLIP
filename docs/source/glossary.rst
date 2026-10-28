@@ -51,9 +51,8 @@ Glossary
 
     **Landing Zone Accelerator (LZA)**
       AWS's reference implementation of a multi-account estate with centrally managed network, guardrails and
-      logging. FLIP's Central Hub can be deployed onto one in its platform-managed mode (``PROD=lza``), where it uses
-      the network the estate provides and ingress arrives through the estate's edge. See
-      :ref:`deploy-central-hub-aws-lza`.
+      logging. FLIP's Central Hub deploys onto such an estate: the workload account uses the network the estate
+      provides and ingress arrives through the estate's edge. See :ref:`deploy-central-hub-aws-lza`.
 
     **MAP**
       MONAI Application Package: a container, built with the MONAI Deploy App SDK, that wraps a trained model as a

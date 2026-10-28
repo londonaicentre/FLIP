@@ -28,6 +28,27 @@ import httpx
 from flip_api.utils.logger import logger
 
 
+def _researcher_refusal(response: httpx.Response) -> str | None:
+    """Read only text the FL API explicitly marks for researchers."""
+    if response.is_client_error:
+        try:
+            body = response.json()
+        except ValueError:
+            return None
+        refusal = body.get("refusal") if isinstance(body, dict) else None
+        if isinstance(refusal, str) and refusal.strip():
+            return refusal
+    return None
+
+
+def fl_api_error_message(error: httpx.HTTPStatusError) -> str:
+    """Format an FL API failure for the activity feed without exposing internal details."""
+    refusal = _researcher_refusal(error.response)
+    if refusal:
+        return f"The FL server refused the job: {refusal}"
+    return f"The FL server refused the job (HTTP {error.response.status_code})."
+
+
 def http_get(url: str, request_id: str | None = None, timeout: float | None = None) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing.
 

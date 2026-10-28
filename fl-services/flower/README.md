@@ -145,10 +145,10 @@ regenerates the CA and invalidates every node already holding credentials. Overr
 make -C fl-services/flower provision NET_NUMBER=1   # → provision/creds/net-1/
 make -C fl-services/flower provision NET_NUMBER=2   # second net for the default dev stack
 
-# A stag/prod kit: PROD selects the env file the slot pool is read from, and the
+# A stag/prod kit: HUB selects the env file the slot pool is read from, and the
 # SuperLink cert needs the hub's own names.
 FLOWER_EXTRA_SERVER_SANS="fl-server-net-1.flip.local,fl.stag.flip.aicentre.co.uk" \
-  make -C fl-services/flower provision NET_NUMBER=1 PROD=stag
+  make -C fl-services/flower provision NET_NUMBER=1 HUB=stag
 ```
 
 `make generate-tls-certificates-net-1` / `-net-2` are direct shortcuts for `provision
@@ -177,6 +177,9 @@ make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode au
 make -C fl-services/flower submit APP=xray_classification   # submit a job to the running stack
 make -C fl-services/flower down
 ```
+
+`APP=` is the tutorial's bare name: the stack mounts `fl-tutorials/flower/` at `/app/src`, and the fl-api
+resolves the name under `/app/src/<category>/<name>` (the tree's layout since #1500) — exactly one match.
 
 **Fetch the dataset before `up`.** The default `APP=xray_classification` is not self-contained: it
 reads images and a dataframe from the SuperNodes' bind mounts, and `up` only creates *placeholder*

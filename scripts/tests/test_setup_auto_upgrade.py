@@ -34,7 +34,7 @@ KIT_TEXT = "CENTRAL_HUB_API_URL=https://hub.example/api\nTRUST_API_KEY_HEADER=X-
 class Sandbox(unittest.TestCase):
     def setUp(self):
         root = Path(tempfile.mkdtemp())
-        self.kit = root / "repo" / ".env.GSTT.production"
+        self.kit = root / "repo" / ".env.GSTT.prod"
         self.kit.parent.mkdir()
         self.kit.write_text(KIT_TEXT)
         self.etc, self.units, self.checkout = root / "etc", root / "units", root / "opt" / "FLIP"
@@ -61,7 +61,7 @@ class Sandbox(unittest.TestCase):
 class Install(Sandbox):
     def test_yes_installs_everything_and_turns_the_hub_toggle_on(self):
         self.assertEqual(self.main("--answer", "yes"), 0)
-        shared = self.etc / ".env.GSTT.production"
+        shared = self.etc / ".env.GSTT.prod"
         self.assertEqual(shared.read_text(), KIT_TEXT)
         self.assertEqual(oct(shared.stat().st_mode & 0o777), "0o600")
         self.assertTrue(self.kit.is_symlink())
@@ -74,7 +74,7 @@ class Install(Sandbox):
         self.main("--answer", "yes")
         service = (self.units / "flip-trust-upgrade.service").read_text()
         self.assertIn(f"{self.checkout}/scripts/trust_upgrade_agent.py tick", service)
-        self.assertIn(f"--kit-file {self.etc / '.env.GSTT.production'}", service)
+        self.assertIn(f"--kit-file {self.etc / '.env.GSTT.prod'}", service)
         self.assertIn(f"--checkout {self.checkout}", service)
         self.assertIn("Type=oneshot", service)
 
@@ -86,7 +86,7 @@ class Install(Sandbox):
         self.main("--answer", "yes")
         self.assertEqual(self.main("--answer", "yes"), 0)
         self.assertEqual(self.toggles, [True, True])
-        self.assertEqual(self.kit.resolve(), (self.etc / ".env.GSTT.production").resolve())
+        self.assertEqual(self.kit.resolve(), (self.etc / ".env.GSTT.prod").resolve())
 
     def test_dry_run_changes_nothing(self):
         self.assertEqual(self.main("--answer", "yes", "--dry-run"), 0)
@@ -134,7 +134,7 @@ class Refusals(Sandbox):
 
     def test_will_not_clobber_a_different_kit_already_in_etc(self):
         self.etc.mkdir()
-        (self.etc / ".env.GSTT.production").write_text("other")
+        (self.etc / ".env.GSTT.prod").write_text("other")
         with self.assertRaises(SystemExit):
             self.main("--answer", "yes")
         self.assertEqual(self.toggles, [])

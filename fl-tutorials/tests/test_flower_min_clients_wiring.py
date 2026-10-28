@@ -40,14 +40,17 @@ REPO_ROOT = TUTORIALS_ROOT.parent
 # Imported, not spelled out: a rename of either symbol must fail this guard rather than leave the
 # apps reading a key nobody writes (which would silently restore flwr's defaults).
 READER = min_clients_from_run_config.__name__
-TREES = ("fl-apps", "fl-tutorials")
+# fl-apps/flower/<job_type>/app is flat; fl-tutorials/flower/<category>/<name>/app is one level deeper
+# (#1500, the NVFLARE layout), so each tree has its own glob depth.
+TREE_GLOBS = {"fl-apps": "flower/*/app/server_app.py", "fl-tutorials": "flower/*/*/app/server_app.py"}
+TREES = tuple(TREE_GLOBS)
 
 
 def _flip_flower_apps() -> list[Path]:
     """Every Flower server_app.py that FLIP injects run-config into, sorted for stable test ids."""
     apps = []
-    for tree in TREES:
-        for server_app in (REPO_ROOT / tree).glob("flower/*/app/server_app.py"):
+    for tree, pattern in TREE_GLOBS.items():
+        for server_app in (REPO_ROOT / tree).glob(pattern):
             pyproject = server_app.parents[1] / "pyproject.toml"
             config = (
                 tomllib.loads(pyproject.read_text()).get("tool", {}).get("flwr", {}).get("app", {}).get("config", {})

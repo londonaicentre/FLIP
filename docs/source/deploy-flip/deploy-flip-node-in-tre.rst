@@ -60,7 +60,7 @@ operator. The TRE operator is responsible for:
 FLIP's own images are published to the GitHub Container Registry
 (``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
 from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
-``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.production.yml``
+``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose_trust.prod.yml``
 and ``trust/xnat/docker-compose-stack.yml`` pin.
 
 Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of
@@ -91,9 +91,7 @@ so images have to come in through the TRE's normal file-ingress process, for exa
    air-gapped TRE therefore needs site-specific adaptation; agree it with the FLIP team
    before the TRE build starts.
 
-The Compose stack's XNAT image carries its plugins, so the FLIP host downloads none at start.
-(The Kubernetes chart is different: it fetches them from ``xnat.org``, ``api.bitbucket.org``
-and GitHub at every start, see :doc:`deploy-flip-node-azure`.)
+The XNAT image carries its plugins, so a trust downloads none at start, on Compose or Kubernetes.
 
 **Network policy**
 

@@ -38,6 +38,7 @@ from fl_api.schemas import (
     UploadAppRequest,
     normalize_status,
 )
+from fl_api.utils.refusals import ResearcherRefusal, researcher_refusal_handler
 from fl_api.utils.upload import upload_application
 from fl_api.utils.validation import safe_join, validate_tutorial_folder_name, warn_if_bundle_url_allow_list_empty
 from fl_api.utils.version import build_identity
@@ -52,6 +53,7 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+app.add_exception_handler(ResearcherRefusal, researcher_refusal_handler)
 
 
 @app.on_event("startup")
@@ -187,7 +189,28 @@ def _validate_tutorial_folder(tutorial_name: str) -> Path:
     # Tutorial submit: pre-baked tutorial folders (e.g. "xray_classification") are
     # submitted by name, not a UUID, so they get a charset/traversal guard instead.
     validate_tutorial_folder_name(tutorial_name)
-    return _resolve_job_dir(tutorial_name)
+    return _resolve_tutorial_dir(tutorial_name)
+
+
+def _resolve_tutorial_dir(tutorial_name: str) -> Path:
+    """Resolve a bare tutorial name to its ``<src_root>/<category>/<name>`` folder (FLIP#1500).
+
+    The mounted tree is ``fl-tutorials/flower/<category>/<name>/`` while the submit contract stays the
+    bare name, which ``validate_tutorial_folder_name`` has already confined to one safe path component,
+    so the glob cannot escape ``src_root`` (a missing root globs empty). Exactly one match is required:
+    none is a 400, and so is more than one — a name in two categories is a tree problem, not a choice.
+    A flat ``<src_root>/<name>`` is deliberately not consulted: after a pull without ``git clean -fdX``
+    the old flat folder survives as ignored caches, and it is not a tutorial.
+    """
+    src_root = _get_src_root()
+    matches = sorted(p for p in src_root.glob(f"*/{tutorial_name}") if p.is_dir())
+    if len(matches) != 1:
+        found = ", ".join(str(p.relative_to(src_root)) for p in matches) or "none"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tutorial '{tutorial_name}' must exist exactly once under {src_root}/<category>/ (found: {found})",
+        )
+    return matches[0]
 
 
 def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:

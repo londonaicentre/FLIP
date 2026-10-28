@@ -16,9 +16,13 @@ into a job and imported flat, so nothing here is importable by dotted name. Each
 from its file path under a unique module name, which also keeps the three same-named
 ``data_utils`` modules from colliding in ``sys.modules``.
 
-**Scope.** Only apps that read 2-D DICOM through MONAI's ``LoadImaged`` belong here. The spleen and
-latent-diffusion tutorials load 3-D NIfTI through ``Orientationd``/``Spacingd``, where the
-axis-order correction these tests pin would be actively wrong — they are deliberately absent.
+**Scope.** Only apps that read 2-D DICOM through MONAI's ``LoadImaged`` belong here. The spleen
+tutorials, and the two ``brain_mri_ldm_*`` tutorials since they were
+retargeted onto the 3-D brain-MRI cohort, load NIfTI through ``Orientationd``/``Spacingd``, where the
+axis-order correction these tests pin would be actively wrong — they are deliberately absent. Those
+chains take their axis order from the image's own affine, which is the guarantee a DICOM pixel array
+cannot give. ``xray_diffusion`` stays registered: it is still the 2-D chest-X-ray tutorial, reading
+``xray_classification``'s chain through a copy, so the same orientation guarantees must hold for it.
 """
 
 from __future__ import annotations
@@ -199,7 +203,12 @@ DICOM_APPS: tuple[TutorialApp, ...] = (
     TutorialApp(
         app_id="flower_xray_classification",
         backend="flower",
-        module_path="flower/xray_classification/app/transforms.py",
+        module_path="flower/image_classification/xray_classification/app/transforms.py",
+    ),
+    TutorialApp(
+        app_id="nvflare_diffusion_model",
+        backend="nvflare",
+        module_path="nvflare/image_generation/xray_diffusion/app_files/transforms.py",
     ),
 )
 
