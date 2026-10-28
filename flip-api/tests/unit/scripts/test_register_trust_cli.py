@@ -314,6 +314,22 @@ def test_main_exits_1_on_rotation_error(monkeypatch, capsys):
     session.rollback.assert_called_once()
 
 
+@pytest.mark.parametrize("flag", [["--code", "ROT"], ["--region", "London"], ["--require-existing"]])
+def test_main_rotate_rejects_registration_flags(monkeypatch, capsys, flag):
+    """`--rotate` identifies the trust by name only; a registration flag is an error, not ignored."""
+    from flip_api.scripts import register_trust as cli
+
+    _patch_session(monkeypatch)
+    monkeypatch.setattr(cli, "rotate_one_trust", _never_called)
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Rotating Trust", "--rotate", *flag])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 2
+    assert "--rotate" in capsys.readouterr().err
+
+
 def test_main_requires_name(monkeypatch, capsys):
     """argparse rejects a call with no --name and exits 2 (the argparse convention)."""
     from flip_api.scripts import register_trust as cli

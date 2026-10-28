@@ -683,7 +683,7 @@ register-trust: _check-compose-project-owner _wait-for-hub
 # generate-xnat-credentials).
 rotate-trust-keys: _check-compose-project-owner _wait-for-hub
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
-	@kit="trust/.env.$(KIT).$(ENV)"; \
+	@kit='$(call kit_file,trust/,$(KIT))'; \
 	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
 	  name="$$(sed -n 's/^TRUST_NAME=//p' "$$kit" | head -1)"; \
 	  [ -n "$$name" ] || { echo "❌ TRUST_NAME not set in $$kit"; exit 1; }; \

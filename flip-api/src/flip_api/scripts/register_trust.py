@@ -309,6 +309,8 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.rotate and (args.code or args.region or args.require_existing):
+        parser.error("--rotate identifies the trust by --name only; drop --code, --region and --require-existing")
 
     with Session(get_engine()) as session:
         try:

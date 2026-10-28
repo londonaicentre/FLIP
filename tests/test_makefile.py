@@ -611,8 +611,8 @@ COMPOSE_COMMAND = re.compile(r"\b(DEBUG_OVERRIDE_COMPOSE_COMMAND|DOCKER_COMMAND)
 class RotateTrustKeys(unittest.TestCase):
     """The dev rotation target drives the register_trust CLI the way its argparse accepts.
 
-    `--name` is the CLI's required argument and `--code` belongs to registration only, so a
-    recipe that passes both (or neither) exits 2 before anything rotates.
+    `--name` is the CLI's required argument and `--code` belongs to registration only: the CLI
+    exits 2 on `--rotate --code`, before anything rotates.
     """
 
     def recipe(self) -> str:
