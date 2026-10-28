@@ -18,6 +18,7 @@ exclude-newer-span = "P3D"
 constraints = [
     { name = "anyio", specifier = ">=4.14.2" },
     { name = "certifi", specifier = ">=2026.10.19" },
+    { name = "dnspython", specifier = ">=2.9.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "urllib3", specifier = ">=2.8.0" },
 ]
