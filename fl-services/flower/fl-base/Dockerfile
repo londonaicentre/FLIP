@@ -16,6 +16,9 @@
 FROM flwr/base:${FLWR_VERSION:-1.38.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
+# torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:
+# without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
+ENV TORCH_DISABLE_NATIVE_JIT=1
 WORKDIR /app
 
 # Install flip-utils from the IN-REPO source (build context = repo root). This
