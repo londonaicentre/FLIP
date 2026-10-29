@@ -84,3 +84,43 @@ resource "snowflake_execute" "observer_event_table" {
 
   depends_on = [snowflake_execute.event_table]
 }
+
+# SELECT on the observability views (#1584), current and future. The views are owner's-rights and
+# the platform tier owns them, so the observer reads account usage and every service's logs
+# through them without holding IMPORTED PRIVILEGES on database SNOWFLAKE or SELECT on anything
+# else. Nothing here grants an account-level privilege to the observer: that is the point.
+resource "snowflake_grant_privileges_to_account_role" "observer_obs_views" {
+  account_role_name = snowflake_account_role.observer.name
+  privileges        = ["SELECT"]
+
+  on_schema_object {
+    all {
+      object_type_plural = "VIEWS"
+      in_schema          = "\"${snowflake_database.platform.name}\".\"${local.platform_schemas.obs}\""
+    }
+  }
+
+  depends_on = [
+    snowflake_view.events,
+    snowflake_view.service_status,
+    snowflake_view.service_restarts,
+    snowflake_view.recent_errors,
+    snowflake_view.fl_client_logs,
+    snowflake_view.compute_pool_cost,
+    snowflake_view.warehouse_cost,
+  ]
+}
+
+resource "snowflake_grant_privileges_to_account_role" "observer_future_obs_views" {
+  account_role_name = snowflake_account_role.observer.name
+  privileges        = ["SELECT"]
+
+  on_schema_object {
+    future {
+      object_type_plural = "VIEWS"
+      in_schema          = "\"${snowflake_database.platform.name}\".\"${local.platform_schemas.obs}\""
+    }
+  }
+
+  depends_on = [snowflake_schema.platform]
+}

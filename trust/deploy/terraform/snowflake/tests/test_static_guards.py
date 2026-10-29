@@ -401,3 +401,45 @@ def test_no_dash_typography_in_prose():
         text = path.read_text()
         assert "\u2014" not in text, f"{path.name} uses an em dash"
         assert "\u2013" not in text, f"{path.name} uses an en dash"
+
+
+# --- observability: per-service log level (FLIP#1584) ---------------------------------------------
+#
+# Logs leave a container through the account event table, which the platform root owns. Two things
+# are pinned here: a spec says how loud it is, and no root turns logging on account-wide with a
+# LOG_LEVEL parameter (that would collect Snowflake-internal output for every object in the
+# account and bill its storage).
+
+
+def test_the_spec_log_level_comes_from_the_variable():
+    scan = hcl_block(source("converter.tf"), 'resource "snowflake_procedure_sql" "convert_scan"')
+    assert "logExporters: {eventTableConfig: {logLevel: ${var.service_log_level}}}" in scan, (
+        "a job's verbosity is a setting, not a literal buried in the spec"
+    )
+
+
+def test_debug_and_trace_are_refused():
+    block = hcl_block(source("variables.tf"), 'variable "service_log_level"')
+    assert block, "the per-service log level must be a variable with a validated set"
+    assert 'contains(["ERROR", "WARN", "INFO"], var.service_log_level)' in block
+    assert 'default     = "INFO"' in block
+    for level in ("DEBUG", "TRACE"):
+        assert f'"{level}"' not in all_terraform(), f"{level} must not be reachable from a tfvars file"
+
+
+def test_no_log_level_parameter_in_this_root():
+    for path in TF_FILES:
+        assert '"LOG_LEVEL"' not in path.read_text(), (
+            f"{path.name}: verbosity is per service, never an account, database or schema parameter"
+        )
+
+
+def test_the_event_table_belongs_to_the_platform_root():
+    """This root logs INTO the account event table and owns nothing about it: not the table, not
+    the EVENT_TABLE parameter, not its retention, not the views over it."""
+    text = all_terraform()
+    assert "EVENT TABLE" not in text, "the event table is created and granted by the platform root"
+    assert not resource_blocks(text, "snowflake_view"), (
+        "the observability views are owner's-rights over SNOWFLAKE.ACCOUNT_USAGE, which this role must not hold"
+    )
+    assert (PLATFORM_DIR / "observability_views.tf").is_file(), "the views live in the platform root"

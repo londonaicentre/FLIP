@@ -23,7 +23,7 @@ import re
 import subprocess
 
 import pytest
-from conftest import ROOT_DIR, TF_FILES, all_terraform, source
+from conftest import DASHBOARD_README, DASHBOARD_SQL, ROOT_DIR, TF_FILES, all_terraform, source
 from tf_blocks import hcl_block, resource_blocks
 
 ROOT_FILES = (
@@ -38,6 +38,7 @@ ROOT_FILES = (
     "network.tf",
     "policies.tf",
     "observability.tf",
+    "observability_views.tf",
     "cost.tf",
     "warehouse.tf",
     "grants.tf",
@@ -379,7 +380,7 @@ def test_makefile_has_target(target):
 
 def test_no_dash_typography_in_prose():
     """House style: no em dash or en dash in prose, including comments and the README."""
-    for path in [*TF_FILES, ROOT_DIR / "README.md", ROOT_DIR / "Makefile"]:
+    for path in [*TF_FILES, ROOT_DIR / "README.md", ROOT_DIR / "Makefile", DASHBOARD_SQL, DASHBOARD_README]:
         text = path.read_text()
         assert "\u2014" not in text, f"{path.name} uses an em dash"
         assert "\u2013" not in text, f"{path.name} uses an en dash"
@@ -399,3 +400,201 @@ def test_apply_and_destroy_always_print_the_revoke() -> None:
     for target in ("apply:", "destroy:"):
         body = makefile.split(target, 1)[1].split("\n\n", 1)[0]
         assert "REVOKE ROLE" in body, f"{target} must remind the operator to revoke the role"
+
+
+# --- observability: views, retention, dashboard (FLIP#1584) ---------------------------------------
+#
+# The whole of #1584 lives in this tier, and the reason is one sentence: a view runs with its
+# OWNER's rights, so a view over SNOWFLAKE.ACCOUNT_USAGE can only be owned by a role holding
+# IMPORTED PRIVILEGES on database SNOWFLAKE, which the deploy role must never hold. Owning them
+# here also keeps a workload `make destroy` from taking the account's observability with it.
+
+VIEW_RESOURCES = (
+    "events",
+    "service_status",
+    "service_restarts",
+    "recent_errors",
+    "fl_client_logs",
+    "compute_pool_cost",
+    "warehouse_cost",
+)
+
+VIEW_NAMES = (
+    "V_EVENTS",
+    "V_SERVICE_STATUS",
+    "V_SERVICE_RESTARTS",
+    "V_RECENT_ERRORS",
+    "V_FL_CLIENT_LOGS",
+    "V_COMPUTE_POOL_COST",
+    "V_WAREHOUSE_COST",
+)
+
+
+def _view_blocks() -> list[str]:
+    return resource_blocks(source("observability_views.tf"), "snowflake_view")
+
+
+@pytest.mark.parametrize("name", VIEW_NAMES)
+def test_the_contracts_observability_views_exist(name):
+    assert f'{name}"' in source("locals.tf"), f"{name} is missing from local.obs_views"
+
+
+@pytest.mark.parametrize("resource_name", VIEW_RESOURCES)
+def test_every_view_is_declared(resource_name):
+    assert hcl_block(source("observability_views.tf"), f'resource "snowflake_view" "{resource_name}"'), resource_name
+
+
+def test_every_view_lives_in_the_platform_obs_schema():
+    blocks = _view_blocks()
+    assert len(blocks) == len(VIEW_RESOURCES), "one resource per view, so each can be named in a grant"
+    for block in blocks:
+        assert "database    = snowflake_database.platform.name" in block, block[:80]
+        assert "schema      = local.platform_schemas.obs" in block, block[:80]
+        assert "name        = local.obs_views." in block, "a view name comes from the contract in locals.tf"
+    code = "\n".join(
+        line for line in source("observability_views.tf").splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "FLIP_TRUST_" not in code, "the views must not live in a database the workload root can destroy"
+
+
+def test_every_view_copies_its_grants_on_replace():
+    """Changing a statement replaces the view; without copy_grants the observer loses SELECT
+    until the next apply of the grant, which is exactly when somebody is reading logs."""
+    for block in _view_blocks():
+        assert "copy_grants = true" in block, block[:80]
+
+
+def test_the_base_view_orders_the_others():
+    """Each derived view reads the base view by reference, so the provider creates them in order
+    rather than failing on a view that does not exist yet."""
+    text = source("observability_views.tf")
+    for resource_name in VIEW_RESOURCES:
+        if resource_name in ("events", "compute_pool_cost", "warehouse_cost"):
+            continue
+        block = hcl_block(text, f'resource "snowflake_view" "{resource_name}"')
+        assert "snowflake_view.events.fully_qualified_name" in block, resource_name
+    events = hcl_block(text, 'resource "snowflake_view" "events"')
+    assert "local.event_table_fqn" in events
+    assert "snowflake_execute.event_table" in events, "the base view cannot be created before the event table"
+
+
+def test_the_cost_views_read_account_usage():
+    for resource_name, table in (
+        ("compute_pool_cost", "SNOWPARK_CONTAINER_SERVICES_HISTORY"),
+        ("warehouse_cost", "WAREHOUSE_METERING_HISTORY"),
+    ):
+        block = hcl_block(source("observability_views.tf"), f'resource "snowflake_view" "{resource_name}"')
+        assert f"SNOWFLAKE.ACCOUNT_USAGE.{table}" in block, resource_name
+        assert "var.cost_window_days" in block, "a cost view must be bounded, not a full history scan"
+
+
+def test_the_observer_reads_account_usage_only_through_the_views():
+    """The observer holds SELECT on the views and no account-level route to the same data. An
+    IMPORTED PRIVILEGES grant, or a SNOWFLAKE database role, would let any holder of the role read
+    every query text in the account, including the OMOP queries a cohort is built from."""
+    text = all_terraform()
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    assert "IMPORTED PRIVILEGES" not in code, "the observer reads ACCOUNT_USAGE through owner's-rights views"
+    assert not resource_blocks(text, "snowflake_grant_database_role"), (
+        "no SNOWFLAKE database role (USAGE_VIEWER, GOVERNANCE_VIEWER, ...) is granted to a FLIP role"
+    )
+
+
+def test_only_the_observer_can_select_the_obs_views():
+    for name in ("observer_obs_views", "observer_future_obs_views"):
+        block = hcl_block(source("grants.tf"), f'resource "snowflake_grant_privileges_to_account_role" "{name}"')
+        assert block, name
+        assert "account_role_name = snowflake_account_role.observer.name" in block, name
+        assert 'privileges        = ["SELECT"]' in block, name
+        assert 'object_type_plural = "VIEWS"' in block, name
+    grants = resource_blocks(all_terraform(), "snowflake_grant_privileges_to_account_role")
+    for block in [b for b in grants if '"SELECT"' in b]:
+        assert "snowflake_account_role.observer.name" in block, (
+            f"only the observer may SELECT in the platform tier:\n{block}"
+        )
+
+
+def test_the_service_role_cannot_reach_the_platform_database():
+    """A container must not read its neighbours' logs. SVC has no USAGE on FLIP_PLATFORM, so the
+    views are out of reach whatever is granted inside the schema."""
+    for block in resource_blocks(all_terraform(), "snowflake_grant_privileges_to_account_role"):
+        if "snowflake_database.platform.name" in block:
+            assert "snowflake_account_role.svc.name" not in block, block
+
+
+# --- retention ------------------------------------------------------------------------------------
+
+
+def test_the_event_table_has_a_retention_task():
+    """Snowflake expires nothing in an event table by itself: DATA_RETENTION_TIME_IN_DAYS there is
+    Time Travel. The retention policy is the DELETE, and it is platform-owned so the deploy key
+    can neither lengthen the window nor switch it off."""
+    block = hcl_block(source("observability.tf"), 'resource "snowflake_task" "prune_events"')
+    assert block, "the event table would grow forever without a pruning task"
+    assert "database  = snowflake_database.platform.name" in block
+    assert "DELETE FROM ${local.event_table_fqn}" in block
+    assert "var.event_table_retention_days" in block
+    assert "started   = true" in block, "a task that is not started is not a retention policy"
+
+
+def test_the_retention_window_is_bounded():
+    block = hcl_block(source("variables.tf"), 'variable "event_table_retention_days"')
+    assert "var.event_table_retention_days <= 90" in block, "logs are operational data, not a record"
+    assert "var.event_table_retention_days >= 1" in block
+
+
+def test_the_event_tables_time_travel_stays_short():
+    """Pruned rows must not be kept for another week in Time Travel storage."""
+    text = source("observability.tf")
+    assert "DATA_RETENTION_TIME_IN_DAYS = 1" in text
+    assert hcl_block(text, 'resource "snowflake_execute" "event_table_time_travel"'), (
+        "the CREATE is IF NOT EXISTS, so an account whose event table predates this needs the ALTER"
+    )
+
+
+def test_verbosity_is_per_service_and_never_an_account_parameter():
+    """A LOG_LEVEL parameter would collect Snowflake-internal output account-wide and bill its
+    storage. Each spec sets its own logExporters.eventTableConfig.logLevel instead."""
+    for root in (ROOT_DIR, ROOT_DIR.parent / "snowflake"):
+        for path in sorted(root.glob("*.tf")):
+            assert '"LOG_LEVEL"' not in path.read_text(), f"{root.name}/{path.name} sets a LOG_LEVEL parameter"
+    for block in resource_blocks(all_terraform(), "snowflake_account_parameter"):
+        assert 'key   = "EVENT_TABLE"' in block, "EVENT_TABLE is the only account parameter this root sets"
+
+
+# --- the dashboard ----------------------------------------------------------------------------------
+
+
+def test_the_dashboard_is_in_the_repo():
+    assert DASHBOARD_SQL.is_file(), "Snowsight has no API, so the dashboard is kept as the SQL of its tiles"
+    assert DASHBOARD_README.is_file(), "and a README saying how to load it"
+    assert "Licensed under the Apache License, Version 2.0" in DASHBOARD_SQL.read_text()
+    assert "Licensed under the Apache License, Version 2.0" in DASHBOARD_README.read_text()
+
+
+def test_the_dashboard_runs_as_the_observer_role():
+    sql = DASHBOARD_SQL.read_text()
+    assert "USE ROLE FLIP_<CODE>_OBSERVER;" in sql, "the dashboard is granted to the observer role, not to a person"
+    assert "ACCOUNTADMIN" not in sql, "no tile may need the break-glass role"
+
+
+@pytest.mark.parametrize("name", VIEW_NAMES)
+def test_the_dashboard_covers_every_view(name):
+    assert f"FLIP_PLATFORM.OBS.{name}" in DASHBOARD_SQL.read_text(), f"no tile reads {name}"
+
+
+def test_the_dashboard_reads_nothing_but_the_views():
+    """A tile that queried the event table or ACCOUNT_USAGE directly would need privileges the
+    observer deliberately does not have, so it would fail only when somebody opened it."""
+    sql = DASHBOARD_SQL.read_text()
+    code = "\n".join(line for line in sql.splitlines() if not line.lstrip().startswith("--"))
+    assert "ACCOUNT_USAGE" not in code
+    assert "FLIP_EVENTS" not in code
+    read = set(re.findall(r"FLIP_PLATFORM\.OBS\.(V_[A-Z_]+)", code))
+    assert read == set(VIEW_NAMES), f"the dashboard reads {sorted(read)}, the views are {sorted(VIEW_NAMES)}"
+
+
+def test_the_grafana_follow_up_is_recorded_and_not_half_built():
+    readme = (ROOT_DIR / "README.md").read_text()
+    assert "Grafana" in readme, "the Grafana-on-SPCS follow-up is a note in Open points, nothing more"
+    assert "grafana" not in all_terraform().lower(), "nothing about Grafana is built in this issue"
