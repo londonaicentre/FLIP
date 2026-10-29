@@ -90,6 +90,16 @@ def registry_host(snow: str, connection: str, dry_run: bool) -> str:
     return host
 
 
+def registry_login(snow: str, connection: str, dry_run: bool) -> None:
+    """Log docker in to the account registry through the snow CLI.
+
+    The registry token is short-lived, so a mirror run that relied on an earlier login
+    fails at its first push. ``snow`` hands the token to ``docker login`` itself; no
+    credential passes through this process's argv or output.
+    """
+    run([snow, "spcs", "image-registry", "login", "--connection", connection], dry_run)
+
+
 def source_tag(kit: dict[str, str], repo: str) -> str:
     """The GHCR tag to mirror, honouring the per-image kit opt-outs.
 
@@ -200,6 +210,7 @@ def main() -> int:
     print(f"📦 Mirroring {len(repos)} image(s) into {names.image_repository} ({args.platform})")
     try:
         host = registry_host(args.snow, args.connection, args.dry_run)
+        registry_login(args.snow, args.connection, args.dry_run)
         recorded = mirror(repos, kit, names, host, args.platform, args.ghcr_org, args.dry_run, pull=not args.no_pull)
     except MirrorError as e:
         print(f"❌ {e}")

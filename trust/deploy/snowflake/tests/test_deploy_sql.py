@@ -302,3 +302,22 @@ def test_mirror_without_pull_pushes_the_local_build(monkeypatch: pytest.MonkeyPa
 
 def test_make_mirror_images_offers_local_builds() -> None:
     assert "$(if $(filter false,$(MIRROR_PULL)),--no-pull,)" in MAKEFILE
+
+
+def test_mirror_logs_in_to_the_registry_before_pushing(monkeypatch: pytest.MonkeyPatch, rendered: Path) -> None:
+    """The registry token is short-lived; the first live mirror failed at its first push."""
+    import mirror_images
+
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], dry_run: bool, capture: bool = False) -> str:
+        commands.append(command)
+        return "reg.example"
+
+    monkeypatch.setattr(mirror_images, "run", fake_run)
+    monkeypatch.setattr(mirror_images, "digest_of", lambda image, dry_run: "sha256:" + "1" * 64)
+    mirror_images.registry_login("snow", "flip-test", False)
+    assert commands[-1] == ["snow", "spcs", "image-registry", "login", "--connection", "flip-test"]
+    source = (SNOWFLAKE_DIR / "mirror_images.py").read_text()
+    main = source[source.index("def main") :]
+    assert main.index("registry_login(") < main.index("recorded = mirror(")
