@@ -53,6 +53,9 @@ def test_up_alters_existing_services_in_place(rendered: Path, manifest: dict) ->
     sql = "\n".join(spcs_sql.sql_up(rendered, manifest, frozenset({"XNAT_DB"})))
     assert "ALTER SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB FROM SPECIFICATION $$" in sql
     assert "ALTER SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB SET QUERY_WAREHOUSE" in sql
+    assert "INSTANCES" not in sql.split("ALTER SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB SET", 1)[1].split(";", 1)[0], (
+        "a block-volume service refuses any MIN/MAX_INSTANCES change, even to the same value"
+    )
     assert "CREATE SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB" not in sql
     assert "CREATE SERVICE FLIP_TRUST_GSTT.APP.TRUST_API" in sql
 

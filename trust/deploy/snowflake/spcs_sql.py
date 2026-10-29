@@ -90,8 +90,8 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
     its block volumes (xnat-db's and Orthanc's databases) and every grant on it. So the
     caller names the services already there (``existing``, unqualified upper-case names
     from SHOW SERVICES): a new one is CREATEd, an existing one gets
-    ``ALTER SERVICE ... FROM SPECIFICATION``, which upgrades it in place, plus a ``SET`` for
-    the settings CREATE would have given it. The job service is only described.
+    ``ALTER SERVICE ... FROM SPECIFICATION``, which upgrades it in place, plus a ``SET`` of
+    its query warehouse. The job service is only described.
 
     Run only between ``sql_grant_create_service`` and ``sql_revoke_create_service``, which
     is what ``run_up`` (and so ``make up``) does.
@@ -117,8 +117,10 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
         if service["sql_name"].rsplit(".", 1)[-1].upper() in existing:
             statements += [
                 f"ALTER SERVICE {service['sql_name']} FROM SPECIFICATION $$\n{body}$$;",
-                f"ALTER SERVICE {service['sql_name']} SET QUERY_WAREHOUSE = {manifest['warehouse']} "
-                "MIN_INSTANCES = 1 MAX_INSTANCES = 1;",
+                # QUERY_WAREHOUSE only: instance counts are fixed at CREATE, and Snowflake
+                # refuses any MIN/MAX_INSTANCES on a service with a block volume as
+                # "scaling", even to the same value (live account, xnat-db).
+                f"ALTER SERVICE {service['sql_name']} SET QUERY_WAREHOUSE = {manifest['warehouse']};",
             ]
             continue
         statements.append(
