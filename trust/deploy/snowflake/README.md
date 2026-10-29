@@ -251,7 +251,7 @@ auth, except the service creates in `make up`. `FLIP_<CODE>_ADMIN` is **retired*
 
 | Object | Owner | Granted |
 | --- | --- | --- |
-| Services (`CREATE OR ALTER SERVICE`) | `FLIP_<CODE>_SVC` | created as that role; the deploy role drops and suspends them through the role hierarchy |
+| Services (`CREATE SERVICE`, then `ALTER SERVICE ... FROM SPECIFICATION`) | `FLIP_<CODE>_SVC` | created as that role; the deploy role drops and suspends them through the role hierarchy |
 | dcm2niix jobs | `FLIP_<CODE>_CONVERTER` | started only by `CALL APP.CONVERT_SCAN` (Terraform workload root) |
 | Secrets (`sync-kit`) | `FLIP_<CODE>_DEPLOY` | `READ` to `FLIP_<CODE>_SVC` |
 | Database, schemas, warehouse, pools, repository, stages | `FLIP_<CODE>_DEPLOY` | per the Terraform workload root |
@@ -297,8 +297,9 @@ No account, no credentials, no network. The guards assert, over rendered specs a
 SQL; the exact secret map per service; the fl-client's read-only kit, net-scoped images
 mount and absent AES key; block volumes only for `xnat-db` and `orthanc`; resource
 requests and limits on every container; `/health` probes on the three APIs; the DICOM TCP
-endpoints; derived SPCS DNS rather than Compose names; and `CREATE OR ALTER` rather than
-`CREATE OR REPLACE` (which would drop the databases' block volumes).
+endpoints; derived SPCS DNS rather than Compose names; and `CREATE SERVICE` for a new service, `ALTER SERVICE ... FROM SPECIFICATION`
+for an existing one, never `CREATE OR REPLACE` (which would drop the databases' block
+volumes). Snowflake has no `CREATE OR ALTER SERVICE`.
 
 For the one-shot jobs they additionally assert: that each stays a job on the job pool and
 exposes no endpoint; that its script is inlined, since a job service can fetch nothing;

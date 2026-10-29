@@ -72,7 +72,7 @@ help:
 	@echo "  make mirror-images KIT=<CODE> HUB=<env>   Mirror GHCR images into the account repository"
 	@echo "                    MIRROR_PULL=false       ...pushing the local daemon's images (local builds) as is"
 	@echo "  make sync-kit      KIT=<CODE> HUB=<env>   Write SECRET objects, push FL kit + governance"
-	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE OR ALTER SERVICE from the rendered specs"
+	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE (or ALTER) each service from the rendered specs"
 	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
 	@echo "  make suspend       KIT=<CODE> HUB=<env>   Suspend every service AND every compute pool"
 	@echo "  make status        KIT=<CODE> HUB=<env>   Service and compute-pool status"
@@ -127,7 +127,7 @@ sync-kit: require-kit
 # CREATE SERVICE only for the length of this target: spcs_sql.py apply-up grants it, creates,
 # and revokes in a `finally`, so a failed deploy cannot leave it behind (FLIP#1578).
 up: require-kit render
-	@echo "🚀 CREATE OR ALTER SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
+	@echo "🚀 CREATE / ALTER SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py apply-up --dir $(RENDER_DIR) \
 		--snow $(SNOW) --connection $(SNOW_CONNECTION) \
 		$(if $(filter true,$(DRY_RUN)),--dry-run,)
