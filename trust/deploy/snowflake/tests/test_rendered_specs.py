@@ -334,5 +334,6 @@ def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
     env = containers(specs["orthanc"])[0]["env"]
     modalities = json.loads(env["ORTHANC__DICOM_MODALITIES"])
     assert modalities["XNAT"]["AET"] == "XNAT"
-    assert modalities["XNAT"]["Host"].startswith("xnat-web.")
+    # Orthanc refused the full SPCS name as too long; the bare name resolves via the search list.
+    assert modalities["XNAT"]["Host"] == "xnat-web"
     assert modalities["XNAT"]["Port"] == env["XNAT_PORT"]
