@@ -390,7 +390,10 @@ summarise_stop() {
     [[ -n "${GITHUB_STEP_SUMMARY:-}" ]] || return 0
     local row
     {
-        if [[ "${STOP_RDS_LEFT_UP:-false}" == "true" ]]; then
+        # `failures` is do_stop's local; summarise_stop only runs from there.
+        if [[ "${failures:-0}" -gt 0 ]]; then
+            echo "### ❌ Staging stop failed: ${failures} action(s), staging may still be partly up"
+        elif [[ "${STOP_RDS_LEFT_UP:-false}" == "true" ]]; then
             echo "### ⚠️ Staging partly stopped"
         else
             echo "### 🌙 Staging stopped"
@@ -412,39 +415,35 @@ summarise_stop() {
 # ---------------------------------------------------------------------------
 
 wait_for() {
-    # wait_for <description> <probe command...>; the probe exits 0 when ready.
-    local description="$1"
-    shift
-    local deadline=$((SECONDS + WAIT_SECONDS))
+    # wait_for <description> <ready states> <state reader...>
+    #
+    # The reader runs as a plain assignment, never as an `if` condition. Inside
+    # an `if`, `set -e` is off for the whole call, so a describe that failed
+    # (AccessDenied, say) used to read as "not ready yet" and the loop polled on
+    # until the deadline, up to three 25-minute waits on the start path. Here the
+    # failed describe ends the run at once, with describe_or_die's own message.
+    local description="$1" ready="$2"
+    shift 2
+    local deadline=$((SECONDS + WAIT_SECONDS)) current
     while true; do
-        if "$@"; then
+        current="$("$@")" || die "${description}: the state could not be read; stopping here."
+        if [[ " ${ready} " == *" ${current} "* ]]; then
             log "   ${description}: ready."
             return 0
         fi
         if [[ "${SECONDS}" -ge "${deadline}" ]]; then
-            warn "${description}: still not ready after ${WAIT_SECONDS}s."
+            warn "${description}: still '${current}' after ${WAIT_SECONDS}s."
             return 1
         fi
         sleep "${WAIT_POLL_SECONDS:-15}"
     done
 }
 
-rds_is_available() { [[ "$(rds_status)" == "available" ]]; }
-
 # Settled means "a start would be accepted or is unnecessary": stopped, or
-# already available. `stopping` and `starting` are the transient states that a
-# start cannot act on.
-rds_is_settled() {
-    local status
-    status="$(rds_status)"
-    [[ "${status}" == "stopped" || "${status}" == "available" ]]
-}
-
-ec2_is_settled() {
-    local state
-    state="$(hub_instance_state "$1")"
-    [[ "${state}" == "stopped" || "${state}" == "running" ]]
-}
+# already available/running. `stopping` and `starting` are the transient states
+# that a start cannot act on.
+RDS_SETTLED_STATES="stopped available"
+EC2_SETTLED_STATES="stopped running"
 
 # The start path is split in two because the apply needs it split (FLIP#1596).
 #
@@ -474,8 +473,10 @@ start_ec2_now() {
     if aws_rw ec2 start-instances --instance-ids "${id}" >/dev/null; then
         log "   ${id}: stopped -> pending."
     else
-        warn "${id}: start-instances failed."
-        FAILURES=$((FAILURES + 1))
+        # A warning, not a failure: this is the SSM bastion (main.tf), which
+        # neither the plan nor the apply uses, and do_status leaves it out of
+        # its verdict too. Failing start-data here would skip the apply.
+        warn "${id}: start-instances failed; the plan and apply do not need this host."
     fi
 }
 
@@ -503,7 +504,7 @@ start_data() {
         log "   currently '${status}', waiting for it to settle before starting."
         if [[ "${DRY_RUN}" == "true" ]]; then
             log "   DRY RUN: not waiting for it to settle."
-        elif wait_for "RDS ${RDS_INSTANCE_ID} to settle" rds_is_settled; then
+        elif wait_for "RDS ${RDS_INSTANCE_ID} to settle" "${RDS_SETTLED_STATES}" rds_status; then
             status="$(rds_status)"
             if [[ "${status}" == "stopped" ]]; then
                 start_rds_now
@@ -535,7 +536,7 @@ start_data() {
                 log "   ${id}: '${state}', waiting for it to settle before starting."
                 if [[ "${DRY_RUN}" == "true" ]]; then
                     log "   DRY RUN: not waiting for it to settle."
-                elif wait_for "EC2 ${id} to settle" ec2_is_settled "${id}"; then
+                elif wait_for "EC2 ${id} to settle" "${EC2_SETTLED_STATES}" hub_instance_state "${id}"; then
                     state="$(hub_instance_state "${id}")"
                     if [[ "${state}" == "stopped" ]]; then
                         start_ec2_now "${id}"
@@ -543,8 +544,8 @@ start_data() {
                         log "   ${id}: settled at '${state}'."
                     fi
                 else
-                    warn "${id}: still '${state}' after ${WAIT_SECONDS}s; it was never started."
-                    FAILURES=$((FAILURES + 1))
+                    # A warning for the same reason as start_ec2_now's.
+                    warn "${id}: still '${state}' after ${WAIT_SECONDS}s; it was never started. The plan and apply do not need this host."
                 fi
                 ;;
             esac
@@ -559,7 +560,7 @@ start_data() {
 
     log ""
     log ">> Waiting for RDS to become available (up to ${WAIT_SECONDS}s)"
-    wait_for "RDS ${RDS_INSTANCE_ID}" rds_is_available || FAILURES=$((FAILURES + 1))
+    wait_for "RDS ${RDS_INSTANCE_ID}" "available" rds_status || FAILURES=$((FAILURES + 1))
 }
 
 # ecs_services.tf ignores desired_count (FLIP#1596), so an apply will not put the
@@ -708,10 +709,12 @@ do_hold_minutes() {
         source="the built-in default"
     fi
 
-    [[ "${candidate}" =~ ^[0-9]+$ ]] ||
-        die "hold minutes must be a non-negative whole number, got '${candidate}' from ${source}"
+    # At most four digits, read as base 10: bash treats a leading zero as octal,
+    # so `010` became 8 minutes and `08` failed, and a long enough value wraps.
+    [[ "${candidate}" =~ ^[0-9]{1,4}$ ]] ||
+        die "hold minutes must be a whole number from 0 to 9999, got '${candidate}' from ${source}"
 
-    local minutes="${candidate}"
+    local minutes=$((10#${candidate}))
     if [[ "${minutes}" -gt "${MAX_HOLD_MINUTES}" ]]; then
         warn "hold of ${minutes} minutes from ${source} exceeds the ${MAX_HOLD_MINUTES} minute ceiling; clamping. A GitHub job is killed at six hours, and a hold that is killed never stops anything."
         minutes="${MAX_HOLD_MINUTES}"

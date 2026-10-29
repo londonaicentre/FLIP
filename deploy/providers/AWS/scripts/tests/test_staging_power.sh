@@ -138,6 +138,18 @@ rds:describe-db-instances)
     # spinning until the deadline.
     [[ -f "${AWS_CALL_LOG}.rds-started" ]] && { printf 'available\n'; exit 0; }
     [[ -n "${STUB_RDS_STATUS:-}" ]] || exit 1
+    # Answer normally for STUB_RDS_DENY_AFTER describes, then refuse, the way an
+    # expired session or a narrowed role does part way through a wait.
+    if [[ -n "${STUB_RDS_DENY_AFTER:-}" ]]; then
+        denied=0
+        [[ -f "${AWS_CALL_LOG}.rds-deny" ]] && denied="$(cat "${AWS_CALL_LOG}.rds-deny")"
+        denied=$((denied + 1))
+        printf '%s' "${denied}" >"${AWS_CALL_LOG}.rds-deny"
+        if [[ "${denied}" -gt "${STUB_RDS_DENY_AFTER}" ]]; then
+            echo "An error occurred (AccessDenied)" >&2
+            exit 254
+        fi
+    fi
     # Same settling behaviour as EC2 above: `stopping` becomes `stopped`.
     if [[ -n "${STUB_RDS_SETTLE_AFTER:-}" ]]; then
         seen=0
@@ -174,7 +186,7 @@ up_world() {
     export STUB_EC2_STATE="running"
     export STUB_RDS_STATUS="available"
     unset STUB_FAIL_ON
-    unset STUB_RDS_SETTLE_AFTER STUB_RDS_SETTLED_STATUS
+    unset STUB_RDS_SETTLE_AFTER STUB_RDS_SETTLED_STATUS STUB_RDS_DENY_AFTER
     unset STUB_EC2_SETTLE_AFTER STUB_EC2_SETTLED_STATE
 }
 
@@ -186,7 +198,7 @@ down_world() {
     export STUB_EC2_STATE="stopped"
     export STUB_RDS_STATUS="stopped"
     unset STUB_FAIL_ON
-    unset STUB_RDS_SETTLE_AFTER STUB_RDS_SETTLED_STATUS
+    unset STUB_RDS_SETTLE_AFTER STUB_RDS_SETTLED_STATUS STUB_RDS_DENY_AFTER
     unset STUB_EC2_SETTLE_AFTER STUB_EC2_SETTLED_STATE
 }
 
@@ -229,6 +241,15 @@ expect_stdout() {
     local needle="$1" title="$2"
     printf '%s' "${STDOUT}" | grep -qF -- "${needle}" && ok "${title}" ||
         no "${title}" "stdout did not contain: ${needle}" "${STDOUT}"
+}
+
+# A whole stdout line, for key=value output where one key is a suffix of
+# another: a substring match for `stopped=false` is also satisfied by
+# `fl_stopped=false`.
+expect_stdout_line() {
+    local line="$1" title="$2"
+    printf '%s\n' "${STDOUT}" | grep -qxF -- "${line}" && ok "${title}" ||
+        no "${title}" "stdout had no line: ${line}" "${STDOUT}"
 }
 
 expect_stderr() {
@@ -461,7 +482,7 @@ unset FLIP_ENVIRONMENT TF_PROD
 export GITHUB_REF_NAME="main"
 run status
 expect_rc 0 "status runs with no environment set and on main"
-expect_stdout "stopped=true" "a stopped estate reports stopped=true"
+expect_stdout_line "stopped=true" "a stopped estate reports stopped=true"
 expect_stdout "fl_stopped=true" "a stopped estate reports fl_stopped=true"
 expect_stdout "rds_status=stopped" "the RDS status is reported"
 expect_not_called "update-service" "status makes no mutating call"
@@ -471,7 +492,7 @@ expect_not_called "stop-db-instance" "status makes no mutating RDS call"
 up_world
 run status
 expect_rc 0 "status on a running estate succeeds"
-expect_stdout "stopped=false" "a running estate reports stopped=false"
+expect_stdout_line "stopped=false" "a running estate reports stopped=false"
 expect_stdout "fl_stopped=false" "a running estate reports fl_stopped=false"
 
 # The FL gate's question is narrower than the estate's: FL at 0 with flip-api up
@@ -482,14 +503,14 @@ export STUB_ECS_fl_server_net_1=0
 export STUB_ECS_fl_api_net_1=0
 run status
 expect_stdout "fl_stopped=true" "FL at 0 with flip-api up still reports fl_stopped=true"
-expect_stdout "stopped=false" "but the estate is not called stopped while flip-api runs"
+expect_stdout_line "stopped=false" "but the estate is not called stopped while flip-api runs"
 
 # RDS available with every service at 0 is a half started estate, and planning
 # against it is fine, so it must not be reported as stopped.
 down_world
 export STUB_RDS_STATUS="available"
 run status
-expect_stdout "stopped=false" "ECS at 0 but RDS available is not 'stopped'"
+expect_stdout_line "stopped=false" "ECS at 0 but RDS available is not 'stopped'"
 
 # status writes its keys to GITHUB_OUTPUT so a workflow can branch on them.
 down_world
@@ -527,6 +548,17 @@ HOLD_MINUTES_INPUT=9999 run hold-minutes
 expect_rc 0 "an over-long hold is clamped rather than rejected"
 expect_stdout "minutes=300" "the hold is clamped to the ceiling"
 expect_stderr "clamping" "the clamp is explained"
+
+# A leading zero is decimal, not octal: bash read 010 as 8 and 08 as an error.
+HOLD_MINUTES_INPUT=010 run hold-minutes
+expect_rc 0 "a zero-padded hold is accepted"
+expect_stdout_line "minutes=10" "010 is ten minutes, not octal eight"
+expect_stdout_line "seconds=600" "and 600 seconds"
+HOLD_MINUTES_INPUT=08 run hold-minutes
+expect_rc 0 "08 is not an invalid octal number"
+expect_stdout_line "minutes=8" "08 is eight minutes"
+HOLD_MINUTES_INPUT=12345678901234567890 run hold-minutes
+expect_rc 1 "a value long enough to wrap is rejected"
 
 HOLD_MINUTES_INPUT="two hours" run hold-minutes
 expect_rc 1 "a non-numeric hold is rejected"
@@ -582,6 +614,49 @@ export STUB_EC2_STATE="running"
 run start-data
 expect_rc 1 "a transient RDS that never settles fails the start"
 expect_stderr "never started" "the failure says the instance was never started"
+up_world
+stag_env
+unset WAIT_SECONDS
+export WAIT_POLL_SECONDS=0
+
+# A describe that fails part way through a wait ends the run at once. Inside
+# `if probe`, `set -e` is off, so it used to read as "not ready" and poll on to
+# the deadline.
+up_world
+stag_env
+export WAIT_SECONDS=30
+export WAIT_POLL_SECONDS=0
+export STUB_RDS_STATUS="stopping"
+export STUB_RDS_DENY_AFTER=2
+started=${SECONDS}
+run start-data
+expect_rc 1 "a describe denied during the settle wait fails the start"
+expect_stderr "could not describe" "the failure names the describe"
+expect_not_called "start-db-instance" "nothing is started on a state that was never read"
+[[ $((SECONDS - started)) -lt 10 ]] && ok "it fails at once rather than polling to the deadline" ||
+    no "it fails at once rather than polling to the deadline" "took $((SECONDS - started))s"
+up_world
+stag_env
+unset WAIT_SECONDS
+export WAIT_POLL_SECONDS=0
+
+# The hub host is the SSM bastion; the plan and apply do not use it, so a
+# failure to start it is a warning and the apply still runs.
+up_world
+stag_env
+export WAIT_SECONDS=0
+export WAIT_POLL_SECONDS=0
+export STUB_EC2_STATE="stopping"
+run start-data
+expect_rc 0 "an EC2 host stuck stopping does not fail start-data"
+expect_stderr "never started" "but it is warned about"
+down_world
+stag_env
+export STUB_RDS_STATUS="available"
+export STUB_FAIL_ON="start-instances"
+run start-data
+expect_rc 0 "a failed EC2 start does not fail start-data"
+expect_stderr "start-instances failed" "but it is warned about"
 up_world
 stag_env
 unset WAIT_SECONDS
@@ -677,6 +752,15 @@ expect_rc 0 "a full stop exits 0"
 expect_summary "🌙 Staging stopped" "a full stop still reports a full stop"
 expect_summary "available → stopping" "the RDS row reports the transition that was made"
 expect_not_summary "::warning" "no warning annotation on a clean stop"
+
+# A failed ECS stop exits 1, and the headline must not say "Staging stopped".
+up_world
+stag_env
+export STUB_FAIL_ON="update-service"
+summary_run stop
+expect_rc 1 "a failed ECS stop fails the job"
+expect_summary "Staging stop failed" "the headline reports the failure"
+expect_not_summary "🌙 Staging stopped" "and does not claim a full stop"
 
 down_world
 stag_env
