@@ -20,10 +20,13 @@ on:
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
       - "trust/deploy/terraform/azure/**"
+      - "trust/deploy/terraform/aws/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
-      # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
-      - "trust/deploy/ansible/roles/flip_fl_kit/**"
+      # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
+      # site.yml imports and the shared roles they compose.
+      - "trust/deploy/ansible/aws-ec2-host.yml"
+      - "trust/deploy/ansible/roles/**"
       # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
       - ".gitignore"
       - ".github/workflows/validate_terraform.yml"
@@ -37,10 +40,13 @@ on:
       # The Makefile and test_env_mode.py read the HUB table.
       - "deploy/env_mode.mk"
       - "trust/deploy/terraform/azure/**"
+      - "trust/deploy/terraform/aws/**"
       # test_flip_api_cognito_iam.py reads it: a new Cognito call must bring its IAM action.
       - "flip-api/src/flip_api/auth/identity/cognito.py"
-      # test_trust_kit_staging.py reads the shared kit-staging role site.yml composes.
-      - "trust/deploy/ansible/roles/flip_fl_kit/**"
+      # test_site_roles.py, test_trust_kit_staging.py and the seed tests read the EC2 host plays
+      # site.yml imports and the shared roles they compose.
+      - "trust/deploy/ansible/aws-ec2-host.yml"
+      - "trust/deploy/ansible/roles/**"
       # test_site_roles.py reads it: galaxy roles installed beside the shared roles stay untracked.
       - ".gitignore"
       - ".github/workflows/validate_terraform.yml"
@@ -269,6 +275,10 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
+      - name: Install graphviz
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+
       - name: Terraform tests and static guards
         working-directory: trust/deploy/terraform/azure
         run: make test
@@ -283,3 +293,50 @@ jobs:
         run: |
           pip install checkov==3.3.14
           checkov -d trust/deploy/terraform/azure --framework terraform --skip-download --compact --quiet
+
+  # AWS EC2 trust node (FLIP#1528): fmt, validate and `terraform test` with a mocked aws provider in
+  # the root and its network module, the Makefile and ssh-config pytest, tflint with the aws
+  # ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing here talks to AWS.
+  aws-ec2:
+    name: AWS EC2 node checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "~> 1.13"
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@v6
+        with:
+          tflint_version: v0.64.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      # graphviz lets test_architecture_diagram.py's render smoke test run rather than skip.
+      - name: Install graphviz
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
+
+      - name: Terraform tests and Makefile checks
+        working-directory: trust/deploy/terraform/aws/ec2
+        run: make test
+
+      - name: Lint
+        working-directory: trust/deploy/terraform/aws/ec2
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: make lint
+
+      - name: Checkov
+        run: |
+          pip install checkov==3.3.14
+          checkov -d trust/deploy/terraform/aws --framework terraform --skip-download --compact --quiet

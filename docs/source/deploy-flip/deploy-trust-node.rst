@@ -91,6 +91,10 @@ Choose your platform
      - The trust builds the node from code in its own Azure subscription. It is a Docker Compose host on a VM
        that configures itself and accepts no inbound connection.
      - :doc:`deploy-flip-node-azure`
+   * - **AWS EC2**
+     - The trust builds the node from code in its own AWS account and VPC. It is a Docker Compose host on an
+       EC2 instance with no public IP and no inbound rule, reached through SSM only.
+     - :doc:`deploy-flip-node-aws-ec2`
    * - **Kubernetes**
      - The trust's platform team runs Kubernetes. The Helm chart is validated on single-node k3s; read its known
        limitations first.
@@ -181,5 +185,6 @@ Kubernetes adds a few destinations of its own; see :doc:`deploy-flip-node-kubern
    onboarding-a-trust
    deploy-flip-node-on-prem
    deploy-flip-node-azure
+   deploy-flip-node-aws-ec2
    deploy-flip-node-kubernetes
    deploy-flip-node-in-tre

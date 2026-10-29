@@ -358,7 +358,7 @@ test: ## Credential-free checks: terraform test in every root and module, plus p
 	@for d in bootstrap modules/network modules/kit_drop vm aks; do \
 		echo "── $$d"; ( cd $$d && $(TF) init -backend=false -input=false >/dev/null && $(TF) validate -no-color && $(TF) test -no-color ) || exit 1; \
 	done
-	uv run --no-project --with pytest pytest tests/ -q
+	uv run --no-project --with pytest --with diagrams pytest tests/ -q
 
 lint: ## terraform fmt check and tflint over the Azure tree
 	$(TF) fmt -check -recursive

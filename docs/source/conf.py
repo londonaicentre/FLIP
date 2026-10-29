@@ -22,10 +22,12 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
+import importlib.util
 import os
 import sys
 import tomllib
 from pathlib import Path
+from types import ModuleType
 
 from sphinx.application import Sphinx
 from sphinx.errors import SphinxError
@@ -219,43 +221,62 @@ html_static_path = ["_static"]
 
 
 # -- Generated figures -------------------------------------------------------
-# The Central Hub AWS diagrams (request paths; data services) are diagram-as-code kept beside the Terraform they
-# depict (deploy/providers/AWS/architecture/central_hub.py, drift-guarded by that tree's tests). They are rendered
-# here at build time into assets/generated/ (gitignored), so the published deployment pages always show the
-# pictures for the commit they document and no PNG has to be kept in sync by hand. Needs graphviz `dot`:
-# ReadTheDocs installs it via build.apt_packages, the docs CI job via apt-get.
+# The architecture diagrams are diagram-as-code kept beside the Terraform they depict, each drift-guarded by that
+# tree's tests: the Central Hub (deploy/providers/AWS/architecture/central_hub.py) and the trust nodes on AWS EC2 and
+# Azure (trust/deploy/terraform/{aws/ec2,azure}/architecture/). They are rendered here at build time into
+# assets/generated/ (gitignored), so the published deployment pages always show the pictures for the commit they
+# document and no PNG has to be kept in sync by hand. Needs graphviz `dot`: ReadTheDocs installs it via
+# build.apt_packages, the docs CI job via apt-get.
 
 AWS_PROVIDER_DIR = REPO_ROOT / "deploy" / "providers" / "AWS"
+DIAGRAM_SCRIPTS = (
+    AWS_PROVIDER_DIR / "architecture" / "central_hub.py",
+    REPO_ROOT / "trust" / "deploy" / "terraform" / "aws" / "ec2" / "architecture" / "trust_ec2.py",
+    REPO_ROOT / "trust" / "deploy" / "terraform" / "azure" / "architecture" / "trust_azure.py",
+)
 GENERATED_ASSETS_DIR = Path(__file__).resolve().parent / "assets" / "generated"
 SKIP_DIAGRAMS_ENV = "FLIP_DOCS_SKIP_DIAGRAMS"
 
 
+def _load_diagram_script(path: Path) -> ModuleType:
+    """Import one diagram script by path: each lives in its own ``architecture`` package, so the names collide."""
+    spec = importlib.util.spec_from_file_location(f"flip_docs_diagram_{path.stem}", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _render_generated_figures(app: Sphinx) -> None:
-    """Render the Central Hub AWS diagrams before Sphinx reads the sources.
+    """Render the architecture diagrams before Sphinx reads the sources.
 
     Fails the build when graphviz is missing rather than publishing a page with an empty figure. A developer
     without graphviz can opt out with ``FLIP_DOCS_SKIP_DIAGRAMS=1`` for a text-only local build; that prints a
-    warning here and Sphinx's own "image file not readable" warning on the Central Hub deployment pages, never silently.
+    warning here and Sphinx's own "image file not readable" warning on the deployment pages, never silently.
     """
     if os.environ.get(SKIP_DIAGRAMS_ENV) == "1":
         logger.warning(
-            "%s=1: not rendering the Central Hub AWS diagrams; the Central Hub deployment pages will report missing "
-            "images",
+            "%s=1: not rendering the architecture diagrams; the Central Hub and trust node deployment pages will "
+            "report missing images",
             SKIP_DIAGRAMS_ENV,
         )
         return
-    sys.path.insert(0, str(AWS_PROVIDER_DIR))
-    from architecture.central_hub import render  # noqa: PLC0415  (import deferred so `diagrams` is only needed here)
-
-    try:
-        outputs = render(GENERATED_ASSETS_DIR)
-    except RuntimeError as exc:
-        raise SphinxError(
-            f"{exc} On ReadTheDocs graphviz comes from build.apt_packages in .readthedocs.yaml; locally, "
-            f"`apt-get install graphviz`, or set {SKIP_DIAGRAMS_ENV}=1 for a text-only build."
-        ) from exc
-    for path in outputs:
-        logger.info("rendered %s", path.relative_to(REPO_ROOT))
+    # Each tree checks its own stems are unique; all render into one directory, so a name two trees share would
+    # silently swap a figure.
+    rendered: set[Path] = set()
+    for script in DIAGRAM_SCRIPTS:
+        render = _load_diagram_script(script).render
+        try:
+            outputs = render(GENERATED_ASSETS_DIR)
+        except RuntimeError as exc:
+            raise SphinxError(
+                f"{exc} On ReadTheDocs graphviz comes from build.apt_packages in .readthedocs.yaml; locally, "
+                f"`apt-get install graphviz`, or set {SKIP_DIAGRAMS_ENV}=1 for a text-only build."
+            ) from exc
+        for path in outputs:
+            if path in rendered:
+                raise SphinxError(f"{script.name} renders {path.name}, which another diagram script already wrote")
+            rendered.add(path)
+            logger.info("rendered %s", path.relative_to(REPO_ROOT))
 
 
 # -- Documentation GIFs ------------------------------------------------------
