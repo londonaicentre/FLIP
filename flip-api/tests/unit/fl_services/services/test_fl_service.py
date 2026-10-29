@@ -1299,7 +1299,7 @@ def test_extract_current_job_data_success(mock_http_get):
     assert result.status == "RUNNING"
 
     # Verify correct HTTP endpoint called (with the generous Flower-aware timeout)
-    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs", timeout=30, params=None)
+    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs", timeout=30, params=[])
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -1362,7 +1362,7 @@ def test_list_backend_jobs_parses_every_job(mock_http_get):
 
     assert jobs is not None
     assert [(j.job_id, j.status) for j in jobs] == [("a", FLJobStatus.RUNNING), ("b", FLJobStatus.FAILED)]
-    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30, params=None)
+    mock_http_get.assert_called_once_with("http://fl-api/list_jobs", timeout=30, params=[])
 
 
 @pytest.mark.parametrize(

@@ -14,12 +14,10 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from nvflare.fuel.flare_api.api_spec import AuthenticationError
 
 from fl_api.core.dependencies import get_studies
-from fl_api.utils.logger import logger
 from fl_api.utils.schemas import JobMetadata, JobStatus, TargetType, normalize_status
-from fl_api.utils.study_sessions import StudySessions, UnknownStudy, is_unknown_study
+from fl_api.utils.study_sessions import StudySessions
 from fl_api.utils.upload import job_sites
 
 router = APIRouter()
@@ -96,27 +94,14 @@ def list_jobs(
         HTTPException: if an error occurs while listing jobs.
     """
     # NVFLARE lists a session's own study only (FLIP#1678): the default study, which holds jobs submitted before
-    # studies, and every study the caller names. An unknown study holds no jobs; any other failure fails the whole
-    # list, because a partial one would read as "the job is gone" to the hub's watchdog.
-    raw_jobs = []
+    # studies, and every study the caller names.
+    raw_jobs: list[dict] = []
     for name in [None, *dict.fromkeys(study)]:
-        try:
-            session = studies.get(name)
-        except UnknownStudy:
-            logger.warning(f"The FL server has no study {name}; listing no jobs for it")
-            continue
-        try:
-            jobs = session.list_jobs(
-                detailed=detailed, limit=limit, id_prefix=id_prefix, name_prefix=name_prefix, reverse=reverse
+        raw_jobs.extend(
+            studies.list_jobs(
+                name, detailed=detailed, limit=limit, id_prefix=id_prefix, name_prefix=name_prefix, reverse=reverse
             )
-        except AuthenticationError as e:
-            # A restarted server that lost the study refuses the cached session's re-login.
-            if name is None or not is_unknown_study(e):
-                raise
-            logger.warning(f"The FL server has lost study {name}; listing no jobs for it")
-            studies.forget(name)
-            continue
-        raw_jobs.extend(jobs)
+        )
     if limit:
         raw_jobs = raw_jobs[:limit]
     # FLARE's list_jobs always includes job_id + status on every entry (verified against

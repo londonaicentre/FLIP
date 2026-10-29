@@ -39,7 +39,16 @@ from typing import Any
 import requests
 import yaml
 
-from flip.nvflare.k8s_job_mode import POD_TEMPLATE, STUDY_RUNTIME, _write_json, default_study, runtime_document
+from flip.nvflare.k8s_job_mode import (
+    POD_TEMPLATE,
+    STUDY_RUNTIME,
+    _float,
+    _int,
+    _required,
+    _write_json,
+    default_study,
+    runtime_document,
+)
 
 COHORT_VOLUME = "flip-cohort-data"
 XNAT_VOLUME = "flip-xnat-archive"
@@ -64,13 +73,6 @@ class SyncConfig:
     interval: float = DEFAULT_INTERVAL
 
 
-def _required(env: Mapping[str, str], name: str) -> str:
-    value = env.get(name, "").strip()
-    if not value:
-        raise ValueError(f"{name} is required for the study sync")
-    return value
-
-
 def config_from_env(local_dir: Path, env: Mapping[str, str]) -> SyncConfig:
     """Read the sync's settings from the environment the chart gives the sidecar.
 
@@ -84,10 +86,10 @@ def config_from_env(local_dir: Path, env: Mapping[str, str]) -> SyncConfig:
         cohort_data_dir=Path(_required(env, "FL_STUDY_COHORT_DATA_DIR")),
         cohort_data_pvc=_required(env, "FL_STUDY_COHORT_DATA_PVC"),
         xnat_archive_pvc=env.get("FL_STUDY_XNAT_ARCHIVE_PVC", "").strip() or None,
-        xnat_gid=int(env.get("FL_STUDY_XNAT_GID", "1001")),
+        xnat_gid=_int(env, "FL_STUDY_XNAT_GID", 1001),
         imaging_api_url=env.get("IMAGING_API_URL", "").strip().rstrip("/") or None,
         headers={header: env.get("TRUST_INTERNAL_SERVICE_KEY", "")},
-        interval=float(env.get("FL_STUDY_SYNC_INTERVAL", DEFAULT_INTERVAL)),
+        interval=_float(env, "FL_STUDY_SYNC_INTERVAL", DEFAULT_INTERVAL),
     )
 
 
@@ -114,13 +116,11 @@ def staged_projects(cohort_data_dir: Path) -> list[str]:
 
 
 def _main_container(spec: dict[str, Any]) -> dict[str, Any]:
-    containers: list[dict[str, Any]] = spec.setdefault("containers", [])
-    for container in containers:
-        if container.get("name") == MAIN_CONTAINER:
-            return container
-    main = {"name": MAIN_CONTAINER}
-    containers.append(main)
-    return main
+    """The job container NVFLARE fills in; the chart's template always names it."""
+    try:
+        return next(c for c in spec.get("containers", []) if c.get("name") == MAIN_CONTAINER)
+    except StopIteration:
+        raise ValueError(f"the job-pod template names no {MAIN_CONTAINER} container") from None
 
 
 def _mount(spec: dict[str, Any], volume: str, pvc: str, path: str, sub_path: str) -> None:
@@ -131,25 +131,15 @@ def _mount(spec: dict[str, Any], volume: str, pvc: str, path: str, sub_path: str
     )
 
 
-def study_entry(
-    job_image: str,
-    template: Mapping[str, Any],
-    project_id: str,
-    cohort_pvc: str,
-    xnat_pvc: str | None,
-    xnat_id: str | None,
-    gid: int,
-) -> dict[str, Any]:
+def study_entry(cfg: SyncConfig, template: Mapping[str, Any], project_id: str, xnat_id: str | None) -> dict[str, Any]:
     """One project's ``study_runtime.yaml`` entry: the site's job pod, plus that project's read-only data.
 
     Args:
-        job_image (str): The site's job image.
+        cfg (SyncConfig): The site's job image, its PVCs and XNAT's group (the archive is ``0750``/``0640``, owned
+            by XNAT).
         template (Mapping[str, Any]): The chart's job-pod template.
         project_id (str): The hub project id, the study name.
-        cohort_pvc (str): The cohort-data PVC.
-        xnat_pvc (str | None): XNAT's data PVC, or None when the archive mount is off.
         xnat_id (str | None): The project's XNAT project id, when it has archived sessions.
-        gid (int): XNAT's group: the archive is ``0750``/``0640``, owned by XNAT.
 
     Returns:
         dict[str, Any]: The entry.
@@ -157,12 +147,12 @@ def study_entry(
     pod = copy.deepcopy(dict(template))
     spec = pod.setdefault("spec", {})
     groups = spec.setdefault("securityContext", {}).setdefault("supplementalGroups", [])
-    if gid not in groups:
-        groups.append(gid)
-    _mount(spec, COHORT_VOLUME, cohort_pvc, f"/data/{project_id}/cohort", project_id)
-    if xnat_pvc and xnat_id:
-        _mount(spec, XNAT_VOLUME, xnat_pvc, f"/data/{project_id}/imaging", f"archive/{xnat_id}")
-    return {"container": {"image": job_image}, "pod_template": pod}
+    if cfg.xnat_gid not in groups:
+        groups.append(cfg.xnat_gid)
+    _mount(spec, COHORT_VOLUME, cfg.cohort_data_pvc, f"/data/{project_id}/cohort", project_id)
+    if cfg.xnat_archive_pvc and xnat_id:
+        _mount(spec, XNAT_VOLUME, cfg.xnat_archive_pvc, f"/data/{project_id}/imaging", f"archive/{xnat_id}")
+    return {"container": {"image": cfg.job_image}, "pod_template": pod}
 
 
 def xnat_archives(cfg: SyncConfig, projects: list[str]) -> dict[str, str]:
@@ -228,12 +218,7 @@ def sync_once(
             print(f"study sync: imaging-api did not answer ({e}); keeping the last imaging mounts", file=sys.stderr)
             refreshed = False
 
-    studies = {
-        p: study_entry(
-            cfg.job_image, template, p, cfg.cohort_data_pvc, cfg.xnat_archive_pvc, archives.get(p), cfg.xnat_gid
-        )
-        for p in projects
-    }
+    studies = {p: study_entry(cfg, template, p, archives.get(p)) for p in projects}
     document = runtime_document(default_study(cfg.job_image, has_pod_template=True), studies)
     target = cfg.local_dir / STUDY_RUNTIME
     if not target.is_file() or json.loads(target.read_text() or "null") != document:

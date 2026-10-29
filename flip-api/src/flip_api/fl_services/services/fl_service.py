@@ -23,7 +23,7 @@ from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.database import get_engine
-from flip_api.db.models.main_models import FLJob, Model, Trust
+from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
     IClientStatus,
@@ -35,6 +35,7 @@ from flip_api.domain.interfaces.fl import (
 )
 from flip_api.domain.schemas.status import FLJobStatus, JobStatus
 from flip_api.domain.schemas.types import FLBackend
+from flip_api.fl_services.services.job_data_staging import project_id_of
 from flip_api.utils.encryption import PROJECT_ID_CONTEXT, encrypt
 from flip_api.utils.exceptions import JobAbortedError, NotFoundError
 from flip_api.utils.http import fl_api_error_message, http_delete, http_get, http_post
@@ -376,13 +377,12 @@ def _check_base_template(base_dir: Path, base_rel_paths: list[str], fl_backend: 
     return app_folders
 
 
-def _study_params(*studies: str | None) -> list[tuple[str, str]] | None:
-    """The FL API's ``?study=`` query, once per study (FLIP#1678), or None when there is none.
+def _study_params(*studies: str | None) -> list[tuple[str, str]]:
+    """The FL API's ``?study=`` query, once per study (FLIP#1678); empty when there is none.
 
     An NVFLARE job lives in its project's study, and the FL API sees a job only through that study's session.
     """
-    named = [("study", study) for study in studies if study]
-    return named or None
+    return [("study", study) for study in studies if study]
 
 
 def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
@@ -1488,8 +1488,8 @@ def abort_model_training(model_id: UUID, session: Session) -> None:
         add_log(model_id, "Training job aborted before start; training slot released.", session)
         return
 
-    model = session.get(Model, model_id)
-    study = str(model.project_id) if model is not None and model.project_id is not None else None
+    project_id = project_id_of(model_id, session)
+    study = str(project_id) if project_id is not None else None
 
     server_status = fetch_server_status(net_endpoint)
     logger.debug(f"Server status: {server_status}")

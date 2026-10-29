@@ -20,7 +20,9 @@ downloading a job works only from a session in that study. The default session c
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
+from functools import cached_property
 from pathlib import Path
+from typing import Any
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -87,8 +89,11 @@ class StudySessions:
         self._startup_dir = startup_dir
         self._max_sessions = max_sessions
         self._sessions: OrderedDict[str, FLIP_Session] = OrderedDict()
-        self._org: str | None = None
         self._lock = threading.Lock()
+
+    @cached_property
+    def _org(self) -> str:
+        return admin_org(self._startup_dir)
 
     def get(self, study: str | None) -> FLIP_Session:
         """The session for a study; the default one for no study.
@@ -121,10 +126,29 @@ class StudySessions:
         if session is not None:
             session.close()
 
+    def list_jobs(self, study: str | None, **kwargs: Any) -> list[dict]:
+        """The jobs in one study, as ``FLIP_Session.list_jobs`` returns them; none for a study the server lacks.
+
+        A study the server never had, or has lost since its session was opened (a restart without its registry
+        refuses the cached session's re-login), holds no jobs: its session is dropped so the next call logs in afresh.
+        Any other failure propagates, because a partial list would read as "the job is gone" to the hub's watchdog.
+        """
+        try:
+            session = self.get(study)
+        except UnknownStudy:
+            logger.warning(f"The FL server has no study {study}; listing no jobs for it")
+            return []
+        try:
+            return session.list_jobs(**kwargs)
+        except AuthenticationError as e:
+            if study is None or not is_unknown_study(e):
+                raise
+            logger.warning(f"The FL server has lost study {study}; listing no jobs for it")
+            self.forget(study)
+            return []
+
     def register(self, study: str, sites: Sequence[str]) -> None:
         """Create the study with these sites, or add them to it. Safe to repeat: NVFLARE merges."""
-        if self._org is None:
-            self._org = admin_org(self._startup_dir)
         self.default.register_study(study, site_orgs=[f"{self._org}:{site}" for site in sites])
         logger.info(f"Study {study} registered with sites {list(sites)}")
 

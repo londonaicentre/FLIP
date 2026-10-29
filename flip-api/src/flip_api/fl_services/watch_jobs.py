@@ -17,6 +17,7 @@ process dies first, nothing does: the model stays RUNNING and its net BUSY. This
 is running with its net's FL API and fails the ones the backend has ended or lost.
 """
 
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from functools import cache
@@ -208,10 +209,12 @@ class JobWatchdog:
             list[UUID]: The ids of the models this tick set to ERROR.
         """
         jobs = find_watched_jobs(session)
-        studies: dict[str, set[str]] = {}
+        studies: dict[str, set[str]] = defaultdict(set)
         for job in jobs:
             if job.fl_backend_job_id is not None:
-                studies.setdefault(job.net_endpoint, set()).update([job.study] if job.study else [])
+                named = studies[job.net_endpoint]
+                if job.study:
+                    named.add(job.study)
         backend_jobs = {endpoint: _list_or_unknown(endpoint, sorted(named)) for endpoint, named in studies.items()}
 
         failed: list[UUID] = []

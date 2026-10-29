@@ -124,7 +124,7 @@ def test_staged_projects_never_turns_an_unexpected_name_into_a_study(cfg, name):
 def _entry(cfg, xnat_id=None):
     import yaml
 
-    return study_entry(IMAGE, yaml.safe_load(TEMPLATE), P1, COHORT_PVC, XNAT_PVC, xnat_id, 1001)
+    return study_entry(cfg, yaml.safe_load(TEMPLATE), P1, xnat_id)
 
 
 def _main(spec):
@@ -401,13 +401,11 @@ def test_staged_projects_is_empty_before_the_first_stage_creates_the_dir(cfg):
     assert staged_projects(cfg.cohort_data_dir / "not-yet") == []
 
 
-def test_entry_adds_the_job_container_when_the_template_names_none(cfg):
+def test_entry_refuses_a_template_that_names_no_job_container(cfg):
     import yaml
 
     bare = yaml.safe_load(TEMPLATE)
     del bare["spec"]["containers"]
 
-    spec = study_entry(IMAGE, bare, P1, COHORT_PVC, XNAT_PVC, XNAT_ID, 1001)["pod_template"]["spec"]
-
-    assert [c["name"] for c in spec["containers"]] == ["nvflare_job"]
-    assert [m["mountPath"] for m in _main(spec)["volumeMounts"]] == [f"/data/{P1}/cohort", f"/data/{P1}/imaging"]
+    with pytest.raises(ValueError, match="nvflare_job"):
+        study_entry(cfg, bare, P1, XNAT_ID)

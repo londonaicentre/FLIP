@@ -216,8 +216,7 @@ def runtime_document(default: Mapping[str, Any], studies: Mapping[str, Mapping[s
 
     NVFLARE's study entries do not inherit from ``default``, so each project's carries its own image and template.
     """
-    entries = {name: dict(entry) for name, entry in studies.items()}
-    return {"format_version": 2, "studies": {"default": dict(default), **entries}}
+    return {"format_version": 2, "studies": {"default": default, **studies}}
 
 
 def study_runtime(mode: K8sJobMode) -> dict[str, Any]:

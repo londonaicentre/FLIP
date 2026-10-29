@@ -80,16 +80,21 @@ def queue_job_data_tasks(
     return [task.id for task in tasks]
 
 
+def _result(task: TrustTask) -> dict:
+    """The task's JSON result, or an empty dict when there is none or it is not an object."""
+    try:
+        result = json.loads(task.result) if task.result else {}
+    except ValueError:
+        return {}
+    return result if isinstance(result, dict) else {}
+
+
 def _reason(task: TrustTask) -> str:
     if task.status == TaskStatus.PENDING:
         return NOT_PICKED_UP
     if task.status == TaskStatus.IN_PROGRESS:
         return STILL_RUNNING
-    try:
-        result = json.loads(task.result) if task.result else {}
-    except ValueError:
-        result = {}
-    status_code = result.get("status_code") if isinstance(result, dict) else None
+    status_code = _result(task).get("status_code")
     if status_code == 403:
         return REFUSED
     if status_code in (400, 422):
@@ -111,13 +116,7 @@ def _does_not_stage(task: TrustTask) -> bool:
     Such a trust has no study sync either, so treating it as "does not stage" stays closed: a job-pod trust among them
     has no study entry and refuses the job at launch, and a Compose trust runs it from the APIs as before.
     """
-    if task.status != TaskStatus.FAILED:
-        return False
-    try:
-        result = json.loads(task.result) if task.result else {}
-    except ValueError:
-        return False
-    return isinstance(result, dict) and str(result.get("error", "")).startswith("Unknown task type")
+    return task.status == TaskStatus.FAILED and str(_result(task).get("error", "")).startswith("Unknown task type")
 
 
 def wait_for_trust_tasks(
@@ -141,11 +140,18 @@ def wait_for_trust_tasks(
     while True:
         session.expire_all()
         tasks = session.exec(select(TrustTask).where(col(TrustTask.id).in_(task_ids))).all()
-        older = [t for t in tasks if _does_not_stage(t)]
-        failed = [t for t in tasks if t.status in (TaskStatus.FAILED, TaskStatus.CANCELLED) and t not in older]
+        older: list[TrustTask] = []
+        failed: list[TrustTask] = []
+        waiting: list[TrustTask] = []
+        for task in tasks:
+            if _does_not_stage(task):
+                older.append(task)
+            elif task.status in (TaskStatus.FAILED, TaskStatus.CANCELLED):
+                failed.append(task)
+            elif task.status != TaskStatus.COMPLETED:
+                waiting.append(task)
         if failed:
             raise JobDataStagingError(_describe(failed, session, "A trust could not stage the job's data"))
-        waiting = [t for t in tasks if t.status != TaskStatus.COMPLETED and t not in older]
         if not waiting and len(tasks) == len(task_ids):
             for task in older:
                 logger.warning(f"Trust {task.trust_id} does not stage job data (an older release); not staged there")
@@ -159,7 +165,8 @@ def wait_for_trust_tasks(
         time.sleep(poll_seconds)
 
 
-def _project_of(model_id: UUID, session: Session) -> UUID | None:
+def project_id_of(model_id: UUID, session: Session) -> UUID | None:
+    """The model's project, which names its NVFLARE study, or None for a model that has none or does not exist."""
     model = session.get(Model, model_id)
     return model.project_id if model is not None else None
 
@@ -175,7 +182,7 @@ def stage_job_data(model_id: UUID, trust_ids: Sequence[UUID], session: Session) 
     Raises:
         JobDataStagingError: when a trust could not stage the data, or did not in time.
     """
-    project_id = _project_of(model_id, session)
+    project_id = project_id_of(model_id, session)
     if project_id is None:
         raise JobDataStagingError(f"Model {model_id} has no project, so there is no cohort to stage")
     task_ids = queue_job_data_tasks(TaskType.STAGE_JOB_DATA, model_id, project_id, trust_ids, session)
@@ -193,7 +200,7 @@ def unstage_job_data(model_id: UUID, session: Session) -> None:
         session (Session): The database session.
     """
     try:
-        project_id = _project_of(model_id, session)
+        project_id = project_id_of(model_id, session)
         job = session.exec(select(FLJob).where(FLJob.model_id == model_id).order_by(col(FLJob.created).desc())).first()
         if project_id is None or job is None or not job.trusts:
             return

@@ -405,5 +405,5 @@ def job_sites(upload_dir: str, model_id: str) -> list[str]:
     Returns:
         list[str]: The site names.
     """
-    meta = json.loads(safe_join(safe_join(Path.cwd() / upload_dir, model_id), META).read_text())
+    meta = read_config(safe_join(safe_join(Path.cwd() / upload_dir, model_id), META))
     return list(meta["mandatory_clients"])

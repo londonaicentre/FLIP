@@ -139,6 +139,19 @@ def _remove_if_empty(project_dir: Path) -> None:
         pass  # Another model is still staged here, or it is already gone.
 
 
+def _sweep_project(project_dir: Path, cutoff: float) -> int:
+    """Remove the project's model and work directories last written before ``cutoff``; the count removed."""
+    removed = 0
+    for entry in project_dir.iterdir():
+        try:
+            if entry.is_dir() and entry.stat().st_mtime < cutoff:
+                shutil.rmtree(entry)
+                removed += 1
+        except FileNotFoundError:
+            pass  # Unstaged while we looked.
+    return removed
+
+
 def sweep(max_age_hours: int, now: float | None = None) -> int:
     """Remove model and work directories older than the cap, and project directories left empty.
 
@@ -158,13 +171,7 @@ def sweep(max_age_hours: int, now: float | None = None) -> int:
         if not _is_project(project_dir.name) or not project_dir.is_dir():
             continue  # Not ours: a volume's lost+found, say.
         try:
-            for entry in project_dir.iterdir():
-                try:
-                    if entry.is_dir() and entry.stat().st_mtime < cutoff:
-                        shutil.rmtree(entry)
-                        removed += 1
-                except FileNotFoundError:
-                    continue
+            removed += _sweep_project(project_dir, cutoff)
         except OSError:
             logger.exception(f"Cohort data sweep could not clear {project_dir.name}; trying again next sweep")
             continue
