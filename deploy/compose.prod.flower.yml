@@ -13,7 +13,8 @@
 # ROLE (FLIP#936): Flower overlay of the local prod-image harness (see the note in
 # compose.prod.yml) — not a deployment target. The canonical production equivalent is the Flower
 # branch of the ECS task definitions (deploy/providers/AWS/ecs_tasks.tf with fl_backend=flower, FLIP#566),
-# which mirrors this overlay: SuperLink 9092/8000/9097, TLS + SuperNode-auth command flags, and the
+# which mirrors this overlay: SuperLink 8000/9097 behind the fleet proxy on 9092 (FLIP#1517; its own
+# container here, an ECS sidecar there), TLS + SuperNode-auth command flags, and the
 # register-supernode-keys one-shot (ecs_flower.tf).
 
 # NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
@@ -92,14 +93,13 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network.
+      # Every SuperLink API is on 8000 (FLIP#1517); loopback-only unless --host says
+      # otherwise. Reached over the compose network, never published.
       - --host
       - 0.0.0.0
       - --health-server-address
       - 0.0.0.0:9097
-    ports:
-      - "${FL_SERVER_PORT}:9092"
+    # No trust-facing port: the fleet proxy below publishes it.
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -108,6 +108,27 @@ services:
       - CHOWN
     restart: unless-stopped
     init: true
+
+  # The SuperLink's only trust-facing listener (FLIP#1517, fl-services/flower/README.md). Its
+  # own container rather than an ECS-style sidecar: compose restarts containers one at a time,
+  # and a proxy in a restarted SuperLink's namespace keeps the dead one. Runs as the
+  # SuperLink's uid, so it reads the same server key with no capabilities.
+  fl-fleet-proxy-net-1:
+    image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
+    environment:
+      - FLEET_PROXY_UPSTREAM=fl-server-net-1:8000
+      - FLEET_PROXY_UPSTREAM_TLS_NAME=fl-server-net-1
+    ports:
+      - "${FL_SERVER_PORT}:9092"
+    volumes:
+      - /opt/flip/services/net-1/certificates:/certs:ro
+    depends_on:
+      - fl-server-net-1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
