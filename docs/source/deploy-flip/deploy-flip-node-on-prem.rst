@@ -124,6 +124,12 @@ the admin manages them.
    * - Trust-local passwords
      - Replace every default password in the *Trust-local credentials* section with a real secret.
      - Yes
+   * - ``TRUST_DATA_SEED``
+     - ``false`` for a trust whose OMOP database and PACS hold real data. The first start then loads none of FLIP's
+       sample data and fetches nothing from Hugging Face or PyPI; neither does a later start or upgrade. Leave it
+       unset on a test trust, which gets the sample data. The DICOM vocabulary normally comes with the sample data:
+       see :ref:`onprem-core-vocabulary`.
+     - Real trusts
    * - ``NUM_AVAILABLE_GPUS``
      - Number of GPUs for FL jobs; ``0`` on a CPU-only host.
      - If needed

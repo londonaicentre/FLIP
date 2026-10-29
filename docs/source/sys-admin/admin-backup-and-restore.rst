@@ -388,7 +388,7 @@ Restoring a Kubernetes node
   re-applied at every pod start, but the ``postgres`` superuser's is set only when the database is first created. See
   the :gh:`Helm chart README <trust/deploy/helm/README.md>` for rotating it by hand.
 - **Mock-data seeding runs on every upgrade** while ``trustData.seed.enabled`` is on, replacing the listed mock
-  projects' rows. Turn it off for a site whose stores hold real data only.
+  projects' rows. A site whose stores hold real data only turns it off with ``TRUST_DATA_SEED=false`` in the kit.
 
 ***********************
 Local development stack

@@ -812,7 +812,8 @@ def check_data_dir(
     the dir and seeds it from the canonical mock dataset at bring-up (FLIP#1187),
     so before the first `up` empty is the expected state. It is only wrong for a
     real hospital deployment, where the operator points these at absolute paths
-    backed by real PACS / OMOP data — hence the hint.
+    backed by real PACS / OMOP data — hence the hint. With the kit's
+    TRUST_DATA_SEED=false nothing is seeded, and the hint says so instead.
     """
     if not kit_present:
         return Check(label, Status.PENDING, "pending — needs kit file")
@@ -824,7 +825,11 @@ def check_data_dir(
         resolved = Path(raw)
     else:
         resolved = repo_root / "trust" / raw.removeprefix("./")
-    seed_hint = "Mocked test data: `make -C trust up-trust KIT=<CODE>` creates and seeds it, nothing to do."
+    # Read as trust/Makefile reads it: a trailing `# comment` and surrounding quotes dropped.
+    if kit_vars.get("TRUST_DATA_SEED", "").split("#", 1)[0].strip().strip("\"'") == "false":
+        seed_hint = "Sample data is off (TRUST_DATA_SEED=false): `make -C trust up-trust` loads nothing into it."
+    else:
+        seed_hint = "Mocked test data: `make -C trust up-trust KIT=<CODE>` creates and seeds it, nothing to do."
     if not resolved.is_dir():
         return Check(
             label,
