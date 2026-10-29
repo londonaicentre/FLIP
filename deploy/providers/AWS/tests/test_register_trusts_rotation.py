@@ -27,7 +27,13 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "register-trusts.sh"
-KIT = [{"trust_name": "Scratch Trust", "trust_api_key": "new", "trust_internal_service_key": "new"}]
+KIT = [
+    {
+        "trust_name": "Scratch Trust",
+        "trust_api_key": "new",  # pragma: allowlist secret
+        "trust_internal_service_key": "new",  # pragma: allowlist secret
+    }
+]
 
 STUB_AWS = """#!/usr/bin/env bash
 printf '%s\\n' "$*" >>"$CALLS"
