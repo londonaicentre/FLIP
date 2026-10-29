@@ -193,6 +193,9 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
       "cognito-idp:AdminUserGlobalSignOut",
       "cognito-idp:DescribeUserPool",
       "cognito-idp:DescribeUserPoolClient",
+      # A public, unauthenticated operation IAM does not gate; listed so the
+      # FLIP#1367 guard's "every call is granted" rule holds without exceptions.
+      "cognito-idp:ForgotPassword",
       "cognito-idp:ListUsers",
     ]
     resources = [module.cognito.user_pool_arn]

@@ -27,7 +27,7 @@ Structured logging, collection and visualisation for the three Trust APIs (`trus
 | Grafana | [`grafana/provisioning/`](grafana/provisioning/) | `3000` (`GRAFANA_PORT`) | Dashboards + ad-hoc LogQL queries, pre-provisioned with a Loki datasource and a **Trust APIs** dashboard. |
 
 These three services (`loki`, `alloy`, `grafana`) are part of the trust's **base compose stack**
-(`trust/deploy/compose_trust.<env>.yml`, always loaded — there is no separate enable/disable flag)
+(`trust/deploy/compose/compose_trust.<env>.yml`, always loaded — there is no separate enable/disable flag)
 alongside `trust-api`, `imaging-api`, `data-access-api`, `orthanc` and `omop-db`
 (`trust/deploy/README.md`). In dev, each API's compose service bind-mounts
 [`log_config/`](log_config/) at `/app/log_config`; the observability trio's own configs are bind-
@@ -76,7 +76,7 @@ make -C deploy/providers/AWS forward-trust HUB=<hub>   # then open http://localh
 TrustEc2InstanceId`, which only resolves from `deploy/providers/AWS/`.)
 
 On a local dev stack, `GRAFANA_PORT` (and `LOKI_PORT`) are published straight to the host by
-`trust/deploy/compose_trust.development.yml`, so `http://localhost:3000` works directly with no
+`trust/deploy/compose/compose_trust.development.yml`, so `http://localhost:3000` works directly with no
 tunnel needed.
 
 ## Credentials

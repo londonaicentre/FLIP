@@ -22,7 +22,7 @@ The **imaging-api** is a Trust-side service that manages imaging data operations
 interfaces with [XNAT](https://www.xnat.org/) for imaging project management and [Orthanc](https://www.orthanc-server.com/)
 as the mock PACS source. It is called only by the [trust-api](../trust-api/).
 
-Tested with `XNAT version 1.10.0, build: 246` (DQR 3.0.0, Container Service 3.8.1).
+Tested with `XNAT version 1.10.2.1` (DQR 3.0.0, Container Service 3.8.2).
 
 ## Role in the FLIP Platform
 
@@ -238,7 +238,7 @@ Create users, update user details, or add a user to an XNAT project.
 
 ## Configuration
 
-Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). `XNAT_URL` is deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
+Key environment variables. Most come from the trust kit file — template at [`../.env.example`](../.env.example), copied per trust to `trust/.env.<CODE>.<env>` — but `XNAT_URL` and `DATA_ACCESS_API_URL` are internal-topology constants with defaults in `imaging_api/config.py`, and the composes do not inject them into this service (`trust/deploy/compose/compose_trust.development.yml` says as much: an empty `${VAR}` from a kit that carried them would override the code default). `XNAT_URL` is deliberately absent from the kit template; `DATA_ACCESS_API_URL` is in it only because the fl-client reads it from env.
 
 | Variable | Description |
 | --- | --- |

@@ -29,7 +29,7 @@ endif
 network1 = deploy_trust-network-1
 
 service_name = omop-db
-docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
+docker_command = docker compose --project-directory .. -f ../deploy/compose/compose_trust.development.yml
 
 lint_command = uv run ruff check . --fix
 mypy_command = uv run mypy src/ tests/ --ignore-missing-imports
@@ -82,7 +82,7 @@ load-dicom-vocab: fetch-vocab-dicom
 
 # Load the public Synthea-in-OMOP EHR cohort (person + conditions + visits) into a RUNNING trust
 # omop-db — the populate side of the EHR risk-prediction tutorial
-# (fl-tutorials/{nvflare/tabular_classification,flower}/ehr_risk_prediction). The shipped mock OMOP
+# (fl-tutorials/{nvflare,flower}/tabular_classification/ehr_risk_prediction). The shipped mock OMOP
 # carries no condition rows, so that tutorial's query.sql returns nothing until this runs. Downloads
 # ~5 MB from the AWS Open Data Registry at run time (anonymous HTTPS, cached under data/synthea-ehr/,
 # never committed) and appends a per-trust person_id-modulo slice (ids shifted clear of the imaging

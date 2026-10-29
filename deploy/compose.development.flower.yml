@@ -18,6 +18,11 @@
 # provisioned TLS certificate (`DNS:fl-server-net-1`), so a SuperNode's certificate check fails
 # outright if that name stops resolving, and `fl-api-net-<N>` is what NET_ENDPOINTS and
 # FL_API_ADDRESS below dial.
+#
+# The trusts' SuperNodes reach `fl-server-net-<N>` on `fl-net-<N>`, and there that name is the
+# fleet proxy's (`fl-fleet-proxy-net-<N>`, FLIP#1517), not the SuperLink's: flwr>=1.40 serves
+# Control, Fleet and Runtime on one port, so the SuperLink stays off `fl-net-<N>` and the proxy
+# forwards the Fleet API alone. Hub-side, on `default`, the name is still the SuperLink.
 services:
   #################### CENTRAL HUB FL ####################
 
@@ -93,12 +98,23 @@ services:
 
   fl-server-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
-    # keys, which the app user (uid 49999) cannot. The other reason this override
-    # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
-    # object store with static keys (FLIP#1291). Prod uses an ECS task IAM role,
-    # so the override is confined to the dev compose.
-    user: "0:0"
+    # Dev-only: run as the host user rather than root (FLIP#1320). The image user
+    # (app, uid 49999) cannot read the host-provisioned 0640 TLS keys; root can, but
+    # a root SuperLink rewrites every host-owned file it touches as root:root, which
+    # is how the operator's AWS SSO token used to end up unreadable to their own CLI.
+    # That particular mount has since gone (results go to the dev object store with
+    # static keys, FLIP#1291), but the hazard applies to any host-owned bind mount,
+    # and matching flip-api (FLIP#1171) is the honest fix. The uid is the host's, so
+    # the provisioned keys and the bundle dir shared with flip-api are readable and
+    # writable; the gid stays the image's, so the rest of the image tree is readable
+    # as it is for the baked user.
+    # Prod uses an ECS task IAM role and sets no `user:` at all, so this is confined
+    # to the dev compose.
+    user: "${UID:-1000}:49999"
+    # Second route to the 0640 provisioned keys: the host group that owns them, for a
+    # kit provisioned under a different uid from the one running the stack. Same
+    # pattern as the NVFLARE dev compose and the trust Flower client.
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
@@ -108,6 +124,24 @@ services:
       - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - NET_ID=net-1
+      # The overridden uid has no /etc/passwd entry, so pwd.getpwuid() raises and the
+      # image's own HOME (`/app`, baked into flwr/base) is all that is left: the
+      # SuperLink's ~/.flwr cache and the ServerApp's torch caches then fail far from
+      # the cause (FLIP#1171). /tmp rather than the image user's /app on purpose: /app
+      # is owned by app:app 0755 (and pip has already put /app/.cache there at build
+      # time), so the host uid cannot write it on any SuperLink image, including every
+      # one published before FLIP#1320. /tmp is 1777 in every image, which keeps this
+      # working without a rebuild or a re-pull.
+      - HOME=/tmp
+      - USER=app
+      - LOGNAME=app
+      # Same reason, for the other path the apps write: the SuperLink runs the ServerApp
+      # as a subprocess (`--isolation subprocess` is the default), so it inherits this
+      # uid, and the app templates default WORKING_DIR to /app/runs, which this uid
+      # cannot create. Left unset, every run finishes its rounds and then dies at
+      # `output_dir.mkdir()` with PermissionError, having saved and uploaded nothing
+      # while the hub model stays RUNNING (FLIP#1320).
+      - WORKING_DIR=/tmp/runs
       # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
       # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
@@ -135,10 +169,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network. The
-      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
-      # published on loopback only.
+      # Every SuperLink API is on 8000 (see the header); loopback-only unless --host says
+      # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address
@@ -149,20 +181,46 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
-      # the host-owned 0640 TLS key — root's implicit DAC bypass is itself a
-      # capability, and it is dropped here (FLIP#485).
-      - DAC_OVERRIDE
+    # No cap_add. CHOWN and DAC_OVERRIDE were what let the root SuperLink read the
+    # host-owned 0640 TLS key under cap_drop: ALL (FLIP#485); now that it runs as the
+    # host user they would be inert anyway, since Docker gives effective capabilities
+    # only to uid 0. Reading the key is the `user:` and `group_add:` above doing it
+    # through the file's own owner and group, which is the least-privileged route
+    # (FLIP#1320).
     # `default` is the hub-internal network. fl-server is the one FL service that calls back
     # into flip-api (FLIP_API_INTERNAL_URL + INTERNAL_SERVICE_KEY above), and flip-api is
     # deliberately not on the FL net — see the networks block in compose.development.yml.
+    # Not on `fl-net-1` either (FLIP#1517): its port 8000 is the Control and Runtime API too.
     networks:
-      - default
-      - fl-net-1
+      default:
+        # The fleet proxy's upstream: on `fl-net-1` the proxy itself answers to fl-server-net-1.
+        aliases:
+          - fl-superlink-net-1
     restart: unless-stopped
     init: true
+
+  # The trusts' only route to the net-1 SuperLink (see the header and fleet-proxy/), on the
+  # address and port the kits already dial. No capabilities: the host group reads the key.
+  fl-fleet-proxy-net-1:
+    image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
+    group_add: ["${DOCKER_GID:-1000}"]
+    volumes:
+      - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
+    environment:
+      - FLEET_PROXY_UPSTREAM=fl-superlink-net-1:8000
+      - FLEET_PROXY_UPSTREAM_TLS_NAME=fl-server-net-1
+    depends_on:
+      - fl-server-net-1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      default: {}
+      fl-net-1:
+        aliases:
+          - fl-server-net-1
+    restart: unless-stopped
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
@@ -200,12 +258,11 @@ services:
 
   fl-server-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    # Dev-only: run as root so the server can read the host-provisioned 0640 TLS
-    # keys, which the app user (uid 49999) cannot. The other reason this override
-    # existed — the operator's 0600 AWS SSO token — is gone: results go to the dev
-    # object store with static keys (FLIP#1291). Prod uses an ECS task IAM role,
-    # so the override is confined to the dev compose.
-    user: "0:0"
+    # Dev-only: run as the host user rather than root, and take the host gid as a
+    # second route to the 0640 provisioned keys. Rationale in full on fl-server-net-1
+    # above (FLIP#1320).
+    user: "${UID:-1000}:49999"
+    group_add: ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     volumes:
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
@@ -215,6 +272,11 @@ services:
       - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - NET_ID=net-2
+      # Same HOME and WORKING_DIR rationale as fl-server-net-1 above.
+      - HOME=/tmp
+      - USER=app
+      - LOGNAME=app
+      - WORKING_DIR=/tmp/runs
       # The ServerApp runs in the image's environment, as on the ECS SuperLink: a cold
       # per-run `uv sync` outlives Flower's task heartbeat and the run never starts (FLIP#1418).
       - FLWR_DISABLE_RUNTIME_DEPENDENCY_INSTALLATION=1
@@ -242,10 +304,8 @@ services:
       - --ssl-keyfile
       - /certs/server.key
       - --enable-supernode-auth
-      # flwr>=1.37: the Control API is HTTP on port 8000, loopback-only unless --host says
-      # otherwise; fl-api and the key registration reach it over the compose network. The
-      # same app serves the ServerApp's /v1/runtime/* routes, so the host port below is
-      # published on loopback only.
+      # Every SuperLink API is on 8000 (see the header); loopback-only unless --host says
+      # otherwise. Reached over `default`; the host port below is on loopback only.
       - --host
       - 0.0.0.0
       - --health-server-address
@@ -256,18 +316,36 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    cap_add:
-      - CHOWN
-      # The root override above still needs DAC_OVERRIDE under cap_drop: ALL to read
-      # the host-owned 0640 TLS key — root's implicit DAC bypass is itself a
-      # capability, and it is dropped here (FLIP#485).
-      - DAC_OVERRIDE
-    # `default` is the hub-internal network — see fl-server-net-1 above.
+    # No cap_add, for the reasons spelled out on fl-server-net-1 above (FLIP#1320).
+    # `default` is the hub-internal network — see fl-server-net-1 above, and for why not `fl-net-2`.
     networks:
-      - default
-      - fl-net-2
+      default:
+        aliases:
+          - fl-superlink-net-2
     restart: unless-stopped
     init: true
+
+  # The trusts' only route to the net-2 SuperLink — see fl-fleet-proxy-net-1 above.
+  fl-fleet-proxy-net-2:
+    image: ${DOCKER_FL_REGISTRY}flower-fleet-proxy:${DOCKER_FL_TAG}
+    group_add: ["${DOCKER_GID:-1000}"]
+    volumes:
+      - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
+    environment:
+      - FLEET_PROXY_UPSTREAM=fl-superlink-net-2:8000
+      - FLEET_PROXY_UPSTREAM_TLS_NAME=fl-server-net-2
+    depends_on:
+      - fl-server-net-2
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      default: {}
+      fl-net-2:
+        aliases:
+          - fl-server-net-2
+    restart: unless-stopped
 
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-2:

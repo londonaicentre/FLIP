@@ -46,7 +46,7 @@ covers `datasets/cxr/omop_convert_cxr.py`, and
 Cross-cutting guards that assert a property across several source files
 (`test_dicom_orientation.py`, `test_nifti_orientation.py`, `test_flower_min_clients_wiring.py`,
 `test_flower_platform_parity.py`, `test_flower_starved_partition.py`,
-`test_flwr_import_paths.py`, `test_offline_apps.py`, `test_ldm_offline_backbone.py`,
+`test_flwr_import_paths.py`, `test_offline_apps.py`, `test_autoencoder_offline_backbone.py`,
 `test_spleen_inference_config_parity.py`, `test_spleen_uploader_paths.py`,
 `test_ehr_feature_engineering.py`, `test_fetch_weights.py`,
 `test_fl_tutorials_make_targets.py`, `test_sim_tutorial_stale_guard.py`,
@@ -120,7 +120,8 @@ radiographs while the model was being fed the transpose.
 ## What it runs
 
 The environment is **flip-utils'** (`flip-utils[full]` — monai, pydicom, torch, timm, sklearn),
-which is what the FL images give these apps at runtime. There is deliberately no `pyproject.toml`
+which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib) for
+the image-generation tutorials' local plotting helpers, which no FL image carries. There is deliberately no `pyproject.toml`
 here: the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml`
 does not even declare `monai`, so that environment cannot import its own `data_utils.py`), and one
 shared environment matching the runtime is both cheaper and more faithful.
@@ -178,7 +179,7 @@ reader's convention, wholly independent of pixel content. It is parametrised ove
 
 ## NIfTI orientation
 
-`test_nifti_orientation.py` checks spleen, prostate and latent-diffusion transform factories against
+`test_nifti_orientation.py` checks spleen, prostate and brain MRI transform factories against
 an asymmetric synthetic RAS/LPS image and masks, pinning both known RAS output and agreement after
 deterministic preprocessing. Its registry discovers `LoadImaged` in top-level functions; class
 methods and module constants are outside that guard. Generated `fl_job/` copies are ignored, and
@@ -214,9 +215,14 @@ contract, and should not be mistaken for it. Untested here:
 - End-to-end training behaviour, which stays with the GPU simulator harness
   (`make -C fl-tutorials run-tutorial`).
 
-The spleen and latent-diffusion tutorials have their own NIfTI orientation checks above. They stay
+The spleen and brain MRI tutorials have their own NIfTI orientation checks above. They stay
 outside `DICOM_APPS`: the 2-D DICOM reader correction does not apply to their 3-D
 `Orientationd`/`Spacingd` path.
+
+Of the three `image_generation` tutorials, `xray_diffusion` **is** registered: it reads the same 2-D
+DICOM chest X-rays as `xray_classification`, through a copy of its chain, so the same orientation
+guarantees apply. The two brain MRI tutorials read NIfTI and are not. A generative model trained on sideways
+or mirrored radiographs would go on to synthesise them.
 
 Tutorials are copy-and-adapt example code, and a repository test cannot follow a copy out of the
 repository. It can keep the thing being copied correct, which is the point: `fl-apps/` (the

@@ -13,9 +13,11 @@
 
 # Trust Compose Stack
 
-> **Deploys: trust only.** The trust-side container stack as Docker Compose, with its two siblings
-> [`helm/`](helm/README.md) (the same stack for Kubernetes) and [`ansible/`](ansible/README.md) (prepares a
-> site-owned host for these files). The Central Hub stack lives in [`deploy/`](../../deploy/README.md); see
+> **Deploys: trust only.** The trust-side container stack as Docker Compose, in [`compose/`](compose/), with
+> its siblings [`helm/`](helm/README.md) (the same stack for Kubernetes), [`ansible/`](ansible/README.md)
+> (prepares a site-owned host for these files), [`terraform/`](terraform/) (trust infrastructure, one root
+> per target: [`azure/`](terraform/azure/README.md), [`aws/ec2/`](terraform/aws/ec2/README.md), [`aws/eks/`](terraform/aws/eks/)) and [`scripts/`](scripts/) (the trust lifecycle and node
+> self-test scripts). The Central Hub stack lives in [`deploy/`](../../deploy/README.md); see
 > [where things live](../../deploy/README.md#where-things-live) for the rule behind the layout.
 
 Do not run these files directly — they are driven by [`trust/Makefile`](../Makefile), which selects the right
@@ -59,17 +61,17 @@ were deliberately relocated here from `trust/` — one level down, into `trust/d
 
 ```bash
 # trust/Makefile
-docker compose --env-file <kit> --project-directory . -f deploy/compose_trust.<env>.yml ...
+docker compose --env-file <kit> --project-directory . -f deploy/compose/compose_trust.<env>.yml ...
 
 # trust/<service>/Makefile
-docker compose --project-directory .. -f ../deploy/compose_trust.development.yml ...
+docker compose --project-directory .. -f ../deploy/compose/compose_trust.development.yml ...
 ```
 
 If you ever see a build context that looks wrong by one level, **the fix is the `--project-directory` flag on
 the caller, not rewriting `./X` to `../X` in these files.** Rewriting them would break every other caller.
 
-`compose.test.yml` is the one exception: Testcontainers runs it with the context set to `trust/deploy/`, so
-its paths are genuinely one level up (`../trust-api`, `../data-access-api`, `../observability`).
+`compose.test.yml` is the one exception: Testcontainers runs it with the context set to `trust/deploy/compose/`, so
+its paths are genuinely two levels up (`../../trust-api`, `../../data-access-api`, `../../observability`).
 
 ## Networks
 

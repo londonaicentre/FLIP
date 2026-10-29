@@ -40,8 +40,7 @@ Central Hub.
 
 **ScatterAndGather**:
 FLIP's FedAvg controller (`flip.nvflare.controllers.ScatterAndGather`), a thin subclass of FLARE's
-stock `ScatterAndGather`. `FlipFedAvgRecipe` (and so `FlipFedOptRecipe`) wires it in;
-`FlipDiffusionRecipe` uses its `ScatterAndGatherLDM` subclass. Clients talk to it through the Client API.
+stock `ScatterAndGather`. `FlipFedAvgRecipe` (and so `FlipFedOptRecipe`) wires it in. Clients talk to it through the Client API.
 
 ## Relationships
 

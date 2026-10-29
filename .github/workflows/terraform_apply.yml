@@ -68,15 +68,22 @@
 # and holds for an operator's `fl_quiesced: true` re-dispatch, exactly as any
 # other FL-affecting apply does. That is deliberate: a platform release is an
 # attended event, and the gate is not weakened for it.
+#
+# The UI (FLIP#1186). The `ui` job publishes flip-ui from the same commit once
+# the apply has succeeded (publish_ui.yml), so the UI never reaches users ahead
+# of the API it calls: a held apply holds the UI too, and the re-dispatch that
+# releases the apply publishes it. `make deploy-ui` remains the manual path.
 
 name: Terraform Apply
 
 on:
+  # Every push, not only infrastructure ones (FLIP#1186): the hub's images and
+  # the UI deploy through this workflow, so a path filter left a flip-api or
+  # flip-ui merge undeployed until the next infrastructure change. A push that
+  # changes nothing plans to a no-op, probes GHCR once (see the wait step) and
+  # republishes the same UI.
   push:
     branches: [develop, main]
-    paths:
-      - "deploy/providers/AWS/**"
-      - ".github/workflows/terraform_apply.yml"
   workflow_dispatch:
     inputs:
       fl_quiesced:
@@ -112,7 +119,11 @@ jobs:
     # estate that was torn down on purpose. It is a repository variable rather
     # than an aws-stag one because a job-level `if` is evaluated before the job's
     # environment is loaded. Production (main) never reads it.
-    if: github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true'
+    # Outside londonaicentre/FLIP, plan, apply and drift all skip unless the
+    # repository variable TF_CI_ON_FORK is `true` (adopters:
+    # deploy/providers/AWS/ci/README.md). A fork has no aws-* environments, so each
+    # run would fail and mail whoever pushed, or for drift whoever last edited it.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
     permissions:
@@ -404,3 +415,33 @@ jobs:
           # consequence is severe enough on a public repo that it should not
           # depend on that staying true. The harness requires it on every step.
           upload-plan: false
+
+      # The UI build reads the Cognito ids from environment variables, because it
+      # runs without the credentials to read Terraform state. They change only if
+      # the pool or client is replaced; this is the run that would replace them,
+      # so it says so.
+      - name: Check the UI's Cognito ids against Terraform
+        working-directory: deploy/providers/AWS
+        env:
+          UI_POOL_ID: ${{ vars.AWS_COGNITO_USER_POOL_ID }}
+          UI_CLIENT_ID: ${{ vars.AWS_COGNITO_APP_CLIENT_ID }}
+        run: |
+          set -uo pipefail
+          pool="$(terraform output -raw CognitoUserPoolId 2>/dev/null)" || pool=""
+          client="$(terraform output -raw CognitoAppClientId 2>/dev/null)" || client=""
+          if [[ "${pool}" != "${UI_POOL_ID}" || "${client}" != "${UI_CLIENT_ID}" ]]; then
+            echo "::warning title=UI Cognito ids differ::AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID on this environment do not match terraform output CognitoUserPoolId / CognitoAppClientId. The published UI signs in against the variables: update them and re-run the ui job."
+          fi
+
+  ui:
+    name: Publish flip-ui (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    needs: apply
+    uses: ./.github/workflows/publish_ui.yml
+    # The ceiling for publish_ui.yml's jobs: its build job narrows to
+    # contents: read, so only the publish job can mint a token.
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
+      release_tag: ${{ inputs.release_tag }}

@@ -92,7 +92,7 @@ else
     log_warn "services-stable did not complete in time — service may be mid-rollout. Proceeding anyway."
 fi
 
-# Kit-file writing is delegated to scripts/distribute_trust_kits.py (the single
+# Kit-file writing is delegated to trust/deploy/scripts/distribute_trust_kits.py (the single
 # in-place-upsert writer shared with the dev path and sync). It seeds the
 # host-local profile from the .example on first write, writes whatever credentials
 # the kit carries (which is what makes rotation work), and upserts metadata + the

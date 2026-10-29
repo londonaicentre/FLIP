@@ -23,6 +23,9 @@ from fl_api.utils.validation import (
     validate_bundle_url,
 )
 
+_URL_SECRET = "bundle-signature-sentinel"  # pragma: allowlist secret (synthetic sentinel)
+_SIGNED_QUERY = f"?X-Amz-Signature={_URL_SECRET}&X-Amz-Security-Token={_URL_SECRET}"
+
 
 def test_safe_join_returns_contained_path(tmp_path):
     result = safe_join(tmp_path, "app", "config", "config_fed_server.json")
@@ -51,7 +54,8 @@ def test_validate_bundle_url_accepts_https():
 )
 def test_validate_bundle_url_rejects_non_https(bad):
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(bad)
+        validate_bundle_url(bad + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -59,7 +63,8 @@ def test_validate_bundle_url_enforces_host_allow_list(monkeypatch):
     monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://objectstore.internal, https://s3.eu-west-2.amazonaws.com")
     assert validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url("https://evil.example.com/key")
+        validate_bundle_url("https://evil.example.com/key" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -82,7 +87,8 @@ def test_validate_bundle_url_enforces_host_allow_list(monkeypatch):
 )
 def test_validate_bundle_url_rejects_unsafe_hosts(bad):
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(bad)
+        validate_bundle_url(bad + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -107,7 +113,8 @@ def test_validate_bundle_url_accepts_explicit_443():
 )
 def test_validate_bundle_url_rejects_numeric_encoded_private_hosts(host, resolves_to):
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py")
+        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -132,7 +139,8 @@ def test_validate_bundle_url_rejects_hosts_with_embedded_nul(host):
     which ipaddress.AddressValueError does not cover, since it is a subclass rather than a parent.
     """
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py")
+        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -181,7 +189,8 @@ def test_validate_bundle_url_rejects_name_resolving_to_non_public_address(monkey
     """``metadata.internal.attacker.example`` is a public name; what it points at is not."""
     calls = _resolver(monkeypatch, resolved)
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url("https://metadata.internal.attacker.example/bundle/app/custom/train.py")
+        validate_bundle_url("https://metadata.internal.attacker.example/bundle/app/custom/train.py" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
     assert "resolves to a non-public address" in exc.value.detail
     assert calls == ["metadata.internal.attacker.example"]
@@ -191,7 +200,8 @@ def test_validate_bundle_url_rejects_mixed_public_and_private_answers(monkeypatc
     """One private answer among public ones is enough: the fetch may connect to any of them."""
     _resolver(monkeypatch, "52.95.150.1", "2600:1f18::1", "10.0.0.5")
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url("https://s3.evil.example.com/bucket/key")
+        validate_bundle_url("https://s3.evil.example.com/bucket/key" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -208,7 +218,8 @@ def test_validate_bundle_url_fails_closed_on_resolution_error(monkeypatch, error
     """A resolver error is "could not verify", which must not mean "allowed"; the fetch would have failed too."""
     _resolver(monkeypatch, error=error)
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url("https://does-not-resolve.example/bundle/app/custom/train.py")
+        validate_bundle_url("https://does-not-resolve.example/bundle/app/custom/train.py" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
     assert "could not be resolved" in exc.value.detail
 
@@ -216,7 +227,8 @@ def test_validate_bundle_url_fails_closed_on_resolution_error(monkeypatch, error
 def test_validate_bundle_url_fails_closed_on_empty_answer(monkeypatch):
     _resolver(monkeypatch)  # a resolver that returns no addresses at all
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url("https://empty-answer.example/bundle/app/custom/train.py")
+        validate_bundle_url("https://empty-answer.example/bundle/app/custom/train.py" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -240,7 +252,8 @@ def test_validate_bundle_url_rejects_non_public_ip_literal_without_resolving(mon
     """The FLIP#893 literal rejections stand on their own and still cost no lookup."""
     calls = _resolver(monkeypatch, error=AssertionError("resolver must not be called for an IP literal"))
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py")
+        validate_bundle_url(f"https://{host}/bundle/app/custom/train.py" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
     assert calls == []
 
@@ -253,7 +266,8 @@ def test_validate_bundle_url_resolves_nothing_when_allow_list_set(monkeypatch):
     monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com, http://object-store:9000")
     calls = _resolver(monkeypatch, "10.0.0.5")
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url("https://exfil.attacker.example/bundle/app/custom/train.py")
+        validate_bundle_url("https://exfil.attacker.example/bundle/app/custom/train.py" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
     assert validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
     assert validate_bundle_url("http://object-store:9000/bucket/key")
@@ -288,7 +302,8 @@ def test_validate_bundle_url_allow_list_rejects_a_near_miss_origin(monkeypatch, 
     """Scheme, host and port must all match: an http origin does not admit https, nor one port another."""
     monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "http://object-store:9000")
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(url)
+        validate_bundle_url(url + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -297,7 +312,8 @@ def test_validate_bundle_url_rejects_non_public_ip_literal_even_when_listed(monk
     """The IP-literal range check is unconditional: listing a loopback or private address does not admit it."""
     monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", f"http://{host}:9000")
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(f"http://{host}:9000/bucket/key")
+        validate_bundle_url(f"http://{host}:9000/bucket/key" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -305,7 +321,8 @@ def test_validate_bundle_url_answers_500_on_a_malformed_allow_list(monkeypatch):
     """The startup hook refuses to boot on a malformed list; a process that bypassed it answers 500, not 400."""
     monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "s3.eu-west-2.amazonaws.com")
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
+        validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 500
 
 
@@ -322,7 +339,8 @@ def test_validate_bundle_url_allow_list_match_is_exact(monkeypatch, host):
     """No suffix or wildcard form: the presigned origin is one exact host, s3.<region>.amazonaws.com."""
     monkeypatch.setenv("BUNDLE_URL_ALLOWED_ORIGINS", "https://s3.eu-west-2.amazonaws.com")
     with pytest.raises(HTTPException) as exc:
-        validate_bundle_url(f"https://{host}/bucket/key")
+        validate_bundle_url(f"https://{host}/bucket/key" + _SIGNED_QUERY)
+    assert _URL_SECRET not in str(exc.value.detail)
     assert exc.value.status_code == 400
 
 
@@ -431,3 +449,40 @@ def test_validate_bundle_url_warns_on_first_validation_when_allow_list_empty(mon
         validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/key")
         validate_bundle_url("https://s3.eu-west-2.amazonaws.com/bucket/other-key")
     assert len(_allow_list_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        (
+            "https://user:password@S3.EXAMPLE:8443/"  # pragma: allowlist secret (synthetic URL)
+            "bucket/key.pt?secret#fragment",
+            "https://s3.example:8443/key.pt",
+        ),
+        ("https://[2001:db8::1]:8443/bucket/key.pt?secret#fragment", "https://[2001:db8::1]:8443/key.pt"),
+        ("https://s3.example:bad/key.pt?secret", "<invalid URL>"),
+        ("https://[invalid/key.pt?secret", "<invalid URL>"),
+    ],
+)
+def test_redact_url_keeps_only_origin_and_basename(url, expected):
+    assert validation.redact_url(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        (
+            "https://user:userinfo-sentinel@bucket"  # pragma: allowlist secret (synthetic URL)
+            f"\uff0fexample.com/key{_SIGNED_QUERY}"
+        ),
+        f"https://user:userinfo-sentinel@[invalid/key{_SIGNED_QUERY}",  # pragma: allowlist secret (synthetic URL)
+    ],
+)
+def test_malformed_bundle_url_never_echoes_credentials(url):
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(url)
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "Bundle URL is malformed."
+    assert "userinfo-sentinel" not in str(exc.value)
+    assert _URL_SECRET not in str(exc.value)
+    assert exc.value.__suppress_context__
