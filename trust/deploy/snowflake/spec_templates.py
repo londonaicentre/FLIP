@@ -275,7 +275,6 @@ def _data_access_api(kit: dict[str, str], names: Names, digests: dict[str, str])
                     "resources": _resources("1", "2Gi", "2", "4Gi"),
                     # The OAuth session token IS this service's database credential.
                     "mountSessionToken": True,
-                    "sessionTokenConfig": {"path": "/snowflake/session", "permission": "0600"},
                     "volumeMounts": volume_mounts,
                     "secrets": _secrets("data-access-api", names),
                 }

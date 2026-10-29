@@ -223,7 +223,10 @@ def test_data_access_api_reads_omop_from_snowflake(specs: dict) -> None:
     assert int(env["SNOWFLAKE_STATEMENT_TIMEOUT_SECONDS"]) > 0
     container = containers(specs["data-access-api"])[0]
     assert container["mountSessionToken"] is True
-    assert container["sessionTokenConfig"]["permission"] == "0600"
+    # /snowflake/session is reserved: the live account rejects any sessionTokenConfig.path
+    # there ("overlaps a location reserved by Snowflake"), and SPCS mounts the token at
+    # /snowflake/session/token without being asked.
+    assert "sessionTokenConfig" not in container
     assert "DATA_ACCESS_POSTGRES_PASSWORD" not in env
 
 
@@ -308,3 +311,12 @@ def test_the_flower_client_reads_the_kit_at_the_mount_root(kit: dict, tmp_path: 
     args = rendered["fl-client-net-1"].spec["spec"]["containers"][0]["args"]
     assert "/app/fl-kit/certificates/ca.crt" in args
     assert not any("/app/fl-kit/net-" in a for a in args)
+
+
+def test_no_spec_points_a_session_token_at_the_reserved_path(specs: dict) -> None:
+    """Snowflake reserves /snowflake/session and rejects the whole spec when a
+    sessionTokenConfig.path overlaps it; the token is mounted there by default."""
+    for name, spec in specs.items():
+        for container in containers(spec):
+            path = container.get("sessionTokenConfig", {}).get("path", "")
+            assert not path.startswith("/snowflake/session"), f"{name}: {path}"
