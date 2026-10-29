@@ -39,6 +39,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -88,6 +89,22 @@ def registry_host(snow: str, connection: str, dry_run: bool) -> str:
     if not host:
         raise MirrorError("`snow spcs image-registry url` returned nothing - is the connection configured?")
     return host
+
+
+def merged_images(lock_file: Path, code: str, env: str, host: str, recorded: dict[str, Any]) -> dict[str, Any]:
+    """This run's digests on top of the pins already in the lock for the same trust.
+
+    A partial mirror (``MIRROR_IMAGES=...``) must not drop the other images' pins, or the
+    next render silently falls back to tags for them. A lock for another trust,
+    environment or registry is replaced, never merged.
+    """
+    try:
+        previous = json.loads(lock_file.read_text())
+    except (OSError, ValueError):
+        return dict(recorded)
+    if (previous.get("code"), previous.get("env"), previous.get("registry")) != (code, env, host):
+        return dict(recorded)
+    return {**previous.get("images", {}), **recorded}
 
 
 def registry_login(snow: str, connection: str, dry_run: bool) -> None:
@@ -221,7 +238,7 @@ def main() -> int:
         "env": env,
         "registry": host,
         "mirrored_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "images": recorded,
+        "images": merged_images(LOCK_FILE, names.code, env, host, recorded),
     }
     if args.dry_run:
         print("ⓘ  --dry-run: images.lock.json not written")

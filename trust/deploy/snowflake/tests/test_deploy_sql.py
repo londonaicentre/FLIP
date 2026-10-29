@@ -484,3 +484,17 @@ def test_mirror_logs_in_to_the_registry_before_pushing(monkeypatch: pytest.Monke
     source = (SNOWFLAKE_DIR / "mirror_images.py").read_text()
     main = source[source.index("def main") :]
     assert main.index("registry_login(") < main.index("recorded = mirror(")
+
+
+def test_a_partial_mirror_keeps_the_other_pins(tmp_path: Path) -> None:
+    """MIRROR_IMAGES=<subset> once dropped every other image's digest from the lock."""
+    import mirror_images
+
+    lock = tmp_path / "images.lock.json"
+    old = {"orthanc": {"digest": "sha256:" + "a" * 64}, "imaging-api": {"digest": "sha256:" + "b" * 64}}
+    lock.write_text(json.dumps({"code": "GSTT", "env": "development", "registry": "reg", "images": old}))
+    new = {"imaging-api": {"digest": "sha256:" + "c" * 64}}
+    merged = mirror_images.merged_images(lock, "GSTT", "development", "reg", new)
+    assert merged == {"orthanc": old["orthanc"], "imaging-api": new["imaging-api"]}
+    assert mirror_images.merged_images(lock, "KCH", "development", "reg", new) == new
+    assert mirror_images.merged_images(tmp_path / "absent.json", "GSTT", "development", "reg", new) == new
