@@ -110,3 +110,39 @@ class TestMakefileWiring:
         # exports.
         assert "ifneq ($(DOCKER_FL_API_TAG),)" in MAKEFILE
         assert "export TF_VAR_fl_api_image_tag=${DOCKER_FL_API_TAG}" in MAKEFILE
+
+
+class TestFleetProxyTag:
+    """Flower's fleet proxy sidecar is a third FL repository (FLIP#1517).
+
+    Built and tagged with the SuperLink, so it follows the server's tag — but a release pins
+    `v<X.Y.Z>@sha256:…`, and the server's digest on the proxy's repository is a reference
+    that does not exist. The proxy carries the trusts' allowlist, so it is pinned by its
+    own digest rather than by a mutable release tag.
+    """
+
+    def test_the_proxy_image_uses_its_own_tag(self):
+        assert "local.fl_fleet_proxy_tag" in _local("fl_fleet_proxy_image")
+        assert "flower-fleet-proxy" in _local("fl_fleet_proxy_image")
+
+    def test_an_unset_proxy_tag_falls_back_to_the_server_tag_without_its_digest(self):
+        expr = _local("fl_fleet_proxy_tag")
+        assert 'var.fl_fleet_proxy_image_tag != ""' in expr
+        assert 'split("@", var.flip_fl_image_tag)[0]' in expr
+
+    def test_the_variable_is_declared_with_an_empty_default(self):
+        block = re.search(r'variable "fl_fleet_proxy_image_tag" \{(.*?)\n\}', VARIABLES, re.DOTALL)
+        assert block, "variable fl_fleet_proxy_image_tag is not declared"
+        assert 'default     = ""' in block.group(1)
+        assert "must not be 'latest'" in block.group(1)
+
+    def test_the_resolver_reads_the_sidecar_and_emits_the_tag(self):
+        line = next(line for line in RESOLVER.splitlines() if 'resolve "FL fleet proxy image"' in line)
+        assert '"fl-server-net-1" "fleet-proxy"' in line
+        assert "FL_PROXY_IMAGE" in line
+        assert '"flower-fleet-proxy"' in RESOLVER
+        assert "DOCKER_FL_PROXY_TAG=${fl_proxy_tag}" in RESOLVER
+
+    def test_the_tf_var_is_exported_only_when_set(self):
+        assert "ifneq ($(DOCKER_FL_PROXY_TAG),)" in MAKEFILE
+        assert "export TF_VAR_fl_fleet_proxy_image_tag=${DOCKER_FL_PROXY_TAG}" in MAKEFILE

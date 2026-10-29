@@ -131,7 +131,7 @@ def read_env_vars(env_path: Path) -> dict[str, str]:
 KUBECTL: list[str] = ["kubectl"]
 
 
-#: An immutable, pullable image tag — a release or a CI sha tag (scripts/site_upgrade.py).
+#: An immutable, pullable image tag — a release or a CI sha tag (trust/deploy/scripts/site_upgrade.py).
 IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
 
 

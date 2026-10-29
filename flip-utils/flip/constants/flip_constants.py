@@ -77,7 +77,7 @@ class ProdSettings(_Common):
     # Trust-internal service auth — protects imaging-api and data-access-api on the
     # trust Docker network from unauthenticated callers. The fl-client container is
     # injected with the per-trust plaintext key in TRUST_INTERNAL_SERVICE_KEY by the
-    # trust compose stack (see trust/compose_trust.*.flower.yml / *.nvflare.yml in
+    # trust compose stack (see trust/deploy/compose/compose_trust.*.flower.yml / *.nvflare.yml in
     # the FLIP repo). The flip package forwards it on every call to imaging-api or
     # data-access-api; user training code does not deal with the header directly.
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"

@@ -11,7 +11,7 @@
 
 """The chart Makefile's release upgrade reads the kit the site was synced from, for every HUB (FLIP#1204).
 
-``upgrade-trust-k8s`` hands scripts/site_upgrade.py ``trust/.env.<KIT>.<env>``; the env token comes
+``upgrade-trust-k8s`` hands trust/deploy/scripts/site_upgrade.py ``trust/.env.<KIT>.<env>``; the env token comes
 from ``deploy/env_mode.mk`` like every other Makefile that reads HUB, so a deployed site's kit is
 ``.stag`` / ``.prod`` rather than a development kit that does not exist.
 """

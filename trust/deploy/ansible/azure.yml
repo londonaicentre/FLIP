@@ -15,7 +15,7 @@
 # azure.yml
 #
 # Run ON an Azure trust node by its own flip-node helper (cloud-init at first boot, then
-# `make -C deploy/providers/azure reprovision`):
+# `make -C trust/deploy/terraform/azure reprovision`):
 #   ansible-playbook -i localhost, -c local trust/deploy/ansible/azure.yml \
 #     -e flip_owner=azureuser -e fl_backend=nvflare
 # The node holds no credentials for the hub's cloud, so the bucket-based FL kit download is not
