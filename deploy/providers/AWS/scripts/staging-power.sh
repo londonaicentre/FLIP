@@ -32,7 +32,7 @@
 # `flip-database`, `Ec2Instance`. A copied dispatch, a workflow edited to run on
 # main, or an operator with the prod profile exported would otherwise take
 # production down with no warning at all. So the guard is not a single `if`: the
-# GitHub environment name, the deploy mode token (TF_PROD) and the git ref are
+# GitHub environment name, the hub selector (TF_HUB) and the git ref are
 # each checked independently, each must be a staging value, and an unset or
 # unrecognised value is a refusal rather than a pass. There is no override flag,
 # because the only thing an override would ever be used for is the accident this
@@ -48,7 +48,7 @@
 #
 # Environment:
 #     FLIP_ENVIRONMENT   GitHub environment name (aws-stag). Required by stop/start.
-#     TF_PROD            deploy/env_mode.mk token (stag | lza-stag). Required by stop/start.
+#     TF_HUB             hub selector, as in deploy/env_mode.mk (stag | prod). Required by stop/start.
 #     GITHUB_REF_NAME    branch the run was loaded from. Must not be main, when set.
 #     AWS_REGION         region for every call (default eu-west-2).
 #     ECS_CLUSTER        default flip-cluster.
@@ -103,7 +103,7 @@ MAX_HOLD_MINUTES=300
 # Staging tokens. Membership is checked, never absence of "prod": a typo, an empty
 # string and a brand new estate token must all refuse rather than pass.
 STAGING_ENVIRONMENTS="aws-stag aws-staging"
-STAGING_TF_PROD_TOKENS="stag lza-stag"
+STAGING_HUBS="stag"
 
 # ---------------------------------------------------------------------------
 # Production guard
@@ -127,8 +127,8 @@ refuse_production() {
    ${SELF} scales ECS services to zero and stops EC2 and RDS. The resource names
    are the same in both estates (${ECS_CLUSTER}, ${RDS_INSTANCE_ID}, ${EC2_NAME_TAG}),
    so running it with production credentials would take production down. There is
-   no override: FLIP_ENVIRONMENT must be one of [${STAGING_ENVIRONMENTS}], TF_PROD
-   one of [${STAGING_TF_PROD_TOKENS}], and the ref must not be main.
+   no override: FLIP_ENVIRONMENT must be one of [${STAGING_ENVIRONMENTS}], TF_HUB
+   one of [${STAGING_HUBS}], and the ref must not be main.
 EOF
     if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
         {
@@ -145,7 +145,7 @@ EOF
 
 assert_staging_target() {
     local environment="${FLIP_ENVIRONMENT:-}"
-    local tf_prod="${TF_PROD:-}"
+    local hub="${TF_HUB:-}"
     local ref="${GITHUB_REF_NAME:-}"
 
     [[ -n "${environment}" ]] ||
@@ -153,10 +153,10 @@ assert_staging_target() {
     contains_word "${environment}" "${STAGING_ENVIRONMENTS}" ||
         refuse_production "FLIP_ENVIRONMENT is '${environment}', which is not a staging environment."
 
-    [[ -n "${tf_prod}" ]] ||
-        refuse_production "TF_PROD is unset, so the deploy mode cannot be established."
-    contains_word "${tf_prod}" "${STAGING_TF_PROD_TOKENS}" ||
-        refuse_production "TF_PROD is '${tf_prod}', which selects a production estate."
+    [[ -n "${hub}" ]] ||
+        refuse_production "TF_HUB is unset, so the hub cannot be established."
+    contains_word "${hub}" "${STAGING_HUBS}" ||
+        refuse_production "TF_HUB is '${hub}', which is not the staging hub."
 
     # The ref is the third, independent check. It is allowed to be empty for a
     # laptop run, where there is no workflow ref at all, but main is never
@@ -166,7 +166,7 @@ assert_staging_target() {
         refuse_production "the run is on 'main', which is the production branch."
     fi
 
-    log "✅ Target confirmed as staging (environment=${environment}, TF_PROD=${tf_prod}, ref=${ref:-none})."
+    log "✅ Target confirmed as staging (environment=${environment}, TF_HUB=${hub}, ref=${ref:-none})."
 }
 
 # ---------------------------------------------------------------------------

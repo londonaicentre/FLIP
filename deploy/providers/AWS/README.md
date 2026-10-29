@@ -1810,7 +1810,7 @@ different mechanism.
 **The production refusal.** `flip-cluster`, `flip-database` and `Ec2Instance` are named identically in both estates, so
 a misrouted stop would take production down. `staging_lifecycle.yml` has no `main` trigger, its jobs refuse to run on
 `main`, its environment is the literal `aws-stag`, and `scripts/staging-power.sh` independently checks
-`FLIP_ENVIRONMENT`, `TF_PROD` and the ref before making a single call, with no override flag. Those checks are pinned
+`FLIP_ENVIRONMENT`, `TF_HUB` and the ref before making a single call, with no override flag. Those checks are pinned
 by `scripts/tests/test_staging_power.sh` and `tests/test_staging_lifecycle_workflow.py`.
 
 **The OIDC trust.** The power job runs from `staging_lifecycle.yml`, and `job_workflow_ref` names the reusable

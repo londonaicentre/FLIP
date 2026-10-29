@@ -23,7 +23,7 @@
 # EC2 and RDS by names that are identical in both estates, so "it declines to run
 # against production" is the property the script exists to keep, and it is pinned
 # here from every direction: the production environment name, the production
-# TF_PROD token, the main branch, and each of those values being absent.
+# TF_HUB value, the main branch, and each of those values being absent.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_staging_power.sh
@@ -37,7 +37,7 @@ SCRIPT="$(cd "${HERE}/.." && pwd)/staging-power.sh"
 # harness append its fixture summaries to the real job summary, and would make the
 # "no annotation outside Actions" style assertions untestable.
 unset GITHUB_ACTIONS GITHUB_STEP_SUMMARY GITHUB_OUTPUT
-unset FLIP_ENVIRONMENT TF_PROD GITHUB_REF_NAME
+unset FLIP_ENVIRONMENT TF_HUB GITHUB_REF_NAME
 unset HOLD_MINUTES_INPUT HOLD_MINUTES_VAR
 
 TEST_ROOT="$(mktemp -d)"
@@ -192,7 +192,7 @@ down_world() {
 
 stag_env() {
     export FLIP_ENVIRONMENT="aws-stag"
-    export TF_PROD="lza-stag"
+    export TF_HUB="stag"
     export GITHUB_REF_NAME="develop"
 }
 
@@ -267,15 +267,15 @@ for action in stop start; do
     expect_stderr "Refusing to run" "${action} on aws-prod says why"
 
     stag_env
-    export TF_PROD="lza"
+    export TF_HUB="prod"
     run "${action}"
-    expect_rc 1 "${action} refuses TF_PROD=lza"
-    expect_not_called "update-service" "${action} with TF_PROD=lza makes no mutating call"
+    expect_rc 1 "${action} refuses TF_HUB=prod"
+    expect_not_called "update-service" "${action} with TF_HUB=prod makes no mutating call"
 
     stag_env
-    export TF_PROD="true"
+    export TF_HUB="lza-stag"
     run "${action}"
-    expect_rc 1 "${action} refuses the legacy production token TF_PROD=true"
+    expect_rc 1 "${action} refuses the pre-#1479 token TF_HUB=lza-stag"
 
     stag_env
     export GITHUB_REF_NAME="main"
@@ -289,9 +289,9 @@ for action in stop start; do
     expect_rc 1 "${action} refuses when FLIP_ENVIRONMENT is unset"
 
     stag_env
-    unset TF_PROD
+    unset TF_HUB
     run "${action}"
-    expect_rc 1 "${action} refuses when TF_PROD is unset"
+    expect_rc 1 "${action} refuses when TF_HUB is unset"
 
     stag_env
     export FLIP_ENVIRONMENT=""
@@ -457,7 +457,7 @@ expect_not_called "update-service" "the desired counts are left alone when alrea
 section "status reports the estate without the production guard"
 # ---------------------------------------------------------------------------
 down_world
-unset FLIP_ENVIRONMENT TF_PROD
+unset FLIP_ENVIRONMENT TF_HUB
 export GITHUB_REF_NAME="main"
 run status
 expect_rc 0 "status runs with no environment set and on main"

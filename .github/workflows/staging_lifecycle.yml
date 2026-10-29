@@ -55,7 +55,7 @@
 # PRODUCTION IS NOT REACHABLE FROM HERE, by four independent means: this workflow
 # has no `main` trigger, the jobs refuse to run on `main`, the environment is
 # hard-coded to aws-stag, and staging-power.sh itself checks the environment name,
-# the TF_PROD token and the ref before it makes a single call. The resource names
+# TF_HUB and the ref before it makes a single call. The resource names
 # are identical in both estates, so one check was never going to be enough.
 
 name: Staging Lifecycle
@@ -246,7 +246,7 @@ jobs:
           # every `if` above. They are passed rather than assumed so that running
           # the script by hand is subject to the same guard as running it here.
           FLIP_ENVIRONMENT: aws-stag
-          TF_PROD: ${{ vars.TF_PROD }}
+          TF_HUB: ${{ vars.TF_HUB }}
           AWS_REGION: ${{ vars.AWS_REGION }}
         run: |
           set -euo pipefail
