@@ -21,6 +21,7 @@ account, no credentials and no network: everything is read off the rendered file
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -41,11 +42,13 @@ EXPECTED_SERVICES = {
     "seed-orthanc",
     "smoke-cstore",
     "reconvert",
+    # The hubless self-test (FLIP#1585).
+    "selftest",
 }
 
 #: The job services, and what each one is. A job is never "up": `make up` only stages its
 #: specification, and an operator (or imaging-api, for dcm2niix) executes it on demand.
-JOB_SERVICES = {"dcm2niix", "xnat-configure", "seed-orthanc", "smoke-cstore", "reconvert"}
+JOB_SERVICES = {"dcm2niix", "xnat-configure", "seed-orthanc", "smoke-cstore", "reconvert", "selftest"}
 
 #: The contract's least-privilege secret map, as SECRET OBJECT NAMES per service.
 EXPECTED_SECRETS = {
@@ -472,3 +475,23 @@ def test_the_flower_client_reads_the_kit_at_the_mount_root(kit: dict, tmp_path: 
     args = rendered["fl-client-net-1"].spec["spec"]["containers"][0]["args"]
     assert "/app/fl-kit/certificates/ca.crt" in args
     assert not any("/app/fl-kit/net-" in a for a in args)
+
+
+def test_the_selftest_job_checks_from_inside_with_the_read_only_role(specs: dict, manifest: dict) -> None:
+    """FLIP#1585: /health over SPCS DNS, a cohort query, two refused writes. It connects to
+    Snowflake as the SELECT-only OMOP role, so the database refusal it reports is that role's."""
+    entry = next(s for s in manifest["services"] if s["name"] == "selftest")
+    assert entry["kind"] == "job"
+    container = containers(specs["selftest"])[0]
+    assert container["env"]["SNOWFLAKE_ROLE"] == "FLIP_GSTT_OMOP_READER"
+    urls = json.loads(container["env"]["SELFTEST_HEALTH_URLS"])
+    assert set(urls) == {"trust-api", "data-access-api", "imaging-api"}
+    assert all(url.endswith(".snowflakecomputing.internal:8000/health") for url in urls.values())
+    assert {s["snowflakeSecret"]["objectName"].rsplit(".", 1)[-1] for s in container["secrets"]} == {
+        "TRUST_INTERNAL_SERVICE_KEY",
+        "AES_KEY_BASE64",
+    }
+    assert "volumes" not in specs["selftest"]["spec"], "the self-test mounts nothing"
+    script = container["args"][0]
+    for check in ("cohort-statistics", "write-refused-by-validation", "db-refuses-delete", "db-refuses-create"):
+        assert check in script, check

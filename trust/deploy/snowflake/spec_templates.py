@@ -40,6 +40,7 @@ receiver queries succeed while every retrieval times out (FLIP#993).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -78,6 +79,12 @@ SECRET_MAP: dict[str, dict[str, str]] = {
         "XNAT_DB_PASSWORD": "POSTGRES_PASSWORD",  # pragma: allowlist secret
     },
     "xnat-nginx": {},
+    # The hubless self-test (FLIP#1585) calls data-access-api as trust-api does: the
+    # trust-internal key, and the AES key that seals a project id for /cohort.
+    "selftest": {
+        "TRUST_INTERNAL_SERVICE_KEY": "TRUST_INTERNAL_SERVICE_KEY",  # pragma: allowlist secret
+        "AES_KEY_BASE64": "AES_KEY_BASE64",  # pragma: allowlist secret
+    },
     "orthanc": {
         "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret
     },
@@ -930,6 +937,43 @@ def fl_nets(kit: dict[str, str]) -> list[str]:
     return [part.strip() for part in raw.split(",") if part.strip()]
 
 
+def _selftest(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
+    """The hubless self-test, as a job service inside the account (FLIP#1585).
+
+    Runs on the data-access-api image (Python, the Snowflake connector and the service's
+    own encryption helper) as the services role, so it sees the trust exactly as a
+    service does: SPCS service DNS for /health, data-access-api for a cohort statistics
+    query and a refused write, and the database itself for the read-only role's refusal.
+    It mounts nothing.
+    """
+    api = {
+        service: f"http://{names.dns(service)}:8000/health"
+        for service in ("trust-api", "data-access-api", "imaging-api")
+    }
+    env = {
+        "ENV": "production",
+        "SELFTEST_HEALTH_URLS": json.dumps(api, sort_keys=True),
+        "DATA_ACCESS_API_URL": f"http://{names.dns('data-access-api')}:8000",
+        "TRUST_INTERNAL_SERVICE_KEY_HEADER": kit.get(
+            "TRUST_INTERNAL_SERVICE_KEY_HEADER", "X-Trust-Internal-Service-Key"
+        ),
+        "SNOWFLAKE_DATABASE": names.database,
+        "SNOWFLAKE_WAREHOUSE": names.warehouse,
+        "SNOWFLAKE_ROLE": names.omop_reader_role,
+    }
+    spec = {
+        "spec": {
+            "containers": [
+                _job_container(
+                    "selftest", _image(names, "data-access-api", kit, digests), _script("selftest-spcs.sh"), env, names
+                )
+            ],
+            **_event_table_exports(),
+        }
+    }
+    return Rendered("selftest", "job", names.job_pool, spec)
+
+
 def build_all(kit: dict[str, str], code: str, digests: dict[str, str] | None = None) -> list[Rendered]:
     """Render every service in the naming contract for one trust.
 
@@ -962,5 +1006,6 @@ def build_all(kit: dict[str, str], code: str, digests: dict[str, str] | None = N
         _seed_orthanc(kit, names, digests),
         _smoke_cstore(kit, names, digests),
         _reconvert(kit, names, digests),
+        _selftest(kit, names, digests),
     ]
     return rendered

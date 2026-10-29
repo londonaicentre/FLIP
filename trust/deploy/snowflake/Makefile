@@ -195,9 +195,15 @@ job-status: require-kit
 	fi
 	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py job-status --dir $(RENDER_DIR) --service $(JOB) | $(RUN_SQL)
 
-selftest: require-kit
-	@echo "🧪 Self-test for $(KIT) ($(KIT_ENV)) $(SQL_MODE) - placeholder, real asserts in FLIP#1585"
+# The hubless self-test (FLIP#1585): service and pool status by SQL, then a job inside the
+# account that checks /health over SPCS DNS, OMOP on Snowflake, a cohort statistics query
+# and two refused writes (by validation and by the read-only role). The job's status is
+# the verdict; its SELFTEST lines say which check failed. The DICOM path has its own
+# checks: smoke-cstore, then reconvert-nifti.
+selftest: require-kit render
+	@echo "🧪 Self-test for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
 	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py selftest --dir $(RENDER_DIR) | $(RUN_SQL)
+	$(call run_job,selftest)
 
 # ── Guards ───────────────────────────────────────────────────────────────────
 # No Snowflake account, no credentials, no network: everything is asserted over rendered
