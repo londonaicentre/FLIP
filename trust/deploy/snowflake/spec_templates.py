@@ -399,6 +399,10 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
     return Rendered("imaging-api", "service", names.pool, spec)
 
 
+#: The FLARE participant kit's directories, as provisioning writes them and Helm mounts them.
+FLARE_WORKSPACE = ("startup", "local", "transfer")
+
+
 def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: str) -> Rendered:
     """One FL client per FL network, mounting that net's images prefix and nothing else.
 
@@ -446,14 +450,28 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
         port = kit.get("FL_EDGE_PORT", "").strip() or kit.get("FL_SERVER_PORT", "").strip()
         container["args"] = [
             "--root-certificates",
-            f"/app/fl-kit/{net_id}/certificates/ca.crt",
+            # The stage volume is FL_KIT/<net-N> itself, so the kit sits at the mount root.
+            "/app/fl-kit/certificates/ca.crt",
             "--superlink",
             f"{superlink}:{port}",
             "--auth-supernode-private-key",
-            f"/app/fl-kit/{net_id}/keys/supernode_credentials_{slot}",
+            f"/app/fl-kit/keys/supernode_credentials_{slot}",
             "--port",
             kit.get("SUPERNODE_1_CLIENTAPPIO_PORT", "9094"),
         ]
+    flare_workspace: list[dict[str, str]] = []
+    if backend != "flower":
+        # The FLARE client runs from /app/startup (it chmods the scripts there) and renders
+        # privacy.json and its log config into /app/local, so both must be writable. A stage
+        # volume cannot be mounted writable here (the kit stays read-only), so the client gets
+        # local volumes and the kit is copied in before the image's own entrypoint runs.
+        flare_workspace = [{"name": f"fl-{part}", "source": "local"} for part in FLARE_WORKSPACE]
+        container["volumeMounts"] += [{"name": f"fl-{part}", "mountPath": f"/app/{part}"} for part in FLARE_WORKSPACE]
+        copies = " && ".join(
+            f"if [ -d /app/fl-kit/{part} ]; then cp -R /app/fl-kit/{part}/. /app/{part}/; fi"
+            for part in FLARE_WORKSPACE
+        )
+        container["command"] = ["/bin/sh", "-c", f"{copies} && exec /app/entrypoint.sh"]
     if int(kit.get("NUM_AVAILABLE_GPUS", "0") or 0) > 0:
         gpus = kit["NUM_AVAILABLE_GPUS"]
         container["resources"]["requests"]["nvidia.com/gpu"] = gpus
@@ -478,6 +496,7 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
                 # FLARE and Flower both want real shared memory for dataloader workers;
                 # the Compose stack's shm_size: 8gb equivalent.
                 {"name": "dshm", "source": "memory", "size": "8Gi"},
+                *flare_workspace,
             ],
             **_event_table_exports(),
         }
