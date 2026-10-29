@@ -180,7 +180,6 @@ def main() -> int:
     # Check Terraform files
     print("🏗️  TERRAFORM FILES")
     all_passed &= check_file_exists("main.tf", "Central Hub Terraform")
-    all_passed &= check_file_exists("modules/trust_ec2/main.tf", "Trust EC2 Terraform")
     print()
 
     # Check templates
@@ -199,7 +198,6 @@ def main() -> int:
     all_passed &= check_makefile_target("check-ssm-ready", "SSM prerequisites check")
     all_passed &= check_makefile_target("ansible-init", "Ansible provisioning")
     all_passed &= check_makefile_target("deploy-centralhub", "Central Hub deployment")
-    all_passed &= check_makefile_target("deploy-trust", "Trust deployment")
     all_passed &= check_makefile_target("full-deploy", "Full deployment")
     print()
 
@@ -216,19 +214,9 @@ def main() -> int:
         "deploy-centralhub does not depend on the SSM bastion",
     )
     all_passed &= check_makefile_dependency(
-        "deploy-trust",
-        "ssh-config",
-        "deploy-trust depends on ssh-config",
-    )
-    all_passed &= check_makefile_dependency(
         "full-deploy",
         "deploy-centralhub",
         "full-deploy depends on deploy-centralhub",
-    )
-    all_passed &= check_makefile_dependency(
-        "full-deploy",
-        "deploy-trust",
-        "full-deploy depends on deploy-trust",
     )
     print()
 

@@ -710,6 +710,12 @@ def test_the_service_allowlist_is_exactly_what_the_flip_root_uses() -> None:
     )
 
 
+# Granted only so the apply that deletes them is allowed (FLIP#1438). Drop with the bootstrap entries
+# once stag and prod have applied the removal.
+RETIRING_ROLES = {"trust-ec2-role"}
+RETIRING_PROFILES = {"trust-ec2-role-profile"}
+
+
 def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> None:
     """An unlisted role or profile would be denied at apply; a stale one would be a standing grant."""
     roles, profiles = set(), set()
@@ -724,8 +730,8 @@ def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> N
                 '"terraform-aws-modules/iam/aws//modules/iam-assumable-role'
             ):
                 roles.add(arguments["role_name"].strip('"'))
-    assert set(_string_list_default("managed_role_names")) == roles
-    assert set(_string_list_default("managed_instance_profile_names")) == profiles
+    assert set(_string_list_default("managed_role_names")) == roles | RETIRING_ROLES
+    assert set(_string_list_default("managed_instance_profile_names")) == profiles | RETIRING_PROFILES
 
 
 def test_the_plan_role_cannot_read_the_accounts_data() -> None:

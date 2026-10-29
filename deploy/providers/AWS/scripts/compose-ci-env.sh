@@ -201,13 +201,6 @@ REQUIRED_KEYS=(
     # FL
     FL_BACKEND
     FL_KIT_SLOT_NAMES
-
-    # The key whose Makefile default is DESTRUCTIVE rather than inert:
-    # DEPLOY_TRUST_EC2 ?= true means "create a t3.xlarge cloud trust host", which
-    # neither estate runs. It is not on check-fl-plan-impact.sh's watch list, so an
-    # unattended apply would make it silently; required with an explicit literal —
-    # `false` written down is a decision, an absent key an accident.
-    DEPLOY_TRUST_EC2
 )
 
 # Keys the Makefile exports only when set, or supplies a `?=` default for. Passed

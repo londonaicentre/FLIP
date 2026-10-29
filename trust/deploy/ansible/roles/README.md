@@ -15,9 +15,8 @@
 
 One set of Ansible roles prepares any host for the trust Compose stack. A play per host type composes
 them and states only what differs: [`../onprem.yml`](../onprem.yml) for a site-owned host,
-[`deploy/providers/AWS/site.yml`](../../../../deploy/providers/AWS/site.yml) for the EC2 trust (which
-adds its own AWS-only plays: Terraform-derived inventory, AWS CLI, SSM bastion, CloudWatch). A future
-cloud play (FLIP#1213, the Azure VM) is another composition of the same roles.
+[`../aws-ec2-host.yml`](../aws-ec2-host.yml) for an EC2 node (which adds its own AWS-only plays: AWS CLI,
+CloudWatch, the S3 kit and vocabulary), and [`../azure.yml`](../azure.yml) for the Azure VM.
 
 | Role | Does | Varies by host type through |
 | ---- | ---- | --------------------------- |
@@ -36,10 +35,8 @@ assert over site.yml). Tags on the EC2 play are `flkit`, `data`, `seed`, `omop`,
 `bastion` — play-level tags reach every task a role brings in, and the two image-dir tasks inside
 `flip_trust_dirs` carry `flkit` themselves so a re-stage lays them down again.
 
-Role lookup: `onprem.yml` finds `./roles` beside itself; `site.yml` finds them through
-`deploy/providers/AWS/ansible.cfg` (`roles_path`). Its first entry is `~/.ansible/roles`, because
-`ansible-galaxy` installs into the first entry and would otherwise drop `geerlingguy.docker` into this
-directory (galaxy-style `namespace.role` dirs here are gitignored, and the test walker skips them).
+Role lookup: every play finds `./roles` beside itself. Galaxy-style `namespace.role` dirs here are
+gitignored, and the test walker skips them.
 
 Inputs every play must set: `fl_backend` (`nvflare` | `flower`) and `fl_kit_source` (`s3` |
 `precreate` | `none`) have no role default, and `flip_fl_kit` / `flip_trust_dirs` check them in their

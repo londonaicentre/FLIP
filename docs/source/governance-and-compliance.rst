@@ -296,7 +296,7 @@ positions:
    * - Log class
      - Retention
      - Why
-   * - Hub infrastructure logs (the ECS, trust EC2 and WAF log groups)
+   * - Hub infrastructure logs (the ECS and WAF log groups)
      - **365 days** in production; **90 days** in staging
      - Production matches the retention baseline the organisation's Landing Zone
        Accelerator already applies to every log group it creates in the same accounts.

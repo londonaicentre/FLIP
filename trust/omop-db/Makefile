@@ -181,7 +181,7 @@ VOCAB_S3_BUCKET ?= flip-lza-stag-aicentre
 # licensed OMOP vocabularies (SNOMED CT, LOINC, Read, ...) and must never be
 # committed; the DICOM bundle and the canonical CSV dataset are public.
 # NOTE when bumping VOCAB_CORE_BUNDLE, update the same bundle name pinned in
-# the Ansible vocab-load play (deploy/providers/AWS/site.yml) and the Helm
+# the Ansible vocab-load role (trust/deploy/ansible/roles/flip_omop_vocab) and the Helm
 # omopDb.vocabLoad.bundleName default — the Dockerfile needs no change (the
 # image is vocab-free).
 VOCAB_CORE_BUNDLE = vocab_aicentre_core_20240916

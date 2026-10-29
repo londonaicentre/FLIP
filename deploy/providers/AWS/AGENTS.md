@@ -4,7 +4,7 @@
 
 | File | Resources |
 |------|-----------|
-| `main.tf` | Provider config, RDS instance, Secrets Manager, target groups, the bastion and Trust EC2, SES |
+| `main.tf` | Provider config, RDS instance, Secrets Manager, target groups, the bastion, SES |
 | `data.tf` | Shared data sources referenced across multiple files (currently the account's canonical user ID, used for S3 log-bucket ACL grants) |
 | `kms.tf` | FLIP application KMS CMK, used for S3 SSE-KMS and Secrets Manager encryption |
 | `locals.tf` | Centralised locals consumed by ECS task definitions (the env-var maps mirroring the prod composes) |
@@ -27,7 +27,7 @@
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend with S3 native locking (`use_lockfile`) |
 | `variables.tf` | All Terraform variables with defaults |
-| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `trust_ec2` (the Trust EC2 host), `terraform_ci_bootstrap` (the CI plan/apply roles, the permissions boundary and the state bucket — NOT used by this root; see below) |
+| `modules/` | Reusable child modules: `cognito` (user pool + client + domain + seed users), `flip_s3_bucket` (one bucket per tenant with per-caller CORS methods), `secgroup` (security group with egress managed entirely inline), `ses` (sender identity + transactional email templates), `terraform_ci_bootstrap` (the CI plan/apply roles, the permissions boundary and the state bucket — NOT used by this root; see below) |
 | `ci/` | Adopters' wrapper root around `modules/terraform_ci_bootstrap`, for an account you own: tfvars-driven, local state then `make migrate-state`. Never run in AI Centre's accounts — see `ci/README.md` |
 
 ## AWS Profiles
@@ -49,21 +49,17 @@ re-created, not edited.
 ```bash
 # Every target but the static ones (lint, fmt-check, tflint-lint, checkov-lint, help) needs HUB=stag|prod —
 # there is no default — and its env file (.env.stag / .env.prod).
-make full-deploy HUB=stag                    # Full staging deploy
+make full-deploy HUB=stag                    # Full staging deploy (the hub only — trusts deploy from trust/deploy/, FLIP#1438)
 make full-deploy HUB=prod                    # Full prod deploy
 make init/plan/apply HUB=prod                # BREAK-GLASS ONLY on the LZA estate — CI applies it (apply on push to `main`, nightly drift; see "Terraform CI" below and README "Repointing CI at the LZA accounts"), and the next CI run reverts a laptop apply. The full-deploy chains are untested there (README "Deploying onto an LZA estate"). HUB=stag requires LZA_VPC_NAME in .env.stag
-make full-deploy-hub-only HUB=<stag|prod>    # Hub only, NO cloud Trust EC2 (all trusts on-prem, e.g. GPU hosts) — see README "Hub-only Deployment"
 make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS deploy at env branch tip via sha-<short7> task-def revisions + the UI to S3 (FLIP#751; TAG= to pin). Prints an FL quiesce reminder (FLIP#770): enable Deployment Mode (pauses FL job pickup) + wait for the running job before deploying; GET /fl/quiesce reports deployment_mode + fl_quiesced. HUB=prod additionally asks "Are you sure you want to continue?" (stag stays non-interactive)
 make rollback-centralhub                      # Repoint ECS services at the previous ACTIVE task-def revision + deregister the rolled-away one; on FLARE, resets the fl-server's EFS local/ first (FLIP#1390; SKIP_FL_LOCAL_RESET=1 skips)
-make deploy-trust                             # Deploy trust stack to EC2
 make register-trusts KIT=<CODE> HUB=<stag|prod>  # Register CODE-named trust kit(s) on the hub + write trust/.env.<CODE>.<hub> — runs `scripts/register-trusts.sh` (a one-off ECS task + SSM SecureString handoff, mirroring the dev `make register-trusts` contract)
-make stage-fl-kit KIT=<CODE>                  # Re-stage the trust's FL participant kit for its REGISTERED slot (runs inside deploy-trust, after register-trusts). ansible-init stages Trust_1 pre-registration because no slot exists yet; this replaces it once one does. The wipe is net-1-wide, so the host ends up holding exactly one slot's kit, and the play asserts the staged fed_client.json names that slot
 make deploy-ui                                # Manual fallback: build + publish UI via scripts/publish-ui.sh (excludes ark_demo/*; no invalidation, the edge distribution is the networking account's). CI publishes after every apply (FLIP#1186)
 make deploy-ark-demo                          # Build the public Ark+ demo SPA + sync to S3 under ark_demo/
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
-make forward-trust                            # SSM port forward all trust UIs
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
 make package-onprem-trust-kit KIT=<CODE> [KIT_FILE=<path>]  # Tarball a filled-in kit (trust/.env.<CODE>.<hub>, or the one at KIT_FILE) + the FL kit slice of its FL_KIT_SLOT for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
@@ -277,7 +273,7 @@ Every publish also pushes an immutable **`sha-<short7>`** tag (first 7 chars of 
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)
 - **Cognito**: `flip-user-pool` with email auth
 - **Architecture diagrams**: `architecture/central_hub.py` renders the Central Hub pictures (request/FL paths; data/platform services) with the `diagrams` library: `central-hub-aws-lza-{network,data}.png`. The ReadTheDocs "Deploy the Central Hub on AWS (LZA)" page renders them at docs build time; `make aws-diagram` (repo root) refreshes the two committed copies under `docs/` that the README embeds (runs in docker when `dot` is absent). `tests/test_architecture_diagram.py` pins the script's `TERRAFORM_ADDRESSES` map to the root-module `.tf` files both ways: a drawn address that no longer exists fails, and so does any resource of a type in `DRAWN_RESOURCE_TYPES` (ECS services, LBs' target groups, CloudFront, RDS Proxy, EFS, buckets, endpoints, …) or any root `module` that is neither drawn nor listed in `UNDRAWN_MODULES`. Every label must be drawn (the renderer's `assert_complete` enforces it, so the graphviz smoke tests catch one left out). `data` blocks are inventoried for the existence check only (the pictures draw the accelerator VPC/subnets this root looks up) and can never become "must be drawn". **A `.tf` change touching those updates the map in the same PR**; the package is deliberately not called `diagrams/` because `tests/conftest.py` puts this directory on `sys.path`.
-- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. On the estates `DOCKER_REGISTRY` is the account's ECR pull-through cache of GHCR (FLIP#749), and `scripts/resolve-image-tags.sh` probes that registry's tags upstream on `ghcr.io/<org>/` (the runner has no ECR login; FLIP#1199). A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
+- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust nodes do too. On the estates `DOCKER_REGISTRY` is the account's ECR pull-through cache of GHCR (FLIP#749), and `scripts/resolve-image-tags.sh` probes that registry's tags upstream on `ghcr.io/<org>/` (the runner has no ECR login; FLIP#1199). A surgical centralhub redeploy is now one command: GH workflow `workflow_dispatch` to build the branch image to GHCR (publishes `sha-<short7>`) → `make deploy-centralhub TAG=sha-<short7>`, which registers new task-definition revisions and repoints the services (FLIP#751 — the previously manual register-task-definition + update-service runbook). The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
 ## Verifying a Central-Hub FL redeploy
 

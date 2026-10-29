@@ -20,8 +20,7 @@
 Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
 `onprem.yml` is the on-prem counterpart of the EC2 plays [`aws-ec2-host.yml`](aws-ec2-host.yml), which
-[`aws-ec2.yml`](aws-ec2.yml) runs against a node from [`../terraform/aws/ec2`](../terraform/aws/ec2/README.md) and
-[`deploy/providers/AWS/site.yml`](../../../deploy/providers/AWS/site.yml) against the hub's own cloud trust. Together they implement the
+[`aws-ec2.yml`](aws-ec2.yml) runs against a node from [`../terraform/aws/ec2`](../terraform/aws/ec2/README.md). Together they implement the
 [hybrid deployment model](../../../docs/source/deploy-flip.rst).
 
 ## Architecture
@@ -177,7 +176,7 @@ make provision-local-trust KIT=<CODE> HUB=<stag|prod>
 2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
 
 > **Warning — the playbook's XNAT directory is not the one XNAT uses.** Both this
-> playbook and `deploy/providers/AWS/site.yml` provision `/opt/flip/xnat/...`, but
+> playbook and `aws-ec2-host.yml` provision `/opt/flip/xnat/...`, but
 > the tree XNAT actually writes to is whatever `XNAT_DATA_DIR` resolves to in
 > `trust/xnat/Makefile`, and the kit file's value wins. Every scaffolded kit sets one
 > — `trust/.env.example`, which `make new-trust` copies, carries

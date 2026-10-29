@@ -14,7 +14,7 @@
 # Run by that root's Makefile (`make -C trust/deploy/terraform/aws/ec2 provision`), never against
 # the hub: the inventory comes from this root's own Terraform outputs, and the host is reached over
 # SSM through the ~/.ssh/config entry the Makefile's ssh-config target writes for node_alias. The
-# host plays themselves are aws-ec2-host.yml, shared with the hub's site.yml.
+# host plays themselves are aws-ec2-host.yml.
 #
 # Needs: node_alias (from the Makefile), trust_data_version, fl_backend, trust_num;
 # flip_aicentre_bucket and fl_kit_date while the kit comes from S3 (fl_kit_source, default s3).

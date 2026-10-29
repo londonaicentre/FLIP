@@ -58,7 +58,7 @@ make -C trust/omop-db load-omop-vocab OMOP_DB_PORT=5436  # Trust_2 (KCH)
 ```
 
 Cohort queries that join `omop.concept` return nothing until this step has
-run. On EC2 trusts the equivalent load is part of `seed-trust-data` (Ansible);
+run. On EC2 trusts the equivalent load is part of the EC2 root's `make seed` (Ansible);
 on Kubernetes it is the chart's `omop-vocab-load` post-install job — when
 `omopDb.vocabLoad.s3Bucket` is set and the Job can reach AWS credentials, which
 on a local `kind` cluster it cannot without extra setup (the node is a container

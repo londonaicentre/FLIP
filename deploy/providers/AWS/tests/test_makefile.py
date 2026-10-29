@@ -16,10 +16,6 @@ was ``sha-<short7>``; a release now also publishes ``:v<X.Y.Z>`` on every image,
 deploy must accept it — while still refusing the floating ``:prod`` / ``:stag``, which would
 defeat the revision audit trail the guard exists for. The guard's regex is the single line
 that decides both, so it is asserted here by running the tag check the way the recipe does.
-
-``upgrade-trust-ec2`` is the EC2 twin of ``make -C trust upgrade-trust``: it must not chain
-through ``seed-trust-data`` (which re-seeds OMOP/Orthanc on the host) or
-``down-trust-ec2`` — those belong to ``deploy-trust``, the first-install verb.
 """
 
 import os
@@ -60,33 +56,6 @@ def _recipe(target: str) -> str:
     m = re.search(rf"^{re.escape(target)}:[^\n]*\n((?:\t[^\n]*\n)+)", text, re.M)
     assert m, f"target {target} not found"
     return "\n".join(line for line in m.group(1).splitlines() if not line.strip().startswith("#"))
-
-
-def test_upgrade_trust_ec2_is_the_data_safe_verb() -> None:
-    text = MAKEFILE.read_text()
-    header = re.search(r"^upgrade-trust-ec2:([^\n]*)\n", text, re.M)
-    assert header, "upgrade-trust-ec2 target not found"
-    prerequisites = header.group(1)
-    for forbidden in ("seed-trust-data", "update-env", "stage-fl-kit"):
-        assert forbidden not in prerequisites, f"upgrade-trust-ec2 must not depend on {forbidden}"
-    recipe = _recipe("upgrade-trust-ec2")
-    assert "upgrade-trust" in recipe, "upgrade-trust-ec2 must delegate to trust/Makefile's upgrade-trust"
-    for forbidden in ("seed-trust-data", "down-trust-ec2", "up-trust-ec2", "image prune"):
-        assert forbidden not in recipe, f"upgrade-trust-ec2 must not run {forbidden}"
-
-
-def test_upgrade_trust_ec2_keeps_the_fl_client_cpu_only() -> None:
-    """The EC2 t3.xlarge has no GPU; up-trust-ec2 pins the fl-client to CPU and the upgrade must too.
-
-    A kit seeded from the template carries NUM_AVAILABLE_GPUS=1, so without the override the
-    upgrade adds the GPU overlay (compose_trust.<env>.gpu.yml) and the recreated fl-client fails
-    with "could not select device driver nvidia" — found by the FLIP#1204 stag run. Passing
-    NUM_AVAILABLE_GPUS=0 on the sub-make's command line both drops the overlay (GPU_OVERRIDE keys
-    on it) and reaches the recipe's shell env, which beats the kit's --env-file for the
-    fl-client's generated resources.json.
-    """
-    call = next(line for line in _recipe("upgrade-trust-ec2").splitlines() if "upgrade-trust " in line)
-    assert "NUM_AVAILABLE_GPUS=0" in call, f"upgrade-trust-ec2 must pin the fl-client to CPU:\n{call}"
 
 
 def _base_ref_shell() -> str:
@@ -130,15 +99,6 @@ def test_both_deploy_loops_swap_the_tag_onto_the_stripped_reference() -> None:
     recipe = _recipe("deploy-centralhub")
     assert '"$${image%:*}:$$TAG"' not in recipe, "a tag swap on the raw (possibly digest-pinned) image reference"
     assert recipe.count('base_ref "$$image" "$$service"') == 2, "both loops must resolve through base_ref()"
-
-
-def test_deploy_trust_still_reseeds_so_the_two_verbs_stay_distinct() -> None:
-    """deploy-trust is the first-install verb; if it ever stops re-seeding, the split above is moot.
-
-    The seed runs in the recipe, between down-trust-ec2 and up-trust-ec2, not as a prerequisite
-    (a prerequisite would run against the still-running omop-db — #1190 review).
-    """
-    assert "seed-trust-data" in _recipe("deploy-trust")
 
 
 # ── Static goals run without the deploy env file (FLIP#1440) ─────────────────────────────────
@@ -275,23 +235,17 @@ def test_the_static_switch_cannot_be_set_from_outside(
     assert "FLARE_KIT_DATE must be set" in result.stderr, result.stderr
 
 
-@pytest.mark.parametrize(("deploy_trust_ec2", "returncode"), [("true", 1), ("false", 0)])
-def test_register_trusts_finding_no_kit_fails_unless_the_deploy_is_hub_only(
-    deploy_trust_ec2: str, returncode: int, tmp_path: Path
-) -> None:
-    """Inside full-deploy the next step deploys a trust, so registering nothing must not pass."""
-    flag = f"DEPLOY_TRUST_EC2={deploy_trust_ec2}"
-    result = _make_dry_run("register-trusts", flag, tmp_path=tmp_path, env_file=_env_file(tmp_path))
-    assert f"{flag} " in result.stdout, result.stdout + result.stderr
+def test_register_trusts_finding_no_kit_warns_and_passes() -> None:
+    """full-deploy registers whatever kits exist; a new hub has none yet, and its trusts register later."""
     env = {"PATH": os.environ["PATH"], "AWS_PROFILE": "probe", "AWS_REGION": "eu-west-2", "HUB": "stag"}
     script = subprocess.run(
         ["bash", "scripts/register-trusts.sh"],
         cwd=AWS_PROVIDER_DIR,
-        env={**env, "KIT_FILES": "", "DEPLOY_TRUST_EC2": deploy_trust_ec2},
+        env={**env, "KIT_FILES": ""},
         capture_output=True,
         text=True,
     )
-    assert script.returncode == returncode, script.stdout + script.stderr
+    assert script.returncode == 0, script.stdout + script.stderr
     assert "No trust/.env.<CODE>.stag kits found" in script.stdout + script.stderr
 
 

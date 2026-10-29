@@ -123,8 +123,8 @@ jobs:
       # terraform_apply.yml. A job-level `env:` block would define every key for
       # every step — and, worse, define an *absent* GitHub variable as the empty
       # string. compose-ci-env.sh can tell absent from empty; the Makefile's `?=`
-      # defaults cannot, so `TF_VAR_deploy_trust_ec2=` reaches Terraform and the
-      # run fails on a type error the operator has to decode.
+      # defaults cannot, so an empty `TF_VAR_…=` reaches Terraform and the run
+      # fails on a type error the operator has to decode.
       #
       # DOCKER_TAG / DOCKER_FL_TAG are deliberately absent: they arrive from the
       # resolver above through $GITHUB_ENV.
@@ -161,7 +161,6 @@ jobs:
           FL_KIT_SLOT_NAMES: ${{ vars.FL_KIT_SLOT_NAMES }}
           FLARE_KIT_DATE: ${{ vars.FLARE_KIT_DATE }}
           FLOWER_KIT_DATE: ${{ vars.FLOWER_KIT_DATE }}
-          DEPLOY_TRUST_EC2: ${{ vars.DEPLOY_TRUST_EC2 }}
           JOB_RESOURCE_SPEC_NUM_GPUS: ${{ vars.JOB_RESOURCE_SPEC_NUM_GPUS }}
           # The LZA keys (FLIP#749), required — see compose-ci-env.sh. The last three have no
           # `export TF_VAR_…` line in the Makefile, so the script writes them into

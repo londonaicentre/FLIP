@@ -27,10 +27,10 @@ Asserted over the source because nothing in CI runs the Makefile or the play aga
 import re
 from pathlib import Path
 
-AWS_PROVIDER_DIR = Path(__file__).resolve().parent.parent
-MAKEFILE = AWS_PROVIDER_DIR / "Makefile"
-SEED_ROLE = AWS_PROVIDER_DIR.parents[2] / "trust/deploy/ansible/roles/flip_trust_seed"
-SEED_SCRIPT = AWS_PROVIDER_DIR.parents[2] / "trust" / "seed_trust.sh"
+ANSIBLE_DIR = Path(__file__).resolve().parent.parent
+MAKEFILE = ANSIBLE_DIR.parent / "terraform/aws/ec2/Makefile"
+SEED_ROLE = ANSIBLE_DIR / "roles/flip_trust_seed"
+SEED_SCRIPT = ANSIBLE_DIR.parents[2] / "trust" / "seed_trust.sh"
 
 
 def test_the_seed_procedure_honours_the_variable():

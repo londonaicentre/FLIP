@@ -16,7 +16,7 @@ Trust node on Docker Compose
 ##############################
 
 Problems on a trust node that runs the Docker Compose stack: an on-prem host
-(:doc:`../deploy-flip/deploy-flip-node-on-prem`) or the trust EC2 the AWS deployment creates.
+(:doc:`../deploy-flip/deploy-flip-node-on-prem`) or a VM node on AWS or Azure.
 
 **Where commands run.** ``make -C …`` commands run from the repo root. ``docker`` commands run on the trust host,
 with ``sudo`` on an on-prem host. The AWS-hosted trust is reached with ``ssh flip-trust``, which
@@ -37,7 +37,7 @@ lists them.
 .. warning::
 
    Several fixes below mention the first-install commands (``make up-onprem-trust``,
-   ``make -C deploy/providers/AWS deploy-trust``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT archive**,
+   ``make -C trust/deploy/terraform/aws/ec2 deploy``, ``make -C trust/xnat up-xnat``). They **wipe the XNAT archive**,
    and the first two re-seed the trust's data. Never use them to move a live site to a new release; see
    :ref:`admin-upgrading-sites`.
 
@@ -140,7 +140,7 @@ the EC2. Docker creates that directory empty and Orthanc starts with no studies.
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS deploy-trust KIT=<CODE> HUB=<env>
+      make -C trust/deploy/terraform/aws/ec2 deploy KIT=<CODE> HUB=<env>
 
 #. Re-trigger the import from the project page.
 

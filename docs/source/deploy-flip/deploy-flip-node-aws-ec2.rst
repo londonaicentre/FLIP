@@ -248,7 +248,6 @@ Not yet here
 
 - **The node self-test before join** (``selftest_node.sh`` over SSM, as the Azure node runs it through Run
   Command) and **the running-stack check after join** (FLIP#1449) are not wired to this root yet.
-  ``make -C deploy/providers/AWS status`` checks only the hub's own trust EC2.
 - **GPU hosts**: ``flip_gpu_host`` holds the NVIDIA driver and checks a container sees the GPU (it does
   nothing on a CPU host), but ``make deploy`` still starts the FL client CPU-only. Untested until the
   account has G-instance quota.

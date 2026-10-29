@@ -16,7 +16,7 @@
 
 """Update SSH config entries to use SSH-over-SSM Session Manager.
 
-This script updates Host entries for `flip` and `flip-trust` in ~/.ssh/config.
+This script updates the Host entry for `flip` (the Central Hub SSM bastion) in ~/.ssh/config.
 The HostName is set to the EC2 instance ID and ProxyCommand is configured to
 tunnel SSH via AWS Systems Manager Session Manager.
 """
@@ -41,15 +41,9 @@ class HostConfig:
 
     alias: str
     instance_output: str
-    # Optional hosts are skipped (with a notice) when their Terraform output is
-    # empty — e.g. the trust EC2 on a hub-only deployment (deploy_trust_ec2=false).
-    optional: bool = False
 
 
-HOST_CONFIGS: tuple[HostConfig, ...] = (
-    HostConfig(alias="flip", instance_output="Ec2InstanceId"),
-    HostConfig(alias="flip-trust", instance_output="TrustEc2InstanceId", optional=True),
-)
+HOST_CONFIGS: tuple[HostConfig, ...] = (HostConfig(alias="flip", instance_output="Ec2InstanceId"),)
 
 
 def _run(cmd: list[str], timeout: int = 20) -> str:
@@ -64,13 +58,11 @@ def _run(cmd: list[str], timeout: int = 20) -> str:
         ) from exc
 
 
-def _terraform_output(name: str, required: bool = True) -> str:
-    """Read a Terraform output value; empty/null is an error unless ``required=False``."""
+def _terraform_output(name: str) -> str:
+    """Read a Terraform output value; empty/null is an error."""
     value = _run(["terraform", "output", "-raw", name])
     if not value or value == "null":
-        if required:
-            raise click.ClickException(f"Terraform output {name} is empty or null.")
-        return ""
+        raise click.ClickException(f"Terraform output {name} is empty or null.")
     return value
 
 
@@ -154,13 +146,7 @@ def main(ssh_config: Path, terraform_dir: Path, dry_run: bool, aws_profile: str 
 
         updated_content = current_content
         for host in HOST_CONFIGS:
-            instance_id = _terraform_output(host.instance_output, required=not host.optional)
-            if not instance_id:
-                click.echo(
-                    f"Skipping SSH host '{host.alias}': Terraform output {host.instance_output} "
-                    "is empty (hub-only deployment, no cloud trust EC2)."
-                )
-                continue
+            instance_id = _terraform_output(host.instance_output)
             new_block = _build_host_block(host.alias, instance_id, region, resolved_profile)
             updated_content = _replace_or_append_host_block(updated_content, host.alias, new_block)
 
