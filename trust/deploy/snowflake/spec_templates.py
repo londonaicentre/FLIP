@@ -17,7 +17,7 @@
 Each ``_<service>`` function below is that service's template: it takes the trust's kit
 file (``trust/.env.<CODE>.<env>``) plus the naming contract and returns the specification
 Snowflake is handed at ``CREATE SERVICE`` / ``ALTER SERVICE``. The compose files
-(``trust/deploy/compose_trust.production*.yml``, ``trust/xnat/docker-compose-stack.yml``)
+(``trust/deploy/compose/compose_trust.prod*.yml``, ``trust/xnat/docker-compose-stack.yml``)
 are the source of truth for each service's environment, ports and volumes; the templates
 are their SPCS translation, and three things change in that translation:
 

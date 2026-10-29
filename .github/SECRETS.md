@@ -17,7 +17,7 @@ This document describes which secrets the CI/CD pipeline reads, and which values
 
 ## Test workflows: generated credentials, not secrets
 
-The test workflows bring up throwaway stacks (Testcontainers Postgres, the `trust/deploy/compose.test.yml` stack,
+The test workflows bring up throwaway stacks (Testcontainers Postgres, the `trust/deploy/compose/compose.test.yml` stack,
 the local hub smoke). Their credentials only have to be consistent within one run, so they are **generated per run**
 rather than read from secrets:
 
