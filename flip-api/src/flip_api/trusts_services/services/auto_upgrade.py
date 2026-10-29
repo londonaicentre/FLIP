@@ -36,6 +36,7 @@ from flip_api.domain.schemas.trusts import (
     UpgradeStatusInput,
     UpgradeWindow,
 )
+from flip_api.private_services.upgrade_notifications import notify_upgrade_finished, notify_upgrade_started
 from flip_api.utils.logger import logger
 from flip_api.utils.version import build_identity
 
@@ -269,10 +270,17 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
         db.add(trust)
         db.commit()
         logger.info(f"Trust {trust.name}: upgrade to {report.release} claimed")
+        # After the commit, deliberately: the lease is the fact, the email is a
+        # courtesy, and notify_* swallows its own failures either way.
+        notify_upgrade_started(trust, report.release, db)
         return UpgradeLease(release=report.release, expires_at=_iso(trust.upgrade_lease_expires_at) or "")
 
     if report.state == "BLOCKED":
-        trust.upgrade_blocker = (report.detail or "UNKNOWN")[:64] if (report.detail in REPORTABLE_BLOCKERS) else None
+        # Keyed off `blocker` (the code), never `detail` (prose): a code the UI does not know
+        # is dropped rather than shown raw. Falls back to `detail` for an agent old enough to
+        # still send the code there.
+        code = report.blocker or report.detail
+        trust.upgrade_blocker = code[:64] if code in REPORTABLE_BLOCKERS else None
         trust.upgrade_blocker_at = now
         db.add(trust)
         db.commit()
@@ -289,4 +297,5 @@ def record_status(trust_id: UUID, report: UpgradeStatusInput, db: Session) -> Up
     db.add(trust)
     db.commit()
     logger.info(f"Trust {trust.name}: upgrade to {report.release} {report.state}")
+    notify_upgrade_finished(trust, report.release, report.state, report.detail, db)
     return None

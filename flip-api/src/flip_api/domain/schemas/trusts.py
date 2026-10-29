@@ -122,8 +122,12 @@ class UpgradeStatusInput(BaseModel):
 
     state: Literal["STARTING", "SUCCEEDED", "FAILED", "BLOCKED"]
     release: str = Field(min_length=1, max_length=64)
-    # A captured log tail on FAILED, or the reason on BLOCKED.
+    # A captured log tail on FAILED, or the human-readable reason on BLOCKED.
     detail: str | None = Field(default=None, max_length=8000)
+    # The machine-readable blocker code on BLOCKED (see REPORTABLE_BLOCKERS). Separate from
+    # `detail` because the UI keys its wording off the code while `detail` carries the specifics
+    # (which health field failed, which files are modified) that no fixed string can express.
+    blocker: str | None = Field(default=None, max_length=64)
 
 
 class UpgradeEnableInput(BaseModel):

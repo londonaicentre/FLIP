@@ -324,7 +324,12 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
             kit,
             "POST",
             "/trust/upgrade-status",
-            {"state": "BLOCKED", "release": decision.release, "detail": decision.detail or decision.reason},
+            {
+                "state": "BLOCKED",
+                "release": decision.release,
+                "blocker": decision.reason,
+                "detail": decision.detail or decision.reason,
+            },
         )
         return 0
     status, _ = hub_call(kit, "POST", "/trust/upgrade-status", {"state": "STARTING", "release": decision.release})

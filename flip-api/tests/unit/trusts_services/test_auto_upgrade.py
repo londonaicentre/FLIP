@@ -221,10 +221,38 @@ class TestClaim:
         t = _trust()
         db = MagicMock()
         db.exec.return_value.one.return_value = t
-        svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", detail="LOCAL_MODIFICATIONS"), db)
+        svc.record_status(
+            t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", blocker="LOCAL_MODIFICATIONS"), db
+        )
         assert t.upgrade_blocker == "LOCAL_MODIFICATIONS"
-        svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", detail="<script>"), db)
+        svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", blocker="<script>"), db)
         assert t.upgrade_blocker is None
+
+    def test_a_blocker_is_read_from_its_own_field_not_the_prose(self):
+        """The agent sends a human-readable `detail` alongside the code; matching on the prose
+        silently loses the blocker and empties the portal's card."""
+        t = _trust()
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        svc.record_status(
+            t.id,
+            UpgradeStatusInput(
+                state="BLOCKED",
+                release="v1.3.0",
+                blocker="SITE_UNHEALTHY",
+                detail="trust-api reported dead_tasks=3",
+            ),
+            db,
+        )
+        assert t.upgrade_blocker == "SITE_UNHEALTHY"
+
+    def test_an_older_agent_sending_the_code_as_detail_still_works(self):
+        """Agents upgrade on their own schedule, so the pre-`blocker` payload must still land."""
+        t = _trust()
+        db = MagicMock()
+        db.exec.return_value.one.return_value = t
+        svc.record_status(t.id, UpgradeStatusInput(state="BLOCKED", release="v1.3.0", detail="UNSUPPORTED_MODE"), db)
+        assert t.upgrade_blocker == "UNSUPPORTED_MODE"
 
 
 class TestRoutes:
