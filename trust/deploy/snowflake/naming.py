@@ -73,6 +73,19 @@ SECRET_KIT_VAR = {
 CODE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,32}$")
 
 
+#: The published FL client image per backend, as deploy/fl_backend.mk names it
+#: (DOCKER_FL_CLIENT_NAME). A kit may override it with its own DOCKER_FL_CLIENT_NAME.
+FL_CLIENT_IMAGES = {"nvflare": "flare-fl-client", "flower": "flower-supernode"}
+
+
+def fl_client_image(kit: dict[str, str]) -> str:
+    """The FL client repository for this kit's backend."""
+    backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
+    if backend not in FL_CLIENT_IMAGES:
+        raise NamingError(f"FL_BACKEND={backend!r}: expected one of {sorted(FL_CLIENT_IMAGES)}")
+    return kit.get("DOCKER_FL_CLIENT_NAME", "").strip() or FL_CLIENT_IMAGES[backend]
+
+
 class NamingError(ValueError):
     """The trust CODE cannot be turned into Snowflake object names."""
 
