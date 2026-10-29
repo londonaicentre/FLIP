@@ -950,6 +950,11 @@ def _selftest(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Ren
         "SNOWFLAKE_DATABASE": names.database,
         "SNOWFLAKE_WAREHOUSE": names.warehouse,
         "SNOWFLAKE_ROLE": names.omop_reader_role,
+        # The script imports data-access-api's encryption helper, which loads its settings:
+        # the Snowflake backend must be named in full (SPCS injects SNOWFLAKE_ACCOUNT/HOST).
+        "OMOP_BACKEND": "snowflake",
+        "SNOWFLAKE_SCHEMA": "OMOP",
+        "SNOWFLAKE_TOKEN_FILE": "/snowflake/session/token",
     }
     spec = {
         "spec": {

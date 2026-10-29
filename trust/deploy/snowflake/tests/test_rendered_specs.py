@@ -485,6 +485,8 @@ def test_the_selftest_job_checks_from_inside_with_the_read_only_role(specs: dict
     assert entry["kind"] == "job"
     container = containers(specs["selftest"])[0]
     assert container["env"]["SNOWFLAKE_ROLE"] == "FLIP_GSTT_OMOP_READER"
+    # It imports data-access-api's settings, which refuse to load without the backend.
+    assert container["env"]["OMOP_BACKEND"] == "snowflake"
     urls = json.loads(container["env"]["SELFTEST_HEALTH_URLS"])
     assert set(urls) == {"trust-api", "data-access-api", "imaging-api"}
     assert all(url.endswith(".snowflakecomputing.internal:8000/health") for url in urls.values())
