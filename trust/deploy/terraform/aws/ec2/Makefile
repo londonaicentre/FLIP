@@ -90,6 +90,12 @@ define require_node_dirs
 		echo "   Comment them out (each defaults under /opt/flip) or make them absolute."; exit 1; }
 endef
 
+# $(call confirm_target,<question>): name the account, profile and region, then stop unless the operator types yes.
+define confirm_target
+	@echo "Target account: $$(aws sts get-caller-identity --query Account --output text) ($(or $(AWS_PROFILE),default profile)), region $(REGION)"
+	@read -r -p "$(1)? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Stopped."; exit 1; }
+endef
+
 # $(call play,<extra ansible-playbook args>): aws-ec2.yml against this node.
 define play
 	cd $(ANSIBLE_DIR) && $(ANSIBLE) ansible-galaxy install -r requirements.yml >/dev/null && \
@@ -128,12 +134,13 @@ plan: ## Plan the node (SUBNET_ID= for a site subnet; empty creates a VPC + NAT 
 apply: ## Show the saved plan and the target account, then apply it only after a typed yes
 	$(TF) show node.tfplan
 	@echo ""
-	@echo "Target account: $$(aws sts get-caller-identity --query Account --output text) ($(or $(AWS_PROFILE),default profile)), region $(REGION)"
-	@read -r -p "Apply this plan? Type yes to continue: " answer; [ "$$answer" = "yes" ] || { echo "Not applied."; exit 1; }
+	$(call confirm_target,Apply this plan)
 	$(TF) apply node.tfplan
 
-destroy: ## Destroy the node and, if created, its network (asks first)
+destroy: ## Destroy the node, its data and, if created, its network (names the account, then asks)
 	$(require_kit)
+	@echo "The root volume goes with the node: its OMOP data, XNAT archive and DICOM store cannot be recovered."
+	$(call confirm_target,Destroy this node)
 	$(TF) destroy $(TF_VARS) -var 'public_key=$(DESTROY_PUBLIC_KEY)'
 
 output: ## Show the root's outputs

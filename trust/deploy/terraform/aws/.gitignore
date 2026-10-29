@@ -18,7 +18,6 @@
 crash.log
 crash.*.log
 .terraform.lock.hcl
-# The ssh config ssh-config writes for this node.
 build/
 # make test's own Terraform data dir.
 **/.terraform-test/
