@@ -83,7 +83,7 @@ full = [
     # MONAI-compatible versions (MONAI 1.5.x extras: skimage>=0.14.2,
     # scipy>=1.12.0, pyyaml), so FL training/eval apps can rely on them
     # instead of inheriting them transitively. See FLIP#623.
-    "monai[skimage,scipy,pyyaml]>=1.6.0",
+    "monai[skimage,scipy,pyyaml]>=1.6.1",  # GHSA-6hp3-vr39-rqw8
     "nibabel>=5.3.2",
     "pydicom>=3.0.2",
     # scikit-learn and timm are NOT MONAI extras, so declare them directly
@@ -115,8 +115,9 @@ constraint-dependencies = [
     "click>=8.3.3",              # CVE-2026-7246
     "cryptography>=50.0.0",      # CVE-2026-26007, CVE-2026-39892, CVE-2026-34073
     "filelock>=4.2.1",           # GHSA-v4x8-3wr5-3wq8, GHSA-567q-5qvw-pf92, GHSA-9vhv-jxww-xfm5, CVE-2025-68146, CVE-2026-22701
-    "fonttools>=4.62.0",         # arbitrary code execution (dev-only, via matplotlib)
+    "fonttools>=4.62.0",         # arbitrary code execution (diffusion group only, via matplotlib)
     "idna>=3.15",                # CVE-2026-45409
+    "msgpack>=1.2.3",            # GHSA-j586-36cw-2gc2
     # GHSA-58r4-6rv3-gfh8, GHSA-8g5g-8vmr-9782, GHSA-pchr-8j38-3x4p, GHSA-vx6w-vv9f-6gvg, GHSA-q45j-58j2-45rg,
     # GHSA-c6hw-5grf-ff96, GHSA-65qm-jvmh-6pqg, GHSA-p4wg-p73j-c528, GHSA-462x-pgg6-55fp;
     # prior hardening: CVE-2026-42311/42310/42309/42308/40192/25990.
@@ -131,16 +132,6 @@ constraint-dependencies = [
     "urllib3>=2.8.0",            # GHSA-8988-9cw3-xx77, GHSA-gh4c-6fx4-qh6g, GHSA-vxq7-64xx-v4gw, CVE-2026-44431, CVE-2025-66471/66418
     "werkzeug>=3.1.9",           # GHSA-g6x2-hccm-hh4m, CVE-2026-27199, CVE-2026-21860, CVE-2025-66221, CVE-2024-49767/49766
 ]
-# flwr (dev-group only) pins cryptography<47.0.0 even in its latest release, which
-# collides with the constraint floor above (GHSA-537c-gmf6-5ccf needs >=48.0.1).
-# Override past that ceiling rather than lowering the floor: flwr uses cryptography
-# only for TLS cert loading in secure aggregation, a stable surface across majors.
-# Mirrors fl-services/flower/fl-api-flower/pyproject.toml and the fl-base Dockerfile's
-# pip-equivalent (#874); it also keeps the dev group's real-flwr test dependency
-# (test_privacy.py) resolvable against the cryptography floor.
-# flwr 1.38 also pins uv<0.12 for its per-run app install, which FLIP does not use (#1418); override it so
-# uv>=0.13.4 (GHSA-hq85-5cpj-mr62, the same compromised CA root as certifi) can be installed.
-override-dependencies = ["cryptography>=50.0.0", "uv>=0.13.4"]
 
 # Pull torch from PyTorch's cu130 wheel index so every FL backend uses the
 # security-patched 2.13 line. cu130 needs NVIDIA driver >=580.
@@ -186,18 +177,22 @@ exclude = [
 dev = [
     # Test-only: lets tests/mypy exercise flip/flower/strategy.py and flip/flower/privacy.py
     # against the real FedAvg and DP primitives. Matches the fl-server images' floor
-    # (flwr/base:1.38.0, fl-api-flower). Deliberately NOT a runtime dep — the flwr runtime is
+    # (flwr/base:1.42.0, fl-api-flower). Deliberately NOT a runtime dep — the flwr runtime is
     # owned by the Flower images and each app's own pyproject; see the module docstring in
     # flip/flower/strategy.py.
-    "flwr>=1.38.0",
+    "flwr>=1.42.0",
     "huggingface-hub>=1.6.0",
-    "matplotlib>=3.10.7",
     "mypy>=1.18.2,<2.0",
-    "pyqt5>=5.15.11",
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.2",
     "types-requests>=2.32.4.20260107",
+]
+# Local runs of the fl-tutorials image-generation tutorials, which write debug images and loss curves
+# from their shared image_generation/dev/plot_utils.py. Kept out of `dev` so nothing else gets a
+# plotting stack, and out of `full` so no FL image does.
+diffusion = [
+    "matplotlib>=3.10.7",
 ]
 
 [tool.ruff]

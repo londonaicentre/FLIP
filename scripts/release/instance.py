@@ -79,6 +79,10 @@ TRUST_HOST_PORTS = (
     "DATA_ACCESS_DEBUG_PORT",
     "GRAFANA_PORT",
     "LOKI_PORT",
+    # Published only by the Trust_1 slot (trust/deploy/compose_trust-1_override.yml).
+    "IMAGING_API_PORT",
+    "DATA_ACCESS_API_PORT",
+    "TRUST_API_PORT",
 )
 
 
