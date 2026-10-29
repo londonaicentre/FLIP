@@ -20,7 +20,7 @@
 #      an already-registered trust returns a metadata-only kit (no credentials;
 #      the hub stores only the SHA-256 hash), so re-running is safe.
 #   3. Write the kit back into trust/.env.<CODE>.<env> via
-#      scripts/distribute_trust_kits.py (whatever credentials the kit carries,
+#      trust/deploy/scripts/distribute_trust_kits.py (whatever credentials the kit carries,
 #      hub-shared refreshed every run; operator host-local edits preserved).
 # Delivery to a host is command-driven, NOT done here: `make upgrade-trust-ec2
 # KIT=<CODE> HUB=<env>` recreates the EC2 host's containers on the new kit;
@@ -97,7 +97,7 @@ fi
 # host-local profile from the .example on first write, writes whatever credentials
 # the kit carries (which is what makes rotation work), and upserts metadata + the
 # hub-shared block under the managed sentinel — preserving operator edits on re-runs. The hub-shared key
-# set and sentinel live in scripts/trust_kit_lib.py.
+# set and sentinel live in trust/deploy/scripts/trust_kit_lib.py.
 
 # Register one trust (identified by its CODE-named kit file) via a one-off ECS
 # task, then write the returned kit back into that same file.
@@ -257,7 +257,7 @@ register_one_kit() {
     # "Wrote kit" over a kit file that never received the new credentials. The SSM
     # parameter is left in place on that failure — it is the only remaining copy, and
     # the message below names it so the operator can recover the kit by hand.
-    if ! echo "$kit" | uv run --no-config "$REPO_ROOT/scripts/distribute_trust_kits.py" --target "$kit_file"; then
+    if ! echo "$kit" | uv run --no-config "$REPO_ROOT/trust/deploy/scripts/distribute_trust_kits.py" --target "$kit_file"; then
         log_error "Trust '$name': could not write $kit_file — $verb FAILED."
         log_error "The kit is still in SSM parameter '$ssm_param'; read it with 'aws ssm get-parameter --name $ssm_param --with-decryption', then delete it."
         return 1

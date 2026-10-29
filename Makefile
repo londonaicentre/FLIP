@@ -708,7 +708,7 @@ rotate-trust-keys: _check-compose-project-owner _wait-for-hub
 	  echo "🔑 Rotating keys for trust '$$name' (KIT=$(KIT))..."; \
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust --rotate --name "$$name")" \
 	    || { echo "❌ key rotation failed for KIT=$(KIT)"; exit 1; }; \
-	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit" \
+	  printf '%s\n' "$$kitjson" | uv run --no-config trust/deploy/scripts/distribute_trust_kits.py --target "$$kit" \
 	    || { echo "❌ The hub has already committed the new keys, but $$kit could not be written: it still holds the OLD, now-refused keys."; \
 	         echo "   Fix the write error and re-run 'make rotate-trust-keys KIT=$(KIT)' to mint another pair."; exit 1; }; \
 	  echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit."
