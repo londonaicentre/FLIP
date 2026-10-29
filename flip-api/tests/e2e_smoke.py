@@ -142,6 +142,22 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "see which recognises chest conditions best, without retraining them.",
         nifti=False,
     ),
+    "brain_mri_ldm_stage1_autoencoder": TutorialCopy(
+        "Brain MRI latent diffusion, stage 1 (autoencoder)",
+        "Learning to compress brain MRI scans and rebuild them faithfully, across the participating trusts' "
+        "scans: the first step towards generating realistic synthetic brain MRI.",
+    ),
+    "brain_mri_ldm_stage2_diffusion": TutorialCopy(
+        "Brain MRI latent diffusion, stage 2 (diffusion)",
+        "Generating realistic synthetic brain MRI scans of a chosen sequence (FLAIR, T1, contrast-enhanced T1 "
+        "or T2) with a generative model trained across the participating trusts' scans.",
+    ),
+    "xray_diffusion": TutorialCopy(
+        "Chest X-ray diffusion",
+        "Generating realistic synthetic chest X-rays with a generative model trained across the participating "
+        "trusts' radiographs.",
+        nifti=False,
+    ),
 }
 APP_DIR_NAMES = ("app", "app_files")
 

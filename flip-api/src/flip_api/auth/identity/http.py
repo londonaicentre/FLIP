@@ -97,6 +97,10 @@ class HttpIdentityProvider(IdentityProvider):
         with _as_http():
             self.inner.delete_user(username)
 
+    def reset_password(self, username: str) -> None:
+        with _as_http():
+            self.inner.reset_password(username)
+
     def _fetch_mfa_enabled(self, username: str) -> bool:
         with _as_http():
             return self.inner._fetch_mfa_enabled(username)

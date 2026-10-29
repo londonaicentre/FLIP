@@ -56,6 +56,9 @@ class InMemoryProvider(IdentityProvider):
     def delete_user(self, username: str) -> None:
         raise NotImplementedError
 
+    def reset_password(self, username: str) -> None:
+        raise NotImplementedError
+
     def _fetch_mfa_enabled(self, username: str) -> bool:
         self.mfa_fetches += 1
         return username in self.mfa_enrolled

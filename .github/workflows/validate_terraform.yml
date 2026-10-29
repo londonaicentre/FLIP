@@ -111,6 +111,7 @@ jobs:
           - test_check_fl_plan_impact.sh
           - test_tflint_lint.sh
           - test_compose_ci_env.sh
+          - test_publish_ui.sh
           - test_reset_fl_server_local.sh
           - test_resolve_image_tags.sh
           - test_setup_github_environments.sh
@@ -136,6 +137,7 @@ jobs:
         harness:
           - test_add_fl_kits.sh
           - test_compose_ci_env.sh
+          - test_publish_ui.sh
           - test_reset_fl_server_local.sh
           - test_setup_github_environments.sh
     steps:

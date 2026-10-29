@@ -32,3 +32,7 @@ apply_branch       = "develop"
 
 # Globally unique. The FLIP root's FLIP_TFSTATE_BUCKET_NAME must name the same bucket.
 state_bucket_name = "your-org-flip-terraform-state-stag"
+
+# Optional: let CI publish flip-ui after each apply (FLIP#1186). The FLIP root's
+# FLIP_UI_BUCKET_NAME. Set the ui_publish_role_arn output as TF_UI_PUBLISH_ROLE_ARN.
+# ui_bucket_name = "your-org-flip-ui-stag"

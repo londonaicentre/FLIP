@@ -13,12 +13,13 @@
 # the XNAT_VERSION pinned in trust/xnat/.env. FLIP does not redistribute them, so each line names
 # the public upstream download and the SHA-256 the file must have. scripts/xnat_artifacts.sh reads
 # this file for the dev plugin cache (`make -C trust prepare-artifacts`), the local image build and
-# the CI image build (.github/workflows/docker_build_xnat_web.yml). The Helm chart downloads the
-# same plugin URLs (trust/deploy/helm/values.yaml xnat.web.plugins.urls); trust/xnat/tests pins
-# the two rosters together and the WAR line to XNAT_VERSION.
+# the CI image build (.github/workflows/docker_build_xnat_web.yml). Deployed trusts (Compose and
+# Helm) run the plugins built into that image; development mounts the cache over them.
+# trust/xnat/tests pins the WAR line to XNAT_VERSION.
 #
-# Bumping a version: replace the URL and the checksum (`sha256sum <file>` on the new download),
-# then the matching Helm URL. Check the plugin compatibility matrices linked from values.yaml.
+# Bumping a version: replace the URL and the checksum (`sha256sum <file>` on the new download); the
+# next xnat-web image carries it everywhere. A new plugin also needs its id in XNAT_PLUGIN_IDS
+# (trust/deploy/helm/check_status.py). Check the plugin compatibility table in README.md.
 #
 # <kind>  <sha256>  <url>
 war     29e91a66aaf38706fe8c539072d00f9f4208ea7853cbedbd8bd88670d5ba451e  https://github.com/NrgXnat/xnat/releases/download/1.10.2.1/xnat-web-1.10.2.1.war
