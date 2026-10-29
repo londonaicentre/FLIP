@@ -1125,6 +1125,32 @@ make -C trust/deploy/helm update-deps
 make -C trust/deploy/helm test
 ```
 
+### What a failed `make deploy` means
+
+`helm upgrade` exiting non-zero used to be ambiguous: it was usually the `xnat-init`
+post-upgrade hook timing out (#565) on a release that had deployed perfectly well, but it
+could equally be a genuine failure where nothing reached the cluster. Telling the two apart
+meant reading the output. Since FLIP#1645 the deploy classifies itself from cluster
+evidence and exits one of three codes:
+
+| Exit | Meaning | What to do |
+|------|---------|------------|
+| `0` | The upgrade landed. Either helm exited 0, or its wait expired but the new revision is live, every workload has rolled out and `xnat-init` completed. | Nothing. |
+| `1` | A real failure: the new spec never applied (the release revision did not advance, so the cluster still runs the old one), a workload did not roll out, or the evidence could not be read. | Read the helm error. The trust is on its previous release. |
+| `3` | The release is live and every workload rolled out, but `xnat-init` did not complete. | The trust is on the new release; re-run `make -C trust/deploy/helm xnat-init`, raising `HELM_TIMEOUT` if the job simply needed longer. |
+
+`3` is still a failure as far as `make` is concerned — it just says something different from
+`1`, so unattended callers (the auto-upgrade agent, FLIP#1640) can report "upgraded, init
+incomplete" instead of guessing.
+
+The decision deliberately does not trust `Ready`. FLIP#1228 was a correct chart that never
+reached the running pod across five upgrades, and the old pods were `Ready` throughout, so a
+workload counts as rolled out only when its controller has observed the new generation
+(`observedGeneration >= generation`) and every replica is both updated and ready. Missing
+evidence always counts against the upgrade: an unreadable cluster is reported as `1`, never
+as a quiet pass. The logic lives in `scripts/deploy_verdict.py` and is tested without a
+cluster in `tests/test_deploy_verdict.py`.
+
 ### Running the XNAT init job by hand
 
 XNAT's post-install init job normally runs as part of the chart. When it is
