@@ -21,6 +21,7 @@ account, no credentials and no network: everything is read off the rendered file
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -326,3 +327,12 @@ def test_xnat_db_keeps_the_superuser_apart_from_the_xnat_role(specs: dict) -> No
     env = containers(specs["xnat-db"])[0]["env"]
     assert "POSTGRES_USER" not in env
     assert env["XNAT_DATASOURCE_USERNAME"] == "xnat"
+
+
+def test_orthanc_knows_xnat_as_a_modality(specs: dict) -> None:
+    """Without ORTHANC__DICOM_MODALITIES, a C-STORE to XNAT is a 404 (live account)."""
+    env = containers(specs["orthanc"])[0]["env"]
+    modalities = json.loads(env["ORTHANC__DICOM_MODALITIES"])
+    assert modalities["XNAT"]["AET"] == "XNAT"
+    assert modalities["XNAT"]["Host"].startswith("xnat-web.")
+    assert modalities["XNAT"]["Port"] == env["XNAT_PORT"]

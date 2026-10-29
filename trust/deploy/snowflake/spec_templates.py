@@ -40,6 +40,7 @@ receiver queries succeed while every retrieval times out (FLIP#993).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -567,6 +568,15 @@ def _orthanc(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rend
                         "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
                         "XNAT_HOST": names.dns("xnat-web"),
                         "XNAT_PORT": kit.get("XNAT_PORT", "8104"),
+                        # What Compose sets inline: Orthanc knows XNAT as a modality under its
+                        # AE title, at its SPCS DNS name. Without it every C-STORE to XNAT is a
+                        # 404 "No modality with symbolic name" (live account).
+                        "ORTHANC__DICOM_MODALITIES": json.dumps(
+                            {
+                                aet: {"AET": aet, "Host": names.dns("xnat-web"), "Port": kit.get("XNAT_PORT", "8104")}
+                                for aet in [kit.get("XNAT_AETITLE", "").strip() or "XNAT"]
+                            }
+                        ),
                     },
                     "resources": _resources("1", "2Gi", "2", "4Gi"),
                     "volumeMounts": [{"name": "orthanc-storage", "mountPath": "/var/lib/orthanc/db"}],
