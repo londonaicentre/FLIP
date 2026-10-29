@@ -95,8 +95,7 @@ The merge triggers two prod Terraform applies: the push apply at `sha-`, then th
 `v<X.Y.Z>` once the fourteen image builds are green. Both can hold on the FL gate. Only the user may attest
 `fl_quiesced`. Nothing may merge to `main` until the release apply has run.
 
-Then check that the Release page, GHCR `:v<X.Y.Z>` (all fourteen) and PyPI (if bumped) are correct, and that prod
-`/api/health` reports `v<X.Y.Z>`. flip-ui is **not** deployed by the merge (#1186 is open):
-`make -C deploy/providers/AWS deploy-ui HUB=<hub>` from a checkout at the tag. A fresh worktree has no Terraform
-state, so run `make -C deploy/providers/AWS init HUB=<hub>` there first. Sites upgrade themselves: point
-operators to *Site upgrade* and `docs/source/sys-admin/admin-upgrading-sites.rst`.
+Then check that the Release page, GHCR `:v<X.Y.Z>` (every image the fourteen builds publish) and PyPI (if bumped)
+are correct, and that prod `/api/health` reports `v<X.Y.Z>`. The release apply publishes flip-ui itself (#1186):
+check that its *Publish flip-ui (prod)* job passed. Sites upgrade themselves: point operators to *Site upgrade* and
+`docs/source/sys-admin/admin-upgrading-sites.rst`.

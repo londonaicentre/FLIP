@@ -16,8 +16,8 @@
 
 Applies CONTRIBUTING § Cutting a release mechanically, after two checks that refuse to start:
 
-- every PR merged into ``develop`` since the previous ``v*`` tag carries a label (``.github/release.yml`` sorts
-  the generated notes by label, so an unlabelled PR is missing from them);
+- every PR merged into ``develop`` whose merge commit is not in the previous ``v*`` tag carries a label
+  (``.github/release.yml`` sorts the generated notes by label, so an unlabelled PR is missing from them);
 - the previous tag is older than ``TAG``.
 
 Then it sets the root version and every service's version to ``TAG`` (CONTRIBUTING § Versioning); bumps
@@ -34,6 +34,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,7 @@ SERVICES = (
     "fl-services/flower/fl-api-flower/pyproject.toml",
 )
 FLIP_UTILS = "flip-utils/flip/__init__.py"
+PR_LIMIT = 1000  # merged PRs the label check reads in one search
 VERSION_PATTERNS = {
     ".toml": r'^(version = ")([^"]+)(")',
     ".json": r'^(\s*"version": ")([^"]+)(")',
@@ -142,13 +144,25 @@ def _gh_json(*args: str) -> Any:
     return json.loads(out) if out.strip() else []
 
 
-def unlabelled_prs(since: str) -> list[dict]:
-    """PRs merged into develop after ``since`` (the previous tag's ISO commit time) that carry no label at all."""
+def unlabelled_prs(previous: str) -> list[dict]:
+    """PRs merged into develop whose merge commit is in ``previous..HEAD`` and that carry no label at all.
+
+    A commit range, not the tag's date: a hotfix tag is cut on main after develop has moved on, so PRs merged
+    into develop before it was tagged still ship in this release (v0.13.2 hid a week of them).
+    """
+    shas = set(git("log", "--format=%H", f"{previous}..HEAD").split())
+    if not shas:
+        return []
+    # Every PR's merge lands after the range's oldest commit; a day's margin, as the sha filter decides.
+    oldest = min(int(t) for t in git("log", "--format=%ct", f"{previous}..HEAD").split())
+    since = datetime.fromtimestamp(oldest - 86400, timezone.utc).date().isoformat()
     prs = _gh_json(
-        "pr", "list", "--base", "develop", "--state", "merged", "--limit", "500",
-        "--search", f"merged:>{since}", "--json", "number,title,labels",
+        "pr", "list", "--base", "develop", "--state", "merged", "--limit", str(PR_LIMIT),
+        "--search", f"merged:>={since}", "--json", "number,title,labels,mergeCommit",
     )  # fmt: skip
-    return [p for p in prs if not p["labels"]]
+    if len(prs) >= PR_LIMIT:
+        raise ReleaseError(f"{len(prs)} PRs merged since {since}: the label check would be truncated")
+    return [p for p in prs if (p.get("mergeCommit") or {}).get("oid") in shas and not p["labels"]]
 
 
 def dependabot_open() -> int:
@@ -177,12 +191,10 @@ def main(argv: list[str] | None = None) -> int:
             raise ReleaseError("no previous v*.*.* tag")
         prev = previous[0]
         utils = (git("tag", "--list", "flip-utils-v*", "--sort=-v:refname").splitlines() or [None])[0]
-        # A timestamp, not a date: PRs merged earlier on the tag's day already shipped in it.
-        since = git("log", "-1", "--format=%cI", prev)
-        missing = unlabelled_prs(since)
+        missing = unlabelled_prs(prev)
         if missing:
             listing = "\n".join(f"  #{p['number']} {p['title']}" for p in missing)
-            raise ReleaseError(f"{len(missing)} PR(s) merged since {prev} carry no label:\n{listing}")
+            raise ReleaseError(f"{len(missing)} new PR(s) since {prev} carry no label:\n{listing}")
         versions = plan(a.tag, prev, utils, git("diff", "--name-only", prev, "HEAD").splitlines())
         print(f"🏷  {prev} → {a.tag}")
         for rel, version in versions.items():
