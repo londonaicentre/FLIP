@@ -72,9 +72,13 @@ variable "gpu_pool_instance_family" {
 }
 
 variable "pool_max_nodes" {
+  # The full node requests about 8.5 vCPU and 25 GiB (xnat-web 2/6, fl-client 2/8, the
+  # rest 1/2 or less); a CPU_X64_S node has 4 vCPU and 16 GiB, so two nodes left
+  # imaging-api and the fl-client unschedulable on the live account. Nodes beyond the
+  # first start only when a service needs them.
   description = "Maximum nodes in the service compute pool."
   type        = number
-  default     = 2
+  default     = 4
 }
 
 variable "job_pool_max_nodes" {
