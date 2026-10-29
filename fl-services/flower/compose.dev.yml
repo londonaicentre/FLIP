@@ -35,8 +35,8 @@ services:
       dockerfile: Dockerfile
     # Add the host's group as a supplementary group so bind-mounted files (owned
     # by the host user, group-writable) stay writable, without disturbing the
-    # image's own user. DOCKER_GID comes from the Makefile; defaults to 1000.
-    group_add: &host-gid ["${DOCKER_GID:-1000}"]
+    # image's own user. The Makefile supplies DOCKER_GID from the host user's gid.
+    group_add: &host-gid ["${DOCKER_GID:?DOCKER_GID must be the host user's gid; make up exports it}"]
     environment:
       - ALLOWED_JOB_FOLDERS=${ALLOWED_JOB_FOLDERS:-xray_classification,3d_spleen_segmentation,3d_spleen_segmentation_evaluation}
       - SUPERLINK_ADDRESS=${SUPERLINK_ADDRESS:-superlink:8000}

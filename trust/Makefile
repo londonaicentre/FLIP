@@ -125,7 +125,7 @@ include ../deploy/portable.mk
 #     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
 #     which the documented on-prem/EC2 bring-up already has (sudo).
 #   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
-#     already hands the client the host GID (`group_add: ["$${DOCKER_GID:-1000}"]`, for
+#     already hands the client the explicit host GID through group_add (for
 #     the 640 TLS keys), so group write is all that is missing — and an unprivileged dev
 #     bring-up could not chown to 49999 anyway.
 #
