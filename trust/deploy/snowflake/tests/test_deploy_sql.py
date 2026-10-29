@@ -259,3 +259,46 @@ def test_no_tooling_emits_stop_all():
     DROP had just been refused). Suspend services, then the pool; never STOP ALL."""
     for path in [*SNOWFLAKE_DIR.glob("*.py"), SNOWFLAKE_DIR / "Makefile"]:
         assert "STOP ALL" not in path.read_text().upper(), path.name
+
+
+# --- image names and local builds ------------------------------------------------------------------
+
+
+def test_fl_client_images_match_the_published_names() -> None:
+    """The live mirror pulled fl-client-nvflare, a repository nobody publishes. The names
+    come from deploy/fl_backend.mk, which the FL image workflows also push."""
+    from naming import FL_CLIENT_IMAGES, fl_client_image
+
+    fl_backend_mk = (SNOWFLAKE_DIR.parents[2] / "deploy" / "fl_backend.mk").read_text()
+    for image in FL_CLIENT_IMAGES.values():
+        assert f"DOCKER_FL_CLIENT_NAME := {image}" in fl_backend_mk, image
+    assert fl_client_image({}) == "flare-fl-client"
+    assert fl_client_image({"FL_BACKEND": "flower"}) == "flower-supernode"
+    assert fl_client_image({"DOCKER_FL_CLIENT_NAME": "own-client"}) == "own-client"
+
+
+def test_the_fl_client_spec_uses_the_published_image(rendered: Path, manifest: dict) -> None:
+    spec = (rendered / "fl-client-net-1.yaml").read_text()
+    assert "/flare-fl-client" in spec
+    assert "fl-client-nvflare" not in spec
+
+
+def test_mirror_without_pull_pushes_the_local_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    import mirror_images
+
+    commands: list[list[str]] = []
+    monkeypatch.setattr(mirror_images, "run", lambda command, dry_run, capture=False: commands.append(command) or "")
+    monkeypatch.setattr(mirror_images, "digest_of", lambda image, dry_run: "sha256:" + "1" * 64)
+    from naming import Names
+
+    mirror_images.mirror(
+        ["imaging-api"], {"DOCKER_TAG": "local"}, Names("GSTT"), "reg", "linux/amd64", "g", True, pull=False
+    )
+    assert [c[1] for c in commands] == ["tag", "push"], "no pull: the local build is pushed as is"
+    commands.clear()
+    mirror_images.mirror(["imaging-api"], {"DOCKER_TAG": "local"}, Names("GSTT"), "reg", "linux/amd64", "g", True)
+    assert [c[1] for c in commands] == ["pull", "tag", "push"]
+
+
+def test_make_mirror_images_offers_local_builds() -> None:
+    assert "$(if $(filter false,$(MIRROR_PULL)),--no-pull,)" in MAKEFILE

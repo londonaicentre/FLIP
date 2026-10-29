@@ -43,7 +43,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from naming import Names
+from naming import Names, fl_client_image
 
 #: Secret object -> container environment variable, per service. This is the contract's
 #: least-privilege map, and the spec guards assert it exactly: the fl-client gets the
@@ -344,9 +344,7 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
     """
     net_id = f"net-{net}"
     backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
-    repo = kit.get("DOCKER_FL_CLIENT_NAME", "").strip() or (
-        "fl-client-flower" if backend == "flower" else "fl-client-nvflare"
-    )
+    repo = fl_client_image(kit)
     env = {
         "NET_ID": net_id,
         "LOCAL_DEV": "false",

@@ -45,7 +45,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from kitfile import kit_path, read_env_vars, resolve_env  # noqa: E402
-from naming import Names, NamingError  # noqa: E402
+from naming import Names, NamingError, fl_client_image  # noqa: E402
 
 REPO_ROOT = HERE.parents[2]
 LOCK_FILE = HERE / "images.lock.json"
@@ -128,7 +128,14 @@ def mirror(
     platform: str,
     ghcr_org: str,
     dry_run: bool,
+    pull: bool = True,
 ) -> dict[str, dict[str, str]]:
+    """Copy each image into the account repository and record the digest it got there.
+
+    With ``pull=False`` the source must already be in the local daemon (a local build of an
+    unpublished change, tagged with its GHCR name); it is pushed as is, never fetched, so a
+    stale registry copy cannot stand in for it.
+    """
     recorded: dict[str, dict[str, str]] = {}
     repo_path = names.image_repository_path.lstrip("/").lower()
     for repo in repos:
@@ -136,7 +143,10 @@ def mirror(
         source = f"{ghcr_org}/{repo}:{tag}"
         target = f"{host}/{repo_path}/{repo}:{tag}"
         print(f"  → {repo}:{tag}")
-        run(["docker", "pull", "--platform", platform, source], dry_run)
+        if pull:
+            run(["docker", "pull", "--platform", platform, source], dry_run)
+        elif not dry_run and subprocess.run(["docker", "image", "inspect", source], capture_output=True).returncode:
+            raise MirrorError(f"--no-pull: {source} is not in the local daemon; build it first")
         run(["docker", "tag", source, target], dry_run)
         run(["docker", "push", target], dry_run)
         recorded[repo] = {
@@ -160,6 +170,9 @@ def main() -> int:
     parser.add_argument("--images", default="", help="Space-separated repository names to mirror")
     parser.add_argument("--kit-file", type=Path, default=None, help="Read the kit from this file instead")
     parser.add_argument("--dry-run", action="store_true", help="Print the commands; run none")
+    parser.add_argument(
+        "--no-pull", action="store_true", help="Push the local daemon's image as is (a local build); never pull"
+    )
     args = parser.parse_args()
 
     env = resolve_env(args.env)
@@ -176,15 +189,20 @@ def main() -> int:
         print("❌ --images named no repositories")
         return 1
     # The FL client image follows the kit's backend, so it is appended rather than listed.
-    backend = (kit.get("FL_BACKEND", "").strip() or "nvflare").lower()
-    fl_repo = kit.get("DOCKER_FL_CLIENT_NAME", "").strip() or f"fl-client-{backend}"
+    try:
+        fl_repo = fl_client_image(kit)
+    except NamingError as e:
+        print(f"❌ {e}")
+        return 1
     if fl_repo not in repos:
         repos.append(fl_repo)
 
     print(f"📦 Mirroring {len(repos)} image(s) into {names.image_repository} ({args.platform})")
     try:
         host = registry_host(args.snow, args.connection, args.dry_run)
-        recorded = mirror(repos, kit, names, host, args.platform, args.ghcr_org, args.dry_run)
+        recorded = mirror(
+            repos, kit, names, host, args.platform, args.ghcr_org, args.dry_run, pull=not args.no_pull
+        )
     except MirrorError as e:
         print(f"❌ {e}")
         return 1

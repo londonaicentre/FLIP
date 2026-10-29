@@ -48,7 +48,8 @@ RENDER_DIR := $(SNOWFLAKE_DIR)rendered/$(shell echo $(KIT) | tr 'a-z' 'A-Z').$(K
 # arm64 by default, which would push an image no compute pool can start.
 GHCR_ORG ?= ghcr.io/londonaicentre
 MIRROR_PLATFORM := linux/amd64
-# FL client image name follows the kit's backend (fl-client-nvflare / fl-client-flower).
+# FL client image name follows the kit's backend (flare-fl-client / flower-supernode, as in
+# deploy/fl_backend.mk); mirror_images.py appends it.
 MIRROR_IMAGES ?= trust-api data-access-api imaging-api orthanc xnat-web xnat-db xnat-nginx xnat-dcm2niix
 
 DRY_RUN ?=
@@ -68,6 +69,7 @@ help:
 	@echo ""
 	@echo "  make render        KIT=<CODE> HUB=<env>   Render one SPCS spec per service"
 	@echo "  make mirror-images KIT=<CODE> HUB=<env>   Mirror GHCR images into the account repository"
+	@echo "                    MIRROR_PULL=false       ...pushing the local daemon's images (local builds) as is"
 	@echo "  make sync-kit      KIT=<CODE> HUB=<env>   Write SECRET objects, push FL kit + governance"
 	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE OR ALTER SERVICE from the rendered specs"
 	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
@@ -100,7 +102,8 @@ mirror-images: require-kit
 		--connection $(SNOW_CONNECTION) --snow $(SNOW) \
 		--ghcr-org $(GHCR_ORG) --platform $(MIRROR_PLATFORM) \
 		--images "$(MIRROR_IMAGES)" \
-		$(if $(filter true,$(DRY_RUN)),--dry-run,)
+		$(if $(filter true,$(DRY_RUN)),--dry-run,) \
+		$(if $(filter false,$(MIRROR_PULL)),--no-pull,)
 
 # ── Secrets, FL kit, governance ──────────────────────────────────────────────
 sync-kit: require-kit
