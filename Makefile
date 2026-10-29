@@ -397,6 +397,14 @@ restart: down up
 #       services depend on object-store, so compose recreates it from this tree; without
 #       ./object-store the bind mount is refused and make stops after step 1 has removed every
 #       FL client, leaving the stack with none. As a prerequisite it fails before anything stops.
+# NOTE: On Flower the trusts dial `fl-server-net-<N>` on fl-net-<N>, which is the fleet proxy's
+#       alias there (FLIP#1517), so the proxies restart with the servers. Step 3's
+#       --remove-orphans drops the other backend's leftovers, as `up` and `down` do: on a switch
+#       to NVFLARE a proxy still answering to that alias would take some of the NVFLARE
+#       clients' connections. Orphans are scoped to this compose project, whose files define
+#       every shared service (flip-db, object-store, keycloak), so nothing else is touched.
+FL_SERVER_SERVICES := fl-server-net-1 fl-server-net-2 \
+	$(if $(filter flower,$(FL_BACKEND)),fl-fleet-proxy-net-1 fl-fleet-proxy-net-2)
 restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-store-dir
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
@@ -404,7 +412,7 @@ restart-fl: _check-compose-project-owner _ensure-fl-jobs-dir _ensure-object-stor
 	@echo "🔄 Step 2: Recreating flip-api to re-seed FLNets.fl_backend=$(FL_BACKEND)..."
 	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) flip-api
 	@echo "🔄 Step 3: Restarting FL APIs and servers..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 fl-server-net-1 fl-server-net-2
+	${DOCKER_COMMAND} up -d --force-recreate --no-deps --remove-orphans $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 $(FL_SERVER_SERVICES)
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
 		echo "🔄 Step 4: Registering new client keys with FL servers (Flower only)..."; \
 		${DOCKER_COMMAND} up --force-recreate $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
@@ -681,7 +689,7 @@ register-trust: _check-compose-project-owner _wait-for-hub
 	  [ -n "$$region" ] && set -- "$$@" --region "$$region"; \
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
 	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
-	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
+	  printf '%s\n' "$$kitjson" | uv run --no-config trust/deploy/scripts/distribute_trust_kits.py --target "$$kit"
 	@$(MAKE) generate-xnat-credentials KIT=$(KIT)
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
@@ -703,7 +711,7 @@ new-trust:
 	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
 	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || \
 	  { echo "❌ $$old already exists under an old kit name — rename it to trust/.env.$(TRUST_CODE).$(ENV) instead."; exit 1; }
-	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
+	@uv run --no-config trust/deploy/scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
 		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
 
 # Refresh the Hub-shared block in trust/.env.<CODE>.<env> with current
@@ -721,7 +729,7 @@ new-trust:
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
 	@:$(call kit_hint,$(call kit_file,trust/,$(KIT)))
-	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config trust/deploy/scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
 # Sync every locally-present kit for this env (current names only; the .example
 # templates never match).

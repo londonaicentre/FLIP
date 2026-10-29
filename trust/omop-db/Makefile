@@ -29,7 +29,7 @@ endif
 network1 = deploy_trust-network-1
 
 service_name = omop-db
-docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
+docker_command = docker compose --project-directory .. -f ../deploy/compose/compose_trust.development.yml
 
 lint_command = uv run ruff check . --fix
 mypy_command = uv run mypy src/ tests/ --ignore-missing-imports

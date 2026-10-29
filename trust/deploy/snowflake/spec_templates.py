@@ -17,7 +17,7 @@
 Each ``_<service>`` function below is that service's template: it takes the trust's kit
 file (``trust/.env.<CODE>.<env>``) plus the naming contract and returns the specification
 Snowflake is handed at ``CREATE SERVICE`` / ``ALTER SERVICE``. The compose files
-(``trust/deploy/compose_trust.production*.yml``, ``trust/xnat/docker-compose-stack.yml``)
+(``trust/deploy/compose/compose_trust.prod*.yml``, ``trust/xnat/docker-compose-stack.yml``)
 are the source of truth for each service's environment, ports and volumes; the templates
 are their SPCS translation, and three things change in that translation:
 
@@ -40,6 +40,7 @@ receiver queries succeed while every retrieval times out (FLIP#993).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -655,6 +656,15 @@ def _orthanc(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rend
                         "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
                         "XNAT_HOST": names.dns("xnat-web"),
                         "XNAT_PORT": kit.get("XNAT_PORT", "8104"),
+                        # What Compose sets inline: Orthanc knows XNAT as a modality under its
+                        # AE title, at its SPCS DNS name. Without it every C-STORE to XNAT is a
+                        # 404 "No modality with symbolic name" (live account).
+                        "ORTHANC__DICOM_MODALITIES": json.dumps(
+                            {
+                                aet: {"AET": aet, "Host": names.dns("xnat-web"), "Port": kit.get("XNAT_PORT", "8104")}
+                                for aet in [kit.get("XNAT_AETITLE", "").strip() or "XNAT"]
+                            }
+                        ),
                     },
                     "resources": _resources("1", "2Gi", "2", "4Gi"),
                     "volumeMounts": [{"name": "orthanc-storage", "mountPath": "/var/lib/orthanc/db"}],

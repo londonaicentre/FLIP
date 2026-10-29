@@ -257,8 +257,8 @@ the FL client starts.
 If you skip this step, the FL client pod stays ``Pending`` with a ``hostPath type check failed`` event naming the
 missing path.
 
-On a managed cluster (AKS): the kit from a Secret
-=================================================
+On a managed cluster (AKS, EKS): the kit from a Secret
+======================================================
 
 A managed node pool replaces nodes at will, so nothing may live on one. Put the kit in a Secret instead and deploy
 with ``flClient.kit.source=secret`` (FLIP#1390):
@@ -275,6 +275,8 @@ with ``flClient.kit.source=secret`` (FLIP#1390):
   ``deploy``, ``deploy-trust-k8s`` and ``upgrade-trust-k8s`` with that ``KIT`` then applies it. A run without it
   moves PGDATA back to the volume root (both databases crash-loop) and looks for the kit on the node (the FL client
   stays ``Pending``).
+- On EKS the overlay is ``values-eks.yaml`` (the same settings, for the EBS CSI default class). The
+  :doc:`EKS root <deploy-flip-node-aws-eks>` creates the cluster and runs both steps for you with ``make join``.
 - The overlays live beside the chart in the repository, not in the packaged chart, so a deploy from a chart tarball
   passes a checkout's copy by path.
 - ``kit-secret`` makes one key per mounted file in ``<release>-flip-trust-fl-kit``. It refuses a kit missing its

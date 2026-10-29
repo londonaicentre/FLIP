@@ -23,7 +23,7 @@ Idempotent: if a trust with ``--name`` already exists it is skipped.
 Output transports — two contracts depending on ``--out-ssm-parameter``:
 
 - *Default (dev pipe / docker compose exec)* — the kit JSON array prints on
-  **stdout**. Consumed locally by ``scripts/distribute_trust_kits.py``. The
+  **stdout**. Consumed locally by ``trust/deploy/scripts/distribute_trust_kits.py``. The
   pipe is local: no remote storage involved.
 
 - *``--out-ssm-parameter <name>`` (prod ECS one-off task)* — the kit JSON is
@@ -70,9 +70,9 @@ from flip_api.trusts_services.services.register_trust import (
 )
 from flip_api.utils.logger import logger
 
-# Keep this list in lockstep with scripts/trust_kit_lib.py:HUB_SHARED_KEYS —
-# the single operator-side definition (scripts/sync_trust_kit.py and
-# scripts/distribute_trust_kits.py both import it; register-trusts.sh delegates
+# Keep this list in lockstep with trust/deploy/scripts/trust_kit_lib.py:HUB_SHARED_KEYS —
+# the single operator-side definition (trust/deploy/scripts/sync_trust_kit.py and
+# trust/deploy/scripts/distribute_trust_kits.py both import it; register-trusts.sh delegates
 # kit writing to the distributor). This CLI runs inside the flip-api container
 # and cannot import the root scripts/ package, so the key set lives in two
 # places. The lockstep is asserted by
@@ -288,7 +288,7 @@ def main() -> None:
         print(args.out_ssm_parameter)
         return
 
-    # Dev pipe: JSON array on stdout for ``scripts/distribute_trust_kits.py``.
+    # Dev pipe: JSON array on stdout for ``trust/deploy/scripts/distribute_trust_kits.py``.
     print(json.dumps(kits))
 
 

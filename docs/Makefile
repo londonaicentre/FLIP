@@ -29,7 +29,7 @@ docs:
 clean:
 	# Remove the build directory and its contents
 	rm -rf $(BUILDDIR)/*
-	# Remove what the conf.py build hooks generate: the AWS diagrams and the fetched docs GIFs (FLIP#1236)
+	# Remove what the conf.py build hooks generate: the architecture diagrams and the fetched docs GIFs (FLIP#1236)
 	rm -rf $(SOURCEDIR)/assets/generated
 	# Remove the API documentation directory except the index.rst file
 	cd $(SOURCEDIR)/autoapi && find . -mindepth 1 -type d -exec rm -rf {} +

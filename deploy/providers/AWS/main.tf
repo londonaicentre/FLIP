@@ -536,8 +536,8 @@ data "aws_route53_zone" "subdomain" {
 # The internal NLB (fl_ingress_lza.tf) forwards its FL listener here. The name
 # keeps the `-lza` suffix the live states hold (a name change is ForceNew).
 resource "aws_lb_target_group" "ecs_fl_server_tcp" {
-  # Container port per backend (FLARE: FL_SERVER_PORT; Flower: SuperLink
-  # Fleet 9092 — see local.fl_server_container_port in ecs_tasks.tf). The
+  # Container port per backend (FLARE: FL_SERVER_PORT; Flower: the fleet proxy's
+  # 9092, FLIP#1517 — see local.fl_server_container_port in ecs_tasks.tf). The
   # NLB LISTENER stays on var.FL_SERVER_PORT for both. Port is ForceNew, so
   # switching backend replaces this TG; the name is keyed by backend and
   # create_before_destroy set so the replacement can stand up while the old

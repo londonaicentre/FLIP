@@ -83,7 +83,7 @@ def write_env_file(path: Path, lines: list[str]) -> None:
     before truncating or writing it, so the new contents are never exposed through an existing
     permissive mode.
 
-    ``scripts/trust_kit_lib.write_secure`` is the same routine for the root-level ``register-trust``
+    ``trust/deploy/scripts/trust_kit_lib.write_secure`` is the same routine for the root-level ``register-trust``
     scripts. It is duplicated rather than shared because that module lives at the repository root,
     outside this package and its virtual environment, so neither can import the other.
 
@@ -101,7 +101,7 @@ def write_env_file(path: Path, lines: list[str]) -> None:
         os.fchmod(env_file.fileno(), KIT_FILE_MODE)
         env_file.truncate(0)
         # Guard the empty case so an empty list writes an empty file, not a lone "\n" that would
-        # leave a leading blank line — matching scripts/trust_kit_lib.write_secure exactly.
+        # leave a leading blank line — matching trust/deploy/scripts/trust_kit_lib.write_secure exactly.
         env_file.write("\n".join(lines) + "\n" if lines else "")
 
 
