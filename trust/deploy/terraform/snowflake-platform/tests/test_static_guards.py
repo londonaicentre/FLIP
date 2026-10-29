@@ -62,7 +62,7 @@ FORBIDDEN_ACCOUNT_PRIVILEGES = (
     "MONITOR USAGE",
 )
 
-ROLES = ("DEPLOY", "SVC", "OMOP_READER", "OMOP_LOADER", "OBSERVER")
+ROLES = ("DEPLOY", "SVC", "OMOP_READER", "OMOP_LOADER", "OBSERVER", "CONVERTER")
 
 SECRET_NAMES = (
     "TRUST_API_KEY",
@@ -89,7 +89,7 @@ def test_apache_header(path):
 
 
 @pytest.mark.parametrize("role", ROLES)
-def test_the_five_roles_exist(role):
+def test_the_six_roles_exist(role):
     assert f'"${{local.prefix}}_{role}"' in source("locals.tf"), role
 
 
@@ -129,7 +129,7 @@ def test_the_consumer_roles_are_granted_to_the_deploy_role():
     """So the workload root can grant on its own objects without MANAGE GRANTS."""
     block = hcl_block(source("roles.tf"), 'resource "snowflake_grant_account_role" "to_deploy"')
     assert block, "the platform tier must hand the consumer roles to the deploy role"
-    for role in ("svc", "omop_reader", "omop_loader", "observer"):
+    for role in ("svc", "omop_reader", "omop_loader", "observer", "converter"):
         assert re.search(rf"{role}\s+= snowflake_account_role.{role}.name", block), role
     assert "parent_role_name = snowflake_account_role.deploy.name" in block
 
@@ -302,6 +302,9 @@ def test_only_the_observer_and_deploy_roles_can_read_the_logs():
     for block in grants:
         if "snowflake_account_role.observer.name" in block and "for_each" not in block:
             assert "parent_role_name = snowflake_account_role.deploy.name" in block, block
+    for block in grants:
+        if "snowflake_account_role.converter.name" in block and "for_each" not in block:
+            raise AssertionError("CONVERTER (CREATE SERVICE) is reachable only through the deploy role")
     event_table_grants = re.findall(r"GRANT SELECT ON EVENT TABLE \S+ TO ROLE \$\{([^}]+)\}", all_terraform())
     assert event_table_grants == ["snowflake_account_role.observer.name"]
 

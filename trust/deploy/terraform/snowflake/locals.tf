@@ -38,6 +38,7 @@ locals {
     omop_reader = "${local.prefix}_OMOP_READER"
     omop_loader = "${local.prefix}_OMOP_LOADER"
     observer    = "${local.prefix}_OBSERVER"
+    converter   = "${local.prefix}_CONVERTER"
   }
 
   deploy_user      = "${local.prefix}_DEPLOY_USER"

@@ -33,6 +33,7 @@ IMAGE="ghcr.io/londonaicentre/xnat-dcm2niix"
 REFERENCES=(
     "trust/xnat/xnat/config/dcm2niix_command.json"
     "trust/imaging-api/imaging_api/config.py"
+    "trust/deploy/terraform/snowflake/converter.tf"
 )
 
 if [[ ! -f "${DOCKERFILE}" ]]; then

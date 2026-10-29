@@ -39,6 +39,7 @@ ROOT_FILES = (
     "stages.tf",
     "cost.tf",
     "grants.tf",
+    "converter.tf",
     "outputs.tf",
 )
 
@@ -166,7 +167,11 @@ def test_nothing_is_granted_to_public():
 
 def test_every_grant_names_a_flip_role_by_convention():
     """The roles are not resources here: the platform tier owns them, this root names them."""
-    for block in resource_blocks(source("grants.tf"), "snowflake_grant_privileges_to_account_role"):
+    blocks = [
+        *resource_blocks(all_terraform(), "snowflake_grant_privileges_to_account_role"),
+        *resource_blocks(all_terraform(), "snowflake_grant_ownership"),
+    ]
+    for block in blocks:
         match = re.search(r"account_role_name\s*=\s*([^\n]+)", block)
         assert match, block
         assert match.group(1).strip().startswith("local.roles."), (
@@ -175,14 +180,103 @@ def test_every_grant_names_a_flip_role_by_convention():
 
 
 def test_no_grant_uses_all_privileges_or_grant_option():
-    text = source("grants.tf")
+    text = all_terraform()
     assert "all_privileges" not in text, "least privilege: list the privileges"
     assert "with_grant_option" not in text, "no role may pass its privileges on"
 
 
 def test_the_deploy_role_grants_itself_nothing():
     """It owns every object this root creates; an owner needs no grant."""
-    assert "local.roles.deploy" not in source("grants.tf")
+    assert "local.roles.deploy" not in all_terraform().split("roles = {")[-1].split("}", 1)[-1]
+
+
+# --- the converter launch path (FLIP#1578) ------------------------------------------------------
+#
+# A service's token carries the role that OWNS it, and SPCS cannot transfer a service's ownership.
+# So CREATE SERVICE decides whose token a container gets, and it must sit only with the role that
+# owns the converter procedures. The services role never holds it at rest (#1582 grants it for the
+# seconds of a deploy and revokes it); imaging-api reaches the converter through CALL only.
+
+
+def _procedures() -> list[str]:
+    return resource_blocks(source("converter.tf"), "snowflake_procedure_sql")
+
+
+def test_create_service_is_held_at_rest_only_by_the_converter_role():
+    holders = [
+        block
+        for block in resource_blocks(all_terraform(), "snowflake_grant_privileges_to_account_role")
+        if '"CREATE SERVICE"' in block
+    ]
+    assert len(holders) == 1, "exactly one role holds CREATE SERVICE through Terraform"
+    assert "account_role_name = local.roles.converter" in holders[0]
+
+
+def test_the_services_role_may_only_call_the_converter_procedures():
+    text = all_terraform()
+    for block in resource_blocks(text, "snowflake_grant_privileges_to_account_role"):
+        if "account_role_name = local.roles.svc" in block and '"PROCEDURE"' in block:
+            assert 'privileges        = ["USAGE"]' in block, block
+    assert "svc_converter_procedures" in text, "imaging-api (as SVC) must be able to CALL CONVERT_SCAN"
+
+
+def test_the_converter_procedures_run_with_the_converter_roles_rights():
+    procedures = _procedures()
+    assert {re.search(r'name\s+= "(\w+)"', b).group(1) for b in procedures} == {"CONVERT_SCAN", "CONVERT_STATUS"}
+    for block in procedures:
+        assert 'execute_as  = "OWNER"' in block, block[:80]
+    ownership = hcl_block(source("converter.tf"), 'resource "snowflake_grant_ownership" "converter_procedures"')
+    assert "account_role_name   = local.roles.converter" in ownership
+    for name in ("convert_scan", "convert_status"):
+        assert f"snowflake_procedure_sql.{name}.fully_qualified_name" in ownership, name
+
+
+def test_converter_arguments_are_checked_before_any_dynamic_sql():
+    """The identifiers become a stage path, a shell argument and part of EXECUTE IMMEDIATE text."""
+    guard = hcl_block(source("converter.tf"), "locals {")
+    patterns = re.findall(r"REGEXP_LIKE\(:(\w+), '([^']+)'\)", guard)
+    assert {name for name, _ in patterns} == {"PROJECT", "SESSION", "SCAN"}
+    for _, pattern in patterns:
+        assert pattern.startswith("^[A-Za-z0-9_-]{1,"), pattern
+        assert pattern.endswith("}$"), pattern
+    assert "RETURN 'rejected';" in guard
+    for block in _procedures():
+        body = block[block.index("procedure_definition") :]
+        assert "local.converter_args_ok" in body, block[:80]
+        first_dynamic = body.find("EXECUTE IMMEDIATE")
+        first_status = body.find("GET_SERVICE_STATUS")
+        first_use = min(i for i in (first_dynamic, first_status) if i >= 0)
+        assert body.index("local.converter_args_ok") < first_use, "validate before use"
+
+
+def test_the_converter_spec_is_fixed_and_cannot_close_the_procedure_body():
+    """Image, pool, command and mounts are written here, never passed in; and a $$ in the body would
+    end the provider's $$-quoted procedure definition."""
+    scan = hcl_block(source("converter.tf"), 'resource "snowflake_procedure_sql" "convert_scan"')
+    assert "$$" not in scan
+    assert "image: ${local.converter_image}" in scan
+    assert "IN COMPUTE POOL ${local.job_pool}" in scan
+    assert "ASYNC = TRUE" in scan, "a converter run must not hold the caller's statement open"
+    assert scan.count("name: input") == 2
+    assert scan.count("name: output") == 2
+
+
+def test_the_converter_mounts_one_session_and_reads_the_archive_only():
+    scan = hcl_block(source("converter.tf"), 'resource "snowflake_procedure_sql" "convert_scan"')
+    assert "@${local.archive_stage}/' || :PROJECT || '/arc001/' || :SESSION || '\"" in scan, (
+        "stage volumes cannot be read-only, so the job mounts one session's subpath, not the archive"
+    )
+    archive = hcl_block(
+        source("converter.tf"), 'resource "snowflake_grant_privileges_to_account_role" "converter_archive_read"'
+    )
+    assert 'privileges        = ["READ"]' in archive
+
+
+def test_the_converter_image_follows_the_dcm2niix_pin():
+    text = source("converter.tf")
+    assert 'converter_source_image = "ghcr.io/londonaicentre/xnat-dcm2niix:' in text
+    pin_check = (SNOWFLAKE_DIR.parents[3] / "trust/xnat/dcm2niix/check_image_pin_sync.sh").read_text()
+    assert '"trust/deploy/terraform/snowflake/converter.tf"' in pin_check
 
 
 # --- secrets ------------------------------------------------------------------------------------

@@ -16,8 +16,8 @@
 **Read this before running anything here.** This is the break-glass root. It creates the Snowflake
 account's security objects and nothing else:
 
-- the five `FLIP_<CODE>_*` roles and the role hierarchy (`DEPLOY`, `SVC`, `OMOP_READER`,
-  `OMOP_LOADER`, `OBSERVER`), nothing granted to `PUBLIC`;
+- the six `FLIP_<CODE>_*` roles and the role hierarchy (`DEPLOY`, `SVC`, `OMOP_READER`,
+  `OMOP_LOADER`, `OBSERVER`, `CONVERTER`), nothing granted to `PUBLIC`;
 - the deploy `SERVICE` user, public key only;
 - the **only** account-level grant in the whole design: four privileges to `FLIP_<CODE>_DEPLOY`;
 - the egress network rule and the external access integration (off by default);
@@ -58,7 +58,7 @@ own. Both roots' pytest guards fail if that list ever grows.
 
 The workload role **owns** every object it creates, and an owner may grant privileges on its own
 objects **without** `MANAGE GRANTS`. What an owner cannot do is name a role it does not hold. So
-this root grants `SVC`, `OMOP_READER`, `OMOP_LOADER` and `OBSERVER` **to** `FLIP_<CODE>_DEPLOY`
+this root grants `SVC`, `OMOP_READER`, `OMOP_LOADER`, `OBSERVER` and `CONVERTER` **to** `FLIP_<CODE>_DEPLOY`
 once (`roles.tf`), and from then on a routine apply can say "grant `SELECT` on this table to
 `FLIP_<CODE>_OMOP_READER`" entirely within its own privileges. Ownership stays with the deploy
 role throughout.
@@ -79,7 +79,7 @@ With `trust_code = GSTT`:
 
 | Object | Name |
 | ------ | ---- |
-| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER` |
+| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` |
 | Deploy user | `FLIP_GSTT_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
 | Egress integration | `FLIP_GSTT_HUB_EAI` (optional, off by default) |
 | Account policies | `FLIP_GSTT_ADMIN_NP`, `FLIP_GSTT_PASSWORD_POLICY`, `FLIP_GSTT_SESSION_POLICY` |

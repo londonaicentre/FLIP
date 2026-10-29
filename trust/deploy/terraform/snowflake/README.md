@@ -57,16 +57,17 @@ platform root and #1582 derive the same names from the same `trust_code`. With
 
 | Object | Name | Created by |
 | ------ | ---- | ---------- |
-| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER` | platform root |
+| Roles | `FLIP_GSTT_DEPLOY`, `FLIP_GSTT_SVC`, `FLIP_GSTT_OMOP_READER`, `FLIP_GSTT_OMOP_LOADER`, `FLIP_GSTT_OBSERVER`, `FLIP_GSTT_CONVERTER` | platform root |
 | Deploy user | `FLIP_GSTT_DEPLOY_USER` (TYPE = SERVICE, key pair) | platform root |
 | Egress integration | `FLIP_GSTT_HUB_EAI` (optional) | platform root |
-| Resource monitor | `FLIP_GSTT_RM` | platform root (attached here) |
+| Resource monitor | `FLIP_GSTT_RM` | platform root (attached to the warehouse there) |
 | Event table | `FLIP_PLATFORM.OBS.FLIP_EVENTS` | platform root |
 | Database | `FLIP_TRUST_GSTT`, schemas `APP`, `OMOP`, `STAGES`, `OBS` | here |
-| Warehouse | `FLIP_GSTT_WH` (XSMALL) | here |
+| Warehouse | `FLIP_GSTT_WH` (XSMALL) | platform root |
 | Compute pools | `FLIP_GSTT_POOL`, `FLIP_GSTT_JOB_POOL`, `FLIP_GSTT_GPU_POOL` (optional) | here |
 | Stages (`STAGES`, all SSE) | `FL_KIT`, `SEED`, `XNAT_ARCHIVE`, `IMAGES`, `CONVERTER_IO`, `GOVERNANCE`, `COHORT_SNAPSHOTS` | here |
 | Image repository | `FLIP_TRUST_GSTT.APP.IMAGES` | here |
+| Converter procedures | `FLIP_TRUST_GSTT.APP.CONVERT_SCAN`, `CONVERT_STATUS` (owned by `CONVERTER`) | here |
 
 `FLIP_<CODE>_ADMIN` is **retired**. An account bootstrapped with it needs the migration in the
 [platform README](../snowflake-platform/README.md#migrating-an-account-bootstrapped-with-flip_code_admin).
@@ -208,3 +209,21 @@ triggers the hub's plan or apply workflows.
   stays false until the account is converted to On-Demand (#1586). Flower's run-time `uv sync`
   needs PyPI egress; either pre-bake the dependencies or add those endpoints to the platform root's
   `fl_server_endpoints` when that happens.
+
+## The NIfTI converter (FLIP#1578)
+
+dcm2niix runs as an SPCS job service, one per scan, launched only by `CALL APP.CONVERT_SCAN(project,
+session, scan)` (`converter.tf`). The reason is token scope: a service's OAuth token carries the role
+that owns it, and SPCS refuses `GRANT OWNERSHIP ON SERVICE`, so whoever runs `EXECUTE JOB SERVICE`
+decides the container's token. The procedures run with the rights of `FLIP_<CODE>_CONVERTER`, the
+only role holding `CREATE SERVICE` at rest, with `READ` on the archive and `READ`/`WRITE` on
+`CONVERTER_IO`. The services role gets `USAGE` on the two procedures and nothing else of the
+converter's, so imaging-api can start a conversion but no service can start an arbitrary container.
+
+The procedure takes three identifiers, refuses any that is not `[A-Za-z0-9_-]` before building SQL,
+and launches a spec written here: image (the mirrored `xnat-dcm2niix` at the pinned tag), job pool,
+command and mounts. Stage volumes cannot be mounted read-only, so the job mounts one session's
+archive subpath and writes under `CONVERTER_IO/<project>/<session>/<scan>`; imaging-api registers
+the output in XNAT over REST. `CALL APP.CONVERT_STATUS(...)` returns the job's SPCS status JSON
+(`[]` before it exists).
+

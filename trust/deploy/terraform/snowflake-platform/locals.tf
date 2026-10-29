@@ -19,7 +19,7 @@ locals {
   code   = upper(var.trust_code)
   prefix = "FLIP_${local.code}"
 
-  # Five roles. FLIP_<CODE>_ADMIN is retired (two-tier decision, 2026-10-20, epic #1589): the
+  # Six roles. FLIP_<CODE>_ADMIN is retired (two-tier decision, 2026-10-20, epic #1589): the
   # privileges it used to hold are split between this break-glass root and object ownership held
   # by the deploy role.
   roles = {
@@ -28,6 +28,7 @@ locals {
     omop_reader = "${local.prefix}_OMOP_READER"
     omop_loader = "${local.prefix}_OMOP_LOADER"
     observer    = "${local.prefix}_OBSERVER"
+    converter   = "${local.prefix}_CONVERTER"
   }
 
   deploy_user      = "${local.prefix}_DEPLOY_USER"

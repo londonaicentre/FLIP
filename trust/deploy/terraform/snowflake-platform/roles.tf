@@ -46,12 +46,23 @@ resource "snowflake_account_role" "observer" {
 # consumer roles are granted TO the deploy role here, once, and from then on a routine workload
 # apply can say "GRANT SELECT ON ... TO ROLE FLIP_<CODE>_OMOP_READER" entirely within its own
 # privileges. Ownership of every object stays with the deploy role.
+# Owns the converter launch procedures and the dcm2niix jobs they start (FLIP#1578). A service's
+# OAuth token carries its OWNER's role and SPCS cannot transfer a service's ownership, so whoever
+# runs EXECUTE JOB SERVICE decides the converter container's token. This role is that owner: it
+# holds CREATE SERVICE on the APP schema (job launch needs it) and READ on the archive, nothing else.
+# No service or user holds it; SVC reaches it only through the fixed-shape procedures.
+resource "snowflake_account_role" "converter" {
+  name    = local.roles.converter
+  comment = "FLIP ${local.code}: owns the dcm2niix launch procedures and their jobs (FLIP#1578)."
+}
+
 resource "snowflake_grant_account_role" "to_deploy" {
   for_each = {
     svc         = snowflake_account_role.svc.name
     omop_reader = snowflake_account_role.omop_reader.name
     omop_loader = snowflake_account_role.omop_loader.name
     observer    = snowflake_account_role.observer.name
+    converter   = snowflake_account_role.converter.name
   }
 
   role_name        = each.value
