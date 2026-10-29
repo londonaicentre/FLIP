@@ -100,6 +100,10 @@ full = [
     # and mismatches torch's cu130 ABI ("operator torchvision::nms does not exist").
     # Declaring it here routes it through the pinned cu130 index (-> 0.28.0+cu130).
     "torchvision>=0.28.0,<0.29",
+    # Constraint-based causal discovery (FCI, the CI tests and the PAG orientation rules) for the
+    # biomarker_causal_discovery tutorial on both backends. The FL images install this extra, so
+    # the tutorial's app code can `import causallearn` deployed and under the simulators alike.
+    "causal-learn>=0.1.4.3",
 ]
 
 [tool.uv]

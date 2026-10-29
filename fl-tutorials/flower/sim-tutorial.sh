@@ -248,6 +248,13 @@ case "$TUTORIAL" in
     # partition, exactly as under the compose stack.
     export DEV_DATAFRAME="$DATA_ROOT/synthea/dataframe.csv"
     DATASET_TARGET=download-synthea-data ;;
+  biomarker_causal_discovery)
+    # Tabular-only, like ehr_risk_prediction: one shared CSV, sliced per site by partition_cohort.
+    # The cohort is built from the user's OWN ADNI download (access-controlled; nothing derived from
+    # it enters the repository): convert-adni-cohort needs ADNI_DIR=<the five IDA tables> — the
+    # tutorial README's "Running on real ADNI data" has the application and download steps.
+    export DEV_DATAFRAME="$DATA_ROOT/ad_biomarkers/dataframe.csv"
+    DATASET_TARGET="convert-adni-cohort ADNI_DIR=<your IDA tables>" ;;
   3d_prostate_segmentation)
     # The XNAT-export-shaped tree prepare_prostate_local_data.py writes from the PI-CAI download
     # (three scans per study, masks beside each), honouring NUM_CASES.

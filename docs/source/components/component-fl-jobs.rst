@@ -91,7 +91,10 @@ To list the tutorials for each backend:
 
 A job type describes the federated algorithm, not the data: the same ``standard`` job type runs imaging and
 tabular apps alike. What to fetch is your script's decision (an imaging app calls ``flip.get_by_accession_number``,
-a tabular one only ``flip.get_dataframe``).
+a tabular one only ``flip.get_dataframe``). Nor does the job have to train: the biomarker causal-discovery
+tutorial (:gh:`fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery
+<fl-tutorials/nvflare/tabular_causal_discovery/biomarker_causal_discovery>`) federates a bootstrapped FCI analysis
+through ``standard`` by choosing what the sites send so that the weighted average *is* the analysis.
 
 Evaluation metrics
 ==================

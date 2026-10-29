@@ -129,6 +129,13 @@ TUTORIALS: dict[str, TutorialCopy] = {
         "with a model trained across the participating trusts.",
         nifti=False,
     ),
+    "biomarker_causal_discovery": TutorialCopy(
+        "Biomarker causal discovery",
+        "Learning which Alzheimer's disease blood biomarkers, brain volumes and demographics drive one another "
+        "— a causal graph with a confidence on every edge — from the participating trusts' cohorts, without any "
+        "trust's rows leaving it.",
+        nifti=False,
+    ),
     "arkplus_multimodel_classification_evaluation": TutorialCopy(
         "Ark+ multi-model classification evaluation",
         "Comparing several existing Ark+ chest X-ray models on each participating trust's radiographs to "

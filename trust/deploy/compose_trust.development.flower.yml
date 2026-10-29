@@ -53,6 +53,9 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # The trust's disclosure floor, the same COHORT_QUERY_THRESHOLD data-access-api enforces, so an
+      # app that releases site-level statistics (the causal-discovery tutorial) can refuse below it.
+      - COHORT_QUERY_THRESHOLD=${COHORT_QUERY_THRESHOLD:-10}
     command:
       - --root-certificates
       - /certs/ca.crt
@@ -108,6 +111,9 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+      # The trust's disclosure floor, the same COHORT_QUERY_THRESHOLD data-access-api enforces, so an
+      # app that releases site-level statistics (the causal-discovery tutorial) can refuse below it.
+      - COHORT_QUERY_THRESHOLD=${COHORT_QUERY_THRESHOLD:-10}
     command:
       - --root-certificates
       - /certs/ca.crt

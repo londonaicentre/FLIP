@@ -610,6 +610,9 @@ e2e_smoke:
 e2e_smoke_ehr:
 	$(MAKE) -C flip-api e2e_smoke_ehr $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
+e2e_smoke_causal:
+	$(MAKE) -C flip-api e2e_smoke_causal $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
 # Record the end-to-end demo video against the running dev stack: six
 # Playwright segments over the live UI (real sign-ins, trusts, uploads,
 # FL training) with the slow waits handled off-camera between segments, then

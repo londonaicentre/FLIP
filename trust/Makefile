@@ -920,6 +920,16 @@ ensure-seeded: wait-omop-db wait-pacs
 load-synthea-ehr:
 	$(OMOP_DB_CMD) load-synthea-ehr TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT)
 
+# Load a licence holder's converted ADNI biomarker cohort into a running trust omop-db — the populate
+# step for the biomarker causal-discovery tutorial on a LOCAL dev stack (nothing ADNI-derived may be
+# published). ADNI_COHORT defaults to fl-tutorials/data/ad_biomarkers/dataframe.csv, what
+# `make -C fl-tutorials convert-adni-cohort` writes. Run once per trust:
+#   make -C trust load-adni-cohort TRUST_INDEX=1 OMOP_DB_PORT=5434   # GSTT
+#   make -C trust load-adni-cohort TRUST_INDEX=2 OMOP_DB_PORT=5436   # KCH
+load-adni-cohort:
+	$(OMOP_DB_CMD) load-adni-cohort TRUST_INDEX=$(TRUST_INDEX) OMOP_DB_PORT=$(OMOP_DB_PORT) \
+		$(if $(ADNI_COHORT),ADNI_COHORT="$(abspath $(ADNI_COHORT))")
+
 # Seed a running trust with the listed projects (FLIP#1100) — OMOP rows into its
 # omop-db, keyed by `source_trust`, the same column the per-project DICOM sets
 # are keyed on. Everything the sub-make needs comes from the kit: the slot
