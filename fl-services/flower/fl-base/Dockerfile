@@ -13,9 +13,12 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.38.0-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.42.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
+# torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:
+# without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
+ENV TORCH_DISABLE_NATIVE_JIT=1
 WORKDIR /app
 
 # Install flip-utils from the IN-REPO source (build context = repo root). This
@@ -48,17 +51,10 @@ WORKDIR /app
 COPY flip-utils/pyproject.toml flip-utils/README.md /opt/flip-utils/
 COPY flip-utils/docs/ /opt/flip-utils/docs/
 COPY flip-utils/flip/ /opt/flip-utils/flip/
-# flwr/base ships flwr==1.38.0, which pins cryptography>=46.0.7,<47.0.0 (GHSA-537c-gmf6-5ccf
-# needs >=48.0.1). This is a plain `pip install`, not a `uv sync`, so the
-# `[tool.uv] override-dependencies` escape hatch used in fl-api-flower/pyproject.toml
-# doesn't apply here — listing cryptography directly on the install line is the pip
-# equivalent, forcing the upgrade past flwr's declared ceiling. Safe for the same reason
-# recorded there: flwr only uses cryptography for TLS cert loading in secure aggregation,
-# a stable surface across majors.
-# pip does not apply flip-utils' UV constraints; carry its security floors here too: setuptools, and certifi
-# and uv (GHSA-6q48-6c7w-9gw2, GHSA-hq85-5cpj-mr62), which flwr/base ships and flwr pins below the uv fix.
-RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "cryptography>=50.0.0" "setuptools>=84.1.0" \
-      "certifi>=2026.10.19" "uv>=0.13.4" \
+# No cryptography pin: flwr>=1.40 requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf.
+# No certifi or uv pin either: flwr>=1.42 requires certifi>=2026.10.19 and uv>=0.13.5 (GHSA-6q48-6c7w-9gw2,
+# GHSA-hq85-5cpj-mr62). pip does not apply flip-utils' UV constraints; carry its setuptools floor here.
+RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=84.1.0" \
       --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to

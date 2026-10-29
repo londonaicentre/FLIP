@@ -287,7 +287,8 @@ def test_the_guard_sees_every_shipped_app():
     for expected in (
         "fl-tutorials/nvflare/image_classification/xray_classification/app_files",
         "fl-tutorials/flower/image_classification/xray_classification/app",
-        "fl-tutorials/nvflare/image_synthesis/latent_diffusion_model/app_files",
+        "fl-tutorials/nvflare/image_generation/brain_mri_ldm_stage1_autoencoder/app_files",
+        "fl-tutorials/nvflare/image_generation/brain_mri_ldm_stage2_diffusion/app_files",
         "fl-apps/nvflare/standard",
         "fl-apps/flower/standard",
     ):

@@ -224,9 +224,9 @@ for wf in terraform_plan.yml terraform_apply.yml terraform_drift.yml; do
     # `vars.DOCKER_TAG` line in the compose step would override the resolved tag
     # and put the mutable one back. The assertion below requires the resolver
     # instead, so the exemption cannot be used to simply drop the key.
-    # (DOCKER_FL_API_TAG has no GitHub variable at all — it exists only as the
-    # resolver's third output, FLIP#1283.)
-    exempt='^(FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG|DOCKER_FL_API_TAG)$'
+    # (DOCKER_FL_API_TAG and DOCKER_FL_PROXY_TAG have no GitHub variable at all —
+    # they exist only as the resolver's own outputs, FLIP#1283 / FLIP#1517.)
+    exempt='^(FLARE_KIT_DATE|FLOWER_KIT_DATE|DOCKER_TAG|DOCKER_FL_TAG|DOCKER_FL_API_TAG|DOCKER_FL_PROXY_TAG)$'
     wanted="$(echo "${manifest}" | grep -vE "${exempt}")"
     absent="$(LC_ALL=C comm -23 <(echo "${wanted}") <(echo "${wf_keys}"))"
     if [[ -z "${absent}" ]]; then
