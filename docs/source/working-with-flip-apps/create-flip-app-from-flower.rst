@@ -534,7 +534,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
    version = "1.0.0"
    dependencies = [
        # flip-utils is deliberately NOT declared — see the note under "Starting point"
-       "flwr[simulation]>=1.38.0",
+       "flwr[simulation]>=1.42.0",
        # ... your model-framework deps (monai, torch, nibabel, ...)
    ]
 
