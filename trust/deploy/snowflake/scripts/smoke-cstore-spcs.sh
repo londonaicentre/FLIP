@@ -83,7 +83,8 @@ orthanc --fail --output /dev/null "${ORTHANC_URL}/system" || fail "Orthanc is no
 xnat --fail --output /dev/null "${XNAT_URL}/data/JSESSION" || fail "XNAT did not authenticate the service account at ${XNAT_URL}."
 
 # ── 1. Pick an instance the PACS already holds ──────────────────────────────────────
-instance=$(orthanc "${ORTHANC_URL}/instances?limit=1" | jq -r '.[0] // empty')
+# Orthanc refuses `limit` without `since` (HTTP 400, an error object rather than a list).
+instance=$(orthanc --fail "${ORTHANC_URL}/instances?since=0&limit=1" | jq -r '.[0] // empty')
 [ -n "$instance" ] || fail "Orthanc holds no instances. Seed it first: make seed-orthanc KIT=<CODE>."
 sop=$(orthanc "${ORTHANC_URL}/instances/${instance}" | jq -r '.MainDicomTags.SOPInstanceUID // empty')
 echo "Sending instance ${instance} (SOPInstanceUID ${sop:-unknown}) to modality ${XNAT_MODALITY}."

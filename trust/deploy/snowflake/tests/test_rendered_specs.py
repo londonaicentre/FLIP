@@ -532,3 +532,10 @@ def test_no_kit_password_reaches_a_spec_in_plain_env(kit: dict) -> None:
     marker = "SENTINEL-initial-admin-7f30"  # pragma: allowlist secret
     for rendered in spec_templates.build_all({**kit, "XNAT_ADMIN_INITIAL_PASSWORD": marker}, "GSTT"):
         assert marker not in json.dumps(rendered.spec), rendered.name
+
+
+def test_smoke_cstore_pages_orthanc_with_since(specs: dict) -> None:
+    """Orthanc answers `/instances?limit=1` with HTTP 400 ("Missing since"), live account."""
+    script = containers(specs["smoke-cstore"])[0]["args"][-1]
+    assert "instances?since=0&limit=1" in script
+    assert "instances?limit=" not in script
