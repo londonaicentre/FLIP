@@ -137,7 +137,7 @@ jobs:
   # fresh window.
   start-staging:
     name: Start staging before the apply
-    if: github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
     concurrency:
       group: stag-hold
       cancel-in-progress: true

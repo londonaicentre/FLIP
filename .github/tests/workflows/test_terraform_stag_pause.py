@@ -79,6 +79,11 @@ class TerraformStagPause(unittest.TestCase):
             ("terraform_apply.yml", "apply"),
             ("terraform_drift.yml", "drift"),
             ("terraform_drift.yml", "dispatch-prod"),
+            ("terraform_apply.yml", "start-staging"),
+            ("terraform_drift.yml", "staging-state"),
+            ("staging_lifecycle.yml", "nightly-guard"),
+            ("staging_lifecycle.yml", "hold"),
+            ("staging_lifecycle.yml", "power"),
         ):
             with self.subTest(workflow=workflow, job=job):
                 assert job_if(workflow, job).startswith(f"{FORK_SKIP} && ")

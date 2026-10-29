@@ -105,9 +105,13 @@ jobs:
   #
   # Only the schedule consults this. A dispatched or called stop is somebody
   # asking for a stop, and second-guessing that would make the dispatch unusable.
+  #
+  # Every job skips forks unless TF_CI_ON_FORK is `true`, as in
+  # terraform_drift.yml: GitHub mails a fork's failed scheduled run to whoever
+  # last edited this file upstream.
   nightly-guard:
     name: Decide whether the nightly guard should stop staging
-    if: github.event_name == 'schedule' && github.ref_name != 'main'
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.event_name == 'schedule' && github.ref_name != 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -158,7 +162,7 @@ jobs:
   # group below.
   hold:
     name: Hold staging up
-    if: inputs.action == 'hold-then-stop' && github.ref_name != 'main'
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && inputs.action == 'hold-then-stop' && github.ref_name != 'main'
     runs-on: ubuntu-latest
     concurrency:
       # Not the workflow-level group: a second hold-then-stop must displace the
@@ -208,7 +212,8 @@ jobs:
     #   * a failed hold or guard means the decision was never made, so do not stop;
     #   * on the schedule, stop only if the guard said nothing is in flight.
     if: >-
-      always() && github.ref_name != 'main'
+      (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true')
+      && always() && github.ref_name != 'main'
       && needs.hold.result != 'cancelled' && needs.hold.result != 'failure'
       && needs.nightly-guard.result != 'failure' && needs.nightly-guard.result != 'cancelled'
       && (github.event_name != 'schedule' || needs.nightly-guard.outputs.proceed == 'true')

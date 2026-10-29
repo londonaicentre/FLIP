@@ -77,7 +77,7 @@ jobs:
   # stopped state and never reaches this job.
   staging-state:
     name: Is staging stopped?
-    if: github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
     runs-on: ubuntu-latest
     environment: aws-stag
     permissions:
