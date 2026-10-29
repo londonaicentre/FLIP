@@ -28,6 +28,10 @@ dependencies = [
     "pydantic-settings>=2.9.1",
     "python-multipart>=0.0.26",
     "requests>=2.33.0",
+    # The Snowflake conversion path only (CONVERTER_BACKEND=snowflake, FLIP#1583): imaging-api
+    # CALLs the owner's-rights procedures APP.CONVERT_SCAN / APP.CONVERT_STATUS with the SPCS
+    # OAuth session token. Imported lazily, so Compose and Helm never load it.
+    "snowflake-connector-python>=3.12",
     "starlette>=1.2.1",
     "types-requests>=2.32.0.20250328",
     "urllib3>=2.7.0",

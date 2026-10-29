@@ -20,6 +20,12 @@ bulk launcher, and the batch-launch plugin's Processing Dashboard through it, po
 
 What it selects, what it will not launch, and its exit codes: trust/deploy/helm/TROUBLESHOOTING.md
 §2.3e. On Compose, ``make -C trust reconvert-nifti KIT=<CODE>`` runs this.
+
+On Snowflake (``CONVERTER_BACKEND=snowflake``, FLIP#1583) the selection is identical and the
+launch is not: there is no Container Service, so each scan goes through APP.CONVERT_SCAN, is
+followed through APP.CONVERT_STATUS, and its output is registered in XNAT over REST by this
+script rather than by the container service's upload step. ``make -C trust/deploy/snowflake
+reconvert-nifti KIT=<CODE>`` runs it as a job service.
 """
 
 import argparse
@@ -48,6 +54,8 @@ from imaging_api.services.projects import (
     get_command_info,
     get_experiments,
 )
+from imaging_api.services.snowflake_converter import DONE, FAILED, ScanRef, SnowflakeConverter
+from imaging_api.services.snowflake_converter import enabled as snowflake_conversion
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.xnat_url import XNAT_REQUEST_TIMEOUT, xnat_url
 
@@ -285,6 +293,108 @@ def bulk_launch(
     return str(report.get("bulk-launch-id") or "?"), refused
 
 
+#
+# The Snowflake conversion path (FLIP#1583)
+#
+# Three of the functions above are Container Service's, and only those three change. The
+# selection (flip_projects, unconverted_scans, session_scans) is the same on both paths,
+# because it reads XNAT and nothing else.
+#
+
+
+def _scan_ref(project: Project, scan: Scan) -> ScanRef:
+    """A selected scan, as the conversion procedures address it.
+
+    The procedure mounts ``<project>/arc001/<session>`` of the archive, whose directory
+    name is the session LABEL, while the REST registration addresses the EXPERIMENT ID.
+    Passing the id where the label belongs mounts a path that does not exist, and the job
+    then converts nothing while reporting DONE.
+    """
+    return ScanRef(project=project.ID, session=scan.label, scan=scan.scan, experiment=scan.experiment)
+
+
+def snowflake_launch(project: Project, scans: list[Scan], converter: SnowflakeConverter) -> tuple[str, dict[str, str]]:
+    """Launch one conversion per scan, in the shape ``bulk_launch`` answers in.
+
+    There is no bulk call: APP.CONVERT_SCAN takes one scan, and giving it a list would
+    mean a second procedure whose only purpose is a loop. A scan the procedure refuses is
+    reported like one XNAT would not queue, so the caller's accounting is unchanged.
+
+    Returns:
+        tuple[str, dict[str, str]]: A launch id for the report, and scan URI -> the reason
+        each refused scan was not launched.
+    """
+    refused: dict[str, str] = {}
+    for scan in scans:
+        try:
+            converter.launch(_scan_ref(project, scan))
+        except Exception as exc:
+            refused[scan.uri] = str(exc)
+    return f"APP.CONVERT_SCAN x{len(scans) - len(refused)}", refused
+
+
+def snowflake_follow(
+    launched: list[tuple[str, Scan, int]],
+    projects: dict[str, Project],
+    minutes: int,
+    headers: dict[str, str],
+    converter: SnowflakeConverter,
+    out: Callable[[str], None],
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> Counter[str]:
+    """Follow this run's conversions, registering each one's output as it finishes.
+
+    The Container Service path has XNAT's own upload step, so ``_follow`` only has to
+    watch for the NIfTI appearing. Here imaging-api IS the upload step: a job that reaches
+    DONE has written files to the shared stage and nothing has put them in the archive
+    yet, so this registers them and only then counts the scan as converted.
+
+    A registration that fails counts as ENDED rather than CONVERTED. The scan keeps its
+    DICOM and no NIfTI, which is exactly the state a later run selects again.
+
+    Returns:
+        Counter[str]: How many launches are in each of CONVERTED, CONVERTING, NO_CONTAINER
+        and ENDED.
+    """
+    state = {scan.uri: NO_CONTAINER for _, scan, _ in launched}
+    refs = {scan.uri: _scan_ref(projects[project_id], scan) for project_id, scan, _ in launched}
+    deadline = clock() + minutes * 60
+    shown: Counter[str] = Counter()
+    while clock() < deadline and any(s in (NO_CONTAINER, CONVERTING) for s in state.values()):
+        sleep(POLL_SECONDS)
+        for _, scan, _ in launched:
+            if state[scan.uri] == CONVERTED:
+                continue
+            ref = refs[scan.uri]
+            try:
+                status = converter.status(ref)
+            except Exception as exc:  # transient: the next round asks again
+                out(f"  Checking {scan} failed, trying again in {POLL_SECONDS} s: {exc}")
+                continue
+            if status == FAILED:
+                state[scan.uri] = ENDED
+                out(f"  {scan}: the conversion job failed.")
+            elif status == DONE:
+                try:
+                    uploaded = converter.collect(ref, headers)
+                    state[scan.uri] = CONVERTED
+                    out(f"  {scan}: converted, {uploaded} file(s) registered in XNAT.")
+                except Exception as exc:
+                    state[scan.uri] = ENDED
+                    out(f"  {scan}: the conversion finished but registering it failed: {exc}")
+            else:
+                state[scan.uri] = CONVERTING if status == "RUNNING" else NO_CONTAINER
+        counts = Counter(state.values())
+        if counts != shown:
+            shown = counts
+            out("  " + ", ".join(f"{n} {s}" for s, n in sorted(counts.items())) + ".")
+    for _, scan, _ in launched:
+        if state[scan.uri] != CONVERTED:
+            out(f"  {scan}: {state[scan.uri]}")
+    return Counter(state.values())
+
+
 def _name(container: dict[str, Any]) -> str:
     return f"container {container.get('id')} {container.get('status')} since {container.get('status-time')}"
 
@@ -349,6 +459,7 @@ def run(
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    converter: SnowflakeConverter | None = None,
 ) -> int:
     """Reports, and with ``--launch`` converts, the archived scans of FLIP projects that have no NIfTI.
 
@@ -359,6 +470,8 @@ def run(
         sleep (Callable[[float], None]): Waits between checks while following the conversions.
         clock (Callable[[], float]): Seconds on a monotonic clock, for the ``--wait`` budget.
         now (Callable[[], datetime]): The current UTC time, against which a session counts as recent.
+        converter (SnowflakeConverter | None): The Snowflake converter, when
+            ``CONVERTER_BACKEND=snowflake``. Built on demand when not given.
 
     Returns:
         int: 0 when nothing failed and every launch was converted; 1 when a project could not be read,
@@ -366,6 +479,12 @@ def run(
         id (nothing is launched); 3 when the wait ended with launches not yet finished.
     """
     args = _parse(argv)
+    # Which machinery converts. The selection below is the same either way; what differs
+    # is what counts as a prior attempt, how a launch is issued, and who uploads the
+    # result (FLIP#1583).
+    on_snowflake = snowflake_conversion()
+    if on_snowflake and converter is None:
+        converter = SnowflakeConverter()
     projects = flip_projects(headers)
     named, unknown = resolve_ids(args.project, projects)
     if unknown:
@@ -385,7 +504,14 @@ def run(
         try:
             # Containers before scans: a conversion that ends between the two reads then shows its NIfTI,
             # rather than looking like one that ended without it.
-            by_scan = containers_by_scan(project.ID, headers)
+            #
+            # On Snowflake there is no container history to read: APP.CONVERT_SCAN drops and
+            # replaces a scan's job on every launch, so a finished attempt leaves nothing
+            # behind to count. --max-attempts therefore has nothing to act on there, and a
+            # scan that keeps failing is relaunched each run rather than being left alone;
+            # the status poll below is what reports it. Giving the procedure an attempt
+            # counter would mean state in Snowflake that only this script reads.
+            by_scan = {} if on_snowflake else containers_by_scan(project.ID, headers)
             missing, with_dicom, recent = unconverted_scans(project.ID, headers, now())
         except Exception as exc:
             tally["unread"] += 1
@@ -422,25 +548,36 @@ def run(
     launched: list[tuple[str, Scan, int]] = []  # (project, scan, how many containers it had before)
     waiting = sum(len(ready) for _, ready, _ in to_launch)
     if waiting:
-        try:
-            wrapper_id = get_command_info(to_launch[0][0].ID, get_settings().DCM2NIIX_IMAGE, headers).wrapper_id
-        except Exception as exc:  # e.g. the wrapper runs another image than this imaging-api's pin
-            tally["failed"] += waiting
-            out(f"Cannot launch {waiting}: {exc}")
-            to_launch = []
+        launcher = "APP.CONVERT_SCAN" if on_snowflake else f"'{DCM2NIIX_WRAPPER_NAME}'"
+        if not on_snowflake:
+            # The wrapper lookup is Container Service's alone, and it is the step that
+            # catches an XNAT whose registered command runs a different dcm2niix image
+            # than this imaging-api is pinned to. There is no equivalent on Snowflake:
+            # the image is fixed in the procedure, in Terraform, not chosen per launch.
+            try:
+                wrapper_id = get_command_info(to_launch[0][0].ID, get_settings().DCM2NIIX_IMAGE, headers).wrapper_id
+            except Exception as exc:  # e.g. the wrapper runs another image than this imaging-api's pin
+                tally["failed"] += waiting
+                out(f"Cannot launch {waiting}: {exc}")
+                to_launch = []
+            launcher = f"'{DCM2NIIX_WRAPPER_NAME}', wrapper {wrapper_id}" if to_launch else launcher
         if to_launch and not args.launch:
             tally["would"] += waiting
-            out(f"Would launch {waiting} ('{DCM2NIIX_WRAPPER_NAME}', wrapper {wrapper_id}).")
+            out(f"Would launch {waiting} ({launcher}).")
             to_launch = []
     for project, ready, before in to_launch:
         try:
-            bulk_id, refused = bulk_launch(project.ID, wrapper_id, ready, headers)
+            if on_snowflake:
+                assert converter is not None
+                bulk_id, refused = snowflake_launch(project, ready, converter)
+            else:
+                bulk_id, refused = bulk_launch(project.ID, wrapper_id, ready, headers)
         except Exception as exc:
             tally["failed"] += len(ready)
             out(f"{project.ID}: launching {len(ready)} FAILED: {exc}")
             continue
         for uri, message in refused.items():
-            out(f"{project.ID}: XNAT did not queue {uri}: {message}")
+            out(f"{project.ID}: {'the converter refused' if on_snowflake else 'XNAT did not queue'} {uri}: {message}")
         queued = [s for s in ready if s.uri not in refused]
         tally["failed"] += len(ready) - len(queued)
         launched += [(project.ID, s, before[s.uri]) for s in queued]
@@ -448,7 +585,13 @@ def run(
 
     states = Counter({NOT_FOLLOWED: len(launched)})
     if launched and args.wait:
-        states = _follow(launched, args.wait, headers, out, sleep, clock)
+        if on_snowflake:
+            assert converter is not None
+            states = snowflake_follow(
+                launched, {p.ID: p for p in selected}, args.wait, headers, converter, out, sleep, clock
+            )
+        else:
+            states = _follow(launched, args.wait, headers, out, sleep, clock)
     summary = f"Projects: {len(selected)}. Scans without NIfTI: {tally['missing']}. "
     if args.launch:
         summary += f"Launched: {len(launched)}" + "".join(f", {n} {state}" for state, n in states.items() if n) + ". "
