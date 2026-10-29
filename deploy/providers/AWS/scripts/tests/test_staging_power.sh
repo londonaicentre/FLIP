@@ -364,6 +364,13 @@ expect_rc 0 "an RDS mid-backup is left alone rather than failing the job"
 expect_not_called "stop-db-instance" "no stop is attempted on a backing-up instance"
 expect_stderr "nightly guard will retry" "the operator is told the guard will retry"
 
+up_world
+stag_env
+export STUB_RDS_STATUS="None"
+run stop
+expect_rc 0 "an absent RDS is not a failure"
+expect_not_called "stop-db-instance" "no stop is attempted on an absent RDS"
+
 # A failed mutating call must fail the job: a stop that half worked and reported
 # green is how an estate stays up while everyone believes it is down.
 up_world
@@ -426,6 +433,16 @@ expect_rc 0 "start-data succeeds"
 expect_called "rds start-db-instance" "start-data starts RDS"
 expect_called "ec2 start-instances" "start-data starts the hub host"
 expect_not_called "update-service" "start-data leaves the ECS counts alone"
+
+# A torn-down estate has no RDS yet. The apply after start-data creates it, so a
+# missing instance must not fail start-data and skip that apply.
+down_world
+stag_env
+export STUB_RDS_STATUS="None" WAIT_SECONDS=2
+run start-data
+expect_rc 0 "start-data succeeds when RDS does not exist yet"
+expect_not_called "start-db-instance" "an absent RDS is not started"
+unset WAIT_SECONDS
 
 down_world
 stag_env

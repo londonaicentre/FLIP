@@ -250,9 +250,11 @@ hub_instance_state() {
         tr -d '[:space:]'
 }
 
+# Status of the instance, or "None" when it does not exist yet: the filter answers an
+# absent instance with an empty list, where --db-instance-identifier is an error.
 rds_status() {
     describe_or_die "the RDS instance ${RDS_INSTANCE_ID}" \
-        aws_ro rds describe-db-instances --db-instance-identifier "${RDS_INSTANCE_ID}" \
+        aws_ro rds describe-db-instances --filters "Name=db-instance-id,Values=${RDS_INSTANCE_ID}" \
         --query 'DBInstances[0].DBInstanceStatus' --output text |
         tr -d '[:space:]'
 }
@@ -331,10 +333,8 @@ do_stop() {
     status="$(rds_status)"
     case "${status}" in
     None)
-        warn "${RDS_INSTANCE_ID} has no status, leaving it alone."
-        STOP_ROWS+=("\`${RDS_INSTANCE_ID}\` (RDS)|❌ no status reported, left alone")
-        STOP_RDS_LEFT_UP=true
-        failures=$((failures + 1))
+        log "   not present, nothing to stop."
+        STOP_ROWS+=("\`${RDS_INSTANCE_ID}\` (RDS)|not present")
         ;;
     stopped | stopping)
         log "   already ${status}."
@@ -480,14 +480,15 @@ start_ec2_now() {
 }
 
 start_data() {
-    local status instance_id state id
+    local status instance_id state id rds_absent=false
 
     log ""
     log ">> Starting RDS ${RDS_INSTANCE_ID}"
     status="$(rds_status)"
     case "${status}" in
     None)
-        die "${RDS_INSTANCE_ID} reports no status; nothing here can start it."
+        log "   not present yet, the apply creates it."
+        rds_absent=true
         ;;
     available) log "   already available." ;;
     stopped)
@@ -556,6 +557,7 @@ start_data() {
         log "   DRY RUN: skipping the wait for RDS."
         return 0
     fi
+    [[ "${rds_absent}" == "false" ]] || return 0
 
     log ""
     log ">> Waiting for RDS to become available (up to ${WAIT_SECONDS}s)"
