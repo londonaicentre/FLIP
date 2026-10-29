@@ -154,9 +154,9 @@ def test_secrets_are_altered_not_replaced(kit: dict) -> None:
     assert sync.absent_kit_entries(kit) == []
     joined = "\n".join(statements)
     assert "CREATE OR REPLACE SECRET" not in joined
-    assert joined.count("CREATE SECRET IF NOT EXISTS") == len(SENTINELS)
-    assert joined.count("ALTER SECRET") == len(SENTINELS)
-    assert joined.count("GRANT READ ON SECRET") == len(SENTINELS)
+    assert joined.count("CREATE SECRET IF NOT EXISTS") == len(sync.SECRETS)
+    assert joined.count("ALTER SECRET") == len(sync.SECRETS)
+    assert joined.count("GRANT READ ON SECRET") == len(sync.SECRETS)
     assert "GRANT WRITE" not in joined
 
 
@@ -185,7 +185,7 @@ def test_a_kit_without_a_value_leaves_that_secret_alone(kit: dict) -> None:
     partial = dict(kit)
     partial["ORTHANC_PASSWORD"] = ""
     statements = sync.secret_statements(sync.Names(CODE), partial)
-    assert sync.absent_kit_entries(partial) == ["ORTHANC_PASSWORD"]
+    assert sync.absent_kit_entries(partial) == ["ORTHANC_PASSWORD", "ORTHANC_REGISTERED_USERS"]
     assert "ORTHANC_PASSWORD" not in "\n".join(statements)
 
 
@@ -209,6 +209,7 @@ def test_redacted_statements_never_hold_a_value(kit: dict) -> None:
     nasty = dict(kit, AES_KEY_BASE64="we'ird\\value")
     present = [e for e in sync.SECRETS if e not in sync.absent_kit_entries(nasty)]
     redacted = "\n".join(sync.redacted_statements(sync.Names(CODE), present))
+    nasty = sync.with_derived_secrets(nasty, sync.is_placeholder)
     for value in (nasty[var] for var in sync.SECRET_KIT_VAR.values()):
         assert value not in redacted
     assert "we\\'ird" not in redacted
@@ -228,8 +229,9 @@ def test_a_failed_snow_call_does_not_echo_its_output(tmp_path: Path, kit: dict) 
     else:
         raise AssertionError("a failing snow call must raise")
     assert "exit 3" in message
+    derived = sync.with_derived_secrets(kit, sync.is_placeholder)
     for var in sync.SECRET_KIT_VAR.values():
-        assert kit[var] not in message
+        assert derived[var] not in message
 
 
 def test_fl_kit_is_pushed_under_its_net_prefix(fake_snow, kit_file: Path, tmp_path: Path) -> None:
@@ -273,3 +275,17 @@ def test_a_placeholder_kit_is_refused_before_anything_runs(fake_snow, tmp_path: 
     result = run_sync(fake_snow, unregistered, tmp_path)
     assert result.returncode == 1
     assert not fake_snow[1].exists()
+
+
+def test_orthanc_users_are_composed_from_the_kit() -> None:
+    """Orthanc's entrypoint takes one JSON user map; a spec can only inject a secret whole."""
+    kit = {"ORTHANC_USERNAME": "flip", "ORTHANC_PASSWORD": "s3cret-value"}  # pragma: allowlist secret
+    derived = sync.with_derived_secrets(kit, sync.is_placeholder)
+    assert json.loads(derived["ORTHANC_REGISTERED_USERS"]) == {"flip": "s3cret-value"}  # pragma: allowlist secret
+    assert "ORTHANC_REGISTERED_USERS" not in sync.with_derived_secrets({"ORTHANC_PASSWORD": ""}, sync.is_placeholder)
+
+
+def test_an_unset_orthanc_password_leaves_the_user_map_absent(kit: dict) -> None:
+    partial = dict(kit)
+    partial["ORTHANC_PASSWORD"] = ""
+    assert {"ORTHANC_PASSWORD", "ORTHANC_REGISTERED_USERS"} <= set(sync.absent_kit_entries(partial))
