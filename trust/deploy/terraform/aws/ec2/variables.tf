@@ -98,7 +98,7 @@ variable "fl_server_ports" {
 }
 
 variable "ssm_endpoints" {
-  description = "Create interface endpoints for SSM (ssm, ssmmessages, ec2messages, ~$24/month per AZ) in the node's VPC. Needed only on a subnet with no internet route to SSM."
+  description = "Create interface endpoints for SSM (ssm, ssmmessages, ec2messages, ~$24/month per AZ) in the node's VPC. Needed only on a subnet with no internet route to SSM. Covers Session Manager only: CloudWatch, the S3 kit and vocabulary, and the rest of the node's egress still need the site's own route."
   type        = bool
   default     = false
 }

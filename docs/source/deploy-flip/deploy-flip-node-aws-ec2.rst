@@ -1,3 +1,14 @@
+..  Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
 .. _deploy-flip-node-aws-ec2:
 
 #############################
@@ -105,7 +116,8 @@ firewall narrows that to these names.
      - 443
      - access, logs and metrics; the CloudWatch agent package at provisioning; the kit and vocabulary
        when they come from a bucket. On a subnet with no internet route to SSM, set ``SSM_ENDPOINTS=true``
-       for interface endpoints (~$24/month per AZ)
+       for interface endpoints (~$24/month per AZ). They cover Session Manager only: CloudWatch, S3 and every
+       other row here still need the site's own route
 
 Neither row has been measured behind a firewall yet.
 
@@ -202,8 +214,9 @@ Operate and remove
   live node.
 - ``make stage-kit`` re-stages the FL kit after a re-registration; ``make seed`` re-seeds after a data
   version bump (the stack must be stopped).
-- ``make destroy KIT=… HUB=…`` removes the node and, in own-VPC mode, its network. Deregister the trust on
-  the hub first.
+- ``make destroy KIT=… HUB=…`` removes the node with its root volume, and so the trust's data, and in
+  own-VPC mode its network. It names the target account and asks for a typed yes first. Deregister the
+  trust on the hub first.
 
 *************
 Not yet here

@@ -113,6 +113,23 @@ def test_provision_closes_the_shared_ssh_connection(kit):
     assert "ssh -O exit flip-stag-test" in make("provision", kit).stdout
 
 
+def test_destroy_names_the_account_and_stops_without_a_typed_yes(kit, tmp_path):
+    """The root volume holds the trust's data, so destroy names the account before Terraform runs."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "aws").write_text("#!/bin/sh\necho 123456789012\n")
+    (bin_dir / "terraform").write_text(f"#!/bin/sh\ntouch {tmp_path}/terraform-ran\n")
+    for tool in bin_dir.iterdir():
+        tool.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    args = ["make", "--no-print-directory", "-C", str(ROOT), "destroy", "KIT=TEST", "HUB=stag", f"KIT_FILE={kit}"]
+    result = subprocess.run(args, input="no\n", capture_output=True, text=True, env=env, timeout=60)
+    assert result.returncode != 0
+    assert "Target account: 123456789012" in result.stdout
+    assert "cannot be recovered" in result.stdout
+    assert not (tmp_path / "terraform-ran").exists()
+
+
 def test_deploy_only_tolerates_an_existing_swarm(kit):
     out = make("deploy", kit).stdout
     assert "already part of a swarm" in out

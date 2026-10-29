@@ -260,6 +260,9 @@ def _render_generated_figures(app: Sphinx) -> None:
             SKIP_DIAGRAMS_ENV,
         )
         return
+    # Each tree checks its own stems are unique; all render into one directory, so a name two trees share would
+    # silently swap a figure.
+    rendered: set[Path] = set()
     for script in DIAGRAM_SCRIPTS:
         render = _load_diagram_script(script).render
         try:
@@ -270,6 +273,9 @@ def _render_generated_figures(app: Sphinx) -> None:
                 f"`apt-get install graphviz`, or set {SKIP_DIAGRAMS_ENV}=1 for a text-only build."
             ) from exc
         for path in outputs:
+            if path in rendered:
+                raise SphinxError(f"{script.name} renders {path.name}, which another diagram script already wrote")
+            rendered.add(path)
             logger.info("rendered %s", path.relative_to(REPO_ROOT))
 
 
