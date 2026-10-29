@@ -143,8 +143,6 @@ variable "managed_role_names" {
     "ecs-fl-server-task-role",
     # rds_proxy.tf
     "flip-rds-proxy-role",
-    # security.tf
-    "flip-sg-drift-lambda-role",
     # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
     "ec2-role",
     "trust-ec2-role",
@@ -196,7 +194,7 @@ variable "create_permissions_boundary" {
 
 # The AWS services an apply may call, as IAM service prefixes; each becomes
 # `<prefix>:*` in the apply role's inline policy, limited to this region plus
-# us-east-1 (CloudFront's certificate and WAF live there). The list is the FLIP
+# us-east-1 (CloudFront's control plane lives there). The list is the FLIP
 # root's own, derived from the resource types it declares, and
 # tests/test_terraform_ci_bootstrap.py holds the two equal in both directions: a
 # FLIP change that starts using a new service fails CI until the service is added
@@ -209,15 +207,12 @@ variable "apply_service_prefixes" {
   default = [
     "acm",
     "cloudfront",
-    "cloudwatch",
     "cognito-idp",
     "ec2",
     "ecs",
     "elasticfilesystem",
     "elasticloadbalancing",
-    "events",
     "kms",
-    "lambda",
     "logs",
     "rds",
     "route53",
@@ -225,10 +220,7 @@ variable "apply_service_prefixes" {
     "secretsmanager",
     "servicediscovery",
     "ses",
-    "sns",
-    "sqs",
     "ssm",
-    "wafv2",
   ]
 
   validation {
@@ -277,6 +269,26 @@ variable "apply_role_name" {
   description = "Name of the apply role."
   type        = string
   default     = "AICentre-FLIPTerraformApplyRole"
+}
+
+# The UI-publish role (FLIP#1186). Off unless the bucket is named, so callers
+# that predate it are unchanged.
+variable "ui_bucket_name" {
+  description = "Name of the flip-ui bucket (the FLIP root's FLIP_UI_BUCKET_NAME). Setting it creates the UI-publish role, scoped to this bucket; empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "ui_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the UI-publish role."
+  type        = string
+  default     = "publish_ui.yml"
+}
+
+variable "ui_publish_role_name" {
+  description = "Name of the UI-publish role."
+  type        = string
+  default     = "AICentre-FLIPUiPublishRole"
 }
 
 variable "manage_state_bucket" {

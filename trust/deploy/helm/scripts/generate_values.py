@@ -26,6 +26,7 @@ No third-party dependencies (stdlib only).
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -103,6 +104,7 @@ CHART_KEY_SLOTS = (
     ("OMOP_POSTGRES_PASSWORD", "omop-postgres-password"),  # pragma: allowlist secret
     ("DATA_ACCESS_POSTGRES_PASSWORD", "data-access-postgres-password"),  # pragma: allowlist secret
     ("ORTHANC_REGISTERED_USERS", "orthanc-registered-users"),
+    ("XNAT_ADMIN_INITIAL_PASSWORD", "xnat-admin-initial-password"),  # pragma: allowlist secret
     ("XNAT_ADMIN_PASSWORD", "xnat-admin-password"),  # pragma: allowlist secret
     ("XNAT_SERVICE_USER", "xnat-service-user"),
     ("XNAT_SERVICE_PASSWORD", "xnat-service-password"),  # pragma: allowlist secret
@@ -166,6 +168,11 @@ def build_values(env: dict[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
         if env_var not in env or not env[env_var]:
             continue
         secrets[secret_key] = env[env_var]
+    # A kit carries Orthanc's one user as ORTHANC_USERNAME/ORTHANC_PASSWORD; Compose builds the
+    # same map from them (trust/deploy/compose_trust.*.yml).
+    user, password = env.get("ORTHANC_USERNAME"), env.get("ORTHANC_PASSWORD")
+    if "orthanc-registered-users" not in secrets and user and password:
+        secrets["orthanc-registered-users"] = json.dumps({user: password})
     return overrides, secrets
 
 

@@ -12,7 +12,7 @@
 #
 # Generates runtime config for flip-ui. Reads env vars from the shell
 # (populated by docker-compose in local dev, or by the deploy Makefile
-# via .env.stag / .env.production for make deploy-ui) and writes JS to
+# via .env.stag / .env.prod for make deploy-ui) and writes JS to
 # stdout. Consumed by public/js/window.js (local dev, via predev npm
 # hook) and dist/js/window.js (deploys, via make deploy-ui).
 
@@ -63,7 +63,7 @@ if [ "${RAW_AUTH_BACKEND}" = "cognito" ]; then
   [ -z "${RAW_CLIENT_ID}" ]    && missing="${missing} AWS_COGNITO_APP_CLIENT_ID"
   if [ -n "${missing}" ]; then
     echo "generate-window-js: ERROR — required Cognito env var(s) not set:${missing}" >&2
-    echo "  Set them in .env.development (local dev) or .env.stag / .env.production" >&2
+    echo "  Set them in .env.development (local dev) or .env.stag / .env.prod" >&2
     echo "  (make deploy-ui). See .env.development.example for the full list." >&2
     exit 1
   fi

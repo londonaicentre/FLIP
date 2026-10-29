@@ -1,0 +1,24 @@
+# The frozen autoencoder in pretrained_autoencoder.pt: the architecture every client builds, and the
+# fingerprint of its weights. Written by process_tools/extract_autoencoder.py; regenerate, don't edit.
+autoencoder:
+  spatial_dims: 3
+  in_channels: 1
+  out_channels: 1
+  num_res_blocks:
+  - 2
+  - 2
+  - 2
+  channels:
+  - 64
+  - 128
+  - 256
+  attention_levels:
+  - false
+  - false
+  - false
+  latent_channels: 8
+  norm_num_groups: 32
+  norm_eps: 1.0e-06
+  with_encoder_nonlocal_attn: false
+  with_decoder_nonlocal_attn: false
+autoencoder_sha256: b116587ba5f98b011c1450180af827876b10370d924d453a27a87968dff70221  # pragma: allowlist secret

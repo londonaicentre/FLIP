@@ -14,9 +14,8 @@
 # limitations under the License.
 """Black-box tests for scripts/distribute_trust_kits.py.
 
-Pins the contract the old distribute-trust-kits.sh provided (array of kit JSON
-on stdin → per-trust kit files), plus the new ``--target PATH`` single-kit mode
-that deploy/providers/AWS/scripts/register-trusts.sh uses.
+Pins the ``--target PATH`` contract (one kit JSON on stdin → that kit file) that
+the dev register-trust pipe and deploy/providers/AWS/scripts/register-trusts.sh use.
 
 Usage:
     uv run --no-config scripts/tests/test_distribute_trust_kits.py
@@ -86,51 +85,35 @@ def _full_kit() -> dict:
     }
 
 
-def test_array_mode_writes_kit() -> None:
-    print("▶ array mode: new registration writes creds + hub-shared to trust/.env.<slot>")
+def test_target_is_required() -> None:
+    print("▶ no --target: refused (there is no slot-named default path any more)")
     root = _temp_repo()
     try:
         res = _run(root, json.dumps([_full_kit()]))
-        kit = root / "trust" / ".env.Trust_1"
-        _assert(res.returncode == 0, "exit 0", res.stderr)
-        _assert(kit.exists(), "kit file created at slot path")
-        content = kit.read_text() if kit.exists() else ""
-        _assert("TRUST_API_KEY=plain-api-1" in content, "TRUST_API_KEY written")
-        _assert("AES_KEY_BASE64=Zm9vYmFy" in content, "hub-shared AES key written")
-        _assert("FL_BACKEND=flower" in content, "hub-shared FL_BACKEND written")
+        _assert(res.returncode != 0, "non-zero exit without --target", res.stdout)
+        _assert(not list((root / "trust").iterdir()), "no kit file written")
     finally:
         shutil.rmtree(root)
 
 
-def test_array_mode_empty_is_noop() -> None:
-    print("▶ array mode: empty array is a no-op (exit 0, no file)")
+def test_target_mode_empty_is_noop() -> None:
+    print("▶ --target mode: empty array is a no-op (exit 0, no file)")
     root = _temp_repo()
     try:
-        res = _run(root, "[]")
+        target = root / "trust" / ".env.DEMO.prod"
+        res = _run(root, "[]", "--target", str(target))
         _assert(res.returncode == 0, "exit 0 on empty array", res.stderr)
-        _assert(not (root / "trust" / ".env.Trust_1").exists(), "no kit file written")
+        _assert(not target.exists(), "no kit file written")
     finally:
         shutil.rmtree(root)
 
 
-def test_array_mode_tolerates_leading_noise() -> None:
-    print("▶ array mode: tolerates leading build/log noise before the JSON array")
+def test_target_mode_skip_preserves_creds() -> None:
+    print("▶ --target mode: skip-path kit (no creds) preserves existing creds, refreshes hub-shared")
     root = _temp_repo()
     try:
-        noisy = "Some build log line\nanother line\n" + json.dumps([_full_kit()])
-        res = _run(root, noisy)
-        kit = root / "trust" / ".env.Trust_1"
-        _assert(res.returncode == 0, "exit 0", res.stderr)
-        _assert(kit.exists() and "TRUST_API_KEY=plain-api-1" in kit.read_text(), "kit written despite noise")
-    finally:
-        shutil.rmtree(root)
-
-
-def test_array_mode_skip_preserves_creds() -> None:
-    print("▶ array mode: skip-path kit (no creds) preserves existing creds, refreshes hub-shared")
-    root = _temp_repo()
-    try:
-        (root / "trust" / ".env.Trust_1").write_text("TRUST_API_KEY=preserved\n")
+        target = root / "trust" / ".env.DEMO.prod"
+        target.write_text("TRUST_API_KEY=preserved\n")
         skip = {
             "trust_id": "abc",
             "trust_name": "GSTT",
@@ -138,21 +121,23 @@ def test_array_mode_skip_preserves_creds() -> None:
             "fl_kit_slot_number": 1,
             "hub_shared": {"AES_KEY_BASE64": "Zm9vYmFy"},
         }
-        _run(root, json.dumps([skip]))
-        content = (root / "trust" / ".env.Trust_1").read_text()
+        _run(root, json.dumps(skip), "--target", str(target))
+        content = target.read_text()
         _assert("TRUST_API_KEY=preserved" in content, "existing creds preserved")
         _assert("AES_KEY_BASE64=Zm9vYmFy" in content, "hub-shared upserted on skip path")
     finally:
         shutil.rmtree(root)
 
 
-def test_array_mode_seeds_from_example() -> None:
-    print("▶ array mode: seeds host-local profile from trust/.env.<slot>.example")
+def test_target_mode_seeds_from_example() -> None:
+    print("▶ --target mode: seeds host-local profile from --example on first write")
     root = _temp_repo()
     try:
-        (root / "trust" / ".env.Trust_1.example").write_text("# host-local\nOMOP_DB_PORT=5436\n")
-        _run(root, json.dumps([_full_kit()]))
-        content = (root / "trust" / ".env.Trust_1").read_text()
+        target = root / "trust" / ".env.DEMO.prod"
+        example = root / "trust" / ".env.DEMO.prod.example"
+        example.write_text("# host-local\nOMOP_DB_PORT=5436\n")
+        _run(root, json.dumps(_full_kit()), "--target", str(target), "--example", str(example))
+        content = target.read_text()
         _assert("OMOP_DB_PORT=5436" in content, "host-local seeded from example")
         _assert("TRUST_API_KEY=plain-api-1" in content, "creds appended over seeded example")
     finally:
@@ -163,7 +148,7 @@ def test_target_mode_writes_single_kit() -> None:
     print("▶ --target mode: writes one kit on stdin to the given path")
     root = _temp_repo()
     try:
-        target = root / "trust" / ".env.DEMO.production"
+        target = root / "trust" / ".env.DEMO.prod"
         res = _run(root, json.dumps(_full_kit()), "--target", str(target))
         _assert(res.returncode == 0, "exit 0", res.stderr)
         _assert(target.exists(), "kit written to --target path")
@@ -197,11 +182,10 @@ def test_target_mode_dev_comments_hub_shared() -> None:
 def main() -> None:
     if not DISTRIBUTE.is_file():
         sys.exit(f"❌ {DISTRIBUTE} not found")
-    test_array_mode_writes_kit()
-    test_array_mode_empty_is_noop()
-    test_array_mode_tolerates_leading_noise()
-    test_array_mode_skip_preserves_creds()
-    test_array_mode_seeds_from_example()
+    test_target_is_required()
+    test_target_mode_empty_is_noop()
+    test_target_mode_skip_preserves_creds()
+    test_target_mode_seeds_from_example()
     test_target_mode_writes_single_kit()
     test_target_mode_dev_comments_hub_shared()
     print("—")

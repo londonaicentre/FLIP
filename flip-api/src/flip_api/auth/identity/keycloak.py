@@ -381,6 +381,9 @@ class KeycloakIdentityProvider(IdentityProvider):
             raise IdentityProviderError("Failed to delete user")
         logger.info(f"Successfully deleted user: {username}")
 
+    def reset_password(self, username: str) -> None:
+        self._invite(self._user_id_for(username), username)
+
     # --- MFA -------------------------------------------------------------------------------
 
     def _otp_credentials(self, user_id: str) -> list[dict[str, Any]]:

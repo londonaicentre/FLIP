@@ -103,7 +103,8 @@ if [ "${FL_BACKEND}" = nvflare ] && [ -n "${FL_API_KEY_GID:-}" ]; then
             absent="${absent} ${key}"
             continue
         fi
-        read -r gid mode < <(stat -c '%g %a' "${key}")
+        # GNU stat spells it -c '%g %a', BSD/macOS stat -f '%g %Lp'.
+        read -r gid mode < <(stat -c '%g %a' "${key}" 2>/dev/null || stat -f '%g %Lp' "${key}")
         if [ "${gid}" != "${FL_API_KEY_GID}" ] || [ $(( 8#${mode} & 040 )) -eq 0 ]; then
             unreadable="${unreadable} ${key}"
         fi

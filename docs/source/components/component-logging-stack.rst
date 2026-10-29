@@ -199,7 +199,7 @@ Docker Compose services
 =======================
 
 The stack is part of the Trust's Compose files: ``trust/deploy/compose_trust.development.yml`` (configurable
-ports) and ``trust/deploy/compose_trust.production.yml`` (persistent data, automatic restart). It adds three
+ports) and ``trust/deploy/compose_trust.prod.yml`` (persistent data, automatic restart). It adds three
 services, with the same images in the Helm chart (``observability.enabled`` turns all three off):
 
 .. list-table::

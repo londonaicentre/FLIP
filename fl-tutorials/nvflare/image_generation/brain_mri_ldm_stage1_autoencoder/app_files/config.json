@@ -1,0 +1,66 @@
+{
+    "job_type": "standard",
+    "SERVER_CHECKPOINT": "medicalnet_perceptual.pt",
+    "AGGREGATE_ONLY_REGEX": "^(autoencoder|discriminator)\\.",
+    "GLOBAL_ROUNDS": 2,
+    "LOCAL_ROUNDS": 3,
+    "LR_START": 0.0001,
+    "VAL_SPLIT": 0.2,
+    "BATCH_SIZE": 1,
+    "SAVE_DEBUG_SAMPLES": false,
+    "DEBUG_PLOT_EVERY": 100,
+    "MODALITIES": [
+        "FLAIR",
+        "T1w",
+        "T1Gd",
+        "T2w"
+    ],
+    "W_RECONSTRUCTION": 1.0,
+    "W_PERCEPTUAL": 1.0,
+    "W_KL": 1e-08,
+    "W_GAN": 0.1,
+    "spatial_shape": [
+        96,
+        112,
+        80
+    ],
+    "voxel_spacing": [
+        2.0,
+        2.0,
+        2.0
+    ],
+    "net_config": {
+        "spatial_dims": 3,
+        "autoencoder": {
+            "in_channels": 1,
+            "out_channels": 1,
+            "num_res_blocks": [
+                2,
+                2,
+                2
+            ],
+            "channels": [
+                64,
+                128,
+                256
+            ],
+            "attention_levels": [
+                false,
+                false,
+                false
+            ],
+            "latent_channels": 8,
+            "norm_num_groups": 32,
+            "norm_eps": 1e-06,
+            "with_encoder_nonlocal_attn": false,
+            "with_decoder_nonlocal_attn": false
+        },
+        "discriminator": {
+            "spatial_dims": 3,
+            "num_layers_d": 4,
+            "channels": 32,
+            "in_channels": 1,
+            "out_channels": 1
+        }
+    }
+}

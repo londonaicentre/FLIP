@@ -92,12 +92,12 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
 **How it works:**
 
 - `make up` / `make down` use `docker stack deploy` / `docker stack rm` under the hood
-- The stack definition uses layered compose files, selected by the `PROD` variable:
+- The stack definition uses layered compose files, selected by the `HUB` variable:
 
   | Environment | Files |
   | --- | --- |
   | Development (default) | `docker-compose-stack.yml` + `docker-compose-stack.development.yml` |
-  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.production.yml` |
+  | Staging / Production | `docker-compose-stack.yml` + `docker-compose-stack.prod.yml` |
 
   The base file defines the three services (`xnat-web`, `xnat-db`, `xnat-nginx`). The development overlay adds host bind-mounts for hot-reload and resource limits sized for dev machines. The production overlay mounts persistent data volumes under `/opt/flip/xnat/`.
 - Two XNAT instances are deployed as separate Swarm stacks (`xnat1`, `xnat2`), one per trust
@@ -106,7 +106,7 @@ XNAT is deployed using Docker Swarm (both locally and on EC2). This is because S
   it — in development *and* in staging/production (local Docker context or remote-over-ssh alike).
   In development the reset runs without `sudo` when the invoking user is the container uid (1001)
   and already owns every directory in the tree; any other developer, or a root-created directory,
-  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> PROD=<env>` (driven
+  gets the `sudo` prompt. Never use it to move a live site to a release. `make upgrade-xnat KIT=<CODE> HUB=<env>` (driven
   by `make -C trust upgrade-trust`) keeps the data dir: it takes a `pg_dumpall` of `xnat-db` into
   `$XNAT_DATA_DIR/backups/`, refuses to proceed unless the `xnat-data/` tree is owned by the
   container uid (1001 — an archive written by a pre-hardening root `xnat-web` needs one
@@ -132,7 +132,23 @@ make build
 ```
 
 This downloads the XNAT WAR and plugins from their upstream URLs in `artifacts.manifest` (or copies them from
-`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${DOCKER_TAG}`.
+`ARTIFACTS_DIR=<dir>`) and checks their SHA-256, then builds all three images (`xnat-web`, `xnat-db`, `xnat-nginx`) tagged as `${DOCKER_REGISTRY}xnat-<service>:${XNAT_TAG}`
+(`XNAT_TAG` defaults to `DOCKER_TAG`).
+
+`make up BUILD=true` (from the repo root) runs this build before deploying each trust's stack, at `XNAT_TAG=dev`. The tag
+must be one the registry does not have: the swarm agent re-pulls a tag on every deploy and keeps the local image only
+when that pull fails, so a local `:stag` build would be replaced by the registry's `:stag`. Tags are daemon-wide, so a
+second stack on the same host (a release check) passes its own on the command line, e.g. `XNAT_TAG=rel0130`; an
+`XNAT_TAG` in the kit is a pull pin and is ignored under `BUILD=true`.
+
+On `main`/`develop` pushes, the database and nginx image workflows watch only their own
+`postgres/` and `nginx/` build contexts, plus their workflow files. The web workflow keeps the
+broad `trust/xnat/` filter except for tool-only edits under `dcm2niix/`. A dcm2niix version bump
+still rebuilds the web image because it also updates the baked-in
+`xnat/config/dcm2niix_command.json`. Release tags rebuild every image; a manual dispatch builds
+its own image whatever changed. The three XNAT images share one `XNAT_TAG` pin, but their
+path-filtered builds no longer share `sha-` tags. When moving a site to a `sha-` tag, set
+`XNAT_TAG` to a release tag (or `stag`/`prod`) published for all three images.
 
 The DICOM→NIfTI converter the Container Service launches is a fourth, standalone image —
 `ghcr.io/londonaicentre/xnat-dcm2niix` (built from [`dcm2niix/`](dcm2niix/), published by its own
@@ -154,10 +170,16 @@ refuses a stale registration is the one listed there) and re-run `configure-dcm2
 `xnat-init` job on Kubernetes, if the image named there is not the current pin. Both update the
 existing command in place, so its ids, and every project's trigger, survive the move (FLIP#1451).
 
-#### Operator action: the GHCR package must be public
+MONAI Label trusts also run a fifth image, `ghcr.io/londonaicentre/xnat-export-mask` (built from
+[`export-mask/`](export-mask/), published by `docker_build_xnat_export_mask.yml`): the `export_mask`
+command that turns an OHIF DICOM-SEG assessor into NIfTI. Its version tag lives in the Dockerfile's
+`EXPORT_MASK_VERSION`, and `tests/test_export_mask_image_pin.py` holds
+[`xnat/config/export_mask_command.json`](xnat/config/export_mask_command.json) to it.
 
-**After the first publish, and again after any delete-and-recreate of the package, set
-`ghcr.io/londonaicentre/xnat-dcm2niix` to public.** New org packages default to **private**, and
+#### Operator action: the GHCR packages must be public
+
+**After the first publish, and again after any delete-and-recreate of a package, set
+`ghcr.io/londonaicentre/xnat-dcm2niix` (and `xnat-export-mask`) to public.** New org packages default to **private**, and
 `GITHUB_TOKEN` cannot change a package's visibility, so the publish workflow cannot do this for you:
 
 > github.com/orgs/londonaicentre/packages/container/xnat-dcm2niix/settings → Danger Zone →
@@ -205,7 +227,7 @@ brought into line with the kit (see [PACS configuration](#pacs-configuration)).
 
 When `make` configures XNAT (the `xnat-configure` recipe), that wait also checks XNAT loaded every plugin its jars declare (`GET /xapi/plugins`; see `xnat/config/wait-for-xnat-plugins.sh`).
 
-In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
+In development (when `HUB` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
 > **Important — XNAT data volumes must be bind-mounted.**
 > XNAT's container service plugin executes Docker commands on the host. `xnat-web` does **not** mount
@@ -219,7 +241,7 @@ In development (when `PROD` is not set), `make up` also mounts the local `xnat/p
 > `trust/.env.example`, hence in anything `make new-trust` scaffolds; `./xnat-data-GSTT` /
 > `./xnat-data-KCH` in the dev examples) — a relative value resolves against `trust/xnat/`. Only
 > when the kit omits the key does `Makefile` fall back to a per-slot default derived from
-> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `PROD=stag|true`,
+> `TRUST_NUM` (= `FL_KIT_SLOT_NUMBER`): `/opt/flip/xnat-trust<N>` under `HUB=stag|prod`,
 > `./xnat-data-trust<N>` in development. See `docker-compose-stack.development.yml` for the full
 > volume configuration.
 
@@ -329,11 +351,8 @@ The XNAT WAR and plugins are third-party, public upstream downloads that FLIP do
   fails there, naming the prep step, and leaves the running stack untouched.
 - **Image builds** (`make build` and the CI workflow `docker_build_xnat_web.yml`) download the WAR and plugins the
   same way and bake them into the image.
-- **Stag, prod, EC2 and on-prem** stacks run the plugins baked into the image, so `make up` neither needs nor checks
-  the host cache there.
-- **Helm** downloads the same plugin URLs at pod start (`trust/deploy/helm/values.yaml` `xnat.web.plugins.urls`).
-  `tests/test_artifacts.py` fails if the chart and the manifest disagree, or if the WAR line is not the `.env`
-  version.
+- **Deployed trusts** (Compose on stag, prod, EC2 or on-prem, and Helm) run the plugins baked into the image, so
+  `make up` neither needs nor checks the host cache there.
 
 [`scripts/xnat_artifacts.sh`](scripts/xnat_artifacts.sh) does the work. `fetch` keeps every file whose checksum
 already matches, downloads the rest to a temporary name, verifies the checksum and only then moves the file into
@@ -377,7 +396,7 @@ applied.
 | DICOM Query-Retrieve Plugin     | 3.0.0                       | Yes       | None — 3.0.0 requires XNAT 1.10.0 or newer (DQR changelog). 3.1.0, built for 1.10.1, marks a C-MOVE that delivers no files `FAILED` instead of leaving it `ISSUED`, a change imaging-api reads, so it is not part of this fix |
 | Container Service Plugin        | 3.8.2 (JDK 8 build)         | Yes       | **Must upgrade** from 3.8.1 — its Kubernetes client cannot load on the 1.10.2.1 WAR (CS-1058). 3.8.2 changes only that client. 3.9.0, built for 1.10.1, is not needed |
 | Batch Launch Plugin             | 0.9.0 (JDK 8 build)         | Yes       | None — the matrix keeps BLP 0.9.0 for 1.10, and there is no later release |
-| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | None — 3.8.0 is the plugin's XNAT 1.10 release, and there is no later release |
+| OHIF Viewer Plugin              | 3.8.0 (`-fat` build)        | Yes       | None — 3.8.0 is the plugin's XNAT 1.10 release, and there is no later release; the optional MONAI Label server registers through it — see [MONAI Label](../README.md#monai-label-optional) |
 
 On 1.10.0 the move to 1.10 changed DQR (2.2.0 → 3.0.0, rebuilt on JDK 21 and `dcm4che5`, with a
 thread-leakage fix), Container Service (3.7.3 → 3.8.1, the only column the matrix ticks for 1.10.0)
@@ -413,14 +432,15 @@ account. The DQR Bitbucket repository also carries `2.3.2`/`2.4.0` for the JDK 8
 
 ### Adding or updating a plugin
 
+One change covers every platform: the manifest, then a new `xnat-web` image.
+
 1. Replace the plugin's line in [`artifacts.manifest`](artifacts.manifest) with the new upstream URL and its
    SHA-256 (`sha256sum <file>` on the downloaded jar). Bumping XNAT itself is the same edit on the `war` line,
    plus `XNAT_VERSION` in `.env`.
-2. Change the same URL in `trust/deploy/helm/values.yaml` (`xnat.web.plugins.urls`).
-3. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
+2. For a new plugin, add its id (the `id=` in the jar's `META-INF/xnat/*-plugin.properties`) to `XNAT_PLUGIN_IDS` in
    `trust/deploy/helm/check_status.py`; its test fails until you do.
-4. Update the plugin compatibility table above.
-5. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
+3. Update the plugin compatibility table above.
+4. Run `make -C trust prepare-artifacts` to refresh your dev cache. Merging rebuilds the image in CI.
 
 ## Importing data
 

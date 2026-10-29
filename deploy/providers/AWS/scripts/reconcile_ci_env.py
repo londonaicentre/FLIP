@@ -14,7 +14,7 @@
 
 The Terraform CI pipeline (FLIP#962) needs every ``TF_VAR_*`` input present as a
 GitHub environment secret or variable. The nominal source is the operator's
-``.env.stag`` / ``.env.production``, but those files live on laptops, drift, and
+``.env.stag`` / ``.env.prod``, but those files live on laptops, drift, and
 in at least one observed case were months stale — a copy that still named a
 renamed S3 bucket, which plans as ``must be replaced`` on a bucket carrying
 ``prevent_destroy``. Seeding GitHub from a stale file would bake that drift into
@@ -34,9 +34,14 @@ Secret values are written to the output file but never printed: the summary
 shows a truncated SHA-256 so two copies can be compared without either being
 disclosed.
 
+``--env prod|stag`` is required. ``--profile`` and ``--bucket`` default to AI Centre's
+LZA estates (profile ``lza-<env>``, state bucket ``flip-terraform-state-lza`` /
+``flip-terraform-state-lza-stag``); another estate passes its own.
+
 Usage:
-    scripts/reconcile_ci_env.py --env prod --profile prod --out ../../../.env.production
-    scripts/reconcile_ci_env.py --env stag --profile stag --compare ../../../.env.stag
+    scripts/reconcile_ci_env.py --env prod --out ../../../.env.prod
+    scripts/reconcile_ci_env.py --env stag --compare ../../../.env.stag
+    scripts/reconcile_ci_env.py --env prod --profile <profile> --bucket <state bucket> --compare ../../../.env.prod
 """
 
 from __future__ import annotations
@@ -87,8 +92,8 @@ class State:
     def __init__(self, doc: dict) -> None:
         self.doc = doc
 
-    def attrs(self, rtype: str, name: str) -> dict[str, Any]:
-        """Attributes of a managed resource's first instance, by type and name.
+    def attrs(self, rtype: str, name: str, mode: str = "managed") -> dict[str, Any]:
+        """Attributes of a resource's first instance, by type and name.
 
         `mode` matters: a `data` source and a `managed` resource can share a
         type and name (aws_ecs_task_definition.flip_api is both, by design —
@@ -98,42 +103,14 @@ class State:
         Args:
             rtype (str): Terraform resource type, e.g. `aws_ecs_task_definition`.
             name (str): Resource name, e.g. `flip_api`.
+            mode (str): `managed` (the default) or `data`.
 
         Returns:
             dict[str, Any]: The first instance's attributes, or `{}` when the resource
                 is absent from state or has no instances.
         """
         for r in self.doc.get("resources", []):
-            if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
-                instances = r.get("instances") or []
-                if instances:
-                    return instances[0].get("attributes") or {}
-        return {}
-
-    def instance_keys(self, rtype: str, name: str) -> list[str]:
-        """index_key of every instance — how a for_each map's keys are recovered."""
-        for r in self.doc.get("resources", []):
-            if r.get("mode") == "managed" and r.get("type") == rtype and r.get("name") == name:
-                return [i.get("index_key") for i in r.get("instances", []) if i.get("index_key") is not None]
-        return []
-
-    def data_attrs(self, rtype: str, name: str) -> dict[str, Any]:
-        """Attributes of a `data` source — the mirror of `attrs`.
-
-        Needed where the deployed value only exists as a lookup: the Ark+ demo
-        bucket is not Terraform-managed, so `data.aws_s3_bucket.demo_assets` is
-        the only record of the name that was passed in.
-
-        Args:
-            rtype (str): Terraform data source type, e.g. `aws_s3_bucket`.
-            name (str): Data source name, e.g. `demo_assets`.
-
-        Returns:
-            dict[str, Any]: The first instance's attributes, or `{}` when the data
-                source is absent from state or has no instances.
-        """
-        for r in self.doc.get("resources", []):
-            if r.get("mode") == "data" and r.get("type") == rtype and r.get("name") == name:
+            if r.get("mode") == mode and r.get("type") == rtype and r.get("name") == name:
                 instances = r.get("instances") or []
                 if instances:
                     return instances[0].get("attributes") or {}
@@ -201,6 +178,10 @@ class State:
                 return bool(r.get("instances"))
         return False
 
+    def output(self, name: str) -> str:
+        """A root output's value, or '' when state has none."""
+        return str((self.doc.get("outputs", {}).get(name) or {}).get("value") or "")
+
     def containers(self, task_family: str) -> list[dict]:
         raw = self.attrs("aws_ecs_task_definition", task_family).get("container_definitions")
         return json.loads(raw) if raw else []
@@ -214,6 +195,19 @@ class State:
 
 def env_of(container: dict) -> dict[str, str]:
     return {e["name"]: e["value"] for e in (container.get("environment") or [])}
+
+
+def networking_ingress_cidrs(st: State) -> str:
+    """The networking account's ingress CIDRs, as the HCL list the env file carries.
+
+    The internal NLB's rules admit them beside the VPC's own CIDR (fl_ingress_lza.tf),
+    so they are the rules' sources less that one; '' when state has either side missing.
+    """
+    vpc_cidr = st.attrs("aws_vpc", "lza", mode="data").get("cidr_block")
+    rule = st.module_attrs("module.fl_internal_nlb_security_group", "aws_security_group_rule", "ingress")
+    if not vpc_cidr or "cidr_blocks" not in rule:
+        return ""
+    return json.dumps([cidr for cidr in rule["cidr_blocks"] or [] if cidr != vpc_cidr])
 
 
 def first_port(container: dict) -> str:
@@ -294,6 +288,10 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
     return tag.partition("@")[0]
 
 
+# AI Centre's LZA estates' state buckets: the --bucket defaults.
+LZA_STATE_BUCKETS = {"prod": "flip-terraform-state-lza", "stag": "flip-terraform-state-lza-stag"}
+
+
 def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tuple[dict, dict]:
     """Return (values, sources) for every key the CI env file needs."""
     raw = subprocess.run(
@@ -350,33 +348,28 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         region,
     )
 
-    trust_ips = st.instance_keys("aws_security_group_rule", "local_trust_fl_server_nlb")
-    k8s_ips = st.instance_keys("aws_security_group_rule", "k8s_trust_fl_server_nlb")
     has_trust_ec2 = st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
+    # The OAC is named after the subdomain (cloudfront.tf); the Route 53 records once read
+    # for both subdomains never existed on an LZA estate.
+    oac_name = st.attrs("aws_cloudfront_origin_access_control", "flip_ui").get("name", "")
 
     v: dict[str, str] = {
         "AWS_REGION": region,
         "FLIP_TFSTATE_BUCKET_NAME": bucket,
         "AICENTRE_BUCKET_NAME": st.attrs("aws_s3_bucket", "aicentre_bucket").get("bucket", ""),
         "FLIP_UI_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_ui").get("bucket", ""),
-        # Two shapes, one key (FLIP#1199). On a legacy estate the demo bucket is
-        # not Terraform-managed (objects are staged by hand), so the `data`
-        # lookup is the only record of the name that was passed in. On an LZA
-        # estate Terraform creates it, and the name lives on the managed
-        # resource inside module.flip_demo_assets_bucket. Exactly one of the two
-        # exists in any given state, so the fallback cannot pick the wrong one —
-        # and reading only the data source would have recovered "" on LZA, which
-        # keys_expected_empty() treats as a failed recovery on prod.
-        "DEMO_ASSETS_BUCKET_NAME": (
-            st.data_attrs("aws_s3_bucket", "demo_assets").get("bucket", "")
-            or st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this").get("bucket", "")
+        # Terraform creates the demo bucket inside module.flip_demo_assets_bucket (FLIP#1199);
+        # the module has to be matched by name, since every flip_s3_bucket caller contributes
+        # an aws_s3_bucket.this.
+        "DEMO_ASSETS_BUCKET_NAME": st.module_attrs("module.flip_demo_assets_bucket", "aws_s3_bucket", "this").get(
+            "bucket", ""
         ),
         "FLIP_APP_BUNDLES_BUCKET_NAME": bucket_of("flip_app_bundles_bucket"),
         "FLIP_FL_RESULTS_BUCKET_NAME": bucket_of("flip_fl_results_bucket"),
         "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME": bucket_of("flip_model_files_uploads_bucket"),
         "SES_VERIFIED_EMAIL": st.attrs("aws_ses_email_identity", "flip_sender").get("email", ""),
-        "ALB_SUBDOMAIN": st.attrs("aws_route53_record", "alb").get("fqdn", ""),
-        "NLB_SUBDOMAIN": st.attrs("aws_route53_record", "fl_server_nlb").get("fqdn", ""),
+        "ALB_SUBDOMAIN": oac_name.removeprefix("flip-ui-") if oac_name.startswith("flip-ui-") else "",
+        "NLB_SUBDOMAIN": st.output("FlServerEndpoint"),
         "POSTGRES_DB": api_env.get("POSTGRES_DB", ""),
         "POSTGRES_USER": api_env.get("POSTGRES_USER", ""),
         "FL_SERVER_PORT": first_port(fl_server),
@@ -399,8 +392,13 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "INTERNAL_SERVICE_KEY_HASH": secret.get("internal_service_key_hash", ""),
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
         "DEPLOY_TRUST_EC2": "true" if has_trust_ec2 else "false",
-        "LOCAL_TRUST_PUBLIC_IPS": json.dumps(sorted(trust_ips)).replace('", "', '", "') if trust_ips else "[]",
-        "K8S_TRUST_PUBLIC_IPS": json.dumps(sorted(k8s_ips)) if k8s_ips else "[]",
+        # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
+        "ACCESS_LOGS_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_access_logs").get("bucket", ""),
+        "EFS_PROVISION_IMAGE": st.container("efs_provision", "provision-efs-certs").get("image", ""),
+        "LZA_VPC_NAME": (st.attrs("aws_vpc", "lza", mode="data").get("tags") or {}).get("Name", ""),
+        # certificate.tf creates the certificate exactly when manage_dns is true.
+        "MANAGE_DNS": "true" if st.attrs("aws_acm_certificate", "flip") else "false",
+        "NETWORKING_INGRESS_CIDRS": networking_ingress_cidrs(st),
     }
     # Which values did NOT come from state. Built by grouping rather than as
     # literal `"KEY": "..."` pairs: secret-scanning treats a quoted string beside
@@ -425,14 +423,12 @@ def keys_expected_empty(env: str) -> set[str]:
 
     ``DEMO_ASSETS_BUCKET_NAME`` is the asymmetric one, and getting it wrong is
     destructive rather than merely wrong. Empty is correct on **stag**, which
-    hosts no public Ark+ demo. On **prod** it gates four live resources plus the
-    ``/ark_demo/*`` CloudFront behaviour on a legacy estate, and the bucket
-    itself on an LZA one (``module.flip_demo_assets_bucket``, FLIP#1199) — where
-    an empty value plans a destroy that ``prevent_destroy`` turns into a failed
-    apply. Either way the gate is ``var.DEMO_ASSETS_BUCKET_NAME != ""``, so an
-    empty recovered value on prod means
+    hosts no public Ark+ demo. On **prod** it gates the bucket itself
+    (``module.flip_demo_assets_bucket``, FLIP#1199), where an empty value plans a
+    destroy that ``prevent_destroy`` turns into a failed apply. The gate is
+    ``var.DEMO_ASSETS_BUCKET_NAME != ""``, so an empty recovered value on prod means
     the lookup failed, not that there is no demo — and seeding the GitHub
-    environment from it would destroy the demo on the next apply. Treated as
+    environment from it would fail the next apply. Treated as
     not-recovered on prod, and omitted from ``--out`` rather than written blank,
     so ``setup-github-environments.sh`` reports it as required-but-absent instead
     of filing it under "optional, which is fine".
@@ -463,10 +459,13 @@ def read_env_file(path: str) -> dict[str, str]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--env", required=True, choices=["stag", "prod"])
-    ap.add_argument("--profile", help="AWS profile (default: same as --env)")
+    ap.add_argument("--env", required=True, choices=["stag", "prod"], help="the hub, as HUB=stag|prod")
+    ap.add_argument("--profile", help="AWS profile (default: lza-<env>)")
     ap.add_argument("--region", default="eu-west-2")
-    ap.add_argument("--bucket", help="state bucket (default: flip-terraform-state-<env>)")
+    ap.add_argument(
+        "--bucket",
+        help="state bucket (default: the LZA estate's, flip-terraform-state-lza / flip-terraform-state-lza-stag)",
+    )
     ap.add_argument("--cluster", default="flip-cluster")
     ap.add_argument("--out", help="write the recovered values here (mode 0600); refuses to overwrite")
     ap.add_argument(
@@ -478,7 +477,7 @@ def main() -> None:
     args = ap.parse_args()
 
     profile = args.profile or args.env
-    bucket = args.bucket or f"flip-terraform-state-{args.env}"
+    bucket = args.bucket or LZA_STATE_BUCKETS[args.env]
 
     print(f"🔎 Reading deployed configuration for '{args.env}' (profile {profile})…\n")
     values, sources = build(args.env, profile, args.region, bucket, args.cluster)

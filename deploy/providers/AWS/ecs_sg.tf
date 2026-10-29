@@ -109,28 +109,6 @@ resource "aws_security_group" "ecs_fl_server" {
   }
 }
 
-# Gated off with the NLB on LZA (FLIP#749): no NLB security group to reference.
-resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {
-  count       = var.lza_managed_network ? 0 : 1
-  type        = "ingress"
-  description = "gRPC from NLB (FL client connections)"
-  # Backend-dependent container port (Flower: SuperLink Fleet 9092) — the
-  # NLB forwards its FL_SERVER_PORT listener here.
-  from_port                = local.fl_server_container_port
-  to_port                  = local.fl_server_container_port
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.ecs_fl_server.id
-  source_security_group_id = module.fl_server_nlb.security_group_id
-}
-
-# State migration for the count added above (FLIP#749): keeps existing legacy
-# states aligned without a manual `terraform state mv`. Safe to remove once
-# every live state file has been migrated.
-moved {
-  from = aws_security_group_rule.ecs_fl_server_ingress_nlb_grpc
-  to   = aws_security_group_rule.ecs_fl_server_ingress_nlb_grpc[0]
-}
-
 # fl-api (the FLARE admin client) connects directly to fl-server on the
 # admin port (same 8002 as the gRPC client port; FLARE multiplexes admin
 # and client RPC over a single HTTP/2 stream). It does NOT go through the

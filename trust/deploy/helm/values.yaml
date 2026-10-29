@@ -15,7 +15,8 @@
 global:
   image:
     # The release this site runs (FLIP#1204): one pin for every FLIP-built image — trust-api,
-    # imaging-api, data-access-api, the fl-client, omop-db, orthanc and the three XNAT images.
+    # imaging-api, data-access-api, the fl-client, omop-db, orthanc, the three XNAT images and
+    # (when enabled) monailabel.
     # `make upgrade-trust-k8s KIT=<CODE> TAG=vX.Y.Z` sets it; `sync-kit` fills it from the kit's
     # DOCKER_TAG. Empty = each service's own image.tag below applies (the mutable `stag`, which
     # moves under a site on every develop merge). Observability images and xnat-dcm2niix carry
@@ -62,8 +63,8 @@ flBackend: "nvflare"
 #
 # Set it through the kit, not by hand: point ACCESS_POLICY_FILE at the document in
 # trust/.env.<CODE>.<env>, validate it, and deploy —
-#   make -C trust check-governance KIT=<CODE> PROD=<env>
-#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> PROD=<env>   (or upgrade-trust-k8s)
+#   make -C trust check-governance KIT=<CODE> HUB=<env>
+#   make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>   (or upgrade-trust-k8s)
 # Both targets regenerate k8s-trust-<CODE>.yaml from the kit first (sync-kit), which embeds
 # the document, validates both halves with the services' own loaders, and writes
 # flPrivacyChecksum. A document passed with `helm upgrade --set-file governance.document=…`
@@ -212,6 +213,9 @@ secrets:
     # env var by scripts/generate_values.py.
     orthanc-registered-users: ""
     xnat-admin-user: ""
+    # XNAT's factory admin password, which xnat-init changes to xnat-admin-password while XNAT
+    # still accepts it. Optional: left empty (or absent from an existing Secret), it is `admin`.
+    xnat-admin-initial-password: ""
     xnat-admin-password: ""
     xnat-service-user: ""
     xnat-service-password: ""
@@ -452,7 +456,7 @@ flClient:
   # kit — the contents of the slot's kit directory (for FLARE: local/, startup/,
   # transfer/; for Flower: certificates/ and keys/ with this slot's credential).
   #
-  # Required whenever flClient.enabled. The chart deliberately offers no way to fetch
+  # Required whenever flClient.enabled with kit.source hostPath (the default). The chart deliberately offers no way to fetch
   # the kit itself: a trust never holds FLIP's AWS credentials (see the trust boundary
   # in AGENTS.md — "FL clients intentionally have no Central Hub credentials"), and the
   # kit reaches an operator out-of-band, as trust/README.md describes. The kit is placed
@@ -465,6 +469,14 @@ flClient:
   # path the Compose and Ansible trust deployments use — so keep any override in step
   # with the path the kit was actually staged to, or the pod stays Pending.
   kitHostPath: ""
+  kit:
+    # Where the kit comes from. hostPath: kitHostPath on the node (kind, a single host).
+    # secret: a Kubernetes Secret, laid out by the stage-fl-kit init container into the pod's
+    # own volume — for a managed node pool (AKS), whose nodes are replaced at will (FLIP#1390).
+    # Build the Secret with `make -C trust/deploy/helm kit-secret KIT_SRC=<slot kit dir>`.
+    source: hostPath
+    # The Secret's name; empty means <release fullname>-fl-kit.
+    secretName: ""
   hostAliases:
     - ip: "13.43.162.56"
       hostnames:
@@ -489,6 +501,43 @@ flClient:
       policy: ""
       percentile: ""
       gamma: ""
+    # One Kubernetes pod per FL job (FLIP#1428). The fl-client becomes a small parent that keeps the
+    # site registered, and NVFLARE's ClientK8sJobLauncher starts each job in its own pod, asking
+    # Kubernetes for the GPUs in the job's resource_spec (nvidia.com/gpu). With the job pods on a GPU
+    # node pool that scales from zero, a GPU is billed only while a job runs. Leave flClient.gpu off:
+    # the parent holds no GPU (the chart refuses both).
+    #
+    # Job pods mount the shared images volume, so they follow flClient.affinity. On a multi-node
+    # cluster with a separate GPU pool, sharedImagesPvc needs a ReadWriteMany class and
+    # flClient.affinity: {} (an RWO disk attaches to one node only). They inherit the fl-client's
+    # NetworkPolicy reach: every rule in network-policy.yaml is namespace-wide.
+    jobPods:
+      enabled: false
+      # GPUs the site lends to jobs at once. NVFLARE queues a job asking for more, and the hub shows
+      # why (FLIP#1423); 0 keeps every job on CPU. Set it to the GPU pool's maximum node count x GPUs
+      # per node.
+      maxGpus: 1
+      # Seconds a job pod may wait for its node while Kubernetes reports "Insufficient" CPU, memory or
+      # GPU (an autoscaler adding a node) before NVFLARE fails the job. Size it to a cold scale-up.
+      # A pod that can never be scheduled (no matching node at all) fails at once whatever this is.
+      pendingTimeout: 900
+      # The parent's internal port, which job pods connect back to through its Service.
+      parentPort: 8102
+      # Placement of job pods only, e.g. a GPU pool's taint (key: sku, value: gpu, effect:
+      # NoSchedule). Prefer the nvidia.com/gpu request plus a toleration over a nodeSelector aimed at
+      # a pool at zero: Kubernetes reports that pod Unschedulable rather than Insufficient, and
+      # NVFLARE fails it immediately instead of waiting for the node.
+      tolerations: []
+      nodeSelector: {}
+      # The launcher calls the Kubernetes API from the parent. The chart's egress already allows port
+      # 443 to any address (networkPolicies.allowedEgressPorts), which covers an API server reached on
+      # 443 (AKS, EKS). NetworkPolicy matches the API server's real endpoint rather than the kubernetes
+      # Service, so where it listens on another port (minikube 8443, kind 6443) name it here, e.g. from
+      # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`. Without it the
+      # launcher's first call hangs and no job pod is ever created. Only the parent gets this rule.
+      apiServer:
+        cidrs: []
+        port: 443
   flower:
     superlink: ""
     # flwr>=1.36 split --clientappio-api-address into separate --host/--port
@@ -563,6 +612,10 @@ omopDb:
     storageClassName: ""
     size: 10Gi
     accessMode: ReadWriteOnce
+    # Keep Postgres's data in this subdirectory of the volume (e.g. "pgdata"). Needed on a
+    # freshly formatted cloud disk (Azure Disk, EBS), whose lost+found at the root makes initdb
+    # refuse to start. Leave empty on an existing volume: its data is at the root.
+    pgdataSubdir: ""
   resources:
     requests:
       memory: "512Mi"
@@ -607,7 +660,7 @@ omopDb:
   #
   # Use YOUR environment's own bucket — trust roles have no cross-account read
   # on another environment's bucket. `make -C trust/deploy/helm
-  # sync-kit KIT=<CODE> PROD=<env>` writes this from the kit's
+  # sync-kit KIT=<CODE> HUB=<env>` writes this from the kit's
   # AICENTRE_BUCKET_NAME, so check that the kit carries the right one (it is not
   # a hub-managed key — a kit scaffolded from trust/.env.example ships it commented
   # out, so the release loads no core vocabulary until it is set).
@@ -744,6 +797,10 @@ xnat:
     pin: ""
   initJob:
     enabled: true
+  # How many dcm2niix conversions (BestEffort pods, one Job per archived scan) run at once; the
+  # rest wait for a slot. null removes the cap. Why: README "Container Service jobs" (FLIP#1448).
+  containerService:
+    maxConcurrentJobs: 4
   web:
     enabled: true
     adminUser: "admin"
@@ -768,6 +825,10 @@ xnat:
     # LoadBalancer — the only two options that reach a PACS outside the cluster.
     dicomService:
       type: ClusterIP
+      # Annotations for the DICOM Service, chiefly to choose the load balancer a managed cluster
+      # creates for type LoadBalancer. On AKS keep the receiver off the internet with
+      #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      annotations: {}
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
@@ -803,35 +864,6 @@ xnat:
         initialDelaySeconds: 30
         periodSeconds: 15
         timeoutSeconds: 5
-    plugins:
-      enabled: true
-      image: python:3.12-slim
-      # These URLs are the single source of the plugin roster: the download
-      # init-container derives each jar's filename from the URL, so a version
-      # bump is a one-line change here. Keep them identical to the plugin lines of
-      # trust/xnat/artifacts.manifest, which the Swarm image is built from (pinned by
-      # trust/xnat/tests/test_artifacts.py) — the chart mounts an emptyDir over
-      # ${XNAT_HOME}/plugins, so these downloads REPLACE the image's plugins
-      # rather than adding to them, and the XNAT_VERSION compatibility matrices
-      # apply to whatever is listed here.
-      # XNAT 1.10 requires DQR 3.x and Container Service 3.8.x. On XNAT 1.10.2.1 the
-      # Kubernetes backend needs Container Service 3.8.2 or later (CS-1058, snakeyaml 2):
-      #   https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix
-      #   https://wiki.xnat.org/container-service/container-service-compatibility-matrix
-      # and OHIF viewer 3.8.0 is the plugin's XNAT 1.10 release:
-      #   https://wiki.xnat.org/xnat-ohif-viewer
-      # Convention, relied on by `make status`: each key is the jar's basename up to the
-      # version, so the filename reads `<key>-<version>...jar`. The roster check pairs a
-      # key with the jars on the pod by exactly that shape; a key spelled otherwise still
-      # deploys fine, but a version skew under it reports as a missing download rather
-      # than a stale jar, sending the operator to init-container logs that are clean.
-      # A new plugin also needs its XNAT plugin id in check_status.py's XNAT_PLUGIN_IDS
-      # (README "Verify the DICOM ingest path"); its test fails until it has one.
-      urls:
-        container-service: "https://github.com/NrgXnat/container-service/releases/download/3.8.2/container-service-3.8.2-fat.jar"
-        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-3.0.0-xpl.jar"
-        batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
-        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.8.0-fat.jar"
     env:
       XNAT_EMAIL: ""
       XNAT_MIN_HEAP: "1024m"
@@ -851,6 +883,8 @@ xnat:
       storageClassName: ""
       size: 20Gi
       accessMode: ReadWriteOnce
+      # As omopDb.persistence.pgdataSubdir: "pgdata" on a fresh cloud disk, empty on an existing volume.
+      pgdataSubdir: ""
     resources:
       requests:
         memory: "512Mi"
@@ -883,6 +917,62 @@ xnat:
       limits:
         memory: "256Mi"
         cpu: "200m"
+
+# ---------------------------------------------------------------------------
+# MONAI Label — optional AI-assisted annotation in the XNAT OHIF viewer
+# ---------------------------------------------------------------------------
+# Off by default: needs an NVIDIA GPU node and pulls a ~10.4GB image. Mirrors the compose
+# overlay (trust/deploy/compose_trust.*.monailabel.yml); operational caveats — the
+# browser-reachable URL, the unauthenticated API, the stock-viewer quirks — are documented
+# in trust/README.md#monai-label-optional.
+monailabel:
+  enabled: false
+  image:
+    repository: ghcr.io/londonaicentre/monailabel
+    tag: stag
+    pullPolicy: IfNotPresent
+  port: 8030
+  # Radiology models to load. 'all' loads nine, each downloading its own weights; the SAM
+  # tasks (sam_2d/sam_3d) register whenever the sam2 package is importable, independent of
+  # this list.
+  models: "deepedit"
+  # Comma-separated XNAT project allowlist; empty means every project on this trust.
+  projects: ""
+  # REQUIRED when enabled: the URL the clinician's BROWSER uses to reach the service
+  # (e.g. http://<node-ip>:30030). XNAT stores it and hands it to the OHIF viewer — it is
+  # never proxied, so a cluster-internal name will not work.
+  publicUrl: ""
+  # /dev/shm for dataloader workers (emptyDir, medium: Memory).
+  shmSize: 8Gi
+  gpu:
+    enabled: true
+    count: 1
+  # Pin the pod to xnat-web's node so the archive PVC (ReadWriteOnce by default) can be
+  # mounted read-only here too. Set false only on an RWX storage class.
+  coScheduleWithXnat: true
+  service:
+    type: NodePort
+    # Fixed nodePort (30000-32767) so publicUrl stays stable; empty lets the cluster pick.
+    nodePort: 30030
+    # Adds a NetworkPolicy opening the service port on this pod through the namespace's
+    # default-deny ingress — required for browser access when networkPolicies.enabled.
+    allowExternalIngress: true
+  # Sources allowed through that NetworkPolicy, as CIDRs. REQUIRED while the policy renders
+  # (networkPolicies.enabled and allowExternalIngress): left empty, the render fails. The API
+  # behind it is unauthenticated (see authEnable) and holds the XNAT service-account
+  # credentials, so opening it to every source has to be written down — ["0.0.0.0/0"] — not
+  # inherited. Set the subnets your clinicians browse from, e.g. ["10.0.0.0/8"].
+  allowedIngressCIDRs: []
+  # MONAI Label's own auth. Its default is False and its RBAC dependencies are no-ops while
+  # it is, so every /datastore route is open to whoever reaches the port. Enabling it needs
+  # an OAuth realm (MONAI_LABEL_AUTH_REALM_URI et al) that FLIP does not run — so treat
+  # allowedIngressCIDRs, not this, as the control until such a realm exists.
+  authEnable: false
+  persistence:
+    # Pretrained weights (incl. the ~900MB SAM checkpoint).
+    size: 20Gi
+    storageClassName: ""
+  resources: {}
 
 # ---------------------------------------------------------------------------
 # Observability Stack — Loki, Alloy, Grafana
