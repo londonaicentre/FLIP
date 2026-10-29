@@ -26,7 +26,8 @@ provider "snowflake" {
   role              = var.terraform_role
   warehouse         = var.terraform_warehouse
 
-  # Every resource this root uses is stable as of provider 2.22 (stage_internal, compute_pool and
-  # image_repository were promoted), so no preview feature is enabled. A new preview resource must
-  # be listed here explicitly.
+  # stage_internal, compute_pool and image_repository are stable as of provider 2.22. The one
+  # preview resource is the converter's launch procedure (converter.tf, FLIP#1578); any other
+  # preview resource must be listed here explicitly too.
+  preview_features_enabled = ["snowflake_procedure_sql_resource"]
 }
