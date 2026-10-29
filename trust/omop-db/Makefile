@@ -165,6 +165,59 @@ unseed-omop: $(if $(CANONICAL_DIR),,fetch-dataset)
 	@echo "✅ Unseeded $(PROJECTS) from trust $(TRUST_INDEX) on port $(OMOP_DB_PORT) ($(SEED_PROVENANCE))"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Snowflake-hosted OMOP (FLIP#1580)
+# ─────────────────────────────────────────────────────────────────────────────
+# The Snowflake twin of seed-omop/unseed-omop above: same canonical source, same
+# source_trust selection, same marker semantics, a different load mechanism
+# (internal stage + COPY INTO instead of INSERT). It lives here rather than in
+# trust/deploy/snowflake/ so that the dataset fetch and the partition split have
+# exactly one implementation; the node shape's Makefile (FLIP#1582) forwards to
+# these targets rather than reimplementing them.
+#
+# Nothing here needs a Snowflake account: DRY_RUN=1 prints the SQL and runs
+# nothing, which is how the seed is reviewed and how its unit tests exercise it.
+#
+#   make seed-omop-snowflake KIT=GSTT SOURCE_TRUST=1 PROJECTS="cxr_project"
+#   make seed-omop-snowflake KIT=GSTT DRY_RUN=1
+#   make unseed-omop-snowflake KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
+#
+# KIT is the trust code from the kit file, upper-cased into the FLIP_<CODE>_*
+# object names. SNOW_CONNECTION names a `snow connection add` entry: a
+# connection name, never a credential; the default matches FLIP#1582's.
+KIT ?=
+SNOW_CONNECTION ?= flip-test
+SNOW ?= snow
+DRY_RUN ?=
+SNOWFLAKE_SEED_ARGS = --code $(KIT) --connection $(SNOW_CONNECTION) --snow $(SNOW) \
+	--projects $(PROJECTS) --source-trust $(SOURCE_TRUST) --num-trusts $(NUM_TRUSTS) \
+	--partition $(PARTITION) --data-dir $(SEED_DATA_SOURCE) \
+	$(if $(CANONICAL_DIR),--canonical-dir $(CANONICAL_DIR),--revision $(HF_TRUST_DATA_REVISION)) \
+	$(if $(filter 1 true,$(DRY_RUN)),--dry-run,)
+
+check-kit:
+	@if [ -z "$(KIT)" ]; then \
+		echo "❌ KIT is required: the trust code the FLIP_<CODE>_* Snowflake objects are named after,"; \
+		echo "   e.g. make seed-omop-snowflake KIT=GSTT"; \
+		exit 1; \
+	fi
+
+# fetch-vocab-dicom is unconditional for the same reason as on Postgres (#1187):
+# the DICOM vocabulary is free and is fetched whether or not the trust-data tag
+# is being used. The seeder skips the load when the vocabulary is already in the
+# trust's OMOP, so the fetched bundle is simply unused in that case.
+seed-omop-snowflake: check-kit $(if $(CANONICAL_DIR),,fetch-dataset) fetch-vocab-dicom
+	uv run python -m omop_db_tools.snowflake_seed $(SNOWFLAKE_SEED_ARGS) \
+		--vocab-dir data/$(VOCAB_DICOM_BUNDLE) $(if $(filter 1 true,$(IF_NEEDED)),--if-needed,)
+
+# The ensure-seeded equivalent: a marker recording exactly these projects, this
+# partition and this version means no fetch, no upload, no SQL.
+ensure-seeded-snowflake:
+	$(MAKE) seed-omop-snowflake KIT=$(KIT) IF_NEEDED=1
+
+unseed-omop-snowflake: check-kit $(if $(CANONICAL_DIR),,fetch-dataset)
+	uv run python -m omop_db_tools.snowflake_seed $(SNOWFLAKE_SEED_ARGS) --remove-only
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Image build + populate pipeline (standalone; see README "Building the image")
 # ─────────────────────────────────────────────────────────────────────────────
 

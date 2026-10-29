@@ -147,6 +147,61 @@ FK-safe (it keeps Synthea's standard gender concepts and zeroes the rest, matchi
 their SNOMED `condition_source_value`) and idempotent. It is a dev/demo convenience: a real trust
 already holds real condition data, so `query.sql` runs against it unchanged.
 
+## Seeding a Snowflake-hosted OMOP (FLIP#1580)
+
+A trust whose OMOP lives in Snowflake rather than in this Postgres image is seeded by
+`src/omop_db_tools/snowflake_seed.py`, the twin of `import_tables.py`. It shares this package's
+dataset fetch (`dataset.fetch_canonical`) and partition split (`dataset.split_for_trust`), so a
+Snowflake trust and a Postgres trust holding the same `source_trust` hold the same rows, and only
+the load mechanism differs: internal stage + `COPY INTO` instead of row inserts.
+
+```sh
+# Print the whole seed as SQL (no account, no credentials, no network)
+make -C trust/omop-db seed-omop-snowflake KIT=GSTT DRY_RUN=1
+
+# Run it, as FLIP_GSTT_OMOP_LOADER, through a `snow connection add` entry
+make -C trust/omop-db seed-omop-snowflake KIT=GSTT SOURCE_TRUST=1 PROJECTS="cxr_project"
+
+# Only if the marker does not already record exactly this (the ensure-seeded equivalent)
+make -C trust/omop-db ensure-seeded-snowflake KIT=GSTT
+
+# Take a project out, as the tables at a given revision describe it
+make -C trust/omop-db unseed-omop-snowflake KIT=GSTT PROJECTS=spleen_project HF_TRUST_DATA_REVISION=20260911
+```
+
+What a run does, in order:
+
+1. **Creates the tables.** The OMOP CDM DDL is translated from this directory's own
+   `files/OMOPCDM_postgresql_5.4_ddl.sql` by `snowflake_ddl.py`: one schema of record, so a column
+   added for Postgres (as `image_occurrence.accession_id` was) reaches Snowflake with no second
+   edit. `tests/unit/test_snowflake_ddl.py` fails if the translation misses a table. Foreign keys
+   and indices are not translated: Snowflake enforces neither and prunes micro-partitions instead.
+2. **Loads the DICOM vocabulary first**, and skips it when already present, because `concept_relationship`
+   carries no unique key, so a blind re-load would duplicate its rows. Same rule, same reason, as
+   `load-dicom-vocab`.
+3. **Replaces the listed projects' rows**, keyed by their own `person_id`s, then `PUT`s the
+   filtered CSVs to `FLIP_TRUST_<CODE>.STAGES.SEED` and `COPY INTO`s them. Every `PUT` precedes
+   every `COPY`, so a failed upload costs nothing.
+4. **Writes the marker last**, to `OMOP._FLIP_SEED_MARKER` (`projects` / `source_trust` /
+   `provenance`): the Snowflake equivalent of the Postgres path's `.seeded` file, rendering the
+   same text. A matching marker means nothing to do; a differing one (a `.data_version` bump, a
+   changed `PROJECTS`, a re-partition) re-seeds those projects and leaves every other project and
+   any Synthea rows alone. Last, so a run that fails part way leaves a marker that does not match
+   and the next run re-seeds.
+
+Object names follow the epic #1589 naming contract: database `FLIP_TRUST_<CODE>`, schemas `OMOP`
+and `STAGES`, stage `STAGES.SEED`, role `FLIP_<CODE>_OMOP_LOADER`, warehouse `FLIP_<CODE>_WH`.
+Those objects are created by the Terraform root (FLIP#1581); this seeder only writes inside them,
+and `USE ROLE` pins the loader explicitly so a connection with a broader default role still seeds
+as the loader and nothing else. The read side is the separate SELECT-only
+`FLIP_<CODE>_OMOP_READER`, granted by
+[`trust/data-access-api/sql/snowflake_readonly_grants.sql`](../data-access-api/sql/snowflake_readonly_grants.sql).
+
+`SNOW_CONNECTION` (default `flip-test`) names a `snow connection add` entry; it is a connection
+name, never a credential. When the Snowflake node shape (FLIP#1582) merges, its
+`trust/deploy/snowflake/Makefile` will forward its seed target to these ones rather than
+reimplementing the fetch and the split.
+
 ## Building the image
 
 The image bakes the schema init chain (`files/`: schema DDL → primary keys →
