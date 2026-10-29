@@ -504,3 +504,11 @@ def test_no_spec_points_a_session_token_at_the_reserved_path(specs: dict) -> Non
         for container in containers(spec):
             path = container.get("sessionTokenConfig", {}).get("path", "")
             assert not path.startswith("/snowflake/session"), f"{name}: {path}"
+
+
+def test_xnat_db_keeps_the_superuser_apart_from_the_xnat_role(specs: dict) -> None:
+    """With POSTGRES_USER=xnat the entrypoint made `xnat` the superuser with the admin
+    password, so XNAT's datasource password was refused (live account)."""
+    env = containers(specs["xnat-db"])[0]["env"]
+    assert "POSTGRES_USER" not in env
+    assert env["XNAT_DATASOURCE_USERNAME"] == "xnat"

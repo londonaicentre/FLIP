@@ -622,7 +622,10 @@ def _xnat_db(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rend
                     "args": ["postgres", "-c", "max_connections=300", "-c", "shared_buffers=512MB"],
                     "env": {
                         "POSTGRES_DB": kit.get("XNAT_DATASOURCE_NAME", "").strip() or "xnat",
-                        "POSTGRES_USER": kit.get("XNAT_DATASOURCE_USERNAME", "xnat"),
+                        # No POSTGRES_USER (as in the Helm chart): the stock entrypoint
+                        # would create the superuser under the app role's name, with the
+                        # admin password, and XNAT's own password would never match.
+                        "XNAT_DATASOURCE_USERNAME": kit.get("XNAT_DATASOURCE_USERNAME", "xnat"),
                         "PGDATA": "/var/lib/postgresql/data/pgdata",
                     },
                     "resources": _resources("1", "4Gi", "2", "8Gi"),
