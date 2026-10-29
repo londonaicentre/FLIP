@@ -106,8 +106,12 @@ echo "Before: prearchive=${before_prearchive} sessions=${before_sessions} archiv
 store=$(orthanc --request POST --header 'Content-Type: application/json' \
   --data "$(jq -nc --arg id "$instance" '{Resources: [$id], Synchronous: true}')" \
   "${ORTHANC_URL}/modalities/${XNAT_MODALITY}/store") || fail "POST /modalities/${XNAT_MODALITY}/store failed."
-failed_count=$(printf '%s' "$store" | jq -r '.FailedInstancesCount // 0')
 echo "Orthanc: ${store}"
+# An HTTP error comes back as an object with HttpStatus (e.g. 404, no such modality): the
+# store never happened, so there is nothing to wait for on the XNAT side.
+http_status=$(printf '%s' "$store" | jq -r '.HttpStatus // empty')
+[ -z "$http_status" ] || fail "Orthanc refused the store (HTTP ${http_status}); is XNAT registered as modality ${XNAT_MODALITY}?"
+failed_count=$(printf '%s' "$store" | jq -r '.FailedInstancesCount // 0')
 [ "$failed_count" = "0" ] || fail "Orthanc reported ${failed_count} failed instance(s): the association aborted."
 
 # ── 4. What the receiver did with it ────────────────────────────────────────────────

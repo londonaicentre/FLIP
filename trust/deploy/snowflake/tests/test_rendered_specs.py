@@ -539,3 +539,9 @@ def test_smoke_cstore_pages_orthanc_with_since(specs: dict) -> None:
     script = containers(specs["smoke-cstore"])[0]["args"][-1]
     assert "instances?since=0&limit=1" in script
     assert "instances?limit=" not in script
+
+
+def test_smoke_cstore_fails_fast_on_an_orthanc_error(specs: dict) -> None:
+    """A 404 from /modalities/<m>/store once cost a 180 s wait for evidence that could not come."""
+    script = containers(specs["smoke-cstore"])[0]["args"][-1]
+    assert script.index(".HttpStatus") < script.index("EVIDENCE_TIMEOUT_SECONDS )")
