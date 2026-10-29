@@ -394,3 +394,49 @@ def test_a_dry_run_plans_the_vocabulary_load(monkeypatch: pytest.MonkeyPatch, na
     """Nothing is known on a dry run, so the printed plan shows the full seed."""
     monkeypatch.setattr(seed, "run_sql", lambda *args, **kwargs: None)
     assert seed.dicom_vocab_present(names, "flip-test", "snow", dry_run=True) is False
+
+
+def test_a_fresh_trust_without_a_concept_table_counts_as_vocabulary_absent(
+    monkeypatch: pytest.MonkeyPatch, names: seed.Names
+) -> None:
+    """The presence check runs before the seed creates the tables; on a fresh trust Snowflake
+    answers 002003 for OMOP.CONCEPT, which means "load it", not "fail" (found on the live account)."""
+
+    def missing_table(*_args, **_kwargs):
+        raise seed.SnowflakeSeedError(
+            "`snow sql` failed with exit code 1: 002003 (42S02): SQL compilation error: "
+            "Object 'FLIP_TRUST_GSTT.OMOP.CONCEPT' does not exist or not authorized."
+        )
+
+    monkeypatch.setattr(seed, "run_sql", missing_table)
+    assert seed.dicom_vocab_present(names, "flip-test", "snow", dry_run=False) is False
+
+
+def test_any_other_snow_failure_in_the_presence_check_still_raises(
+    monkeypatch: pytest.MonkeyPatch, names: seed.Names
+) -> None:
+    def other_error(*_args, **_kwargs):
+        raise seed.SnowflakeSeedError("`snow sql` failed with exit code 1: 390201 warehouse does not exist")
+
+    monkeypatch.setattr(seed, "run_sql", other_error)
+    with pytest.raises(seed.SnowflakeSeedError):
+        seed.dicom_vocab_present(names, "flip-test", "snow", dry_run=False)
+
+
+def test_snow_runs_with_templating_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """snow rewrites & in SQL unless templating is off, which corrupts any literal holding one."""
+    seen: list[list[str]] = []
+
+    class Done:
+        returncode = 0
+        stdout = "[]"
+        stderr = ""
+
+    def fake_run(command: list[str], **_kw: object) -> Done:
+        seen.append(command)
+        return Done()
+
+    monkeypatch.setattr(seed.shutil, "which", lambda _name: "/usr/bin/snow")
+    monkeypatch.setattr(seed.subprocess, "run", fake_run)
+    seed.run_sql(["SELECT 1;"], connection="flip-test")
+    assert seen[0][seen[0].index("--enable-templating") + 1] == "NONE"

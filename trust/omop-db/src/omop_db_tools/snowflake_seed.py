@@ -563,7 +563,8 @@ def run_sql(
             f"{snow!r} is not on PATH. Install the Snowflake CLI and configure a connection "
             "(`snow connection add`), or re-run with DRY_RUN=1 to print the SQL."
         )
-    command = [snow, "sql", "--stdin", "--connection", connection]
+    # Templating off: snow otherwise rewrites & and &{...} in the SQL (&& arrives as &).
+    command = [snow, "sql", "--stdin", "--enable-templating", "NONE", "--connection", connection]
     if capture:
         command += ["--format", "json"]
     result = subprocess.run(command, input=script, text=True, capture_output=capture)  # noqa: S603
@@ -649,15 +650,22 @@ def dicom_vocab_present(names: Names, connection: str, snow: str, dry_run: bool)
     """Whether the DICOM vocabulary is already in this trust's OMOP.
 
     On a dry run this answers False, so the printed SQL shows the full seed including the
-    vocabulary load -- the interesting case to read.
+    vocabulary load -- the interesting case to read. On a fresh trust the CONCEPT table does
+    not exist yet (the seed creates it after this check), and Snowflake answers that with
+    error 002003: that also means "not loaded", not a failure.
     """
-    rows = run_sql(
-        [*sql_session_preamble(names), sql_dicom_vocab_loaded(names)],
-        connection=connection,
-        snow=snow,
-        dry_run=dry_run,
-        capture=True,
-    )
+    try:
+        rows = run_sql(
+            [*sql_session_preamble(names), sql_dicom_vocab_loaded(names)],
+            connection=connection,
+            snow=snow,
+            dry_run=dry_run,
+            capture=True,
+        )
+    except SnowflakeSeedError as e:
+        if "002003" in str(e) and ".CONCEPT" in str(e).upper():
+            return False
+        raise
     return bool(rows)
 
 
