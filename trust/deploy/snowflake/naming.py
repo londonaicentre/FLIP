@@ -235,3 +235,13 @@ class Names:
         schema = "app"
         database = self.database.lower().replace("_", "-")
         return f"{host}.{schema}.{database}.snowflakecomputing.internal"
+
+    def short_dns(self, service: str) -> str:
+        """The bare service name, for a peer that caps host-name length.
+
+        Every trust service lives in the APP schema, and an SPCS container's DNS search list
+        holds ``app.<database>.snowflakecomputing.internal``, so the bare name resolves to the
+        same address as :meth:`dns` (verified on the live account). Orthanc refuses a
+        DICOM modality host as long as the full name ("Invalid host name (too long)").
+        """
+        return service.lower().replace("_", "-")
