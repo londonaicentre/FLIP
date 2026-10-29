@@ -28,7 +28,9 @@ carries the ``FLIP_<CODE>_`` prefix while database-level objects are merely qual
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Callable
 
 #: Schemas of the trust database. APP holds services, secrets, network rules and the
 #: image repository; OMOP the clinical tables (FLIP#1580); STAGES the internal stages;
@@ -55,7 +57,9 @@ SECRETS = (
     "XNAT_ADMIN_PASSWORD",  # pragma: allowlist secret
     "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
     "XNAT_DB_PASSWORD",  # pragma: allowlist secret
+    "XNAT_DB_ADMIN_PASSWORD",  # pragma: allowlist secret
     "ORTHANC_PASSWORD",  # pragma: allowlist secret
+    "ORTHANC_REGISTERED_USERS",  # pragma: allowlist secret
 )
 
 #: Kit variable each secret object takes its value from. The kit is the only source;
@@ -67,8 +71,30 @@ SECRET_KIT_VAR = {
     "XNAT_ADMIN_PASSWORD": "XNAT_ADMIN_PASSWORD",  # pragma: allowlist secret
     "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
     "XNAT_DB_PASSWORD": "XNAT_DATASOURCE_PASSWORD",  # pragma: allowlist secret
+    "XNAT_DB_ADMIN_PASSWORD": "XNAT_DATASOURCE_ADMIN_PASSWORD",  # pragma: allowlist secret
     "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret
+    # Derived by with_derived_secrets: Orthanc's entrypoint takes its users as one JSON map.
+    "ORTHANC_REGISTERED_USERS": "ORTHANC_REGISTERED_USERS",  # pragma: allowlist secret
 }
+
+
+def with_derived_secrets(kit: dict[str, str], is_placeholder: Callable[[str], bool]) -> dict[str, str]:
+    """The kit plus the secret values composed from other kit entries.
+
+    ``ORTHANC__REGISTERED_USERS`` is a JSON map ``{username: password}`` (what Compose
+    builds inline in compose_trust.prod.yml). A spec can only inject a secret whole, so
+    sync-kit stores the composed map as its own secret. Nothing is derived from a
+    placeholder password, so an unset ``ORTHANC_PASSWORD`` leaves the map absent too.
+    """
+    derived = dict(kit)
+    password = kit.get("ORTHANC_PASSWORD", "")
+    if not is_placeholder(password):
+        username = kit.get("ORTHANC_USERNAME", "").strip() or "admin"
+        derived["ORTHANC_REGISTERED_USERS"] = json.dumps({username: password})
+    else:
+        derived.pop("ORTHANC_REGISTERED_USERS", None)
+    return derived
+
 
 CODE_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,32}$")
 

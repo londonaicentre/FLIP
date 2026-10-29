@@ -50,7 +50,7 @@ GHCR_ORG ?= ghcr.io/londonaicentre
 MIRROR_PLATFORM := linux/amd64
 # FL client image name follows the kit's backend (flare-fl-client / flower-supernode, as in
 # deploy/fl_backend.mk); mirror_images.py appends it.
-MIRROR_IMAGES ?= trust-api data-access-api imaging-api orthanc xnat-web xnat-db xnat-nginx xnat-dcm2niix
+MIRROR_IMAGES ?= trust-api data-access-api imaging-api orthanc xnat-web xnat-db xnat-dcm2niix
 
 DRY_RUN ?=
 ifeq ($(strip $(DRY_RUN)),true)

@@ -74,12 +74,16 @@ SECRET_MAP: dict[str, dict[str, str]] = {
         "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
         "XNAT_DB_PASSWORD": "XNAT_DATASOURCE_PASSWORD",  # pragma: allowlist secret
     },
+    # The superuser (POSTGRES_PASSWORD) and the xnat role (XNAT_DATASOURCE_PASSWORD, read
+    # by the image's init script) are two passwords; its guard refuses a missing or equal pair.
     "xnat-db": {
-        "XNAT_DB_PASSWORD": "POSTGRES_PASSWORD",  # pragma: allowlist secret
+        "XNAT_DB_ADMIN_PASSWORD": "POSTGRES_PASSWORD",  # pragma: allowlist secret
+        "XNAT_DB_PASSWORD": "XNAT_DATASOURCE_PASSWORD",  # pragma: allowlist secret
     },
-    "xnat-nginx": {},
+    # The entrypoint refuses to start without ORTHANC__REGISTERED_USERS, a JSON user map
+    # sync-kit composes from ORTHANC_USERNAME and ORTHANC_PASSWORD.
     "orthanc": {
-        "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret
+        "ORTHANC_REGISTERED_USERS": "ORTHANC__REGISTERED_USERS",  # pragma: allowlist secret
     },
     "dcm2niix": {},
     # One-shot job services (FLIP#1583). Each holds the narrowest set that lets it do its
@@ -190,7 +194,7 @@ def _image(names: Names, repo: str, kit: dict[str, str], digests: dict[str, str]
     if digest:
         return f"{names.image_repository_path}/{repo}@{digest}"
     tag = kit.get("DOCKER_TAG", "").strip() or "stag"
-    if repo in ("xnat-web", "xnat-db", "xnat-nginx", "xnat-dcm2niix"):
+    if repo in ("xnat-web", "xnat-db", "xnat-dcm2niix"):
         tag = kit.get("XNAT_TAG", "").strip() or tag
     elif repo == "orthanc":
         tag = kit.get("ORTHANC_TAG", "").strip() or tag
@@ -634,24 +638,6 @@ def _xnat_db(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rend
     return Rendered("xnat-db", "service", names.pool, spec)
 
 
-def _xnat_nginx(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
-    spec = {
-        "spec": {
-            "containers": [
-                {
-                    "name": "xnat-nginx",
-                    "image": _image(names, "xnat-nginx", kit, digests),
-                    "env": {"XNAT_WEB_HOST": names.dns("xnat-web"), "XNAT_WEB_PORT": "8080"},
-                    "resources": _resources("0.25", "512Mi", "0.5", "1Gi"),
-                }
-            ],
-            "endpoints": [{"name": "web", "port": 80, "protocol": "HTTP", "public": False}],
-            **_event_table_exports(),
-        }
-    }
-    return Rendered("xnat-nginx", "service", names.pool, spec)
-
-
 def _orthanc(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
     size = kit.get("ORTHANC_VOLUME_SIZE", "").strip() or "200Gi"
     spec = {
@@ -944,7 +930,6 @@ def build_all(kit: dict[str, str], code: str, digests: dict[str, str] | None = N
     rendered = [
         _xnat_db(kit, names, digests),
         _xnat_web(kit, names, digests),
-        _xnat_nginx(kit, names, digests),
         _orthanc(kit, names, digests),
         _data_access_api(kit, names, digests),
         _imaging_api(kit, names, digests),
