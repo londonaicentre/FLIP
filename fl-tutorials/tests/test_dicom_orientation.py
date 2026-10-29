@@ -172,6 +172,15 @@ def test_full_chain_orientation_is_identity(dicom_app, dicom_path, is_validation
     )
 
 
+#: Generated copies of tutorial sources, skipped by the registry walk below. ``make export`` writes a
+#: whole copy of an app under ``<tutorial>/fl_job/``; both it and ``__pycache__`` are gitignored, so CI
+#: never sees them, but locally ``make export && make pytest`` would otherwise report the *exported*
+#: copy of an already-registered ``transforms.py`` as an unregistered DICOM app. Narrowing the walk to
+#: source is not a weakening: the originals are still scanned, and the ``missed`` guard below still
+#: fails if this filter ever empties the walk.
+_GENERATED_DIRS = frozenset({"fl_job", "__pycache__"})
+
+
 def test_registry_covers_every_dicom_load_site() -> None:
     """Every ``LoadImaged`` call site in the tutorial tree is registered or on the NIfTI path.
 
@@ -187,12 +196,14 @@ def test_registry_covers_every_dicom_load_site() -> None:
     scanned = set()
     unaccounted = []
     for path in sorted(TUTORIALS_ROOT.rglob("*.py")):
-        # Skip this suite itself and anything non-tree-owned (per-tutorial .venv/ uv environments).
+        # Skip this suite, per-tutorial .venv environments and generated fl_job exports.
         # Match on the tree-relative parts, never on `path.parts`: those carry the absolute path, so
         # a checkout under any dot component (~/.local/src/FLIP, a .worktrees/ worktree) would skip
         # every file and pass this test without inspecting anything.
         relative = path.relative_to(TUTORIALS_ROOT)
-        if any(part.startswith(".") for part in relative.parts) or relative.parts[0] == "tests":
+        if any(part.startswith(".") or part in _GENERATED_DIRS for part in relative.parts):
+            continue
+        if relative.parts[0] == "tests":
             continue
         scanned.add(path.resolve())
         text = path.read_text(encoding="utf-8")

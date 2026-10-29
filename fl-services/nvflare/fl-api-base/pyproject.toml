@@ -12,7 +12,7 @@
 
 [project]
 name = "flip-fl-api"
-version = "0.12.0"
+version = "0.13.1"
 description = "Wrapper API for FLARE FL Admin API."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
@@ -38,10 +38,15 @@ dev = [
 exclude-newer = "3 days"
 # Security: minimum versions for transitive packages with open CVEs.
 constraint-dependencies = [
-    "aiohttp>=3.14.3",           # CVE-2026-47265, CVE-2026-34993, CVE-2026-34525/16/15/14/13/12, CVE-2026-22815, CVE-2026-21860
+    # GHSA-2g87-pp6c-29x5, GHSA-5wr8-gcqf-gqf3, GHSA-494j-54xm-rwp3; prior hardening: CVE-2026-47265,
+    # CVE-2026-34993, CVE-2026-34525/16/15/14/13/12, CVE-2026-22815, CVE-2026-21860.
+    "aiohttp>=3.14.4",
     "anyio>=4.14.2",             # CVE-2026-63374, CVE-2026-64847
+    "certifi>=2026.10.19",       # GHSA-6q48-6c7w-9gw2
     "cryptography>=50.0.0",      # CVE-2026-26007, CVE-2026-39892, CVE-2026-34073
+    "dnspython>=2.9.0",          # GHSA-45c3-73f7-pv4m
     "idna>=3.15",                # CVE-2026-45409
+    "msgpack>=1.2.3",            # GHSA-j586-36cw-2gc2
     "protobuf>=6.33.5",          # CVE-2026-0994, CVE-2025-4565
     "pygments>=2.20.0",          # CVE-2026-4539
     "pyjwt>=2.15.0",             # GHSA-42vr-xj54-vc7v, GHSA-x33g-cr3x-6449, CVE-2026-32597

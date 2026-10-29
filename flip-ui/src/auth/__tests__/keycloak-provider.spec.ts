@@ -132,13 +132,13 @@ describe("KeycloakAuthProvider", () => {
             expect(provider.backend).toBe("keycloak");
         });
 
-        it("offers no Cognito-only flows: ROPC cannot enrol TOTP, and Keycloak's invalid_grant hides which factor failed", () => {
+        it("offers no in-app account flows: ROPC cannot enrol TOTP, and Keycloak's invalid_grant hides which factor failed", () => {
             expect(provider.capabilities).toEqual({
                 newPasswordChallenge: false,
                 totpChallenge: false,
                 totpEnrolment: false,
                 forgotPassword: false,
-                adminResetPassword: false,
+                adminResetPassword: true,
                 globalSignOut: false
             });
         });

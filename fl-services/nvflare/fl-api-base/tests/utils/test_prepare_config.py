@@ -29,6 +29,7 @@ from fl_api.utils.prepare_config import (
     configure_meta,
     configure_server,
 )
+from fl_api.utils.refusals import ResearcherRefusal
 from fl_api.utils.schemas import JobResources
 
 MOCK_CONFIG_PATH = Path("/path/to/config.json")
@@ -414,7 +415,7 @@ class TestConfigureClient:
 
         # Execute and Assert
         with pytest.raises(
-            FileNotFoundError,
+            ResearcherRefusal,
             match="No config_fed_client.json found in app 'test_app'",
         ):
             configure_client(
@@ -540,36 +541,6 @@ class TestConfigureServer:
 
         (modified_config, _), _ = mock_write_config.call_args
         assert modified_config["workflows"][0]["args"]["min_clients"] == len(MOCK_APP_CLIENTS)
-
-    def test_configure_server_diffusion_recipe_overrides_min_clients_only(
-        self, mock_isfile, mock_read_config, mock_write_config
-    ):
-        """The diffusion_model template's ScatterAndGatherLDM workflows carry literal
-        min_clients (must be overridden to the trust count, as for the other recipe templates) but
-        num_rounds_ae/num_rounds_dm instead of num_rounds — those must pass through untouched:
-        the controller re-reads GLOBAL_ROUNDS_AE/GLOBAL_ROUNDS_DM from the app config.json at
-        start, so the deployed per-stage round counts come from the user config, not from here."""
-        config = self._minimal_server_config()
-        config["workflows"][0]["args"].update(
-            {"min_clients": 1, "num_rounds_ae": 1, "num_rounds_dm": 1, "train_task_name": "train_ae"}
-        )
-        mock_read_config.return_value = config
-
-        configure_server(
-            job_dir=MOCK_JOB_APP_DIR,
-            app_name=MOCK_APP_NAME,
-            global_rounds=20,
-            trusts=MOCK_APP_CLIENTS,
-            ignore_result_error=True,
-            aggregator="agg",
-            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
-        )
-
-        (modified_config, _), _ = mock_write_config.call_args
-        sag_args = modified_config["workflows"][0]["args"]
-        assert sag_args["min_clients"] == len(MOCK_APP_CLIENTS)
-        assert sag_args["num_rounds_ae"] == 1
-        assert sag_args["num_rounds_dm"] == 1
 
     def test_configure_server_injects_trim_broadcast_filter(self, mock_isfile, mock_read_config, mock_write_config):
         """With aggregate_only_regex set, a TrimBroadcastVars filter is appended to the train
@@ -821,7 +792,7 @@ class TestConfigureServer:
 
         # Execute and Assert
         with pytest.raises(
-            FileNotFoundError,
+            ResearcherRefusal,
             match="No config_fed_server.json found in app 'test_app'",
         ):
             configure_server(

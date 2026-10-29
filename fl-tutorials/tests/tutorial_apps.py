@@ -16,19 +16,26 @@ into a job and imported flat, so nothing here is importable by dotted name. Each
 from its file path under a unique module name, which also keeps the three same-named
 ``data_utils`` modules from colliding in ``sys.modules``.
 
-**Scope.** Only apps that read 2-D DICOM through MONAI's ``LoadImaged`` belong here. The spleen and
-latent-diffusion tutorials load 3-D NIfTI through ``Orientationd``/``Spacingd``, where the
-axis-order correction these tests pin would be actively wrong — they are deliberately absent.
+**Scope.** Only apps that read 2-D DICOM through MONAI's ``LoadImaged`` belong here. The spleen
+tutorials, and the two ``brain_mri_ldm_*`` tutorials since they were
+retargeted onto the 3-D brain-MRI cohort, load NIfTI through ``Orientationd``/``Spacingd``, where the
+axis-order correction these tests pin would be actively wrong — they are deliberately absent. Those
+chains take their axis order from the image's own affine, which is the guarantee a DICOM pixel array
+cannot give. ``xray_diffusion`` stays registered: it is still the 2-D chest-X-ray tutorial, reading
+``xray_classification``'s chain through a copy, so the same orientation guarantees must hold for it.
 """
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import importlib.util
 import inspect
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import monai.transforms as mt
 
@@ -74,6 +81,35 @@ _NON_RESAMPLING_TRANSFORMS: tuple[type, ...] = (
     mt.EnsureTyped,
     mt.Lambdad,
 )
+
+
+@contextlib.contextmanager
+def flower_client_app(tutorial_dir: Path) -> Iterator[ModuleType]:
+    """Import a Flower tutorial's ``app.client_app`` under the ``app`` package name it ships as.
+
+    Every Flower tutorial ships its code as a package called ``app``, so whichever one is imported first
+    would otherwise be served to the next test; this displaces any cached ``app*`` modules while the
+    tutorial is in use and restores them afterwards.
+    """
+    displaced = {name: module for name, module in sys.modules.items() if name == "app" or name.startswith("app.")}
+    for name in displaced:
+        del sys.modules[name]
+    sys.path.insert(0, str(tutorial_dir))
+    try:
+        yield importlib.import_module("app.client_app")
+    finally:
+        for name in [name for name in sys.modules if name == "app" or name.startswith("app.")]:
+            del sys.modules[name]
+        sys.modules.update(displaced)
+        with contextlib.suppress(ValueError):
+            sys.path.remove(str(tutorial_dir))
+
+
+def simulated_site_context(partition_id: int, num_partitions: int = 2) -> SimpleNamespace:
+    """A ClientApp ``Context`` the way the flwr simulator shapes it: node_config values are strings."""
+    return SimpleNamespace(
+        run_config={}, node_config={"partition-id": str(partition_id), "num-partitions": str(num_partitions)}
+    )
 
 
 @dataclass(frozen=True)
@@ -167,7 +203,12 @@ DICOM_APPS: tuple[TutorialApp, ...] = (
     TutorialApp(
         app_id="flower_xray_classification",
         backend="flower",
-        module_path="flower/xray_classification/app/transforms.py",
+        module_path="flower/image_classification/xray_classification/app/transforms.py",
+    ),
+    TutorialApp(
+        app_id="nvflare_diffusion_model",
+        backend="nvflare",
+        module_path="nvflare/image_generation/xray_diffusion/app_files/transforms.py",
     ),
 )
 

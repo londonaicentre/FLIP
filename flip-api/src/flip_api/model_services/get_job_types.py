@@ -63,8 +63,7 @@ def get_job_types_endpoint(
             {
                 "standard": ["trainer.py", "config.json", "models.py"],
                 "evaluation": ["evaluator.py", "config.json", "models.py"],
-                "fed_opt": ["trainer.py", "config.json", "models.py"],
-                "diffusion_model": ["trainer.py", "validator.py", "config.json", "models.py"]
+                "fed_opt": ["trainer.py", "config.json", "models.py"]
             }
 
     """

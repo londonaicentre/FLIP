@@ -16,7 +16,7 @@
 # hold the core vocabulary, so re-runs are safe. Bundle comes from the org S3
 # bucket via the instance role — so this role needs the AWS CLI and a role or
 # credentials that can read that bucket; it is the one data role an on-prem
-# host cannot run as-is (`make -C trust load-omop-vocab` is the on-prem route).
+# host cannot run as-is (`make -C trust/omop-db load-omop-vocab` is the on-prem route).
 - name: assert the cluster password extra-var is set
   assert:
     that:

@@ -19,10 +19,7 @@ describe("docs: reset user password", () => {
         cy.intercept("GET", "/users/**/permissions", { fixture: "user/getPermissions" });
         cy.intercept("GET", "/users?pageNumber=1&pageSize=20", { fixture: "user/getUsers" });
         cy.intercept("GET", "/roles", { fixture: "user/getRoles" });
-        cy.intercept("POST", "https://cognito-idp.eu-west-2.amazonaws.com/", {
-            statusCode: 200,
-            body: {}
-        }).as("passwordReset");
+        cy.intercept("POST", "/users/*/password/reset", { statusCode: 200 }).as("passwordReset");
 
         cy.visit("/admin/users");
         cy.demoPause();
@@ -35,7 +32,7 @@ describe("docs: reset user password", () => {
 
         cy.getBySel("confirm-modal-btn").demoClick();
         cy.wait("@passwordReset");
-        cy.contains("The user's password has been reset").should("be.visible");
+        cy.contains("The user has been emailed a way to set a new password").should("be.visible");
         cy.demoPause(1200);
     });
 });
