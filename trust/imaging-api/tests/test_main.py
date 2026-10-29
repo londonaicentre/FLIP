@@ -10,14 +10,17 @@
 # limitations under the License.
 #
 
-"""Tests for imaging_api.main app construction (currently: docs gating)."""
+"""Tests for imaging_api.main app construction (docs gating, lifespan background services)."""
 
+import asyncio
 import importlib
+import threading
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
 from imaging_api import config, main
+from imaging_api.utils.background import dead_background_tasks, reset_dead_background_tasks
 
 
 class TestDocsGating:
@@ -53,3 +56,54 @@ class TestDocsGating:
         finally:
             monkeypatch.undo()
             importlib.reload(main)
+
+
+class TestLifespan:
+    """The lifespan starts the cache-retention sweeper (FLIP#1050), gated on its toggle."""
+
+    def test_sweeper_started_and_health_reports_ok(self, monkeypatch):
+        started = threading.Event()
+
+        async def fake_sweeper():
+            started.set()
+            await asyncio.Event().wait()  # run until the lifespan cancels us
+
+        monkeypatch.setattr(main, "run_cache_retention_sweeper", fake_sweeper)
+        with TestClient(main.app) as client:
+            assert started.wait(timeout=5), "lifespan did not start the retention sweeper"
+            response = client.get("/health/")
+            assert response.json()["status"] == "ok"
+            assert response.json()["dead_tasks"] == []
+        # Shutdown cancelled the (still-running) sweeper: cancellation is not a death.
+        assert dead_background_tasks() == set()
+
+    def test_sweeper_not_started_when_disabled(self, monkeypatch):
+        started = threading.Event()
+
+        async def fake_sweeper():
+            started.set()
+
+        monkeypatch.setattr(main, "run_cache_retention_sweeper", fake_sweeper)
+        monkeypatch.setattr(config.get_settings(), "IMAGE_CACHE_RETENTION_ENABLED", False)
+        with TestClient(main.app) as client:
+            assert client.get("/health/").json()["status"] == "ok"
+        assert not started.is_set()
+
+    def test_dead_sweeper_surfaces_as_degraded(self, monkeypatch):
+        async def dying_sweeper():
+            raise RuntimeError("sweeper blew up")
+
+        monkeypatch.setattr(main, "run_cache_retention_sweeper", dying_sweeper)
+        try:
+            with TestClient(main.app) as client:
+                # The death is recorded via a done-callback on the app's event loop;
+                # each request round-trip lets that loop run, so poll a few times
+                # rather than sleeping (bounded — never an unbounded retry loop).
+                for _ in range(50):
+                    body = client.get("/health/").json()
+                    if body["status"] == "degraded":
+                        break
+                assert body["status"] == "degraded"
+                assert body["dead_tasks"] == ["image_cache_retention"]
+        finally:
+            reset_dead_background_tasks()
