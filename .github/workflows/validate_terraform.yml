@@ -298,8 +298,16 @@ jobs:
   # the root and its network module, the Makefile and ssh-config pytest, tflint with the aws
   # ruleset, and checkov with in-code, reasoned skips. Credential-free: nothing here talks to AWS.
   aws-ec2:
-    name: AWS EC2 node checks
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - root: aws/ec2
+            name: AWS EC2 node checks
+          - root: aws/eks
+            name: AWS EKS node checks
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -327,11 +335,11 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq graphviz
 
       - name: Terraform tests and Makefile checks
-        working-directory: trust/deploy/terraform/aws/ec2
+        working-directory: trust/deploy/terraform/${{ matrix.root }}
         run: make test
 
       - name: Lint
-        working-directory: trust/deploy/terraform/aws/ec2
+        working-directory: trust/deploy/terraform/${{ matrix.root }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: make lint
@@ -339,4 +347,4 @@ jobs:
       - name: Checkov
         run: |
           pip install checkov==3.3.14
-          checkov -d trust/deploy/terraform/aws --framework terraform --skip-download --compact --quiet
+          checkov -d trust/deploy/terraform/${{ matrix.root }} --framework terraform --skip-download --compact --quiet

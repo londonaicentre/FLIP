@@ -25,7 +25,7 @@ egress, so it cannot run in the hub's own Landing Zone Accelerator accounts, whi
 (checked on stag on 21 Oct 2026).
 
 For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`; on Azure,
-:doc:`deploy-flip-node-azure`.
+:doc:`deploy-flip-node-azure`; as the Helm chart on Amazon EKS, :doc:`deploy-flip-node-aws-eks`.
 
 .. contents:: On this page
    :local:
@@ -222,9 +222,9 @@ Before ``deploy``:
   each defaults under ``/opt/flip``.
 - **A trust on slot 3 or above** needs ``SOURCE_TRUST=1`` (or 2): the mock dataset has two partitions,
   and the seed defaults to the slot number.
-- **Credentials from** ``aws login`` are not read by Terraform. Export them first, and again when they
-  expire (about every 15 minutes):
-  ``eval "$(aws configure export-credentials --profile <profile> --format env)"``.
+- **Credentials from** ``aws login`` are not read by Terraform. A ``credential_process`` profile hands
+  them over and refreshes them itself, as on the :doc:`EKS page <deploy-flip-node-aws-eks>`:
+  ``credential_process = aws configure export-credentials --profile <your aws login profile> --format process``.
 - **An AWS Free plan account** launches only Free-Tier-eligible instance types: ``t3.xlarge`` fails at
   ``apply``, after the network is created. ``INSTANCE_TYPE=m7i-flex.large`` (2 vCPU, 8 GiB) runs the x-ray
   tutorial end to end (checked on 21 Oct 2026, cohort to results, no memory pressure).

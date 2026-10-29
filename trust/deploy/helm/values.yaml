@@ -314,6 +314,8 @@ imagingApi:
       initialDelaySeconds: 5
       periodSeconds: 10
       timeoutSeconds: 3
+  # The chart adds a required podAffinity to fl-client's node while the two share an RWO
+  # sharedImagesPvc (see the comment on that block); this is the operator's part.
   affinity:
     podAntiAffinity:
       preferredDuringSchedulingIgnoredDuringExecution:
@@ -418,10 +420,12 @@ dataAccessApi:
 # (kind's local-path, EBS gp3) actually provide — ReadWriteMany needs an RWX-capable class
 # such as EFS or NFS, and asking for it by default would leave the claim Pending on a
 # single-node cluster. Because RWO binds the volume to one node while two pods mount it,
-# imaging-api and fl-client must land on the same node: flClient.affinity below carries a
-# required podAffinity that pins the fl-client to imaging-api's node, so a multi-node cluster
-# schedules them together instead of leaving one pod Pending forever. Switch accessMode to
-# ReadWriteMany on an RWX class and that affinity can be relaxed to a preferred rule.
+# imaging-api and fl-client must land on the same node. While the volume is enabled and RWO, the
+# chart gives both pods the flip/shared-images label and a required podAffinity to it, so whichever
+# is restarted follows the one still running; at install the first matches itself and goes
+# anywhere. Both are also Recreate on RWO, so a restart frees the pod's CPU on that node before
+# the new one asks for it. On ReadWriteMany (an RWX class), or with the volume off, the chart drops
+# the label, the affinity and Recreate, and the two place freely.
 sharedImagesPvc:
   enabled: true
   storageClassName: ""
@@ -435,23 +439,14 @@ flClient:
   enabled: true
   netId: "net-1"
   imagesDir: /app/data/images
-  # Co-schedule with imaging-api. The two share sharedImagesPvc, which ships ReadWriteOnce
-  # (see the comment on that block), and an RWO volume can only be mounted from one node —
-  # so on a multi-node cluster without this the scheduler is free to place them apart and one
-  # pod sits Pending indefinitely with no indication that the volume is the reason. `required`
-  # rather than `preferred` deliberately: a preferred rule degrades to exactly that silent
-  # Pending. Harmless on the single-node kind and k3s targets, where it is always satisfied.
-  # Set to {} if you move sharedImagesPvc to an RWX class and want free placement.
-  affinity:
-    podAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-              - key: app.kubernetes.io/component
-                operator: In
-                values:
-                  - imaging-api
-          topologyKey: kubernetes.io/hostname
+  # The operator's affinity. The chart adds the co-scheduling with imaging-api itself while the
+  # two share an RWO sharedImagesPvc (see the comment on that block): an RWO volume can only be
+  # mounted from one node, so on a multi-node cluster without it the scheduler is free to place
+  # them apart and one pod sits Pending indefinitely with no indication that the volume is the
+  # reason. `required` rather than `preferred` deliberately: a preferred rule degrades to exactly
+  # that silent Pending. Harmless on the single-node kind and k3s targets, where it is always
+  # satisfied.
+  affinity: {}
   # Absolute path ON THE NODE holding this trust's already-provisioned FL participant
   # kit — the contents of the slot's kit directory (for FLARE: local/, startup/,
   # transfer/; for Flower: certificates/ and keys/ with this slot's credential).

@@ -51,6 +51,12 @@ metadata:
     app.kubernetes.io/component: imaging-api
 spec:
   replicas: {{ .Values.imagingApi.replicas }}
+  {{- if include "flip-trust.sharedImagesOneNode" . }}
+  # Shares a ReadWriteOnce volume with fl-client: a surge pod scheduled elsewhere would wait on it
+  # forever, and one on the same node may find no CPU left, so the old pod goes first.
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
@@ -60,6 +66,9 @@ spec:
       labels:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: imaging-api
+        {{- if include "flip-trust.sharedImagesOneNode" . }}
+        flip/shared-images: "true"
+        {{- end }}
     spec:
       enableServiceLinks: false
       serviceAccountName: {{ include "flip-trust.fullname" . }}-imaging-api
@@ -67,9 +76,9 @@ spec:
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
       {{- end }}
-      {{- with .Values.imagingApi.affinity }}
+      {{- with include "flip-trust.sharedImagesAffinity" (dict "affinity" .Values.imagingApi.affinity "root" $) }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- . | nindent 8 }}
       {{- end }}
       containers:
         - name: imaging-api

@@ -70,7 +70,8 @@ spec:
   # new pod before stopping the old: the two evict each other's server connection until the old one
   # exits, the server drops the site, and a job started in that window is aborted. rollingUpdate is cleared
   # so an upgrade from the RollingUpdate default applies: the live object keeps the API server's defaults,
-  # which server-side apply would otherwise refuse beside Recreate.
+  # which server-side apply would otherwise refuse beside Recreate. On a multi-node cluster it also
+  # shares a ReadWriteOnce volume with imaging-api, which a surged pod on another node would wait on.
   strategy:
     type: Recreate
     rollingUpdate: null
@@ -85,6 +86,9 @@ spec:
         {{- include "flip-trust.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: fl-client
         flip/network: {{ .Values.flClient.netId }}
+        {{- if include "flip-trust.sharedImagesOneNode" . }}
+        flip/shared-images: "true"
+        {{- end }}
       {{- $governed := and .Values.governance.document (eq .Values.flBackend "nvflare") }}
       {{- /* NVFLARE mounts a job pod's workspace at the parent's workspace path, so with job pods the parent
       cannot use /app, where the image keeps its code and virtualenv (FLIP#1428). */}}
@@ -131,9 +135,9 @@ spec:
           operator: Exists
           effect: NoSchedule
       {{- end }}
-      {{- with .Values.flClient.affinity }}
+      {{- with include "flip-trust.sharedImagesAffinity" (dict "affinity" .Values.flClient.affinity "root" $) }}
       affinity:
-        {{- toYaml . | nindent 8 }}
+        {{- . | nindent 8 }}
       {{- end }}
       initContainers:
         {{- if $kitFromSecret }}

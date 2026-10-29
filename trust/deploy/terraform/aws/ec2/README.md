@@ -23,7 +23,7 @@ Runbook: [Deploy a FLIP node on AWS EC2](../../../../../docs/source/deploy-flip/
 | Path | What it is |
 |---|---|
 | `*.tf` | The root: the node's security group (no inbound), role, key pair and instance, plus the opt-ins in `optional.tf` (SSM endpoints, stop/start schedule) |
-| `../modules/network/` | An existing subnet passed through, or a VPC with a NAT gateway |
+| `../modules/network/` | An existing subnet passed through, or a VPC with a NAT gateway; the EKS root (`../eks/`) uses it too |
 | `Makefile` | `init plan apply ssh-config provision deploy upgrade …`; `make help` lists them |
 | `scripts/ssh_config.py` | The `~/.ssh/config` entry that reaches the node over SSM |
 | `architecture/` | The node diagrams, rendered by the docs build; `tests/test_architecture_diagram.py` fails when they drift from the `.tf` files |
