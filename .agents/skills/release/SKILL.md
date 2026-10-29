@@ -92,10 +92,10 @@ notes). Run that command only when asked. With the PR open, it fails unless the 
 preview comment is present. Read that comment. When asked to merge, merge it **with a merge commit**.
 
 The merge triggers two prod Terraform applies: the push apply at `sha-`, then the `release.yml` apply at
-`v<X.Y.Z>` once the twelve image builds are green. Both can hold on the FL gate. Only the user may attest
+`v<X.Y.Z>` once the fourteen image builds are green. Both can hold on the FL gate. Only the user may attest
 `fl_quiesced`. Nothing may merge to `main` until the release apply has run.
 
-Then check that the Release page, GHCR `:v<X.Y.Z>` (all twelve) and PyPI (if bumped) are correct, and that prod
+Then check that the Release page, GHCR `:v<X.Y.Z>` (all fourteen) and PyPI (if bumped) are correct, and that prod
 `/api/health` reports `v<X.Y.Z>`. flip-ui is **not** deployed by the merge (#1186 is open):
 `make -C deploy/providers/AWS deploy-ui HUB=<hub>` from a checkout at the tag. A fresh worktree has no Terraform
 state, so run `make -C deploy/providers/AWS init HUB=<hub>` there first. Sites upgrade themselves: point

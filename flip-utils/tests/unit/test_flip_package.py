@@ -85,11 +85,10 @@ class TestJobTypeEnum:
         assert JobType.STANDARD.value == "standard"
         assert JobType.EVALUATION.value == "evaluation"
         assert JobType.FED_OPT.value == "fed_opt"
-        assert JobType.DIFFUSION.value == "diffusion_model"
 
     def test_job_type_all_members(self):
-        """JobType should have exactly 4 members."""
-        assert len(JobType) == 4
+        """JobType should have exactly 3 members."""
+        assert len(JobType) == 3
 
 
 class TestFLIPStandardDev:

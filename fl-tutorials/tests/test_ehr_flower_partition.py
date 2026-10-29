@@ -27,7 +27,7 @@ from flip.flower import identity
 from tutorial_apps import flower_client_app, simulated_site_context
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EHR_TUTORIAL = REPO_ROOT / "fl-tutorials" / "flower" / "ehr_risk_prediction"
+EHR_TUTORIAL = REPO_ROOT / "fl-tutorials" / "flower" / "tabular_classification" / "ehr_risk_prediction"
 
 
 @pytest.fixture

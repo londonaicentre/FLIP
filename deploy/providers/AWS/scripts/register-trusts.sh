@@ -20,7 +20,7 @@
 #      an already-registered trust returns a metadata-only kit (no credentials;
 #      the hub stores only the SHA-256 hash), so re-running is safe.
 #   3. Write the kit back into trust/.env.<CODE>.<env> via
-#      scripts/distribute_trust_kits.py (credentials on first registration,
+#      trust/deploy/scripts/distribute_trust_kits.py (credentials on first registration,
 #      hub-shared refreshed every run; operator host-local edits preserved).
 # Delivery to a host is command-driven, NOT done here: `make deploy-trust`
 # pushes the kit to the EC2 host; `make package-onprem-trust-kit` tarballs it
@@ -86,12 +86,12 @@ else
     log_warn "services-stable did not complete in time — service may be mid-rollout. Proceeding anyway."
 fi
 
-# Kit-file writing is delegated to scripts/distribute_trust_kits.py (the single
+# Kit-file writing is delegated to trust/deploy/scripts/distribute_trust_kits.py (the single
 # in-place-upsert writer shared with the dev path and sync). It seeds the
 # host-local profile from the .example on first write, writes credentials only
 # on a new registration, and upserts metadata + the hub-shared block under the
 # managed sentinel — preserving operator edits on re-runs. The hub-shared key
-# set and sentinel live in scripts/trust_kit_lib.py.
+# set and sentinel live in trust/deploy/scripts/trust_kit_lib.py.
 
 # Register one trust (identified by its CODE-named kit file) via a one-off ECS
 # task, then write the returned kit back into that same file.
@@ -199,7 +199,7 @@ register_one_kit() {
     # .prod/.stag kit, so distribute_trust_kits.py writes the hub-shared
     # block LIVE (the remote operator has no hub .env). Credentials are written
     # only on first registration; operator host-local edits are preserved.
-    echo "$kit" | uv run --no-config "$REPO_ROOT/scripts/distribute_trust_kits.py" --target "$kit_file"
+    echo "$kit" | uv run --no-config "$REPO_ROOT/trust/deploy/scripts/distribute_trust_kits.py" --target "$kit_file"
     log_success "Wrote kit for '$name' → $kit_file"
 }
 

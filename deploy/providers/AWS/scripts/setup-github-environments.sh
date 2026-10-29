@@ -89,6 +89,9 @@ AWS_DIR="$(cd "${HERE}/.." && pwd)"
 REPO_ROOT="$(cd "${AWS_DIR}/../../.." && pwd)"
 PLAN_WORKFLOW="${REPO_ROOT}/.github/workflows/terraform_plan.yml"
 [[ -f "${PLAN_WORKFLOW}" ]] || die "cannot find ${PLAN_WORKFLOW} — the secret/variable split is read from it"
+# The UI publish's variables (FLIP#1186) are read from the workflow that uses them.
+UI_WORKFLOW="${REPO_ROOT}/.github/workflows/publish_ui.yml"
+[[ -f "${UI_WORKFLOW}" ]] || die "cannot find ${UI_WORKFLOW} — the UI publish's variables are read from it"
 
 GH_ENV="aws-${ENV}"
 # The profile the CI roles of this estate are reached through. Matches the
@@ -260,6 +263,21 @@ expect_trust "${TF_PLAN_ROLE_NAME}" StringEquals sub "${EXPECTED_SUB}"
 expect_trust "${TF_APPLY_ROLE_NAME}" StringEquals sub "${EXPECTED_SUB}"
 expect_trust "${TF_APPLY_ROLE_NAME}" StringEquals job_workflow_ref "${EXPECTED_APPLY_REF}"
 
+# The UI-publish role (FLIP#1186) is optional: the bootstrap module creates it
+# only when its caller names the UI bucket. Without it CI does not publish the UI
+# and `make deploy-ui` stays the way to. When it exists it is held to the same
+# environment and branch as the apply role.
+TF_UI_PUBLISH_ROLE_NAME="${TF_UI_PUBLISH_ROLE_NAME:-AICentre-FLIPUiPublishRole}"
+EXPECTED_UI_REF="${REPO}/.github/workflows/publish_ui.yml@refs/heads/${APPLY_BRANCH}"
+UI_ARN=""
+if out="$(aws_q iam get-role --role-name "${TF_UI_PUBLISH_ROLE_NAME}" --query Role.Arn --output text 2>&1)"; then
+    UI_ARN="${out}"
+    expect_trust "${TF_UI_PUBLISH_ROLE_NAME}" StringEquals sub "${EXPECTED_SUB}"
+    expect_trust "${TF_UI_PUBLISH_ROLE_NAME}" StringEquals job_workflow_ref "${EXPECTED_UI_REF}"
+elif [[ "${out}" != *NoSuchEntity* ]]; then
+    die "could not read the role ${TF_UI_PUBLISH_ROLE_NAME}: $(tail -1 <<<"${out}")"
+fi
+
 # The FLIP root attaches this boundary to every role it owns; an apply against an
 # account without it fails every role update with NoSuchEntity.
 boundary_arn="arn:${PARTITION}:iam::${ACCOUNT}:policy/${TF_BOUNDARY_NAME}"
@@ -271,6 +289,11 @@ if ! out="$(aws_q iam get-policy --policy-arn "${boundary_arn}" --query Policy.P
 fi
 
 echo "   state bucket, both roles, their trust policies and the boundary check out"
+if [[ -n "${UI_ARN}" ]]; then
+    echo "   the UI-publish role and its trust policy check out"
+else
+    echo "   no ${TF_UI_PUBLISH_ROLE_NAME}: CI will not publish the UI (set ui_bucket_name on the bootstrap module)"
+fi
 
 # ---------------------------------------------------------------------------
 # 1. The environment itself
@@ -356,6 +379,10 @@ echo "   set TF_HUB=${HUB}"
 set_gh variable TF_PLAN_ROLE_ARN "${PLAN_ARN}"
 set_gh variable TF_APPLY_ROLE_ARN "${APPLY_ARN}"
 echo "   set TF_PLAN_ROLE_ARN, TF_APPLY_ROLE_ARN"
+if [[ -n "${UI_ARN}" ]]; then
+    set_gh variable TF_UI_PUBLISH_ROLE_ARN "${UI_ARN}"
+    echo "   set TF_UI_PUBLISH_ROLE_ARN"
+fi
 
 # ---------------------------------------------------------------------------
 # 3. Everything the workflows dereference
@@ -375,8 +402,12 @@ read_lines SECRET_KEYS < <(
     grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*secrets\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
         sed -E 's/.*secrets\.//' | sort -u
 )
+# The UI publish's variables count only where its role exists; elsewhere nothing
+# reads them.
+VARIABLE_SOURCES=("${PLAN_WORKFLOW}")
+[[ -n "${UI_ARN}" ]] && VARIABLE_SOURCES+=("${UI_WORKFLOW}")
 read_lines VARIABLE_KEYS < <(
-    grep -oE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*vars\.[A-Z0-9_]+' "${PLAN_WORKFLOW}" |
+    grep -ohE '^[[:space:]]+[A-Z][A-Z0-9_]*:[[:space:]]+\$\{\{[[:space:]]*vars\.[A-Z0-9_]+' "${VARIABLE_SOURCES[@]}" |
         sed -E 's/.*vars\.//' | sort -u
 )
 ((${#SECRET_KEYS[@]} > 0)) || die "found no 'secrets.' references in ${PLAN_WORKFLOW} — has its env block changed shape?"
@@ -428,6 +459,16 @@ read_lines LZA_KEYS < <(
 )
 ((${#LZA_KEYS[@]} > 0)) || die "could not read LZA_REQUIRED_KEYS from compose-ci-env.sh"
 REQUIRED_KEYS+=("${LZA_KEYS[@]}")
+# The keys the UI build refuses to run without: its "Check the window.js inputs"
+# step names them on one `for key in …` line.
+if [[ -n "${UI_ARN}" ]]; then
+    read_lines UI_KEYS < <(
+        grep -oE '^[[:space:]]+for key in [A-Z0-9_ ]+; do' "${UI_WORKFLOW}" | head -1 |
+            sed -E 's/^[[:space:]]+for key in //; s/; do$//' | tr ' ' '\n' | sed '/^$/d'
+    )
+    ((${#UI_KEYS[@]} > 0)) || die "could not read the window.js inputs from ${UI_WORKFLOW}"
+    REQUIRED_KEYS+=("${UI_KEYS[@]}")
+fi
 
 SET=()
 MISSING=()
@@ -435,8 +476,8 @@ OPTIONAL_ABSENT=()
 UNSET_HERE=()
 for key in "${SECRET_KEYS[@]}"; do set_one secret "${key}"; done
 for key in ${VARIABLE_KEYS[@]+"${VARIABLE_KEYS[@]}"}; do
-    # Written in step 2 from the flag, never from the env file.
-    [[ "${key}" == "TF_HUB" ]] && continue
+    # Written in step 2 from the flag and IAM, never from the env file.
+    [[ "${key}" == "TF_HUB" || "${key}" == "TF_UI_PUBLISH_ROLE_ARN" ]] && continue
     set_one variable "${key}"
 done
 

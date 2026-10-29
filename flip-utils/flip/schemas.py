@@ -107,7 +107,7 @@ class TrainingMetrics(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _default_x_value_to_global_round(cls, data: Any) -> Any:
-        """Backfill a missing/None ``x_value`` from ``global_round`` (back-compat with old senders)."""
+        """Default an unset or None ``x_value`` to ``global_round`` (FLIP#148)."""
         if isinstance(data, dict) and data.get("x_value") is None:
             global_round = data.get("global_round")
             if global_round is not None:  # absent global_round -> let the field-required error surface

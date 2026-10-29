@@ -14,7 +14,8 @@
 With the repository variable set to ``true``, no staging plan, apply or drift job may start: the
 aws-stag environment would otherwise rebuild a staging estate that was torn down on purpose on the
 next develop merge. Production must never read the variable, so every guard on a job that can run
-on ``main`` has to let ``main`` through. Read as text, like the other workflow tests.
+on ``main`` has to let ``main`` through. The fork skips share those ``if:`` expressions, so they are
+pinned here too. Read as text, like the other workflow tests.
 
 Usage:
     python3 .github/tests/workflows/test_terraform_stag_pause.py
@@ -28,6 +29,7 @@ from pathlib import Path
 
 WORKFLOWS = Path(__file__).resolve().parents[2] / "workflows"
 GUARD = "vars.TF_STAG_DISABLED != 'true'"
+FORK_SKIP = "(github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true')"
 
 
 def job_if(workflow: str, job: str) -> str:
@@ -65,10 +67,21 @@ class TerraformStagPause(unittest.TestCase):
                 assert expr == f"github.ref_name == 'main' || {GUARD}" or clause in expr, expr
                 assert expr.count(GUARD) == 1, f"{workflow}:{job} reads the guard outside the main clause"
 
-    def test_the_plan_keeps_its_fork_skip(self) -> None:
+    def test_the_plan_keeps_its_fork_pr_skip(self) -> None:
         assert job_if("terraform_plan.yml", "plan") == (
-            f"github.event.pull_request.head.repo.full_name == github.repository && {GUARD}"
+            f"{FORK_SKIP} && github.event.pull_request.head.repo.full_name == github.repository && {GUARD}"
         )
+
+    def test_every_terraform_job_skips_forks_that_have_not_opted_in(self) -> None:
+        """A fork has no aws-* environments, so each run fails and mails whoever pushed or last edited the file."""
+        for workflow, job in (
+            ("terraform_plan.yml", "plan"),
+            ("terraform_apply.yml", "apply"),
+            ("terraform_drift.yml", "drift"),
+            ("terraform_drift.yml", "dispatch-prod"),
+        ):
+            with self.subTest(workflow=workflow, job=job):
+                assert job_if(workflow, job).startswith(f"{FORK_SKIP} && ")
 
     def test_the_production_drift_dispatch_does_not_wait_on_the_paused_job(self) -> None:
         text = (WORKFLOWS / "terraform_drift.yml").read_text()

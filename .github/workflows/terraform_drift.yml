@@ -121,6 +121,10 @@ jobs:
 
   drift:
     name: Drift (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
+    # Both jobs skip outside londonaicentre/FLIP unless TF_CI_ON_FORK is `true`;
+    # see terraform_apply.yml. Without it a fork would fail here nightly, and
+    # GitHub mails a scheduled run's failure to whoever last edited this file
+    # upstream.
     # TF_STAG_DISABLED pauses the staging leg only; see terraform_apply.yml.
     # dispatch-prod below does not depend on this job, so production drift still
     # runs from the develop schedule.
@@ -131,7 +135,8 @@ jobs:
     # stopped is not a licence to plan it and report the refresh error as drift.
     needs: [staging-state]
     if: >-
-      always()
+      (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true')
+      && always()
       && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
       && needs.staging-state.result != 'failure'
       && needs.staging-state.result != 'cancelled'
@@ -410,7 +415,8 @@ jobs:
   # error can never be mistaken for "absent" and skip production silently.
   dispatch-prod:
     name: Dispatch the production drift run on main
-    if: github.ref_name != 'main'
+    # Same fork skip as the drift job.
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: read

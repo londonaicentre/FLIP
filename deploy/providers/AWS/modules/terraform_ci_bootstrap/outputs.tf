@@ -26,6 +26,11 @@ output "apply_role_arn" {
   value       = aws_iam_role.terraform_apply.arn
 }
 
+output "ui_publish_role_arn" {
+  description = "Role ARN for the flip-ui publish, when ui_bucket_name is set, otherwise null. Set as TF_UI_PUBLISH_ROLE_ARN on the GitHub environment."
+  value       = try(aws_iam_role.ui_publish[0].arn, null)
+}
+
 output "account_id" {
   description = "Account these roles were created in — check it against the intended FLIP environment before wiring the ARNs up."
   value       = data.aws_caller_identity.current.account_id

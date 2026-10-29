@@ -110,9 +110,12 @@ The kit file's Host-local profile can set `FL_SITE_PRIVACY_POLICY=percentile` (p
 `FL_SITE_PRIVACY_*` parameters — see the commented block in `trust/.env.example`). The fl-client entrypoint
 renders these into the client's FLARE `local/privacy.json` at container start, so THIS trust's
 update-privacy filter is applied to every outgoing model update regardless of the researcher's app config
-(site filters run before app filters and jobs cannot opt out). Unset = no site policy (app-level filters
-only, the previous behavior). Invalid values stop the fl-client at startup — fail closed. Apply changes with
-`make -C trust up-fl-clients-kit KIT=<CODE>` (`down-fl-clients-kit KIT=<CODE>` stops and removes
+(site filters run before app filters and a job's configuration cannot opt out or pick a weaker scope). The
+bound object is the job's *configuration*: every FLARE app template runs the Client API `in_process`, so job
+code runs inside the client's job process and is not currently isolated from the filter (FLIP#1572). Unset =
+no site policy (app-level filters only, the previous behavior). Invalid values stop the fl-client at startup
+(fail closed). Apply changes with `make -C trust up-fl-clients-kit KIT=<CODE>`
+(`down-fl-clients-kit KIT=<CODE>` stops and removes
 just that trust's clients; `up-fl-clients` / `down-fl-clients` do the same across every kit for
 this env, leaving the rest of each trust stack up); the fl-client log then shows
 `[site-privacy] site privacy policy ACTIVE: ...`. Details: `docs/source/components/component-fl-privacy.rst`
@@ -393,7 +396,7 @@ further consequences on a real trust:
   Because of that, **`MONAI_LABEL_BIND_HOST` defaults to `127.0.0.1`**: out of the box the port
   is published on loopback only, and the trust host gains no listener reachable from the
   network (the trust deployment model is otherwise strictly outbound — see
-  [Deployment Architecture](../CLAUDE.md)). That default is deliberately *not* browser-usable
+  [Deployment Architecture](../AGENTS.md#deployment-architecture)). That default is deliberately *not* browser-usable
   from another machine. To give clinicians access, pick one:
 
   1. **Serve it through the XNAT nginx** (recommended) — same-origin with XNAT, so it also
@@ -569,7 +572,7 @@ key shows up there before it shows up as every task failing to decrypt.
 
 ## Integration tests (cohort-query end-to-end)
 
-The `trust-api` and `data-access-api` integration suites run against a throwaway Compose stack — vanilla Postgres seeded from a small OMOP fixture plus a freshly-built `data-access-api`. The stack is defined in [`deploy/compose.test.yml`](deploy/compose.test.yml) and brought up by [Testcontainers](https://testcontainers-python.readthedocs.io/) inside session-scoped pytest fixtures, so a single test invocation is enough — no `make up` first.
+The `trust-api` and `data-access-api` integration suites run against a throwaway Compose stack — vanilla Postgres seeded from a small OMOP fixture plus a freshly-built `data-access-api`. The stack is defined in [`deploy/compose/compose.test.yml`](deploy/compose/compose.test.yml) and brought up by [Testcontainers](https://testcontainers-python.readthedocs.io/) inside session-scoped pytest fixtures, so a single test invocation is enough — no `make up` first.
 
 ```sh
 # trust-api: drives ``handle_cohort_query`` end-to-end through trust-api → data-access-api → omop-db

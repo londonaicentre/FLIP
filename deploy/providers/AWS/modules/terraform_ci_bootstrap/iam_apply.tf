@@ -250,7 +250,7 @@ data "aws_iam_policy_document" "apply_iam" {
   }
 
   # Belt and braces now that every Allow above is scoped to named roles that
-  # never include these two: an operator widening managed_role_names by mistake
+  # never include these three: an operator widening managed_role_names by mistake
   # must still not hand the pipeline its own identity.
   statement {
     sid    = "NoSelfEscalation"
@@ -270,6 +270,7 @@ data "aws_iam_policy_document" "apply_iam" {
     resources = [
       local.apply_role_arn,
       local.plan_role_arn,
+      local.ui_publish_role_arn,
     ]
   }
 
