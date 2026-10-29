@@ -18,18 +18,23 @@
 #
 # DATA_RETENTION_TIME_IN_DAYS on an event table is Time Travel, NOT row expiry: event rows are
 # never removed by Snowflake. The retention policy this issue asks for is therefore the pruning
-# task below; the Time Travel window is kept at one day so a pruned row is not also kept for a
-# week in Time Travel storage.
+# task below; the Time Travel window is set by the ALTER that follows, and is kept at one day so a
+# pruned row is not also kept for a week in Time Travel storage.
+#
+# The CREATE statement is deliberately left exactly as it was: changing it would force a replace,
+# and this resource's revert is DROP EVENT TABLE, so a cosmetic edit here would take the account's
+# logs with it.
 resource "snowflake_execute" "event_table" {
-  execute = "CREATE EVENT TABLE IF NOT EXISTS ${local.event_table_fqn} DATA_RETENTION_TIME_IN_DAYS = 1"
+  execute = "CREATE EVENT TABLE IF NOT EXISTS ${local.event_table_fqn}"
   revert  = "DROP EVENT TABLE IF EXISTS ${local.event_table_fqn}"
   query   = "SHOW EVENT TABLES LIKE '${local.event_table}' IN SCHEMA ${snowflake_database.platform.name}.${local.platform_schemas.obs}"
 
   depends_on = [snowflake_schema.platform]
 }
 
-# Applied separately from the CREATE because the CREATE is IF NOT EXISTS: on an account whose event
-# table predates this change the CREATE is a no-op and only this statement moves the setting.
+# The Time Travel window, set by its own statement rather than in the CREATE above: the CREATE is
+# IF NOT EXISTS, so on an account whose event table already exists it is a no-op, and editing it
+# would mean replacing the event table to change a retention setting.
 resource "snowflake_execute" "event_table_time_travel" {
   execute = "ALTER TABLE ${local.event_table_fqn} SET DATA_RETENTION_TIME_IN_DAYS = 1"
   revert  = "ALTER TABLE ${local.event_table_fqn} UNSET DATA_RETENTION_TIME_IN_DAYS"
