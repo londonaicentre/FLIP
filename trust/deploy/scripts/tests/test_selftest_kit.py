@@ -12,10 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Black-box tests for scripts/selftest_kit.py — the hub-less kit for an Azure node's self-test (FLIP#1390).
+"""Black-box tests for trust/deploy/scripts/selftest_kit.py — the hub-less kit for a node's self-test (FLIP#1390).
 
 Usage:
-    uv run --no-config scripts/tests/test_selftest_kit.py
+    uv run --no-config trust/deploy/scripts/tests/test_selftest_kit.py
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import tempfile
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
-REPO_ROOT = SCRIPTS_DIR.parent
+REPO_ROOT = SCRIPTS_DIR.parents[2]
 SCRIPT = SCRIPTS_DIR / "selftest_kit.py"
 TEMPLATE = REPO_ROOT / "trust" / ".env.example"
 

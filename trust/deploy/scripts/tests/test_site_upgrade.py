@@ -10,14 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""Tests for scripts/site_upgrade.py — the operator-side release resolver (FLIP#1204).
+"""Tests for trust/deploy/scripts/site_upgrade.py — the operator-side release resolver (FLIP#1204).
 
 Covers the decisions the script makes before any container moves: which tag is the
 target (CLI, else the hub's running build), what counts as an image tag, when a move is a
 downgrade, and that writing the tag into the kit touches exactly the two Hub-shared keys.
 
 Usage:
-    uv run scripts/tests/test_site_upgrade.py
+    uv run trust/deploy/scripts/tests/test_site_upgrade.py
 """
 
 from __future__ import annotations

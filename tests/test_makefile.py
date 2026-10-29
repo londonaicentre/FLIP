@@ -86,7 +86,7 @@ class BuildTrue(unittest.TestCase):
     def test_every_repo_built_dev_service_pulls_by_default_and_builds_on_build_true(self):
         services = {
             **repo_built_services("deploy/compose.development.yml"),
-            **repo_built_services("trust/deploy/compose_trust.development.yml"),
+            **repo_built_services("trust/deploy/compose/compose_trust.development.yml"),
         }
         assert {"flip-api", "omop-db", "orthanc", "trust-api"} <= services.keys(), services.keys()
         for name, body in services.items():
@@ -221,7 +221,7 @@ class MakeKitSelection(unittest.TestCase):
     def check_selected(self, expected, hub=None, *extra, subdir="."):
         output = self.run_make("onboard-onprem-trust", hub, *extra, subdir=subdir)
         args = json.loads(self.args_file.read_text())
-        assert args[:4] == ["run", "--no-config", "../scripts/onboard_onprem_trust.py", "SITE"], args
+        assert args[:4] == ["run", "--no-config", "deploy/scripts/onboard_onprem_trust.py", "SITE"], args
         assert Path(args[args.index("--kit-file") + 1]) == self.root / "trust" / expected, args
         assert self.hub_file.read_text() == (hub or ("" if subdir == "trust" else "prod"))
         return output
@@ -278,7 +278,7 @@ class MakeKitSelection(unittest.TestCase):
         assert not self.args_file.exists(), "new_trust.py must not run"
         result = self.make("new-trust", "TRUST_CODE=OTHER", "TRUST_NAME=Other", "HUB=prod")
         assert result.returncode == 0, result.stdout + result.stderr
-        assert "scripts/new_trust.py" in self.args_file.read_text()
+        assert "trust/deploy/scripts/new_trust.py" in self.args_file.read_text()
 
     def test_sweeps_take_current_names_and_name_the_old_kits_they_skip(self):
         """Only KIT= finds an old name: a sweep also took trust/.env.<word> (.env.local) for a kit."""
@@ -443,7 +443,7 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
         for hub in ("prod", "stag"):
             generated = subprocess.run(
                 [sys.executable, "-c", code, str(selected)],
-                env={**self.env, "PYTHONPATH": str(REPO / "scripts"), "HUB": hub},
+                env={**self.env, "PYTHONPATH": str(REPO / "trust" / "deploy" / "scripts"), "HUB": hub},
                 capture_output=True,
                 text=True,
                 timeout=30,

@@ -47,7 +47,7 @@ make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub 
 ### Containers run as a non-root user (GHSA-8465), with capabilities hardened
 
 `flower-supernode` and `flower-fl-base` inherit the non-root `app` user from the upstream `flwr/base`
-image. The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.flower.yml`)
+image. The trust-deployment `fl-client-net-*` services (`trust/deploy/compose/compose_trust.{production,development}.flower.yml`)
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
 service — the `flower-supernode` entrypoint does no chmod/chown at all, so no capability needs adding
 back in either environment. See [`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)

@@ -25,7 +25,7 @@ case "${BACKEND}" in
         ;;
 esac
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 OUT="${SELFTEST_OUT:-/opt/flip/selftest}"
 DATA_ROOT="${SELFTEST_DATA_ROOT:-/opt/flip/data/trust-1}"
 DOCKER_TAG="${SELFTEST_DOCKER_TAG:-stag}"
@@ -114,7 +114,7 @@ KIT_ARGS=(--backend "${BACKEND}" --fl-kit-dir "${FL_KIT_DIR}" --data-root "${DAT
 if [ -n "${SELFTEST_KIT_TEMPLATE:-}" ]; then
     KIT_ARGS+=(--template "${SELFTEST_KIT_TEMPLATE}")
 fi
-if python3 "${REPO_ROOT}/scripts/selftest_kit.py" "${KIT_ARGS[@]}" >/dev/null; then
+if python3 "${REPO_ROOT}/trust/deploy/scripts/selftest_kit.py" "${KIT_ARGS[@]}" >/dev/null; then
     record "kit file" true "${KIT_OUT}"
 else
     record "kit file" false "selftest_kit.py failed"

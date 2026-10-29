@@ -28,7 +28,7 @@ importlib (the script is stdlib-only with a guarded __main__, so importing
 it has no side effects).
 
 Usage:
-    uv run scripts/tests/test_onboard_onprem_trust.py
+    uv run trust/deploy/scripts/tests/test_onboard_onprem_trust.py
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _check(path: Path):
         "OMOP_DATA_DIR",
         {"OMOP_DATA_DIR": str(path)},
         True,
-        SCRIPTS_DIR.parent,
+        SCRIPTS_DIR.parents[2],
     )
 
 
@@ -149,7 +149,7 @@ def test_5_site_privacy_uses_runtime_validator() -> None:
         {"FL_BACKEND": "nvflare", "FL_SITE_PRIVACY_POLICY": "percentile"},
         True,
         "TEST",
-        SCRIPTS_DIR.parent,
+        SCRIPTS_DIR.parents[2],
     )
     _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
 
@@ -165,7 +165,7 @@ def test_6_site_privacy_rejects_non_finite_value() -> None:
         },
         True,
         "TEST",
-        SCRIPTS_DIR.parent,
+        SCRIPTS_DIR.parents[2],
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
 
@@ -177,7 +177,7 @@ def test_7_site_privacy_rejects_unsupported_backend() -> None:
         {"FL_BACKEND": "flower", "FL_SITE_PRIVACY_POLICY": "percentile"},
         True,
         "TEST",
-        SCRIPTS_DIR.parent,
+        SCRIPTS_DIR.parents[2],
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
     _assert("nothing on flower enforces it" in result.detail, "detail explains that Flower ignores the policy")
@@ -190,7 +190,7 @@ def test_8_site_privacy_not_configured_reports_cleanly() -> None:
         {"FL_BACKEND": "nvflare"},
         True,
         "TEST",
-        SCRIPTS_DIR.parent,
+        SCRIPTS_DIR.parents[2],
     )
     _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
     _assert("no site privacy policy configured" in result.detail, "detail names the no-policy state", result.detail)
@@ -214,7 +214,7 @@ def test_9_site_privacy_rejects_misspelt_variable() -> None:
         },
         True,
         "TEST",
-        SCRIPTS_DIR.parent,
+        SCRIPTS_DIR.parents[2],
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
     _assert("FL_SITE_PRIVACY_PERCENTIL " in result.detail, "detail names the misspelt variable", result.detail)
@@ -398,7 +398,7 @@ def test_19_hub_on_its_release_sha_build_is_not_behind() -> None:
     _assert(other.status == mod.Status.WARN, "an unrelated sha is still reported", other.detail)
 
 
-EXAMPLE_DOCUMENT = SCRIPTS_DIR.parent / "trust" / "governance.example.toml"
+EXAMPLE_DOCUMENT = SCRIPTS_DIR.parents[2] / "trust" / "governance.example.toml"
 
 
 def _document(text: str) -> str:
@@ -412,7 +412,7 @@ def test_20_governance_document_valid_passes_with_its_digest() -> None:
     """The checklist that gates upgrade-onprem-trust validates the [disclosure]/[access] half."""
     print("▶ valid governance document -> PASS, names the digest")
     result = mod.check_governance_document(
-        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parent
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parents[2]
     )
     _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
     _assert("sha256 " in result.detail, "detail carries the digest the service logs", result.detail)
@@ -422,7 +422,7 @@ def test_21_governance_document_below_the_floor_fails() -> None:
     print("▶ governance document lowering the kit floor -> FAIL")
     document = _document("[disclosure]\nmin_cohort_size = 5\n")
     result = mod.check_governance_document(
-        {"ACCESS_POLICY_FILE": document, "COHORT_QUERY_THRESHOLD": "10"}, True, "TEST", SCRIPTS_DIR.parent
+        {"ACCESS_POLICY_FILE": document, "COHORT_QUERY_THRESHOLD": "10"}, True, "TEST", SCRIPTS_DIR.parents[2]
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
     _assert("below the configured COHORT_QUERY_THRESHOLD" in result.detail, "detail is the loader's", result.detail)
@@ -430,7 +430,7 @@ def test_21_governance_document_below_the_floor_fails() -> None:
 
 def test_22_governance_document_not_configured_passes() -> None:
     print("▶ no governance document -> PASS, platform defaults")
-    result = mod.check_governance_document({"COHORT_QUERY_THRESHOLD": "12"}, True, "TEST", SCRIPTS_DIR.parent)
+    result = mod.check_governance_document({"COHORT_QUERY_THRESHOLD": "12"}, True, "TEST", SCRIPTS_DIR.parents[2])
     _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
     _assert("COHORT_QUERY_THRESHOLD=12" in result.detail, "detail names the floor in force", result.detail)
 
@@ -440,7 +440,7 @@ def test_23_site_privacy_reads_the_documents_section() -> None:
     print("▶ fail-open gamma in the document -> FAIL")
     document = _document('[fl_privacy.nvflare]\npolicy = "percentile"\ngamma = 0\n')
     result = mod.check_site_privacy_policy(
-        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": document}, True, "TEST", SCRIPTS_DIR.parent
+        {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": document}, True, "TEST", SCRIPTS_DIR.parents[2]
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
     _assert("gamma" in result.detail, "detail names the parameter", result.detail)
@@ -452,7 +452,7 @@ def test_24_site_privacy_in_both_sources_fails() -> None:
         {"FL_BACKEND": "nvflare", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT), "FL_SITE_PRIVACY_POLICY": "percentile"},
         True,
         "TEST",
-        SCRIPTS_DIR.parent,
+        SCRIPTS_DIR.parents[2],
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
     _assert("configured twice" in result.detail, "detail says why", result.detail)
@@ -461,7 +461,7 @@ def test_24_site_privacy_in_both_sources_fails() -> None:
 def test_25_documents_nvflare_section_on_flower_fails() -> None:
     print("▶ [fl_privacy.nvflare] on a Flower trust -> FAIL")
     result = mod.check_site_privacy_policy(
-        {"FL_BACKEND": "flower", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parent
+        {"FL_BACKEND": "flower", "ACCESS_POLICY_FILE": str(EXAMPLE_DOCUMENT)}, True, "TEST", SCRIPTS_DIR.parents[2]
     )
     _assert(result.status == mod.Status.FAIL, "status is FAIL", result.detail)
 
@@ -470,7 +470,7 @@ def test_26_a_relative_document_resolves_against_trust() -> None:
     """Compose resolves ACCESS_POLICY_FILE against trust/ (--project-directory trust); so does the checklist."""
     print("▶ relative ACCESS_POLICY_FILE -> resolved against trust/")
     result = mod.check_governance_document(
-        {"ACCESS_POLICY_FILE": "./governance.example.toml"}, True, "TEST", SCRIPTS_DIR.parent
+        {"ACCESS_POLICY_FILE": "./governance.example.toml"}, True, "TEST", SCRIPTS_DIR.parents[2]
     )
     _assert(result.status == mod.Status.PASS, "status is PASS", result.detail)
 
@@ -509,7 +509,7 @@ def test_27_selected_kit_controls_values_and_filename_hints() -> None:
 def test_28_missing_file_heading_and_advice_name_the_selected_path() -> None:
     """Missing suffixed kits give actionable diagnostics without silently checking a legacy kit."""
     print("▶ selected missing kit is named in the heading and advice")
-    selected = SCRIPTS_DIR.parent / "trust/.env.MISSING.prod"
+    selected = SCRIPTS_DIR.parents[2] / "trust/.env.MISSING.prod"
     out = io.StringIO()
     exit_code = None
     with (
@@ -530,7 +530,7 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
     """Copying the READY command must deploy the kit that was checked, including custom filenames."""
     print("▶ READY command preserves and shell-quotes the selected kit")
     selected_paths = (
-        SCRIPTS_DIR.parent / "trust/.env.SITE.stag",
+        SCRIPTS_DIR.parents[2] / "trust/.env.SITE.stag",
         Path("/opt/operator kits/kit's file; echo unsafe"),
         Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
     )
@@ -604,7 +604,7 @@ def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
 def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
     """Every kit is scaffolded from trust/.env.example, so that is the template its defaults come from."""
     print("\n[31] Trust-local passwords: compared against trust/.env.example")
-    repo_root = SCRIPTS_DIR.parent
+    repo_root = SCRIPTS_DIR.parents[2]
     defaults = mod.read_kit_vars(repo_root / "trust" / ".env.example")
     rotated = {key: "rotated-secret" for key in mod.TRUST_LOCAL_PASSWORD_KEYS}  # pragma: allowlist secret
     for kit_vars, root, status in (

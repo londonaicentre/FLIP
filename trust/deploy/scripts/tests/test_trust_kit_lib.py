@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Unit tests for scripts/trust_kit_lib.py — the single kit-file writer.
+"""Unit tests for trust/deploy/scripts/trust_kit_lib.py — the single kit-file writer.
 
 trust_kit_lib.write_kit() merges a kit dict (as emitted by
 flip_api.scripts.register_trust) into trust/.env.<...> in place, preserving
@@ -21,7 +21,7 @@ the prod distributor, and sync — so these tests pin the behaviours the old
 distribute-trust-kits.sh and sync_trust_kit.py relied on.
 
 Usage:
-    uv run --no-config scripts/tests/test_trust_kit_lib.py
+    uv run --no-config trust/deploy/scripts/tests/test_trust_kit_lib.py
 """
 
 from __future__ import annotations

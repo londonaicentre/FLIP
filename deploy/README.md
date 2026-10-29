@@ -26,7 +26,8 @@ they are filed by two different rules:
 
 1. **Application composition** — which containers form a stack. A compose file lives **next to the source
    tree whose images it builds**, so most of them are outside this directory.
-2. **Infrastructure provisioning** — accounts, hosts, clusters. That is `deploy/providers/`.
+2. **Infrastructure provisioning** — accounts, hosts, clusters. The hub's is `deploy/providers/`; a trust's
+   is `trust/deploy/terraform/`, one root per target, reading nothing from the hub (#1438).
 
 | I want to… | Go to |
 | ---------- | ----- |
@@ -36,6 +37,8 @@ they are filed by two different rules:
 | Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
 | Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
+| Provision an **Azure** trust (VM or AKS) | [`trust/deploy/terraform/azure/`](../trust/deploy/terraform/azure/README.md) |
+| Register a trust, sync or package its **kit**, upgrade a site | `make` targets; the scripts are in `trust/deploy/scripts/` |
 | Provision an **on-prem** trust host (Ansible) | [`trust/deploy/ansible/`](../trust/deploy/ansible/README.md) |
 | Deploy a trust to **Kubernetes** (Helm) | [Deploy a trust on Kubernetes](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-flip-node-kubernetes.html) (chart: [`trust/deploy/helm/`](../trust/deploy/helm/README.md)) |
 
@@ -256,7 +259,7 @@ backend outside the full trust stack — carry no `cap_drop` either, but for a d
 they are simply **not hardened yet**, not blocked from it. They run the same non-root
 `flare-fl-client` image and the same kit dirs as the hardened `fl-client-net-*` services below, so
 a later pass can harden them the same way. The trust-deployment `fl-client-net-*` services (in
-`trust/deploy/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the rows
+`trust/deploy/compose/compose_trust.*.yml`, what a real trust actually runs) are hardened — see the rows
 below. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |

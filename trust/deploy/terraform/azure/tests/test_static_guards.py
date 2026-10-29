@@ -8,7 +8,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Static guards for deploy/providers/azure (FLIP#1390).
+"""Static guards for trust/deploy/terraform/azure (FLIP#1390).
 
 Payment safety and the no-IDs rule are enforced here, where no runtime test can see them:
 no auto-approve, every provider pinned to var.subscription_id, no real GUIDs in tracked files,

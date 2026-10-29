@@ -6,7 +6,7 @@ Deploy a FLIP node on Azure
 
 A FLIP node on Azure is an on-prem node whose host happens to be an Azure VM: the same trust-side
 stack (trust-api, imaging-api, data-access-api, FL client, XNAT, Orthanc), the same on-prem verbs,
-built entirely from code in ``deploy/providers/azure``. The VM configures itself at first boot and
+built entirely from code in ``trust/deploy/terraform/azure``. The VM configures itself at first boot and
 is operated only through Azure Run Command: there are no inbound ports and no SSH from outside. It
 receives its kit the way any trust does, from the hub admin, through a private container it reads
 with its own identity. For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`. The
@@ -139,7 +139,7 @@ Build the node and test it
 
 .. code-block:: bash
 
-   cd deploy/providers/azure
+   cd trust/deploy/terraform/azure
    SUB="<subscription name>"
    REGION=<region>   # the node's region
    SUBNET=<subnet resource id>   # the site's subnet; leave empty for a standalone node (see below)
@@ -281,7 +281,7 @@ On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``
 
 .. code-block:: bash
 
-   cd deploy/providers/azure
+   cd trust/deploy/terraform/azure
    SUB="<subscription name>"
 
    make bootstrap       AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once
