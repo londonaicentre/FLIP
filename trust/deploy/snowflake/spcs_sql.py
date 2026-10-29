@@ -82,12 +82,16 @@ def sql_revoke_create_service(manifest: dict[str, Any]) -> list[str]:
     return _create_service_grant(manifest, "REVOKE")
 
 
-def sql_up(directory: Path, manifest: dict[str, Any]) -> list[str]:
-    """CREATE OR ALTER SERVICE for every service, as the services role; the job is only described.
+def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] = frozenset()) -> list[str]:
+    """CREATE the services that do not exist and ALTER the ones that do, as the services role.
 
-    ``CREATE OR ALTER`` rather than ``CREATE OR REPLACE``: replacing a service drops its
-    block volumes (xnat-db's and Orthanc's databases) and every grant on it. ALTER
-    applies the new specification to the running service in place.
+    Snowflake has no ``CREATE OR ALTER SERVICE`` (the live account answers "syntax error ...
+    unexpected 'OR'"), and ``CREATE OR REPLACE`` is not an option: replacing a service drops
+    its block volumes (xnat-db's and Orthanc's databases) and every grant on it. So the
+    caller names the services already there (``existing``, unqualified upper-case names
+    from SHOW SERVICES): a new one is CREATEd, an existing one gets
+    ``ALTER SERVICE ... FROM SPECIFICATION``, which upgrades it in place, plus a ``SET`` for
+    the settings CREATE would have given it. The job service is only described.
 
     Run only between ``sql_grant_create_service`` and ``sql_revoke_create_service``, which
     is what ``run_up`` (and so ``make up``) does.
@@ -110,8 +114,15 @@ def sql_up(directory: Path, manifest: dict[str, Any]) -> list[str]:
                 f"-- procedure APP.CONVERT_SCAN (Terraform, FLIP#1578); {service['spec_file']} documents it."
             )
             continue
+        if service["sql_name"].rsplit(".", 1)[-1].upper() in existing:
+            statements += [
+                f"ALTER SERVICE {service['sql_name']} FROM SPECIFICATION $$\n{body}$$;",
+                f"ALTER SERVICE {service['sql_name']} SET QUERY_WAREHOUSE = {manifest['warehouse']} "
+                "MIN_INSTANCES = 1 MAX_INSTANCES = 1;",
+            ]
+            continue
         statements.append(
-            f"CREATE OR ALTER SERVICE {service['sql_name']}\n"
+            f"CREATE SERVICE {service['sql_name']}\n"
             f"  IN COMPUTE POOL {service['pool']}\n"
             f"  QUERY_WAREHOUSE = {manifest['warehouse']}\n"
             f"  MIN_INSTANCES = 1\n"
@@ -251,14 +262,34 @@ def print_runner(statements: list[str]) -> None:
     print("\n".join(statements))
 
 
-def run_up(directory: Path, manifest: dict[str, Any], run: Callable[[list[str]], None]) -> None:
+def existing_services(snow: str, connection: str, manifest: dict[str, Any]) -> frozenset[str]:
+    """The services already in the trust's APP schema, as unqualified upper-case names."""
+    out = subprocess.run(
+        [snow, "sql", "--stdin", "--enable-templating", "NONE", "--format", "json", "--connection", connection],
+        input=f"SHOW SERVICES IN SCHEMA {manifest['database']}.APP;\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    rows = json.loads(out) if out.strip() else []
+    if rows and isinstance(rows[0], list):  # one result list per statement
+        rows = rows[-1]
+    return frozenset(str(row.get("name", "")).upper() for row in rows if isinstance(row, dict))
+
+
+def run_up(
+    directory: Path,
+    manifest: dict[str, Any],
+    run: Callable[[list[str]], None],
+    existing: frozenset[str] = frozenset(),
+) -> None:
     """Grant, create the services as the services role, and revoke whatever happened.
 
     The revoke sits in ``finally`` so a failed spec, a lost connection or Ctrl-C still
     leaves the services role without CREATE SERVICE. Rendering the statements first means
     a broken spec fails before anything is granted.
     """
-    statements = sql_up(directory, manifest)
+    statements = sql_up(directory, manifest, existing)
     run(sql_grant_create_service(manifest))
     try:
         run(statements)
@@ -317,7 +348,11 @@ def main() -> None:
     if args.command == "apply-up":
         # Executes, unlike the other commands: the grant must be revoked even when the
         # create fails, which a single piped script cannot guarantee.
-        run_up(args.dir, manifest, print_runner if args.dry_run else snow_runner(args.snow, args.connection))
+        if args.dry_run:
+            run_up(args.dir, manifest, print_runner)
+        else:
+            existing = existing_services(args.snow, args.connection, manifest)
+            run_up(args.dir, manifest, snow_runner(args.snow, args.connection), existing)
         return
     for statement in COMMANDS[args.command](args.dir, manifest):
         print(statement)

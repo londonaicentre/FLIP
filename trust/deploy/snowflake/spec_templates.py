@@ -16,7 +16,7 @@
 
 Each ``_<service>`` function below is that service's template: it takes the trust's kit
 file (``trust/.env.<CODE>.<env>``) plus the naming contract and returns the specification
-Snowflake is handed at ``CREATE OR ALTER SERVICE``. The compose files
+Snowflake is handed at ``CREATE SERVICE`` / ``ALTER SERVICE``. The compose files
 (``trust/deploy/compose_trust.production*.yml``, ``trust/xnat/docker-compose-stack.yml``)
 are the source of truth for each service's environment, ports and volumes; the templates
 are their SPCS translation, and three things change in that translation:
@@ -136,7 +136,7 @@ class Rendered:
     #: Spec-level, lower-case name (``trust-api``). The SQL object name is its upper-case,
     #: underscored form: ``FLIP_TRUST_<CODE>.APP.TRUST_API``.
     name: str
-    #: ``service`` (CREATE OR ALTER SERVICE) or ``job`` (EXECUTE JOB SERVICE).
+    #: ``service`` (CREATE / ALTER SERVICE) or ``job`` (EXECUTE JOB SERVICE).
     kind: str
     #: Compute pool the service runs on.
     pool: str
