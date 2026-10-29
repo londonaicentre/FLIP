@@ -295,6 +295,17 @@ populated data, and the API deployments roll onto the new images.
    upgrade re-applies the listed mock projects (only those projects' rows are replaced). **Turn it off in the
    override for a site whose stores hold real data only.**
 
+**Databases initialised before the role split.** A trust whose XNAT database volume was created by a chart
+older than the xnat-db role split holds a single superuser named ``xnat`` and no ``postgres`` role. Releases
+that carry FLIP#1658 connect as whichever of the two roles the volume has, so the upgrade completes and the
+application role's password is re-synced; on such a site the application role stays the database superuser
+until it is converged (see :ref:`ts-k8s-xnat-db-roles`). One related pre-flight check: a release from the
+``guard-xnat-db-passwords.sh`` era refuses to start xnat-db when the two XNAT passwords are equal
+(``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD`` in the kit, ``xnat-datasource-password``
+and ``xnat-datasource-admin-password`` in ``values-secrets.yaml``; ``xnat-admin-password`` is a different
+secret, XNAT's web admin password), so a site that ever set them to the same value must
+rotate one of them before the upgrade, or the pod stops for that reason instead.
+
 **Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image
 (or all three XNAT images for ``xnat.image.pin``):
 

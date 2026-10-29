@@ -198,6 +198,24 @@ variable "tags" {
   }
 }
 
+variable "ui_bucket_name" {
+  description = "Name of the flip-ui bucket. Setting it creates the UI-publish role (TF_UI_PUBLISH_ROLE_ARN); empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "ui_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the UI-publish role."
+  type        = string
+  default     = "publish_ui.yml"
+}
+
+variable "ui_publish_role_name" {
+  description = "Name of the UI-publish role."
+  type        = string
+  default     = "AICentre-FLIPUiPublishRole"
+}
+
 variable "manage_state_bucket" {
   description = "Create and harden the state bucket. Set false only if something else already manages it."
   type        = bool

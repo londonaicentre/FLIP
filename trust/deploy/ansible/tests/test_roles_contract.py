@@ -13,7 +13,8 @@
 # limitations under the License.
 """Static guard: the shared roles' input contract (FLIP#1213 review).
 
-The roles are composed by onprem.yml, deploy/providers/AWS/site.yml and (next) azure.yml.
+The roles are composed by onprem.yml, azure.yml and aws-ec2-host.yml (imported by aws-ec2.yml and
+deploy/providers/AWS/site.yml).
 A missing or misspelt input must stop the play, not fall back to a value that silently
 re-owns the net-N dirs for the wrong backend or stages no FL kit at all. The same goes for
 flip_observability_config's hand-kept file list: a file added under trust/observability
@@ -156,3 +157,36 @@ def test_trust_dirs_role_creates_the_cohort_membership_stores() -> None:
         "data-access-api runs as uid 1000 in its image and must be able to write its store"
     )
     assert "flkit" in (stores.get("tags") or []), "an EC2 --tags flkit re-stage must lay the stores down too"
+
+
+def test_fl_kit_is_readable_by_the_fl_client_alone() -> None:
+    """A staged kit holds the FL client's private key, so nobody but the client's uid may read it.
+
+    Both staging sources wrote it 0644 (FLIP#1528's live run): the copy keeps the source's mode and
+    aws s3 sync uses the umask. The uids are the images' users, as the Helm chart's stage-kit has them.
+    """
+    defaults = _load(ROLES_DIR / "flip_fl_kit" / "defaults" / "main.yml") or {}
+    assert defaults.get("fl_kit_owner") == "{{ '49999' if fl_backend == 'flower' else '1000' }}"
+    tasks = _load(ROLES_DIR / "flip_fl_kit" / "tasks" / "main.yml") or []
+    [lock] = [task for task in tasks if task.get("name") == "make the kit readable by the FL client only"]
+    body = lock["file"]
+    assert body["path"] == "{{ fl_kit_dir }}/net-1"
+    assert body["recurse"] is True
+    assert (body["owner"], body["group"], body["mode"]) == ("{{ fl_kit_owner }}", "{{ fl_kit_owner }}", "u+rwX,go-rwx")
+    assert lock["when"] == 'fl_kit_source in ["s3", "local"]', "precreate leaves the operator's tarball alone"
+    assert tasks.index(lock) == len(tasks) - 1, "it must run after the kit is staged"
+
+
+def test_cloudwatch_agent_account_never_takes_the_orthanc_uid() -> None:
+    """The agent's package creates cwagent with the highest free system uid, 999 on a fresh host.
+
+    999 is the Orthanc container's uid, so the agent's account then owns the DICOM store on the host
+    (FLIP#1528's live run). The role creates the account first, below 999; the package keeps it.
+    """
+    tasks = _load(ROLES_DIR / "flip_cloudwatch_agent" / "tasks" / "main.yml") or []
+    names = [task.get("name") for task in tasks]
+    account = tasks[names.index("create the cwagent account below the Orthanc uid")]
+    assert names.index(account["name"]) < names.index("install CloudWatch agent")
+    script = account["shell"]
+    assert "SYS_UID_MAX=998" in script
+    assert "SYS_GID_MAX=998" in script

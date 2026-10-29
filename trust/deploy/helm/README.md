@@ -152,21 +152,18 @@ unaffected either way; the chart needs no version switch.
 How `make status` and `make smoke-cstore` decide. Polling green does not mean imaging works: the two
 share no code, so the operator guide has operators run both.
 
-`status` lists `/data/xnat/home/plugins` in the running `xnat-web` pod and compares it
-against the release's own `xnat.web.plugins.urls`, failing with both versions named when
-they disagree. They disagree when the **pod spec** is older than the values — the plugins
-live in an emptyDir refilled by an init container on every pod creation, so a mismatch
-means no upgrade has rolled `xnat-web` since the roster changed. It then asks XNAT which plugins
-it **loaded** (`GET /xapi/plugins`, inside the pod as the service account, the credential on
-curl's stdin) and fails a jar that is **present on disk but not loaded** — unreadable, typically
-a truncated download; see the `tomcat` container's startup log. XNAT lists plugins by id, not by
-these keys (`container-service` is `containers`), hence `XNAT_PLUGIN_IDS` in `check_status.py`;
-when XNAT cannot be asked, `status` warns and checks the jars alone. This is the chart's only
-check of what XNAT loaded: the `xnat-init` readiness wait runs in its own pod, whose jars are the
-image's rather than this pod's, so it waits for the DQR route alone. A plugin built for a
-different XNAT core loads and then aborts every C-STORE in the importer, which is why
-`smoke-cstore` stores a real object through the PACS rather than trusting `status` or a C-ECHO:
-C-ECHO never reaches the importer and passes throughout.
+`status` asks XNAT in every running `xnat-web` pod, as the service account (the credential on
+curl's stdin), which plugins it lists (`GET /xapi/plugins`) and whether its DQR route answers
+(`GET /xapi/dqr/settings`). It fails each plugin in `XNAT_PLUGIN_IDS` (`check_status.py`) that
+XNAT does not list, a DQR route that answers 404 (XNAT lists a plugin whose configuration failed
+to load), and an XNAT that answers wrongly (not 200, or not a JSON object); see the `tomcat`
+container's startup log. XNAT lists plugins by id, not by file name (`container-service` is
+`containers`), hence the map; a test keeps it in step with the manifest the image is built from.
+A pod nothing answers on is a warning, which does not fail `status`. A pass names each plugin's
+version as XNAT reports it. A plugin can load and still abort every C-STORE in the importer (a
+manifest that pairs it with the wrong XNAT core), which is why `smoke-cstore` stores a real
+object through the PACS rather than trusting `status` or a C-ECHO: C-ECHO never reaches the
+importer and passes throughout.
 
 `smoke-cstore` passes when Orthanc reports 0 failed instances **and** XNAT shows receiver-side
 evidence that the object landed — polled, strongest first: a new prearchive object carrying the
@@ -282,6 +279,16 @@ version fails to render. Delete the removed values from your overrides:
 The failure mode if you miss one is loud rather than silent: an unknown value is ignored by
 Helm, but a missing `flClient.kitHostPath` fails the render by name, and a kit that never
 reached the node leaves the pod `Pending` on a `hostPath type check failed` event.
+
+#### Upgrading: the chart no longer downloads XNAT plugins
+
+`xnat.web.plugins` (`enabled`, `image`, `urls`) is gone with the `download-plugins` init container
+and the `emptyDir` it filled. XNAT runs the plugins built into the `xnat-web` image, from the same
+manifest the chart's list matched, so the upgrade replaces the pod once and changes no plugin
+version. A release that pins an older `xnat-web` image (`xnat.image.pin`) now runs that image's
+own plugins, which match its core. Helm ignores the retired keys, so delete them
+from your overrides; a plugin version now changes only with the image (`trust/xnat/README.md`,
+"Adding or updating a plugin").
 
 ### Secrets
 
@@ -422,8 +429,8 @@ Chart-specific notes (the full operational guide, including the stock-viewer qui
 - Pretrained weights (incl. the ~900 MB SAM checkpoint) persist in the
   `<release>-monailabel-models` PVC; first start on a cold volume takes minutes (the startup
   probe allows 30).
-- The chart's XNAT already ships the `ohif-viewer` plugin in its roster (`xnat.web.plugins`),
-  as every FLIP XNAT does, so there is no extra plugin step.
+- The chart's XNAT image already carries the `ohif-viewer` plugin, as every FLIP XNAT does, so
+  there is no extra plugin step.
 - **No `export_mask` converter here.** The compose trust registers a container-service command
   that turns saved DICOM-SEG assessors into the NIfTI that FL training consumes
   (`trust/xnat/xnat/config/configure-export-mask.sh`, run from `xnat-configure`); the chart's
@@ -827,7 +834,8 @@ not deploy. `sync-kit` patches the per-trust keys on top without touching the ot
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
 | `orthanc-registered-users` | orthanc | Orthanc registered users, JSON user map e.g. `{"admin": "<password>"}`. Required when `orthanc.enabled` — the env ref is non-optional (asserted on every chart render by the `Helm Template` CI job) and the image refuses to start without users (FLIP-PT-091). Populated by `scripts/generate_values.py` from `ORTHANC_REGISTERED_USERS`, else from the kit's `ORTHANC_USERNAME` / `ORTHANC_PASSWORD` |
-| `xnat-admin-password` | xnat-web | XNAT admin password |
+| `xnat-admin-initial-password` | xnat-web, xnat-init | XNAT's factory admin password, from the kit's `XNAT_ADMIN_INITIAL_PASSWORD`. Optional: absent, the chart uses `admin` (see [XNAT admin password](#xnat-admin-password)) |
+| `xnat-admin-password` | xnat-web, xnat-init | This trust's XNAT admin password, from the kit's `XNAT_ADMIN_PASSWORD` |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
 | `xnat-datasource-password` | xnat-web, xnat-db | Password of the `xnat` **application role** — mint via `make generate-xnat-credentials KIT=<CODE>` and fill from the kit with `scripts/generate_values.py`; xnat-web and xnat-db refuse to start on the shipped placeholder or weak values (FLIP-PT-056). imaging-api does not hold it: it reads import status through XNAT's REST API (FLIP#1456) |
@@ -836,6 +844,22 @@ not deploy. `sync-kit` patches the per-trust keys on top without touching the ot
 
 For production, use [External Secrets Operator](https://external-secrets.io/) to
 sync secrets from AWS Secrets Manager or HashiCorp Vault.
+
+### XNAT admin password
+
+XNAT installs with the login `admin` / `admin`. The `xnat-init` hook runs `configure-xnat.sh` on
+every install and upgrade: while XNAT still accepts `xnat-admin-initial-password` it signs in with
+it and changes it to `xnat-admin-password`, and once XNAT refuses it, it signs in with
+`xnat-admin-password` and leaves the password as it is (FLIP#1692). So every later run has
+`admin` refused at least twice first; that is expected. Kits keep `XNAT_ADMIN_INITIAL_PASSWORD=admin`.
+
+- **A trust still on `admin`** (installed by an earlier chart, which fed one key to both): set a new
+  `XNAT_ADMIN_PASSWORD` in the kit, rerun `scripts/generate_values.py`, then
+  `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<env>`. XNAT still accepts `admin`, so
+  the hook changes it with no refused login.
+- **Changing it later:** change it in XNAT first, then put the same value in the kit, rerun
+  `scripts/generate_values.py` and deploy. A kit-only change fails the hook and counts towards
+  XNAT's lockout.
 
 ### xnat-db roles and credential rotation
 

@@ -232,3 +232,29 @@ binds whether or not this check can see it.
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+"true" while imaging-api and fl-client share a ReadWriteOnce sharedImagesPvc, which binds it to one
+node: the two pods must then land together (flip-trust.sharedImagesAffinity) and restart Recreate.
+Empty when the volume is off or RWX, where nothing ties them to one node.
+*/}}
+{{- define "flip-trust.sharedImagesOneNode" -}}
+{{- if and .Values.sharedImagesPvc.enabled (eq .Values.sharedImagesPvc.accessMode "ReadWriteOnce") }}true{{ end }}
+{{- end }}
+
+{{/*
+A pod's affinity: the operator's own (dict "affinity" <.Values.x.affinity> "root" $), plus, under
+flip-trust.sharedImagesOneNode, a required podAffinity to the flip/shared-images label. Both pods
+carry it, so whichever restarts follows the one still running; at install the first matches itself.
+*/}}
+{{- define "flip-trust.sharedImagesAffinity" -}}
+{{- $affinity := deepCopy (.affinity | default dict) }}
+{{- if include "flip-trust.sharedImagesOneNode" .root }}
+{{- $podAffinity := get $affinity "podAffinity" | default dict }}
+{{- $required := get $podAffinity "requiredDuringSchedulingIgnoredDuringExecution" | default list }}
+{{- $term := dict "labelSelector" (dict "matchLabels" (dict "flip/shared-images" "true")) "topologyKey" "kubernetes.io/hostname" }}
+{{- $_ := set $podAffinity "requiredDuringSchedulingIgnoredDuringExecution" (append $required $term) }}
+{{- $_ := set $affinity "podAffinity" $podAffinity }}
+{{- end }}
+{{- with $affinity }}{{ toYaml . }}{{ end }}
+{{- end }}

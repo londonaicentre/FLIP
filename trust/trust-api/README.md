@@ -116,7 +116,7 @@ one replica.
 
 ## Testing
 
-Tests are split into `tests/` (unit-level, no real backing services — `tests/routers/`, `tests/services/`, etc.) and `tests/integration/` (real OMOP database via the shared `trust/deploy/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
+Tests are split into `tests/` (unit-level, no real backing services — `tests/routers/`, `tests/services/`, etc.) and `tests/integration/` (real OMOP database via the shared `trust/deploy/compose/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
 
 ```bash
 make local_test         # ruff + mypy + unit suite (no Docker required)

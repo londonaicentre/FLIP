@@ -218,6 +218,24 @@ For a genuine same-day patch of an active CVE, the cooldown can be bypassed for 
 Any override must be justified in the pull-request description. Use it only for security patches that genuinely
 cannot wait 72 hours.
 
+#### Security floors
+
+Upgrading the lockfile clears a Dependabot alert; a floor keeps it cleared. Without one, a later `uv lock` that has to
+re-resolve the package (because a new dependency caps it, say) can quietly pick a vulnerable release again. With one,
+that `uv lock` fails instead. When you fix an alert:
+
+- **Raise any floor the package already has** to the fixed version: a dependency specifier, a `[tool.uv]
+  constraint-dependencies` entry, or an `overrides` entry in `flip-ui/package.json`.
+- **Add one in any project that ships**, meaning a service image, an FL image, `flip-utils`, `flip-ui` or
+  `trust/xnat/export-mask`. A transitive Python fix goes in `constraint-dependencies` with the advisory IDs beside it;
+  a transitive npm fix goes in `overrides`.
+- **Leave dev and docs tooling lock-only** (`docs/`, `deploy/providers/AWS/`, dev-only groups) unless the first rule
+  applies. None of it ships.
+
+`constraint-dependencies` is read only by uv. It guards this repo's lockfiles, not a downstream `pip install
+flip-utils`, so carry the floor by hand into any install that skips `[tool.uv]`, such as the `pip install` in
+`fl-services/flower/fl-base/Dockerfile`.
+
 ### Environment variables
 
 Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses
@@ -495,9 +513,9 @@ against a canary fixture, and its guards are regression-tested by `scripts/tests
 
 ### Azure trust node checks (Terraform)
 
-`deploy/providers/azure` (FLIP#1390) carries its own credential-free checks: `make -C deploy/providers/azure test`
+`trust/deploy/terraform/azure` (FLIP#1390) carries its own credential-free checks: `make -C trust/deploy/terraform/azure test`
 runs `terraform test` with a mocked `azurerm` provider in every root and module plus the static pytest guards, and
-`make -C deploy/providers/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
+`make -C trust/deploy/terraform/azure lint` runs `terraform fmt` and tflint with the azurerm ruleset. CI runs both, plus
 checkov, in the "Azure node checks" job of `validate_terraform.yml`. The static guards enforce the cost and safety
 rules a plan cannot show: no target skips Terraform's confirmation, every provider block and `az` call names the
 subscription explicitly, no real subscription or tenant IDs in tracked files, no inbound NSG rules, and the VM's NIC
@@ -728,8 +746,8 @@ The previous `make patch-aws-creds` target is gone along with the chart's in-clu
 see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
 removed values.
 
-The chart has a `check_status.py` smoke test script (which also compares the running xnat-web
-pod's plugin jars against `xnat.web.plugins.urls`), a `scripts/smoke-cstore.sh` DICOM ingest
+The chart has a `check_status.py` smoke test script (which also checks that XNAT on each running
+xnat-web pod lists every plugin and answers its DQR route), a `scripts/smoke-cstore.sh` DICOM ingest
 smoke, and a `sync_k8s_kit.py` script that syncs a registered trust's kit file (hub registration
 itself still goes through `register_trust` / `make register-trusts`) into the chart's Kubernetes
 Secret and a Helm values override. See the [K8s README](trust/deploy/helm/README.md) for details.
@@ -773,7 +791,7 @@ The same mirroring holds everywhere, not just in the services: a test sits in th
 Two trees sit outside any service and have their own home. `fl-tutorials/tests/` carries **two** suites, split at `tests/datasets/` because the two halves need different dependencies — `make -C fl-tutorials test` runs ruff plus both, and `.github/workflows/fl-tutorials-tests.yml` runs the same on every PR touching `fl-tutorials/**`:
 
 - **`fl-tutorials/tests/`, minus `tests/datasets/`** — the CPU-only suite over the tutorial apps' transform chains (`make -C fl-tutorials pytest`). A test belongs here if it can assert on tutorial code with **no GPU, no dataset download, no FL image and no network** — transform composition, import-time correctness, and what the preprocessing chain actually feeds the model. Fixtures are synthesised in-process (see `fl-tutorials/tests/dicom_phantom.py`), never committed as data. Anything that needs real training to observe — convergence, metric values, multi-round behaviour — belongs instead with the GPU simulator harness (`make -C fl-tutorials run-tutorial`), which is not run in CI: it is a [pre-release gate](#pre-release-checklist) instead.
-  The suite runs in **flip-utils' environment** (`flip-utils[full]`), which is what the FL images give these apps at runtime; it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
+  The suite runs in **flip-utils' environment** (`flip-utils[full]`), which is what the FL images give these apps at runtime, plus its `diffusion` group (matplotlib, for the image-generation tutorials' local plotting only); it deliberately has no `pyproject.toml` of its own, and the per-tutorial `uv` environments are the wrong target (`arkplus_fine_tuning/pyproject.toml` does not declare `monai`, so that environment cannot import its own `data_utils.py`).
 - **`fl-tutorials/tests/datasets/`** — the CPU-only suite over `fl-tutorials/datasets/**`, the mock-OMOP generation tooling (`make -C fl-tutorials pytest-datasets`). Same no-GPU/no-download/**no-network** rule, with fixtures built in-process. It runs against **each dataset's own uv project**, one pytest invocation per entry in `DATASET_TEST_PROJECTS`, rather than in flip-utils' environment: this is workstation tooling that never runs on an FL image and has no business pulling `pandera`/`sqlglot` into the FL runtime environment. The per-project split is also the only thing in CI that checks a dataset's `pyproject.toml` declares what its code actually imports. `tests/datasets/` anchors its own pytest rootdir (`tests/datasets/pytest.ini`) so the tutorial-app `conftest.py`, which imports monai and pydicom at module scope, is not loaded into these runs. Anything needing the published export — the end-to-end verification gate — is a Make target (`make -C fl-tutorials reproduce-<project>-omop`), not a test: it reaches the network. See `fl-tutorials/tests/README.md` for the full rationale and `fl-tutorials/datasets/README.md` for the generation and verification targets.
 - **`fl-apps/`** — has no pytest suite; its invariant is the required-files manifest, checked by `fl-apps/check_required_files.sh` (pre-commit + `.github/workflows/fl-apps-check-required-files.yml`). Files that must stay byte-identical to another file — the Flower tutorial copies of the `fl-apps/flower/` templates, and the shared Ark+ evaluation sources — are pinned in `scripts/check_tutorial_sync.sh`.
 
@@ -866,7 +884,7 @@ Each service has its own version string:
 - [`fl-services/nvflare/fl-api-base/pyproject.toml`](fl-services/nvflare/fl-api-base/pyproject.toml)
 - [`fl-services/flower/fl-api-flower/pyproject.toml`](fl-services/flower/fl-api-flower/pyproject.toml)
 
-These are **independent**. Bump a service's version only when *that service* has user-visible changes, applying SemVer to the service alone. Services are not aligned with the root version on every release — a release where only `flip-ui` changed bumps the root and `flip-ui/package.json`, and nothing else. Per-service versions are informational (deployments select images by tag, not by version string), but keeping them honest makes them useful for audit and changelog scope. What a running container *reports* as its version is different: the service images (flip-api, trust-api, imaging-api, data-access-api and both FL APIs) bake `FLIP_RELEASE` — the `v<X.Y.Z>` release tag, or the `sha-<short7>` tag of a branch build — and their `/health` returns that, so a container names its build rather than a pyproject number two builds can share, and the Connection Status page names the build a site runs (FLIP#1204). A local build carries no `FLIP_RELEASE` and falls back to the pyproject version.
+These **follow the root version**: every release sets each of them to the release version, whether or not that service changed, so all the services of a release carry one number. Per-service versions are informational (deployments select images by tag, not by version string). What a running container *reports* as its version is different: the service images (flip-api, trust-api, imaging-api, data-access-api and both FL APIs) bake `FLIP_RELEASE` — the `v<X.Y.Z>` release tag, or the `sha-<short7>` tag of a branch build — and their `/health` returns that, so a container names its build rather than a pyproject number two builds can share, and the Connection Status page names the build a site runs (FLIP#1204). A local build carries no `FLIP_RELEASE` and falls back to the pyproject version.
 
 The tooling and scaffolding projects — `trust/omop-db` (`omop-db-tools`), the dataset tooling under `fl-tutorials/datasets/`, the tutorial and `fl-apps` projects, `docs/`, `deploy/providers/AWS/` and `trust/xnat/tests/` — carry a placeholder version (`0.1.0` or `1.0.0`) that a release does not bump and nothing reads. The omop-db image does not install `omop-db-tools`; like every image, it is versioned by its tag, and a release publishes it at `:v<X.Y.Z>`.
 
@@ -878,7 +896,7 @@ The mechanical steps are make targets (FLIP#1608), each a script under [`scripts
 
 | Target | Does |
 |---|---|
-| `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; bumps the root, every changed service and (if changed) flip-utils; `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
+| `make release-prepare TAG=v<X.Y.Z>` | Refuses while a merged PR is unlabelled; sets the root and every service to the release version, bumps flip-utils (if changed); `make lock`; empties *Release checks*. `DRY_RUN=1` previews. |
 | `make release-instance TAG=… PR=<n>` | An isolated `FLIP_INSTANCE` (`rel<XYZ>`, ports moved by `PORT_OFFSET`, fresh secrets) with every image built from the checkout at `:rel<XYZ>`. `release-gates` runs it; on its own it is for debugging. |
 | `make release-verify TAG=…` | Proves the instance runs this commit: image tags, compose working directory, `/api/health`, AES key match. |
 | `make release-gates TAG=… PR=<n>` | On the GPU host, quickest first: `unit_test`, `integration_test` and both tutorial suites on a quiet host, then the instance, both smokes and teardown; one JSON result per gate under `release-gates/<TAG>/`, and every container's log when a stack gate fails. Run it from a dedicated release worktree: the instance writes `trust/.env.<KIT>.development`, the files a developer's own trusts use, so it refuses a checkout whose kits another stack wrote. |
@@ -889,7 +907,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 
 - `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
 - All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
-- Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file listed under [Versioning](#versioning) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
+- Bump the `version` in the root `pyproject.toml` to the new release version. Set every service file listed under [Versioning](#versioning) to the same version.
 - If `flip-utils/**` changed in this release, bump `__version__` in [`flip-utils/flip/__init__.py`](flip-utils/flip/__init__.py) — [`check-version-bump.yml`](.github/workflows/check-version-bump.yml) fails the `develop` → `main` PR unless it is valid semver and strictly higher than the latest `flip-utils-v*.*.*` tag. It need not match — or differ from — the root version; the two trains tag in separate namespaces (see [flip-utils and the PyPI release path](#flip-utils-and-the-pypi-release-path)).
 - Curate the release-notes header in [`.github/RELEASE_NOTES_TEMPLATE.md`](.github/RELEASE_NOTES_TEMPLATE.md) — Highlights, Breaking Changes, **Site upgrade**, New Features, Bug Fixes. Editing the file is the only way to change those sections; the preview comment on the PR is regenerated from it on every push. The *Site upgrade* section is the prompt trust operators act on (FLIP#1204): say whether the upgrade is required, the ordering (hub first / sites first / one Deployment-Mode window — a flag-day such as FLIP#1179's cipher change or an FL-framework bump is the latter), and whether a **refreshed kit** is needed because the Hub-shared block changed.
 - Run **`/audit-tutorial <name>` over the catalogue** (Claude Code; the `tutorial-contract` skill under `.claude/skills/` reads as Markdown for a manual pass): the guards, the GPU-free NVFLARE export, the registrations and the README checklist (figure, Expected performance, References, demo video) per tutorial. `make -C fl-tutorials test` already carries the catalogue guard (`tests/test_tutorial_catalogue.py`); the audit is for what a test cannot judge.
@@ -917,7 +935,7 @@ The list below is what they check and do, and what stays manual (the notes' pros
 
 The release is not deployed by merging. Two steps, in this order:
 
-1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI is still `make deploy-ui HUB=prod` (FLIP#1186). If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
+1. **Hub.** Enable Deployment Mode, wait for `GET /fl/quiesce` to report no busy net, then `make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=v<X.Y.Z>` (the guard accepts `sha-<short7>` or `v<X.Y.Z>`), then disable Deployment Mode. The UI ships with the release apply: the `ui` job of `terraform_apply.yml` publishes it from the tagged commit once that apply succeeds, so a held apply holds the UI too (FLIP#1186). The user menu then shows `v<X.Y.Z>`. If the `ui` job fails, re-run it from the apply run, or run `make -C deploy/providers/AWS deploy-ui HUB=prod` from a checkout at the tag. If the apply that accompanied the merge rotated any Hub-shared value — the AES key, the FL kit date — reconcile the operator env from deployed state and re-issue kits **before** telling sites to upgrade: `deploy/providers/AWS/scripts/reconcile_ci_env.py --env prod --compare .env.prod` → `make sync-trust-kits HUB=prod` → `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod`.
 1. **Sites, operator-triggered.** Each site's operator moves their FLIP checkout to the tag (`git fetch --tags origin && git checkout v<X.Y.Z>` — the compose files, Makefiles and the verb itself come from the checkout, and the verb refuses a release tag from any other checkout) and runs `make upgrade-onprem-trust KIT=<CODE>` (Kubernetes: `upgrade-trust-k8s`; EC2: `upgrade-trust-ec2`, both from a checkout at the tag), which defaults to the release the hub now reports. Nothing pushes upgrades to sites; the release notes' *Site upgrade* section is the prompt, and the Connection Status drawer shows which containers are still on another build. The full operator runbook is `docs/source/sys-admin/admin-upgrading-sites.rst`.
 
 ### Release notes
@@ -947,7 +965,7 @@ For an urgent fix, a security fix say, that cannot wait for the next release of 
 
 1. Branch `hotfix/v<X.Y.Z>` from the last release tag, where `<X.Y.Z>` is the next patch version: `git switch -c hotfix/v0.13.2 v0.13.1`.
 1. Add the fix. When it was reviewed on its own PR to `develop`, cherry-pick that PR's commits (`git cherry-pick -x`); otherwise commit it here.
-1. Bump the patch version in the root `pyproject.toml` (and the root `uv.lock`), in any service under [Versioning](#versioning) that the fix touches and, if `flip-utils/**` changed, in `flip-utils/flip/__init__.py`. Fill in `.github/RELEASE_NOTES_TEMPLATE.md` as for any release: *Site upgrade* says whether sites must upgrade, and *Release checks* records the pre-release checks you ran, which are at least the ones that exercise the fix.
+1. Bump the patch version in the root `pyproject.toml` (and the root `uv.lock`), in every service under [Versioning](#versioning) and, if `flip-utils/**` changed, in `flip-utils/flip/__init__.py`. Fill in `.github/RELEASE_NOTES_TEMPLATE.md` as for any release: *Site upgrade* says whether sites must upgrade, and *Release checks* records the pre-release checks you ran, which are at least the ones that exercise the fix.
 1. Open a PR from `hotfix/v<X.Y.Z>` to `main`. `validate_branch_origin.yml` accepts it and the release-notes preview runs on it; `check-version-bump.yml` does not, so a flip-utils bump (step 3) is yours to check. Merge it with a merge commit: `release.yml` then releases `v<X.Y.Z>` as above, and *Nothing may merge to `main` during the wait* applies.
 1. Merge `main` back into `develop` through a PR, again with a merge commit, so `develop` carries the fix, the new version and the release notes, and the next `develop` → `main` PR does not conflict with the hotfix.
 

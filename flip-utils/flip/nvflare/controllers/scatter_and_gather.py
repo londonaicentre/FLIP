@@ -176,9 +176,9 @@ class ScatterAndGather(NVFlareScatterAndGather):
     def _is_running_a_round(self) -> bool:
         """Whether this controller is currently inside its own round loop.
 
-        Every controller receives every fired event, so in a multi-phase job (the LDM
-        ``train_ae`` → ``train_dm`` split wires one ``ScatterAndGatherLDM`` per phase) a
-        controller is routinely handed events belonging to a *sibling's* round. Acting on
+        Every controller receives every fired event, so in a job that chains controllers (as the
+        retired two-stage ``diffusion_model`` job did, one per phase) a controller is routinely
+        handed events belonging to a *sibling's* round. Acting on
         one means answering for a round this controller never ran.
 
         Used by the zero-acceptance guard only. Two states must be excluded, and checking just

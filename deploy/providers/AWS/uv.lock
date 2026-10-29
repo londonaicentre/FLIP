@@ -112,7 +112,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "black", specifier = ">=26.3.1" },
+    { name = "black", specifier = ">=26.10.1" },
     { name = "frictionless", specifier = ">=5.18.1" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "isort", specifier = ">=6.0.1" },

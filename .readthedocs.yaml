@@ -27,7 +27,7 @@ build:
     # nodejs: "16"
     # rust: "1.55"
     # golang: "1.17"
-  # graphviz renders the Central Hub AWS diagram (deploy/providers/AWS/architecture/) during the build.
+  # graphviz renders the architecture diagrams (deploy/providers/AWS/architecture/, trust/deploy/terraform/*/architecture/) during the build.
   apt_packages:
     - graphviz
 

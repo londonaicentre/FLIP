@@ -56,7 +56,6 @@ class UnknownJobTypeError(Exception):
 JOB_TYPE_ALIASES = {
     "standard_client_api": "standard",
     "evaluation_client_api": "evaluation",
-    "diffusion_model_client_api": "diffusion_model",
 }
 
 
@@ -191,7 +190,7 @@ def describe_bundled_app_dirs(fl_backend: FLBackend) -> str:
 # closed at depth 0 only. A template directory is a live uv project root, so the tools that run
 # there write *into* ``app/`` too: ``.venv/``, ``.flwr/``, ``.ruff_cache/``, ``.pytest_cache/``, a
 # stray ``.env``, and ``.DS_Store`` in every directory the Finder displays. The counter-evidence is
-# in-tree — ``fl-tutorials/flower/3d_spleen_segmentation_evaluation/app/.gitignore`` exists
+# in-tree — ``fl-tutorials/flower/image_evaluation/3d_spleen_segmentation_evaluation/app/.gitignore`` exists
 # precisely to ignore ``.flwr/``, ``.venv/`` and ``uv.lock`` *inside* an ``app/`` directory. The
 # dot rule catches all but ``uv.lock``, which is named because it is not dot-prefixed: it is a
 # resolved lock for the developer's machine, and the Flower run-root ``pyproject.toml`` is what the
