@@ -91,10 +91,14 @@ One SPCS service per container. All endpoints `public: false`.
 | `imaging-api` | stage IMAGES (all nets) | TRUST_INTERNAL_SERVICE_KEY, AES_KEY_BASE64, XNAT_SERVICE_PASSWORD | HTTP 8000 |
 | `fl-client-net-<N>` | stage IMAGES `net-<N>/` only, stage FL_KIT `net-<N>/` read-only | TRUST_INTERNAL_SERVICE_KEY only | none |
 | `xnat-web` | stages XNAT_ARCHIVE, CONVERTER_IO | XNAT_ADMIN_PASSWORD, XNAT_SERVICE_PASSWORD, XNAT_DB_PASSWORD | HTTP 8080, **TCP `XNAT_PORT`** |
-| `xnat-db` | block volume | XNAT_DB_PASSWORD | TCP 5432 |
-| `xnat-nginx` | none | none | HTTP 80 |
-| `orthanc` | block volume | ORTHANC_PASSWORD | HTTP 8042, **TCP 4242** |
+| `xnat-db` | block volume | XNAT_DB_ADMIN_PASSWORD, XNAT_DB_PASSWORD | TCP 5432 |
+| `orthanc` | block volume | ORTHANC_REGISTERED_USERS (composed by sync-kit) | HTTP 8042, **TCP 4242** |
 | `dcm2niix` (job) | stages XNAT_ARCHIVE, CONVERTER_IO | none | none |
+
+`xnat-nginx` is not deployed on SPCS: its configuration proxies to the Compose host names
+`xnat-web` and `orthanc`, it binds port 80 as a non-root user (SPCS grants no low-port
+capability), and nothing in the trust calls it, since every service reaches XNAT on
+`xnat-web` directly. The XNAT UI through a public endpoint is a follow-up.
 
 Not on Snowflake: `omop-db` (replaced by native Snowflake tables) and Loki/Grafana/Alloy
 (replaced by the account event table: three always-on containers cost about 44 credits a
@@ -232,7 +236,6 @@ a live account.
 | Every image runs unmodified on SPCS (amd64, non-root, stage-volume throughput adequate) | FLIP#1579 | Resource figures, `uid`/`gid` on stage volumes, and possibly the images themselves |
 | A stage volume can be sliced to a prefix (`@...IMAGES/net-1`), which is what carries the per-net isolation rule | FLIP#1579 | The fl-client needs one stage per net instead, and the Terraform root grows a stage per FL network |
 | Stage read-only is enforced by granting READ and not WRITE (SPCS has no `readOnly` mount flag). The intent is recorded per volume in `manifest.json` | FLIP#1579 | A different mechanism, or an accepted residual risk documented in the runbook |
-| Orthanc's entrypoint can compose `ORTHANC__REGISTERED_USERS` from an `ORTHANC_PASSWORD` environment variable | FLIP#1579 | The image gains a small entrypoint shim, or the password is mounted as a file via `directoryPath` |
 | The resource requests and limits are starting points, not measurements | FLIP#1579, FLIP#1585 | Revised against the self-test's observed usage |
 | The self-test is a placeholder: service status and container logs read through `SYSTEM$` functions | FLIP#1585 | Replaced by real assertions (a cohort query, an image pull, an FL round) |
 

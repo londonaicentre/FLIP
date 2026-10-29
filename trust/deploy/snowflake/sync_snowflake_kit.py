@@ -56,7 +56,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from kitfile import is_placeholder, kit_path, read_env_vars, resolve_env  # noqa: E402
-from naming import SECRET_KIT_VAR, SECRETS, Names, NamingError  # noqa: E402
+from naming import SECRET_KIT_VAR, SECRETS, Names, NamingError, with_derived_secrets  # noqa: E402
 
 REPO_ROOT = HERE.parents[2]
 
@@ -98,6 +98,7 @@ def absent_kit_entries(kit: dict[str, str]) -> list[str]:
     the services that would map it are not deployed. Returns names from :data:`SECRETS`
     only, never anything read from the kit, so the result is safe to print.
     """
+    kit = with_derived_secrets(kit, is_placeholder)
     return [entry for entry in SECRETS if is_placeholder(kit.get(SECRET_KIT_VAR[entry], ""))]
 
 
@@ -124,6 +125,7 @@ def _object_statements(names: Names, literals: dict[str, str]) -> list[str]:
 def secret_statements(names: Names, kit: dict[str, str]) -> list[str]:
     """SQL carrying the real values. Executed only, never printed."""
     skipped = set(absent_kit_entries(kit))
+    kit = with_derived_secrets(kit, is_placeholder)
     return _object_statements(
         names, {entry: sql_literal(kit[SECRET_KIT_VAR[entry]]) for entry in SECRETS if entry not in skipped}
     )

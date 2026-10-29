@@ -33,7 +33,6 @@ EXPECTED_SERVICES = {
     "fl-client-net-1",
     "xnat-web",
     "xnat-db",
-    "xnat-nginx",
     "orthanc",
     "dcm2niix",
 }
@@ -45,9 +44,8 @@ EXPECTED_SECRETS = {
     "imaging-api": {"TRUST_INTERNAL_SERVICE_KEY", "AES_KEY_BASE64", "XNAT_SERVICE_PASSWORD"},
     "fl-client-net-1": {"TRUST_INTERNAL_SERVICE_KEY"},
     "xnat-web": {"XNAT_ADMIN_PASSWORD", "XNAT_SERVICE_PASSWORD", "XNAT_DB_PASSWORD"},
-    "xnat-db": {"XNAT_DB_PASSWORD"},
-    "xnat-nginx": set(),
-    "orthanc": {"ORTHANC_PASSWORD"},
+    "xnat-db": {"XNAT_DB_ADMIN_PASSWORD", "XNAT_DB_PASSWORD"},
+    "orthanc": {"ORTHANC_REGISTERED_USERS"},
     "dcm2niix": set(),
 }
 

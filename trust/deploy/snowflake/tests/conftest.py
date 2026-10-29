@@ -46,6 +46,7 @@ SENTINELS = {
     "XNAT_SERVICE_PASSWORD": "SENTINEL-xnat-service-88ab",  # pragma: allowlist secret
     "XNAT_DATASOURCE_PASSWORD": "SENTINEL-xnat-db-03de",  # pragma: allowlist secret
     "ORTHANC_PASSWORD": "SENTINEL-orthanc-6b70",  # pragma: allowlist secret
+    "XNAT_DATASOURCE_ADMIN_PASSWORD": "SENTINEL-xnat-db-admin-5e21",  # pragma: allowlist secret
 }
 
 CODE = "GSTT"
