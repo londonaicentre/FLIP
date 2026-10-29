@@ -48,6 +48,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -62,6 +63,11 @@ DEFAULT_CHECKOUT = Path("/opt/flip/releases/FLIP")
 ENV_TOKEN_TO_HUB = {"prod": "prod", "stag": "stag", "production": "prod", "lza-prod": "prod", "lza-stag": "stag"}
 LOG_TAIL_BYTES = 6000
 HTTP_TIMEOUT_S = 15
+# After the upgrade verb returns, how long the site has to come up ON the target release before the
+# attempt is called FAILED. Generous because XNAT's in-place schema upgrade dominates it and a slow
+# one must not park the site: FAILED stops this release being retried until an operator clears it.
+VERIFY_TIMEOUT_S = 600
+VERIFY_POLL_S = 10
 # Same shape the hub and flip-ui accept as a comparable release identity.
 RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
 
@@ -69,6 +75,36 @@ RELEASE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
 LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
 UNSUPPORTED_MODE = "UNSUPPORTED_MODE"
 UNKNOWN_CHECKOUT = "UNKNOWN_CHECKOUT"
+SITE_UNHEALTHY = "SITE_UNHEALTHY"
+
+
+@dataclass(frozen=True)
+class Health:
+    """trust-api's own ``/health``, as far as this host could read it."""
+
+    reachable: bool
+    status: str | None  # "ok" | "degraded"
+    version: str | None
+    hub_key_match: bool | None
+    dead_tasks: tuple[str, ...]
+
+    @property
+    def fit_to_upgrade(self) -> str | None:
+        """Why this site must not be touched, or None when it is healthy enough to upgrade."""
+        if not self.reachable:
+            return "trust-api /health is unreachable"
+        if self.status != "ok":
+            return f"trust-api reports status={self.status}" + (
+                f" (dead background tasks: {', '.join(self.dead_tasks)})" if self.dead_tasks else ""
+            )
+        if self.dead_tasks:
+            return f"dead background tasks: {', '.join(self.dead_tasks)}"
+        if self.hub_key_match is not True:
+            return (
+                "this trust's AES key does not match the hub's (hub_key_match="
+                f"{self.hub_key_match}); the kit needs refreshing before an upgrade"
+            )
+        return None
 
 
 @dataclass(frozen=True)
@@ -78,6 +114,7 @@ class Local:
     current_release: str | None
     checkout_clean: bool | None  # None: git could not say
     unsupported: bool  # a remotely driven (EC2 / DOCKER_HOST) site
+    health: Health | None = None  # None: not read (callers that only need the release)
 
 
 @dataclass(frozen=True)
@@ -85,6 +122,7 @@ class Decision:
     action: str  # "UPGRADE" | "SKIP" | "BLOCKED"
     reason: str
     release: str | None = None
+    detail: str | None = None  # human-readable "why", reported with a BLOCKED code
 
 
 def in_window(now_utc: datetime, window: dict | None, tz_name: str | None) -> bool:
@@ -121,6 +159,12 @@ def decide(policy: dict, local: Local, now_utc: datetime) -> Decision:
         return Decision("BLOCKED", UNKNOWN_CHECKOUT, target)
     if not local.checkout_clean:
         return Decision("BLOCKED", LOCAL_MODIFICATIONS, target)
+    # Pre-flight: never touch a site that is already broken. An upgrade recreates every container,
+    # so a site that cannot be verified healthy first cannot be told apart afterwards from one this
+    # agent broke — and a mismatched AES key would survive the recreate as a dead trust.
+    unfit = local.health.fit_to_upgrade if local.health else None
+    if unfit:
+        return Decision("BLOCKED", SITE_UNHEALTHY, target, unfit)
     if not in_window(now_utc, policy.get("maintenance_window"), policy.get("timezone")):
         return Decision("SKIP", "outside the maintenance window")
     if policy.get("is_busy"):
@@ -171,20 +215,35 @@ def kit_identity(kit_file: Path) -> tuple[str, str]:
     return parts[2], ENV_TOKEN_TO_HUB[parts[3]]
 
 
+def read_health(kit: dict[str, str]) -> Health:
+    """trust-api's own ``/health``, read over loopback. Never raises: unreachable is a Health too."""
+    port = kit.get("TRUST_API_PORT", "8020")
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=HTTP_TIMEOUT_S) as resp:  # noqa: S310
+            body = json.loads(resp.read())
+    except (urllib.error.URLError, OSError, ValueError):
+        return Health(False, None, None, None, ())
+    if not isinstance(body, dict):
+        return Health(False, None, None, None, ())
+    version = body.get("version")
+    status = body.get("status")
+    dead = body.get("dead_tasks")
+    return Health(
+        reachable=True,
+        status=status if isinstance(status, str) else None,
+        version=version if isinstance(version, str) else None,
+        hub_key_match=body.get("hub_key_match") if isinstance(body.get("hub_key_match"), bool) else None,
+        dead_tasks=tuple(str(t) for t in dead) if isinstance(dead, list) else (),
+    )
+
+
 def local_state(kit: dict[str, str], repo: Path) -> Local:
-    """Current release from trust-api's own /health; clean checkout from git; remote-driven from the kit."""
+    """Current release and fitness from trust-api's /health; clean checkout from git; remote-driven from the kit."""
     unsupported = any(kit.get(k, "").startswith(("ssh://", "tcp://")) for k in ("DOCKER_HOST", "DOCKER_CONTEXT"))
     status = run(["git", "status", "--porcelain", "--untracked-files=no"], repo)
     clean = (status.stdout.strip() == "") if status.returncode == 0 else None
-    release = None
-    try:
-        port = kit.get("TRUST_API_PORT", "8020")
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=HTTP_TIMEOUT_S) as resp:  # noqa: S310
-            version = json.loads(resp.read()).get("version")
-            release = version if isinstance(version, str) else None
-    except (urllib.error.URLError, OSError, ValueError):
-        release = None
-    return Local(release, clean, unsupported)
+    health = read_health(kit)
+    return Local(health.version, clean, unsupported, health)
 
 
 def checkout(repo: Path, tag: str) -> str | None:
@@ -217,6 +276,36 @@ def upgrade(repo: Path, kit_file: Path, tag: str) -> tuple[bool, str]:
     return out.returncode == 0, (out.stdout + out.stderr)[-LOG_TAIL_BYTES:]
 
 
+def verify(
+    kit: dict[str, str],
+    tag: str,
+    *,
+    timeout_s: int = VERIFY_TIMEOUT_S,
+    poll_s: int = VERIFY_POLL_S,
+    sleep=time.sleep,
+    now=time.monotonic,
+) -> tuple[bool, str]:
+    """Poll /health until the site is up ON ``tag``. Returns (verified, what the last read said)."""
+    deadline = now() + timeout_s
+    health = read_health(kit)
+    while True:
+        if health.reachable and health.status == "ok" and not health.dead_tasks and health.version == tag:
+            return True, f"trust-api reports {tag}, status=ok"
+        if now() >= deadline:
+            break
+        sleep(poll_s)
+        health = read_health(kit)
+    if not health.reachable:
+        last = "trust-api /health never came back"
+    elif health.version != tag:
+        last = f"trust-api reports {health.version or 'no version'}, not {tag}"
+    else:
+        last = f"trust-api reports status={health.status}" + (
+            f", dead background tasks: {', '.join(health.dead_tasks)}" if health.dead_tasks else ""
+        )
+    return False, f"the upgrade applied but the site did not come up on {tag} within {timeout_s}s: {last}"
+
+
 def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
     try:
         kit = read_kit(kit_file)
@@ -235,7 +324,7 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
             kit,
             "POST",
             "/trust/upgrade-status",
-            {"state": "BLOCKED", "release": decision.release, "detail": decision.reason},
+            {"state": "BLOCKED", "release": decision.release, "detail": decision.detail or decision.reason},
         )
         return 0
     status, _ = hub_call(kit, "POST", "/trust/upgrade-status", {"state": "STARTING", "release": decision.release})
@@ -243,9 +332,15 @@ def tick(kit_file: Path, repo: Path, dry_run: bool) -> int:
         print("the hub refused the claim (a job landed, or the policy changed); nothing done")
         return 0
     ok, tail = upgrade(repo, kit_file, decision.release)
+    detail = tail
+    if ok:
+        # The verb exiting 0 only says the deployment was applied. Confirm the site actually came
+        # back up ON the target before telling the hub it SUCCEEDED.
+        ok, detail = verify(kit, decision.release)
+        print(detail)
     report = {"state": "SUCCEEDED" if ok else "FAILED", "release": decision.release}
     if not ok:
-        report["detail"] = tail
+        report["detail"] = detail
     hub_call(kit, "POST", "/trust/upgrade-status", report)
     print("SUCCEEDED" if ok else "FAILED")
     return 0 if ok else 1

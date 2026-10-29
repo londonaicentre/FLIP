@@ -135,7 +135,7 @@ export type AutoUpgradeState =
     | "FAILED";
 
 /** Why a pending upgrade has not started yet; empty when nothing holds it back. */
-export type AutoUpgradeBlocker = "JOBS_RUNNING" | "OUTSIDE_WINDOW" | "LOCAL_MODIFICATIONS" | "AGENT_OFFLINE";
+export type AutoUpgradeBlocker = "JOBS_RUNNING" | "OUTSIDE_WINDOW" | "LOCAL_MODIFICATIONS" | "SITE_UNHEALTHY" | "AGENT_OFFLINE";
 
 /** The auto-upgrade policy and status of one trust, as its Trust Admin sees it. */
 export interface IAutoUpgrade {

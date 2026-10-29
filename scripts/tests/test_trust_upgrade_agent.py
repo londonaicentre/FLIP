@@ -30,7 +30,8 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import trust_upgrade_agent as agent  # noqa: E402
 
 NOW = datetime(2026, 10, 23, 2, 0)  # 03:00 BST
-CLEAN = agent.Local(current_release="v1.2.0", checkout_clean=True, unsupported=False)
+HEALTHY = agent.Health(reachable=True, status="ok", version="v1.2.0", hub_key_match=True, dead_tasks=())
+CLEAN = agent.Local(current_release="v1.2.0", checkout_clean=True, unsupported=False, health=HEALTHY)
 
 
 def policy(**kw):
@@ -96,7 +97,7 @@ class Decide(unittest.TestCase):
         )
 
     def test_host_blockers_are_reported_not_forced(self):
-        dirty = agent.Local("v1.2.0", checkout_clean=False, unsupported=False)
+        dirty = agent.Local("v1.2.0", checkout_clean=False, unsupported=False, health=HEALTHY)
         self.assertEqual(agent.decide(policy(), dirty, NOW).reason, agent.LOCAL_MODIFICATIONS)
         unknown = agent.Local("v1.2.0", checkout_clean=None, unsupported=False)
         self.assertEqual(agent.decide(policy(), unknown, NOW).reason, agent.UNKNOWN_CHECKOUT)
@@ -104,9 +105,28 @@ class Decide(unittest.TestCase):
         self.assertEqual(agent.decide(policy(), remote, NOW).reason, agent.UNSUPPORTED_MODE)
 
     def test_a_blocker_is_reported_even_outside_the_window(self):
-        dirty = agent.Local("v1.2.0", checkout_clean=False, unsupported=False)
+        dirty = agent.Local("v1.2.0", checkout_clean=False, unsupported=False, health=HEALTHY)
         p = policy(maintenance_window={"start": "04:00", "end": "05:00"}, timezone="UTC")
         self.assertEqual(agent.decide(p, dirty, NOW).action, "BLOCKED")
+
+    def test_an_unhealthy_site_is_never_touched(self):
+        """Recreating every container on an already-broken site makes the two causes indistinguishable."""
+        for health, needle in [
+            (agent.Health(False, None, None, None, ()), "unreachable"),
+            (agent.Health(True, "degraded", "v1.2.0", True, ("task",)), "degraded"),
+            (agent.Health(True, "ok", "v1.2.0", True, ("poller",)), "poller"),
+            (agent.Health(True, "ok", "v1.2.0", False, ()), "AES key"),
+        ]:
+            with self.subTest(health=health):
+                d = agent.decide(policy(), agent.Local("v1.2.0", True, False, health), NOW)
+                self.assertEqual((d.action, d.reason), ("BLOCKED", agent.SITE_UNHEALTHY))
+                self.assertIn(needle, d.detail or "")
+
+    def test_being_unhealthy_does_not_nag_when_there_is_nothing_to_do(self):
+        """A disabled or already-current trust must not report a blocker it was never going to act on."""
+        sick = agent.Local("v1.3.0", True, False, agent.Health(False, None, None, None, ()))
+        self.assertEqual(agent.decide(policy(), sick, NOW).action, "SKIP")
+        self.assertEqual(agent.decide(policy(enabled=False), sick, NOW).action, "SKIP")
 
 
 class Tick(unittest.TestCase):
@@ -119,7 +139,7 @@ class Tick(unittest.TestCase):
             "CENTRAL_HUB_API_URL=https://hub.example/api\nTRUST_API_KEY_HEADER=X-Trust-API-Key\nTRUST_API_KEY=k\nFL_KIT_SLOT=Trust_1\n"
         )
 
-    def _run(self, claim_status=200, upgrade_result=(True, ""), pol=None, dry_run=False):
+    def _run(self, claim_status=200, upgrade_result=(True, ""), pol=None, dry_run=False, verified=(True, "on v1.3.0")):
         calls = []
 
         def hub(kit, method, route, body=None):
@@ -131,6 +151,7 @@ class Tick(unittest.TestCase):
         with (
             mock.patch.object(agent, "hub_call", hub),
             mock.patch.object(agent, "local_state", return_value=CLEAN),
+            mock.patch.object(agent, "verify", return_value=verified),
             mock.patch.object(agent, "upgrade", return_value=upgrade_result) as up,
         ):
             code = agent.tick(self.kit, Path("/nonexistent"), dry_run)
@@ -153,6 +174,13 @@ class Tick(unittest.TestCase):
         up.assert_not_called()
         self.assertEqual(len(calls), 2)
 
+    def test_an_upgrade_that_does_not_come_up_is_a_failure(self):
+        """`make` exiting 0 only says the deployment applied; SUCCEEDED requires the site to be up on it."""
+        code, calls, _ = self._run(verified=(False, "did not come up on v1.3.0: unreachable"))
+        self.assertEqual(code, 1)
+        self.assertEqual(calls[-1][2]["state"], "FAILED")
+        self.assertIn("did not come up", calls[-1][2]["detail"])
+
     def test_dry_run_changes_and_reports_nothing(self):
         code, calls, up = self._run(dry_run=True)
         self.assertEqual((code, len(calls)), (0, 1))
@@ -166,6 +194,57 @@ class Tick(unittest.TestCase):
     def test_unreadable_hub_is_exit_2(self):
         with mock.patch.object(agent, "hub_call", side_effect=agent.urllib.error.URLError("down")):
             self.assertEqual(agent.tick(self.kit, Path("/nonexistent"), False), 2)
+
+
+class Verify(unittest.TestCase):
+    """Deciding whether the site actually came back up on the target, without real sleeping."""
+
+    def _verify(self, reads, tag="v1.3.0", timeout_s=30):
+        clock = {"t": 0.0}
+        seq = list(reads)
+
+        def now():
+            return clock["t"]
+
+        def sleep(s):
+            clock["t"] += s
+
+        def read(_kit):
+            return seq.pop(0) if len(seq) > 1 else seq[0]
+
+        with mock.patch.object(agent, "read_health", read):
+            return agent.verify({}, tag, timeout_s=timeout_s, poll_s=10, sleep=sleep, now=now)
+
+    def test_passes_as_soon_as_the_target_is_serving(self):
+        ok, detail = self._verify([agent.Health(True, "ok", "v1.3.0", True, ())])
+        self.assertTrue(ok)
+        self.assertIn("v1.3.0", detail)
+
+    def test_waits_through_the_restart_then_passes(self):
+        """The site is down while containers are recreated; that is the normal path, not a failure."""
+        ok, _ = self._verify(
+            [
+                agent.Health(False, None, None, None, ()),
+                agent.Health(True, "ok", "v1.2.0", True, ()),
+                agent.Health(True, "ok", "v1.3.0", True, ()),
+            ]
+        )
+        self.assertTrue(ok)
+
+    def test_still_on_the_old_release_at_the_deadline_fails(self):
+        ok, detail = self._verify([agent.Health(True, "ok", "v1.2.0", True, ())])
+        self.assertFalse(ok)
+        self.assertIn("not v1.3.0", detail)
+
+    def test_up_on_the_target_but_degraded_fails(self):
+        ok, detail = self._verify([agent.Health(True, "degraded", "v1.3.0", True, ("poller",))])
+        self.assertFalse(ok)
+        self.assertIn("poller", detail)
+
+    def test_never_coming_back_fails(self):
+        ok, detail = self._verify([agent.Health(False, None, None, None, ())])
+        self.assertFalse(ok)
+        self.assertIn("never came back", detail)
 
 
 class KitIdentity(unittest.TestCase):

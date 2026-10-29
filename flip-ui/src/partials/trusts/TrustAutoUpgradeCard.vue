@@ -220,10 +220,11 @@ const BLOCKER_TEXT: Record<AutoUpgradeBlocker, string> = {
     JOBS_RUNNING: "A training job that uses this Trust is running. The upgrade waits for it to finish.",
     OUTSIDE_WINDOW: "It is outside the maintenance window. The upgrade starts when the window opens.",
     LOCAL_MODIFICATIONS: "The upgrade agent's copy of FLIP has local modifications. An operator must restore it.",
+    SITE_UNHEALTHY: "This Trust is not healthy, so the upgrade is holding off until it is. See the status above.",
     AGENT_OFFLINE: "The upgrade agent on the Trust host has not checked in recently."
 };
 const blockerTexts = computed(() => (props.autoUpgrade.state === "PENDING" ? props.autoUpgrade.blockers : [])
-    .map(b => BLOCKER_TEXT[b]));
+    .map(b => BLOCKER_TEXT[b] ?? b));
 
 interface IStatusView { key: string; icon: string; text: string; classes: string }
 const NEUTRAL = "bg-gray-50 border-gray-200 text-gray-700 dark:bg-dark-surface dark:border-dark-border dark:text-gray-200";

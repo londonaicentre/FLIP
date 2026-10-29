@@ -49,8 +49,9 @@ JOBS_RUNNING = "JOBS_RUNNING"
 OUTSIDE_WINDOW = "OUTSIDE_WINDOW"
 LOCAL_MODIFICATIONS = "LOCAL_MODIFICATIONS"
 AGENT_OFFLINE = "AGENT_OFFLINE"
+SITE_UNHEALTHY = "SITE_UNHEALTHY"
 # What a host agent may report under BLOCKED.
-REPORTABLE_BLOCKERS = frozenset({LOCAL_MODIFICATIONS, "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT"})
+REPORTABLE_BLOCKERS = frozenset({LOCAL_MODIFICATIONS, "UNSUPPORTED_MODE", "UNKNOWN_CHECKOUT", SITE_UNHEALTHY})
 
 # Only an immutable CI tag is comparable between the hub and a trust (mirrors flip-ui's isImageTag).
 _IMAGE_TAG = re.compile(r"^v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$")
