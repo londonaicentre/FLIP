@@ -84,7 +84,7 @@ RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
 
-# REPO_ROOT is where scripts/site_upgrade.py and the shared make fragments live.
+# REPO_ROOT is where trust/deploy/scripts/site_upgrade.py and the shared make fragments live.
 REPO_ROOT := $(abspath $(CHART_DIR)/../../..)
 # Kit-file env token (ENV) from HUB, derived once for every Makefile that reads HUB.
 include $(REPO_ROOT)/deploy/env_mode.mk
@@ -275,9 +275,9 @@ undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undepl
 	@true
 
 smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received it (FLIP#1228)
-	## `make status` compares the pod's plugin jars against the values; this drives the
-	## path those jars are on. Both are needed: a roster can match while the importer is
-	## broken for some other reason, and a C-ECHO can pass while every store aborts.
+	## `make status` checks XNAT lists every plugin and answers its DQR route; this drives
+	## the path those plugins are on. Both are needed: every plugin can load while the
+	## importer is broken, and a C-ECHO can pass while every store aborts.
 	## Requires a seeded Orthanc (it stores an instance the PACS already holds).
 	## Exit 2 from the script is INCONCLUSIVE — the only evidence was a prearchive object's
 	## arrival time while received.log exists and gained no line. Not a pass, and not enough
@@ -308,7 +308,7 @@ smoke-cstore: ## Send a real C-STORE through the PACS and verify XNAT received i
 upgrade-trust-k8s: ## Move a deployed trust to a release tag (data-safe helm upgrade)
 	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> is required"; exit 1; }
 	@[ -f "$(CHART_DIR)/k8s-trust-$(KIT).yaml" ] || { echo "❌ $(CHART_DIR)/k8s-trust-$(KIT).yaml not found — run make sync-kit KIT=$(KIT) first"; exit 1; }
-	uv run --no-config $(REPO_ROOT)/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
+	uv run --no-config $(REPO_ROOT)/trust/deploy/scripts/site_upgrade.py plan --kit-file $(KIT_FILE) $(if $(TAG),--tag $(TAG)) $(if $(FL_TAG),--fl-tag $(FL_TAG)) $(if $(FORCE),--force) $(if $(YES),--yes) $(if $(ALLOW_CHECKOUT_DRIFT),--allow-checkout-drift)
 	$(MAKE) _upgrade-trust-k8s-apply KIT=$(KIT) HUB=$(HUB)
 
 # Phase 2: regenerate the override from the kit the resolver just pinned — that is how

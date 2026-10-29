@@ -107,6 +107,7 @@ class XnatBuildTriggers(unittest.TestCase):
             (["trust/xnat/xnat/Dockerfile"], {"web"}),
             (["trust/xnat/xnat/config/anon_script.das"], {"web"}),
             (["trust/xnat/.env"], {"web"}),
+            (["trust/xnat/artifacts.manifest"], {"web"}),
             (["trust/xnat/dcm2niix/Dockerfile"], set()),
             (
                 ["trust/xnat/dcm2niix/Dockerfile", "trust/xnat/xnat/config/dcm2niix_command.json"],

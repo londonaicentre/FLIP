@@ -6,7 +6,7 @@ Deploy a FLIP node on Azure
 
 A FLIP node on Azure is an on-prem node whose host happens to be an Azure VM: the same trust-side
 stack (trust-api, imaging-api, data-access-api, FL client, XNAT, Orthanc), the same on-prem verbs,
-built entirely from code in ``deploy/providers/azure``. The VM configures itself at first boot and
+built entirely from code in ``trust/deploy/terraform/azure``. The VM configures itself at first boot and
 is operated only through Azure Run Command: there are no inbound ports and no SSH from outside. It
 receives its kit the way any trust does, from the hub admin, through a private container it reads
 with its own identity. For a node on a Trust's own host see :doc:`deploy-flip-node-on-prem`. The
@@ -139,7 +139,7 @@ Build the node and test it
 
 .. code-block:: bash
 
-   cd deploy/providers/azure
+   cd trust/deploy/terraform/azure
    SUB="<subscription name>"
    REGION=<region>   # the node's region
    SUBNET=<subnet resource id>   # the site's subnet; leave empty for a standalone node (see below)
@@ -270,22 +270,18 @@ reach its API server never joins the cluster. The trial's 4 vCPUs are the VM's t
 $0.25 an hour, plus the NAT gateway on a standalone cluster.
 
 Behind the Trust's firewall the cluster needs more than the VM's list (`Network and security`_):
+the outbound rules Microsoft documents for AKS ("Outbound network and FQDN rules for AKS
+clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag, and the region's
+``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
 
-- **AKS itself:** the outbound rules Microsoft documents for AKS ("Outbound network and FQDN
-  rules for AKS clusters"). On Azure Firewall that is the ``AzureKubernetesService`` FQDN tag,
-  and the region's ``AzureCloud`` service tag on TCP/UDP 443, 1194 and 9000, plus NTP.
-- **XNAT plugins:** the chart downloads them at every pod start, from ``xnat.org``,
-  ``api.bitbucket.org`` (served from ``bbuseruploads.s3.amazonaws.com``) and ``github.com``
-  (served from ``release-assets.githubusercontent.com``). The VM's image carries them instead.
-
-That list was measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
+They were measured on 17 Oct by running this chapter behind a deny-all Azure Firewall Basic.
 
 On your machine you also need ``kubectl``, ``kubelogin``, Helm 3.16 or newer, ``jq``,
 ``python3`` and ``uv``.
 
 .. code-block:: bash
 
-   cd deploy/providers/azure
+   cd trust/deploy/terraform/azure
    SUB="<subscription name>"
 
    make bootstrap       AZ_SUBSCRIPTION="$SUB" STATE_SA=<unique storage name> ALERT_EMAIL=<you>   # once

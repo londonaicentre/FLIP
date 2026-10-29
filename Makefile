@@ -462,7 +462,7 @@ ifeq ($(IS_DEPLOYED),)
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
 else
 	@echo "ℹ️  flip-ui is served from S3 + CloudFront when HUB=$(HUB); no container to start."
-	@echo "    Run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\` to publish the bundle."
+	@echo "    CI publishes it after each apply; to publish by hand, run \`make -C deploy/providers/AWS deploy-ui HUB=$(HUB)\`."
 endif
 ui-off: _check-compose-project-owner
 ifeq ($(IS_DEPLOYED),)
@@ -689,7 +689,7 @@ register-trust: _check-compose-project-owner _wait-for-hub
 	  [ -n "$$region" ] && set -- "$$@" --region "$$region"; \
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
 	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
-	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
+	  printf '%s\n' "$$kitjson" | uv run --no-config trust/deploy/scripts/distribute_trust_kits.py --target "$$kit"
 	@$(MAKE) generate-xnat-credentials KIT=$(KIT)
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
@@ -711,7 +711,7 @@ new-trust:
 	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
 	@old='$(call kit_file,trust/,$(TRUST_CODE))'; [ "$$old" = trust/.env.$(TRUST_CODE).$(ENV) ] || \
 	  { echo "❌ $$old already exists under an old kit name — rename it to trust/.env.$(TRUST_CODE).$(ENV) instead."; exit 1; }
-	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
+	@uv run --no-config trust/deploy/scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
 		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
 
 # Refresh the Hub-shared block in trust/.env.<CODE>.<env> with current
@@ -729,7 +729,7 @@ new-trust:
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
 	@:$(call kit_hint,$(call kit_file,trust/,$(KIT)))
-	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config trust/deploy/scripts/sync_trust_kit.py --env-class $(ENV_CLASS) $(patsubst trust/.env.%,%,$(call kit_file,trust/,$(KIT)))
 
 # Sync every locally-present kit for this env (current names only; the .example
 # templates never match).

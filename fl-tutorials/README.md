@@ -20,11 +20,14 @@ the model-file contract, run an application locally, or provide the inputs to th
 
 | Backend | Examples |
 | --- | --- |
-| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, diffusion, EHR risk prediction (tabular/OMOP-only), and template tests |
+| [`nvflare/`](nvflare/) | Chest X-ray classification, spleen segmentation and evaluation, [image generation](nvflare/image_generation/README.md) (brain MRI latent diffusion in two jobs, chest X-ray diffusion), EHR risk prediction (tabular/OMOP-only), and template tests |
 | [`flower/`](flower/) | Chest X-ray classification, spleen segmentation and evaluation, prostate zonal segmentation (PI-CAI, nnU-Net-planned), EHR risk prediction (tabular/OMOP-only) |
 
-The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower explicitly with
-`FL_BACKEND=flower`.
+Both trees are laid out `fl-tutorials/<backend>/<category>/<name>/` (#1500): a tutorial's two copies sit at the
+same relative path, the category names the task family (`image_classification`, `image_segmentation`,
+`image_evaluation`, `image_generation`, `tabular_classification`, …), and every `make` target addresses a tutorial by
+`<name>` alone. The root Makefile forwards tutorial commands to `FL_BACKEND=nvflare` by default. Select Flower
+explicitly with `FL_BACKEND=flower`.
 
 ## Run an example
 
@@ -48,7 +51,7 @@ package set the FL images install), so it needs no FL image; the images are exer
 the dev stack. The spleen examples take `download-spleen-data` in place of
 `download-xray-data`; the EHR risk-prediction example (the tabular/OMOP-only one — no imaging, CPU is enough)
 takes `download-synthea-data`. The prostate example is Flower-only and takes `prepare-prostate-local-data
-NUM_CASES=12` for the simulator; see its [README](flower/3d_prostate_segmentation/README.md) for the full
+NUM_CASES=12` for the simulator; see its [README](flower/image_segmentation/3d_prostate_segmentation/README.md) for the full
 PI-CAI setup and the nnU-Net plan.
 
 GPU-backed examples need a CUDA GPU on the host. Dataset tooling is

@@ -37,9 +37,9 @@ The FLIP touchpoints your app needs are:
 
    - ``fl-apps/flower/standard/app/`` — the platform's base bundle: the ``ServerApp`` and the
      ``FedAvgWithClientMetrics`` strategy. You supply ``client_app.py`` and ``models.py``.
-   - ``fl-tutorials/flower/xray_classification/`` — chest X-ray classification, with both ``ServerApp`` and
+   - ``fl-tutorials/flower/image_classification/xray_classification/`` — chest X-ray classification, with both ``ServerApp`` and
      ``ClientApp``.
-   - ``fl-tutorials/flower/3d_spleen_segmentation/`` — MONAI spleen segmentation. Exercises every touchpoint below,
+   - ``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/`` — MONAI spleen segmentation. Exercises every touchpoint below,
      including best-model selection.
 
 *****************
@@ -525,7 +525,7 @@ Two files carry a Flower app's configuration, and they play different roles loca
 Beyond a normal Flower project, your ``pyproject.toml`` needs a ``[tool.flwr.app.config]`` block that declares the
 FLIP run-config keys (placeholder values are fine) and your training hyperparameters (``num-server-rounds``,
 ``local-epochs``, …), so you can override them locally. Abridged from
-``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
+``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/pyproject.toml``:
 
 .. code-block:: toml
 
@@ -585,7 +585,7 @@ FLIP run-config keys (placeholder values are fine) and your training hyperparame
 Because the template's ``pyproject.toml`` governs a platform run, set rounds, epochs, learning rate or the DP knobs
 in a ``config.toml`` uploaded next to your code. FLIP passes it to ``flwr run`` when you submit, so every top-level
 key in it overrides the template's ``[tool.flwr.app.config]``. From
-``fl-tutorials/flower/3d_spleen_segmentation/app/config.toml``:
+``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/app/config.toml``:
 
 .. code-block:: toml
 
@@ -695,7 +695,7 @@ A tutorial submitted this way runs with its ``pyproject.toml`` values, not its `
 
 .. seealso::
 
-   ``fl-tutorials/flower/3d_spleen_segmentation/README.md`` has the full local-run instructions and remaining
+   ``fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/README.md`` has the full local-run instructions and remaining
    caveats, including the data-enrichment (label upload) step the segmentation tutorials need before they can train
    on a real FLIP project. ``flip-api/AGENTS.md`` documents the end-to-end smoke tests.
 

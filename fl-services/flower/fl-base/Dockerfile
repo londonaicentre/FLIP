@@ -16,6 +16,9 @@
 FROM flwr/base:${FLWR_VERSION:-1.42.0-py3.12-ubuntu24.04} AS base
 
 ARG LOCAL_DEV=false
+# torch's native Triton kernels compile a C helper on first use, and this image has no C compiler:
+# without this, a GPU backward through one of them fails (FLIP#1700). torch reads it at import.
+ENV TORCH_DISABLE_NATIVE_JIT=1
 WORKDIR /app
 
 # Install flip-utils from the IN-REPO source (build context = repo root). This
@@ -51,7 +54,7 @@ COPY flip-utils/flip/ /opt/flip-utils/flip/
 # No cryptography pin: flwr>=1.40 requires cryptography>=50.0.0, past GHSA-537c-gmf6-5ccf.
 # No certifi or uv pin either: flwr>=1.42 requires certifi>=2026.10.19 and uv>=0.13.5 (GHSA-6q48-6c7w-9gw2,
 # GHSA-hq85-5cpj-mr62). pip does not apply flip-utils' UV constraints; carry its setuptools floor here.
-RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=83.0.0" \
+RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>=84.1.0" \
       --extra-index-url https://download.pytorch.org/whl/cu130
 
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to

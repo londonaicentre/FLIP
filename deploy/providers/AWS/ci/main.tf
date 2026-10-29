@@ -86,6 +86,10 @@ module "terraform_ci" {
   apply_role_name                = var.apply_role_name
   tags                           = var.tags
 
+  ui_bucket_name           = var.ui_bucket_name
+  ui_publish_workflow_file = var.ui_publish_workflow_file
+  ui_publish_role_name     = var.ui_publish_role_name
+
   manage_state_bucket                = var.manage_state_bucket
   state_bucket_sse_algorithm         = var.state_bucket_sse_algorithm
   state_noncurrent_versions_retained = var.state_noncurrent_versions_retained

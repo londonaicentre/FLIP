@@ -1575,7 +1575,7 @@ def main(
                 )
 
                 # Only the trust overlay is load-bearing here. A production trust
-                # attaches to `default` alone (trust/deploy/compose_trust.prod.yml),
+                # attaches to `default` alone (trust/deploy/compose/compose_trust.prod.yml),
                 # so deploy_fl-net-{1,2} — which exist only in the single-host dev
                 # topology — were never used on a trust EC2 and warned every run (FLIP#959).
                 expected_networks = [

@@ -48,7 +48,7 @@ make up FL_BACKEND=flower DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev   # run the hub 
 ### Containers run as a non-root user (GHSA-8465), with capabilities hardened
 
 `flower-supernode` and `flower-fl-base` inherit the non-root `app` user from the upstream `flwr/base`
-image. The trust-deployment `fl-client-net-*` services (`trust/deploy/compose_trust.{production,development}.flower.yml`)
+image. The trust-deployment `fl-client-net-*` services (`trust/deploy/compose/compose_trust.{production,development}.flower.yml`)
 also set `security_opt: [no-new-privileges:true]` and `cap_drop: [ALL]`, matching every other trust-side
 service — the `flower-supernode` entrypoint does no chmod/chown at all, so no capability needs adding
 back in either environment. See [`deploy/README.md`](../../deploy/README.md#linux-capability-restrictions)
@@ -213,6 +213,9 @@ make -C fl-services/flower up-secure          # SECURE stack (TLS + SuperNode au
 make -C fl-services/flower submit APP=xray_classification   # submit a job to the running stack
 make -C fl-services/flower down
 ```
+
+`APP=` is the tutorial's bare name: the stack mounts `fl-tutorials/flower/` at `/app/src`, and the fl-api
+resolves the name under `/app/src/<category>/<name>` (the tree's layout since #1500) — exactly one match.
 
 **Fetch the dataset before `up`.** The default `APP=xray_classification` is not self-contained: it
 reads images and a dataframe from the SuperNodes' bind mounts, and `up` only creates *placeholder*
