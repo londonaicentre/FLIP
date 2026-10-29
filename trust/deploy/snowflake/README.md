@@ -34,7 +34,8 @@ trust's kit file, and never pass through Terraform variables or state.
 | `kitfile.py` | Kit-file parsing, shared by the renderer and the kit sync |
 | `mirror_images.py` | GHCR to the account image repository, linux/amd64, digests recorded in `images.lock.json` |
 | `sync_snowflake_kit.py` | SECRET objects, the FL kit onto the `FL_KIT` stage, the governance document onto `GOVERNANCE`. The twin of `helm/sync_k8s_kit.py` |
-| `spcs_sql.py` | Emits the deploy SQL (`up`/`down`/`suspend`/`status`/`selftest`); the Makefile pipes it |
+| `spcs_sql.py` | Emits the deploy SQL (`up`/`down`/`suspend`/`status`/`selftest`), and runs the one-shot jobs (`run-job`/`job-status`); the Makefile pipes it |
+| `scripts/` | What the one-shot job services run: `xnat-configure-spcs.sh`, `seed-orthanc-spcs.sh`, `smoke-cstore-spcs.sh`. Repo files so they can be read and reviewed on their own; `render_specs.py` inlines each into its spec |
 | `tests/` | The guards. No Snowflake account, no credentials, no network |
 
 `rendered/` and `images.lock.json` are generated and gitignored.
@@ -62,7 +63,17 @@ make -C trust/deploy/snowflake sync-kit KIT=GSTT HUB=stag
 # 4. Render and deploy
 make -C trust/deploy/snowflake up KIT=GSTT HUB=stag
 
-# 5. Check, and stop paying when idle
+# 5. Configure XNAT. NOT optional: until this has run XNAT has registered no DICOM
+#    receiver and rejects every C-STORE, so the trust answers HTTP and retrieves nothing.
+make -C trust/deploy/snowflake xnat-configure KIT=GSTT HUB=stag
+make -C trust/deploy/snowflake job-status     KIT=GSTT HUB=stag JOB=xnat-configure
+
+# 6. Seed the mocked PACS, once the DICOM is on the SEED stage (see below), then prove
+#    the DICOM path works end to end.
+make -C trust/deploy/snowflake seed-orthanc KIT=GSTT HUB=stag
+make -C trust/deploy/snowflake smoke-cstore KIT=GSTT HUB=stag
+
+# 7. Check, and stop paying when idle
 make -C trust/deploy/snowflake status  KIT=GSTT HUB=stag
 make -C trust/deploy/snowflake suspend KIT=GSTT HUB=stag
 ```
@@ -95,6 +106,10 @@ One SPCS service per container. All endpoints `public: false`.
 | `xnat-nginx` | none | none | HTTP 80 |
 | `orthanc` | block volume | ORTHANC_PASSWORD | HTTP 8042, **TCP 4242** |
 | `dcm2niix` (job) | stages XNAT_ARCHIVE, CONVERTER_IO | none | none |
+| `xnat-configure` (job) | none | XNAT_ADMIN_PASSWORD, XNAT_SERVICE_PASSWORD | none |
+| `seed-orthanc` (job) | stage SEED (read-only) | ORTHANC_PASSWORD | none |
+| `smoke-cstore` (job) | stage XNAT_ARCHIVE (read-only) | ORTHANC_PASSWORD, XNAT_SERVICE_PASSWORD | none |
+| `reconvert` (job) | stages CONVERTER_IO, XNAT_ARCHIVE (read-only) | TRUST_INTERNAL_SERVICE_KEY, AES_KEY_BASE64, XNAT_SERVICE_PASSWORD | none |
 
 Not on Snowflake: `omop-db` (replaced by native Snowflake tables) and Loki/Grafana/Alloy
 (replaced by the account event table: three always-on containers cost about 44 credits a
@@ -135,6 +150,76 @@ account repository and records the digest the registry returned. The renderer th
 that digest: a tag in the account repository can be re-pushed, a digest cannot. SPCS runs
 amd64 only, so the explicit platform matters on an arm64 workstation, where a tag pull
 gets arm64 silently and the service fails to start with an exec-format error.
+
+### The one-shot jobs
+
+Four of the Compose and Helm targets have no equivalent in `make up`, because they are
+things you *do* to a trust rather than services it runs. On SPCS each is a job service:
+rendered like any other spec, never created, executed on demand.
+
+```bash
+make -C trust/deploy/snowflake xnat-configure  KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake seed-orthanc    KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake smoke-cstore    KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake reconvert-nifti KIT=<CODE> HUB=<env>
+make -C trust/deploy/snowflake job-status      KIT=<CODE> HUB=<env> JOB=<name>
+```
+
+Each is `EXECUTE JOB SERVICE ... ASYNC = TRUE` with a `NAME`, run as the services role
+with `CREATE SERVICE` granted for the length of the call and revoked in a `finally`.
+`ASYNC` because a statement times out at 300 s and `configure-xnat.sh` alone outlives
+that on a cold site; the `NAME` because `SYSTEM$GET_SERVICE_STATUS` and
+`SYSTEM$GET_SERVICE_LOGS` are the only way to read what a job did, and an anonymous job
+cannot be addressed once the call returns. All four take `DRY_RUN=true`.
+
+| Job | Compose / Helm twin | What is different here |
+|---|---|---|
+| `xnat-configure` | `make -C trust/xnat xnat-configure`, the chart's `xnat-init` hook | Runs `configure-xnat.sh` unmodified from the xnat-web image. It deliberately does **not** run `configure-dcm2niix.sh`: there is no Container Service on SPCS, and registering the command would give XNAT a converter it can never launch |
+| `seed-orthanc` | `make -C trust seed-orthanc` | The compose path streams the published DICOM from Hugging Face. A Snowflake trust has no egress and no host to download onto, so the corpus is PUT on the `SEED` stage once and this job uploads what it finds |
+| `smoke-cstore` | `make -C trust/deploy/helm smoke-cstore` | There is no `exec` on SPCS, so the receiver's `received.log` cannot be read. Evidence is XNAT's own REST API first (a new session, then a new prearchive entry); the `XNAT_ARCHIVE` stage's file count alone is reported as INCONCLUSIVE (exit 2), because a concurrent DQR import looks identical |
+| `reconvert` | `make -C trust reconvert-nifti` | imaging-api's own script with `CONVERTER_BACKEND=snowflake`, so it CALLs `APP.CONVERT_SCAN` rather than XNAT's bulk launcher, and registers the NIfTI in XNAT itself |
+
+**The SEED stage layout** is this directory's contract, and the seeding job is the only
+thing that reads it:
+
+```
+@FLIP_TRUST_<CODE>.STAGES.SEED/dicom/<project>/<accession>/<instance>.dcm
+```
+
+Put it there once, from a workstation that has the data:
+
+```bash
+snow stage copy ./dicom @FLIP_TRUST_GSTT.STAGES.SEED/dicom/ --recursive \
+  --enable-templating NONE --connection flip-test
+```
+
+A re-run of `seed-orthanc` uploads the same instances and stores none of them again:
+Orthanc dedupes on SOPInstanceUID. `SEED_PROJECTS` in the kit limits it to named
+projects; unset, every project directory on the stage is seeded.
+
+### DICOM to NIfTI conversion
+
+There is no XNAT Container Service here: no Docker socket, no swarm, no Kubernetes
+backend for the plugin to drive. `xnat-web` therefore runs with
+`XNAT_CONTAINER_SERVICE_ENABLED=false`, and conversion goes through imaging-api instead,
+gated by `CONVERTER_BACKEND=snowflake` (the SPCS spec sets it; Compose and Helm leave it
+at `container-service` and are unchanged):
+
+1. imaging-api CALLs `APP.CONVERT_SCAN(project, session, scan)`, an owner's-rights
+   procedure owned by `FLIP_<CODE>_CONVERTER` (Terraform, FLIP#1581). It is a procedure
+   because launching a job needs `CREATE SERVICE`, and a service's OAuth token carries
+   the role that OWNS it: granting the services role that privilege would let the
+   fl-client, which runs researcher code, start arbitrary containers.
+2. It polls `APP.CONVERT_STATUS`. An empty status (`[]`) means the job exists and has not
+   been scheduled yet, which is **pending**, not failed.
+3. It reads the output from its own mount of the `CONVERTER_IO` stage, at
+   `<project>/<session>/<scan>/`, and registers it in XNAT over REST as a `NIFTI`
+   resource. That is the step the container service's output handler performed before.
+
+`session` there is the XNAT session **label**, because the archive tree is
+`<project>/arc001/<label>/SCANS/<scan>/DICOM` and that is what the procedure mounts. The
+REST registration addresses the **experiment id**. The two are different things and both
+appear on this path.
 
 ### Secret handling
 
@@ -215,6 +300,19 @@ requests and limits on every container; `/health` probes on the three APIs; the 
 endpoints; derived SPCS DNS rather than Compose names; and `CREATE OR ALTER` rather than
 `CREATE OR REPLACE` (which would drop the databases' block volumes).
 
+For the one-shot jobs they additionally assert: that each stays a job on the job pool and
+exposes no endpoint; that its script is inlined, since a job service can fetch nothing;
+that neither curl-driven job puts a credential in argv; that the reading jobs' volumes
+carry read-only intent (a smoke test able to write the archive could manufacture its own
+evidence); that `EXECUTE JOB SERVICE` is `ASYNC` and named, runs as the services role, and
+always revokes `CREATE SERVICE`; and that imaging-api and the `reconvert` job agree on
+every converter setting, since the job *is* imaging-api's code.
+
+The imaging-api side of the conversion path has its own suite, with the Snowflake
+connector mocked: `make -C trust/imaging-api local_test`
+(`tests/services/test_snowflake_converter.py`,
+`tests/scripts/test_reconvert_nifti_snowflake.py`).
+
 CI runs them from `.github/workflows/test_snowflake_specs.yml`, path-gated like every
 other service suite (`scripts/pr_paths_changed.py`).
 
@@ -226,8 +324,8 @@ a live account.
 
 | Assumption | Spike | If it turns out otherwise |
 |---|---|---|
-| XNAT runs non-root with its archive on a stage volume and its DICOM SCP on an internal TCP endpoint | FLIP#1577 | `xnat-web`'s volumes, uid/gid and endpoints change; the archive may need a block volume |
-| XNAT needs no Container Service plugin: `dcm2niix` runs as an SPCS job service that imaging-api executes | FLIP#1578 | `imaging-api`'s `DCM2NIIX_JOB_SERVICE`/`DCM2NIIX_JOB_POOL` and the job spec change |
+| ~~XNAT runs non-root with its archive on a stage volume and its DICOM SCP on an internal TCP endpoint~~ | FLIP#1577 | **Verified live.** The image needed three fixes to get there (FLIP#1583): the entrypoint's database host is no longer the literal `xnat-db`, the rendered-config copy is no longer written to a root-owned directory, and `conf/Catalina/localhost` is pre-created |
+| ~~XNAT needs no Container Service plugin: `dcm2niix` runs as an SPCS job service that imaging-api executes~~ | FLIP#1578 | **Verified live.** imaging-api CALLs `APP.CONVERT_SCAN`; see "DICOM to NIfTI conversion" above |
 | Every image runs unmodified on SPCS (amd64, non-root, stage-volume throughput adequate) | FLIP#1579 | Resource figures, `uid`/`gid` on stage volumes, and possibly the images themselves |
 | A stage volume can be sliced to a prefix (`@...IMAGES/net-1`), which is what carries the per-net isolation rule | FLIP#1579 | The fl-client needs one stage per net instead, and the Terraform root grows a stage per FL network |
 | Stage read-only is enforced by granting READ and not WRITE (SPCS has no `readOnly` mount flag). The intent is recorded per volume in `manifest.json` | FLIP#1579 | A different mechanism, or an accepted residual risk documented in the runbook |
