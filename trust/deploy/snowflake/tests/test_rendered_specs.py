@@ -493,7 +493,7 @@ def test_the_selftest_job_checks_from_inside_with_the_read_only_role(specs: dict
         "AES_KEY_BASE64",
     }
     assert "volumes" not in specs["selftest"]["spec"], "the self-test mounts nothing"
-    script = container["args"][0]
+    script = container["args"][-1]
     for check in ("cohort-statistics", "write-refused-by-validation", "db-refuses-delete", "db-refuses-create"):
         assert check in script, check
 
