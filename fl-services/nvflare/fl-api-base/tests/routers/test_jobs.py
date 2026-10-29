@@ -19,6 +19,7 @@ from nvflare.fuel.flare_api.api_spec import AuthenticationError, JobNotFound
 
 from fl_api.app import app
 from fl_api.core.dependencies import get_session, get_studies
+from fl_api.utils.schemas import TargetType
 from fl_api.utils.study_sessions import StudySessions
 
 
@@ -263,3 +264,44 @@ def test_download_job_uses_the_named_study_session(client, study_sessions):
     response = client.get("/download_job/s1", params={"study": "p1"})
 
     assert response.json() == "/tmp/result"
+
+
+def test_list_jobs_fails_on_an_authentication_error_that_is_not_a_lost_study(client, study_sessions):
+    # Only "unknown study" means the study is gone; a refused credential must surface, not read as "no jobs".
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].list_jobs.side_effect = AuthenticationError("bad token", auth_code="AUTH_FAILED")
+
+    response = client.get("/list_jobs", params=[("study", "p1")])
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    study_sessions["p1"].close.assert_not_called()
+
+
+def test_list_jobs_fails_when_the_default_session_is_refused(client, override_session):
+    override_session.list_jobs.side_effect = AuthenticationError("unknown study", auth_code="AUTH_UNKNOWN_STUDY")
+
+    response = client.get("/list_jobs")
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+def test_show_errors_uses_the_named_study_session(client, override_session, study_sessions):
+    study_sessions["p1"] = MagicMock()
+    study_sessions["p1"].show_errors.return_value = {"site-1": {"ClientRunner": "boom"}}
+
+    response = client.post(f"/1234/show_errors/{TargetType.CLIENT.value}/site-1,site-2", params={"study": "p1"})
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"site-1": {"ClientRunner": "boom"}}
+    study_sessions["p1"].show_errors.assert_called_once_with("1234", TargetType.CLIENT, ["site-1", "site-2"])
+    override_session.show_errors.assert_not_called()
+
+
+def test_show_stats_defaults_to_every_target_in_the_default_session(client, override_session):
+    override_session.show_stats.return_value = {"server": {"ServerRunner": {}}}
+
+    response = client.post(f"/show_stats/{TargetType.SERVER.value}/1234")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"server": {"ServerRunner": {}}}
+    override_session.show_stats.assert_called_once_with("1234", TargetType.SERVER, None)

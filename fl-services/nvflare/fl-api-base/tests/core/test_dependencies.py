@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fl_api.core.dependencies import get_session
+from fl_api.core.dependencies import get_session, get_studies
 from fl_api.utils.flip_session import FLIP_Session
 
 
@@ -41,3 +41,10 @@ def test_get_session_returns_session(fake_request):
     assert isinstance(result, FLIP_Session)
     assert result is dummy_session
     assert result.name == "dummy"
+
+
+def test_get_studies_returns_the_study_sessions():
+    studies = object()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(studies=studies)))
+
+    assert get_studies(request) is studies

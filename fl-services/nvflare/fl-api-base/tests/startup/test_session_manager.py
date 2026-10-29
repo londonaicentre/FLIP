@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from nvflare.apis.fl_exception import FLCommunicationError
 
-from fl_api.startup.session_manager import create_fl_session
+from fl_api.startup.session_manager import create_fl_session, open_study_session
 
 
 @pytest.fixture
@@ -97,4 +97,25 @@ def test_create_fl_session_gives_up_after_the_startup_timeout(fake_settings):
     ):
         create_fl_session()
 
+    failed.close.assert_called_once()
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_open_study_session_closes_a_session_that_cannot_connect(fake_settings, close_fails):
+    # A study session opens inside a request: a server that refuses it must not leave a half-open session behind,
+    # and a close that fails in turn must not hide why connecting failed.
+    failed = MagicMock()
+    failed.try_connect.side_effect = FLCommunicationError("cannot connect to server for 5.0 seconds")
+    if close_fails:
+        failed.close.side_effect = RuntimeError("already closed")
+
+    with (
+        patch("fl_api.startup.session_manager.get_settings", return_value=fake_settings),
+        patch("fl_api.startup.session_manager.FLIP_Session", return_value=failed) as session_cls,
+        pytest.raises(FLCommunicationError),
+    ):
+        open_study_session("p1")
+
+    assert session_cls.call_args.kwargs["study"] == "p1"
+    failed.try_connect.assert_called_once_with(fake_settings.TIMEOUT_SESSION_CONNECT)
     failed.close.assert_called_once()

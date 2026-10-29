@@ -395,3 +395,19 @@ def test_main_once_reports_a_failed_sync(cfg, capsys):
         assert study_sync.main([str(cfg.local_dir), "--once"], env=_loop_env(cfg)) == 1
 
     assert "disk full" in capsys.readouterr().err
+
+
+def test_staged_projects_is_empty_before_the_first_stage_creates_the_dir(cfg):
+    assert staged_projects(cfg.cohort_data_dir / "not-yet") == []
+
+
+def test_entry_adds_the_job_container_when_the_template_names_none(cfg):
+    import yaml
+
+    bare = yaml.safe_load(TEMPLATE)
+    del bare["spec"]["containers"]
+
+    spec = study_entry(IMAGE, bare, P1, COHORT_PVC, XNAT_PVC, XNAT_ID, 1001)["pod_template"]["spec"]
+
+    assert [c["name"] for c in spec["containers"]] == ["nvflare_job"]
+    assert [m["mountPath"] for m in _main(spec)["volumeMounts"]] == [f"/data/{P1}/cohort", f"/data/{P1}/imaging"]

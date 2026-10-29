@@ -122,3 +122,32 @@ def test_lifespan_does_not_sweep_when_staging_is_off():
     ):
         pass
     sweep.assert_not_called()
+
+
+def test_lifespan_keeps_sweeping_after_a_failed_sweep(caplog):
+    import asyncio
+    import threading
+
+    swept = threading.Event()
+    outcomes = iter([RuntimeError("volume gone"), 0])
+    real_sleep = asyncio.sleep
+
+    def sweep(*args, **kwargs):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        swept.set()
+        return outcome
+
+    async def short_first_wait(seconds):
+        await real_sleep(0 if not swept.is_set() else seconds)
+
+    with (
+        patch("data_access_api.main.cohort_data.staging_enabled", return_value=True),
+        patch("data_access_api.main.cohort_data.ensure_data_dir"),
+        patch("data_access_api.main.cohort_data.sweep", side_effect=sweep),
+        patch("data_access_api.main.asyncio.sleep", side_effect=short_first_wait),
+        TestClient(main.app),
+    ):
+        assert swept.wait(5)
+    assert "Cohort data sweep failed" in caplog.text

@@ -119,3 +119,27 @@ def test_unstage_is_a_noop_when_staging_is_disabled(approved_cohort):
 
     assert response.status_code == 200
     assert response.json() == {"deleted": False}
+
+
+def test_stage_refuses_a_project_id_the_store_cannot_name(data_dir, approved_cohort):
+    with patch("data_access_api.routers.cohort.cohort_data.stage_dataframe", side_effect=ValueError("not a uuid")):
+        response = client.post("/cohort/stage", json=STAGE_BODY, headers=WRITE_AUTH_HEADERS)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Project id is not a valid UUID."
+
+
+def test_stage_reports_a_write_failure_without_its_cause(data_dir, approved_cohort):
+    with patch("data_access_api.routers.cohort.cohort_data.stage_dataframe", side_effect=OSError(28, "No space left")):
+        response = client.post("/cohort/stage", json=STAGE_BODY, headers=WRITE_AUTH_HEADERS)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Could not stage the cohort data."
+
+
+def test_unstage_refuses_a_project_id_the_store_cannot_name(data_dir, approved_cohort):
+    with patch("data_access_api.routers.cohort.cohort_data.unstage", side_effect=ValueError("not a uuid")):
+        response = client.post("/cohort/stage/delete", json=STAGE_BODY, headers=WRITE_AUTH_HEADERS)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Project id is not a valid UUID."

@@ -173,3 +173,29 @@ def test_stage_never_touches_the_process_umask(data_dir):
     assert stat.S_IMODE(path.stat().st_mode) == 0o640
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o750
     assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o750
+
+
+def test_sweep_of_a_directory_that_does_not_exist_yet_removes_nothing(data_dir):
+    with patch("data_access_api.services.cohort_data.get_settings") as mock_settings:
+        mock_settings.return_value.COHORT_DATA_DIR = str(data_dir / "not-yet")
+        assert cohort_data.sweep(max_age_hours=168) == 0
+
+
+def test_sweep_goes_on_past_an_entry_unstaged_while_it_runs(data_dir):
+    first = cohort_data.stage_dataframe(PROJECT, MODEL, pd.DataFrame({"person_id": [1]})).parent
+    second = cohort_data.stage_dataframe(PROJECT, OTHER_MODEL, pd.DataFrame({"person_id": [2]})).parent
+    ten_days_ago = time.time() - 10 * 24 * 3600
+    for entry in (first, second):
+        os.utime(entry, (ten_days_ago, ten_days_ago))
+    real_rmtree = cohort_data.shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        if path == first:
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        return real_rmtree(path, *args, **kwargs)
+
+    with patch.object(cohort_data.shutil, "rmtree", rmtree):
+        removed = cohort_data.sweep(max_age_hours=168)
+
+    assert removed == 1
+    assert not second.exists()
