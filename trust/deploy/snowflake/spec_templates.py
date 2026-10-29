@@ -770,7 +770,9 @@ def _xnat_configure(kit: dict[str, str], names: Names, digests: dict[str, str]) 
         # XNAT's factory password unless the kit names the one in force. Not a secret
         # object: it is the published default of an uninitialised site, and a kit that
         # carries a real rotated value should put it in XNAT_ADMIN_PASSWORD instead.
-        "XNAT_ADMIN_INITIAL_PASSWORD": kit.get("XNAT_ADMIN_INITIAL_PASSWORD", "").strip() or "admin",
+        # No XNAT_ADMIN_INITIAL_PASSWORD: the script defaults it to XNAT's factory "admin",
+        # which is what a fresh site answers to. The kit's value is a credential and must
+        # never sit in a spec's plain env (it did, and was also the wrong password).
         "XNAT_AUTH_PROBE_ATTEMPTS": "1",
         **_pacs_env(kit, names),
     }
