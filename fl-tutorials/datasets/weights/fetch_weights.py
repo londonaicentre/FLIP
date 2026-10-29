@@ -17,10 +17,11 @@ FL apps never download at run time (FLIP#1206 — see the user guide's *Model Fi
 why). So the download happens HERE, on a developer machine, once, and the result is a file the
 tutorial ships beside its code through the ordinary scanned upload.
 
-Today that is one network: torchvision's SqueezeNet, the perceptual-loss backbone of the
-latent-diffusion tutorial. lpips resolves it through torch.hub, so it stays the ``.pth``
-torchvision itself reads and the app drops it into a hub ``checkpoints/`` dir at run time
-instead of downloading it. Add an entry to ``CHECKPOINTS`` for the next network.
+Today that is MedicalNet (ResNet-50, with ResNet-10 as the lighter option), the 3-D
+perceptual-loss backbone of the autoencoder tutorial, which loads it from beside its code, and the
+published brain MRI autoencoder the latent diffusion tutorial freezes.
+``squeezenet1_1`` is torchvision's 2-D LPIPS backbone, which no tutorial ships at present. Add an
+entry to ``CHECKPOINTS`` for the next network.
 
 Every checkpoint URL carries the first eight sha256 hex chars in its filename (torch.hub's
 convention, ``HASH_REGEX``), and the file is fetched with that prefix as ``hash_prefix`` — the
@@ -43,14 +44,23 @@ from torch.hub import HASH_REGEX, download_url_to_file
 @dataclass(frozen=True)
 class Checkpoint:
     url: str
+    #: Full sha256, for publishers that do not put a hash in the filename. torchvision does, so
+    #: its entries leave this unset and the digest is read back out of the name instead.
+    sha256: str | None = None
+    #: Filename to stage under, when the published name carries no hash. The staged name always
+    #: ends up in torch.hub's ``<arch>-<first 8 sha256 hex>.<ext>`` form, so an app can check a
+    #: checkpoint against its own name without consulting anything else.
+    stage_as: str | None = None
 
     @property
     def filename(self) -> str:
-        return self.url.rsplit("/", 1)[-1]
+        return self.stage_as or self.url.rsplit("/", 1)[-1]
 
     @property
     def hash_prefix(self) -> str:
         """The sha256 prefix torch.hub embeds in the filename (``name-<hex>.pth``)."""
+        if self.sha256 is not None:
+            return self.sha256[:8]
         match = HASH_REGEX.search(self.filename)
         if match is None:
             raise ValueError(f"{self.filename} carries no hash prefix; only hash-named checkpoints are stageable")
@@ -59,6 +69,28 @@ class Checkpoint:
 
 CHECKPOINTS: dict[str, Checkpoint] = {
     "squeezenet1_1": Checkpoint("https://download.pytorch.org/models/squeezenet1_1-b8a52dc0.pth"),
+    # MedicalNet (Chen, Ma and Zheng, arXiv:1904.00625; Tencent, MIT licence), the 3-D perceptual
+    # backbone the autoencoder tutorial ships (ResNet-50; ResNet-10 the lighter option). Published
+    # on the Hugging Face hub without a hash in the filename, so the digest is pinned here and the
+    # file is staged under the hash-named form the app verifies against. Fetched by plain URL
+    # rather than `hf_hub_download` to keep this tool's one download path (and its hash check).
+    "medicalnet_resnet10": Checkpoint(
+        "https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet10/resolve/main/resnet_10_23dataset.pth",
+        sha256="afa8055f3e47f4a18239495d92a7abc587902c69c31c743de2b2784653b72605",  # pragma: allowlist secret
+        stage_as="medicalnet_resnet10_23datasets-afa8055f.pth",
+    ),
+    "medicalnet_resnet50": Checkpoint(
+        "https://huggingface.co/TencentMedicalNet/MedicalNet-Resnet50/resolve/main/resnet_50_23dataset.pth",
+        sha256="ff48a62219073fb977fd3f4ddfb8dc1367f0ec156c8d6f6c37e205bd683a246e",  # pragma: allowlist secret
+        stage_as="medicalnet_resnet50_23datasets-ff48a622.pth",
+    ),
+    # The brain MRI autoencoder (v3.1) we trained with the autoencoder tutorial, which the latent diffusion
+    # tutorial freezes (`make prepare-checkpoint`). Its model card is in the same repository.
+    "brain_mri_autoencoder": Checkpoint(
+        "https://huggingface.co/aicentreflip/tutorials-brain-mri-latent-diffusion/resolve/main/autoencoder/v3.1/autoencoder.safetensors",
+        sha256="84a3ece437de82b03aea6a35e0bea27273f925647a84f09cb758ab2402d6cf45",  # pragma: allowlist secret
+        stage_as="brain_mri_autoencoder_v3.1-84a3ece4.safetensors",
+    ),
 }
 
 

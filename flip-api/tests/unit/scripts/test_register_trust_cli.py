@@ -509,7 +509,7 @@ def test_hub_shared_keys_in_lockstep():
 
     ``register_trust.py`` (the emitter) runs inside the flip-api container and
     cannot import the root ``scripts/`` package, so the hub-shared key set is
-    defined in two places. ``scripts/trust_kit_lib.py`` is the single
+    defined in two places. ``trust/deploy/scripts/trust_kit_lib.py`` is the single
     operator-side definition — ``sync_trust_kit.py`` and
     ``distribute_trust_kits.py`` both import it, and the prod
     ``register-trusts.sh`` delegates kit writing to the distributor. Drift
@@ -529,16 +529,16 @@ def test_hub_shared_keys_in_lockstep():
         repo_root = repo_root.parent
     assert repo_root.name, "Could not locate FLIP repo root from test file"
 
-    lib_path = repo_root / "scripts" / "trust_kit_lib.py"
+    lib_path = repo_root / "trust" / "deploy" / "scripts" / "trust_kit_lib.py"
 
-    # Parse scripts/trust_kit_lib.py:HUB_SHARED_KEYS — a tuple of string literals.
+    # Parse trust/deploy/scripts/trust_kit_lib.py:HUB_SHARED_KEYS — a tuple of string literals.
     lib_src = lib_path.read_text()
     match = re.search(r"HUB_SHARED_KEYS\s*:[^=]*=\s*\((?P<body>[^)]*)\)", lib_src)
     assert match, f"HUB_SHARED_KEYS tuple not found in {lib_path}"
     lib_keys = tuple(re.findall(r'"([A-Z0-9_]+)"', match.group("body")))
 
     assert HUB_SHARED_ENV_KEYS == lib_keys, (
-        f"flip-api register_trust.py and scripts/trust_kit_lib.py disagree:\n"
+        f"flip-api register_trust.py and trust/deploy/scripts/trust_kit_lib.py disagree:\n"
         f"  register_trust.py:HUB_SHARED_ENV_KEYS = {HUB_SHARED_ENV_KEYS}\n"
         f"  trust_kit_lib.py:HUB_SHARED_KEYS      = {lib_keys}"
     )

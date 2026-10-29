@@ -99,6 +99,10 @@ class IdentityProvider(ABC):
     def delete_user(self, username: str) -> None:
         """Delete ``username`` from the directory."""
 
+    @abstractmethod
+    def reset_password(self, username: str) -> None:
+        """Email ``username`` a way to set a new password, re-sending the invite if they never signed in."""
+
     # --- MFA -------------------------------------------------------------------------------
 
     @abstractmethod

@@ -137,12 +137,12 @@ picks the implementation once at boot from `window.AUTH_BACKEND`.
   sign-out.
 - **Keycloak** (`src/auth/keycloak-provider.ts`, the dev stack) — the OIDC Resource Owner Password grant against the
   realm's token endpoint, no SDK and no redirect, so the same username/password form works. Tokens live in
-  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are all off by
-  design: the password grant cannot run Keycloak's required actions (forced password update, TOTP enrolment are
-  browser flows in Keycloak's own UI), and Keycloak answers a wrong password and a missing OTP with the same
-  `invalid_grant`, so an in-app TOTP step cannot be offered honestly. The pages link out to the Keycloak console
-  instead ("Forgot password?" on the login page, the admin "Reset Password" tooltip), and an account with a pending
-  required action gets a "Finish setting up your account in Keycloak" notice with a link.
+  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are off by
+  design, except the admin "Reset Password" (flip-api re-sends the user's invite): the password grant cannot run
+  Keycloak's required actions (forced password update, TOTP enrolment are browser flows in Keycloak's own UI), and
+  Keycloak answers a wrong password and a missing OTP with the same `invalid_grant`, so an in-app TOTP step cannot be
+  offered honestly. The pages link out to the Keycloak console instead ("Forgot password?" on the login page), and an
+  account with a pending required action gets a "Finish setting up your account in Keycloak" notice with a link.
 
 > **`VITE_LOCAL=true` and `VITE_DEMO=true` must never reach a production build.** Both flags are inlined by Vite at
 > build time and short-circuit the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enable a

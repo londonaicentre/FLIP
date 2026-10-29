@@ -76,7 +76,7 @@ format:
 # these apps at runtime, rather than in a per-tutorial venv — arkplus_fine_tuning/pyproject.toml
 # does not even declare monai, so that env cannot import its own data_utils.py. See
 # tests/README.md.
-PYTEST ?= uv run --project ../flip-utils --extra full --group dev pytest
+PYTEST ?= uv run --project ../flip-utils --extra full --group dev --group diffusion pytest
 
 # Dataset-tooling tests (tests/datasets/) exercise datasets/**, which is workstation tooling,
 # not FL-runtime code — flip-utils has no use for pandera/sqlglot — so each dataset's tests run

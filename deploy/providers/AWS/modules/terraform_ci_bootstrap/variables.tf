@@ -271,6 +271,26 @@ variable "apply_role_name" {
   default     = "AICentre-FLIPTerraformApplyRole"
 }
 
+# The UI-publish role (FLIP#1186). Off unless the bucket is named, so callers
+# that predate it are unchanged.
+variable "ui_bucket_name" {
+  description = "Name of the flip-ui bucket (the FLIP root's FLIP_UI_BUCKET_NAME). Setting it creates the UI-publish role, scoped to this bucket; empty creates none."
+  type        = string
+  default     = ""
+}
+
+variable "ui_publish_workflow_file" {
+  description = "Reusable workflow permitted to assume the UI-publish role."
+  type        = string
+  default     = "publish_ui.yml"
+}
+
+variable "ui_publish_role_name" {
+  description = "Name of the UI-publish role."
+  type        = string
+  default     = "AICentre-FLIPUiPublishRole"
+}
+
 variable "manage_state_bucket" {
   description = "Declare and harden the Terraform state bucket named by state_bucket_name (versioning, public-access block, encryption, lifecycle, TLS-only policy). False leaves the bucket to something else."
   type        = bool
