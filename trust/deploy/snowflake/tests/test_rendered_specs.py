@@ -283,3 +283,28 @@ def test_multiple_fl_nets_each_get_their_own_prefix(kit: dict, tmp_path: Path) -
         for volume in spec["spec"]["volumes"]:
             if volume["source"] == "stage":
                 assert volume["stageConfig"]["name"].endswith(f"/net-{net}")
+
+
+def test_the_flare_client_gets_a_writable_workspace_seeded_from_the_kit(specs: dict) -> None:
+    """The FLARE client chmods /app/startup and writes /app/local (privacy.json, log config).
+    The kit stage stays read-only; local volumes take the copy (found on the live account)."""
+    spec = specs["fl-client-net-1"]["spec"]
+    container = containers(specs["fl-client-net-1"])[0]
+    mounts = {m["mountPath"]: m["name"] for m in container["volumeMounts"]}
+    volumes = {v["name"]: v for v in spec["volumes"]}
+    for part in ("startup", "local", "transfer"):
+        assert volumes[mounts[f"/app/{part}"]]["source"] == "local", part
+        assert f"cp -R /app/fl-kit/{part}/. /app/{part}/" in container["command"][-1]
+    assert volumes[mounts["/app/fl-kit"]]["source"] == "stage"
+    assert container["command"][-1].endswith("exec /app/entrypoint.sh")
+
+
+def test_the_flower_client_reads_the_kit_at_the_mount_root(kit: dict, tmp_path: Path) -> None:
+    """The stage volume is FL_KIT/net-N itself, so no net-N segment inside the mount."""
+    import spec_templates
+
+    flower = {**kit, "FL_BACKEND": "flower", "NLB_SUBDOMAIN": "fl.example", "FL_SERVER_PORT": "9092"}
+    rendered = {r.name: r for r in spec_templates.build_all(flower, "GSTT")}
+    args = rendered["fl-client-net-1"].spec["spec"]["containers"][0]["args"]
+    assert "/app/fl-kit/certificates/ca.crt" in args
+    assert not any("/app/fl-kit/net-" in a for a in args)

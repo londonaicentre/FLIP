@@ -200,9 +200,7 @@ def main() -> int:
     print(f"📦 Mirroring {len(repos)} image(s) into {names.image_repository} ({args.platform})")
     try:
         host = registry_host(args.snow, args.connection, args.dry_run)
-        recorded = mirror(
-            repos, kit, names, host, args.platform, args.ghcr_org, args.dry_run, pull=not args.no_pull
-        )
+        recorded = mirror(repos, kit, names, host, args.platform, args.ghcr_org, args.dry_run, pull=not args.no_pull)
     except MirrorError as e:
         print(f"❌ {e}")
         return 1
