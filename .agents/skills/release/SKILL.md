@@ -99,3 +99,10 @@ Then check that the Release page, GHCR `:v<X.Y.Z>` (every image the fourteen bui
 are correct, and that prod `/api/health` reports `v<X.Y.Z>`. The release apply publishes flip-ui itself (#1186):
 check that its *Publish flip-ui (prod)* job passed. Sites upgrade themselves: point operators to *Site upgrade* and
 `docs/source/sys-admin/admin-upgrading-sites.rst`.
+
+Last, write the team announcement for the core team's `#aic-flip` Slack channel, from the published notes: a
+`:flip-logo-gif-alpha-med: FLIP v<X.Y.Z> is out` line, one short bullet per *Highlights* item (its bold title, then
+its PRs in brackets, each number linked to the PR, as in `**Trusts on Azure** [#1406, #1420]: …`, then the gist in
+plain words), and the full list behind the Release page link
+(`https://github.com/londonaicentre/FLIP/releases/tag/v<X.Y.Z>`). With a Slack connection, save it as a draft in that
+channel; otherwise put it in the report. Never send it: the user does.
