@@ -310,7 +310,6 @@ def _data_access_api(kit: dict[str, str], names: Names, digests: dict[str, str])
                     "resources": _resources("1", "2Gi", "2", "4Gi"),
                     # The OAuth session token IS this service's database credential.
                     "mountSessionToken": True,
-                    "sessionTokenConfig": {"path": "/snowflake/session", "permission": "0600"},
                     "volumeMounts": volume_mounts,
                     "secrets": _secrets("data-access-api", names),
                 }
@@ -384,7 +383,6 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
                     # The OAuth session token is how imaging-api CALLs the converter
                     # procedures; it is not a database credential for anything else.
                     "mountSessionToken": True,
-                    "sessionTokenConfig": {"path": "/snowflake/session", "permission": "0600"},
                     "volumeMounts": [
                         # The whole images tree: imaging-api writes every net's cache.
                         {"name": "images", "mountPath": "/app/data/images"},
@@ -909,7 +907,6 @@ def _reconvert(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Re
         memory="2Gi",
     )
     container["mountSessionToken"] = True
-    container["sessionTokenConfig"] = {"path": "/snowflake/session", "permission": "0600"}
     container["volumeMounts"] = [
         {"name": "converter-io", "mountPath": "/converter-io"},
         {"name": "xnat-archive", "mountPath": f"{xnat_root}/archive"},

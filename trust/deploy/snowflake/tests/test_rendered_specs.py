@@ -239,7 +239,10 @@ def test_data_access_api_reads_omop_from_snowflake(specs: dict) -> None:
     assert int(env["SNOWFLAKE_STATEMENT_TIMEOUT_SECONDS"]) > 0
     container = containers(specs["data-access-api"])[0]
     assert container["mountSessionToken"] is True
-    assert container["sessionTokenConfig"]["permission"] == "0600"
+    # /snowflake/session is reserved: the live account rejects any sessionTokenConfig.path
+    # there ("overlaps a location reserved by Snowflake"), and SPCS mounts the token at
+    # /snowflake/session/token without being asked.
+    assert "sessionTokenConfig" not in container
     assert "DATA_ACCESS_POSTGRES_PASSWORD" not in env
 
 
@@ -431,7 +434,6 @@ def test_the_converter_path_carries_no_database_password(specs: dict) -> None:
     for name in ("imaging-api", "reconvert"):
         container = containers(specs[name])[0]
         assert container["mountSessionToken"] is True, f"{name} has no session token to connect with"
-        assert container["sessionTokenConfig"]["permission"] == "0600"
         assert "SNOWFLAKE_PASSWORD" not in container["env"]
         # SPCS injects both; a rendered copy could only go stale.
         assert "SNOWFLAKE_HOST" not in container["env"]
@@ -495,3 +497,12 @@ def test_the_selftest_job_checks_from_inside_with_the_read_only_role(specs: dict
     script = container["args"][0]
     for check in ("cohort-statistics", "write-refused-by-validation", "db-refuses-delete", "db-refuses-create"):
         assert check in script, check
+
+
+def test_no_spec_points_a_session_token_at_the_reserved_path(specs: dict) -> None:
+    """Snowflake reserves /snowflake/session and rejects the whole spec when a
+    sessionTokenConfig.path overlaps it; the token is mounted there by default."""
+    for name, spec in specs.items():
+        for container in containers(spec):
+            path = container.get("sessionTokenConfig", {}).get("path", "")
+            assert not path.startswith("/snowflake/session"), f"{name}: {path}"
