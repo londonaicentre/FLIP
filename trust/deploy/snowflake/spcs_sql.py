@@ -134,6 +134,59 @@ def sql_up(directory: Path, manifest: dict[str, Any], existing: frozenset[str] =
     return statements
 
 
+def sql_run_job(directory: Path, manifest: dict[str, Any], name: str) -> list[str]:
+    """EXECUTE JOB SERVICE for one rendered job service (FLIP#1583).
+
+    The one-shot half of the node: xnat-configure, seed-orthanc, smoke-cstore and
+    reconvert. Three properties are deliberate:
+
+    * Run AS the services role, like the long-running services, so the job's own token
+      carries the narrow role rather than the deploy role's. ``run_job`` grants
+      CREATE SERVICE for the length of the call and revokes it in a ``finally``, exactly
+      as ``run_up`` does, because EXECUTE JOB SERVICE needs the same privilege.
+    * ``ASYNC = TRUE``. A statement has a 300 s timeout and configure-xnat.sh alone can
+      take longer than that on a cold site, so a synchronous call would report a timeout
+      for a job that is running correctly.
+    * ``NAME =`` is given, so the job is addressable afterwards:
+      SYSTEM$GET_SERVICE_STATUS and SYSTEM$GET_SERVICE_LOGS are the only way to read what
+      it did. An anonymous job's output is unrecoverable once the call returns.
+
+    Raises:
+        SystemExit: ``name`` is not a job service in the manifest.
+    """
+    jobs = {service["name"]: service for service in manifest["services"] if service["kind"] == JOB_KIND}
+    if name not in jobs:
+        sys.exit(f"❌ {name!r} is not a job service in this manifest. Choose one of: {', '.join(sorted(jobs))}")
+    service = jobs[name]
+    body = _spec_body(directory, service)
+    return [
+        f"USE ROLE {manifest['service_role']};",
+        f"USE DATABASE {manifest['database']};",
+        f"USE SCHEMA {manifest['database']}.APP;",
+        f"EXECUTE JOB SERVICE\n"
+        f"  IN COMPUTE POOL {service['pool']}\n"
+        f"  NAME = {service['sql_name']}\n"
+        f"  ASYNC = TRUE\n"
+        f"  QUERY_WAREHOUSE = {manifest['warehouse']}\n"
+        f"  FROM SPECIFICATION $$\n{body}$$;",
+        # Empty status means \"not scheduled yet\", not \"nothing happened\" (FLIP#1578).
+        f"SELECT SYSTEM$GET_SERVICE_STATUS('{service['sql_name']}') AS {name.replace('-', '_')}_status;",
+    ]
+
+
+def sql_job_status(manifest: dict[str, Any], name: str) -> list[str]:
+    """Status and the tail of the logs for one job service, by name."""
+    jobs = {service["name"]: service for service in manifest["services"] if service["kind"] == JOB_KIND}
+    if name not in jobs:
+        sys.exit(f"❌ {name!r} is not a job service in this manifest. Choose one of: {', '.join(sorted(jobs))}")
+    service = jobs[name]
+    alias = name.replace("-", "_")
+    return [
+        f"SELECT SYSTEM$GET_SERVICE_STATUS('{service['sql_name']}') AS {alias}_status;",
+        f"SELECT SYSTEM$GET_SERVICE_LOGS('{service['sql_name']}', 0, '{name}', 500) AS {alias}_logs;",
+    ]
+
+
 def sql_down(manifest: dict[str, Any]) -> list[str]:
     """DROP every service, newest first. Block volumes keep their snapshot on delete."""
     services = [s for s in manifest["services"] if s["kind"] != JOB_KIND]
@@ -246,6 +299,21 @@ def run_up(
         run(sql_revoke_create_service(manifest))
 
 
+def run_job(directory: Path, manifest: dict[str, Any], name: str, run: Callable[[list[str]], None]) -> None:
+    """Grant, execute the job as the services role, and revoke whatever happened.
+
+    The same shape as :func:`run_up`, and for the same reason: EXECUTE JOB SERVICE needs
+    CREATE SERVICE, and the services role must not keep it, since the fl-client runs
+    researcher code with that role's token.
+    """
+    statements = sql_run_job(directory, manifest, name)
+    run(sql_grant_create_service(manifest))
+    try:
+        run(statements)
+    finally:
+        run(sql_revoke_create_service(manifest))
+
+
 COMMANDS = {
     "up": lambda directory, manifest: sql_up(directory, manifest),
     "down": lambda directory, manifest: sql_down(manifest),
@@ -257,13 +325,28 @@ COMMANDS = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Emit SPCS deploy SQL from a rendered trust")
-    parser.add_argument("command", choices=sorted([*COMMANDS, "apply-up"]))
+    parser.add_argument("command", choices=sorted([*COMMANDS, "apply-up", "run-job", "job-status"]))
     parser.add_argument("--dir", type=Path, required=True, help="Directory render_specs.py wrote")
     parser.add_argument("--snow", default="snow", help="apply-up: the snow CLI")
     parser.add_argument("--connection", default="flip-test", help="apply-up: the snow connection")
-    parser.add_argument("--dry-run", action="store_true", help="apply-up: print the SQL, run nothing")
+    parser.add_argument("--dry-run", action="store_true", help="apply-up / run-job: print the SQL, run nothing")
+    parser.add_argument("--service", default="", help="run-job / job-status: the job service name")
     args = parser.parse_args()
     manifest = load(args.dir / "manifest.json")
+    if args.command == "job-status":
+        for statement in sql_job_status(manifest, args.service):
+            print(statement)
+        return
+    if args.command == "run-job":
+        # Executes, like apply-up and for the same reason: the grant must be revoked even
+        # when the job fails, which a single piped script cannot guarantee.
+        run_job(
+            args.dir,
+            manifest,
+            args.service,
+            print_runner if args.dry_run else snow_runner(args.snow, args.connection),
+        )
+        return
     if args.command == "apply-up":
         # Executes, unlike the other commands: the grant must be revoked even when the
         # create fails, which a single piped script cannot guarantee.

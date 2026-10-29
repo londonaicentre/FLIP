@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -220,7 +221,6 @@ def test_status_and_selftest_read_through_sql_only(manifest: dict) -> None:
 
 
 def test_a_spec_that_would_break_the_sql_literal_is_refused(rendered: Path, manifest: dict, tmp_path: Path) -> None:
-    import json
     import shutil
 
     shutil.copytree(rendered, tmp_path / "r")
@@ -275,6 +275,153 @@ def test_no_tooling_emits_stop_all():
     DROP had just been refused). Suspend services, then the pool; never STOP ALL."""
     for path in [*SNOWFLAKE_DIR.glob("*.py"), SNOWFLAKE_DIR / "Makefile"]:
         assert "STOP ALL" not in path.read_text().upper(), path.name
+
+
+#
+# The one-shot job services (FLIP#1583)
+#
+# xnat-configure, seed-orthanc, smoke-cstore and reconvert are run with EXECUTE JOB
+# SERVICE rather than created. Everything below is asserted over the emitted SQL and a
+# fake `snow` binary, so it needs no account.
+#
+
+JOB_SERVICES = ["xnat-configure", "seed-orthanc", "smoke-cstore", "reconvert"]
+
+#: A `snow` that records what it was handed and prints nothing of it back. The same shape
+#: as test_sync_kit.py's, and here for the same reason: the credential-carrying path has to
+#: be observed, not reasoned about.
+FAKE_SNOW = """#!/usr/bin/env python3
+import json, sys, os
+record = {"argv": sys.argv[1:], "stdin": "" if sys.stdin.isatty() else sys.stdin.read()}
+with open(os.environ["FAKE_SNOW_LOG"], "a") as f:
+    f.write(json.dumps(record) + "\\n")
+print("ok")
+"""
+
+
+@pytest.fixture
+def fake_snow(tmp_path: Path) -> tuple[Path, Path]:
+    binary = tmp_path / "snow"
+    binary.write_text(FAKE_SNOW)
+    binary.chmod(0o755)
+    return binary, tmp_path / "snow.log"
+
+
+def _run_job_cli(fake_snow: tuple[Path, Path], rendered: Path, service: str) -> subprocess.CompletedProcess[str]:
+    binary, log = fake_snow
+    return subprocess.run(
+        [
+            sys.executable,
+            str(SNOWFLAKE_DIR / "spcs_sql.py"),
+            "run-job",
+            "--dir",
+            str(rendered),
+            "--service",
+            service,
+            "--snow",
+            str(binary),
+        ],
+        text=True,
+        capture_output=True,
+        env={"PATH": "/usr/bin:/bin", "FAKE_SNOW_LOG": str(log)},
+    )
+
+
+@pytest.mark.parametrize("service", JOB_SERVICES)
+def test_a_job_is_executed_not_created(rendered: Path, manifest: dict, service: str) -> None:
+    """A job that reached CREATE SERVICE would run forever on the pool, and bill for it."""
+    sql = "\n".join(spcs_sql.sql_run_job(rendered, manifest, service))
+    assert "EXECUTE JOB SERVICE" in sql
+    assert "CREATE OR ALTER SERVICE" not in sql
+    assert "CREATE SERVICE " not in sql
+
+
+@pytest.mark.parametrize("service", JOB_SERVICES)
+def test_a_job_is_async_and_named(rendered: Path, manifest: dict, service: str) -> None:
+    """Both halves of "a job you can still read afterwards".
+
+    ASYNC because a statement times out at 300 s and configure-xnat.sh alone outlives that
+    on a cold site, so a synchronous call reports a timeout for a healthy job. NAME because
+    SYSTEM$GET_SERVICE_STATUS and SYSTEM$GET_SERVICE_LOGS are the only way to see what the
+    job did, and an anonymous one cannot be addressed once the call returns.
+    """
+    sql = "\n".join(spcs_sql.sql_run_job(rendered, manifest, service))
+    entry = next(item for item in manifest["services"] if item["name"] == service)
+    assert "ASYNC = TRUE" in sql
+    assert f"NAME = {entry['sql_name']}" in sql
+    assert f"IN COMPUTE POOL {manifest['pools']['job']}" in sql
+
+
+@pytest.mark.parametrize("service", JOB_SERVICES)
+def test_a_job_embeds_its_own_rendered_spec(rendered: Path, manifest: dict, service: str) -> None:
+    sql = "\n".join(spcs_sql.sql_run_job(rendered, manifest, service))
+    assert (rendered / f"{service}.yaml").read_text().splitlines()[-1] in sql
+
+
+@pytest.mark.parametrize("service", JOB_SERVICES)
+def test_a_job_carries_no_secret_value(rendered: Path, manifest: dict, service: str) -> None:
+    sql = "\n".join(spcs_sql.sql_run_job(rendered, manifest, service))
+    for name, value in SENTINELS.items():
+        assert value not in sql, f"{name} reached the SQL that runs {service}"
+
+
+def test_an_unknown_job_is_refused_by_name(rendered: Path, manifest: dict) -> None:
+    """Naming the choices matters: `make job-status JOB=xnat_configure` is the likely typo."""
+    with pytest.raises(SystemExit) as exc:
+        spcs_sql.sql_run_job(rendered, manifest, "xnat_configure")
+    assert "xnat-configure" in str(exc.value)
+
+
+def test_a_long_running_service_cannot_be_run_as_a_job(rendered: Path, manifest: dict) -> None:
+    """`run-job --service xnat-web` must refuse rather than start a second xnat-web."""
+    with pytest.raises(SystemExit):
+        spcs_sql.sql_run_job(rendered, manifest, "xnat-web")
+
+
+def test_running_a_job_grants_and_always_revokes_create_service(rendered: Path, manifest: dict) -> None:
+    """The services role must not keep CREATE SERVICE: the fl-client runs researcher code
+    with that role's token. The revoke is in a `finally`, so a failed job still drops it."""
+    batches: list[list[str]] = []
+
+    def failing(statements: list[str]) -> None:
+        batches.append(statements)
+        if any("EXECUTE JOB SERVICE" in statement for statement in statements):
+            raise RuntimeError("the job failed")
+
+    with pytest.raises(RuntimeError):
+        spcs_sql.run_job(rendered, manifest, "xnat-configure", failing)
+    assert "GRANT CREATE SERVICE" in batches[0][1]
+    assert "REVOKE CREATE SERVICE" in batches[-1][1]
+
+
+@pytest.mark.parametrize("service", JOB_SERVICES)
+def test_a_job_runs_as_the_services_role(rendered: Path, manifest: dict, service: str) -> None:
+    """A job's own token is its owner's role, so it must be the narrow one (FLIP#1578)."""
+    statements = spcs_sql.sql_run_job(rendered, manifest, service)
+    assert statements[0] == f"USE ROLE {manifest['service_role']};"
+    assert manifest["service_role"] != manifest["role"]
+
+
+def test_run_job_reaches_snow_with_templating_off(fake_snow, rendered: Path) -> None:
+    """`snow sql` rewrites && to & and resolves &name unless templating is NONE, which
+    would corrupt a shell script travelling inside a spec."""
+
+    result = _run_job_cli(fake_snow, rendered, "smoke-cstore")
+    assert result.returncode == 0, result.stderr
+    records = [json.loads(line) for line in fake_snow[1].read_text().splitlines()]
+    assert records, "the job never reached snow"
+    for record in records:
+        assert "--enable-templating" in record["argv"]
+        assert record["argv"][record["argv"].index("--enable-templating") + 1] == "NONE"
+    assert any("EXECUTE JOB SERVICE" in record["stdin"] for record in records)
+
+
+def test_the_job_makefile_targets_exist_and_honour_dry_run() -> None:
+    for target in ("xnat-configure", "seed-orthanc", "smoke-cstore", "reconvert-nifti", "job-status"):
+        body = re.search(rf"^{re.escape(target)}:(.*)$", MAKEFILE, re.M)
+        assert body, f"missing target: {target}"
+        assert "require-kit" in body.group(1), f"{target} must depend on require-kit"
+    assert "$(if $(filter true,$(DRY_RUN)),--dry-run,)" in MAKEFILE
 
 
 # --- image names and local builds ------------------------------------------------------------------
