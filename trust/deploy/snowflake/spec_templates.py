@@ -41,6 +41,7 @@ receiver queries succeed while every retrieval times out (FLIP#993).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from naming import Names
@@ -81,7 +82,34 @@ SECRET_MAP: dict[str, dict[str, str]] = {
         "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret
     },
     "dcm2niix": {},
+    # One-shot job services (FLIP#1583). Each holds the narrowest set that lets it do its
+    # one job: xnat-configure authenticates as the XNAT admin and creates the service
+    # account, seed-orthanc only needs the PACS password, smoke-cstore drives Orthanc and
+    # reads XNAT back as the service account, and reconvert is imaging-api's own set.
+    "xnat-configure": {
+        "XNAT_ADMIN_PASSWORD": "XNAT_ADMIN_PASSWORD",  # pragma: allowlist secret
+        "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
+    },
+    "seed-orthanc": {
+        "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret
+    },
+    "smoke-cstore": {
+        "ORTHANC_PASSWORD": "ORTHANC_PASSWORD",  # pragma: allowlist secret
+        "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
+    },
+    "reconvert": {
+        "TRUST_INTERNAL_SERVICE_KEY": "TRUST_INTERNAL_SERVICE_KEY",  # pragma: allowlist secret
+        "AES_KEY_BASE64": "AES_KEY_BASE64",  # pragma: allowlist secret
+        "XNAT_SERVICE_PASSWORD": "XNAT_SERVICE_PASSWORD",  # pragma: allowlist secret
+    },
 }
+
+#: Where the job-service scripts live, beside this module. They are repo files rather than
+#: heredocs inside the templates so that they can be read, reviewed and (for the two with
+#: real logic) exercised on their own; ``_script`` inlines the text at render time, which
+#: keeps the rendered specification self-contained and means a job service needs no image
+#: of its own and no stage to fetch anything from.
+SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
 
 #: Services allowed a block volume. Everything else shares a file tree on a stage, so a
 #: second instance (or a redeploy) sees the same files. Only the two databases need the
@@ -289,6 +317,34 @@ def _data_access_api(kit: dict[str, str], names: Names, digests: dict[str, str])
     return Rendered("data-access-api", "service", names.pool, spec, read_only_volumes=["governance"])
 
 
+def _converter_env(kit: dict[str, str], names: Names) -> dict[str, str]:
+    """Settings for the Snowflake DICOM to NIfTI path, shared by imaging-api and reconvert.
+
+    ``CONVERTER_BACKEND`` is the gate the whole feature hangs on: unset (or
+    ``container-service``) nothing changes, and Compose and Helm keep launching dcm2niix
+    through XNAT's Container Service exactly as before. ``snowflake`` makes imaging-api
+    CALL the owner's-rights procedures instead (FLIP#1581), which is the only path that
+    works here, since SPCS has no Docker socket for Container Service to drive.
+
+    SNOWFLAKE_HOST and SNOWFLAKE_ACCOUNT are deliberately absent: SPCS injects both into
+    every container, and a rendered copy could only go stale. The OAuth session token at
+    SNOWFLAKE_TOKEN_FILE is the credential; there is no password anywhere on this path.
+    """
+    return {
+        "CONVERTER_BACKEND": "snowflake",
+        "SNOWFLAKE_DATABASE": names.database,
+        # The procedures live in APP, beside the services and the secrets.
+        "SNOWFLAKE_SCHEMA": "APP",
+        "SNOWFLAKE_TOKEN_FILE": "/snowflake/session/token",
+        # imaging-api reads the converter's output from its own mount of the stage the
+        # procedure told the job to write to, then registers the files in XNAT over REST.
+        "CONVERTER_IO_DIR": "/converter-io",
+        # Named for the reader and for `make status`: the job the procedure launches.
+        "DCM2NIIX_JOB_SERVICE": names.service("dcm2niix"),
+        "DCM2NIIX_JOB_POOL": names.job_pool,
+    }
+
+
 def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
     env = {
         "ENV": "production",
@@ -304,9 +360,9 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
         "XNAT_SERVICE_USER": kit.get("XNAT_SERVICE_USER", ""),
         "BASE_IMAGES_DOWNLOAD_DIR": "/app/data/images",
         # NIfTI conversion is an SPCS job service rather than an XNAT Container Service
-        # launch (FLIP#1578): imaging-api runs EXECUTE JOB SERVICE against this name.
-        "DCM2NIIX_JOB_SERVICE": names.service("dcm2niix"),
-        "DCM2NIIX_JOB_POOL": names.job_pool,
+        # launch (FLIP#1578, FLIP#1583): imaging-api CALLs APP.CONVERT_SCAN, polls
+        # APP.CONVERT_STATUS, and registers the result in XNAT over REST.
+        **_converter_env(kit, names),
     }
     spec = {
         "spec": {
@@ -318,13 +374,25 @@ def _imaging_api(kit: dict[str, str], names: Names, digests: dict[str, str]) -> 
                     "readinessProbe": _probe(8000),
                     "livenessProbe": _probe(8000),
                     "resources": _resources("1", "2Gi", "2", "4Gi"),
-                    # The whole images tree: imaging-api writes every net's cache.
-                    "volumeMounts": [{"name": "images", "mountPath": "/app/data/images"}],
+                    # The OAuth session token is how imaging-api CALLs the converter
+                    # procedures; it is not a database credential for anything else.
+                    "mountSessionToken": True,
+                    "sessionTokenConfig": {"path": "/snowflake/session", "permission": "0600"},
+                    "volumeMounts": [
+                        # The whole images tree: imaging-api writes every net's cache.
+                        {"name": "images", "mountPath": "/app/data/images"},
+                        # Where the dcm2niix job leaves the NIfTI it produced. imaging-api
+                        # reads it from here and PUTs it into XNAT as a NIFTI resource.
+                        {"name": "converter-io", "mountPath": "/converter-io"},
+                    ],
                     "secrets": _secrets("imaging-api", names),
                 }
             ],
             "endpoints": [{"name": "api", "port": 8000, "protocol": "HTTP", "public": False}],
-            "volumes": [{"name": "images", "source": "stage", "stageConfig": {"name": names.stage_ref("IMAGES")}}],
+            "volumes": [
+                {"name": "images", "source": "stage", "stageConfig": {"name": names.stage_ref("IMAGES")}},
+                {"name": "converter-io", "source": "stage", "stageConfig": {"name": names.stage_ref("CONVERTER_IO")}},
+            ],
             **_event_table_exports(),
         }
     }
@@ -420,6 +488,30 @@ def _fl_client(kit: dict[str, str], names: Names, digests: dict[str, str], net: 
     return Rendered(f"fl-client-{net_id}", "service", pool, spec, read_only_volumes=["fl-kit"])
 
 
+def _pacs_env(kit: dict[str, str], names: Names) -> dict[str, str]:
+    """The upstream PACS and the DQR schedule, as configure-xnat.sh reads them.
+
+    Shared by xnat-web (which serves the configuration) and the xnat-configure job (which
+    applies it). One source so the two cannot disagree about which PACS this trust talks
+    to, which is the drift that hid FLIP#993 behind a chart that looked correct.
+    """
+    return {
+        # Derived: the PACS is another SPCS service, so its DNS name is not "orthanc".
+        "PACS_HOST": kit.get("PACS_HOST_OVERRIDE", "").strip() or names.dns("orthanc"),
+        "PACS_AETITLE": kit.get("PACS_AETITLE", "ORTHANC"),
+        "PACS_QR_PORT": kit.get("PACS_QR_PORT", "4242"),
+        "PACS_LABEL": kit.get("PACS_LABEL", "Test PACS instance"),
+        "PACS_SUPPORTS_EXTENDED_NEGOTIATIONS": kit.get("PACS_SUPPORTS_EXTENDED_NEGOTIATIONS", "true"),
+        "PACS_AVAILABILITY_DAYS": kit.get("PACS_AVAILABILITY_DAYS", "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY"),
+        "PACS_AVAILABILITY_START": kit.get("PACS_AVAILABILITY_START", "00:00"),
+        "PACS_AVAILABILITY_END": kit.get("PACS_AVAILABILITY_END", "24:00"),
+        "PACS_THREADS": kit.get("PACS_THREADS", "1"),
+        "PACS_UTILIZATION_PERCENT": kit.get("PACS_UTILIZATION_PERCENT", "100"),
+        "DQR_MAX_PACS_REQUEST_ATTEMPTS": kit.get("DQR_MAX_PACS_REQUEST_ATTEMPTS", "100"),
+        "DQR_RETRY_WAIT_SECONDS": kit.get("DQR_RETRY_WAIT_SECONDS", "300"),
+    }
+
+
 def _xnat_web(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
     dicom_port = int(kit.get("XNAT_PORT", "8104"))
     xnat_home = kit.get("XNAT_HOME", "").strip() or "/data/xnat/home"
@@ -434,23 +526,20 @@ def _xnat_web(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Ren
         "XNAT_SERVICE_USER": kit.get("XNAT_SERVICE_USER", ""),
         "XNAT_PORT": str(dicom_port),
         "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
-        # Derived: the PACS is another SPCS service, so its DNS name is not "orthanc".
-        "PACS_HOST": kit.get("PACS_HOST_OVERRIDE", "").strip() or names.dns("orthanc"),
-        "PACS_AETITLE": kit.get("PACS_AETITLE", "ORTHANC"),
-        "PACS_QR_PORT": kit.get("PACS_QR_PORT", "4242"),
-        "PACS_LABEL": kit.get("PACS_LABEL", "Test PACS instance"),
-        "PACS_SUPPORTS_EXTENDED_NEGOTIATIONS": kit.get("PACS_SUPPORTS_EXTENDED_NEGOTIATIONS", "true"),
-        "PACS_AVAILABILITY_DAYS": kit.get("PACS_AVAILABILITY_DAYS", "MONDAY,TUESDAY,WEDNESDAY,THURSDAY,FRIDAY"),
-        "PACS_AVAILABILITY_START": kit.get("PACS_AVAILABILITY_START", "00:00"),
-        "PACS_AVAILABILITY_END": kit.get("PACS_AVAILABILITY_END", "24:00"),
-        "PACS_THREADS": kit.get("PACS_THREADS", "1"),
-        "PACS_UTILIZATION_PERCENT": kit.get("PACS_UTILIZATION_PERCENT", "100"),
-        "DQR_MAX_PACS_REQUEST_ATTEMPTS": kit.get("DQR_MAX_PACS_REQUEST_ATTEMPTS", "100"),
-        "DQR_RETRY_WAIT_SECONDS": kit.get("DQR_RETRY_WAIT_SECONDS", "300"),
+        **_pacs_env(kit, names),
         "XNAT_DATASOURCE_DRIVER": kit.get("XNAT_DATASOURCE_DRIVER", "org.postgresql.Driver"),
         "XNAT_DATASOURCE_URL": f"jdbc:postgresql://{names.dns('xnat-db')}:5432/{db_name}",
         "XNAT_DATASOURCE_NAME": db_name,
         "XNAT_DATASOURCE_USERNAME": kit.get("XNAT_DATASOURCE_USERNAME", "xnat"),
+        # The entrypoint's wait used to be hardcoded to the compose name `xnat-db`, which
+        # resolves nowhere here. It now reads the JDBC URL above, and this makes the host
+        # explicit so the spec says out loud which database the service waits for (FLIP#1583).
+        "XNAT_DB_HOST": names.dns("xnat-db"),
+        "XNAT_DB_PORT": "5432",
+        # make-xnat-config.sh's convenience copy of the rendered configuration. Its default
+        # (/usr/local/share/xnat) is root-owned and this container runs as uid 1001, so it
+        # is pointed at the writable cache volume instead (FLIP#1583).
+        "XNAT_CONFIG_SHARE_DIR": f"{xnat_root}/cache/config",
         "XNAT_SMTP_ENABLED": kit.get("XNAT_SMTP_ENABLED", "false"),
         # The Container Service plugin is not installed on SPCS: there is no Docker
         # socket and no swarm. dcm2niix runs as a job service instead (FLIP#1578).
@@ -618,6 +707,202 @@ def _dcm2niix(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Ren
     return Rendered("dcm2niix", "job", names.job_pool, spec)
 
 
+def _script(name: str) -> str:
+    """One job-service script, read from :data:`SCRIPTS_DIR` at render time.
+
+    Raises:
+        FileNotFoundError: The script is missing, which would otherwise produce a spec
+            whose container exits immediately with an empty command.
+    """
+    path = SCRIPTS_DIR / name
+    if not path.exists():
+        raise FileNotFoundError(f"job-service script {path} is missing")
+    return path.read_text()
+
+
+def _job_container(
+    name: str,
+    image: str,
+    script: str,
+    env: dict[str, str],
+    names: Names,
+    *,
+    cpu: str = "0.5",
+    memory: str = "1Gi",
+) -> dict[str, Any]:
+    """A one-shot container that runs an inlined bash script.
+
+    ``bash -c`` with the script as the argument rather than a path: a job service has no
+    way to fetch a file that is not in its image or on a mounted stage, and inlining keeps
+    the rendered specification the single artefact an operator deploys and reviews.
+    """
+    return {
+        "name": name,
+        "image": image,
+        "command": ["/bin/bash", "-c"],
+        "args": [script],
+        "env": env,
+        "resources": _resources(cpu, memory, cpu, memory),
+        "secrets": _secrets(name, names),
+    }
+
+
+def _xnat_configure(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
+    """configure-xnat.sh as a one-shot job service (FLIP#1583).
+
+    The Compose ``make -C trust/xnat xnat-configure`` and the Helm chart's xnat-init hook,
+    on SPCS. Until it has run, XNAT has registered no DICOM receiver and rejects every
+    C-STORE, so this is not optional on a new deploy: ``make up`` leaves a site that
+    answers HTTP and retrieves nothing.
+    """
+    env = {
+        "XNAT_URL": f"http://{names.dns('xnat-web')}:8080",
+        "XNAT_ADMIN_USER": kit.get("XNAT_ADMIN_USER", "admin"),
+        "XNAT_SERVICE_USER": kit.get("XNAT_SERVICE_USER", ""),
+        "XNAT_PORT": kit.get("XNAT_PORT", "8104"),
+        "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
+        # XNAT's factory password unless the kit names the one in force. Not a secret
+        # object: it is the published default of an uninitialised site, and a kit that
+        # carries a real rotated value should put it in XNAT_ADMIN_PASSWORD instead.
+        "XNAT_ADMIN_INITIAL_PASSWORD": kit.get("XNAT_ADMIN_INITIAL_PASSWORD", "").strip() or "admin",
+        "XNAT_AUTH_PROBE_ATTEMPTS": "1",
+        **_pacs_env(kit, names),
+    }
+    spec = {
+        "spec": {
+            "containers": [
+                _job_container(
+                    "xnat-configure",
+                    _image(names, "xnat-web", kit, digests),
+                    _script("xnat-configure-spcs.sh"),
+                    env,
+                    names,
+                )
+            ],
+            **_event_table_exports(),
+        }
+    }
+    return Rendered("xnat-configure", "job", names.job_pool, spec)
+
+
+def _seed_orthanc(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
+    """The mocked PACS seeded from the SEED stage (FLIP#1583).
+
+    Mirrors ``make -C trust seed-orthanc``, minus the half of it that cannot exist here: a
+    Snowflake trust has no egress to Hugging Face and no host to stage a download on, so
+    the DICOM arrives on @STAGES.SEED and this job uploads what is there. SEED is mounted
+    read-only: seeding reads the corpus, it never rewrites it.
+
+    Runs from the xnat-web image because it is the one mirrored image with bash, curl and
+    jq; it touches nothing of XNAT's.
+    """
+    env = {
+        "ORTHANC_URL": f"http://{names.dns('orthanc')}:8042",
+        "ORTHANC_USERNAME": kit.get("ORTHANC_USERNAME", "admin"),
+        "SEED_DIR": "/seed",
+        "PROJECTS": kit.get("SEED_PROJECTS", ""),
+        "SEED_DRY_RUN": "false",
+    }
+    container = _job_container(
+        "seed-orthanc", _image(names, "xnat-web", kit, digests), _script("seed-orthanc-spcs.sh"), env, names
+    )
+    container["volumeMounts"] = [{"name": "seed", "mountPath": "/seed"}]
+    spec = {
+        "spec": {
+            "containers": [container],
+            "volumes": [{"name": "seed", "source": "stage", "stageConfig": {"name": names.stage_ref("SEED")}}],
+            **_event_table_exports(),
+        }
+    }
+    return Rendered("seed-orthanc", "job", names.job_pool, spec, read_only_volumes=["seed"])
+
+
+def _smoke_cstore(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
+    """A real C-STORE through the PACS, checked at the receiver (FLIP#1583).
+
+    The Snowflake twin of the Helm chart's ``smoke-cstore``. A C-ECHO completes inside the
+    association layer and never reaches XNAT's importer, so it passes while every store
+    aborts (FLIP#1228); this drives the path the plugins are actually on.
+
+    The XNAT_ARCHIVE stage is mounted read-only. A smoke test that could write to the
+    archive could manufacture its own evidence.
+    """
+    env = {
+        "ORTHANC_URL": f"http://{names.dns('orthanc')}:8042",
+        "ORTHANC_USERNAME": kit.get("ORTHANC_USERNAME", "admin"),
+        "XNAT_URL": f"http://{names.dns('xnat-web')}:8080",
+        "XNAT_SERVICE_USER": kit.get("XNAT_SERVICE_USER", ""),
+        "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
+        "ARCHIVE_DIR": "/archive",
+    }
+    container = _job_container(
+        "smoke-cstore", _image(names, "xnat-web", kit, digests), _script("smoke-cstore-spcs.sh"), env, names
+    )
+    container["volumeMounts"] = [{"name": "xnat-archive", "mountPath": "/archive"}]
+    spec = {
+        "spec": {
+            "containers": [container],
+            "volumes": [
+                {"name": "xnat-archive", "source": "stage", "stageConfig": {"name": names.stage_ref("XNAT_ARCHIVE")}}
+            ],
+            **_event_table_exports(),
+        }
+    }
+    return Rendered("smoke-cstore", "job", names.job_pool, spec, read_only_volumes=["xnat-archive"])
+
+
+def _reconvert(kit: dict[str, str], names: Names, digests: dict[str, str]) -> Rendered:
+    """``reconvert-nifti`` as a job service, on the Snowflake conversion path (FLIP#1583).
+
+    The same ``python -m imaging_api.scripts.reconvert_nifti`` the Compose and Helm trusts
+    run, with CONVERTER_BACKEND=snowflake so it calls APP.CONVERT_SCAN instead of XNAT's
+    Container Service bulk launcher. It needs imaging-api's own environment because it is
+    imaging-api's code: the same XNAT credentials, the same converter settings, and the
+    session token that is its database credential.
+
+    It mounts CONVERTER_IO read-write (it reads the NIfTI the dcm2niix job wrote, and the
+    job writes there) and the archive read-only.
+    """
+    xnat_root = kit.get("XNAT_ROOT", "").strip() or "/data/xnat"
+    env = {
+        "ENV": "production",
+        "LOG_LEVEL": _log_level(kit),
+        "XNAT_URL": f"http://{names.dns('xnat-web')}:8080",
+        "XNAT_PORT": kit.get("XNAT_PORT", "8104"),
+        "XNAT_AETITLE": kit.get("XNAT_AETITLE", "").strip() or "XNAT",
+        "XNAT_SERVICE_USER": kit.get("XNAT_SERVICE_USER", ""),
+        "BASE_IMAGES_DOWNLOAD_DIR": "/app/data/images",
+        "DATA_ACCESS_API_URL": f"http://{names.dns('data-access-api')}:8000",
+        **_converter_env(kit, names),
+    }
+    container = _job_container(
+        "reconvert",
+        _image(names, "imaging-api", kit, digests),
+        "set -euo pipefail\npython -m imaging_api.scripts.reconvert_nifti ${RECONVERT_ARGS:---launch}\n",
+        env,
+        names,
+        cpu="1",
+        memory="2Gi",
+    )
+    container["mountSessionToken"] = True
+    container["sessionTokenConfig"] = {"path": "/snowflake/session", "permission": "0600"}
+    container["volumeMounts"] = [
+        {"name": "converter-io", "mountPath": "/converter-io"},
+        {"name": "xnat-archive", "mountPath": f"{xnat_root}/archive"},
+    ]
+    spec = {
+        "spec": {
+            "containers": [container],
+            "volumes": [
+                {"name": "converter-io", "source": "stage", "stageConfig": {"name": names.stage_ref("CONVERTER_IO")}},
+                {"name": "xnat-archive", "source": "stage", "stageConfig": {"name": names.stage_ref("XNAT_ARCHIVE")}},
+            ],
+            **_event_table_exports(),
+        }
+    }
+    return Rendered("reconvert", "job", names.job_pool, spec, read_only_volumes=["xnat-archive"])
+
+
 def fl_nets(kit: dict[str, str]) -> list[str]:
     """The FL networks this trust runs a client for.
 
@@ -652,5 +937,13 @@ def build_all(kit: dict[str, str], code: str, digests: dict[str, str] | None = N
         _trust_api(kit, names, digests),
     ]
     rendered += [_fl_client(kit, names, digests, net) for net in fl_nets(kit)]
-    rendered.append(_dcm2niix(kit, names, digests))
+    # Job services last: none of them is "up", each is executed on demand, and every one
+    # of them needs the services above to already exist (FLIP#1583).
+    rendered += [
+        _dcm2niix(kit, names, digests),
+        _xnat_configure(kit, names, digests),
+        _seed_orthanc(kit, names, digests),
+        _smoke_cstore(kit, names, digests),
+        _reconvert(kit, names, digests),
+    ]
     return rendered

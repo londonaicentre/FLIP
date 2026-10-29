@@ -61,7 +61,8 @@ RUN_SQL = $(SNOW) sql --stdin --enable-templating NONE --connection $(SNOW_CONNE
 SQL_MODE =
 endif
 
-.PHONY: help require-kit render mirror-images sync-kit up down suspend status selftest test clean
+.PHONY: help require-kit render mirror-images sync-kit up down suspend status selftest test clean \
+	xnat-configure seed-orthanc smoke-cstore reconvert-nifti job-status
 
 help:
 	@echo "FLIP trust on Snowflake (SPCS) - trust/deploy/snowflake"
@@ -74,6 +75,14 @@ help:
 	@echo "  make suspend       KIT=<CODE> HUB=<env>   Suspend every service AND every compute pool"
 	@echo "  make status        KIT=<CODE> HUB=<env>   Service and compute-pool status"
 	@echo "  make selftest      KIT=<CODE> HUB=<env>   Placeholder self-test (real asserts: FLIP#1585)"
+	@echo ""
+	@echo "  One-shot jobs (EXECUTE JOB SERVICE, ASYNC; follow with job-status):"
+	@echo "  make xnat-configure KIT=<CODE> HUB=<env>  Register the DICOM receiver, the PACS and the DQR schedule"
+	@echo "  make seed-orthanc   KIT=<CODE> HUB=<env>  Seed the mocked PACS from the SEED stage"
+	@echo "  make smoke-cstore   KIT=<CODE> HUB=<env>  Drive a real C-STORE and check the receiver"
+	@echo "  make reconvert-nifti KIT=<CODE> HUB=<env> Convert archived scans that have DICOM but no NIfTI"
+	@echo "  make job-status     KIT=<CODE> JOB=<name> Status and logs of one job service"
+	@echo ""
 	@echo "  make test                                  Spec and sync-kit guards (no account needed)"
 	@echo ""
 	@echo "  Add DRY_RUN=true to any Snowflake target to print the SQL instead of running it."
@@ -131,6 +140,57 @@ suspend: require-kit
 
 status: require-kit
 	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py status --dir $(RENDER_DIR) | $(RUN_SQL)
+
+# ── One-shot jobs ────────────────────────────────────────────────────────────
+# EXECUTE JOB SERVICE against a rendered job spec, run AS the services role with
+# CREATE SERVICE granted for the length of the call and revoked in a `finally`
+# (spcs_sql.py run_job), exactly as `up` does. ASYNC = TRUE throughout: a statement
+# times out at 300 s and configure-xnat.sh alone outlives that on a cold site, so a
+# synchronous call would report a timeout for a job that is running correctly. Each
+# returns immediately; follow with `make job-status JOB=<name>`.
+define run_job
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py run-job --dir $(RENDER_DIR) --service $(1) \
+		--snow $(SNOW) --connection $(SNOW_CONNECTION) \
+		$(if $(filter true,$(DRY_RUN)),--dry-run,)
+	@$(if $(filter true,$(DRY_RUN)),true,echo "   Follow it: make job-status KIT=$(KIT) HUB=$(HUB) JOB=$(1)")
+endef
+
+# Not optional on a new deploy. Until this has run XNAT has registered no DICOM
+# receiver and rejects every C-STORE, so the trust answers HTTP and retrieves nothing
+# (spike FLIP#1577). The compose twin is `make -C trust/xnat xnat-configure`, the
+# Kubernetes twin the chart's xnat-init hook.
+xnat-configure: require-kit render
+	@echo "🔧 Configuring XNAT for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
+	$(call run_job,xnat-configure)
+
+# The PACS half of `make -C trust seed`. Put the DICOM on the stage first, once:
+#   snow stage copy <dicom dir> @FLIP_$(KIT)... /dicom/ --recursive --enable-templating NONE
+# A re-run is a no-op (Orthanc dedupes on SOPInstanceUID).
+seed-orthanc: require-kit render
+	@echo "🌱 Seeding the mocked PACS for $(KIT) ($(KIT_ENV)) from the SEED stage $(SQL_MODE)"
+	$(call run_job,seed-orthanc)
+
+# A real C-STORE through the mocked PACS, then the receiver's own evidence. The twin of
+# `make -C trust/deploy/helm smoke-cstore`. A C-ECHO passes while every store aborts, so
+# this is the only check that says the DICOM path works (FLIP#1228).
+smoke-cstore: require-kit render
+	@echo "🩺 C-STORE smoke for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
+	$(call run_job,smoke-cstore)
+
+# `make -C trust reconvert-nifti`, on the Snowflake conversion path: imaging-api's own
+# script, with CONVERTER_BACKEND=snowflake, so it CALLs APP.CONVERT_SCAN instead of
+# XNAT's Container Service bulk launcher. RECONVERT_ARGS overrides the default --launch.
+reconvert-nifti: require-kit render
+	@echo "🔁 Reconverting scans without NIfTI for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
+	$(call run_job,reconvert)
+
+JOB ?=
+job-status: require-kit
+	@if [ -z "$(strip $(JOB))" ]; then \
+		echo "❌ JOB is required, e.g. make job-status KIT=$(KIT) JOB=xnat-configure"; \
+		exit 1; \
+	fi
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py job-status --dir $(RENDER_DIR) --service $(JOB) | $(RUN_SQL)
 
 selftest: require-kit
 	@echo "🧪 Self-test for $(KIT) ($(KIT_ENV)) $(SQL_MODE) - placeholder, real asserts in FLIP#1585"
