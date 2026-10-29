@@ -37,12 +37,24 @@ import spcs_sql  # noqa: E402
 MAKEFILE = (SNOWFLAKE_DIR / "Makefile").read_text()
 
 
-def test_up_uses_create_or_alter_not_replace(rendered: Path, manifest: dict) -> None:
+def test_up_creates_new_services_and_never_replaces(rendered: Path, manifest: dict) -> None:
     """CREATE OR REPLACE SERVICE drops the block volumes - xnat-db's and Orthanc's
-    databases - and every grant. ALTER applies the new spec to the running service."""
+    databases - and every grant. CREATE OR ALTER SERVICE does not exist in Snowflake
+    (the live account rejected it as a syntax error)."""
     sql = "\n".join(spcs_sql.sql_up(rendered, manifest))
-    assert "CREATE OR REPLACE SERVICE" not in sql
-    assert sql.count("CREATE OR ALTER SERVICE") == len([s for s in manifest["services"] if s["kind"] != "job"])
+    assert "OR REPLACE" not in sql
+    assert "OR ALTER" not in sql
+    assert sql.count("CREATE SERVICE ") == len([s for s in manifest["services"] if s["kind"] != "job"])
+
+
+def test_up_alters_existing_services_in_place(rendered: Path, manifest: dict) -> None:
+    """A service already there is upgraded by ALTER ... FROM SPECIFICATION, which keeps its
+    block volumes; its settings follow with SET."""
+    sql = "\n".join(spcs_sql.sql_up(rendered, manifest, frozenset({"XNAT_DB"})))
+    assert "ALTER SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB FROM SPECIFICATION $$" in sql
+    assert "ALTER SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB SET QUERY_WAREHOUSE" in sql
+    assert "CREATE SERVICE FLIP_TRUST_GSTT.APP.XNAT_DB" not in sql
+    assert "CREATE SERVICE FLIP_TRUST_GSTT.APP.TRUST_API" in sql
 
 
 def test_up_embeds_each_rendered_spec(rendered: Path, manifest: dict) -> None:
@@ -50,7 +62,7 @@ def test_up_embeds_each_rendered_spec(rendered: Path, manifest: dict) -> None:
     for service in manifest["services"]:
         if service["kind"] == "job":
             continue
-        assert f"CREATE OR ALTER SERVICE {service['sql_name']}" in sql
+        assert f"CREATE SERVICE {service['sql_name']}" in sql
         assert f"IN COMPUTE POOL {service['pool']}" in sql
 
 
@@ -134,7 +146,7 @@ def test_run_up_grants_creates_then_revokes(rendered: Path, manifest: dict) -> N
 def test_a_failed_or_interrupted_deploy_still_revokes(rendered: Path, manifest: dict, error) -> None:
     """A bad spec, a dropped connection or Ctrl-C must not leave the services role able to
     create containers."""
-    run = _Recorder(fail_on="CREATE OR ALTER SERVICE", error=error)
+    run = _Recorder(fail_on="CREATE SERVICE FLIP", error=error)
     with pytest.raises(error):
         spcs_sql.run_up(rendered, manifest, run)
     assert _kinds(run.batches) == ["grant", "up", "revoke"]
@@ -158,7 +170,7 @@ def test_apply_up_dry_run_prints_the_bracketed_sql(rendered: Path, capsys, monke
     monkeypatch.setattr(sys, "argv", ["spcs_sql.py", "apply-up", "--dir", str(rendered), "--dry-run"])
     spcs_sql.main()
     out = capsys.readouterr().out
-    assert out.index("GRANT CREATE SERVICE") < out.index("CREATE OR ALTER SERVICE") < out.index("REVOKE CREATE SERVICE")
+    assert out.index("GRANT CREATE SERVICE") < out.index("CREATE SERVICE FLIP") < out.index("REVOKE CREATE SERVICE")
 
 
 def test_the_hub_eai_is_not_attached_here(rendered: Path, manifest: dict) -> None:
@@ -173,7 +185,7 @@ def test_the_hub_eai_is_not_attached_here(rendered: Path, manifest: dict) -> Non
 
 def test_the_job_service_is_not_created_as_a_running_service(rendered: Path, manifest: dict) -> None:
     sql = "\n".join(spcs_sql.sql_up(rendered, manifest))
-    assert "CREATE OR ALTER SERVICE FLIP_TRUST_GSTT.APP.DCM2NIIX" not in sql
+    assert "CREATE SERVICE FLIP_TRUST_GSTT.APP.DCM2NIIX" not in sql
 
 
 def test_suspend_covers_the_compute_pools(manifest: dict) -> None:
