@@ -346,7 +346,7 @@ def test_run_sql_pipes_one_script_to_one_process(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(seed.shutil, "which", lambda _: "/usr/bin/snow")
     monkeypatch.setattr(subprocess, "run", fake_run)
     seed.run_sql(["USE ROLE R;", "SELECT 1;"], connection="flip-test")
-    assert seen["command"] == ["snow", "sql", "--stdin", "--connection", "flip-test"]
+    assert seen["command"] == ["snow", "sql", "--stdin", "--enable-templating", "NONE", "--connection", "flip-test"]
     assert seen["input"] == "USE ROLE R;\nSELECT 1;\n"
 
 
