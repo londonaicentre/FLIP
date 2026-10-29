@@ -111,9 +111,14 @@ sync-kit: require-kit
 		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 
 # ── Services ─────────────────────────────────────────────────────────────────
+# Services are created AS the services role (a service's token is its owner's role), which holds
+# CREATE SERVICE only for the length of this target: spcs_sql.py apply-up grants it, creates,
+# and revokes in a `finally`, so a failed deploy cannot leave it behind (FLIP#1578).
 up: require-kit render
 	@echo "🚀 CREATE OR ALTER SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"
-	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py up --dir $(RENDER_DIR) | $(RUN_SQL)
+	@$(PYTHON) $(SNOWFLAKE_DIR)spcs_sql.py apply-up --dir $(RENDER_DIR) \
+		--snow $(SNOW) --connection $(SNOW_CONNECTION) \
+		$(if $(filter true,$(DRY_RUN)),--dry-run,)
 
 down: require-kit
 	@echo "🛑 DROP SERVICE for $(KIT) ($(KIT_ENV)) $(SQL_MODE)"

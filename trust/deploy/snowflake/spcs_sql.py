@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -57,18 +59,45 @@ def _spec_body(directory: Path, service: dict[str, Any]) -> str:
     return text
 
 
+def _create_service_grant(manifest: dict[str, Any], verb: str) -> list[str]:
+    preposition = "TO" if verb == "GRANT" else "FROM"
+    return [
+        f"USE ROLE {manifest['role']};",
+        f"{verb} CREATE SERVICE ON SCHEMA {manifest['database']}.APP {preposition} ROLE {manifest['service_role']};",
+    ]
+
+
+def sql_grant_create_service(manifest: dict[str, Any]) -> list[str]:
+    """Give the services role CREATE SERVICE for the length of one deploy (FLIP#1578).
+
+    A service's OAuth token carries the role that OWNS it, and SPCS refuses
+    ``GRANT OWNERSHIP ON SERVICE``, so the only way to give services the narrow services
+    role's token is to create them as that role. It must not keep the privilege: the
+    fl-client runs researcher code with that token. ``run_up`` revokes it in a ``finally``.
+    """
+    return _create_service_grant(manifest, "GRANT")
+
+
+def sql_revoke_create_service(manifest: dict[str, Any]) -> list[str]:
+    return _create_service_grant(manifest, "REVOKE")
+
+
 def sql_up(directory: Path, manifest: dict[str, Any]) -> list[str]:
-    """CREATE OR ALTER SERVICE for every service; the job service is only described.
+    """CREATE OR ALTER SERVICE for every service, as the services role; the job is only described.
 
     ``CREATE OR ALTER`` rather than ``CREATE OR REPLACE``: replacing a service drops its
     block volumes (xnat-db's and Orthanc's databases) and every grant on it. ALTER
     applies the new specification to the running service in place.
+
+    Run only between ``sql_grant_create_service`` and ``sql_revoke_create_service``, which
+    is what ``run_up`` (and so ``make up``) does.
     """
     statements = [
-        # Services are created by the deploy role, which owns them and every object they
-        # reference. It holds BIND SERVICE ENDPOINT on the account and nothing else that is
-        # account-level (epic FLIP#1589).
-        f"USE ROLE {manifest['role']};",
+        # Created AS the services role, so each service's token is that role's and not the
+        # deploy role's (FLIP#1578). The deploy user can assume it: the platform tier grants
+        # it to the deploy role. Drop, suspend and status stay with the deploy role, which
+        # inherits ownership of these services through that grant.
+        f"USE ROLE {manifest['service_role']};",
         f"USE DATABASE {manifest['database']};",
         f"USE SCHEMA {manifest['database']}.APP;",
     ]
@@ -77,8 +106,8 @@ def sql_up(directory: Path, manifest: dict[str, Any]) -> list[str]:
         if service["kind"] == JOB_KIND:
             statements.append(
                 f"-- {service['sql_name']} is a job service: executed on demand (EXECUTE JOB SERVICE),\n"
-                f"-- never a running service. Its spec is rendered to {service['spec_file']} and passed\n"
-                "-- at execution time by imaging-api."
+                f"-- never a running service. imaging-api starts it through the owner's-rights\n"
+                f"-- procedure APP.CONVERT_SCAN (Terraform, FLIP#1578); {service['spec_file']} documents it."
             )
             continue
         statements.append(
@@ -151,6 +180,39 @@ def sql_selftest(manifest: dict[str, Any]) -> list[str]:
     return statements
 
 
+def snow_runner(snow: str, connection: str) -> Callable[[list[str]], None]:
+    """Run one batch of statements through ``snow sql --stdin``; raise if it fails."""
+
+    def run(statements: list[str]) -> None:
+        subprocess.run(
+            [snow, "sql", "--stdin", "--enable-templating", "NONE", "--connection", connection],
+            input="\n".join(statements) + "\n",
+            text=True,
+            check=True,
+        )
+
+    return run
+
+
+def print_runner(statements: list[str]) -> None:
+    print("\n".join(statements))
+
+
+def run_up(directory: Path, manifest: dict[str, Any], run: Callable[[list[str]], None]) -> None:
+    """Grant, create the services as the services role, and revoke whatever happened.
+
+    The revoke sits in ``finally`` so a failed spec, a lost connection or Ctrl-C still
+    leaves the services role without CREATE SERVICE. Rendering the statements first means
+    a broken spec fails before anything is granted.
+    """
+    statements = sql_up(directory, manifest)
+    run(sql_grant_create_service(manifest))
+    try:
+        run(statements)
+    finally:
+        run(sql_revoke_create_service(manifest))
+
+
 COMMANDS = {
     "up": lambda directory, manifest: sql_up(directory, manifest),
     "down": lambda directory, manifest: sql_down(manifest),
@@ -162,10 +224,18 @@ COMMANDS = {
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Emit SPCS deploy SQL from a rendered trust")
-    parser.add_argument("command", choices=sorted(COMMANDS))
+    parser.add_argument("command", choices=sorted([*COMMANDS, "apply-up"]))
     parser.add_argument("--dir", type=Path, required=True, help="Directory render_specs.py wrote")
+    parser.add_argument("--snow", default="snow", help="apply-up: the snow CLI")
+    parser.add_argument("--connection", default="flip-test", help="apply-up: the snow connection")
+    parser.add_argument("--dry-run", action="store_true", help="apply-up: print the SQL, run nothing")
     args = parser.parse_args()
     manifest = load(args.dir / "manifest.json")
+    if args.command == "apply-up":
+        # Executes, unlike the other commands: the grant must be revoked even when the
+        # create fails, which a single piped script cannot guarantee.
+        run_up(args.dir, manifest, print_runner if args.dry_run else snow_runner(args.snow, args.connection))
+        return
     for statement in COMMANDS[args.command](args.dir, manifest):
         print(statement)
 

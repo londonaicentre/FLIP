@@ -113,6 +113,8 @@ def render(kit: dict[str, str], code: str, env: str, out_dir: Path, digests: dic
         # owns the database, the pools, the repository, the stages, the secrets and the
         # services (epic FLIP#1589). FLIP_<CODE>_ADMIN is retired.
         "role": names.deploy_role,
+        # Services are created AS this role so their tokens carry its grants (FLIP#1578).
+        "service_role": names.service_role,
         "schema": "APP",
         "warehouse": names.warehouse,
         "image_repository": names.image_repository,

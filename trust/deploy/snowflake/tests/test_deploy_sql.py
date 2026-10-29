@@ -60,18 +60,105 @@ def test_up_carries_no_secret_value(rendered: Path, manifest: dict) -> None:
         assert value not in sql, f"{name} reached the deploy SQL"
 
 
-def test_every_deploy_statement_runs_as_the_deploy_role(rendered: Path, manifest: dict) -> None:
-    """FLIP_<CODE>_ADMIN is retired (epic FLIP#1589): services are created, dropped and
-    suspended by the least-privilege workload role, which owns them."""
+def test_no_deploy_statement_uses_a_privileged_role(rendered: Path, manifest: dict) -> None:
+    """FLIP_<CODE>_ADMIN is retired (epic FLIP#1589). Drop, suspend and the JIT grant run as the
+    least-privilege workload role; the services are created as the services role (FLIP#1578)."""
     assert manifest["role"] == "FLIP_GSTT_DEPLOY"
+    assert manifest["service_role"] == "FLIP_GSTT_SVC"
     for sql in (
-        "\n".join(spcs_sql.sql_up(rendered, manifest)),
         "\n".join(spcs_sql.sql_down(manifest)),
         "\n".join(spcs_sql.sql_suspend(manifest)),
+        "\n".join(spcs_sql.sql_grant_create_service(manifest)),
+        "\n".join(spcs_sql.sql_revoke_create_service(manifest)),
     ):
         assert "USE ROLE FLIP_GSTT_DEPLOY;" in sql
+    for sql in [*(spcs_sql.sql_up(rendered, manifest)), *spcs_sql.sql_down(manifest)]:
         assert "FLIP_GSTT_ADMIN" not in sql, "the admin role is retired"
         assert "ACCOUNTADMIN" not in sql
+
+
+# --- services are owned by the services role (FLIP#1578) -----------------------------------------
+#
+# A service's OAuth token carries the role that OWNS it, and SPCS refuses GRANT OWNERSHIP ON
+# SERVICE. Created by the deploy role, every container (the fl-client running researcher code
+# among them) would hold a token able to drop the trust database. So the services are created AS
+# the services role, which holds CREATE SERVICE only for the length of `make up`.
+
+
+def test_services_are_created_as_the_services_role(rendered: Path, manifest: dict) -> None:
+    sql = spcs_sql.sql_up(rendered, manifest)
+    assert sql[0] == "USE ROLE FLIP_GSTT_SVC;"
+    assert not any(s.startswith("USE ROLE") for s in sql[1:]), "no switch back before the creates"
+    assert "GRANT" not in "\n".join(sql), "sql_up grants nothing: run_up brackets it"
+
+
+def test_the_grant_and_revoke_name_only_create_service_on_app(manifest: dict) -> None:
+    assert spcs_sql.sql_grant_create_service(manifest)[1] == (
+        "GRANT CREATE SERVICE ON SCHEMA FLIP_TRUST_GSTT.APP TO ROLE FLIP_GSTT_SVC;"
+    )
+    assert spcs_sql.sql_revoke_create_service(manifest)[1] == (
+        "REVOKE CREATE SERVICE ON SCHEMA FLIP_TRUST_GSTT.APP FROM ROLE FLIP_GSTT_SVC;"
+    )
+
+
+class _Recorder:
+    def __init__(self, fail_on: str | None = None, error: type[BaseException] = RuntimeError) -> None:
+        self.batches: list[str] = []
+        self.fail_on = fail_on
+        self.error = error
+
+    def __call__(self, statements: list[str]) -> None:
+        batch = "\n".join(statements)
+        self.batches.append(batch)
+        if self.fail_on and self.fail_on in batch:
+            raise self.error(f"failed on {self.fail_on}")
+
+
+def _kind(batch: str) -> str:
+    if "REVOKE CREATE SERVICE" in batch:
+        return "revoke"
+    return "grant" if "GRANT CREATE SERVICE" in batch else "up"
+
+
+def _kinds(batches: list[str]) -> list[str]:
+    return [_kind(batch) for batch in batches]
+
+
+def test_run_up_grants_creates_then_revokes(rendered: Path, manifest: dict) -> None:
+    run = _Recorder()
+    spcs_sql.run_up(rendered, manifest, run)
+    assert _kinds(run.batches) == ["grant", "up", "revoke"]
+
+
+@pytest.mark.parametrize("error", [RuntimeError, KeyboardInterrupt])
+def test_a_failed_or_interrupted_deploy_still_revokes(rendered: Path, manifest: dict, error) -> None:
+    """A bad spec, a dropped connection or Ctrl-C must not leave the services role able to
+    create containers."""
+    run = _Recorder(fail_on="CREATE OR ALTER SERVICE", error=error)
+    with pytest.raises(error):
+        spcs_sql.run_up(rendered, manifest, run)
+    assert _kinds(run.batches) == ["grant", "up", "revoke"]
+
+
+def test_a_spec_that_cannot_render_fails_before_anything_is_granted(rendered: Path, manifest: dict) -> None:
+    broken = dict(manifest, services=[*manifest["services"], {**manifest["services"][0], "spec_file": "missing.yaml"}])
+    run = _Recorder()
+    with pytest.raises(FileNotFoundError):
+        spcs_sql.run_up(rendered, broken, run)
+    assert run.batches == []
+
+
+def test_make_up_goes_through_the_bracketed_runner() -> None:
+    up = MAKEFILE[MAKEFILE.index("\nup:") : MAKEFILE.index("\ndown:")]
+    assert "spcs_sql.py apply-up" in up
+    assert "spcs_sql.py up " not in up, "piping sql_up straight into snow would skip the revoke"
+
+
+def test_apply_up_dry_run_prints_the_bracketed_sql(rendered: Path, capsys, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["spcs_sql.py", "apply-up", "--dir", str(rendered), "--dry-run"])
+    spcs_sql.main()
+    out = capsys.readouterr().out
+    assert out.index("GRANT CREATE SERVICE") < out.index("CREATE OR ALTER SERVICE") < out.index("REVOKE CREATE SERVICE")
 
 
 def test_the_hub_eai_is_not_attached_here(rendered: Path, manifest: dict) -> None:

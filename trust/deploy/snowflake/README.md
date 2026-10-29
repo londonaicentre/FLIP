@@ -161,16 +161,28 @@ are created here, not there.
 
 Everything in this directory runs as **`FLIP_<CODE>_DEPLOY`**, the least-privilege
 workload role, signed in as the `FLIP_<CODE>_DEPLOY_USER` `SERVICE` user with key-pair
-auth. `FLIP_<CODE>_ADMIN` is **retired** (two-tier decision, 2026-10-20, epic FLIP#1589).
+auth, except the service creates in `make up`. `FLIP_<CODE>_ADMIN` is **retired**
+(two-tier decision, 2026-10-20, epic FLIP#1589).
 
 | Object | Owner | Granted |
 | --- | --- | --- |
-| Services (`CREATE OR ALTER SERVICE`) | `FLIP_<CODE>_DEPLOY` | the service runs with `FLIP_<CODE>_SVC` through its spec |
+| Services (`CREATE OR ALTER SERVICE`) | `FLIP_<CODE>_SVC` | created as that role; the deploy role drops and suspends them through the role hierarchy |
+| dcm2niix jobs | `FLIP_<CODE>_CONVERTER` | started only by `CALL APP.CONVERT_SCAN` (Terraform workload root) |
 | Secrets (`sync-kit`) | `FLIP_<CODE>_DEPLOY` | `READ` to `FLIP_<CODE>_SVC` |
 | Database, schemas, warehouse, pools, repository, stages | `FLIP_<CODE>_DEPLOY` | per the Terraform workload root |
 
+**Why services are owned by the services role (FLIP#1578).** A service's OAuth token
+(`/snowflake/session/token`) carries the role that owns the service, and SPCS refuses
+`GRANT OWNERSHIP ON SERVICE`. Created by the deploy role, every container, the fl-client
+running researcher code among them, would hold a token able to drop the trust database. So
+`make up` (`spcs_sql.py apply-up`) grants `CREATE SERVICE` on `APP` to `FLIP_<CODE>_SVC`,
+creates the services as that role, and revokes the grant in a `finally`: a failed spec, a
+lost connection or Ctrl-C still revokes it. Verified on the test account: the token of a
+service created this way is `FLIP_<CODE>_SVC`, and `CREATE SERVICE`, `EXECUTE JOB SERVICE`
+and the event table are all denied to it.
+
 That role holds exactly four account privileges, granted once by the break-glass
-Terraform root: `CREATE DATABASE`, `CREATE WAREHOUSE`, `CREATE COMPUTE POOL`,
+Terraform root: `CREATE DATABASE`, `CREATE COMPUTE POOL`, `EXECUTE TASK`,
 `BIND SERVICE ENDPOINT`. It has no `CREATE ROLE`, no `CREATE USER`, no
 `CREATE INTEGRATION`, no `CREATE NETWORK POLICY` and no `MANAGE GRANTS`. The grants this
 directory issues all work through **ownership**: an owner may grant privileges on its own
