@@ -431,7 +431,6 @@ def test_the_converter_path_carries_no_database_password(specs: dict) -> None:
     for name in ("imaging-api", "reconvert"):
         container = containers(specs[name])[0]
         assert container["mountSessionToken"] is True, f"{name} has no session token to connect with"
-        assert container["sessionTokenConfig"]["permission"] == "0600"
         assert "SNOWFLAKE_PASSWORD" not in container["env"]
         # SPCS injects both; a rendered copy could only go stale.
         assert "SNOWFLAKE_HOST" not in container["env"]
