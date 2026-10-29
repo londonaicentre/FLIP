@@ -25,7 +25,7 @@ import os
 import sys
 from pathlib import Path
 
-#: The ``PROD`` -> kit-file token map lives in ``deploy/env_mode.mk`` and nowhere else.
+#: The ``HUB`` -> kit-file token map lives in ``deploy/env_mode.mk`` and nowhere else.
 #: Scripts here take the resolved token as ``--env``; the Makefile injects it.
 DEFAULT_ENV = "development"
 
@@ -52,20 +52,20 @@ def is_placeholder(value: str) -> bool:
 
 
 def resolve_env(env: str | None) -> str:
-    """The kit-file env token, refusing to guess when ``PROD`` is set without ``--env``.
+    """The kit-file env token, refusing to guess when ``HUB`` is set without ``--env``.
 
-    Two copies of the PROD map is how the LZA tokens drifted out of step, so this script
-    keeps none: with ``PROD`` set it insists on being run through the Makefile.
+    Two copies of the HUB map is how the LZA tokens drifted out of step, so this script
+    keeps none: with ``HUB`` set it insists on being run through the Makefile.
     """
     if env:
         return env
-    prod = os.environ.get("PROD", "")
-    if prod:
+    hub = os.environ.get("HUB", "")
+    if hub:
         sys.exit(
-            f"❌ PROD={prod!r} is set but --env is not.\n"
-            "   PROD maps to the kit-file token in deploy/env_mode.mk only. Run this through\n"
+            f"❌ HUB={hub!r} is set but --env is not.\n"
+            "   HUB maps to the kit-file token in deploy/env_mode.mk only. Run this through\n"
             "   the Snowflake Makefile, which injects it:\n"
-            f"       make -C trust/deploy/snowflake <target> KIT=<CODE> PROD={prod}\n"
+            f"       make -C trust/deploy/snowflake <target> KIT=<CODE> HUB={hub}\n"
             "   Or pass the token directly:  --env <token>"
         )
     return DEFAULT_ENV

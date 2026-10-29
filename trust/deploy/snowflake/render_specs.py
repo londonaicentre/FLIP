@@ -57,7 +57,7 @@ HEADER = """\
 # Rendered from trust/.env.{code}.{env}. Contains NO secret values: credentials
 # reach the container as Snowflake SECRET objects, written by `make sync-kit`.
 # Regenerate with:
-#   make -C trust/deploy/snowflake render KIT={code} PROD=<env>
+#   make -C trust/deploy/snowflake render KIT={code} HUB=<env>
 """
 
 
@@ -132,8 +132,8 @@ def main() -> None:
     parser.add_argument(
         "--env",
         default=None,
-        help="Kit-file env token (trust/.env.<KIT>.<token>). Required when PROD is set; the "
-        "Makefile injects it from deploy/env_mode.mk. Default without PROD: development.",
+        help="Kit-file env token (trust/.env.<KIT>.<token>). Required when HUB is set; the "
+        "Makefile injects it from deploy/env_mode.mk. Default without HUB: development.",
     )
     parser.add_argument("--out-dir", type=Path, default=None, help="Output directory (default: rendered/<KIT>.<env>)")
     parser.add_argument(
@@ -156,8 +156,8 @@ def main() -> None:
             f"❌ Kit file not found: {path}\n"
             "   Register the trust first:\n"
             f'     make new-trust TRUST_CODE={args.kit} TRUST_NAME="..."\n'
-            f"     make -C deploy/providers/AWS register-trusts KIT={args.kit} PROD={env}\n"
-            f"     make sync-trust-kit KIT={args.kit} PROD={env}"
+            f"     make -C deploy/providers/AWS register-trusts KIT={args.kit} HUB={env}\n"
+            f"     make sync-trust-kit KIT={args.kit} HUB={env}"
         )
     kit = read_env_vars(path)
     out_dir = args.out_dir or HERE / "rendered" / f"{names.code}.{env}"

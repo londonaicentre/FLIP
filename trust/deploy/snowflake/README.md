@@ -48,35 +48,35 @@ trust's kit file, and never pass through Terraform variables or state.
 snow connection add --connection-name flip-test ...
 
 # 1a. Account security objects, break glass, rarely, by a person user with MFA (FLIP#1581)
-make -C trust/deploy/terraform/snowflake-platform apply KIT=GSTT PROD=stag
+make -C trust/deploy/terraform/snowflake-platform apply KIT=GSTT HUB=stag
 
 # 1b. Infrastructure, the workload root (FLIP#1581)
-make -C trust/deploy/terraform/snowflake apply KIT=GSTT PROD=stag
+make -C trust/deploy/terraform/snowflake apply KIT=GSTT HUB=stag
 
 # 2. Images into the account repository (needs docker + GHCR login + egress)
-make -C trust/deploy/snowflake mirror-images KIT=GSTT PROD=stag
+make -C trust/deploy/snowflake mirror-images KIT=GSTT HUB=stag
 
 # 3. Secrets, FL kit, governance document
-make -C trust/deploy/snowflake sync-kit KIT=GSTT PROD=stag
+make -C trust/deploy/snowflake sync-kit KIT=GSTT HUB=stag
 
 # 4. Render and deploy
-make -C trust/deploy/snowflake up KIT=GSTT PROD=stag
+make -C trust/deploy/snowflake up KIT=GSTT HUB=stag
 
 # 5. Check, and stop paying when idle
-make -C trust/deploy/snowflake status  KIT=GSTT PROD=stag
-make -C trust/deploy/snowflake suspend KIT=GSTT PROD=stag
+make -C trust/deploy/snowflake status  KIT=GSTT HUB=stag
+make -C trust/deploy/snowflake suspend KIT=GSTT HUB=stag
 ```
 
 Every Snowflake target takes `DRY_RUN=true`, which prints the SQL instead of running it:
 
 ```bash
-make -C trust/deploy/snowflake up KIT=GSTT PROD=stag DRY_RUN=true
+make -C trust/deploy/snowflake up KIT=GSTT HUB=stag DRY_RUN=true
 ```
 
 That is not only a safety net. It is how the deploy path is tested, since CI has no
 Snowflake account and no credentials.
 
-`PROD` maps to the kit-file token (`trust/.env.<CODE>.<token>`) through
+`HUB` maps to the kit-file token (`trust/.env.<CODE>.<token>`) through
 `deploy/env_mode.mk`, the repo's single copy of that map, exactly as the Helm Makefile
 does. `SNOW_CONNECTION` selects the snow CLI connection and defaults to `flip-test`.
 

@@ -230,8 +230,8 @@ def test_dry_run_prints_instead_of_running() -> None:
     assert "RUN_SQL = $(SNOW) sql --stdin --enable-templating NONE --connection $(SNOW_CONNECTION)" in MAKEFILE
 
 
-def test_prod_maps_to_the_kit_env_through_env_mode_mk() -> None:
-    """One PROD map for the whole repo. A second copy is how the LZA tokens drifted."""
+def test_hub_maps_to_the_kit_env_through_env_mode_mk() -> None:
+    """One HUB map for the whole repo. A second copy is how the LZA tokens drifted."""
     assert "include $(REPO_ROOT)/deploy/env_mode.mk" in MAKEFILE
     assert "KIT_ENV := $(ENV)" in MAKEFILE
 

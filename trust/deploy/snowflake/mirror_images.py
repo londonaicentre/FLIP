@@ -152,7 +152,7 @@ def mirror(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Mirror FLIP images from GHCR into a Snowflake image repository")
     parser.add_argument("--kit", required=True, help="Trust CODE")
-    parser.add_argument("--env", default=None, help="Kit-file env token (the Makefile injects it from PROD)")
+    parser.add_argument("--env", default=None, help="Kit-file env token (the Makefile injects it from HUB)")
     parser.add_argument("--connection", default="flip-test", help="snow CLI connection name")
     parser.add_argument("--snow", default="snow", help="snow CLI binary")
     parser.add_argument("--ghcr-org", default="ghcr.io/londonaicentre", help="Source registry and org")

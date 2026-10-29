@@ -42,7 +42,7 @@ JOB_KIND = "job"
 
 def load(manifest_path: Path) -> dict[str, Any]:
     if not manifest_path.exists():
-        sys.exit(f"❌ {manifest_path} not found. Run `make render KIT=<CODE> PROD=<env>` first.")
+        sys.exit(f"❌ {manifest_path} not found. Run `make render KIT=<CODE> HUB=<env>` first.")
     data: dict[str, Any] = json.loads(manifest_path.read_text())
     return data
 

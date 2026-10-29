@@ -21,9 +21,9 @@
 SNOWFLAKE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 REPO_ROOT := $(abspath $(SNOWFLAKE_DIR)/../../..)
 
-# Kit-file env token (ENV) from PROD, derived in one place for every FLIP Makefile that
-# reads PROD - including lza / lza-stag, whose kits are trust/.env.<CODE>.lza-prod and
-# .lza-stag. Included before anything that needs the kit file's name, as the Helm
+# Kit-file env token (ENV) from HUB, derived in one place for every FLIP Makefile that
+# reads HUB (FLIP#1479: prod and stag select trust/.env.<CODE>.prod and
+# .stag). Included before anything that needs the kit file's name, as the Helm
 # Makefile does.
 include $(REPO_ROOT)/deploy/env_mode.mk
 
@@ -66,14 +66,14 @@ endif
 help:
 	@echo "FLIP trust on Snowflake (SPCS) - trust/deploy/snowflake"
 	@echo ""
-	@echo "  make render        KIT=<CODE> PROD=<env>   Render one SPCS spec per service"
-	@echo "  make mirror-images KIT=<CODE> PROD=<env>   Mirror GHCR images into the account repository"
-	@echo "  make sync-kit      KIT=<CODE> PROD=<env>   Write SECRET objects, push FL kit + governance"
-	@echo "  make up            KIT=<CODE> PROD=<env>   CREATE OR ALTER SERVICE from the rendered specs"
-	@echo "  make down          KIT=<CODE> PROD=<env>   Drop every service"
-	@echo "  make suspend       KIT=<CODE> PROD=<env>   Suspend every service AND every compute pool"
-	@echo "  make status        KIT=<CODE> PROD=<env>   Service and compute-pool status"
-	@echo "  make selftest      KIT=<CODE> PROD=<env>   Placeholder self-test (real asserts: FLIP#1585)"
+	@echo "  make render        KIT=<CODE> HUB=<env>   Render one SPCS spec per service"
+	@echo "  make mirror-images KIT=<CODE> HUB=<env>   Mirror GHCR images into the account repository"
+	@echo "  make sync-kit      KIT=<CODE> HUB=<env>   Write SECRET objects, push FL kit + governance"
+	@echo "  make up            KIT=<CODE> HUB=<env>   CREATE OR ALTER SERVICE from the rendered specs"
+	@echo "  make down          KIT=<CODE> HUB=<env>   Drop every service"
+	@echo "  make suspend       KIT=<CODE> HUB=<env>   Suspend every service AND every compute pool"
+	@echo "  make status        KIT=<CODE> HUB=<env>   Service and compute-pool status"
+	@echo "  make selftest      KIT=<CODE> HUB=<env>   Placeholder self-test (real asserts: FLIP#1585)"
 	@echo "  make test                                  Spec and sync-kit guards (no account needed)"
 	@echo ""
 	@echo "  Add DRY_RUN=true to any Snowflake target to print the SQL instead of running it."
@@ -81,7 +81,7 @@ help:
 
 require-kit:
 	@if [ -z "$(strip $(KIT))" ]; then \
-		echo "❌ KIT is required - the trust CODE, e.g. make render KIT=GSTT PROD=stag"; \
+		echo "❌ KIT is required - the trust CODE, e.g. make render KIT=GSTT HUB=stag"; \
 		exit 1; \
 	fi
 

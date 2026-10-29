@@ -251,7 +251,7 @@ def main() -> int:
     parser.add_argument(
         "--env",
         default=None,
-        help="Kit-file env token (trust/.env.<KIT>.<token>). Required when PROD is set; the "
+        help="Kit-file env token (trust/.env.<KIT>.<token>). Required when HUB is set; the "
         "Makefile injects it from deploy/env_mode.mk.",
     )
     parser.add_argument("--connection", default=DEFAULT_CONNECTION, help="snow CLI connection name")
@@ -280,8 +280,8 @@ def main() -> int:
         print(f"❌ Kit file not found: {path}")
         print("   Register the trust first:")
         print(f'     make new-trust TRUST_CODE={args.kit} TRUST_NAME="..."')
-        print(f"     make -C deploy/providers/AWS register-trusts KIT={args.kit} PROD={env}")
-        print(f"     make sync-trust-kit KIT={args.kit} PROD={env}")
+        print(f"     make -C deploy/providers/AWS register-trusts KIT={args.kit} HUB={env}")
+        print(f"     make sync-trust-kit KIT={args.kit} HUB={env}")
         return 1
 
     kit = read_env_vars(path)
@@ -319,8 +319,8 @@ def main() -> int:
     print()
     print("-" * 64)
     print("📦 Next:")
-    print(f"     make -C trust/deploy/snowflake render KIT={args.kit} PROD={env}")
-    print(f"     make -C trust/deploy/snowflake up KIT={args.kit} PROD={env}")
+    print(f"     make -C trust/deploy/snowflake render KIT={args.kit} HUB={env}")
+    print(f"     make -C trust/deploy/snowflake up KIT={args.kit} HUB={env}")
     print("-" * 64)
     return 0
 
