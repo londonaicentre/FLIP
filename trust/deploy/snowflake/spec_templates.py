@@ -750,8 +750,10 @@ def _job_container(
     return {
         "name": name,
         "image": image,
-        "command": ["/bin/bash", "-c"],
-        "args": [script],
+        # SPCS refuses ``args`` beside a multi-element ``command``, so the shell's ``-c``
+        # travels in args with the script.
+        "command": ["/bin/bash"],
+        "args": ["-c", script],
         "env": env,
         "resources": _resources(cpu, memory, cpu, memory),
         "secrets": _secrets(name, names),
