@@ -348,9 +348,10 @@ def test_job_scripts_are_inlined_into_the_spec(specs: dict, service: str, marker
     done nothing, which reads as a pass.
     """
     container = containers(specs[service])[0]
-    assert container["command"] == ["/bin/bash", "-c"]
-    assert len(container["args"]) == 1
-    assert marker in container["args"][0]
+    assert container["command"] == ["/bin/bash"]
+    assert container["args"][0] == "-c"
+    assert len(container["args"]) == 2
+    assert marker in container["args"][1]
 
 
 def test_xnat_configure_does_not_register_the_container_service(specs: dict) -> None:
@@ -360,7 +361,7 @@ def test_xnat_configure_does_not_register_the_container_service(specs: dict) -> 
     socket, no swarm, no Kubernetes backend), so every trigger would fire into a failure
     instead of leaving conversion to the dcm2niix job service (FLIP#1578).
     """
-    script = containers(specs["xnat-configure"])[0]["args"][0]
+    script = containers(specs["xnat-configure"])[0]["args"][-1]
     assert "configure-dcm2niix.sh" in script, "say out loud why it is not run"
     assert "bash configure-dcm2niix.sh" not in script
     assert specs["xnat-web"]["spec"]["containers"][0]["env"]["XNAT_CONTAINER_SERVICE_ENABLED"] == "false"
@@ -384,7 +385,7 @@ def test_seed_orthanc_reads_the_seed_stage_only(specs: dict) -> None:
     """Seeding has no egress on Snowflake: the corpus arrives on @STAGES.SEED."""
     spec = specs["seed-orthanc"]["spec"]
     assert [volume["stageConfig"]["name"] for volume in spec["volumes"]] == ["@FLIP_TRUST_GSTT.STAGES.SEED"]
-    script = containers(specs["seed-orthanc"])[0]["args"][0]
+    script = containers(specs["seed-orthanc"])[0]["args"][-1]
     assert "huggingface" not in script.lower(), "a Snowflake trust has no egress to the dataset host"
 
 
@@ -395,7 +396,7 @@ def test_credentials_never_reach_a_job_command_line(specs: dict) -> None:
     pins that neither grows a `--user` or a `-u` with an interpolated secret.
     """
     for name in ("seed-orthanc", "smoke-cstore"):
-        script = containers(specs[name])[0]["args"][0]
+        script = containers(specs[name])[0]["args"][-1]
         assert "--netrc-file" in script, f"{name} must authenticate through a netrc"
         assert "chmod 600" in script, f"{name} must not leave the netrc world-readable"
         # Comments are allowed to name the option; code is not.
@@ -489,3 +490,11 @@ def test_xnat_db_keeps_the_superuser_apart_from_the_xnat_role(specs: dict) -> No
     env = containers(specs["xnat-db"])[0]["env"]
     assert "POSTGRES_USER" not in env
     assert env["XNAT_DATASOURCE_USERNAME"] == "xnat"
+
+
+def test_no_container_has_args_beside_a_multi_element_command(specs: dict) -> None:
+    """The live account rejects such a spec: "Args not allowed when multiple commands are specified"."""
+    for name, spec in specs.items():
+        for container in containers(spec):
+            if len(container.get("command", [])) > 1:
+                assert "args" not in container, name
