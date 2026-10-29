@@ -521,3 +521,12 @@ def test_no_container_has_args_beside_a_multi_element_command(specs: dict) -> No
         for container in containers(spec):
             if len(container.get("command", [])) > 1:
                 assert "args" not in container, name
+
+
+def test_no_kit_password_reaches_a_spec_in_plain_env(kit: dict) -> None:
+    """xnat-configure once carried the kit's XNAT_ADMIN_INITIAL_PASSWORD as plain env."""
+    import spec_templates
+
+    marker = "SENTINEL-initial-admin-7f30"  # pragma: allowlist secret
+    for rendered in spec_templates.build_all({**kit, "XNAT_ADMIN_INITIAL_PASSWORD": marker}, "GSTT"):
+        assert marker not in json.dumps(rendered.spec), rendered.name
