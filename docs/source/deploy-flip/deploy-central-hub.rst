@@ -361,7 +361,7 @@ Three things to plan for:
 - **The internal service key rotates with it**, so every trust-internal container has to restart together, not only
   ``trust-api``. Deliver the kit and recreate them in one step:
 
-  - Cloud trust EC2: ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>``.
+  - AWS EC2 node: ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``.
   - On-prem: copy the filled kit onto its slot-named file, package it, and have the operator run their upgrade
     command:
 
@@ -370,7 +370,7 @@ Three things to plan for:
        cp trust/.env.<CODE>.<suffix> trust/.env.<slot>
        make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env>
 
-  Do **not** use ``deploy-trust``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+  Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
 - **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
   caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
   must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the

@@ -359,7 +359,7 @@ tag or the `sha-` build of its commit); choosing it exits 4 with the `git checko
 warning. The resolver refuses (exit 5) a tag any site image was never built at — every
 `sha-` build is path-filtered, so most `sha-` tags lack orthanc / omop-db / xnat-* / the FL client; the
 opt-outs are `FL_TAG=` and the kit's `OMOP_DB_TAG` / `ORTHANC_TAG` / `XNAT_TAG` (on Helm:
-`flClient|omopDb|orthanc|xnat.image.pin`, which beat `global.image.tag`). `up-trust` / `up-onprem-trust` / `restart-trust` / `deploy-trust` stay the
+`flClient|omopDb|orthanc|xnat.image.pin`, which beat `global.image.tag`). `up-trust` / `up-onprem-trust` / `restart-trust` / the EC2 root's `deploy` stay the
 **first-install** verbs: they run `ensure-seeded` (re-seeds on a data-version bump) and `xnat-reset`, so never use them to move a live site.
 The heartbeat reply carries `hub_version` + an AES-key fingerprint; trust-api's `/health` reports
 `hub_version` / `hub_key_match` / `hub_key_fingerprint` (forgotten when a heartbeat fails), and the onboarding

@@ -22,8 +22,8 @@
 #   3. Write the kit back into trust/.env.<CODE>.<env> via
 #      trust/deploy/scripts/distribute_trust_kits.py (whatever credentials the kit carries,
 #      hub-shared refreshed every run; operator host-local edits preserved).
-# Delivery to a host is command-driven, NOT done here: `make upgrade-trust-ec2
-# KIT=<CODE> HUB=<env>` recreates the EC2 host's containers on the new kit;
+# Delivery to a host is command-driven, NOT done here: `make -C trust/deploy/terraform/aws/ec2
+# upgrade KIT=<CODE> HUB=<env>` recreates an EC2 node's containers on the new kit;
 # `make package-onprem-trust-kit` tarballs it for an on-prem operator.
 #
 # ROTATE_KEYS=1 (set by `make rotate-trust-keys KIT=<CODE>`) runs the same CLI with

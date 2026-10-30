@@ -168,8 +168,9 @@ def test_upgrade_keeps_the_data_and_the_fl_client_on_cpu(kit):
     out = make("upgrade", kit).stdout.replace("\\\n", " ")
     call = next(line for line in out.splitlines() if "upgrade-trust " in line)
     assert "NUM_AVAILABLE_GPUS=0" in call, call
-    for forbidden in (" seed ", "down-trust-ec2", "up-trust-ec2"):
-        assert forbidden not in out, f"upgrade must not run {forbidden.strip()}"
+    assert not re.search(r"\bseed\b", out), "upgrade must not run seed"
+    for forbidden in ("down-trust-ec2", "up-trust-ec2"):
+        assert forbidden not in out, f"upgrade must not run {forbidden}"
 
 
 def test_no_target_reads_a_hub_env_file():
