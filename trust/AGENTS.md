@@ -35,7 +35,7 @@ the commented dev form):
 
 | Section | Owner | Touched by |
 |---------|-------|-----------|
-| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FL_SITE_PRIVACY_*` site privacy policy) |
+| Host-local profile | Operator | hand-edit (ports, bind dirs, optional `FLIP_UID`/`FLIP_GID` to run the containers as the operator, optional `FL_SITE_PRIVACY_*` site privacy policy) |
 | Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
 | Hub-shared (managed) | Hub admin | `register-trust KIT=<CODE>` (live in prod, commented in dev) / `sync-trust-kit KIT=<CODE>` (prod refresh) |
 | Kit credentials (managed) | Hub | `register-trust` only — write-once; hub keeps only the hash |
@@ -99,7 +99,15 @@ so bring-up only checks it: a non-root operator needs `make -C trust prepare-hos
 run once, as root, by whoever prepares the host (it creates every mount source with its owner and
 deletes nothing), and `xnat-reset` then deletes nothing either, refusing a tree that holds files.
 Only development keeps a throwaway-container fallback, on the developer's own machine; a remote
-DOCKER_CONTEXT (EC2) still prepares the membership store through the remote daemon.
+DOCKER_CONTEXT (EC2) still prepares the membership store through the remote daemon. A kit that sets
+`FLIP_UID`/`FLIP_GID` to the operator's own ids needs neither step (FLIP#1731): every bind-mount
+writer runs as them (prod compose `user: "${FLIP_UID:-<image uid>}:${FLIP_GID:-<image gid>}"`,
+the same defaults as `deploy/portable.mk`'s `API_UID`/`ORTHANC_UID`/`XNAT_CONTAINER_UID`, which
+the ownership guards read), so the operator's own `mkdir` is enough and `xnat-reset` provisions the
+XNAT tree itself, as in development. xnat-db alone keeps its
+root entrypoint (Alpine Postgres, no nss_wrapper). The images' runtime-written paths are
+world-writable with the sticky bit for that uid (`scripts/tests/test_container_identity.py`
+pins both the defaults and those lines).
 
 ## Key Files
 

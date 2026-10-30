@@ -315,7 +315,7 @@ Per-trust lifecycle, run from `trust/` (KIT handling differs per target: `down-f
 
 ```bash
 make -C trust prepare-artifacts        # Download the dev XNAT plugins from upstream, checksum-pinned in trust/xnat/artifacts.manifest (no AWS; ARTIFACTS_DIR=<dir> offline). `make up` only checks the cache (#1292)
-make -C trust prepare-host-dirs KIT=<CODE> HUB=prod  # As ROOT, once, by whoever prepares an on-prem host: every bind-mount source with its container uid, deletes nothing; bring-up only checks ownership (#1723)
+make -C trust prepare-host-dirs KIT=<CODE> HUB=prod  # As ROOT, once, by whoever prepares an on-prem host: every bind-mount source with its container uid, deletes nothing; bring-up only checks ownership (#1723). A kit whose FLIP_UID/FLIP_GID are the operator's ids needs neither: its containers run as them (#1731)
 make -C trust down-fl-clients          # Stop + remove FL client containers for every registered kit, rest of the stack stays up
 make -C trust down-fl-clients-kit KIT=<CODE>  # Same, one kit
 make -C trust down-trust-ec2 KIT=<CODE>       # Stop trust services + XNAT on an EC2-hosted trust

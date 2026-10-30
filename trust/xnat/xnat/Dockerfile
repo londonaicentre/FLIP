@@ -59,6 +59,15 @@ RUN groupadd --system --gid 1001 xnat \
         "${XNAT_ROOT}"
 
 # Switch to the non-root user before running the application
+# The paths XNAT writes inside the image at run time are world-writable with the sticky bit — the
+# mode the Tomcat base image already gives its own temp/, work/ and logs/ — so the container also
+# runs as a kit's FLIP_UID (FLIP#1731), which owns nothing here: config/ is written by
+# make-xnat-config.sh at start, work/ and ROOT/logs by XNAT and Turbine, prearchive/ by every
+# DICOM receipt. archive/, build/, cache/ and tomcat_logs/ are bind mounts the host owns.
+RUN mkdir -p ${TOMCAT_XNAT_FOLDER_PATH}/logs \
+    && chmod 1777 ${TOMCAT_XNAT_FOLDER_PATH}/logs ${XNAT_HOME}/config ${XNAT_HOME}/logs ${XNAT_HOME}/work \
+         ${XNAT_ROOT}/ftp ${XNAT_ROOT}/pipeline ${XNAT_ROOT}/prearchive
+
 USER xnat
 
 EXPOSE 8080

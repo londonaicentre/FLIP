@@ -153,11 +153,14 @@ XNAT_DATA_DIR ?= $(if $(IS_DEPLOYED),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-dat
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 
-# uid/gid every XNAT bind-mount source must be owned by. `xnat-web` runs as the
-# in-image `xnat` user, created with a fixed id in trust/xnat/xnat/Dockerfile
-# (`useradd --system --uid 1001 --gid xnat`). That is a property of the image,
-# not of the host, so it can neither be derived from $(USER) nor assumed to be
-# the conventional 1000 that the FLIP-built Python services use.
+include ../../deploy/portable.mk
+
+# uid/gid every XNAT bind-mount source must be owned by (XNAT_CONTAINER_UID/GID, from
+# deploy/portable.mk): the kit's FLIP_UID:FLIP_GID when set — xnat-web then runs as them
+# (FLIP#1731) — else the in-image `xnat` user, created with a fixed id in
+# trust/xnat/xnat/Dockerfile (`useradd --system --uid 1001 --gid xnat`). That default is a
+# property of the image, not of the host, so it can neither be derived from $(USER) nor
+# assumed to be the conventional 1000 that the FLIP-built Python services use.
 #
 # XNAT ingests DICOM into archive/, stages it through build/ and cache/, and
 # rotates its logs into tomcat_logs/. If any of those is not writable it accepts
@@ -170,7 +173,8 @@ export XNAT_DATA_DIR
 # Dockerfile sets no USER and the compose pins none, so the container starts as root
 # and the stock postgres entrypoint re-chowns PGDATA and drops to `postgres` itself.
 # That is what makes a 1001-owned xnat-db-data harmless, and it is what would go away
-# if someone pinned a `user:` on xnat-db. Its dir is included on stag/prod only, so
+# if someone pinned a `user:` on xnat-db. It keeps starting as root under FLIP_UID too: its
+# Alpine Postgres has no nss_wrapper, so it cannot run as a uid it does not know. Its dir is included on stag/prod only, so
 # the whole tree carries one owner.
 #
 # deploy/providers/AWS/site.yml and trust/deploy/ansible/onprem.yml
@@ -181,8 +185,6 @@ export XNAT_DATA_DIR
 # host stay isolated. Compose and xnat-reset read that same variable, so this recipe
 # provisions the tree XNAT actually writes to and the playbooks' one is not it — an
 # ownership change made there would look right and reach nothing.
-XNAT_CONTAINER_UID := 1001
-XNAT_CONTAINER_GID := 1001
 XNAT_DIR_OWNER := $(XNAT_CONTAINER_UID):$(XNAT_CONTAINER_GID)
 
 # The bind-mount sources xnat-reset provisions. xnat-db-data is stag/prod-only:
@@ -223,7 +225,6 @@ XNAT_WEB_DATA_DIRS := $(addprefix $(XNAT_DATA_DIR)/xnat-data/,tomcat_logs archiv
 # rejects `-c` — otherwise counts zero and is reported as wrong ownership, which
 # sends the reader after the wrong fault. A missing directory still counts zero
 # and still fires the guard, now with stat naming the path it could not read.
-include ../../deploy/portable.mk
 
 define check_xnat_dir_owner
 	owned="$$($(1) | grep -cx '$(XNAT_DIR_OWNER)' || true)"; \
@@ -236,6 +237,16 @@ define check_xnat_dir_owner
 		$(prepare_host_dirs_hint); \
 		exit 1; \
 	fi
+endef
+
+# True when the invoking user IS xnat-web's uid, holds its gid and owns every directory under
+# $(XNAT_DATA_DIR) (an absent tree qualifies): xnat-reset's wipe, mkdir and chown then all succeed
+# unprivileged. Development is there whenever the developer is uid 1001; a deployed kit gets there
+# by setting FLIP_UID/FLIP_GID to the operator (FLIP#1731).
+define operator_owns_xnat_tree
+	[ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ] \
+		&& case " $$(id -G) " in *" $(XNAT_CONTAINER_GID) "*) true;; *) false;; esac \
+		&& [ -z "$$(find $(XNAT_DATA_DIR) -type d ! -user $(XNAT_CONTAINER_UID) 2>/dev/null | head -n 1)" ]
 endef
 
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
@@ -573,9 +584,10 @@ xnat-plugins-check:
 # for the resolution rule and how to override per-host.
 #
 # The remote deployed branch provisions over ssh under sudo, on a host FLIP administers. The
-# local one does it directly as root; for a non-root operator it deletes nothing and only checks
-# the empty tree `make -C trust prepare-host-dirs` made as root, refusing one that holds files
-# (FLIP#1723). The development branch provisions under sudo,
+# local one does it directly as root, or unprivileged when the operator is the container uid and
+# owns the tree (the kit's FLIP_UID, FLIP#1731); any other non-root operator deletes nothing and
+# only checks the empty tree `make -C trust prepare-host-dirs` made as root, refusing one that
+# holds files (FLIP#1723). The development branch provisions under sudo,
 # unless the invoking user IS the container uid, holds its gid and already owns
 # every directory under the tree — then the wipe, mkdir and chown all succeed
 # unprivileged (unlink needs write on the parent directory, so files a root-running
@@ -627,6 +639,9 @@ xnat-reset:
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
 				if [ "$$(id -u)" = 0 ]; then \
 					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+				elif $(operator_owns_xnat_tree); then \
+					echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns the tree — resetting it without root (FLIP#1731)"; \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
 				else \
 					echo "  👤 not root — deleting nothing, checking the tree prepare-host-dirs made (FLIP#1723)"; \
 					if [ -d $(XNAT_DATA_DIR) ] && [ -n "$$(find $(XNAT_DATA_DIR) -mindepth 1 ! -type d -print 2>&1 | head -n 1)" ]; then \
@@ -641,9 +656,7 @@ xnat-reset:
 		esac; \
 	else \
 		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
-		if [ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ] \
-			&& case " $$(id -G) " in *" $(XNAT_CONTAINER_GID) "*) true;; *) false;; esac \
-			&& [ -z "$$(find $(XNAT_DATA_DIR) -type d ! -user $(XNAT_CONTAINER_UID) 2>/dev/null | head -n 1)" ]; then \
+		if $(operator_owns_xnat_tree); then \
 			echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns every directory in the tree — no sudo needed"; \
 			priv=""; \
 		else \

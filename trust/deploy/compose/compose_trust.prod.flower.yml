@@ -22,6 +22,10 @@ services:
     # fl-client did not, which is how AICP sat half-dead for weeks (FLIP#1204).
     # unless-stopped rather than always so an explicit `docker stop` is still honoured.
     restart: unless-stopped
+    # The kit's FLIP_UID:FLIP_GID when set, else the image's app user (FLIP#1731). HOME is /app,
+    # the image's own, made writable by any uid; USER/LOGNAME below name a uid the image does not
+    # know, or torch's import fails in getpass.getuser().
+    user: "${FLIP_UID:-49999}:${FLIP_GID:-49999}"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -58,6 +62,8 @@ services:
       - ${FL_KIT_DIR}/net-1/certificates:/certs:ro
       - ${FL_KIT_DIR}/net-1/keys:/keys:ro
     environment:
+      - USER=app
+      - LOGNAME=app
       - NET_ID=net-1
       - SUPERNODE_NAME=${FL_KIT_SLOT}
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}

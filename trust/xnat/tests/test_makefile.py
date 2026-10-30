@@ -232,11 +232,15 @@ REFUSING = {
 }
 
 
-class XnatDirsWithoutRoot(unittest.TestCase):
-    """xnat-reset's local prod branch and xnat-prepare-dirs, run for real as a non-root user who is given
-    the container uid (so ownership checks can pass): no sudo, no root container (FLIP#1723)."""
+XNAT_SUBDIRS = ("tomcat_logs", "archive", "build", "cache", "../xnat-db-data")
 
-    def _run(self, target: str, data: Path, tmp: str) -> subprocess.CompletedProcess[str]:
+
+class XnatDirsWithoutRoot(unittest.TestCase):
+    """xnat-reset's local prod branch and xnat-prepare-dirs, run for real as a non-root user: no sudo, no
+    root container (FLIP#1723). As the container uid (a kit's FLIP_UID, FLIP#1731) the reset provisions the
+    tree itself; as anyone else it deletes nothing and only checks."""
+
+    def _run(self, target: str, data: Path, tmp: str, uid: int | None = None) -> subprocess.CompletedProcess[str]:
         bin_dir = Path(tmp) / "bin"
         bin_dir.mkdir(exist_ok=True)
         for name, body in REFUSING.items():
@@ -245,8 +249,8 @@ class XnatDirsWithoutRoot(unittest.TestCase):
         return run_target(
             target,
             f"XNAT_DATA_DIR={data}",
-            f"XNAT_CONTAINER_UID={os.getuid()}",
-            f"XNAT_CONTAINER_GID={os.getgid()}",
+            f"XNAT_CONTAINER_UID={os.getuid() if uid is None else uid}",
+            f"XNAT_CONTAINER_GID={os.getgid() if uid is None else uid}",
             subdir="trust/xnat",
             env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
         )
@@ -254,36 +258,53 @@ class XnatDirsWithoutRoot(unittest.TestCase):
     def setUp(self):
         if os.getuid() == 0:
             self.skipTest("running as root takes the direct branch")
+        self.other_uid = os.getuid() + 1
 
     def test_prepare_dirs_then_reset_completes_without_escalating(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp) / "xnat"
             prepared = self._run("xnat-prepare-dirs", data, tmp)
             assert prepared.returncode == 0, prepared.stdout + prepared.stderr
-            for name in ("tomcat_logs", "archive", "build", "cache", "../xnat-db-data"):
+            for name in XNAT_SUBDIRS:
                 assert (data / "xnat-data" / name).is_dir(), name
             reset = self._run("xnat-reset", data, tmp)
             assert reset.returncode == 0, reset.stdout + reset.stderr
             assert "STUB:" not in reset.stderr, reset.stderr
 
-    def test_a_tree_with_files_is_refused_not_deleted(self):
+    def test_the_container_uid_provisions_and_wipes_the_tree_itself(self):
         with tempfile.TemporaryDirectory() as tmp:
             data = Path(tmp) / "xnat"
-            assert self._run("xnat-prepare-dirs", data, tmp).returncode == 0
+            reset = self._run("xnat-reset", data, tmp)
+            assert reset.returncode == 0, reset.stdout + reset.stderr
+            assert "resetting it without root (FLIP#1731)" in reset.stdout, reset.stdout
+            for name in XNAT_SUBDIRS:
+                assert (data / "xnat-data" / name).is_dir(), name
             left = data / "xnat-data" / "archive" / "study.dcm"
             left.write_text("x")
-            reset = self._run("xnat-reset", data, tmp)
+            again = self._run("xnat-reset", data, tmp)
+            assert again.returncode == 0, again.stdout + again.stderr
+            assert not left.exists(), "a first install starts XNAT fresh"
+            assert "STUB:" not in reset.stderr + again.stderr, reset.stderr + again.stderr
+
+    def test_another_uids_tree_with_files_is_refused_not_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            left = data / "xnat-data" / "archive" / "study.dcm"
+            left.parent.mkdir(parents=True)
+            left.write_text("x")
+            reset = self._run("xnat-reset", data, tmp, uid=self.other_uid)
             assert reset.returncode != 0, reset.stdout
             assert "holds files from an earlier install" in reset.stdout, reset.stdout
             assert f"rm -rf {data} && make -C trust prepare-host-dirs KIT=SCR HUB=prod" in reset.stdout, reset.stdout
             assert left.exists(), "a non-root reset must delete nothing"
             assert "STUB:" not in reset.stderr, reset.stderr
 
-    def test_a_missing_tree_names_prepare_host_dirs(self):
+    def test_another_uids_missing_tree_names_prepare_host_dirs(self):
         with tempfile.TemporaryDirectory() as tmp:
-            reset = self._run("xnat-reset", Path(tmp) / "absent", tmp)
+            reset = self._run("xnat-reset", Path(tmp) / "absent", tmp, uid=self.other_uid)
             assert reset.returncode != 0, reset.stdout
             assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in reset.stdout, reset.stdout
+            assert not (Path(tmp) / "absent").exists(), "another uid's tree is not created"
             assert "STUB:" not in reset.stderr, reset.stderr
 
 

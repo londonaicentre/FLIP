@@ -23,3 +23,19 @@ endif
 # directory's owner to a container's uid needs root, so it belongs to whoever prepares the host, once;
 # bring-up only checks it.
 prepare_host_dirs_hint = echo "   or have the host owner run, as root: make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"
+
+# Who runs each container that writes a bind mount (FLIP#1731). A kit may set FLIP_UID and
+# FLIP_GID to the operator's own ids: those containers then run as them, so directories the
+# operator creates with mkdir are already right and nothing needs chown. Unset, each image keeps
+# its own user. The prod composes carry the same defaults (`${FLIP_UID:-1000}` …), so Make and
+# compose cannot disagree about who must own a directory. FLIP_GID follows FLIP_UID when the kit
+# sets only one, and is exported because compose reads it from the environment.
+FLIP_GID := $(or $(FLIP_GID),$(FLIP_UID))
+export FLIP_GID
+# trust-api, imaging-api, data-access-api and the FLARE client share one uid.
+API_UID := $(or $(FLIP_UID),1000)
+API_GID := $(or $(FLIP_GID),1000)
+ORTHANC_UID := $(or $(FLIP_UID),999)
+ORTHANC_GID := $(or $(FLIP_GID),999)
+XNAT_CONTAINER_UID := $(or $(FLIP_UID),1001)
+XNAT_CONTAINER_GID := $(or $(FLIP_GID),1001)

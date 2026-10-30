@@ -60,3 +60,7 @@ RUN python -m pip install -U --no-cache-dir "/opt/flip-utils[full]" "setuptools>
 # Copy register-supernode-keys.sh (used by the secure / central-hub topology to
 # register SuperNode public keys with the SuperLink).
 COPY --chown=app:app fl-services/flower/register-supernode-keys.sh /scripts/register-supernode-keys.sh
+
+# HOME is /app (the flwr/base image's own). A kit's FLIP_UID (FLIP#1731) owns nothing here, so
+# the SuperNode's ~/.flwr and the caches under ~/.cache need /app writable by any uid, sticky.
+RUN mkdir -p /app/.cache && chmod 1777 /app /app/.cache

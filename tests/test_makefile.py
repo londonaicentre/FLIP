@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from make_dry_run import KIT as DRY_RUN_KIT  # noqa: E402
 from make_dry_run import REPO, assert_data_safe, dry_run, main, run_target  # noqa: E402
 
 HUB_ONLY_SERVICES = {"flip-db", "flip-api"}  # what `make central-hub` starts (flip-api/Makefile `up`)
@@ -125,6 +126,24 @@ class HostDirsArePreparedNotEscalated(unittest.TestCase):
         assert "xnat-prepare-dirs KIT=SCR HUB=prod" in out, out
         assert "chown 1001:1001 /nonexistent/xnat /nonexistent/xnat/xnat-data" in out, out
         assert "rm -rf" not in out, out
+
+    def test_prepare_host_dirs_follows_the_kits_flip_uid(self):
+        """A kit's FLIP_UID:FLIP_GID is who every bind-mount writer runs as, so it is who owns the dirs;
+        FLIP_GID alone unset follows FLIP_UID (FLIP#1731)."""
+        out = dry_run("prepare-host-dirs", kit=DRY_RUN_KIT + "FLIP_UID=4242\nFLIP_GID=4243\n")
+        for needle in (
+            'chown 4242:4243 "$base"',  # the images base, then its net dirs
+            'owner="4242:4243"; mode=755',
+            "chown 4242:4243 /nonexistent/xnat /nonexistent/xnat/xnat-data",
+            'dir="/opt/flip/cohort-snapshots/trust-9"; owner="4242:4243"',
+            'chown 4242:4243 "$pacs"',
+            'chown 4242:4243 "$omop"',  # omop-db runs as that uid too, so its dir must be its
+        ):
+            assert needle in out, (needle, out)
+        for image_user in ("chown 999:999", "chown 1001:1001", 'owner="1000:1000"'):
+            assert image_user not in out, (image_user, out)
+        out = dry_run("prepare-host-dirs", kit=DRY_RUN_KIT + "FLIP_UID=4242\n")
+        assert 'owner="4242:4242"; mode=755' in out, out
 
     def test_prepare_host_dirs_refuses_a_non_root_user(self):
         if os.getuid() == 0:

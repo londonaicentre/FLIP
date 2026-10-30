@@ -1049,15 +1049,48 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
         nearest = next(p for p in (path, *path.parents) if p.exists())
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked.append(f"{var} ({nearest} is not writable)")
-    hints = [
-        f"Set {', '.join(DATA_DIR_VARS)} in {kit_path} to absolute paths on the data disk, then have"
-        " the host owner run `make -C trust prepare-host-dirs` once, as root: it creates them with their owners.",
-    ]
+    if kit_vars.get("FLIP_UID", "").strip() == str(os.getuid()):
+        then = "create them yourself with mkdir -p: the containers run as you (FLIP_UID)."
+    else:
+        then = (
+            "have the host owner run `make -C trust prepare-host-dirs` once, as root:"
+            " it creates them with their owners."
+        )
+    hints = [f"Set {', '.join(DATA_DIR_VARS)} in {kit_path} to absolute paths on the data disk, then {then}"]
     if blocked:
         return Check(label, Status.FAIL, f"cannot create: {'; '.join(blocked)}", hints=hints)
     if relative:
         return Check(label, Status.WARN, f"relative, so inside this checkout: {', '.join(relative)}", hints=hints)
     return Check(label, Status.PASS, "absolute")
+
+
+IMAGE_USERS = "1000 the APIs and the FLARE client, 999 Orthanc, 1001 xnat-web, 49999 the Flower SuperNode"
+
+
+def check_container_uid(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+    """Who the bind-mount writers run as, and whether that is this user (FLIP#1731).
+
+    FLIP_UID/FLIP_GID set to the operator's own ids means the directories they create need no
+    chown; any other value, or none, means `prepare-host-dirs` as root.
+    """
+    label = "Container uid"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    uid = kit_vars.get("FLIP_UID", "").strip()
+    gid = kit_vars.get("FLIP_GID", "").strip()
+    root_step = "the bind-mount dirs need `make -C trust prepare-host-dirs`, as root"
+    if not uid and not gid:
+        return Check(label, Status.PASS, f"unset: each image's own user ({IMAGE_USERS}); {root_step}")
+    if not (uid.isdigit() and gid.isdigit()):
+        return Check(
+            label,
+            Status.FAIL,
+            f"FLIP_UID={uid or '<unset>'} FLIP_GID={gid or '<unset>'}: both must be set, as numbers",
+            hints=[f"Edit {kit_path}: FLIP_UID=$(id -u) and FLIP_GID=$(id -g) run the containers as you."],
+        )
+    if (int(uid), int(gid)) == (os.getuid(), os.getgid()):
+        return Check(label, Status.PASS, f"{uid}:{gid}, this user: directories you create need no chown")
+    return Check(label, Status.WARN, f"{uid}:{gid} is not this user ({os.getuid()}:{os.getgid()}); {root_step}")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1100,6 +1133,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
         check_data_dir_paths(kit_vars, kit_present, kit_path),
+        check_container_uid(kit_vars, kit_present, kit_path),
     ]
 
 

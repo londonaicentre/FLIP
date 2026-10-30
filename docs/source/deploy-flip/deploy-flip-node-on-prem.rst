@@ -47,23 +47,31 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
 
 - **Docker socket access**: ``docker ps`` works, and the daemon is in swarm mode (``docker swarm init`` once, for
   XNAT). Socket access is root-equivalent on the host, so granting it is the host owner's decision, not FLIP's.
-- **Bind-mount directories owned by the uid of the container that writes them.** Setting another uid's ownership
-  needs root, so it is a host-preparation step, run once, not part of the bring-up. Whoever prepares the host
-  runs, as root on the host:
+- **Bind-mount directories owned by the uid of the container that writes them.** Two ways to get there:
 
-  .. code-block:: shell
+  - **Run the containers as yourself.** Set ``FLIP_UID`` and ``FLIP_GID`` in the kit to your own ids (``id -u``,
+    ``id -g``). Every container that writes a bind mount then runs as you, so the directories you create with
+    ``mkdir -p`` are already right and nothing needs root. This is the route for a host where you have Docker but
+    no ``sudo``. The one exception is ``xnat-db``, which still starts as root and re-owns its own data directory
+    (its Alpine Postgres cannot run as a uid it does not know): you create that directory too, and deleting it
+    later needs root.
+  - **Keep the images' own users** (the table below) and have whoever prepares the host run, once, as root:
 
-     make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
+    .. code-block:: shell
 
-  It creates every directory below with its owner and deletes nothing, so it is safe to re-run.
-  ``make up-onprem-trust`` then only checks the ownership, and a failed check names the same command.
+       make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
+
+    It creates every directory below with its owner and deletes nothing, so it is safe to re-run.
+
+  On the first route ``make up-onprem-trust`` creates the XNAT tree itself; on the second it only checks the
+  ownership, and a failed check names the fix.
 
   .. list-table::
      :header-rows: 1
      :widths: 40 12 48
 
      * - Written by
-       - uid
+       - uid (default)
        - Directory (kit file)
      * - trust-api, imaging-api, data-access-api, the FLARE client
        - 1000
@@ -79,7 +87,7 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
 
   Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR``
-  in the kit to absolute paths on the data disk before running ``prepare-host-dirs``. The kit template carries the
+  in the kit to absolute paths on the data disk before they are created. The kit template carries the
   development values, which are relative and so land inside the checkout; unset ones fall back to ``/opt/flip``.
   The checklist's *Data dir paths* row warns on a relative path and fails on one that does not exist yet and that
   you cannot create.
@@ -92,9 +100,10 @@ A host provisioned by the Ansible playbook below gives the login user none of th
 user to the ``docker`` group. There, every command on this page runs as ``sudo -E make …`` (``-E`` keeps your
 ``$HOME``, so root's Docker reuses your registry login), and the playbook has already created the directories. On
 a host where you already have Docker access but no ``sudo``, as in many trusted research environments, run them as
-yourself once the host owner has run ``prepare-host-dirs``. Rootless Docker is not supported: the
-images run as fixed uids that cannot write directories you own under it; use the Helm chart
-(:doc:`deploy-flip-node-kubernetes`) on such a host.
+yourself, with ``FLIP_UID``/``FLIP_GID`` set to your ids or once the host owner has run ``prepare-host-dirs``.
+Rootless Docker is untested and not supported: under it the container uids map to subordinate ids of your
+account, so ``FLIP_UID`` would have to name container root, which nothing here has exercised. Where Docker is not
+available to you at all, use the Helm chart (:doc:`deploy-flip-node-kubernetes`).
 
 .. _onprem-forward-proxy:
 
@@ -206,6 +215,10 @@ the admin manages them.
      - If needed
    * - Storage and bind-mount directories
      - Point them at your host's disk layout.
+     - If needed
+   * - ``FLIP_UID`` and ``FLIP_GID``
+     - Your own ids (``id -u``, ``id -g``) to run the containers as you, so the directories you create need no root
+       to prepare (:ref:`onprem-operator-access`). Leave unset to keep the images' own users.
      - If needed
    * - Trust-local passwords
      - Replace every default password in the *Trust-local credentials* section with a real secret.
