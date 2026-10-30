@@ -305,6 +305,7 @@ docker compose -f deploy/compose.development.yml run --rm <service>
 make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."  # Scaffold trust/.env.<CODE>.<env>
 make register-trusts                  # Register the shipped dev roster (trust/.env.*.development.example)
 make register-trust KIT=<CODE>        # Register one trust + fill its kit (creds + hub-shared block)
+make rotate-trust-keys KIT=<CODE>     # Reissue one registered trust's api + internal-service keys in place
 make sync-trust-kit KIT=<CODE> HUB=<env>   # Rotation only: refresh hub-shared values in trust/.env.<CODE>.<env>
 make sync-trust-kits                  # Refresh every locally-present kit file
 make generate-internal-service-key    # Generate fl-server-to-hub key
