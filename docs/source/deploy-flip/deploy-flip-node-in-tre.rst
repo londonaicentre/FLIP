@@ -85,7 +85,8 @@ The XNAT image carries its plugins, so a trust downloads none at start, on Compo
 
 - Allow the outbound connections in :ref:`deploy-trust-node-network`. The Central Hub API
   and the FL server are **separate** hosts, and the FL server must be exempt from TLS
-  inspection.
+  inspection. Once the kit file is on the host, ``make onboard-onprem-trust KIT=<CODE>`` probes
+  them from there and prints what it cannot reach: run it before and after the firewall change.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**
