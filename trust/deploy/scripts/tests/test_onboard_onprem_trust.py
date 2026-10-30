@@ -539,11 +539,12 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
         Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
     )
     for selected in selected_paths:
-        for hub in (None, "prod", "stag"):
+        for hub, sudo_user in ((None, None), ("prod", None), ("stag", None), ("prod", "operator")):
+            env = {k: v for k, v in (("HUB", hub), ("SUDO_USER", sudo_user)) if v is not None}
             out = io.StringIO()
             exit_code = None
             with (
-                mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
+                mock.patch.dict(os.environ, env, clear=True),
                 mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
                 mock.patch.object(sys, "stdout", out),
                 mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
@@ -553,9 +554,11 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
                 except SystemExit as error:
                     exit_code = error.code
             text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
-            command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
+            command = next(line.strip() for line in text.splitlines() if "make up-onprem-trust" in line)
             _assert(exit_code == 0, f"{selected.name}: READY exits 0")
-            expected = ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
+            # Docker socket access is the requirement; sudo appears only when the checklist ran under it.
+            expected = ["sudo", "-E"] if sudo_user else []
+            expected += ["make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
             if hub and hub != "prod":
                 expected.append(f"HUB={hub}")
             _assert(
@@ -745,6 +748,79 @@ def test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub() -> None:
     _assert(registries.status == mod.Status.PASS, "registries probed through probe_tcp", str(registries))
 
 
+def _paths(**kit: str):
+    return mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
+
+
+def test_36_relative_data_dirs_warn() -> None:
+    """The kit template's development paths resolve inside the checkout on a deployed trust (FLIP#1723)."""
+    print("▶ relative data dir paths -> WARN naming them")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(
+            OMOP_DATA_DIR=f"{td}/omop",
+            ORTHANC_STORAGE_DIR="./orthanc/orthanc-storage-trust1",
+            BASE_IMAGES_DOWNLOAD_DIR="./data/trust",
+            COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+        )
+    _assert(check.status == mod.Status.WARN, "WARN", f"{check.status}: {check.detail}")
+    _assert("ORTHANC_STORAGE_DIR, BASE_IMAGES_DOWNLOAD_DIR" in check.detail, "names both", check.detail)
+    _assert("trust/.env.SITE.prod" in check.hints[0], "hint names the kit", check.hints[0])
+
+
+def test_37_uncreatable_data_dir_fails() -> None:
+    """A dir the bring-up's mkdir cannot create fails here, not halfway through `up` (FLIP#1723)."""
+    print("▶ data dir under an unwritable parent -> FAIL; the container-made store is exempt")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        locked.mkdir()
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            check = _paths(
+                OMOP_DATA_DIR=f"{locked}/omop",
+                ORTHANC_STORAGE_DIR=f"{td}/orthanc",
+                BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
+                COHORT_SNAPSHOT_STORAGE_DIR=f"{locked}/snapshots",
+            )
+    _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
+    _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
+    _assert("COHORT_SNAPSHOT_STORAGE_DIR" not in check.detail, "membership store exempt", check.detail)
+
+
+def test_38_absolute_creatable_data_dirs_pass() -> None:
+    print("▶ absolute, creatable data dirs -> PASS")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(**{var: f"{td}/{var.lower()}" for var in mod.DATA_DIR_VARS})
+    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
+def test_39_trust_health_probe_ignores_the_proxy() -> None:
+    """Behind a TRE proxy with NO_PROXY unset, urllib would send 127.0.0.1 to the proxy (FLIP#1723)."""
+    print("▶ local trust-api probe bypasses http_proxy")
+    import http.server
+    import threading
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — http.server's name
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok"}')
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with mock.patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:9", "no_proxy": ""}):
+            try:
+                body = mod.fetch_local_trust_health(str(server.server_address[1]))
+            except OSError as error:
+                body = {"error": str(error)}
+    finally:
+        server.shutdown()
+    _assert(body == {"status": "ok"}, "answers directly", str(body))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -784,6 +860,10 @@ def main() -> None:
     test_33_fl_endpoint_comes_from_what_the_client_dials()
     test_34_registries_warn_and_name_the_mirror()
     test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub()
+    test_36_relative_data_dirs_warn()
+    test_37_uncreatable_data_dir_fails()
+    test_38_absolute_creatable_data_dirs_pass()
+    test_39_trust_health_probe_ignores_the_proxy()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

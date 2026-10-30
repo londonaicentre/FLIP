@@ -267,13 +267,13 @@ On a Compose Trust host, where ``<N>`` is the Trust's slot number:
 
    .. code-block:: shell
 
-      sudo docker ps --filter name=trust<N>-
+      docker ps --filter name=trust<N>-
 
 2. Check that Alloy can reach Loki:
 
    .. code-block:: shell
 
-      sudo docker logs trust<N>-alloy-1
+      docker logs trust<N>-alloy-1
 
 3. Check that the Docker socket (``/var/run/docker.sock``) is mounted into the Alloy container. Alloy cannot
    find containers without it.

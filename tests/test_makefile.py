@@ -109,6 +109,31 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert_data_safe(out, "upgrade-onprem-trust")
 
 
+class HostDirsArePreparedNotEscalated(unittest.TestCase):
+    """A deployed bring-up checks bind-mount ownership and never escalates to set it: that is
+    prepare-host-dirs, run once as root by whoever prepares the host (FLIP#1723)."""
+
+    def test_deployed_up_trust_runs_no_root_container_and_names_the_remedy(self):
+        out = dry_run("up-trust")
+        assert "alpine:3.20 chown" not in out, out
+        assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in out, out
+
+    def test_prepare_host_dirs_creates_every_mount_source(self):
+        out = dry_run("prepare-host-dirs")
+        for needle in ('pacs="/nonexistent/orthanc"', 'base="/nonexistent/images"', "cohort-snapshots/trust-9"):
+            assert needle in out, (needle, out)
+        assert "xnat-prepare-dirs KIT=SCR HUB=prod" in out, out
+        assert "chown 1001:1001 /nonexistent/xnat /nonexistent/xnat/xnat-data" in out, out
+        assert "rm -rf" not in out, out
+
+    def test_prepare_host_dirs_refuses_a_non_root_user(self):
+        if os.getuid() == 0:
+            self.skipTest("running as root")
+        result = run_target("prepare-host-dirs")
+        assert result.returncode != 0, result.stdout
+        assert "needs root" in result.stdout, result.stdout
+
+
 class RestartFlFleetProxies(unittest.TestCase):
     """restart-fl's server step carries Flower's fleet proxies, and drops them on NVFLARE (FLIP#1517).
 
@@ -459,7 +484,7 @@ with contextlib.redirect_stdout(out), \\
         mod.main()
     except SystemExit as error:
         assert error.code == 0
-ready = next(line.strip() for line in out.getvalue().splitlines() if 'sudo -E make up-onprem-trust' in line)
+ready = next(line.strip() for line in out.getvalue().splitlines() if 'make up-onprem-trust' in line)
 with mock.patch.object(mod.subprocess, 'run', return_value=mod.subprocess.CompletedProcess([], 1, 'bad policy', '')):
     check = mod.check_governance_document(
         {'ACCESS_POLICY_FILE': 'governance.toml'}, True, 'SITE', selected.parents[2], selected)
@@ -479,7 +504,9 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             for name, command in commands.items():
                 with self.subTest(hub=hub, command=name):
                     # Reuse the printed assignments, but run only the read-only checklist through stub uv.
-                    assignments = shlex.split(command)[4:]
+                    tokens = shlex.split(command)
+                    target = "up-onprem-trust" if name == "ready" else "check-governance"
+                    assignments = tokens[tokens.index(target) + 1 :]
                     self.run_make(
                         "onboard-onprem-trust",
                         None,

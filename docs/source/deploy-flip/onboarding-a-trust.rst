@@ -161,7 +161,7 @@ Step 6 — Check the trust is polling
    * - Platform
      - Command
    * - Docker Compose host
-     - ``sudo docker logs -f trust<N>-trust-api-1``
+     - ``docker logs -f trust<N>-trust-api-1``
    * - Kubernetes
      - ``kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api``
 
@@ -225,7 +225,7 @@ the AI Centre cannot hand on its copy, because the licences do not clearly allow
       * - Platform
         - Command
       * - Docker Compose host
-        - ``sudo docker restart trust<N>-data-access-api-1``
+        - ``docker restart trust<N>-data-access-api-1``
       * - Kubernetes
         - ``kubectl -n flip-trust rollout restart deployment/trust-release-flip-trust-data-access-api``
 
@@ -248,8 +248,8 @@ code does: FLARE job code runs in the FL client's job process, so code review re
    stops the FL client at startup, by design.
 #. Apply it:
 
-   - **Docker Compose host:** ``sudo -E make onboard-onprem-trust KIT=<CODE>`` from the repo root validates the
-     settings; then restart the FL clients with ``sudo -E make -C trust up-fl-clients-kit KIT=<CODE> HUB=prod``.
+   - **Docker Compose host:** ``make onboard-onprem-trust KIT=<CODE>`` from the repo root validates the
+     settings; then restart the FL clients with ``make -C trust up-fl-clients-kit KIT=<CODE> HUB=prod``.
    - **Kubernetes:** re-run the deploy (Step 4 on :doc:`deploy-flip-node-kubernetes`), which carries the settings
      into the chart.
 
@@ -277,7 +277,7 @@ to be re-issued.
 
 #. *Trust operator:* replace only the *Hub-shared* block in your kit file, then apply it:
 
-   - **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<CODE> YES=1`` from the repo root.
+   - **Docker Compose host:** ``make upgrade-onprem-trust KIT=<CODE> YES=1`` from the repo root.
    - **Kubernetes:** re-run the deploy (Step 4 on :doc:`deploy-flip-node-kubernetes`); it re-patches the keys into
      the Secret and restarts the API services.
 
@@ -294,7 +294,7 @@ Later — upgrade to a new release
 
 Check out the new release tag, then:
 
-- **Docker Compose host:** ``sudo -E make upgrade-onprem-trust KIT=<CODE>`` from the repo root.
+- **Docker Compose host:** ``make upgrade-onprem-trust KIT=<CODE>`` from the repo root.
 - **Kubernetes:** ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=prod``; see "Upgrading" on
   :doc:`deploy-flip-node-kubernetes`.
 

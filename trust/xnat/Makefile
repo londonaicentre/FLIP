@@ -12,7 +12,7 @@
 
 .PHONY: build up down up-xnat down-xnat upgrade-xnat xnat-backup xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-plugins-check xnat-reset xnat-configure \
-	xnat-configure-export-mask \
+	xnat-configure-export-mask xnat-prepare-dirs \
 	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_TAG,
@@ -233,6 +233,7 @@ define check_xnat_dir_owner
 		echo "    retrieval fails with the PACS reporting 'Peer aborted Association' and XNAT"; \
 		echo "    writes no logs to explain it (FLIP#1095)."; \
 		echo "    Fix: $(if $(2),$(2) ,)sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
+		$(prepare_host_dirs_hint); \
 		exit 1; \
 	fi
 endef
@@ -571,7 +572,10 @@ xnat-plugins-check:
 # Data dir defaults vary by HUB — see the XNAT_DATA_DIR comment above
 # for the resolution rule and how to override per-host.
 #
-# The two deployed branches provision under sudo. The development branch does too,
+# The remote deployed branch provisions over ssh under sudo, on a host FLIP administers. The
+# local one does it directly as root; for a non-root operator it deletes nothing and only checks
+# the empty tree `make -C trust prepare-host-dirs` made as root, refusing one that holds files
+# (FLIP#1723). The development branch provisions under sudo,
 # unless the invoking user IS the container uid, holds its gid and already owns
 # every directory under the tree — then the wipe, mkdir and chown all succeed
 # unprivileged (unlink needs write on the parent directory, so files a root-running
@@ -621,9 +625,17 @@ xnat-reset:
 				;; \
 			*) \
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
-				sudo rm -rf $(XNAT_DATA_DIR); \
-				sudo mkdir -p $(XNAT_DATA_DIRS); \
-				sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+				if [ "$$(id -u)" = 0 ]; then \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+				else \
+					echo "  👤 not root — deleting nothing, checking the tree prepare-host-dirs made (FLIP#1723)"; \
+					if [ -d $(XNAT_DATA_DIR) ] && [ -n "$$(find $(XNAT_DATA_DIR) -mindepth 1 ! -type d -print 2>&1 | head -n 1)" ]; then \
+						echo "❌  $(XNAT_DATA_DIR) holds files from an earlier install. This first install starts"; \
+						echo "    XNAT fresh, and deleting files owned by uid $(XNAT_CONTAINER_UID) needs root. As root on this host:"; \
+						echo "    rm -rf $(XNAT_DATA_DIR) && make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"; \
+						exit 1; \
+					fi; \
+				fi; \
 				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 				;; \
 		esac; \
@@ -642,6 +654,14 @@ xnat-reset:
 		$$priv chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
 		$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 	fi
+
+# The XNAT half of `make -C trust prepare-host-dirs` (FLIP#1723): the bind-mount sources, owned by
+# xnat-web's uid. Run as root; it deletes nothing (xnat-reset is the destructive first-install step).
+xnat-prepare-dirs:
+	$(require_kit)
+	mkdir -p $(XNAT_DATA_DIRS)
+	chown $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR) $(XNAT_DATA_DIR)/xnat-data $(XNAT_DATA_DIRS)
+	@$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS))
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
 # Usage: make xnat-configure XNAT_PROJECT=<stack-name>

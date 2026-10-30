@@ -239,7 +239,7 @@ containers on the trust host:
 .. code-block:: shell
 
    for c in omop-db orthanc data-access-api imaging-api; do
-     sudo docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust<N>-$c-1
+     docker inspect --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' trust<N>-$c-1
    done
 
 **Mock data is re-seedable; site data is not.** The mock OMOP rows and Orthanc studies come from the published trust
@@ -265,7 +265,7 @@ FLIP schedules none of these. Take them with the site running (see the warning u
 
    .. code-block:: shell
 
-      sudo -E make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
+      make -C trust/xnat xnat-backup KIT=<CODE> HUB=prod
 
    It writes ``$XNAT_DATA_DIR/backups/xnat-db-<timestamp>.sql.gz`` and keeps it only if the dump is complete. Copy it
    off the host: the first-install commands delete the whole ``XNAT_DATA_DIR``, dumps included.

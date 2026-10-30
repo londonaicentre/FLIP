@@ -258,9 +258,10 @@ def check_swarm() -> Check:
             Status.FAIL,
             "docker daemon is up but denied this user access",
             hints=[
-                "Expected on an on-prem host — the login user is deliberately not in the docker group"
-                " (membership is root-equivalent). Do NOT add yourself to the docker group;"
-                " re-run via: sudo -E make onboard-onprem-trust KIT=<CODE>",
+                "This user cannot reach the Docker socket. On a host provisioned by the on-prem playbook"
+                " that is deliberate (the docker group is root-equivalent): re-run via"
+                " sudo -E make onboard-onprem-trust KIT=<CODE>. Otherwise ask the host admin for Docker"
+                " access — see 'Access the operator needs' in the on-prem deployment guide.",
             ],
         )
     if state == "unavailable":
@@ -321,7 +322,9 @@ def fetch_local_trust_health(port: str, timeout: float = 3.0) -> dict:
     Raises whatever urllib raises when nothing answers — the caller maps that to PENDING.
     """
     request = urllib.request.Request(f"http://127.0.0.1:{port}/health", headers={"Accept": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 — loopback only
+    # No proxies: behind a forward proxy with NO_PROXY unset (a TRE), urllib would send loopback to the proxy.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(request, timeout=timeout) as response:  # noqa: S310 — loopback only
         body = json.loads(response.read().decode() or "{}")
     return body if isinstance(body, dict) else {}
 
@@ -467,7 +470,8 @@ def check_registries_reachable() -> Check:
         "; ".join(f"{host}: {why}" for host, why in unreachable.items()),
         hints=[
             "ghcr.io + pkg-containers.githubusercontent.com serve FLIP's images; the docker.io hosts the"
-            " logging stack, XNAT's socket proxy and the alpine helper. Pulls need both hosts of a registry.",
+            " logging stack, XNAT's socket proxy and the alpine image xnat-backup runs. Pulls need both hosts"
+            " of a registry.",
             f"Allow them outbound ({EGRESS_DOC}), or agree an image mirror with the FLIP team (FLIP#1721).",
         ],
     )
@@ -1011,6 +1015,51 @@ def check_data_dir(
     return Check(label, Status.PASS, str(resolved))
 
 
+# Every host-side bind-mount source a kit sets. The membership store is prepared by a container on
+# the docker host, so only the first three are created by a plain mkdir as this user.
+DATA_DIR_VARS: tuple[str, ...] = (
+    "OMOP_DATA_DIR",
+    "ORTHANC_STORAGE_DIR",
+    "BASE_IMAGES_DOWNLOAD_DIR",
+    "COHORT_SNAPSHOT_STORAGE_DIR",
+)
+MKDIR_DATA_DIR_VARS = DATA_DIR_VARS[:3]
+
+
+def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: str) -> Check:
+    """Every data dir is absolute, and the bring-up can create it as this user (FLIP#1723).
+
+    The kit template carries the development paths, which are relative: on a deployed trust they
+    resolve inside this checkout, on whatever disk it sits on. An unset one falls back to /opt/flip,
+    which a non-root operator usually cannot create.
+    """
+    label = "Data dir paths"
+    if not kit_present:
+        return Check(label, Status.PENDING, "pending — needs kit file")
+    relative: list[str] = []
+    blocked: list[str] = []
+    for var in DATA_DIR_VARS:
+        raw = kit_vars.get(var, "").strip()
+        if raw and not raw.startswith("/"):
+            relative.append(var)
+            continue
+        if var not in MKDIR_DATA_DIR_VARS:
+            continue
+        path = Path(raw or "/opt/flip")
+        nearest = next(p for p in (path, *path.parents) if p.exists())
+        if nearest != path and not os.access(nearest, os.W_OK):
+            blocked.append(f"{var} ({nearest} is not writable)")
+    hints = [
+        f"Set {', '.join(DATA_DIR_VARS)} in {kit_path} to absolute paths on the data disk, then have"
+        " the host owner run `make -C trust prepare-host-dirs` once, as root: it creates them with their owners.",
+    ]
+    if blocked:
+        return Check(label, Status.FAIL, f"cannot create: {'; '.join(blocked)}", hints=hints)
+    if relative:
+        return Check(label, Status.WARN, f"relative, so inside this checkout: {', '.join(relative)}", hints=hints)
+    return Check(label, Status.PASS, "absolute")
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Orchestration
 # ─────────────────────────────────────────────────────────────────────
@@ -1050,6 +1099,7 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit, kit_path),
         check_data_dir("OMOP data dir", "OMOP_DATA_DIR", kit_vars, kit_present, repo_root),
         check_data_dir("Orthanc storage dir", "ORTHANC_STORAGE_DIR", kit_vars, kit_present, repo_root),
+        check_data_dir_paths(kit_vars, kit_present, kit_path),
     ]
 
 
@@ -1076,6 +1126,14 @@ def main() -> None:
         "let it continue rather than suggest a command.",
     )
     args = parser.parse_args()
+
+    # The governance and site-privacy checks run stdlib tomllib under this interpreter.
+    if sys.version_info < (3, 11):
+        sys.exit(
+            f"❌ This checklist needs Python 3.11 or later; this is {sys.version.split()[0]}.\n"
+            "   `make onboard-onprem-trust` runs it under uv, which installs one if it can download it;\n"
+            "   otherwise run it with a python3.11+ the host provides."
+        )
 
     kit = args.kit or "Trust_2"
 
@@ -1115,10 +1173,12 @@ def main() -> None:
             print("  Proceeding.")
         else:
             print("  Bring the stack up:")
-            # sudo -E: the provisioned on-prem login user is deliberately not in the
-            # docker group (root-equivalent), so the stack comes up via sudo.
+            # Docker socket access is all the stack needs. Only a checklist that itself ran under
+            # sudo (the playbook-provisioned host, whose login user has no socket access) prints the
+            # same prefix for the next step (FLIP#1723).
+            prefix = "sudo -E " if os.environ.get("SUDO_USER") else ""
             command = (
-                f"sudo -E make up-onprem-trust {quote_make_assignment('KIT', kit)} "
+                f"{prefix}make up-onprem-trust {quote_make_assignment('KIT', kit)} "
                 f"{quote_make_assignment('KIT_FILE', kit_file)}"
             )
             hub = os.environ.get("HUB", "prod")

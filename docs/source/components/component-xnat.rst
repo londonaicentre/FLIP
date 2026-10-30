@@ -337,7 +337,7 @@ from the repo root on the trust host:
 
    make -C trust reconvert-nifti KIT=<CODE>
 
-Without ``LAUNCH=1`` it only reports what it would convert. On an on-prem host, prefix the command with ``sudo -E``.
+Without ``LAUNCH=1`` it only reports what it would convert.
 See :ref:`ts-k8s-nifti-backlog` for what it selects and its options.
 
 *****************

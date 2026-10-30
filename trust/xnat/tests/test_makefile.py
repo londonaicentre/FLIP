@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -55,10 +56,15 @@ class UpgradeXnat(unittest.TestCase):
 
 # A stand-in for the docker CLI, just enough of it for xnat-backup: `ps` finds the db by its service
 # label (NO_DB hides it), `exec` is the db container's `pg_dumpall | gzip` (DUMP=ok|fail|truncated),
-# and `run alpine …` runs the command here — under bash, as the containers' busybox sh has pipefail
-# and dash does not — with each `-v src:dst` mount rewritten to its host path.
+# `context` is a local daemon, and `run alpine …` runs the command here — under bash, as the
+# containers' busybox sh has pipefail and dash does not — with each `-v src:dst` mount rewritten
+# to its host path.
 STUB_DOCKER = r"""#!/bin/bash
 case "$1" in
+  context)
+    [ "$2" = show ] && echo default
+    [ "$2" = inspect ] && echo unix:///var/run/docker.sock
+    exit 0 ;;
   ps)
     [ -z "$NO_DB" ] && [[ "$*" == *"service.name="*"_xnat-db"* ]] && echo "stub-xnat-db"
     exit 0 ;;
@@ -215,6 +221,70 @@ class UpXnatBuild(unittest.TestCase):
         with mock.patch.dict(os.environ, {"XNAT_TAG": "stag"}):
             out = dry_run("up-xnat", subdir="trust/xnat")
         assert "XNAT_TAG=sha-badcff1" in out, out
+
+
+# Neither sudo nor a root container may be reached on the non-root path (FLIP#1723).
+REFUSING = {
+    "sudo": '#!/bin/sh\necho "STUB: sudo called" >&2\nexit 1\n',
+    "docker": '#!/bin/sh\ncase "$1" in\n  context)\n    [ "$2" = show ] && echo default\n'
+    '    [ "$2" = inspect ] && echo unix:///var/run/docker.sock\n    exit 0 ;;\nesac\n'
+    'echo "STUB: docker $1 called" >&2\nexit 1\n',
+}
+
+
+class XnatDirsWithoutRoot(unittest.TestCase):
+    """xnat-reset's local prod branch and xnat-prepare-dirs, run for real as a non-root user who is given
+    the container uid (so ownership checks can pass): no sudo, no root container (FLIP#1723)."""
+
+    def _run(self, target: str, data: Path, tmp: str) -> subprocess.CompletedProcess[str]:
+        bin_dir = Path(tmp) / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        for name, body in REFUSING.items():
+            (bin_dir / name).write_text(body)
+            (bin_dir / name).chmod(0o755)
+        return run_target(
+            target,
+            f"XNAT_DATA_DIR={data}",
+            f"XNAT_CONTAINER_UID={os.getuid()}",
+            f"XNAT_CONTAINER_GID={os.getgid()}",
+            subdir="trust/xnat",
+            env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        )
+
+    def setUp(self):
+        if os.getuid() == 0:
+            self.skipTest("running as root takes the direct branch")
+
+    def test_prepare_dirs_then_reset_completes_without_escalating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            prepared = self._run("xnat-prepare-dirs", data, tmp)
+            assert prepared.returncode == 0, prepared.stdout + prepared.stderr
+            for name in ("tomcat_logs", "archive", "build", "cache", "../xnat-db-data"):
+                assert (data / "xnat-data" / name).is_dir(), name
+            reset = self._run("xnat-reset", data, tmp)
+            assert reset.returncode == 0, reset.stdout + reset.stderr
+            assert "STUB:" not in reset.stderr, reset.stderr
+
+    def test_a_tree_with_files_is_refused_not_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "xnat"
+            assert self._run("xnat-prepare-dirs", data, tmp).returncode == 0
+            left = data / "xnat-data" / "archive" / "study.dcm"
+            left.write_text("x")
+            reset = self._run("xnat-reset", data, tmp)
+            assert reset.returncode != 0, reset.stdout
+            assert "holds files from an earlier install" in reset.stdout, reset.stdout
+            assert f"rm -rf {data} && make -C trust prepare-host-dirs KIT=SCR HUB=prod" in reset.stdout, reset.stdout
+            assert left.exists(), "a non-root reset must delete nothing"
+            assert "STUB:" not in reset.stderr, reset.stderr
+
+    def test_a_missing_tree_names_prepare_host_dirs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reset = self._run("xnat-reset", Path(tmp) / "absent", tmp)
+            assert reset.returncode != 0, reset.stdout
+            assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in reset.stdout, reset.stdout
+            assert "STUB:" not in reset.stderr, reset.stderr
 
 
 if __name__ == "__main__":

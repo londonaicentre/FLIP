@@ -24,10 +24,11 @@ Prerequisites
 The requirements every trust node shares (trust data, Central Hub, network) are on :doc:`deploy-trust-node`. The
 host itself needs:
 
-- **Ubuntu 22.04 or newer**, physical or VM, with a user that has ``sudo`` rights (default ``ubuntu``).
+- **Ubuntu 22.04 or newer**, physical or VM, with a login user that has the access listed under
+  `Access the operator needs`_ (the Ansible step also needs ``sudo``).
 - **Internet access**, to pull Docker images and packages.
 - **Docker in swarm mode** (XNAT runs as a swarm stack). The readiness checklist tells you if it is missing; the
-  one-off fix is ``sudo docker swarm init``.
+  one-off fix is ``docker swarm init``.
 - **A writable directory for FLIP**, default ``/opt/flip``, with the sub-directories the stack mounts. The
   :gh:`on-prem Ansible playbook <trust/deploy/ansible/onprem.yml>` creates them and shows the full list.
 - **For GPU training or evaluation:** an NVIDIA GPU on driver **580 or newer** (check *Driver Version* in
@@ -36,11 +37,96 @@ host itself needs:
   The FL images bring their own CUDA 13 runtime, so the host needs no CUDA toolkit. The playbook installs neither
   the driver nor the toolkit. A CPU-only host (``NUM_AVAILABLE_GPUS=0`` in the kit) needs neither.
 
-.. note::
+.. _onprem-operator-access:
 
-   On the trust host, every command that touches Docker runs with ``sudo -E``. The playbook deliberately does not
-   add the login user to the ``docker`` group, because membership is equivalent to root access. ``-E`` keeps your
-   ``$HOME``, so root's Docker reuses your registry login for image pulls.
+*************************
+Access the operator needs
+*************************
+
+No FLIP command on this page runs ``sudo`` itself. The account that runs them needs:
+
+- **Docker socket access**: ``docker ps`` works, and the daemon is in swarm mode (``docker swarm init`` once, for
+  XNAT). Socket access is root-equivalent on the host, so granting it is the host owner's decision, not FLIP's.
+- **Bind-mount directories owned by the uid of the container that writes them.** Setting another uid's ownership
+  needs root, so it is a host-preparation step, run once, not part of the bring-up. Whoever prepares the host
+  runs, as root on the host:
+
+  .. code-block:: shell
+
+     make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
+
+  It creates every directory below with its owner and deletes nothing, so it is safe to re-run.
+  ``make up-onprem-trust`` then only checks the ownership, and a failed check names the same command.
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 40 12 48
+
+     * - Written by
+       - uid
+       - Directory (kit file)
+     * - trust-api, imaging-api, data-access-api, the FLARE client
+       - 1000
+       - ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``
+     * - xnat-web
+       - 1001
+       - ``XNAT_DATA_DIR``
+     * - Orthanc
+       - 999
+       - ``ORTHANC_STORAGE_DIR``
+     * - Flower SuperNode
+       - gid 49999
+       - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
+
+  Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR``
+  in the kit to absolute paths on the data disk before running ``prepare-host-dirs``. The kit template carries the
+  development values, which are relative and so land inside the checkout; unset ones fall back to ``/opt/flip``.
+  The checklist's *Data dir paths* row warns on a relative path and fails on one that does not exist yet and that
+  you cannot create.
+- **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).
+- **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``, which read TOML with
+  the standard library. ``uv`` installs one when it can download it; otherwise the host must provide a
+  ``python3.11`` or newer. The checklist refuses an older interpreter up front.
+
+A host provisioned by the Ansible playbook below gives the login user none of this, on purpose: it does not add the
+user to the ``docker`` group. There, every command on this page runs as ``sudo -E make …`` (``-E`` keeps your
+``$HOME``, so root's Docker reuses your registry login), and the playbook has already created the directories. On
+a host where you already have Docker access but no ``sudo``, as in many trusted research environments, run them as
+yourself once the host owner has run ``prepare-host-dirs``. Rootless Docker is not supported: the
+images run as fixed uids that cannot write directories you own under it; use the Helm chart
+(:doc:`deploy-flip-node-kubernetes`) on such a host.
+
+.. _onprem-forward-proxy:
+
+Behind a forward proxy
+======================
+
+Where all outbound traffic goes through a proxy, as in most trusted research environments, three settings matter:
+
+- **Image pulls** use the Docker daemon's own proxy setting (a systemd drop-in). The host owner sets it.
+- **Containers** get no proxy unless you give them one. Without it, trust-api cannot reach the hub and the FL client
+  cannot reach the FL server. Put it in your Docker client config, ``~/.docker/config.json``; Compose passes it to
+  every container it creates. ``noProxy`` must name the stack's own services, or their calls to each other go to the
+  proxy too. Add your site's internal domains to it.
+
+  .. code-block:: json
+
+     {
+       "proxies": {
+         "default": {
+           "httpProxy": "http://proxy.example.nhs.uk:3128",
+           "httpsProxy": "http://proxy.example.nhs.uk:3128",
+           "noProxy": "localhost,127.0.0.1,trust-api,data-access-api,imaging-api,orthanc,omop-db,xnat-web,loki"
+         }
+       }
+     }
+
+  Merge the ``proxies`` key into the file if it exists; containers created before the change keep their old
+  environment until they are recreated. The proxy must also allow the FL server's port (the kit's
+  ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``), not only 443.
+- **Your shell** may export ``http_proxy`` too. Then ``curl http://127.0.0.1:<port>`` goes to the proxy, and a
+  published port seems not to answer. Use ``curl --noproxy '*' …``, or export ``NO_PROXY=localhost,127.0.0.1``
+  (and ``no_proxy``). The readiness checklist's own probe bypasses the proxy.
 
 *******************************
 Provision the host with Ansible
@@ -143,10 +229,13 @@ Step 4 — Run the readiness checklist and start the stack
 
 *Who: trust operator, from the repo root*
 
+Unless you run as root or on a host the playbook provisioned, the host owner first runs
+``make -C trust prepare-host-dirs KIT=<CODE> HUB=prod`` as root (:ref:`onprem-operator-access`).
+
 .. code-block:: shell
 
-   sudo -E make onboard-onprem-trust KIT=<CODE>   # readiness checklist
-   sudo -E make up-onprem-trust KIT=<CODE>        # starts only if every check passes
+   make onboard-onprem-trust KIT=<CODE>   # readiness checklist
+   make up-onprem-trust KIT=<CODE>        # starts only if every check passes
 
 Both default to the production hub (``HUB=prod``); add ``HUB=stag`` for staging. The checklist prints a ✅ or ❌ for
 each precondition: the kit file, Docker swarm, the hub-shared settings and credentials being filled in, the hub API
@@ -178,7 +267,7 @@ Every trust container is named ``trust<N>-<service>-1``, where ``<N>`` is ``FL_K
    * - Symptom
      - Check
    * - Trust not polling the hub
-     - Is the stack running (``sudo docker ps``)? Look for polling errors in ``sudo docker logs trust<N>-trust-api-1``.
+     - Is the stack running (``docker ps``)? Look for polling errors in ``docker logs trust<N>-trust-api-1``.
    * - ``Connection timed out`` (FL)
      - Is a host or network firewall blocking outbound traffic on the FL port (8002 for production, 8003 for staging)?
    * - Ansible ``Permission denied``

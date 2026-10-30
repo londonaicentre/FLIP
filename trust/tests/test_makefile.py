@@ -83,6 +83,14 @@ class UpgradeTrust(unittest.TestCase):
         assert "alpine:3.20" in out, out
         assert " alpine " not in out.replace("alpine:3.20", ""), out
 
+    def test_a_local_deployed_store_is_checked_not_escalated(self):
+        """Only a remote DOCKER_CONTEXT prepares the store through a container; locally a non-root operator
+        gets the check and the prepare-host-dirs remedy (FLIP#1723)."""
+        out = dry_run("_upgrade-trust-apply")
+        assert '[ -n "$DOCKER_CONTEXT" ]' in out, out
+        assert "alpine:3.20 chown" not in out, out
+        assert "prepare-host-dirs KIT=SCR HUB=prod" in out, out
+
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""
         out = dry_run("up-trust")
