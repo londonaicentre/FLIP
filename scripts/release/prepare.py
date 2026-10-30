@@ -150,19 +150,22 @@ def unlabelled_prs(previous: str) -> list[dict]:
     A commit range, not the tag's date: a hotfix tag is cut on main after develop has moved on, so PRs merged
     into develop before it was tagged still ship in this release (v0.13.2 hid a week of them).
     """
-    shas = set(git("log", "--format=%H", f"{previous}..HEAD").split())
-    if not shas:
+    times = dict(line.split() for line in git("log", "--format=%H %ct", f"{previous}..HEAD").splitlines())
+    if not times:
         return []
-    # Every PR's merge lands after the range's oldest commit; a day's margin, as the sha filter decides.
-    oldest = min(int(t) for t in git("log", "--format=%ct", f"{previous}..HEAD").split())
-    since = datetime.fromtimestamp(oldest - 86400, timezone.utc).date().isoformat()
+    # Each candidate's own merge commit is in the range, so none merged before its oldest commit; the day
+    # only absorbs clock skew between git and GitHub and the cut to a UTC date.
+    since = datetime.fromtimestamp(min(map(int, times.values())) - 86400, timezone.utc).date().isoformat()
     prs = _gh_json(
         "pr", "list", "--base", "develop", "--state", "merged", "--limit", str(PR_LIMIT),
         "--search", f"merged:>={since}", "--json", "number,title,labels,mergeCommit",
     )  # fmt: skip
     if len(prs) >= PR_LIMIT:
         raise ReleaseError(f"{len(prs)} PRs merged since {since}: the label check would be truncated")
-    return [p for p in prs if (p.get("mergeCommit") or {}).get("oid") in shas and not p["labels"]]
+    unknown = [f"#{p['number']}" for p in prs if not (p.get("mergeCommit") or {}).get("oid")]
+    if unknown:
+        raise ReleaseError(f"GitHub reports no merge commit for {', '.join(unknown)}: cannot tell if they ship")
+    return [p for p in prs if p["mergeCommit"]["oid"] in times and not p["labels"]]
 
 
 def dependabot_open() -> int:

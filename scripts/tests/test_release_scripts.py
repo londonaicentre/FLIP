@@ -471,23 +471,35 @@ class Prepare(unittest.TestCase):
             {"number": 3, "title": "c", "labels": [], "mergeCommit": {"oid": "ccc"}},
             {"number": 4, "title": "d", "labels": [], "mergeCommit": {"oid": "ddd"}},
         ]
-        log = {"%H": "aaa\nbbb\nccc", "%ct": "1761300000\n1761000000\n1761200000"}
+        log = "aaa 1792843200\nbbb 1792497600\nccc 1792670400"  # 24, 20 and 22 Oct 2026
         with (
-            mock.patch.object(prepare, "git", side_effect=lambda *a: log[a[1].removeprefix("--format=")]) as git,
+            mock.patch.object(prepare, "git", return_value=log) as git,
             mock.patch.object(prepare, "_gh_json", return_value=prs) as gh,
         ):
             assert [p["number"] for p in prepare.unlabelled_prs("v9.8.1")] == [1, 3]
         assert git.call_args.args[-1] == "v9.8.1..HEAD"
-        assert "merged:>=2025-10-19" in gh.call_args.args  # a day before the oldest commit in the range
+        assert "merged:>=2026-10-19" in gh.call_args.args  # a day before the oldest commit in the range
 
     def test_unlabelled_prs_refuses_a_truncated_search(self):
         prs = [{"number": 1, "title": "a", "labels": [{"name": "x"}], "mergeCommit": {"oid": "aaa"}}]
         with (
-            mock.patch.object(prepare, "git", return_value="1761000000"),
+            mock.patch.object(prepare, "git", return_value="aaa 1792497600"),
             mock.patch.object(prepare, "PR_LIMIT", 1),
             mock.patch.object(prepare, "_gh_json", return_value=prs),
         ):
             assert "truncated" in str(refused(prepare.unlabelled_prs, "v9.8.1"))
+
+    def test_unlabelled_prs_refuses_a_pr_without_a_merge_commit(self):
+        # Fail closed: without its merge commit the range cannot say whether the PR ships in this release.
+        prs = [
+            {"number": 1, "title": "a", "labels": [], "mergeCommit": {"oid": "aaa"}},
+            {"number": 2, "title": "b", "labels": [{"name": "x"}], "mergeCommit": None},
+        ]
+        with (
+            mock.patch.object(prepare, "git", return_value="aaa 1792497600"),
+            mock.patch.object(prepare, "_gh_json", return_value=prs),
+        ):
+            assert "#2" in str(refused(prepare.unlabelled_prs, "v9.8.1"))
 
     def test_version_files_round_trip(self):
         for rel in ("pyproject.toml", "flip-ui/package.json", prepare.FLIP_UTILS):
