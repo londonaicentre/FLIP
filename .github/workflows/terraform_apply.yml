@@ -93,6 +93,13 @@ on:
           reach GET /fl/quiesce, so nothing verifies it.
         type: boolean
         default: false
+      hold_minutes:
+        description: >-
+          Staging only. Minutes to keep staging up after the end to end check
+          before stopping it. Empty uses the repository variable
+          STAGING_HOLD_MINUTES, or 120. Ignored on main.
+        type: string
+        default: ""
       release_tag:
         description: >-
           Pin this release (v<X.Y.Z>) instead of the commit's sha image. Set by
@@ -112,6 +119,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # FLIP#1596. Staging is stopped between deploys, so the apply has to turn it on
+  # before it can plan: Terraform refreshes RDS on every plan and a stopped
+  # instance fails the refresh, not the apply, which reads as a broken pipeline
+  # rather than a sleeping database. This also restores the ECS desired counts,
+  # which the apply itself no longer does now that ecs_services.tf ignores them.
+  #
+  # Idempotent on an estate that is already up, so a start against a running
+  # estate costs one describe call per resource and nothing else. A merge made
+  # while a hold is sleeping is not that case: the workflow-level
+  # `tf-apply-<ref>` group has `cancel-in-progress: false`, so the new run would
+  # otherwise queue behind the whole hold and its stop, and then start an estate
+  # that is still stopping. Claiming `stag-hold` here cancels the sleeping hold
+  # before the merge waits on it, which is also the right outcome on its own
+  # terms: the hold's purpose is to keep staging up after a deploy, and a newer
+  # deploy supersedes it. The hold-then-stop job at the end of this run opens a
+  # fresh window.
+  start-staging:
+    name: Start staging before the apply
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
+    concurrency:
+      group: stag-hold
+      cancel-in-progress: true
+    uses: ./.github/workflows/staging_lifecycle.yml
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    secrets: inherit # pragma: allowlist secret
+    with:
+      # The data half only. The ECS counts are restored after the gate, by the
+      # restore-staging-services job below.
+      action: start-stag-data
+
   apply:
     name: Apply (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
     # Setting the repository variable TF_STAG_DISABLED=true pauses the staging
@@ -119,11 +159,24 @@ jobs:
     # estate that was torn down on purpose. It is a repository variable rather
     # than an aws-stag one because a job-level `if` is evaluated before the job's
     # environment is loaded. Production (main) never reads it.
+    #
     # Outside londonaicentre/FLIP, plan, apply and drift all skip unless the
     # repository variable TF_CI_ON_FORK is `true` (adopters:
     # deploy/providers/AWS/ci/README.md). A fork has no aws-* environments, so each
     # run would fail and mail whoever pushed, or for drift whoever last edited it.
-    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
+    #
+    # `always()` is required because start-staging is skipped on main, and a
+    # skipped dependency would otherwise skip this job, i.e. silently stop every
+    # production apply. The result checks below are what stop `always()` from
+    # meaning "apply even though staging could not be started": planning against a
+    # database that never came up produces a refresh error, not a plan.
+    needs: [start-staging]
+    if: >-
+      (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true')
+      && always()
+      && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
+      && needs.start-staging.result != 'failure'
+      && needs.start-staging.result != 'cancelled'
     runs-on: ubuntu-latest
     environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
     permissions:
@@ -354,11 +407,37 @@ jobs:
           # what was applied.
           upload-plan: false
 
+      # FLIP#1596. The gate below asks whether this apply could disturb a training
+      # run. On a stopped staging estate the answer is no by construction: with
+      # fl-server-net-1 and fl-api-net-1 at desired count 0 there is no task to
+      # interrupt and none can start, so there is nothing for an operator to
+      # attest to. Without this, every develop apply to a stopped estate, a docs
+      # only merge included, holds for an fl_quiesced dispatch that means nothing.
+      #
+      # This is a MEASUREMENT, not an attestation. It asks ECS, in this job,
+      # moments before the plan is read, and it is deliberately taken before
+      # restore-staging-services puts the counts back. It never runs on main: the
+      # production estate is not stopped by anything, so a true here could only
+      # ever come from a bug or a misconfigured variable, and the step not
+      # existing is a stronger guarantee than the step returning false.
+      - name: Check whether the FL services are stopped
+        id: fl_state
+        if: github.ref_name != 'main'
+        continue-on-error: true
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: deploy/providers/AWS/scripts/staging-power.sh status
+
       # Hazard B. Exit 1 holds the deploy with the resources named; exit 2 means
       # the plan could not be read, which is also a hold — never an apply.
       - name: Check the plan for FL impact
         if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.fl_quiesced) }}
         working-directory: deploy/providers/AWS
+        env:
+          # Empty on main and on any run where the step above could not answer,
+          # and the script treats anything but the literal "true" as "the gate
+          # stands", so a failed measurement holds rather than releases.
+          FL_SERVICES_STOPPED: ${{ steps.fl_state.outputs.fl_stopped }}
         run: |
           terraform show -json tfplan > tfplan.json
           scripts/check-fl-plan-impact.sh tfplan.json
@@ -445,3 +524,159 @@ jobs:
     with:
       environment: ${{ github.ref_name == 'main' && 'aws-prod' || 'aws-stag' }}
       release_tag: ${{ inputs.release_tag }}
+
+  # ---------------------------------------------------------------------------
+  # The staging cycle after the apply (FLIP#1596): restore, check, hold, stop.
+  # None of these jobs exists on a production apply. They are gated on the ref
+  # rather than on an environment ternary so that there is no expression anywhere
+  # in this file that could select aws-prod for a stop.
+  # ---------------------------------------------------------------------------
+
+  # The counts the gate needed to see at 0. Terraform no longer owns them
+  # (ecs_services.tf, ignore_changes = [desired_count]), so this is what brings
+  # the services back after an apply: the "no manual steps" half of the start
+  # path.
+  restore-staging-services:
+    name: Restore the staging ECS services
+    needs: [apply]
+    if: github.ref_name != 'main' && needs.apply.result == 'success' && vars.TF_STAG_DISABLED != 'true'
+    uses: ./.github/workflows/staging_lifecycle.yml
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    secrets: inherit # pragma: allowlist secret
+    with:
+      action: start-stag-services
+
+  # The end to end check. FLIP#1596 asks for login, a cohort query and an FL round;
+  # none of those can run from a GitHub runner today, so this is deliberately the
+  # smaller thing it asks for second: an unauthenticated reachability check of the
+  # deployed hub, reported on the run summary.
+  #
+  # What it does NOT do, and why. Login needs a Cognito user and MFA is on; a
+  # cohort query needs that session; an FL round needs reachable trusts, which on
+  # LZA sit behind the networking account's edge and are not addressable from a
+  # hosted runner. Each of those is a credential and a route this workflow does not
+  # have, and inventing an unauthenticated path to them would be a hole in the
+  # estate, not a test. The existing suites are no help either: local_auth_smoke.yml
+  # boots a compose stack with no AWS at all, and `make e2e_smoke` is a dev box
+  # target that needs FL images and trusts. So: a health probe now, and a real
+  # authenticated end to end check when there is a CI identity to run it as.
+  #
+  # Never blocks the stop. A hub that does not answer is a reason to look, not a
+  # reason to leave staging running all night.
+  staging-end-to-end:
+    name: End to end check against staging
+    needs: [apply, restore-staging-services]
+    if: github.ref_name != 'main' && needs.apply.result == 'success' && vars.TF_STAG_DISABLED != 'true'
+    runs-on: ubuntu-latest
+    # Required, not cosmetic. LZA_WEB_EDGE_DOMAIN is an aws-stag environment
+    # variable, not a repository one, so a job with no environment reads it as
+    # empty, skips the probe and reports a warning annotation nobody reads. The
+    # whole check then passes without having checked anything. Hard-coded rather
+    # than a ternary for the same reason as staging_lifecycle.yml: nothing here
+    # should be able to select aws-prod.
+    environment: aws-stag
+    permissions:
+      contents: read
+    steps:
+      - name: Probe the deployed hub
+        id: probe
+        # The probe itself is allowed to fail so that the report step below runs
+        # and renders the summary; the report step is what sets the job's result.
+        continue-on-error: true
+        env:
+          # Set STAGING_HEALTH_URL to point the check somewhere specific;
+          # otherwise it is derived from the LZA web edge domain.
+          HEALTH_URL: ${{ vars.STAGING_HEALTH_URL }}
+          EDGE_DOMAIN: ${{ vars.LZA_WEB_EDGE_DOMAIN }}
+        run: |
+          set -uo pipefail
+          url="${HEALTH_URL}"
+          if [[ -z "${url}" && -n "${EDGE_DOMAIN}" ]]; then
+            url="https://${EDGE_DOMAIN}/api/health"
+          fi
+          if [[ -z "${url}" ]]; then
+            echo "verdict=skipped" >> "$GITHUB_OUTPUT"
+            echo "::warning title=End to end check skipped::Neither STAGING_HEALTH_URL nor LZA_WEB_EDGE_DOMAIN is set, so there is no address to probe."
+            exit 0
+          fi
+          echo "Probing ${url}"
+          # The service has just been scaled from 0, so the first minute is an ECS
+          # task pulling an image and an ALB target going healthy. Retrying is the
+          # check; a single immediate curl would only ever measure that.
+          code=000
+          for attempt in $(seq 1 30); do
+            code="$(curl -sS -o "${RUNNER_TEMP}/body.txt" -w '%{http_code}' --max-time 15 "${url}" || echo 000)"
+            [[ "${code}" =~ ^(2|3)[0-9][0-9]$ ]] && break
+            echo "attempt ${attempt}: HTTP ${code}"
+            sleep 20
+          done
+          echo "status=${code}" >> "$GITHUB_OUTPUT"
+          if [[ "${code}" =~ ^(2|3)[0-9][0-9]$ ]]; then
+            echo "verdict=passed" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=failed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report the result
+        if: always()
+        env:
+          VERDICT: ${{ steps.probe.outputs.verdict }}
+          STATUS: ${{ steps.probe.outputs.status }}
+        run: |
+          set -euo pipefail
+          case "${VERDICT:-failed}" in
+            passed)  icon="✅"; text="The deployed hub answered (HTTP ${STATUS})." ;;
+            skipped) icon="⏭️"; text="No address configured, so nothing was probed. Set STAGING_HEALTH_URL or LZA_WEB_EDGE_DOMAIN on the aws-stag environment." ;;
+            *)       icon="❌"; text="The deployed hub did not answer (last status ${STATUS:-none})." ;;
+          esac
+          {
+            echo "### ${icon} End to end check against staging"
+            echo
+            echo "${text}"
+            echo
+            echo "Staging now enters its hold window; it stops when the window ends."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "${icon} ${text}"
+
+          # The job's verdict. A check that renders ❌ on the summary and still
+          # exits 0 is not a check, and "skipped" is a failure too: it means the
+          # deploy was never verified, which is indistinguishable from a silent
+          # misconfiguration of the address. hold-then-stop-staging runs under
+          # `always()`, so failing here never leaves staging up.
+          case "${VERDICT:-failed}" in
+            passed) ;;
+            skipped)
+              echo "::error title=End to end check not run::Neither STAGING_HEALTH_URL nor LZA_WEB_EDGE_DOMAIN is set on aws-stag, so the deploy was not verified."
+              exit 1
+              ;;
+            *)
+              echo "::error title=End to end check failed::The deployed hub did not answer (last status ${STATUS:-none})."
+              exit 1
+              ;;
+          esac
+
+  # The hold, then the stop. `needs` the end to end job but not its verdict: a
+  # failed probe must not leave staging running indefinitely, which is the state
+  # this whole issue exists to end.
+  hold-then-stop-staging:
+    name: Hold staging, then stop it
+    needs: [apply, staging-end-to-end]
+    if: >-
+      always() && github.ref_name != 'main'
+      && needs.apply.result == 'success'
+      && vars.TF_STAG_DISABLED != 'true'
+    uses: ./.github/workflows/staging_lifecycle.yml
+    permissions:
+      contents: read
+      id-token: write
+      actions: read
+    secrets: inherit # pragma: allowlist secret
+    with:
+      action: hold-then-stop
+      # Empty on a push, which is what makes the repository variable
+      # STAGING_HOLD_MINUTES the default for merges while a dispatch can still
+      # override it per run.
+      hold_minutes: ${{ inputs.hold_minutes }}

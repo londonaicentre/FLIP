@@ -73,6 +73,7 @@ module "terraform_ci" {
   state_key                      = var.state_key
   plan_workflow_file             = var.plan_workflow_file
   apply_workflow_file            = var.apply_workflow_file
+  power_workflow_file            = var.power_workflow_file
   drift_workflow_file            = var.drift_workflow_file
   flip_api_secret_name           = var.flip_api_secret_name
   managed_role_names             = var.managed_role_names
