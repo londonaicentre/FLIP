@@ -120,27 +120,15 @@ concurrency:
 
 jobs:
   # FLIP#1596. Staging is stopped between deploys, so the apply has to turn it on
-  # before it can plan: Terraform refreshes RDS on every plan and a stopped
-  # instance fails the refresh, not the apply, which reads as a broken pipeline
-  # rather than a sleeping database. This also restores the ECS desired counts,
-  # which the apply itself no longer does now that ecs_services.tf ignores them.
+  # before it applies: a stopped RDS instance cannot be modified. This also
+  # restores the ECS desired counts, which the apply itself no longer does now
+  # that ecs_services.tf ignores them.
   #
   # Idempotent on an estate that is already up, so a start against a running
-  # estate costs one describe call per resource and nothing else. A merge made
-  # while a hold is sleeping is not that case: the workflow-level
-  # `tf-apply-<ref>` group has `cancel-in-progress: false`, so the new run would
-  # otherwise queue behind the whole hold and its stop, and then start an estate
-  # that is still stopping. Claiming `stag-hold` here cancels the sleeping hold
-  # before the merge waits on it, which is also the right outcome on its own
-  # terms: the hold's purpose is to keep staging up after a deploy, and a newer
-  # deploy supersedes it. The hold-then-stop job at the end of this run opens a
-  # fresh window.
+  # estate costs one describe call per resource and nothing else.
   start-staging:
     name: Start staging before the apply
     if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
-    concurrency:
-      group: stag-hold
-      cancel-in-progress: true
     uses: ./.github/workflows/staging_lifecycle.yml
     permissions:
       contents: read
@@ -151,6 +139,22 @@ jobs:
       # The data half only. The ECS counts are restored after the gate, by the
       # restore-staging-services job below.
       action: start-stag-data
+
+  # A newer deploy supersedes the previous one's hold window. Claiming `stag-hold`
+  # cancels a sleeping hold, and the lifecycle's stop declines a cancelled hold;
+  # this run's hold-then-stop-staging opens a fresh window. It is its own job, not
+  # a claim on start-staging, so a `hold-then-stop` dispatched while start-staging
+  # waits on RDS cancels this no-op rather than the start and the apply behind it.
+  supersede-hold:
+    name: End the previous hold window
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: stag-hold
+      cancel-in-progress: true
+    permissions: {}
+    steps:
+      - run: echo "Claimed stag-hold; a sleeping hold from an earlier deploy is cancelled."
 
   apply:
     name: Apply (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
@@ -168,8 +172,8 @@ jobs:
     # `always()` is required because start-staging is skipped on main, and a
     # skipped dependency would otherwise skip this job, i.e. silently stop every
     # production apply. The result checks below are what stop `always()` from
-    # meaning "apply even though staging could not be started": planning against a
-    # database that never came up produces a refresh error, not a plan.
+    # meaning "apply even though staging could not be started": a database that
+    # never came up cannot be modified, so the apply would fail part way.
     needs: [start-staging]
     if: >-
       (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true')
@@ -661,6 +665,12 @@ jobs:
   # The hold, then the stop. `needs` the end to end job but not its verdict: a
   # failed probe must not leave staging running indefinitely, which is the state
   # this whole issue exists to end.
+  #
+  # Dispatched as its own Staging Lifecycle run, not called: the workflow-level
+  # `tf-apply-<ref>` group holds a run until its last job ends, so a called hold
+  # kept the next merge queued for the whole window, and GitHub keeps only one
+  # pending run per group, so a third merge cancelled the second. A
+  # workflow_dispatch made with GITHUB_TOKEN does start a run.
   hold-then-stop-staging:
     name: Hold staging, then stop it
     needs: [apply, staging-end-to-end]
@@ -668,15 +678,20 @@ jobs:
       always() && github.ref_name != 'main'
       && needs.apply.result == 'success'
       && vars.TF_STAG_DISABLED != 'true'
-    uses: ./.github/workflows/staging_lifecycle.yml
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write
-      actions: read
-    secrets: inherit # pragma: allowlist secret
-    with:
-      action: hold-then-stop
-      # Empty on a push, which is what makes the repository variable
-      # STAGING_HOLD_MINUTES the default for merges while a dispatch can still
-      # override it per run.
-      hold_minutes: ${{ inputs.hold_minutes }}
+      actions: write # dispatch staging_lifecycle.yml
+    steps:
+      - name: Dispatch the hold
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          # Empty on a push, which is what makes the repository variable
+          # STAGING_HOLD_MINUTES the default for merges while a dispatch can still
+          # override it per run.
+          HOLD_MINUTES: ${{ inputs.hold_minutes }}
+        run: |
+          set -euo pipefail
+          gh workflow run staging_lifecycle.yml --ref "${GITHUB_REF_NAME}" \
+            -f action=hold-then-stop -f hold_minutes="${HOLD_MINUTES}"
+          echo "### ⏳ Hold dispatched: see the Staging Lifecycle run" >> "$GITHUB_STEP_SUMMARY"
