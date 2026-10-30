@@ -131,8 +131,8 @@ locals {
     for r in [
       # The 443 floor. One rule, because every destination behind it is the same AWS tuple:
       # Central Hub API (CloudFront), GHCR, Docker Hub, Hugging Face seeding, download.docker.com,
-      # awscli.amazonaws.com, apt/esm over HTTPS, PyPI (seed_trust.sh's `uv run`), the
-      # us-east-1 CloudWatch-agent .deb, and the AWS APIs with no VPC endpoint
+      # awscli.amazonaws.com, apt/esm over HTTPS, PyPI (seed_trust.sh's `uv run`), and the
+      # AWS APIs with no VPC endpoint
       # (ssmmessages, ec2messages, monitoring).
       {
         port        = 443
