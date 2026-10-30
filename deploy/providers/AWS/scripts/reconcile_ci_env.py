@@ -339,8 +339,8 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         or "{}"
     )
 
-    # Live, not state: the parameter is what a Flower hub's flip-api reads (an
-    # NVFLARE hub reads its kits in S3 instead, FLIP#1720).
+    # The env file's FL_KIT_SLOT_NAMES as last applied (Terraform renders it into
+    # this parameter).
     slots = aws(
         ["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names", "--query", "Parameter.Value", "--output", "text"],
         profile,

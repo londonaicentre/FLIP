@@ -21,6 +21,7 @@ from sqlmodel import Session
 from flip_api.db.models.main_models import FLKitSlot
 from flip_api.db.seed.fl_kit_slots import (
     _NON_NUMERIC_SLOT_NUMBER,
+    FLARE_KIT_REQUIRED_FILES,
     _slot_number,
     insert_missing_slots,
     resolve_fl_kit_slot_names,
@@ -90,7 +91,7 @@ def test_seed_empty_pool_is_noop(mock_get_settings, mock_session):
 class TestResolveFlKitSlotNames:
     """Single source per env: dev = the DevSettings-only env var, prod Flower = the
     /flip/fl_kit_slot_names SSM parameter with NO env fallback (a broken parameter
-    yields an empty list, loudly). Prod NVFLARE reads S3: TestReadyFlareKitNames.
+    yields an empty list, loudly). Prod NVFLARE reads S3: TestCompleteFlareKitNames.
     """
 
     @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
@@ -183,50 +184,57 @@ class TestResolveFlKitSlotNames:
 _KITS = "s3://kits-bucket/fl-flare-participant-kits/20260704"
 
 
-def _kit_paths(*keys: str) -> list[str]:
-    return [f"{_KITS}/{key}" for key in keys]
+def _kit(net: str, slot: str, files=FLARE_KIT_REQUIRED_FILES) -> list[str]:
+    return [f"{_KITS}/{net}/services/{slot}/startup/{name}" for name in files]
 
 
-@patch("flip_api.db.seed.fl_kit_slots.get_parameter")
+# The hub's own kits, as provisioned: never claimable.
+_SERVER_AND_ADMIN_KITS = [
+    *_kit("net-1", "fl-server-net-1", ["fed_server.json", "rootCA.pem", "server.crt", "server.key", "sub_start.sh"]),
+    *_kit("net-1", "flip-fl-api-net-1", ["client.crt", "client.key", "fed_admin.json", "rootCA.pem"]),
+]
+
+
 @patch("flip_api.db.seed.fl_kit_slots.S3Client")
 @patch("flip_api.db.seed.fl_kit_slots.get_settings")
-class TestReadyFlareKitNames:
-    """Prod NVFLARE: the pool is every slot whose kit carries a READY marker on every net."""
+class TestCompleteFlareKitNames:
+    """Prod NVFLARE: the pool is every slot whose kit is complete on every net."""
 
     def _settings(self, mock_get_settings, uri=_KITS):
         mock_get_settings.return_value = SimpleNamespace(ENV="production", FL_BACKEND="nvflare", FLARE_KITS_S3_URI=uri)
 
-    def test_slot_ready_on_every_net_is_claimable(self, mock_get_settings, mock_s3, mock_get_parameter):
+    @patch("flip_api.db.seed.fl_kit_slots.get_parameter")
+    def test_kit_complete_on_every_net_is_claimable(self, mock_get_parameter, mock_get_settings, mock_s3):
         self._settings(mock_get_settings)
-        mock_s3.return_value.list_objects.return_value = _kit_paths(
-            "net-1/services/fl-server-net-1/startup/rootCA.pem",
-            "net-1/services/Trust_10/READY",
-            "net-1/services/Trust_2/startup/client.crt",
-            "net-1/services/Trust_2/READY",
-            "net-2/services/Trust_2/READY",
-            "net-2/services/Trust_10/READY",
-            "net-2/state/cert.json",
-        )
+        mock_s3.return_value.list_objects.return_value = [
+            *_SERVER_AND_ADMIN_KITS,
+            *_kit("net-1", "Trust_10"),
+            *_kit("net-2", "Trust_10"),
+            *_kit("net-1", "Trust_2"),
+            *_kit("net-2", "Trust_2"),
+            f"{_KITS}/net-2/state/cert.json",
+        ]
 
-        # Numeric order, and the SSM parameter is never consulted.
+        # Numeric order, server/admin kits left out, and the SSM parameter never consulted.
         assert resolve_fl_kit_slot_names() == ["Trust_2", "Trust_10"]
         mock_s3.return_value.list_objects.assert_called_once_with(f"{_KITS}/")
         mock_get_parameter.assert_not_called()
 
-    def test_slot_missing_its_marker_on_one_net_is_not_claimable(self, mock_get_settings, mock_s3, mock_get_parameter):
+    def test_kit_incomplete_or_missing_on_a_net_is_not_claimable(self, mock_get_settings, mock_s3):
         """An interrupted upload, or a net added after the kit was minted."""
         self._settings(mock_get_settings)
-        mock_s3.return_value.list_objects.return_value = _kit_paths(
-            "net-1/services/Trust_1/READY",
-            "net-2/services/Trust_1/READY",
-            "net-1/services/Trust_2/READY",
-            "net-2/services/Trust_2/startup/client.crt",
-            "net-1/services/Trust_3/startup/READY",
-        )
+        mock_s3.return_value.list_objects.return_value = [
+            *_kit("net-1", "Trust_1"),
+            *_kit("net-2", "Trust_1"),
+            *_kit("net-1", "Trust_2"),
+            *_kit("net-2", "Trust_2", FLARE_KIT_REQUIRED_FILES - {"client.key"}),
+            *_kit("net-1", "Trust_3"),
+            f"{_KITS}/net-2/services/fl-server-net-2/startup/rootCA.pem",
+        ]
 
         assert resolve_fl_kit_slot_names() == ["Trust_1"]
 
-    def test_listing_failure_returns_empty_and_logs_error(self, mock_get_settings, mock_s3, mock_get_parameter, caplog):
+    def test_listing_failure_returns_empty_and_logs_error(self, mock_get_settings, mock_s3, caplog):
         self._settings(mock_get_settings)
         mock_s3.return_value.list_objects.side_effect = Exception("AccessDenied")
 
@@ -236,11 +244,17 @@ class TestReadyFlareKitNames:
         assert "AccessDenied" in caplog.text
         assert caplog.records[-1].levelno == logging.ERROR
 
-    @pytest.mark.parametrize("uri", ["", _KITS])
-    def test_unset_uri_or_no_kits_returns_empty_and_logs_error(
-        self, mock_get_settings, mock_s3, mock_get_parameter, uri, caplog
-    ):
-        self._settings(mock_get_settings, uri=uri)
+    def test_unset_uri_returns_empty_without_listing(self, mock_get_settings, mock_s3, caplog):
+        self._settings(mock_get_settings, uri="")
+
+        with caplog.at_level(logging.ERROR, logger="flip_api.seed"):
+            assert resolve_fl_kit_slot_names() == []
+
+        mock_s3.return_value.list_objects.assert_not_called()
+        assert caplog.records[-1].levelno == logging.ERROR
+
+    def test_no_kits_returns_empty_and_logs_error(self, mock_get_settings, mock_s3, caplog):
+        self._settings(mock_get_settings)
         mock_s3.return_value.list_objects.return_value = []
 
         with caplog.at_level(logging.ERROR, logger="flip_api.seed"):

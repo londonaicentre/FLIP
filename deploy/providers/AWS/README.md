@@ -572,30 +572,19 @@ When to run `make add-fl-kits N=<n>`, what it asks and how to recover a failed r
 [Deploy the Central Hub → Running out of FL kit slots](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#deploy-central-hub-kit-slots).
 This section is the mechanism.
 
-**The kits are the pool (FLIP#1720).** On an NVFLARE hub flip-api's slot pool is every slot whose kit carries a
-`services/<slot>/READY` marker on **every** net under `fl-flare-participant-kits/<FLARE_KIT_DATE>/` (task env
-`FLARE_KITS_S3_URI`). flip-api re-reads S3 when its pool runs dry (reconcile-on-miss), so a new kit is claimable by
-the next `register-trusts` with **no Terraform apply and no restart**. The marker is written last, once that net's
-copy of the kit is complete, so a half-uploaded kit is never claimable. (A Flower hub still reads
-`FL_KIT_SLOT_NAMES` through the `/flip/fl_kit_slot_names` SSM parameter: its SuperLink labels SuperNodes from the
-same list at startup.)
+**The kits are the pool (FLIP#1720).** On an NVFLARE hub flip-api's slot pool is every slot whose kit is complete on
+**every** net under `fl-flare-participant-kits/<FLARE_KIT_DATE>/` (task env `FLARE_KITS_S3_URI`): its
+`startup/{client.crt,client.key,rootCA.pem,fed_client.json,sub_start.sh}` all present. flip-api re-reads S3 when its
+pool runs dry (reconcile-on-miss), so a new kit is claimable by the next `register-trusts` with **no Terraform apply
+and no restart**. Every complete kit under the kit date is claimable, so delete a kit from S3 rather than keep one
+that should not be handed out. (A Flower hub still reads `FL_KIT_SLOT_NAMES` through the `/flip/fl_kit_slot_names`
+SSM parameter: its SuperLink labels SuperNodes from the same list at startup.)
 
-**Activation vs minting is automatic.** A kit on every net without its markers — minted before FLIP#1720, or by a
-run that stopped before writing them — is a *spare*. `add-fl-kits N=<n>` treats `N` as *"ensure N more live
-slots"*, not a mint count: it **activates** up to `N` spares first (lowest-numbered first, each checked for a
-complete kit on every net, then marked — no certs, no upload) and only **mints** the shortfall. When spares cover
-the request it mints nothing and skips the CA workspace entirely. A hub whose kits all predate FLIP#1720 has no
-markers anywhere, so its live kits would look like spares and "activating" one a trust holds would add nothing:
-`add-fl-kits` refuses there until `make mark-fl-kits-ready HUB=<hub>` (`add-fl-kits N=all`: every spare checked and
-marked, nothing minted) has run once. Run it again after a full re-provision, since `upload-kits-to-s3`'s
-`sync --delete` drops the markers.
-
-It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activates any spares toward `N`, and for
-the remaining shortfall restores + fingerprint-verifies each net's CA workspace
-(`fl-services/nvflare/provision/workspace-<env>/`) and mints the next `Trust_<n>` names on **every** net via
-`nvflare provision --add_client` (existing kits untouched — no CA rotation), uploads **only** the new kits
-additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and marks each
-kit ready on each net as its upload completes.
+`make add-fl-kits N=<n>` runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
+fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`), mints the next
+`Trust_<n>` names on **every** net via `nvflare provision --add_client` (existing kits untouched — no CA rotation),
+uploads **only** the new kits additively (never `aws s3 sync --delete`), the five required startup files last so a
+half-uploaded kit never counts, and refreshes each net's mirrored `state/cert.json`.
 
 The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
 stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of

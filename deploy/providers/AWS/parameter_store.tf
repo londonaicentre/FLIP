@@ -59,7 +59,7 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
 # boot seeding and re-read when a trust registration finds the pool exhausted
 # (resolve_fl_kit_slot_names, reconcile-on-miss). The SuperLink labels SuperNodes
 # from the same list at startup (ecs_flower.tf), so it stays authored config. An
-# NVFLARE hub ignores it: its pool is the kits marked ready in S3 (FLIP#1720). The
+# NVFLARE hub ignores it: its pool is the complete kits in S3 (FLIP#1720). The
 # value stays the JSON-list *string* from the env file (flip-api json.loads it).
 # Not a secret, hence SSM per the /flip convention above.
 resource "aws_ssm_parameter" "fl_kit_slot_names" {

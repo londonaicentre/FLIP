@@ -29,9 +29,11 @@ from flip_api.utils.s3_client import S3Client
 # config there. Slot names are plain configuration, not secrets, hence Parameter Store.
 _FL_KIT_SLOT_NAMES_PARAMETER = "/flip/fl_kit_slot_names"
 
-# add_fl_kits.sh writes services/<slot>/READY as the last object of a kit's upload to a
-# net, so a slot whose marker is on every net has a complete kit on every net (FLIP#1720).
-_KIT_KEY_RE = re.compile(r"(net-\d+)/(?:services/([^/]+)/READY$)?")
+# A FLARE client kit is complete on a net once these startup files are there (FLIP#1720).
+# add_fl_kits.sh uploads them last, so a half-uploaded kit never qualifies; the hub's own
+# server and admin kits have no fed_client.json, so they never do either.
+FLARE_KIT_REQUIRED_FILES = frozenset({"client.crt", "client.key", "rootCA.pem", "fed_client.json", "sub_start.sh"})
+_KIT_KEY_RE = re.compile(r"(net-\d+)/(?:services/([^/]+)/startup/([^/]+)$)?")
 
 _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 
@@ -59,9 +61,9 @@ def resolve_fl_kit_slot_names() -> list[str]:
     """Resolve the FL kit-slot names from their environment's single source.
 
     - Development: the ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
-    - Production, NVFLARE: the kits themselves — every slot marked ready on every net
-      under ``FLARE_KITS_S3_URI``. Minting a kit with ``make add-fl-kits`` makes it
-      claimable; register_trust re-reads this when the pool runs dry, so no restart.
+    - Production, NVFLARE: the kits themselves — every slot with a complete kit on every
+      net under ``FLARE_KITS_S3_URI``. A kit minted by ``make add-fl-kits`` is claimable
+      at once; register_trust re-reads this when the pool runs dry, so no restart.
     - Production, Flower: the ``/flip/fl_kit_slot_names`` SSM parameter.
 
     Deliberately no fallback: an unreadable source returns an empty list, logged. The
@@ -77,44 +79,50 @@ def resolve_fl_kit_slot_names() -> list[str]:
         # DevSettings | ProdSettings union here.
         return getattr(settings, "FL_KIT_SLOT_NAMES", []) or []
     if settings.FL_BACKEND == FLBackend.NVFLARE:
-        return _ready_flare_kit_names(getattr(settings, "FLARE_KITS_S3_URI", ""))
+        return _complete_flare_kit_names(getattr(settings, "FLARE_KITS_S3_URI", ""))
     return _slot_names_from_parameter()
 
 
-def _ready_flare_kit_names(kits_uri: str) -> list[str]:
-    """List the slots whose FLARE kit is marked ready on every net under ``kits_uri``.
+def _complete_flare_kit_names(kits_uri: str) -> list[str]:
+    """List the slots whose FLARE kit is complete on every net under ``kits_uri``.
 
-    A kit missing its marker on any net (an interrupted upload, or a net added since the
-    kit was minted) is not claimable: a trust needs a working kit for every net.
+    A trust needs a working kit for every net, so a kit incomplete or missing on any net
+    is left out. That only keeps a slot from being added: a row already in the pool stays.
 
     Args:
         kits_uri (str): ``s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>``.
 
     Returns:
-        list[str]: The ready slot names; empty when there are none or the listing fails.
+        list[str]: The complete slot names; empty when there are none or the listing fails.
     """
+    if not kits_uri:
+        logger.error("FLARE_KITS_S3_URI is not set. The kit-slot pool cannot grow.")
+        return []
     prefix = f"{kits_uri.rstrip('/')}/"
     try:
-        if not kits_uri:
-            raise ValueError("FLARE_KITS_S3_URI is not set")
         paths = S3Client().list_objects(prefix)
-    except Exception as e:
-        logger.error(f"Could not list the FLARE kits under '{prefix}' ({e}). The kit-slot pool cannot grow.")
+    except Exception:
+        logger.exception(f"Could not list the FLARE kits under '{prefix}'. The kit-slot pool cannot grow.")
         return []
 
     nets: set[str] = set()
-    ready_on: defaultdict[str, set[str]] = defaultdict(set)
+    startup_files: defaultdict[tuple[str, str], set[str]] = defaultdict(set)  # (slot, net) -> file names
     for path in paths:
         if match := _KIT_KEY_RE.match(path.removeprefix(prefix)):
-            net, slot_name = match.groups()
+            net, slot_name, file_name = match.groups()
             nets.add(net)
             if slot_name:
-                ready_on[slot_name].add(net)
+                startup_files[slot_name, net].add(file_name)
 
     if not nets:
         logger.error(f"No FLARE kits under '{prefix}' — is FLARE_KIT_DATE right? The kit-slot pool cannot grow.")
         return []
-    return sorted((name for name, on in ready_on.items() if on == nets), key=lambda name: (_slot_number(name), name))
+    complete = {
+        slot
+        for slot, _ in startup_files
+        if all(FLARE_KIT_REQUIRED_FILES <= startup_files.get((slot, net), set()) for net in nets)
+    }
+    return sorted(complete, key=lambda name: (_slot_number(name), name))
 
 
 def _slot_names_from_parameter() -> list[str]:

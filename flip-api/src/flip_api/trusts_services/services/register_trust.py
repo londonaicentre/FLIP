@@ -160,9 +160,8 @@ def register_trust(
     # SKIP LOCKED so two concurrent registrations don't collide on the same row.
     slot = _claim_free_slot(session)
     if slot is None:
-        # Pool exhausted — but kits may have been added since boot (in production the
-        # live source is read here; see resolve_fl_kit_slot_names). Reconcile additively
-        # and retry the claim once.
+        # Pool exhausted, but kits may have been added since boot: reconcile additively
+        # from resolve_fl_kit_slot_names and retry the claim once.
         try:
             with session.begin_nested():
                 inserted = insert_missing_slots(session, resolve_fl_kit_slot_names())
@@ -182,8 +181,9 @@ def register_trust(
         logger.error(
             "FL kit slot pool exhausted even after reconcile. Development: add slots to FL_KIT_SLOT_NAMES and "
             "restart flip-api. Stag/prod NVFLARE: `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod>`. "
-            "Stag/prod Flower: add the slots to FL_KIT_SLOT_NAMES and run a Terraform apply. If kits already exist "
-            "and still don't appear, check earlier logs for errors reading the slot source."
+            "Stag/prod Flower: provision SuperNode keys for the new slots, add them to FL_KIT_SLOT_NAMES and run a "
+            "Terraform apply (it replaces the SuperLink, so quiesce first). If kits already exist and still don't "
+            "appear, check earlier logs for errors reading the slot source."
         )
         raise NoFreeKitSlotError("No FL kit slots available. Pre-provision more FL kits and try again.")
 

@@ -128,8 +128,6 @@ upload-kits-to-s3:
 	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with HUB=stag|prod"; exit 1; }
 	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
 	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
-	@echo "ℹ️  --delete also drops the kits' READY markers: no kit is claimable on the hub until"
-	@echo "   'make -C deploy/providers/AWS mark-fl-kits-ready HUB=$(HUB)' marks them (FLIP#1720)."
 
 # Standalone FL services for one net (fl-server + fl-api + 2 clients), no hub/trusts.
 # Needs `make fl-provision` first; runs on the local :$(FL_BUILD_TAG) images.

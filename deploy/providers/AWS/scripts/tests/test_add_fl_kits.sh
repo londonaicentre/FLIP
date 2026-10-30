@@ -12,14 +12,13 @@
 # limitations under the License.
 #
 
-# Black-box tests for scripts/add_fl_kits.sh — the activate/mint split, the spare
-# completeness guard, the READY markers, and the mint-loop recovery reporting.
+# Black-box tests for scripts/add_fl_kits.sh — slot numbering, net discovery, the
+# required-files-last upload order, and the mint-loop recovery reporting.
 #
 # Drives the REAL script with `aws` / `make` / `openssl` stubbed on PATH (no credentials,
 # no network) inside a throwaway repo skeleton, so the checkout's provisioning workspace
-# is never touched. The pre-prompt scenarios abort at the confirmation and assert the
-# printed Plan; the post-prompt scenarios run to completion (YES=1) and assert the
-# READY markers written and the guard-abort recovery guidance.
+# is never touched. The plan scenarios abort at the confirmation and assert the printed
+# Plan; the mint scenarios run to completion (YES=1).
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_add_fl_kits.sh
@@ -43,84 +42,39 @@ MOCKBIN="${TEST_ROOT}/mockbin"
 mkdir -p "${MOCKBIN}"
 
 # Mock aws. Fixtures (per case, via FIXTURE_DIR):
-#   nets                       — one net-N per line (s3 ls of the kit date prefix)
-#   <net>.services             — one Trust_*/fl-server-* per line (s3 ls of a net's services/)
-#   <net>.<name>.startup       — override a kit's startup/ file list (completeness check);
-#                                default is a complete kit
-#   <net>.<name>.keycount      — override the never-overwrite KeyCount probe; default 0 (empty)
-#   <net>.ready                — one Trust_* per line marked READY on that net
-#   <net>.ready_fail           — present: listing that net's READY markers fails
-#   puts                       — written by the mock: one "<key>" per put-object (the markers)
+#   nets                  — one top-level prefix per line (s3 ls of the kit date prefix)
+#   <net>.services        — one Trust_*/fl-server-* per line (s3 ls of a net's services/)
+#   <net>.<name>.keycount — override the never-overwrite KeyCount probe; default 0 (empty)
+#   uploads               — written by the mock: one line per upload to s3, with its args
 cat > "${MOCKBIN}/aws" <<'MOCK_AWS'
 #!/usr/bin/env bash
 if [[ "$1" == "s3" && "$2" == "ls" ]]; then
-    uri="$3"
-    if [[ "$uri" =~ /(net-[0-9]+)/services/$ ]]; then
-        net="${BASH_REMATCH[1]}"
-        while read -r n; do [[ -n "$n" ]] && printf '                           PRE %s/\n' "$n"; done \
-            < "${FIXTURE_DIR}/${net}.services"
-        exit 0
-    fi
-    while read -r n; do [[ -n "$n" ]] && printf '                           PRE %s/\n' "$n"; done \
-        < "${FIXTURE_DIR}/nets"
+    fx="${FIXTURE_DIR}/nets"
+    [[ "$3" =~ /(net-[0-9]+)/services/$ ]] && fx="${FIXTURE_DIR}/${BASH_REMATCH[1]}.services"
+    while read -r n; do [[ -n "$n" ]] && printf '                           PRE %s/\n' "$n"; done < "$fx"
     exit 0
 fi
-if [[ "$1" == "s3api" && "$2" == "list-objects-v2" ]]; then
-    prefix="" query=""
-    while [[ $# -gt 0 ]]; do
-        [[ "$1" == "--prefix" ]] && { prefix="$2"; shift; }
-        [[ "$1" == "--query" ]] && { query="$2"; shift; }
-        shift
-    done
-    if [[ "$query" == "Contents[].Key" && "$prefix" =~ /(net-[0-9]+)/services/$ ]]; then  # READY markers
-        net="${BASH_REMATCH[1]}"
-        [[ -f "${FIXTURE_DIR}/${net}.ready_fail" ]] && exit 254
-        out=""
-        if [[ -f "${FIXTURE_DIR}/${net}.ready" ]]; then
-            while read -r n; do [[ -n "$n" ]] && out="${out}${out:+	}${prefix}${n}/READY"; done \
-                < "${FIXTURE_DIR}/${net}.ready"
-        fi
-        printf '%s\n' "${out:-None}"
-        exit 0
-    fi
-    if [[ "$query" == "Contents[].Key" ]]; then  # spare completeness check under startup/
-        [[ "$prefix" =~ /(net-[0-9]+)/services/(Trust_[^/]+)/startup/$ ]] || exit 1
-        fx="${FIXTURE_DIR}/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.startup"
-        files="client.crt client.key rootCA.pem fed_client.json start.sh stop_fl.sh sub_start.sh"
-        [[ -f "$fx" ]] && files="$(cat "$fx")"
-        out=""
-        for f in $files; do out="${out}${out:+	}${prefix}${f}"; done
-        printf '%s\n' "$out"
-        exit 0
-    fi
-    if [[ "$query" == "KeyCount" ]]; then  # never-overwrite probe on a mint target prefix
-        [[ "$prefix" =~ /(net-[0-9]+)/services/(Trust_[^/]+)/$ ]] || exit 1
-        fx="${FIXTURE_DIR}/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.keycount"
-        count=0
-        [[ -f "$fx" ]] && count="$(cat "$fx")"
-        echo "${count}"
-        exit 0
-    fi
-    echo "mock aws: unexpected s3api query: ${query}" >&2
-    exit 1
-fi
-if [[ "$1" == "s3api" && "$2" == "put-object" ]]; then
-    while [[ $# -gt 0 ]]; do
-        [[ "$1" == "--key" ]] && echo "$2" >> "${FIXTURE_DIR}/puts"
-        shift
-    done
-    echo '{"ETag": "\"mock\""}'
+if [[ "$1" == "s3api" && "$2" == "list-objects-v2" ]]; then  # never-overwrite KeyCount probe
+    prefix=""
+    while [[ $# -gt 0 ]]; do [[ "$1" == "--prefix" ]] && prefix="$2"; shift; done
+    [[ "$prefix" =~ /(net-[0-9]+)/services/(Trust_[^/]+)/$ ]] || exit 1
+    fx="${FIXTURE_DIR}/${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.keycount"
+    if [[ -f "$fx" ]]; then cat "$fx"; else echo 0; fi
     exit 0
 fi
 if [[ "$1" == "s3" && "$2" == "cp" ]]; then
-    src="" dst=""
     shift 2
+    src="" dst="" skip=""
     for a in "$@"; do
+        if [[ -n "$skip" ]]; then skip=""; continue; fi
+        [[ "$a" == --exclude || "$a" == --include ]] && { skip=1; continue; }
         [[ "$a" == --* ]] && continue
         [[ -z "$src" ]] && { src="$a"; continue; }
         dst="$a"
     done
-    if [[ "$dst" != s3://* ]]; then  # download: create the destination so later reads work
+    if [[ "$dst" == s3://*/services/* ]]; then
+        echo "${dst#*/fl-flare-participant-kits/*/} $*" >> "${FIXTURE_DIR}/uploads"
+    elif [[ "$dst" != s3://* ]]; then  # download: create the destination so later reads work
         mkdir -p "$(dirname "$dst")"
         : > "$dst"
     fi
@@ -138,85 +92,31 @@ chmod +x "${MOCKBIN}/aws" "${MOCKBIN}/make" "${MOCKBIN}/openssl"
 
 PASS=0
 FAIL=0
-# STARTUP_OVERRIDES / KEYCOUNT_OVERRIDES: "net Trust_X <value...>" lines, reset per case.
-# READY_ON: "net Trust_X" lines marked READY on that net only; READY_FAIL: nets whose
-# marker listing fails.
-STARTUP_OVERRIDES=()
-KEYCOUNT_OVERRIDES=()
-READY_ON=()
-READY_FAIL=()
+KEYCOUNT_OVERRIDES=()  # "net Trust_X <count>" lines, reset per case
 YES_MODE=""
 ENV_MODE=""  # ENV_NAME for the next run_case (default stag; the Makefile passes it from HUB via deploy/env_mode.mk)
 
-# run_case <label> <N> <names READY on every net> <nets> <net=services...>...
+# run_case <label> <N> <top-level prefixes> <net=services...>...
 run_case() {
-    local name="$1" N="$2" ready="$3" nets="$4"
-    shift 4
-    local fx
-    fx="$(mktemp -d --tmpdir="${TEST_ROOT}")"
-    printf '%s\n' ${nets} | tr ' ' '\n' > "${fx}/nets"
-    local spec net svcs
+    local name="$1" N="$2" nets="$3" spec ov
+    shift 3
+    FX="$(mktemp -d "${TEST_ROOT}/fx.XXXXXX")"
+    printf '%s\n' ${nets} > "${FX}/nets"
     for spec in "$@"; do
-        net="${spec%%=*}" svcs="${spec#*=}"
-        printf '%s\n' ${svcs} | tr ' ' '\n' > "${fx}/${net}.services"
-        printf '%s\n' ${ready} > "${fx}/${net}.ready"
-    done
-    for ov in "${READY_ON[@]:-}"; do
-        [[ -n "${ov}" ]] && echo "${ov#* }" >> "${fx}/${ov%% *}.ready"
-    done
-    for ov in "${READY_FAIL[@]:-}"; do
-        [[ -n "${ov}" ]] && : > "${fx}/${ov}.ready_fail"
-    done
-    local ov
-    for ov in "${STARTUP_OVERRIDES[@]:-}"; do
-        [[ -z "${ov}" ]] && continue
-        echo "${ov}" | cut -d' ' -f3- > "${fx}/$(echo "${ov}" | awk '{print $1"."$2}').startup"
+        printf '%s\n' ${spec#*=} > "${FX}/${spec%%=*}.services"
     done
     for ov in "${KEYCOUNT_OVERRIDES[@]:-}"; do
-        [[ -z "${ov}" ]] && continue
-        echo "${ov}" | cut -d' ' -f3- > "${fx}/$(echo "${ov}" | awk '{print $1"."$2}').keycount"
+        [[ -n "${ov}" ]] && echo "${ov##* }" > "${FX}/$(echo "${ov}" | awk '{print $1"."$2}').keycount"
     done
-    LAST_PUTS="${fx}/puts"
     LAST_OUT="$(printf 'n\n' | env PATH="${MOCKBIN}:${PATH}" \
         N="${N}" ENV_NAME="${ENV_MODE:-stag}" AICENTRE_BUCKET_NAME=testbucket FLARE_KIT_DATE=2026-01-01 \
-        FL_BACKEND=nvflare FIXTURE_DIR="${fx}" YES="${YES_MODE}" \
+        FL_BACKEND=nvflare FIXTURE_DIR="${FX}" YES="${YES_MODE}" \
         bash "${SCRIPT}" 2>&1)"
     LAST_RC=$?
-    LAST_ACT="$(printf '%s\n' "${LAST_OUT}" | sed -n 's/^     activate      //p')"
-    LAST_MNT="$(printf '%s\n' "${LAST_OUT}" | sed -n 's/^     mint          //p')"
     echo "── ${name}"
-    STARTUP_OVERRIDES=()
     KEYCOUNT_OVERRIDES=()
-    READY_ON=()
-    READY_FAIL=()
     YES_MODE=""
     ENV_MODE=""
-}
-
-check() {  # assert the plan's activate/mint lines
-    local label="$1" want_act="$2" want_mnt="$3"
-    if [[ "${LAST_ACT}" == "${want_act}" && "${LAST_MNT}" == "${want_mnt}" ]]; then
-        echo "   ✅ ${label}"
-        PASS=$((PASS + 1))
-    else
-        echo "   ❌ ${label}"
-        echo "      want activate=[${want_act}] mint=[${want_mnt}]"
-        echo "      got  activate=[${LAST_ACT}] mint=[${LAST_MNT}]  rc=${LAST_RC}"
-        FAIL=$((FAIL + 1))
-    fi
-}
-
-check_refuses() {  # assert the run aborted (non-zero) with a substring in its output
-    local label="$1" want_substr="$2"
-    if [[ "${LAST_RC}" -ne 0 && "${LAST_OUT}" == *"${want_substr}"* ]]; then
-        echo "   ✅ ${label}"
-        PASS=$((PASS + 1))
-    else
-        echo "   ❌ ${label} (rc=${LAST_RC})"
-        echo "      wanted non-zero exit + substring: ${want_substr}"
-        echo "      got: ${LAST_OUT}"
-        FAIL=$((FAIL + 1))
-    fi
 }
 
 check_contains() {  # assert a substring, with the expected exit code
@@ -232,20 +132,19 @@ check_contains() {  # assert a substring, with the expected exit code
     fi
 }
 
-check_marked() {  # assert exactly these READY markers were written ("net/Trust_X" ...)
-    local label="$1" want="" got=""
-    shift
-    for m in "$@"; do want="${want}fl-flare-participant-kits/2026-01-01/${m%%/*}/services/${m#*/}/READY"$'\n'; done
-    [[ -f "${LAST_PUTS}" ]] && got="$(sort "${LAST_PUTS}")"$'\n'
-    want="$(printf '%s' "${want}" | sort)"$'\n'
-    [[ "${want}" == $'\n' ]] && want=""
-    if [[ "${got}" == "${want}" ]]; then
+check_plan() {  # assert the plan's mint line (the run aborts at the prompt)
+    check_contains "$1" 1 "     mint          $2"
+}
+
+check_last_upload() {  # assert a kit's final upload carries exactly the required startup files
+    local label="$1" kit="$2" last
+    last="$(grep "^${kit}/ " "${FX}/uploads" 2>/dev/null | tail -1)"
+    if [[ "${last}" == *"--exclude * --include startup/client.crt --include startup/client.key --include startup/rootCA.pem --include startup/fed_client.json --include startup/sub_start.sh" ]]; then
         echo "   ✅ ${label}"
         PASS=$((PASS + 1))
     else
         echo "   ❌ ${label}"
-        echo "      want: ${want}"
-        echo "      got:  ${got}"
+        echo "      uploads: $(cat "${FX}/uploads" 2>/dev/null)"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -260,139 +159,77 @@ seed_workspace() {  # pre-seed a net's CA state + server kit so the mint loop sk
 
 # --- Plan scenarios (abort at the confirmation prompt) --------------------------------
 
-# 1. No spares — mint all.
-run_case "no spares, mint all (N=2)" 2 "Trust_1 Trust_2" "net-1 net-2" \
+run_case "mint the next names (N=2)" 2 "net-1 net-2" \
     "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
-check "activate none, mint Trust_3 Trust_4" "(none — no spare kits)" "Trust_3 Trust_4  (existing max: Trust_2)"
+check_plan "mint Trust_3 Trust_4" "Trust_3 Trust_4  (existing max: Trust_2)"
 
-# 2. Spares < N — activate the spare, mint the rest.
-run_case "spare<N (N=2, 1 spare)" 2 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3" "net-2=Trust_1 Trust_2 Trust_3"
-check "activate Trust_3, mint Trust_4" "Trust_3" "Trust_4  (existing max: Trust_3)"
+# A name on one net only (a half-uploaded kit) still bumps the numbering, so it is never reused.
+run_case "half-uploaded name bumps max (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2 Trust_9" "net-2=Trust_1 Trust_2"
+check_plan "mint Trust_10" "Trust_10  (existing max: Trust_9)"
 
-# 3. Spares >= N — pure activation, no mint.
-run_case "spare>=N (N=2, 3 spares)" 2 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3 Trust_4 Trust_5" "net-2=Trust_1 Trust_2 Trust_3 Trust_4 Trust_5"
-check "activate Trust_3 Trust_4 (lowest two), no mint" "Trust_3 Trust_4" "(none — spares cover N)"
-
-# 4. Half-uploaded kit (net-1 only) is NOT a spare but bumps max_num.
-run_case "half-uploaded bumps max (N=2)" 2 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3 Trust_9" "net-2=Trust_1 Trust_2 Trust_3"
-check "activate Trust_3, mint Trust_10 (past the half-uploaded Trust_9)" "Trust_3" "Trust_10  (existing max: Trust_9)"
-
-# 5. Non-numeric Trust_K8s on every net but not in env — NOT auto-activated, doesn't affect max.
-run_case "non-numeric not activated (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
+run_case "non-numeric name does not affect max (N=1)" 1 "net-1 net-2" \
     "net-1=Trust_1 Trust_2 Trust_K8s" "net-2=Trust_1 Trust_2 Trust_K8s"
-check "activate none, mint Trust_3" "(none — no spare kits)" "Trust_3  (existing max: Trust_2)"
+check_plan "mint Trust_3" "Trust_3  (existing max: Trust_2)"
 
-# 6. Numeric sort of spares (not lexical): Trust_3, Trust_9 before Trust_10.
-run_case "numeric spare ordering (N=2)" 2 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3 Trust_9 Trust_10" "net-2=Trust_1 Trust_2 Trust_3 Trust_9 Trust_10"
-check "activate Trust_3 Trust_9 (numeric lowest two), no mint" "Trust_3 Trust_9" "(none — spares cover N)"
+# Zero-padded suffixes parse as decimal: bash arithmetic reads leading-zero numerals as
+# octal, so Trust_008 crashed the max_num comparison ("value too great for base") and
+# Trust_010 would compute max as 8. flip-api accepts such names (Python int() is decimal).
+run_case "zero-padded suffixes parse as decimal (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_008 Trust_010" "net-2=Trust_008 Trust_010"
+check_plan "mint Trust_11 (max is decimal 10, not octal 8)" "Trust_11  (existing max: Trust_10)"
 
-# 6b. Zero-padded suffixes parse as decimal: bash arithmetic reads leading-zero
-#     numerals as octal, so Trust_008 crashed the max_num comparison ("value too
-#     great for base") and Trust_010 would compute max as 8. flip-api accepts
-#     such names (Python int() is decimal), so they can reach this script.
-run_case "zero-padded suffixes parse as decimal (N=1)" 1 "Trust_008 Trust_010" "net-1 net-2" \
-    "net-1=Trust_008 Trust_010 fl-server-net-1" "net-2=Trust_008 Trust_010 fl-server-net-2"
-check "mint Trust_11 (max is decimal 10, not octal 8)" "(none — no spare kits)" "Trust_11  (existing max: Trust_10)"
+# A stray prefix such as net-1-old/ is not a net (it would otherwise read as a second net-1).
+run_case "stray net-like prefix ignored (N=1)" 1 "net-1 net-1-old state" \
+    "net-1=Trust_1"
+check_contains "nets line lists net-1 only" 1 "     nets          net-1
+"
 
-# 7. COMPLETENESS GUARD: a spare whose kit is complete on every net activates cleanly.
-run_case "complete spare activates (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3" "net-2=Trust_1 Trust_2 Trust_3"
-check "activate Trust_3 (kit complete on both nets)" "Trust_3" "(none — spares cover N)"
+# --- Mint scenarios (YES=1, past the confirmation prompt) -----------------------------
 
-# 8. COMPLETENESS GUARD: a spare present on every net but INCOMPLETE on net-2
-#    (its final-net upload was interrupted — missing client.key) is REFUSED, not activated.
-STARTUP_OVERRIDES=("net-2 Trust_3 client.crt rootCA.pem fed_client.json sub_start.sh")
-run_case "incomplete spare refused (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3" "net-2=Trust_1 Trust_2 Trust_3"
-check_refuses "refuses: incomplete on net-2, missing client.key" \
-    "spare Trust_3 is incomplete on net-2: missing startup/client.key"
-check_marked "writes no marker"
-
-# 8b. A kit marked READY on net-1 only (its run stopped before net-2's marker) is a spare.
-READY_ON=("net-1 Trust_3")
-run_case "ready on one net only is a spare (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3" "net-2=Trust_1 Trust_2 Trust_3"
-check "activate Trust_3 (not ready on net-2)" "Trust_3" "(none — spares cover N)"
-
-# 8c. The READY listing fails CLOSED: read as "no markers", every live kit would look
-#     like a spare and the activations would add no capacity.
-READY_FAIL=(net-2)
-run_case "READY listing failure refused (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
-check_refuses "refuses on a failed marker listing" "Could not list the READY markers"
-
-# 8d. A hub whose kits predate FLIP#1720 (no marker anywhere) is refused: its live kits
-#     would look like spares, and "activating" one a trust holds adds no capacity.
-run_case "unmarked hub refused (N=1)" 1 "" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
-check_refuses "points at mark-fl-kits-ready" "mark-fl-kits-ready"
-
-# 8e. N=all (mark-fl-kits-ready) activates every spare and mints nothing.
-run_case "N=all activates every spare" all "" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3" "net-2=Trust_1 Trust_2"
-check "activate Trust_1 Trust_2, no mint" "Trust_1 Trust_2" "(none — spares cover N)"
-
-run_case "N=all with every kit marked is a no-op" all "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
-check_contains "exits 0, nothing to do" 0 "already marked ready"
-
-# --- Write scenarios (YES=1, past the confirmation prompt) ----------------------------
-
-# 9. Activation writes the spare's marker on every net, and mints nothing.
-YES_MODE=1
-run_case "activation marks the spare ready (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 Trust_3" "net-2=Trust_1 Trust_2 Trust_3"
-check_contains "run succeeds and reports the activation" 0 "activated [Trust_3]"
-check_marked "Trust_3 marked on both nets" net-1/Trust_3 net-2/Trust_3
-
-# 9b. Full mint run: workspaces pre-seeded, mint + upload mocked — the run succeeds and
-#     the minted kit is marked ready on every net.
+# Full run: workspaces pre-seeded, mint + upload mocked. The required startup files go
+# in each kit's last upload, so flip-api never counts a half-uploaded kit.
 seed_workspace net-1
 seed_workspace net-2
 YES_MODE=1
-run_case "full mint run marks the kit ready (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
+run_case "full mint run (N=1)" 1 "net-1 net-2" \
     "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
-check_contains "run succeeds and reports the mint" 0 "minted [Trust_3"
-check_marked "Trust_3 marked on both nets" net-1/Trust_3 net-2/Trust_3
+check_contains "run succeeds and reports the mint" 0 "Minted Trust_3"
+check_last_upload "net-1: required startup files uploaded last" net-1/services/Trust_3
+check_last_upload "net-2: required startup files uploaded last" net-2/services/Trust_3
 
-# 10. RECOVERY GUIDANCE ON GUARD ABORT: net-1's kit mints + uploads, then the
-#     never-overwrite guard trips on net-2. The abort must still print what was uploaded
-#     and the recovery — a guard `exit 1` bypasses the ERR trap, so this asserts the
-#     die() path keeps the guidance on exactly the partial-run paths. net-1's marker is
-#     written; net-2's never is, so the kit is not claimable.
+# RECOVERY GUIDANCE ON GUARD ABORT: net-1's kit mints + uploads, then the never-overwrite
+# guard trips on net-2. The abort must still print what was uploaded and the recovery —
+# a guard `exit 1` bypasses the ERR trap, so this asserts the die() path keeps the
+# guidance on exactly the partial-run paths.
 seed_workspace net-1
 seed_workspace net-2
 KEYCOUNT_OVERRIDES=("net-2 Trust_3 5")
 YES_MODE=1
-run_case "guard abort after upload keeps recovery guidance (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
+run_case "guard abort after upload keeps recovery guidance (N=1)" 1 "net-1 net-2" \
     "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
-check_refuses "refuses net-2 overwrite" "already has objects — refusing to overwrite"
-check_refuses "reports the net-1 upload" "Kits already uploaded this run: net-1/Trust_3"
-check_refuses "says how to recover" "Re-running add-fl-kits is safe"
-check_marked "only net-1 is marked" net-1/Trust_3
+check_contains "refuses net-2 overwrite" 1 "already has objects — refusing to overwrite"
+check_contains "reports the net-1 upload" 1 "Kits uploaded this run (the last may be partial): net-1/Trust_3"
+check_contains "says how to recover" 1 "with the number of slots still needed"
 
 # --- ENV_NAME (FLIP#749): the environment CLASS the Makefile derives from HUB (deploy/env_mode.mk's
 # --- ENV_CLASS); anything else is refused ---
 
 ENV_MODE=stag
-run_case "ENV_NAME=stag plans as the stag env (N=2)" 2 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
-check "activate none, mint Trust_3 Trust_4" "(none — no spare kits)" "Trust_3 Trust_4  (existing max: Trust_2)"
+run_case "ENV_NAME=stag plans as the stag env (N=2)" 2 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
+check_plan "mint Trust_3 Trust_4" "Trust_3 Trust_4  (existing max: Trust_2)"
 check_contains "plan header names the stag env" 1 "Plan (stag):"
 
 ENV_MODE=prod
-run_case "ENV_NAME=prod plans as the prod env (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
+run_case "ENV_NAME=prod plans as the prod env (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
 check_contains "plan header names the prod env" 1 "Plan (prod):"
 
 ENV_MODE=lza-stag
-run_case "anything but prod|stag is refused (N=1)" 1 "Trust_1 Trust_2" "net-1 net-2" \
-    "net-1=Trust_1 Trust_2 fl-server-net-1" "net-2=Trust_1 Trust_2 fl-server-net-2"
-check_refuses "rejects ENV_NAME=lza-stag before touching anything" "ENV_NAME must be"
+run_case "anything but prod|stag is refused (N=1)" 1 "net-1 net-2" \
+    "net-1=Trust_1 Trust_2" "net-2=Trust_1 Trust_2"
+check_contains "rejects ENV_NAME=lza-stag before touching anything" 1 "ENV_NAME must be"
 
 echo ""
 echo "==== ${PASS} passed, ${FAIL} failed ===="

@@ -321,25 +321,17 @@ slot left. One command adds more (FLARE only):
 
    make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
 
-``N`` is the number of **extra claimable slots** you want, not the number of kits to create. The command first
-activates spare kits that were provisioned earlier but never made claimable, which is quick and needs no
-certificates. It mints new kits only for the shortfall: that restores and verifies each net's CA workspace and needs
-the FLARE provisioning tools. Existing kits are never touched and no CA is rotated.
+``N`` is the number of new kits to make. The command restores and verifies each net's CA workspace, which needs the
+FLARE provisioning tools, then makes and uploads the kits. Existing kits are never touched and no CA is rotated.
 
-It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). Each kit is marked ready once it is
-complete on every net, and the hub reads the ready kits straight from S3, so the next ``register-trusts`` can claim
-one: no Terraform apply and no restart.
-
-.. note::
-
-   On a hub whose kits were made before this release, ``add-fl-kits`` stops and asks you to run
-   ``make -C deploy/providers/AWS mark-fl-kits-ready HUB=<stag|prod>`` once first. That checks each existing kit
-   is complete on every net and marks it ready; it creates no kits.
+It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
+the kits in S3, so the next ``register-trusts`` can claim one: no Terraform apply and no restart. Every complete kit
+in S3 can be claimed, so delete a kit there rather than keep one that should not be handed out.
 
 .. warning::
 
-   If a run stops part-way, it prints which kits it uploaded. Re-running ``add-fl-kits`` is safe: a kit that is now
-   on every net is checked and marked ready, and one missing from some net is never claimable.
+   If a run stops part-way, it prints which kits it uploaded. A kit that is not complete on every net is never
+   claimed. Re-run ``add-fl-kits`` with the number of kits still needed: it numbers past every kit already in S3.
 
 .. seealso::
 

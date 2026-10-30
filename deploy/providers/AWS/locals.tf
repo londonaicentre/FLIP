@@ -161,11 +161,11 @@ locals {
       # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
-      # The NVFLARE kit-slot pool: every slot whose kit is marked ready on every net
-      # under this prefix (resolve_fl_kit_slot_names, FLIP#1720). A Flower hub reads
-      # the /flip/fl_kit_slot_names SSM parameter instead, so FL_KIT_SLOT_NAMES is
+      # The NVFLARE kit-slot pool: every slot whose kit is complete on every net under
+      # this prefix (resolve_fl_kit_slot_names, FLIP#1720). A Flower hub reads the
+      # /flip/fl_kit_slot_names SSM parameter instead, so FL_KIT_SLOT_NAMES is
       # deliberately not in the task env.
-      FLARE_KITS_S3_URI = var.fl_backend == "nvflare" ? "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flare-participant-kits/${var.flare_kit_date}" : ""
+      FLARE_KITS_S3_URI = var.fl_backend == "nvflare" ? local.flare_kits_base_s3 : ""
     })
     fl_server = {
       LOCAL_DEV                      = "false"

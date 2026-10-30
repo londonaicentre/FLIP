@@ -67,8 +67,7 @@ make forward-trust                            # SSM port forward all trust UIs
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
 make package-onprem-trust-kit KIT=<CODE> [KIT_FILE=<path>]  # Tarball a filled-in kit (trust/.env.<CODE>.<hub>, or the one at KIT_FILE) + the FL kit slice of its FL_KIT_SLOT for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
-make add-fl-kits N=<n> HUB=<stag|prod>       # Ensure N more claimable FL kit slots — activate spares first, mint only the shortfall (FLARE; no Terraform, no restart — see README)
-make mark-fl-kits-ready HUB=<stag|prod>       # Mark every complete FLARE kit READY (once per hub after FLIP#1720, and after upload-kits-to-s3)
+make add-fl-kits N=<n> HUB=<stag|prod>       # Mint N more claimable FL kit slots on every net (FLARE; the hub reads complete kits from S3, so no Terraform, no restart — see README)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
 make print-tf-env                             # Print resolved TF_VAR_* as KEY=value (consumed by the CI workflows)

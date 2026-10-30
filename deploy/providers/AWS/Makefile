@@ -373,22 +373,13 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
 
 .PHONY: add-fl-kits
-add-fl-kits: ## Ensure N more claimable FL kit slots exist, end to end (FLARE; HUB=stag|prod)
-	## Wraps scripts/add_fl_kits.sh: discover nets from S3 → ACTIVATE up to N spares
-	## (kits on every net without a READY marker on every net — no certs, no upload)
-	## → MINT only the shortfall on every net (restore/fingerprint-verify each net's CA
-	## workspace, additive S3 upload, never sync --delete). Each kit's READY marker is
-	## written last, and flip-api's pool is every slot marked ready on every net
-	## (FLIP#1720), so the slots are claimable at the next trust registration — no
-	## Terraform, no restart. N is a target ("N more live slots"), not a mint count.
+add-fl-kits: ## Mint N more claimable FL kit slots on every net (FLARE; HUB=stag|prod)
+	## Wraps scripts/add_fl_kits.sh: restore/fingerprint-verify each net's CA workspace,
+	## mint the next Trust_<n> names, upload only the new kits (never sync --delete).
+	## flip-api's pool is every kit complete on every net (FLIP#1720), so the slots are
+	## claimable at the next trust registration — no Terraform apply, no restart.
 	@[ -n "$(N)" ] || { echo "❌ N is required, e.g. make add-fl-kits N=2 HUB=prod"; exit 1; }
 	@$(_AWS_ENV) N=$(N) YES=$(YES) FL_BACKEND=$(FL_BACKEND) ENV_NAME=$(ENV_CLASS) ./scripts/add_fl_kits.sh
-
-.PHONY: mark-fl-kits-ready
-mark-fl-kits-ready: ## Mark every complete FLARE kit ready (once per hub after FLIP#1720, or after upload-kits-to-s3)
-	## add-fl-kits N=all: each kit on every net without its READY markers is checked for a
-	## complete kit on every net, then marked. Mints nothing, so needs no CA workspace.
-	@$(_AWS_ENV) N=all YES=$(YES) FL_BACKEND=$(FL_BACKEND) ENV_NAME=$(ENV_CLASS) ./scripts/add_fl_kits.sh
 
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)

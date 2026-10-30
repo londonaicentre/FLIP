@@ -354,7 +354,7 @@ class FLKitSlot(SQLModel, table=True):
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
     Lifecycle: rows are seeded at boot from the resolved slot names (one per
-    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the ready kits in S3
+    pre-provisioned FL kit slot; ``resolve_fl_kit_slot_names`` — the complete kits in S3
     (NVFLARE) or the ``/flip/fl_kit_slot_names`` SSM parameter (Flower) in production,
     the ``FL_KIT_SLOT_NAMES`` env var in dev) and additively reconciled from the same source when a registration
     finds the pool exhausted. ``POST /admin/trusts`` claims the next

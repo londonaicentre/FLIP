@@ -19,6 +19,9 @@
 # so we need a bootstrap run that creates the required directory layout.
 
 locals {
+  # Root of this deployment's FLARE kits: also flip-api's FLARE_KITS_S3_URI (locals.tf).
+  flare_kits_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flare-participant-kits/${var.flare_kit_date}"
+
   # FLARE participant kits are produced by `nvflare provision` and uploaded
   # to the AI Centre bucket - NOT the FLIP bucket. The path mirrors the
   # source-of-truth used by site.yml's central-hub kit sync (lines 168-169).
@@ -26,7 +29,7 @@ locals {
   #   fl-flare-participant-kits/{date}/net-1/services/fl-server-net-1/{startup,local}/...
   #   fl-flare-participant-kits/{date}/net-1/services/flip-fl-api-net-1/{startup,local}/...
   # NB: the fl-api kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`.
-  fl_provision_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flare-participant-kits/${var.flare_kit_date}/net-1/services"
+  fl_provision_base_s3 = "${local.flare_kits_base_s3}/net-1/services"
 
   # Flower creds are produced by `make -C fl-services/flower provision` (with
   # FLOWER_EXTRA_SERVER_SANS covering the Cloud Map + public FL hostnames)

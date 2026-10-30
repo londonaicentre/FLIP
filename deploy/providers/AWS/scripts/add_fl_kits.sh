@@ -12,24 +12,18 @@
 # limitations under the License.
 #
 
-# Ensure N more *claimable* FL kit slots exist on a running stag/prod FLARE
-# deployment, end to end. N is a target ("N more live slots"), not a mint count:
+# Mint N more *claimable* FL kit slots on a running stag/prod FLARE deployment, end to
+# end:
 #
-#   1. discover the deployment's nets from S3
-#   2. ACTIVATE spares first: kits already minted on every net but not marked READY on
-#      every net just need their markers — no certs, no upload. Up to N are taken,
-#      lowest-numbered first (matching the hub's slot_number-ASC claim order).
-#   3. MINT only the shortfall M = N - activated on EVERY net: restore +
-#      fingerprint-verify each net's CA workspace (state/ holds the root CA),
-#      `nvflare provision --add_client` (via make), upload ONLY the new kits to S3
-#      (additive `aws s3 cp`; never `sync --delete`) + refresh each net's mirrored
-#      state/cert.json CA registry. Skipped entirely when spares cover N (M = 0), so
-#      pure activation needs no CA workspace and no provisioning toolchain at all.
+#   1. discover the deployment's nets and existing kit names from S3
+#   2. on EVERY net: restore + fingerprint-verify the CA workspace (state/ holds the
+#      root CA), `nvflare provision --add_client` (via make) the next Trust_<n> names,
+#      upload ONLY the new kits (additive `aws s3 cp`; never `sync --delete`) and
+#      refresh the net's mirrored state/cert.json CA registry
 #
-# A kit's services/<name>/READY marker is written on each net only after the kit is
-# complete there. flip-api's pool is every slot marked ready on every net (FLIP#1720)
-# and it re-reads S3 when the pool runs dry, so the slots are claimable at the next
-# trust registration — no Terraform, no restart.
+# flip-api's pool is every slot whose kit is complete on every net (FLIP#1720), and it
+# re-reads S3 when the pool runs dry, so the slots are claimable at the next trust
+# registration — no Terraform, no restart.
 #
 # Invoked by `make -C deploy/providers/AWS add-fl-kits N=<n> HUB=<stag|prod> [YES=1]`
 # (the Makefile hands this script the environment CLASS as ENV_NAME=prod|stag),
@@ -37,14 +31,13 @@
 # FLARE_KIT_DATE, AWS_PROFILE, FL_BACKEND, HUB) plus N / YES.
 #
 # Safety invariants (live trusts' kits are sacred):
-#   - activates existing spares before minting, so a good kit minted on every net is
-#     never stranded and the numbering never skips past it
 #   - never writes into an existing S3 kit prefix; the emptiness check fails CLOSED
 #     (an S3 error aborts the run, it is never read as "empty")
 #   - never uses `upload-kits-to-s3` (`aws s3 sync --delete` over the whole net)
 #   - aborts if the local root CA fingerprint differs from the S3 server kit's
 #     (the kit's rootCA.pem stands in for the CA in state/cert.json — normal
 #     provisioning always writes them together)
+#   - uploads a kit's required startup files last, so a half-uploaded kit never counts
 #   - a mid-run failure prints exactly what was uploaded and how to recover
 
 set -euo pipefail
@@ -60,9 +53,8 @@ if [[ "${FL_BACKEND:-nvflare}" != "nvflare" ]]; then
     exit 1
 fi
 
-# N=all (`make mark-fl-kits-ready`) activates every spare and mints nothing.
-if [[ "${N}" != "all" ]] && { ! [[ "${N}" =~ ^[0-9]+$ ]] || [[ "${N}" -lt 1 ]]; }; then
-    echo "❌ N must be a positive integer or 'all', got '${N}'." >&2
+if ! [[ "${N}" =~ ^[0-9]+$ ]] || [[ "${N}" -lt 1 ]]; then
+    echo "❌ N must be a positive integer, got '${N}'." >&2
     exit 1
 fi
 
@@ -90,23 +82,24 @@ WORKSPACE_PARENT="${NVFLARE_DIR}/provision/workspace-${ENV_NAME}"
 KEY_PREFIX="fl-flare-participant-kits/${FLARE_KIT_DATE}"
 BASE_S3="s3://${AICENTRE_BUCKET_NAME}/${KEY_PREFIX}"
 
+# A kit is complete on a net once these startup files are there: flip-api's
+# FLARE_KIT_REQUIRED_FILES (db/seed/fl_kit_slots.py; a test keeps the two in step).
+REQUIRED_STARTUP_FILES=(client.crt client.key rootCA.pem fed_client.json sub_start.sh)
+
 log() { echo "🧩 $*"; }
 
-# A mid-run abort must tell the operator what already reached S3. A kit uploaded to
-# only some nets is never claimable (flip-api needs it ready on every net), and a
-# re-run treats a kit that IS on every net as a spare: completeness-checked, then
-# marked. The ERR trap only covers command failures; guard aborts must go through
-# die(), which routes their message through the same reporting (an explicit
-# `exit 1` bypasses the trap, which would lose it on exactly the partial-run paths).
+# A mid-run abort must tell the operator what already reached S3. The ERR trap only
+# covers command failures; guard aborts must go through die(), which routes their
+# message through the same reporting (an explicit `exit 1` bypasses the trap, which
+# would lose it on exactly the partial-run paths).
 UPLOADED=()
 on_error() {
     echo "" >&2
     echo "❌ add-fl-kits aborted." >&2
     if [[ ${#UPLOADED[@]} -gt 0 ]]; then
-        echo "   Kits already uploaded this run: ${UPLOADED[*]}" >&2
-        echo "   Re-running add-fl-kits is safe: a kit now on every net is checked and marked ready" >&2
-        echo "   as a spare. One missing from some net stays unclaimable until it is minted there" >&2
-        echo "   (see the nvflare README)." >&2
+        echo "   Kits uploaded this run (the last may be partial): ${UPLOADED[*]}" >&2
+        echo "   A kit is claimable only once it is complete on every net. Re-run add-fl-kits" >&2
+        echo "   with the number of slots still needed: it numbers past every kit in S3." >&2
     else
         echo "   Nothing was minted or uploaded; re-run once the underlying error is fixed." >&2
     fi
@@ -117,13 +110,6 @@ die() {
     printf '%s\n' "$@" >&2
     on_error
     exit 1
-}
-
-# Write services/<name>/READY on a net: the marker flip-api counts (FLIP#1720), written
-# only once that net's copy of the kit is complete.
-mark_ready() {
-    aws s3api put-object --bucket "${AICENTRE_BUCKET_NAME}" \
-        --key "${KEY_PREFIX}/$1/services/$2/READY" >/dev/null
 }
 
 # --- 1. Discover nets + compute the new slot names -----------------------------
@@ -137,7 +123,7 @@ nets_listing="$(aws s3 ls "${BASE_S3}/")" || {
 NETS=()
 while IFS= read -r net; do
     NETS+=("${net}")
-done < <(printf '%s\n' "${nets_listing}" | awk '{print $2}' | grep -oE '^net-[0-9]+' | sort -V)
+done < <(printf '%s\n' "${nets_listing}" | awk '{print $2}' | sed -n 's#^\(net-[0-9]*\)/$#\1#p' | sort -V)
 if [[ "${#NETS[@]}" -eq 0 ]]; then
     echo "❌ No net-* prefixes under ${BASE_S3}/ — is FLARE_KIT_DATE correct?" >&2
     exit 1
@@ -147,8 +133,6 @@ log "Nets in S3 (${FLARE_KIT_DATE}): ${NETS[*]}"
 # Existing slot names: every net's services/Trust_* prefixes. The max trailing number
 # decides where new names start, so a name is never reused, even a half-uploaded one.
 existing_names=()
-s3_names=()     # one entry per (net, name) — the repeat count is what identifies a kit minted on EVERY net
-ready_names=()  # one entry per (net, name) marked READY on that net
 for net in "${NETS[@]}"; do
     services_listing="$(aws s3 ls "${BASE_S3}/${net}/services/")" || {
         echo "❌ Could not list ${BASE_S3}/${net}/services/ — refusing to compute slot numbers" >&2
@@ -156,74 +140,9 @@ for net in "${NETS[@]}"; do
         exit 1
     }
     while IFS= read -r name; do
-        [[ -n "${name}" ]] && existing_names+=("${name}") && s3_names+=("${name}")
+        [[ -n "${name}" ]] && existing_names+=("${name}")
     done < <(printf '%s\n' "${services_listing}" | awk '{print $2}' | grep -oE '^Trust_[^/]+' || true)
-    # Fails closed too: read as "no markers", an AWS error would make every live kit
-    # look like a spare, and N "activations" would add no capacity.
-    ready_listing="$(aws s3api list-objects-v2 --bucket "${AICENTRE_BUCKET_NAME}" \
-        --prefix "${KEY_PREFIX}/${net}/services/" --query 'Contents[].Key' --output text)" || {
-        echo "❌ Could not list the READY markers under ${BASE_S3}/${net}/services/." >&2
-        exit 1
-    }
-    while IFS= read -r name; do
-        [[ -n "${name}" ]] && ready_names+=("${name}")
-    done < <(printf '%s\n' "${ready_listing}" | tr '\t' '\n' | sed -n 's#.*/services/\([^/]*\)/READY$#\1#p')
 done
-
-# The Trust_<N> names that appear once per net, i.e. on every net (input: one entry per
-# (net, name)).
-on_every_net() {
-    printf '%s\n' "$@" | grep -E '^Trust_[0-9]+$' | sort | uniq -c |
-        awk -v nets="${#NETS[@]}" '$1 == nets { print $2 }' | sort -u
-}
-
-# Spare kits: minted on EVERY net but not marked READY on every net — a kit minted
-# before FLIP#1720, or one whose run stopped before its markers. Activating one is
-# writing its markers — no new certs, no upload, no restart — so we activate spares
-# before minting: a good kit is never stranded and the numbering never skips past it.
-# Sorted lowest-number-first (`sort -t_ -k2 -n`) to drain idle slots in the same order
-# the hub claims them (slot_number ASC).
-# Counted per net (not a plain union): a kit missing entirely from a net (count < nets)
-# is excluded here, and a kit present-but-incomplete on a net (an interrupted final-net
-# upload still leaves a prefix, so it counts) is caught by the completeness check before
-# activation below. Excluded names still bump max_num below, so they are never reused.
-spare_names=()
-if [[ "${#s3_names[@]}" -gt 0 ]]; then
-    while IFS= read -r name; do
-        [[ -n "${name}" ]] && spare_names+=("${name}")
-    done < <(comm -23 \
-        <(on_every_net "${s3_names[@]}") \
-        <(on_every_net ${ready_names[@]+"${ready_names[@]}"}) |
-        sort -t_ -k2 -n)
-fi
-
-# A hub whose kits predate FLIP#1720 has kits but no markers, and those kits may be
-# live: "activating" one a trust already holds would add no capacity. Mark them first.
-if [[ "${N}" != "all" && "${#ready_names[@]}" -eq 0 && "${#spare_names[@]}" -gt 0 ]]; then
-    echo "❌ No kit under ${BASE_S3}/ is marked READY yet, so the existing kits cannot be told" >&2
-    echo "   apart from spares. Run 'make -C deploy/providers/AWS mark-fl-kits-ready HUB=${HUB:-<env>}'" >&2
-    echo "   once first (FLIP#1720), then re-run add-fl-kits." >&2
-    exit 1
-fi
-if [[ "${N}" == "all" ]]; then
-    N="${#spare_names[@]}"
-    if [[ "${N}" -eq 0 ]]; then
-        log "Every kit on every net is already marked ready — nothing to do."
-        exit 0
-    fi
-fi
-
-# Split the request of N more live slots into ACTIVATE (reuse spares, cheapest) then
-# MINT (the shortfall). N is a target, not a mint count: with enough spares, mint_count
-# is 0 and the whole CA-restore/mint path below is skipped.
-ACTIVATE_NAMES=()
-if [[ "${#spare_names[@]}" -gt 0 ]]; then
-    for name in "${spare_names[@]}"; do
-        [[ "${#ACTIVATE_NAMES[@]}" -ge "${N}" ]] && break
-        ACTIVATE_NAMES+=("${name}")
-    done
-fi
-mint_count=$((N - ${#ACTIVATE_NAMES[@]}))
 
 max_num=0
 for name in ${existing_names[@]+"${existing_names[@]}"}; do
@@ -239,74 +158,23 @@ for name in ${existing_names[@]+"${existing_names[@]}"}; do
 done
 
 MINT_NAMES=()
-for ((i = 1; i <= mint_count; i++)); do
+for ((i = 1; i <= N; i++)); do
     MINT_NAMES+=("Trust_$((max_num + i))")
 done
 
-# A spare qualifies for activation only if its kit is COMPLETE on every net. The per-net
-# count above only proves a prefix exists, which a kit whose final net's recursive
-# `aws s3 cp` upload was interrupted still satisfies (≥1 object under services/<name>/).
-# Activating such a partial kit would silently hand a trust a slot it cannot join on the
-# short net, so verify the essential startup files exist on every net and fail closed on
-# a gap — a partial kit is an interrupted-run anomaly to clean up (see the mid-run
-# recovery in fl-services/nvflare/README.md), not something to activate. Only the ≤N
-# names we are about to activate are checked, not every spare.
-if [[ "${#ACTIVATE_NAMES[@]}" -gt 0 ]]; then
-    for name in "${ACTIVATE_NAMES[@]}"; do
-        for net in "${NETS[@]}"; do
-            startup_keys="$(aws s3api list-objects-v2 --bucket "${AICENTRE_BUCKET_NAME}" \
-                --prefix "${KEY_PREFIX}/${net}/services/${name}/startup/" \
-                --query 'Contents[].Key' --output text)" || {
-                echo "❌ could not verify ${name}/ on ${net} — refusing to activate a spare blind." >&2
-                exit 1
-            }
-            for required in client.crt client.key rootCA.pem fed_client.json sub_start.sh; do
-                if [[ "${startup_keys}" != *"/startup/${required}"* ]]; then
-                    echo "❌ spare ${name} is incomplete on ${net}: missing startup/${required}." >&2
-                    echo "   A partially-uploaded kit (an interrupted prior add-fl-kits run) must be cleaned" >&2
-                    echo "   up before it can be activated — see the mid-run recovery in" >&2
-                    echo "   fl-services/nvflare/README.md. Refusing to activate an incomplete kit." >&2
-                    exit 1
-                fi
-            done
-        done
-    done
-fi
-
-activate_display="(none — no spare kits)"
-[[ "${#ACTIVATE_NAMES[@]}" -gt 0 ]] && activate_display="${ACTIVATE_NAMES[*]}"
-mint_display="(none — spares cover N)"
-[[ "${#MINT_NAMES[@]}" -gt 0 ]] && mint_display="${MINT_NAMES[*]}"
-# Show the "existing max" hint only when minting; noise otherwise.
-mint_line="${mint_display}"
-[[ "${#MINT_NAMES[@]}" -gt 0 ]] && mint_line="${mint_display}  (existing max: Trust_${max_num})"
-
 echo ""
-echo "   Plan (${ENV_NAME}):  ${N} more live slot(s)"
+echo "   Plan (${ENV_NAME}):  mint ${N} kit slot(s)"
 echo "     bucket        ${AICENTRE_BUCKET_NAME} (kit date ${FLARE_KIT_DATE})"
 echo "     nets          ${NETS[*]}"
-echo "     activate      ${activate_display}"
-echo "     mint          ${mint_line}"
+echo "     mint          ${MINT_NAMES[*]}  (existing max: Trust_${max_num})"
 echo ""
 if [[ "${YES}" != "1" ]]; then
     read -r -p "   Proceed? [y/N] " answer
     [[ "${answer}" == "y" || "${answer}" == "Y" ]] || { echo "Aborted."; exit 1; }
 fi
 
-# --- 2. ACTIVATE: each spare was verified complete on every net above --------------
+# --- 2. Per net: restore/verify the CA workspace, mint, upload ------------------
 
-for name in ${ACTIVATE_NAMES[@]+"${ACTIVATE_NAMES[@]}"}; do
-    for net in "${NETS[@]}"; do
-        mark_ready "${net}" "${name}"
-    done
-    log "${name}: marked ready on ${NETS[*]}."
-done
-
-# --- 3. MINT the shortfall: per net restore/verify CA workspace, mint, upload, mark -
-# Skipped entirely when spares already cover N (mint_count == 0) — pure activation
-# touches no CA state and needs none of the provisioning toolchain.
-
-if [[ "${#MINT_NAMES[@]}" -gt 0 ]]; then
 # One temp path, reused for every net's root-CA download and cleaned by a single
 # EXIT trap. Bash keeps only one EXIT trap, so a per-net `trap ... EXIT` inside
 # the loop would silently replace the previous net's and could leak its file.
@@ -360,20 +228,25 @@ for net in "${NETS[@]}"; do
         log "${net}: minting ${name} against the existing root CA..."
         make -C "${NVFLARE_DIR}" "provision-add-client-${ENV_NAME}" NET_NUMBER="${net_number}" CLIENT_NAME="${name}"
 
+        # Required startup files last: until they are all there, flip-api skips the kit.
         log "${net}: uploading ${name} (additive)..."
-        aws s3 cp "${workspace}/services/${name}/" "${BASE_S3}/${net}/services/${name}/" \
-            --recursive --only-show-errors
         UPLOADED+=("${net}/${name}")
-        mark_ready "${net}" "${name}"
+        excludes=() includes=()
+        for f in "${REQUIRED_STARTUP_FILES[@]}"; do
+            excludes+=(--exclude "startup/${f}")
+            includes+=(--include "startup/${f}")
+        done
+        aws s3 cp "${workspace}/services/${name}/" "${BASE_S3}/${net}/services/${name}/" \
+            --recursive --only-show-errors "${excludes[@]}"
+        aws s3 cp "${workspace}/services/${name}/" "${BASE_S3}/${net}/services/${name}/" \
+            --recursive --only-show-errors --exclude '*' "${includes[@]}"
     done
 
     # Refresh the mirrored CA registry so the next add from a fresh checkout signs
     # with a registry that knows these identities.
     aws s3 cp "${workspace}/state/cert.json" "${BASE_S3}/${net}/state/cert.json" --only-show-errors
-    log "${net}: done (${#MINT_NAMES[@]} kits minted, uploaded + marked ready, state/cert.json refreshed)."
+    log "${net}: done (${#MINT_NAMES[@]} kits minted + uploaded, state/cert.json refreshed)."
 done
-fi
 
 echo ""
-log "Slots ensured: activated [${activate_display}], minted [${mint_display}]."
-log "They are claimable at the next trust registration — no Terraform apply, no restart."
+log "Minted ${MINT_NAMES[*]}: claimable at the next trust registration — no Terraform apply, no restart."
