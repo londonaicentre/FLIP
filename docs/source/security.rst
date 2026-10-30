@@ -188,13 +188,34 @@ already exists.
 The clinical data boundary
 **************************
 
-Cohort queries execute inside the trust, against the trust's own OMOP database. Several
-independent controls would each have to fail before anything unintended could execute:
+Cohort queries execute against the trust's own OMOP database, under the trust's own
+governance. For a trust whose OMOP is the local PostgreSQL database on the trust node, that
+also means inside the trust's network perimeter. A trust may instead hold its OMOP in its own
+Snowflake warehouse, in which case the query executes in that trust's own Snowflake tenancy:
+outside the trust's network perimeter, inside its own governance, and reached over outbound
+HTTPS with credentials only the trust holds. Which it is, is the trust's decision alone,
+recorded in its deployment kit; the Central Hub never sees those credentials and cannot
+change where a trust's data lives. The statement that trust systems accept no inbound
+connections is unaffected.
+
+Several independent controls would each have to fail before anything unintended could
+execute:
 
 - **Read-only role.** The query runs as a read-only database role with DML and DDL
-  revoked. The database itself refuses to write, regardless of what the query says.
+  revoked. The database itself refuses to write, regardless of what the query says. On a
+  Snowflake trust the equivalent is a role granted ``SELECT`` on the OMOP schema and nothing
+  else, with no write or DDL privilege and a statement timeout, created by the trust's own
+  Snowflake administrator before the trust can be onboarded.
 - **Parsed and re-emitted.** The query is parsed with ``sqlglot`` and re-emitted from its
-  parsed form before execution, which breaks the injection taint chain.
+  parsed form before execution, which breaks the injection taint chain. The same pass is
+  what lets one query, authored once at the hub, run on trusts with different databases: the
+  trust re-emits it for its own engine, so no researcher writes per-trust SQL.
+- **The rules do not vary by database.** Every control in this list holds on every supported
+  backend. What differs is the implementation, deliberately: the set of unrecognised
+  functions refused is specific to the engine, because what is dangerous in PostgreSQL's
+  system catalog and what is dangerous in a Snowflake warehouse are different lists. In both
+  cases the posture is to refuse anything not recognised rather than to enumerate what is
+  forbidden.
 - **Read-only statement types only.** This is decided from the parsed AST rather than by
   scanning for banned keywords.
 - **One statement per request.** Multiple statements bundled into one request are

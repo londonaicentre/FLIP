@@ -6,7 +6,7 @@ FastAPI service for querying the OMOP Common Data Model database. Receives cohor
 
 ## Key Patterns
 
-- Connects to omop-db (PostgreSQL port 5432) on the trust network
+- Reads OMOP through a backend chosen by `OMOP_BACKEND` (`data_access_api/db/backend.py`, FLIP#13): `postgres` (default; omop-db on port 5432 over the trust network, unchanged) or `snowflake` (native tables, SPCS OAuth token or key-pair auth, never a password; read-only grants in `sql/snowflake_readonly_grants.sql`). Cohort SQL is always parsed and validated in the Postgres authoring dialect and re-emitted in the backend's dialect, so one hub query runs on both; each backend carries its own dangerous-surface allowlist. The engine is built lazily (`get_engine()`), never at import
 - Receives internal requests from trust-api (all `/cohort` endpoints) and from imaging-api (`/cohort/accession-ids`); not directly exposed
 - Every internal caller authenticates with the per-trust `TRUST_INTERNAL_SERVICE_KEY` header (see [`trust/AGENTS.md`](../AGENTS.md#trust-internal-service-authentication)). `/health` stays unauthenticated. The cohort router is **split by privilege** (`utils/internal_auth.py`): the read router (`/cohort` statistics, `/cohort/dataframe`, `/cohort/accession-ids`) requires the trust-internal key; the write router (`/cohort/snapshot`, `/cohort/snapshot/delete`) requires that **plus** cohort-admin — `authenticate_cohort_admin`, proof of possessing `AES_KEY_BASE64` (SHA-256 of the key, constant-time compared). fl-client holds the trust-internal key (for its reads) but no AES key, so it cannot define/destroy a project's frozen cohort (FLIP#857). A valid trust-internal key without the proof → 403
 - OMOP CDM query translation layer
