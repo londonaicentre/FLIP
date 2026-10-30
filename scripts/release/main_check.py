@@ -49,12 +49,12 @@ def after_merge(tag: str) -> list[str]:
     return [
         "Merge with a **merge commit** — never squash or rebase.",
         "Two prod Terraform applies follow: the push apply at `sha-<short7>`, then `release.yml`'s apply at "
-        f"`{tag}` once the twelve image builds are green. Either can hold on the FL gate; only the user attests "
+        f"`{tag}` once the fourteen image builds are green. Either can hold on the FL gate; only the user attests "
         "`fl_quiesced`.",
         "Nothing merges to `main` until the release apply has run.",
-        f"Check the Release page, GHCR `:{tag}` on all twelve images, PyPI if flip-utils was bumped, and that prod "
-        f"`/api/health` reports `{tag}`.",
-        "Deploy the UI by hand (#1186): `make -C deploy/providers/AWS deploy-ui HUB=<hub>` from a checkout at the tag.",
+        f"Check the Release page, GHCR `:{tag}` on every image the fourteen builds publish, PyPI if flip-utils was "
+        f"bumped, and that prod `/api/health` reports `{tag}`.",
+        "Check that the release apply's *Publish flip-ui (prod)* job passed (#1186).",
         "Sites upgrade themselves: point operators to *Site upgrade* and "
         "`docs/source/sys-admin/admin-upgrading-sites.rst`.",
     ]

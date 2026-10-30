@@ -463,11 +463,43 @@ class Prepare(unittest.TestCase):
         assert versions[prepare.FLIP_UTILS] == "99.1.0"  # strictly above the last flip-utils tag
         assert prepare.FLIP_UTILS not in prepare.plan("v9.9.0", "v9.8.0", None, ["flip-utils/tests/t.py"], ROOT)
 
-    def test_unlabelled_prs_start_after_the_previous_tag(self):
-        prs = [{"number": 1, "title": "a", "labels": []}, {"number": 2, "title": "b", "labels": [{"name": "x"}]}]
-        with mock.patch.object(prepare, "_gh_json", return_value=prs) as gh:
-            assert prepare.unlabelled_prs("2026-10-20T14:03:11+01:00") == prs[:1]
-        assert "merged:>2026-10-20T14:03:11+01:00" in gh.call_args.args
+    def test_unlabelled_prs_are_those_merged_after_the_previous_tag_by_commit(self):
+        # #3 merged before a hotfix tag's date but is not in the tag, so it ships now (v0.13.2); #4 is in the tag.
+        prs = [
+            {"number": 1, "title": "a", "labels": [], "mergeCommit": {"oid": "aaa"}},
+            {"number": 2, "title": "b", "labels": [{"name": "x"}], "mergeCommit": {"oid": "bbb"}},
+            {"number": 3, "title": "c", "labels": [], "mergeCommit": {"oid": "ccc"}},
+            {"number": 4, "title": "d", "labels": [], "mergeCommit": {"oid": "ddd"}},
+        ]
+        log = "aaa 1792843200\nbbb 1792497600\nccc 1792670400"  # 24, 20 and 22 Oct 2026
+        with (
+            mock.patch.object(prepare, "git", return_value=log) as git,
+            mock.patch.object(prepare, "_gh_json", return_value=prs) as gh,
+        ):
+            assert [p["number"] for p in prepare.unlabelled_prs("v9.8.1")] == [1, 3]
+        assert git.call_args.args[-1] == "v9.8.1..HEAD"
+        assert "merged:>=2026-10-19" in gh.call_args.args  # a day before the oldest commit in the range
+
+    def test_unlabelled_prs_refuses_a_truncated_search(self):
+        prs = [{"number": 1, "title": "a", "labels": [{"name": "x"}], "mergeCommit": {"oid": "aaa"}}]
+        with (
+            mock.patch.object(prepare, "git", return_value="aaa 1792497600"),
+            mock.patch.object(prepare, "PR_LIMIT", 1),
+            mock.patch.object(prepare, "_gh_json", return_value=prs),
+        ):
+            assert "truncated" in str(refused(prepare.unlabelled_prs, "v9.8.1"))
+
+    def test_unlabelled_prs_refuses_a_pr_without_a_merge_commit(self):
+        # Fail closed: without its merge commit the range cannot say whether the PR ships in this release.
+        prs = [
+            {"number": 1, "title": "a", "labels": [], "mergeCommit": {"oid": "aaa"}},
+            {"number": 2, "title": "b", "labels": [{"name": "x"}], "mergeCommit": None},
+        ]
+        with (
+            mock.patch.object(prepare, "git", return_value="aaa 1792497600"),
+            mock.patch.object(prepare, "_gh_json", return_value=prs),
+        ):
+            assert "#2" in str(refused(prepare.unlabelled_prs, "v9.8.1"))
 
     def test_version_files_round_trip(self):
         for rel in ("pyproject.toml", "flip-ui/package.json", prepare.FLIP_UTILS):
@@ -522,7 +554,8 @@ class MainCheck(unittest.TestCase):
         body = argv[argv.index("--body") + 1]
         assert "merge commit" in body
         assert "fl_quiesced" in body
-        assert "`:v0.13.0` on all twelve images" in body
+        assert "`:v0.13.0` on every image the fourteen builds publish" in body
+        assert "deploy-ui" not in body  # the apply publishes the UI (#1186)
         assert "- [ ] Delete JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" in body
 
 
