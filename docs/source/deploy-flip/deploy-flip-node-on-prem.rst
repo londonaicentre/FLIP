@@ -50,7 +50,8 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
 - **Bind-mount directories owned by the uid of the container that writes them.** ``make up-onprem-trust`` prepares
   them and verifies the ownership. A non-root user cannot ``chown`` to a uid they are not, so where a plain
   ``chown`` fails the Makefile does it through a throwaway container, which socket access allows; the
-  ownership-failure messages print both remedies.
+  ownership-failure messages print both remedies. That container runs the trust's own ``omop-db`` image from GHCR,
+  so it needs no Docker Hub access.
 
   .. list-table::
      :header-rows: 1
@@ -72,7 +73,14 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - gid 49999
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
 
+  Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR``
+  in the kit to absolute paths on the data disk, under a directory you can write. The kit template carries the
+  development values, which are relative and so land inside the checkout; unset ones fall back to ``/opt/flip``,
+  which a non-root user usually cannot create. The checklist's *Data dir paths* row checks both.
 - **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).
+- **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``, which read TOML with
+  the standard library. ``uv`` installs one when it can download it; otherwise the host must provide a
+  ``python3.11`` or newer. The checklist refuses an older interpreter up front.
 
 A host provisioned by the Ansible playbook below gives the login user none of this, on purpose: it does not add the
 user to the ``docker`` group. There, every command on this page runs as ``sudo -E make …`` (``-E`` keeps your
@@ -80,6 +88,38 @@ user to the ``docker`` group. There, every command on this page runs as ``sudo -
 ``sudo``, as in many trusted research environments, run them as yourself. Rootless Docker is not supported: the
 images run as fixed uids that cannot write directories you own under it; use the Helm chart
 (:doc:`deploy-flip-node-kubernetes`) on such a host.
+
+.. _onprem-forward-proxy:
+
+Behind a forward proxy
+======================
+
+Where all outbound traffic goes through a proxy, as in most trusted research environments, three settings matter:
+
+- **Image pulls** use the Docker daemon's own proxy setting (a systemd drop-in). The host owner sets it.
+- **Containers** get no proxy unless you give them one. Without it, trust-api cannot reach the hub and the FL client
+  cannot reach the FL server. Put it in your Docker client config, ``~/.docker/config.json``; Compose passes it to
+  every container it creates. ``noProxy`` must name the stack's own services, or their calls to each other go to the
+  proxy too. Add your site's internal domains to it.
+
+  .. code-block:: json
+
+     {
+       "proxies": {
+         "default": {
+           "httpProxy": "http://proxy.example.nhs.uk:3128",
+           "httpsProxy": "http://proxy.example.nhs.uk:3128",
+           "noProxy": "localhost,127.0.0.1,trust-api,data-access-api,imaging-api,orthanc,omop-db,xnat-web,loki"
+         }
+       }
+     }
+
+  Merge the ``proxies`` key into the file if it exists; containers created before the change keep their old
+  environment until they are recreated. The proxy must also allow the FL server's port (the kit's
+  ``FL_EDGE_PORT``, else ``FL_SERVER_PORT``), not only 443.
+- **Your shell** may export ``http_proxy`` too. Then ``curl http://127.0.0.1:<port>`` goes to the proxy, and a
+  published port seems not to answer. Use ``curl --noproxy '*' …``, or export ``NO_PROXY=localhost,127.0.0.1``
+  (and ``no_proxy``). The readiness checklist's own probe bypasses the proxy.
 
 *******************************
 Provision the host with Ansible

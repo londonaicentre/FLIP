@@ -93,8 +93,10 @@ host provisioned by the on-prem playbook deliberately leaves the login user out 
 group (root-equivalent), so there the operator prefixes `sudo -E` (`-E` preserves `$HOME` so
 root's docker reuses the operator's GHCR login); the checklist then prints the same prefix for
 the next step (`SUDO_USER` set). Where a non-root operator cannot `chown` a bind mount to the
-container's uid, the Makefiles do it through a throwaway alpine container (`ensure_net_dirs`,
-`ensure_data_dirs`, `ensure_snapshot_dir`, the local prod branch of `xnat-reset`).
+container's uid, the Makefiles do it through a throwaway root container (`ensure_net_dirs`,
+`ensure_data_dirs`, `ensure_snapshot_dir`, the local prod branch of `xnat-reset`). Its image is
+the trust's own omop-db (`ROOT_HELPER_IMAGE` in `deploy/portable.mk`), not alpine, which would
+need Docker Hub.
 
 ## Key Files
 

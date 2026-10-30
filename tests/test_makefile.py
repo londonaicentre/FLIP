@@ -113,7 +113,8 @@ class NetDirsWithoutSudo(unittest.TestCase):
     def test_net_dirs_fall_back_to_a_throwaway_container(self):
         """A non-root operator cannot chown to another uid; Docker socket access can (FLIP#1723)."""
         out = dry_run("up-trust")
-        assert "alpine:3.20" in out, out
+        assert "ghcr.io/londonaicentre/omop-db:" in out, out  # not alpine: Docker Hub may be refused
+        assert "alpine" not in out, out
         assert "chown $owner /d/net-1 /d/net-2" in out, out
         assert "or, without sudo:" in out, out
 

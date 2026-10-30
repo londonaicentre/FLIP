@@ -619,6 +619,79 @@ def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
         _assert(check.status == status, f"{status.name}: {check.detail}", str(check))
 
 
+def _paths(**kit: str):
+    return mod.check_data_dir_paths(kit, True, "trust/.env.SITE.prod")
+
+
+def test_32_relative_data_dirs_warn() -> None:
+    """The kit template's development paths resolve inside the checkout on a deployed trust (FLIP#1723)."""
+    print("▶ relative data dir paths -> WARN naming them")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(
+            OMOP_DATA_DIR=f"{td}/omop",
+            ORTHANC_STORAGE_DIR="./orthanc/orthanc-storage-trust1",
+            BASE_IMAGES_DOWNLOAD_DIR="./data/trust",
+            COHORT_SNAPSHOT_STORAGE_DIR=f"{td}/snapshots",
+        )
+    _assert(check.status == mod.Status.WARN, "WARN", f"{check.status}: {check.detail}")
+    _assert("ORTHANC_STORAGE_DIR, BASE_IMAGES_DOWNLOAD_DIR" in check.detail, "names both", check.detail)
+    _assert("trust/.env.SITE.prod" in check.hints[0], "hint names the kit", check.hints[0])
+
+
+def test_33_uncreatable_data_dir_fails() -> None:
+    """A dir the bring-up's mkdir cannot create fails here, not halfway through `up` (FLIP#1723)."""
+    print("▶ data dir under an unwritable parent -> FAIL; the container-made store is exempt")
+    with tempfile.TemporaryDirectory() as td:
+        locked = Path(td) / "locked"
+        locked.mkdir()
+        writable = lambda path, mode: Path(path) != locked  # noqa: E731 — root ignores mode bits, so fake it
+        with mock.patch.object(mod.os, "access", side_effect=writable):
+            check = _paths(
+                OMOP_DATA_DIR=f"{locked}/omop",
+                ORTHANC_STORAGE_DIR=f"{td}/orthanc",
+                BASE_IMAGES_DOWNLOAD_DIR=f"{td}/images",
+                COHORT_SNAPSHOT_STORAGE_DIR=f"{locked}/snapshots",
+            )
+    _assert(check.status == mod.Status.FAIL, "FAIL", f"{check.status}: {check.detail}")
+    _assert(f"OMOP_DATA_DIR ({locked} is not writable)" in check.detail, "names the var and parent", check.detail)
+    _assert("COHORT_SNAPSHOT_STORAGE_DIR" not in check.detail, "membership store exempt", check.detail)
+
+
+def test_34_absolute_creatable_data_dirs_pass() -> None:
+    print("▶ absolute, creatable data dirs -> PASS")
+    with tempfile.TemporaryDirectory() as td:
+        check = _paths(**{var: f"{td}/{var.lower()}" for var in mod.DATA_DIR_VARS})
+    _assert(check.status == mod.Status.PASS, "PASS", f"{check.status}: {check.detail}")
+
+
+def test_35_trust_health_probe_ignores_the_proxy() -> None:
+    """Behind a TRE proxy with NO_PROXY unset, urllib would send 127.0.0.1 to the proxy (FLIP#1723)."""
+    print("▶ local trust-api probe bypasses http_proxy")
+    import http.server
+    import threading
+
+    class Health(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 — http.server's name
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status": "ok"}')
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        with mock.patch.dict(os.environ, {"http_proxy": "http://127.0.0.1:9", "no_proxy": ""}):
+            try:
+                body = mod.fetch_local_trust_health(str(server.server_address[1]))
+            except OSError as error:
+                body = {"error": str(error)}
+    finally:
+        server.shutdown()
+    _assert(body == {"status": "ok"}, "answers directly", str(body))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -654,6 +727,10 @@ def main() -> None:
     test_29_ready_command_preserves_and_quotes_the_selected_kit()
     test_30_governance_action_preserves_and_quotes_the_selected_kit()
     test_31_unrotated_passwords_compare_against_the_kit_template()
+    test_32_relative_data_dirs_warn()
+    test_33_uncreatable_data_dir_fails()
+    test_34_absolute_creatable_data_dirs_pass()
+    test_35_trust_health_probe_ignores_the_proxy()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

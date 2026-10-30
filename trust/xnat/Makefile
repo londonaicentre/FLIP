@@ -234,7 +234,7 @@ define check_xnat_dir_owner
 		echo "    writes no logs to explain it (FLIP#1095)."; \
 		echo "    Fix: $(if $(2),$(2) ,)sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
 		echo "    or, without sudo (Docker socket access is enough):"; \
-		echo "         $(if $(2),$(2) ,)docker run --rm -v $(XNAT_DATA_DIR):/d alpine:3.20 chown -R $(XNAT_DIR_OWNER) /d"; \
+		echo "         $(if $(2),$(2) ,)docker run --rm -v $(XNAT_DATA_DIR):/d $(ROOT_HELPER_IMAGE) chown -R $(XNAT_DIR_OWNER) /d"; \
 		exit 1; \
 	fi
 endef
@@ -628,7 +628,7 @@ xnat-reset:
 				else \
 					echo "  🐳 not root — provisioning the tree through a throwaway container (FLIP#1723)"; \
 					parent="$$(dirname $(XNAT_DATA_DIR))"; \
-					docker run --rm -v "$$parent":"$$parent" alpine:3.20 sh -c \
+					docker run --rm -v "$$parent":"$$parent" $(ROOT_HELPER_IMAGE) sh -c \
 						"rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
 				fi; \
 				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \

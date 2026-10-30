@@ -146,7 +146,7 @@ define ensure_net_dirs
 	fi; \
 	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
 	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
-	  docker run --rm -v "$$(cd "$$base" && pwd)":/d alpine:3.20 \
+	  docker run --rm -v "$$(cd "$$base" && pwd)":/d $(ROOT_HELPER_IMAGE) \
 	    sh -c "chown $$owner /d/net-1 /d/net-2 && chmod $$mode /d/net-1 /d/net-2" >/dev/null 2>&1 || true; \
 	  for d in "$$base/net-1" "$$base/net-2"; do \
 	    got="$$($(call stat_fmt,%u:%g %a) "$$d")"; \
@@ -155,7 +155,7 @@ define ensure_net_dirs
 	    echo "    fl-client both write there, so every image download would 500 and training"; \
 	    echo "    would later fail with a misleading num_samples=0."; \
 	    echo "    Fix: sudo chown $$owner $$base/net-1 $$base/net-2 && sudo chmod $$mode $$base/net-1 $$base/net-2"; \
-	    echo "    or, without sudo: docker run --rm -v $$base:/d alpine:3.20 sh -c 'chown $$owner /d/net-1 /d/net-2 && chmod $$mode /d/net-1 /d/net-2'"; \
+	    echo "    or, without sudo: docker run --rm -v $$base:/d $(ROOT_HELPER_IMAGE) sh -c 'chown $$owner /d/net-1 /d/net-2 && chmod $$mode /d/net-1 /d/net-2'"; \
 	    exit 1; \
 	  done; \
 	fi
@@ -338,14 +338,14 @@ TRUST_BUILD_VARS = \
 # - Orthanc runs as uid 999 with CHOWN only (no DAC_OVERRIDE), so its storage dir must be
 #   owned by 999 before the first start or it exits at once. A plain chown works when
 #   this runs as root (the documented on-prem bring-up does); otherwise a throwaway
-#   alpine container does it, which needs no sudo. Only the top-level dir is touched.
+#   ROOT_HELPER_IMAGE container does it, which needs no sudo. Only the top-level dir is touched.
 # Pass the two resolved paths (what the compose file will mount) as $1 (OMOP) and $2 (PACS).
 define ensure_data_dirs
 	@omop="$(1)"; pacs="$(2)"; \
 	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; exit 1; }; \
 	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "999" ]; then \
 	  chown 999:999 "$$pacs" 2>/dev/null || \
-	  docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine chown 999:999 /d || { \
+	  docker run --rm -v "$$(cd "$$pacs" && pwd)":/d $(ROOT_HELPER_IMAGE) chown 999:999 /d || { \
 	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
 	    echo "   Fix: sudo chown 999:999 $$pacs"; exit 1; }; \
 	fi
@@ -363,13 +363,13 @@ define ensure_snapshot_dir
 	case "$$dir" in \
 	  /*) name="$$(basename "$$dir")"; \
 	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$($(call stat_fmt,%u:%g) "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
-	      docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
+	      docker run --rm -v "$$(dirname "$$dir")":/parent $(ROOT_HELPER_IMAGE) \
 	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
 	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
 	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
 	     if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
 	       chown "$$owner" "$$dir" 2>/dev/null || \
-	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d || { \
+	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d $(ROOT_HELPER_IMAGE) chown "$$owner" /d || { \
 	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
 	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
 	     fi ;; \
