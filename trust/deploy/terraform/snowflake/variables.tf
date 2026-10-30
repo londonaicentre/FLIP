@@ -139,6 +139,24 @@ variable "suspend_pools_timezone" {
   default     = "Europe/London"
 }
 
+variable "service_log_level" {
+  description = <<-EOT
+    Verbosity every SPCS service and job writes into the account event table, set per service in
+    its spec's logExporters.eventTableConfig.logLevel (#1584). There is deliberately no account,
+    database or schema LOG_LEVEL parameter anywhere in either root: that would collect
+    Snowflake-internal output account-wide and bill its storage. DEBUG and TRACE are refused here
+    because a container's debug stream is clinical-adjacent text landing in a table several roles
+    can read, and because the event table is pruned on a fixed window, so noise displaces signal.
+  EOT
+  type        = string
+  default     = "INFO"
+
+  validation {
+    condition     = contains(["ERROR", "WARN", "INFO"], var.service_log_level)
+    error_message = "service_log_level must be ERROR, WARN or INFO. DEBUG and TRACE are not available to a deployed trust."
+  }
+}
+
 variable "manage_services" {
   description = "Placeholder for #1582: when the SPCS service specs land, this root gains the services themselves. It changes nothing yet."
   type        = bool

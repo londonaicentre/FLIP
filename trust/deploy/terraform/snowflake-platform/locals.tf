@@ -48,6 +48,27 @@ locals {
   event_table     = "FLIP_EVENTS"
   event_table_fqn = "${local.platform_database}.${local.platform_schemas.obs}.${local.event_table}"
 
+  # The retention task (#1584). Named for the platform, not for a trust: one event table serves
+  # every trust in the account, so its pruning is not per-trust work.
+  prune_task = "FLIP_PLATFORM_PRUNE_EVENTS"
+
+  # The observability views (#1584). Every one of them lives in FLIP_PLATFORM.OBS and is readable
+  # by FLIP_<CODE>_OBSERVER alone; the dashboard in dashboards/ queries these names and nothing
+  # else, so a tile never has to know the event table's shape.
+  obs_views = {
+    events            = "V_EVENTS"
+    service_status    = "V_SERVICE_STATUS"
+    service_restarts  = "V_SERVICE_RESTARTS"
+    recent_errors     = "V_RECENT_ERRORS"
+    fl_client_logs    = "V_FL_CLIENT_LOGS"
+    compute_pool_cost = "V_COMPUTE_POOL_COST"
+    warehouse_cost    = "V_WAREHOUSE_COST"
+  }
+
+  # How an fl-client service is recognised in the event table. The #1582 naming contract gives
+  # every FL client service a name beginning FL_CLIENT (one per FL network, FL_CLIENT_NET_<n>).
+  fl_client_service_pattern = "FL_CLIENT%"
+
   # The account privileges the workload role is allowed to hold, and nothing else. No CREATE ROLE,
   # no CREATE USER, no CREATE INTEGRATION, no CREATE NETWORK POLICY, no MANAGE GRANTS, and no
   # CREATE WAREHOUSE: the warehouse is platform-owned so its resource monitor cannot be shed.
