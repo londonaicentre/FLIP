@@ -1,0 +1,30 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# The third-party images a trust node runs, mirrored into ghcr.io/londonaicentre/mirror/<name> so a
+# site allowlists one registry (FLIP#1721). Each line is the upstream reference and the digest of its
+# image index; scripts/mirror_images.sh copies that digest (a byte-identical index, so the mirror has
+# the same digest) and tags it with the upstream tag. The compose files, the Helm chart and the
+# Ansible seed role pin `ghcr.io/londonaicentre/mirror/<name>:<tag>@<digest>`;
+# scripts/tests/test_mirror_images.py keeps them on this list.
+#
+# Bumping a version: `docker buildx imagetools inspect <upstream>` for the new digest, update the line
+# and every pin, then `gh workflow run mirror_images.yml --ref <branch>` (or `make mirror-images` with
+# a write:packages login) before the PR merges, so no branch names a mirror that does not exist yet.
+# Loki and Grafana are AGPL-3.0: each mirror's package description links to its upstream source.
+#
+# <upstream>  <index digest>
+docker.io/grafana/loki:3.4.0  sha256:74b8ccbd6e4b4932874742cf3997389592389ea721b3f210aad266486b985a4c
+docker.io/grafana/alloy:v1.9.0  sha256:32bc0ba6bad75ca24bdf4a6d2dd793a564dff06b6446927699c08d9f9c749c6e
+docker.io/grafana/grafana:11.5.0  sha256:0a2874cf39c6487093c682215f7c7903ed8646d78ae5f911af945d2dfcc0a447
+docker.io/tecnativa/docker-socket-proxy:v0.4.2  sha256:1f3a6f303320723d199d2316a3e82b2e2685d86c275d5e3deeaf182573b47476
+ghcr.io/astral-sh/uv:python3.12-bookworm-slim  sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+docker.io/library/busybox:1.36  sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662

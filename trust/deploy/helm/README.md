@@ -209,7 +209,7 @@ from `dicom.log` and the container log alike. See
 | `trustData.seed.sourceRef` | `develop` | FLIP git ref the seed tools are installed from at run time — match the ref your images were built from (`main` for `:prod`) |
 | `trustData.seed.dicomVocabBundle` | `vocab_dicom_paulnagy_20260109` | The Apache-licensed DICOM vocabulary bundle loaded before the rows |
 | `trustData.seed.forceDicomVocab` | `false` | Recovery only: reload the DICOM vocabulary over one that reports itself present. The load skips on a single concept committed before the bulk load, so a Job killed between them leaves a half-loaded vocabulary every later upgrade skips. Set for one upgrade, then put it back |
-| `trustData.seed.image.*` | `ghcr.io/astral-sh/uv@sha256:…` | The uv image the hook runs in (pinned by digest) |
+| `trustData.seed.image.*` | `ghcr.io/londonaicentre/mirror/astral-sh/uv@sha256:…` | The uv image the hook runs in: FLIP's mirror, pinned by digest (`trust/deploy/mirror-images.manifest`) |
 | `trustData.seed.workDirSize` | `8Gi` | Scratch emptyDir for the fetched tables, vocabulary zip and DICOM sets |
 
 #### Upgrading: `trustData.version` replaces the two per-store pins (FLIP#1100)
@@ -1257,11 +1257,12 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
   unwritten and the Job falls through to a full fetch-and-load rather than
   failing, because a needless download is recoverable and a wrongly-skipped load
   is silent. The loader then reports the real error.
-- The Job reaches no host but S3. `fetch-bundle` only downloads the zip; the
-  loader unpacks it with the `unzip` baked into the `omop-db` image, so nothing
-  is installed at run time and no package mirror has to be on the egress
-  allowlist. `unzip: not found` in `load-vocab` means the `omopDb.image.tag` in
-  use predates this — repull a CI-published tag.
+- The Job reaches no host but S3. All three containers run the `omop-db` image,
+  which bakes the AWS CLI and `unzip`, so nothing is installed at run time and no
+  package mirror has to be on the egress allowlist (FLIP#1721 retired the Docker
+  Hub `amazon/aws-cli` image the fetch used before). `aws: not found` in
+  `fetch-bundle`, or `unzip: not found` in `load-vocab`, means the `omopDb.image.tag`
+  in use predates this — repull a CI-published tag.
 
 ### Getting help
 

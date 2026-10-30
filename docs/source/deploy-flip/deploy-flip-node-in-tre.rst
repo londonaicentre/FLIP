@@ -57,14 +57,17 @@ operator. The TRE operator is responsible for:
 
 **Container images**
 
-FLIP's own images are published to the GitHub Container Registry
-(``ghcr.io/londonaicentre/*``). The observability stack and XNAT's Docker socket proxy come
-from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
-``tecnativa/docker-socket-proxy``, at the tags ``trust/deploy/compose/compose_trust.prod.yml``
-and ``trust/xnat/docker-compose-stack.yml`` pin.
+Everything a trust node runs comes from one registry, the GitHub Container Registry, under
+``ghcr.io/londonaicentre/``: FLIP's own images, and byte-identical copies of the third-party ones
+(Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's ``uv`` and ``busybox`` helpers) under
+``ghcr.io/londonaicentre/mirror/``, pinned by digest in the compose files and the Helm chart
+(:gh:`trust/deploy/mirror-images.manifest`). Nothing is pulled from Docker Hub.
 
-Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of
-each registry in :ref:`deploy-trust-node-network`.
+Where the TRE lets the FLIP host pull directly (CREATE does this), its proxy needs the two GHCR
+hosts in :ref:`deploy-trust-node-network`. A proxy allowlist works by host name: it cannot be
+narrowed to FLIP's packages and admits every public image on GHCR. The control over what the node
+runs is the image references themselves, release tags for FLIP's images and digests for the
+mirrored ones, not the allowlist.
 
 Otherwise, TREs typically block direct pulls from public registries,
 so images have to come in through the TRE's normal file-ingress process, for example as
