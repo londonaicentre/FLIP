@@ -537,8 +537,7 @@ To change it:
 #      services.tf, module "cognito" → callback_urls
 # 2. Apply — TARGETED at the app client. Never run a full `make apply` on stag/prod for
 #    this: it also applies whatever else is pending in the plan, FL task-definition
-#    replacements included. Same reasoning as `apply-fl-kit-slots` above. The apply
-#    updates Cognito immediately …
+#    replacements included. The apply updates Cognito immediately …
 make init HUB=stag
 terraform plan -target=module.cognito.aws_cognito_user_pool_client.client -out=cognito.tfplan
 terraform apply cognito.tfplan
@@ -569,35 +568,23 @@ because the allowlist the API is *serving* only changes at the restart in step 3
 
 ### Growing the FL kit-slot pool (`add-fl-kits`)
 
-When to run `make add-fl-kits N=<n>`, what it asks and how to recover a failed final apply:
+When to run `make add-fl-kits N=<n>`, what it asks and how to recover a failed run:
 [Deploy the Central Hub → Running out of FL kit slots](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#deploy-central-hub-kit-slots).
 This section is the mechanism.
 
-**Activation vs minting is automatic.** A slot is claimable only when its name is in `FL_KIT_SLOT_NAMES` *and* its
-kit exists in S3, and those two can drift — a deployment provisioned with a batch of spare kits has kits nobody can
-claim. `add-fl-kits N=<n>` treats `N` as *"ensure N more live slots"*, not a mint count: it **activates** up to `N`
-such spares first (lowest-numbered first — just an env-file edit, no certs, no upload, no restart) and only
-**mints** the shortfall. When spares cover the request it mints nothing and skips the CA workspace entirely, so
-growing the pool past over-provisioned kits needs none of the provisioning toolchain. (Stag on 2026-07-14 held 48
-spare kits: `add-fl-kits N=1` activated the idle `Trust_3` in seconds instead of minting `Trust_51`.)
+**The kits are the pool (FLIP#1720).** On an NVFLARE hub flip-api's slot pool is every slot whose kit is complete on
+**every** net under `fl-flare-participant-kits/<FLARE_KIT_DATE>/` (task env `FLARE_KITS_S3_URI`): its
+`startup/{client.crt,client.key,rootCA.pem,fed_client.json,sub_start.sh}` all present. flip-api re-reads S3 when its
+pool runs dry (reconcile-on-miss), so a new kit is claimable by the next `register-trusts` with **no Terraform apply
+and no restart**. Every complete kit under the kit date is claimable, so delete a kit from S3 rather than keep one
+that should not be handed out. (A Flower hub still reads `FL_KIT_SLOT_NAMES` through the `/flip/fl_kit_slot_names`
+SSM parameter: its SuperLink labels SuperNodes from the same list at startup.)
 
-It runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, activates any spares toward `N`, and for
-the remaining shortfall restores + fingerprint-verifies each net's CA workspace
-(`fl-services/nvflare/provision/workspace-<env>/`) and mints the next `Trust_<n>` names on **every** net via
-`nvflare provision --add_client` (existing kits untouched — no CA rotation), uploads **only** the new kits
-additively (never `aws s3 sync --delete`) plus a refresh of each net's mirrored `state/cert.json`, and appends the
-activated + minted names to `FL_KIT_SLOT_NAMES` in the env file. The make target then re-invokes make for
-`apply-fl-kit-slots` (so the sub-make re-reads the edited env file) — a targeted plan/apply of only the
-`/flip/fl_kit_slot_names` SSM parameter, plus the flip-api task-role policy that grants its read so the first
-rollout is self-contained. flip-api re-reads the parameter when its slot pool runs dry (reconcile-on-miss), so the
-new slots are claimable by the next `register-trusts` with **no restart and no task-definition change**.
-
-> **The targeted apply is not literally one resource.** `-target` applies the target's whole dependency closure,
-> and the flip-api task-role policy references the bucket modules, whose server-access logging points at
-> `aws_s3_bucket.flip_access_logs`. On an environment whose state predates that S3-logging hardening, the first
-> `apply-fl-kit-slots` therefore *also* creates `flip-access-logs-<subdomain>` and its ACL/ownership controls. It is
-> additive (stag, 2026-07-14: **4 to add, 1 to change, 0 to destroy**). Nothing is replaced or destroyed — but read
-> the plan before confirming.
+`make add-fl-kits N=<n>` runs `scripts/add_fl_kits.sh`: discovers the deployment's nets from S3, restores +
+fingerprint-verifies each net's CA workspace (`fl-services/nvflare/provision/workspace-<env>/`), mints the next
+`Trust_<n>` names on **every** net via `nvflare provision --add_client` (existing kits untouched — no CA rotation),
+uploads **only** the new kits additively (never `aws s3 sync --delete`), the five required startup files last so a
+half-uploaded kit never counts, and refreshes each net's mirrored `state/cert.json`.
 
 The script has a black-box test harness (`scripts/tests/test_add_fl_kits.sh`, `aws`/`make`/`openssl`
 stubbed — no credentials or network) that CI runs in the `Deploy script tests` job of

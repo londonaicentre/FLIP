@@ -339,9 +339,8 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         or "{}"
     )
 
-    # Live, not state: the kit-slot list is grown by `make apply-fl-kit-slots`,
-    # which is a targeted apply — state and the parameter can legitimately differ
-    # between full applies.
+    # The env file's FL_KIT_SLOT_NAMES as last applied (Terraform renders it into
+    # this parameter).
     slots = aws(
         ["ssm", "get-parameter", "--name", "/flip/fl_kit_slot_names", "--query", "Parameter.Value", "--output", "text"],
         profile,

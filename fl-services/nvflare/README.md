@@ -189,27 +189,18 @@ already-onboarded participant's kit byte-identical — no re-provision, no CA ro
 fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`.
 
 **One-command path (stag/prod).** `make -C deploy/providers/AWS add-fl-kits N=<n>
-HUB=stag|prod` runs this whole section end to end. `N` is a target ("ensure N more live
-slots"), not a mint count: it discovers the deployment's nets from S3, **activates** up
-to `N` existing spares first (env-file edit only — no CA workspace, no certs, no upload),
-and for any remaining shortfall restores + fingerprint-verifies each net's CA workspace
-and mints the next `Trust_<n>` names on **every** net (slot names are global across nets —
-see the hub section below), uploads only the new kits additively. When spares cover `N`
-nothing is minted and the CA workspace is never touched. It then appends the activated +
-minted names to `FL_KIT_SLOT_NAMES` in the env file and applies the
-`/flip/fl_kit_slot_names` SSM parameter (`make apply-fl-kit-slots`) so the slots are
-immediately claimable. The manual steps below are what it automates — use them for
-unusual cases (custom slot names, a single net).
+HUB=stag|prod` runs this whole section end to end: it discovers the deployment's nets from
+S3, restores + fingerprint-verifies each net's CA workspace, mints the next `Trust_<n>`
+names on **every** net (slot names are global across nets — see the hub section below)
+and uploads only the new kits additively. The slots are claimable at the next trust
+registration — no Terraform, no restart. The manual steps below are what it automates —
+use them for unusual cases (custom slot names, a single net).
 
-**Minting vs activating.** A kit existing in S3 and a slot being *claimable* are two
-different things: the hub only claims names listed in `FL_KIT_SLOT_NAMES` (via the SSM
-parameter). A net provisioned with spare kits therefore has kits no trust can claim, and
-those need **activating, not minting** — add the name to `FL_KIT_SLOT_NAMES`, run
-`make -C deploy/providers/AWS apply-fl-kit-slots HUB=…`, done (no certs, no upload, no
-restart). `add-fl-kits N=<n>` does this for you: it treats `N` as "ensure N more live
-slots" and activates up to `N` such spares (lowest-numbered first) before minting the
-shortfall, so a good kit is never stranded and, when spares cover `N`, nothing is minted
-at all.
+**What makes a kit claimable.** The hub claims a slot once its kit is complete on
+**every** net: `startup/{client.crt,client.key,rootCA.pem,fed_client.json,sub_start.sh}`
+all present (FLIP#1720). Those five files are uploaded last, so a half-uploaded kit never
+counts. Every complete kit under the kit date is claimable, so delete a kit from S3 rather
+than leave one there that should not be handed out.
 
 **CA-state custody.** The preserved `state/` is the hard prerequisite: it holds the root
 CA that signs the new kit. The workspace is gitignored, so it exists only in the checkout
@@ -229,8 +220,13 @@ a refresh of `state/cert.json` so the mirrored CA registry records the new ident
 the next add-from-a-fresh-checkout:
 
 ```sh
-aws s3 cp provision/workspace-<env>/net-<N>/services/<CLIENT_NAME>/ \
-  s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/<CLIENT_NAME>/ --recursive
+KIT=provision/workspace-<env>/net-<N>/services/<CLIENT_NAME>/
+DEST=s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/services/<CLIENT_NAME>/
+REQUIRED="client.crt client.key rootCA.pem fed_client.json sub_start.sh"
+# Everything but the five required startup files, then those five, so the hub never
+# counts a half-uploaded kit.
+aws s3 cp "$KIT" "$DEST" --recursive $(for f in $REQUIRED; do printf -- '--exclude startup/%s ' "$f"; done)
+aws s3 cp "$KIT" "$DEST" --recursive --exclude '*' $(for f in $REQUIRED; do printf -- '--include startup/%s ' "$f"; done)
 aws s3 cp provision/workspace-<env>/net-<N>/state/cert.json \
   s3://${AICENTRE_BUCKET_NAME}/fl-flare-participant-kits/${FLARE_KIT_DATE}/net-<N>/state/cert.json
 ```
@@ -263,32 +259,19 @@ A kit in S3 is not yet claimable. `register_trust` claims rows from the hub's
 re-assigns rows, so existing trust↔slot bindings are safe). One pool row covers **all**
 nets — every net carries a kit per slot name, which is why the minting steps above run
 per net. The pool is seeded at flip-api boot and **reconciled on demand**: when a
-registration finds the pool exhausted, flip-api re-reads the configured slot list,
+registration finds the pool exhausted, flip-api re-reads its slot source,
 additively inserts any new names, and retries the claim; only if the pool is still empty
-does it fail with `NoFreeKitSlotError: "No FL kit slots available…"`. The configured
-list has a single source per environment (`resolve_fl_kit_slot_names`):
+does it fail with `NoFreeKitSlotError: "No FL kit slots available…"`. The slot list has a
+single source per environment (`resolve_fl_kit_slot_names`):
 
 - **Dev**: the `FL_KIT_SLOT_NAMES` env var (a `DevSettings`-only field). Add the name to
   `.env.development` and restart flip-api (settings load once per process).
-- **Stag/prod (ECS)**: the **`/flip/fl_kit_slot_names` SSM parameter** — the only
-  production source (the list is plain configuration, not a secret, and there is
-  deliberately no env fallback: a broken or missing parameter means the pool can't grow,
-  loudly, rather than silently serving stale env values). Add the name to
-  `FL_KIT_SLOT_NAMES` in `.env.stag` / `.env.prod` and run
-  `make -C deploy/providers/AWS apply-fl-kit-slots HUB=stag|prod` — a targeted
-  plan/apply of just that parameter, with a plain-text diff you can review. **No
-  restart, no task-definition change**: the next registration reconciles the pool from
-  the parameter. (`make add-fl-kits` runs this step for you.)
-
-> **The env file must stay a superset of every name ever activated.** Pool rows are
-> never deleted, and `add-fl-kits` detects spares purely as *minted-in-S3 on every net
-> but absent from `FL_KIT_SLOT_NAMES`* — it cannot see the hub's `fl_kit_slot` table. If
-> a previously-activated name drops out of the env file (a restored or hand-edited
-> copy), the script "activates" it again: the run reports success, the reconcile inserts
-> nothing (the row already exists — possibly assigned to a live trust), and **zero
-> claimable capacity is added**, so the next registration still fails with
-> `NoFreeKitSlotError`. Treat the `FL_KIT_SLOT_NAMES` list as append-only — `N` means
-> "N more live slots" only while that invariant holds.
+- **Stag/prod NVFLARE (ECS)**: the kits themselves — every slot complete on every net under
+  `s3://<AICENTRE_BUCKET_NAME>/fl-flare-participant-kits/<FLARE_KIT_DATE>/` (flip-api's
+  `FLARE_KITS_S3_URI`). There is deliberately no fallback: if the listing fails the pool
+  can't grow, loudly. **No restart, no Terraform**: the next registration reconciles the
+  pool from S3. (A Flower hub reads the `/flip/fl_kit_slot_names` SSM parameter, rendered
+  from `FL_KIT_SLOT_NAMES` by Terraform.)
 
 Then `make register-trust KIT=<CODE>` (see
 [Joining as a new trust](../../trust/README.md#joining-as-a-new-trust-dev-hub)) claims the slot — registration writes

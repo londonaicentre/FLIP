@@ -200,7 +200,7 @@ register_one_kit() {
     #
     # On failure, salvage the task's logger lines BEFORE the stream is deleted below:
     # that is where the operator remediation lives (an exhausted pool names
-    # apply-fl-kit-slots / add-fl-kits). Safe to echo — the kit body only ever travels
+    # add-fl-kits). Safe to echo — the kit body only ever travels
     # via --out-ssm-parameter, so the logger never carries credentials.
     failure_log=""
     if [ -z "$kit" ] || [ "$kit" = "None" ] || [ "$(echo "$kit" | jq 'length')" = "0" ]; then

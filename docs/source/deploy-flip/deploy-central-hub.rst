@@ -321,19 +321,17 @@ slot left. One command adds more (FLARE only):
 
    make -C deploy/providers/AWS add-fl-kits N=2 HUB=<stag|prod>
 
-``N`` is the number of **extra claimable slots** you want, not the number of kits to create. The command first
-activates spare kits that were provisioned earlier but never made claimable, which is quick and needs no
-certificates. It mints new kits only for the shortfall: that restores and verifies each net's CA workspace and needs
-the FLARE provisioning tools. Existing kits are never touched and no CA is rotated.
+``N`` is the number of new kits to make. The command restores and verifies each net's CA workspace, which needs the
+FLARE provisioning tools, then makes and uploads the kits. Existing kits are never touched and no CA is rotated.
 
-It ends with a targeted Terraform plan and apply of the slot list, and pauses for you to confirm both the kit plan
-and the Terraform plan (``YES=1`` skips the prompts). Read the plan before you confirm. The hub picks up the new
-slots without a restart, so the next ``register-trusts`` can claim one.
+It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). The hub reads its slots straight from
+the kits in S3, so the next ``register-trusts`` can claim one: no Terraform apply and no restart. Every complete kit
+in S3 can be claimed, so delete a kit there rather than keep one that should not be handed out.
 
 .. warning::
 
-   If the final apply fails, recover with ``make -C deploy/providers/AWS apply-fl-kit-slots HUB=<hub>``. Do not
-   re-run ``add-fl-kits``: the slot names are already in your env file, and a second run would add another ``N``.
+   If a run stops part-way, it prints which kits it uploaded. A kit that is not complete on every net is never
+   claimed. Re-run ``add-fl-kits`` with the number of kits still needed: it numbers past every kit already in S3.
 
 .. seealso::
 
