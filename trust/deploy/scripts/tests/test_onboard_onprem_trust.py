@@ -821,6 +821,26 @@ def test_39_trust_health_probe_ignores_the_proxy() -> None:
     _assert(body == {"status": "ok"}, "answers directly", str(body))
 
 
+def test_40_container_uid_row() -> None:
+    """FLIP_UID/FLIP_GID: unset keeps the image users, this user's ids PASS, another's WARN, half-set FAIL."""
+    print("▶ container uid row")
+    me = {"FLIP_UID": str(os.getuid()), "FLIP_GID": str(os.getgid())}
+    cases = (
+        ({}, mod.Status.PASS, "each image's own user"),
+        (me, mod.Status.PASS, "this user"),
+        ({"FLIP_UID": str(os.getuid() + 1), "FLIP_GID": str(os.getgid())}, mod.Status.WARN, "is not this user"),
+        ({"FLIP_UID": str(os.getuid())}, mod.Status.FAIL, "both must be set"),
+        ({"FLIP_UID": "alex", "FLIP_GID": "1"}, mod.Status.FAIL, "both must be set"),
+    )
+    for kit, status, words in cases:
+        check = mod.check_container_uid(kit, True, "trust/.env.SITE.prod")
+        _assert(check.status == status and words in check.detail, f"{status.name}: {check.detail}", str(check))
+    pending = mod.check_container_uid({}, False, "trust/.env.SITE.prod")
+    _assert(pending.status == mod.Status.PENDING, "PENDING without the kit")
+    hint = mod.check_data_dir_paths({**me, "ORTHANC_STORAGE_DIR": "./pacs"}, True, "trust/.env.SITE.prod").hints[0]
+    _assert("mkdir -p" in hint and "prepare-host-dirs" not in hint, "data-dir hint says mkdir when run as me", hint)
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -864,6 +884,7 @@ def main() -> None:
     test_37_uncreatable_data_dir_fails()
     test_38_absolute_creatable_data_dirs_pass()
     test_39_trust_health_probe_ignores_the_proxy()
+    test_40_container_uid_row()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

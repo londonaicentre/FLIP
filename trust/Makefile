@@ -119,6 +119,8 @@ include ../deploy/portable.mk
 # children) and on Flower it does not share imaging-api's UID: the Flower client is built
 # on the upstream flwr/base image, which runs as `app` (uid/gid 49999). Mirrors the K8s
 # chart's images-init (trust/deploy/helm/templates/fl-client.yaml):
+#   * FLIP_UID set, any env — FLIP_UID:FLIP_GID, 0755: imaging-api and the client are then
+#     the same user, whichever backend (FLIP#1731).
 #   * FLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
@@ -137,7 +139,9 @@ include ../deploy/portable.mk
 define ensure_net_dirs
 	@base="$(IMAGES_BASE)"; \
 	mkdir -p "$$base/net-1" "$$base/net-2"; \
-	if [ "$(FL_BACKEND)" = "flower" ]; then \
+	if [ -n "$(FLIP_UID)" ]; then \
+	  owner="$(API_UID):$(API_GID)"; mode=755; \
+	elif [ "$(FL_BACKEND)" = "flower" ]; then \
 	  owner="$$($(call stat_fmt,%u) "$$base"):$(if $(IS_DEPLOYED),49999,$(DOCKER_GID))"; mode=775; \
 	else \
 	  owner="$$($(call stat_fmt,%u:%g) "$$base")"; mode=755; \
@@ -234,9 +238,10 @@ TRUST_PROJECT := $(INSTANCE_PREFIX)trust$(TRUST_NUM)
 # deployed default is absolute, like the OMOP and Orthanc dirs, so it names the same place on a
 # remote DOCKER_CONTEXT (EC2), and per slot like the images dir, so trusts sharing a host never
 # share a store (records are keyed by project alone). data-access-api runs as uid 1000 in the
-# production image and as the host user under the dev compose, so that is who must own it.
+# production image (or the kit's FLIP_UID, FLIP#1731) and as the host user under the dev compose,
+# so that is who must own it.
 COHORT_SNAPSHOT_DIR_HOST := $(or $(COHORT_SNAPSHOT_STORAGE_DIR),$(if $(filter prod,$(__DCKR_SUFFIX)),/opt/flip/cohort-snapshots/trust-$(TRUST_NUM),./data-access-api/.snapshots/Trust_$(TRUST_NUM)))
-COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),1000:1000,$(shell id -u):$(shell id -g))
+COHORT_SNAPSHOT_OWNER := $(if $(filter prod,$(__DCKR_SUFFIX)),$(API_UID):$(API_GID),$(shell id -u):$(shell id -g))
 # Dev only: expose this trust's APIs on the host. The override binds a single
 # fixed host-port set, so only the trust assigned slot Trust_1 claims it.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose/compose_trust-1_override.yml,)
@@ -330,9 +335,10 @@ TRUST_BUILD_VARS = \
 #   CHOWN/FOWNER, so it takes ownership itself and initdb + the image's init scripts
 #   (schema, primary keys, indices, the data_analyst_reader role) run on the empty dir.
 #   The one thing it needs from us is DATA_ACCESS_POSTGRES_PASSWORD in its environment
-#   (compose passes it) — without it the role script aborts the init.
-# - Orthanc runs as uid 999 with CHOWN only (no DAC_OVERRIDE), so its storage dir must be
-#   owned by 999 before the first start or it exits at once. A plain chown works when
+#   (compose passes it) — without it the role script aborts the init. Under a kit's FLIP_UID
+#   omop-db runs as that uid instead (FLIP#1731), so the dir must be its.
+# - Orthanc runs as uid 999 (or the kit's FLIP_UID) with CHOWN only (no DAC_OVERRIDE), so its
+#   storage dir must be owned by that uid before the first start or it exits at once. A plain chown works when
 #   this runs as root; a non-root operator needs it done beforehand by `prepare-host-dirs`,
 #   run as root by the host owner (FLIP#1723). Only development falls back to a throwaway
 #   container, on the developer's own machine. Only the top-level dir is touched.
@@ -340,11 +346,16 @@ TRUST_BUILD_VARS = \
 define ensure_data_dirs
 	@omop="$(1)"; pacs="$(2)"; \
 	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
-	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "999" ]; then \
-	  chown 999:999 "$$pacs" 2>/dev/null || \
-	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine:3.20 chown 999:999 /d ||) { \
-	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
-	    echo "   Fix: sudo chown 999:999 $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
+	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "$(ORTHANC_UID)" ]; then \
+	  chown $(ORTHANC_UID):$(ORTHANC_GID) "$$pacs" 2>/dev/null || \
+	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine:3.20 chown $(ORTHANC_UID):$(ORTHANC_GID) /d ||) { \
+	    echo "❌ $$pacs must be owned by uid $(ORTHANC_UID) (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
+	    echo "   Fix: sudo chown $(ORTHANC_UID):$(ORTHANC_GID) $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
+	fi; \
+	if [ -n "$(FLIP_UID)" ] && [ "$$($(call stat_fmt,%u) "$$omop")" != "$(FLIP_UID)" ]; then \
+	  chown $(FLIP_UID):$(FLIP_GID) "$$omop" 2>/dev/null || { \
+	    echo "❌ $$omop must be owned by uid $(FLIP_UID) (FLIP_UID: omop-db runs as it) and is $$($(call stat_fmt,%u:%g) "$$omop")"; \
+	    echo "   Fix: sudo chown $(FLIP_UID):$(FLIP_GID) $$omop"; $(prepare_host_dirs_hint); exit 1; }; \
 	fi
 endef
 
@@ -513,7 +524,8 @@ prepare-artifacts:
 # bring-up that does: whoever prepares the host runs it once, as root, on the host itself; up-trust
 # and upgrade-trust then only check. It deletes nothing, so it is safe to re-run. The on-prem
 # Ansible playbook does the same for /opt/flip. A root-created images base would hand its root
-# ownership to the net dirs, so it goes to uid 1000 (imaging-api) first.
+# ownership to the net dirs, so it goes to imaging-api's uid first. A kit whose FLIP_UID/FLIP_GID
+# are the operator's own ids needs none of this: its containers run as them (FLIP#1731).
 prepare-host-dirs:
 	$(require_kit_file)
 	@[ "$$(id -u)" = 0 ] || { \
@@ -521,7 +533,7 @@ prepare-host-dirs:
 	  echo "   Run it as root on the trust host (sudo -E make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))),"; \
 	  echo "   or ask the host owner to."; exit 1; }
 	@base="$(IMAGES_BASE)"; mkdir -p "$$base"; \
-	[ "$$($(call stat_fmt,%u) "$$base")" != 0 ] || chown 1000:1000 "$$base"
+	[ "$$($(call stat_fmt,%u) "$$base")" != 0 ] || chown $(API_UID):$(API_GID) "$$base"
 	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
 	$(ensure_net_dirs)
 	$(ensure_snapshot_dir)

@@ -91,6 +91,12 @@ class UpgradeTrust(unittest.TestCase):
         assert "alpine:3.20 chown" not in out, out
         assert "prepare-host-dirs KIT=SCR HUB=prod" in out, out
 
+    def test_the_store_owner_follows_the_kits_flip_uid(self):
+        """data-access-api runs as the kit's FLIP_UID when set, so that is who must own the store (FLIP#1731)."""
+        out = dry_run("_upgrade-trust-apply", kit=KIT + "FLIP_UID=4242\nFLIP_GID=4243\n")
+        assert 'owner="4242:4243"' in out, out
+        assert 'owner="1000:1000"' not in out, out
+
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""
         out = dry_run("up-trust")

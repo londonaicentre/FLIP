@@ -13,6 +13,12 @@
 #
 
 
+# Under a kit's FLIP_UID (FLIP#1731) this uid has no passwd entry: HOME would be "/" and
+# getpass.getuser() raises inside torch's import. Name the user and give it a home it can write.
+if ! id -un >/dev/null 2>&1; then
+    export HOME=/tmp USER=flip LOGNAME=flip
+fi
+
 # Make scripts executable
 chmod +x /app/startup/start.sh
 chmod +x /app/startup/sub_start.sh

@@ -9,6 +9,9 @@
 # Make creates and the dirs compose mounts match.
 services:
   xnat-web:
+    # The kit's FLIP_UID:FLIP_GID when set, else the image's xnat user (FLIP#1731). xnat-db keeps
+    # the stack file's root entrypoint: its Alpine Postgres cannot run as a uid it does not know.
+    user: "${FLIP_UID:-1001}:${FLIP_GID:-1001}"
     environment:
       - DATA_PATH=${XNAT_DATA_DIR}/xnat-data
     volumes:
