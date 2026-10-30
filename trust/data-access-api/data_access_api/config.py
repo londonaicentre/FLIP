@@ -108,6 +108,22 @@ class Settings(BaseSettings):
             return 536_870_912
         return v
 
+    # Per-job cohort data (FLIP#1678). Where each job's approved dataframe is staged before the job starts, for a
+    # trust that mounts it into the job's pods (Kubernetes NVFLARE job pods). Empty disables staging: the stage task
+    # is then a no-op, as on Compose trusts, whose jobs still read their data from this API.
+    COHORT_DATA_DIR: str = ""
+    # Staged data is removed when the model ends; this sweep cap catches what is never unstaged. It must exceed the
+    # longest job.
+    COHORT_DATA_MAX_AGE_HOURS: PositiveInt = 168
+
+    @field_validator("COHORT_DATA_MAX_AGE_HOURS", mode="before")
+    @classmethod
+    def coerce_empty_cohort_data_max_age(cls, v: object) -> object:
+        """Treat an empty-string cap as the default (same kit-file gotcha as the threshold)."""
+        if v is None or v == "":
+            return 168
+        return v
+
     #
     OMOP_DB_SERVICE_NAME: str = "omop-db"  # The name of the OMOP database service in Docker Compose or Kubernetes
     OMOP_DB_PORT: int = 5432  # Calls from another container use port 5432 (e.g. http://omop-db:5432)

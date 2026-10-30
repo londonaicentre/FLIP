@@ -97,3 +97,57 @@ def test_startup_checks_the_snapshot_store():
     """The lifespan hook runs the boot-time snapshot store check (create, sweep, probe)."""
     with patch.object(main, "ensure_store") as mock_ensure_store, TestClient(main.app):
         mock_ensure_store.assert_called_once_with()
+
+
+def test_lifespan_sweeps_staged_cohort_data_when_staging_is_on():
+    # FLIP#1678: staged rows the hub never unstages are removed by the trust itself.
+    import threading
+
+    swept = threading.Event()
+    with (
+        patch("data_access_api.main.cohort_data.staging_enabled", return_value=True),
+        patch("data_access_api.main.cohort_data.ensure_data_dir") as ensure,
+        patch("data_access_api.main.cohort_data.sweep", side_effect=lambda *a, **k: swept.set() or 0),
+        TestClient(main.app),
+    ):
+        assert swept.wait(5)
+    ensure.assert_called_once()
+
+
+def test_lifespan_does_not_sweep_when_staging_is_off():
+    with (
+        patch("data_access_api.main.cohort_data.staging_enabled", return_value=False),
+        patch("data_access_api.main.cohort_data.sweep") as sweep,
+        TestClient(main.app),
+    ):
+        pass
+    sweep.assert_not_called()
+
+
+def test_lifespan_keeps_sweeping_after_a_failed_sweep(caplog):
+    import asyncio
+    import threading
+
+    swept = threading.Event()
+    outcomes = iter([RuntimeError("volume gone"), 0])
+    real_sleep = asyncio.sleep
+
+    def sweep(*args, **kwargs):
+        outcome = next(outcomes)
+        if isinstance(outcome, Exception):
+            raise outcome
+        swept.set()
+        return outcome
+
+    async def short_first_wait(seconds):
+        await real_sleep(0 if not swept.is_set() else seconds)
+
+    with (
+        patch("data_access_api.main.cohort_data.staging_enabled", return_value=True),
+        patch("data_access_api.main.cohort_data.ensure_data_dir"),
+        patch("data_access_api.main.cohort_data.sweep", side_effect=sweep),
+        patch("data_access_api.main.asyncio.sleep", side_effect=short_first_wait),
+        TestClient(main.app),
+    ):
+        assert swept.wait(5)
+    assert "Cohort data sweep failed" in caplog.text

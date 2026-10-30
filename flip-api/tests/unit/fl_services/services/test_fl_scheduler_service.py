@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -26,7 +26,15 @@ from flip_api.domain.interfaces.fl import (
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
 from flip_api.domain.schemas.types import FLBackend, FLLogEvent
 from flip_api.fl_services.services import fl_scheduler_service
+from flip_api.fl_services.services.job_data_staging import JobDataStagingError
 from flip_api.utils.exceptions import DatabaseError, JobAbortedError, NotFoundError
+
+
+@pytest.fixture(autouse=True)
+def staging():
+    """Every prepare stages the job's data at its trusts (FLIP#1678); unit tests never wait on trust tasks."""
+    with patch("flip_api.fl_services.services.fl_scheduler_service.stage_job_data") as mock_stage:
+        yield mock_stage
 
 
 @pytest.fixture
@@ -815,3 +823,88 @@ class TestLogQueuePositions:
         with patch.object(fl_scheduler_service, "log_queue_positions") as mock_positions:
             fl_scheduler_service.remove_job_from_queue(model_id, fake_session)
         mock_positions.assert_not_called()
+
+
+# --- per-job data staging before submit (FLIP#1678) -----------------------------------------------
+
+
+def _prepare_patches():
+    return (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
+            return_value="s3://dest/model",
+        ),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id",
+            return_value=INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+    )
+
+
+def test_prepare_and_start_training_stages_before_bundle_urls_and_start(fake_session, model_id, fl_job_id, staging):
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    trust_ids = [uuid4(), uuid4()]
+    order = Mock()
+    order.attach_mock(staging, "stage")
+    bundle, net, validate = _prepare_patches()
+    with (
+        bundle,
+        net,
+        validate,
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url"]) as mock_urls,
+        patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log"),
+    ):
+        order.attach_mock(mock_urls, "bundle_urls")
+        order.attach_mock(mock_start, "start")
+
+        assert fl_scheduler_service.prepare_and_start_training(model_id, fl_job_id, trust_ids, fake_session) is True
+
+    assert [c[0] for c in order.mock_calls] == ["stage", "bundle_urls", "start"]
+    staging.assert_called_once_with(model_id, trust_ids, fake_session)
+
+
+def test_prepare_and_start_training_fails_the_model_when_staging_fails(fake_session, model_id, fl_job_id, staging):
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    staging.side_effect = JobDataStagingError("Trust_1 could not stage the job's data: Query execution failed.")
+    bundle, net, validate = _prepare_patches()
+    with (
+        bundle,
+        net,
+        validate,
+        patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.release_scheduler_for_model"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        pytest.raises(JobDataStagingError),
+    ):
+        fl_scheduler_service.prepare_and_start_training(model_id, fl_job_id, [uuid4()], fake_session)
+
+    mock_start.assert_not_called()
+    mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
+    assert "Trust_1" in mock_log.call_args.args[1]
+
+
+def test_prepare_and_start_training_does_not_stage_on_a_flower_net(fake_session, model_id, fl_job_id, staging):
+    # Final review #1: only an NVFLARE job pod reads staged data. A Flower trust would stage rows nothing mounts.
+    fake_session.exec.return_value.one_or_none.return_value = JobStatus.IN_PROGRESS
+    with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_flower_application",
+            return_value="s3://dest/model",
+        ),
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id",
+            return_value=INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.FLOWER),
+        ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url"]),
+        patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log"),
+    ):
+        assert fl_scheduler_service.prepare_and_start_training(model_id, fl_job_id, [uuid4()], fake_session) is True
+
+    staging.assert_not_called()
+    mock_start.assert_called_once()

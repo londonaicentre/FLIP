@@ -30,6 +30,7 @@ The trust-api acts as the local orchestrator at each Trust:
 2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) in response to approved FL studies
 3. **Service health** — a background collector probes the trust stack every `HEALTH_COLLECT_INTERVAL_SECONDS` (imaging-api + data-access-api `/health`, XNAT via its anonymous `buildInfo` endpoint, the PACS connector transitively via imaging-api's `ping_pacs` DIMSE echo, the OMOP database via a raw TCP connect) and attaches the snapshot to the heartbeat; the hub surfaces it on the Connection Status page's per-container drawer. Each PACS echo opens an association to the hospital PACS, so it runs at most every five minutes, the cycles in between report its last result, and a PACS outage can show up to five minutes late
 4. **Audit** — logs all operations locally for governance purposes
+5. **Job data** — stages each NVFLARE job's approved dataframe before it starts and removes it when the model ends (`STAGE_JOB_DATA` / `UNSTAGE_JOB_DATA` tasks, FLIP#1678), through data-access-api's cohort-admin routes. A stage is acknowledged `STAGE_ACK_DELAY_SECONDS` after the data is written, so the job's study entry is in place before the hub submits
 
 The trust-api polls the [flip-api](../../flip-api/) (Central Hub) for tasks. It does not accept inbound requests from the hub or expose an external user interface.
 
@@ -72,6 +73,7 @@ trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub; task payloads arrive as AES-256-GCM envelopes (FLIP#1179). Must be byte-identical to the hub's key: a mismatch fails closed, reporting every task as `Invalid payload: failed authentication` |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
 | `COHORT_QUERY_TIMEOUT_SECONDS` | Timeout on trust-api's one cohort-query request, `POST /cohort` to data-access-api (default: 300). A cohort re-runs against OMOP at every later stage too, but those are other services' calls (imaging-api → `/cohort/accession-ids`, fl-client → `/cohort/dataframe`) and this setting does not reach them |
+| `STAGE_ACK_DELAY_SECONDS` | How long a job-data stage waits before it is acknowledged (default: 5), longer than the fl-client study-sync interval (2 s) so the job's NVFLARE study entry exists when the hub submits (FLIP#1678) |
 | `HEALTH_COLLECT_INTERVAL_SECONDS` | How often the health collector probes the trust services (default: 30) |
 | `HEALTH_PROBE_DEGRADED_MS` | A successful probe slower than this reports `degraded` (default: 1000) |
 | `XNAT_URL` | Internal URL of XNAT for the health probe (default `http://xnat-web:8080`) |

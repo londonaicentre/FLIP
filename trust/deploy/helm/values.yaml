@@ -404,6 +404,14 @@ dataAccessApi:
     # for it. The chart otherwise avoids fsGroup (see README "Known Limitations") — this
     # one is load-bearing, not cosmetic.
     fsGroup: 1000
+  # Per-job cohort data (FLIP#1678), only with flClient.nvflare.jobPods: before a job starts, data-access-api writes
+  # the job's approved dataframe here, and the project's job pods mount it read-only. It holds clinical rows while a
+  # job runs (removed when the model ends, swept after COHORT_DATA_MAX_AGE_HOURS). The fl-client and its job pods
+  # mount it too: ReadWriteOnce works on a single node; otherwise use ReadWriteMany.
+  cohortData:
+    size: 20Gi
+    storageClassName: ""
+    accessMode: ReadWriteOnce
 
 # ---------------------------------------------------------------------------
 # Shared images PVC — used by imaging-api and fl-client to share downloaded
@@ -533,6 +541,22 @@ flClient:
       apiServer:
         cidrs: []
         port: 443
+      # Each FLIP project is an NVFLARE study (FLIP#1678). A study-sync sidecar writes one entry per project with
+      # staged cohort data into NVFLARE's local/study_runtime.yaml, so a project's job pods mount, read-only, only that
+      # project's data: its staged dataframe (dataAccessApi.cohortData) and its own directory of XNAT's archive.
+      studySync:
+        # Seconds between syncs; trust-api waits STAGE_ACK_DELAY_SECONDS (5) after staging, so keep this below it.
+        interval: 2
+        resources:
+          requests: {cpu: 10m, memory: 64Mi}
+          limits: {memory: 256Mi}
+      xnatArchive:
+        # Mount each imaging project's archive directory into its job pods. Needs this chart's XNAT, on storage the job
+        # pods can attach: ReadWriteOnce only on a single node; a separate GPU pool needs ReadWriteMany or ReadOnlyMany.
+        enabled: true
+        # XNAT's group. The archive is 1001:1001, 0750/0640, so job pods read it through supplementalGroups (never
+        # fsGroup, which would re-own the whole archive).
+        gid: 1001
   flower:
     superlink: ""
     # flwr>=1.36 split --clientappio-api-address into separate --host/--port

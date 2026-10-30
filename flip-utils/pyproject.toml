@@ -51,8 +51,10 @@ dependencies = [
     "boto3>=1.38.31",
     "nvflare==2.9.0",
     "pandas>=2.3.0",
+    "pyarrow>=26.0.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
+    "pyyaml>=6.0.3",
     "requests>=2.33.0",
     "tqdm>=4.67.1",
 ]
@@ -186,6 +188,7 @@ dev = [
     "pytest>=8.4.2",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.2",
+    "types-pyyaml>=6.0.12.20260906",
     "types-requests>=2.32.4.20260107",
 ]
 # Local runs of the fl-tutorials image-generation tutorials, which write debug images and loss curves

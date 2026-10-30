@@ -178,6 +178,9 @@ class Settings(BaseSettings):
     FL_JOB_WATCHDOG_STRIKES: int = 3
     # A picked-up job with no backend id after this long never reached the FL server. upload_app alone allows 15.
     FL_JOB_PREPARE_TIMEOUT_MINUTES: int = 30
+    # How long a job's start waits for every trust to stage its cohort data (FLIP#1678). With upload_app's 15 minutes
+    # it must stay under FL_JOB_PREPARE_TIMEOUT_MINUTES.
+    STAGE_JOB_DATA_TIMEOUT_SECONDS: int = 600
     SCHEDULER_KEEP_FL_API_SESSION_ALIVE_RATE: int = 2  # in minutes
     SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE: int = (
         30  # How often to check for projects with unimported studies (in minutes)

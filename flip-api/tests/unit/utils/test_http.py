@@ -208,3 +208,26 @@ def test_http_delete_raises_on_request_error():
     with patch.object(httpx.Client, "delete", side_effect=httpx.ConnectError("connection refused")):
         with pytest.raises(httpx.RequestError):
             http_delete("http://example.com/resource/1")
+
+
+# --- query parameters (the FL API's ?study=, repeated per study) ---------------------------------
+
+STUDY_PARAMS = [("study", "a"), ("study", "b")]
+
+
+def test_http_get_forwards_params(json_response):
+    with patch.object(httpx.Client, "get", return_value=json_response) as mock_get:
+        http_get("http://example.com/resource", params=STUDY_PARAMS)
+    mock_get.assert_called_once_with("http://example.com/resource", headers={}, params=STUDY_PARAMS)
+
+
+def test_http_post_forwards_params(json_response):
+    with patch.object(httpx.Client, "post", return_value=json_response) as mock_post:
+        http_post("http://example.com/resource", params=STUDY_PARAMS)
+    assert mock_post.call_args.kwargs["params"] == STUDY_PARAMS
+
+
+def test_http_delete_forwards_params(json_response):
+    with patch.object(httpx.Client, "delete", return_value=json_response) as mock_delete:
+        http_delete("http://example.com/resource", params=STUDY_PARAMS)
+    mock_delete.assert_called_once_with("http://example.com/resource", headers={}, params=STUDY_PARAMS)

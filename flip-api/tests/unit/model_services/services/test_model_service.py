@@ -716,3 +716,35 @@ def test_queued_positions_by_model_empty_queue():
     session.exec.return_value.all.return_value = []
 
     assert queued_positions_by_model(session) == {}
+
+
+# --- unstaging the job's data on every terminal status (FLIP#1678) --------------------------------
+
+
+@pytest.mark.parametrize(
+    "status",
+    [ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOADED, ModelStatus.RESULTS_UPLOAD_FAILED],
+)
+@patch("flip_api.model_services.services.model_service.job_data_staging")
+@patch("flip_api.model_services.services.model_service.fl_scheduler_service")
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_terminal_status_queues_unstage(mock_audit, mock_scheduler, mock_staging, status):
+    session = MagicMock()
+    session.get.return_value = MagicMock(status=ModelStatus.RUNNING)
+    model_id = uuid4()
+
+    update_model_status(model_id, status, session)
+
+    mock_staging.unstage_job_data.assert_called_once_with(model_id, session)
+
+
+@patch("flip_api.model_services.services.model_service.job_data_staging")
+@patch("flip_api.model_services.services.model_service.fl_scheduler_service")
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_non_terminal_status_does_not_unstage(mock_audit, mock_scheduler, mock_staging):
+    session = MagicMock()
+    session.get.return_value = MagicMock(status=ModelStatus.PREPARED)
+
+    update_model_status(uuid4(), ModelStatus.RUNNING, session)
+
+    mock_staging.unstage_job_data.assert_not_called()

@@ -35,6 +35,8 @@ metadata:
     flip/network: {{ .Values.flClient.netId }}
 spec:
   enableServiceLinks: false
+  # A job pod never calls the Kubernetes API (NVFLARE's study runtime design): no token to read.
+  automountServiceAccountToken: false
   {{- with .Values.flClient.hostAliases }}
   hostAliases:
     {{- toYaml . | nindent 4 }}

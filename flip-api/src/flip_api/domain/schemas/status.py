@@ -208,6 +208,10 @@ class TaskType(StrEnum):
     # the CREATE_IMAGING task so the frozen accession set exists by the time imaging
     # retrieval asks for it.
     PERSIST_COHORT = "persist_cohort"
+    # Per-job cohort data (FLIP#1678): before a job is submitted each of its trusts writes the job's approved
+    # dataframe where the job's pods mount it; once the model ends, the trusts remove it.
+    STAGE_JOB_DATA = "stage_job_data"
+    UNSTAGE_JOB_DATA = "unstage_job_data"
 
 
 class CohortSnapshotState(StrEnum):

@@ -203,12 +203,25 @@ def patch_comm_config(comm_config: Mapping[str, Any], mode: K8sJobMode) -> dict[
     return patched
 
 
-def study_runtime(mode: K8sJobMode) -> dict[str, Any]:
-    """Return ``study_runtime.yaml``: the default study's job image and, when the site has one, its pod template."""
-    default: dict[str, Any] = {"container": {"image": mode.job_image}}
-    if mode.pod_template is not None:
+def default_study(job_image: str, has_pod_template: bool) -> dict[str, Any]:
+    """Return the default study's entry: the job image and, when the site has one, its pod template."""
+    default: dict[str, Any] = {"container": {"image": job_image}}
+    if has_pod_template:
         default["pod_template"] = POD_TEMPLATE
-    return {"format_version": 2, "studies": {"default": default}}
+    return default
+
+
+def runtime_document(default: Mapping[str, Any], studies: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
+    """Return a ``study_runtime.yaml`` document: the default study beside one entry per project study (FLIP#1678).
+
+    NVFLARE's study entries do not inherit from ``default``, so each project's carries its own image and template.
+    """
+    return {"format_version": 2, "studies": {"default": default, **studies}}
+
+
+def study_runtime(mode: K8sJobMode) -> dict[str, Any]:
+    """Return ``study_runtime.yaml`` at start-up: the default study alone, until the study sync adds projects."""
+    return runtime_document(default_study(mode.job_image, mode.pod_template is not None), {})
 
 
 def _read_json(path: Path) -> dict[str, Any]:

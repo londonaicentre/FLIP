@@ -156,3 +156,18 @@ def test_no_document_means_no_policy(reload_config):
 def test_snapshot_max_bytes_coerces_empty_to_default(value):
     """A commented-out kit-file entry arrives empty and must fall back to the shipped cap."""
     assert Settings(SNAPSHOT_MAX_BYTES=value).SNAPSHOT_MAX_BYTES == Settings().SNAPSHOT_MAX_BYTES
+
+
+def test_cohort_data_staging_is_off_by_default():
+    # FLIP#1678: only a trust that mounts job data (Kubernetes job pods) sets a directory.
+    assert Settings().COHORT_DATA_DIR == ""
+
+
+@pytest.mark.parametrize("value", ["", None])
+def test_cohort_data_max_age_coerces_empty_to_a_week(value):
+    assert Settings(COHORT_DATA_MAX_AGE_HOURS=value).COHORT_DATA_MAX_AGE_HOURS == 168
+
+
+def test_cohort_data_max_age_must_be_positive():
+    with pytest.raises(ValidationError):
+        Settings(COHORT_DATA_MAX_AGE_HOURS=0)

@@ -30,6 +30,8 @@ from trust_api.services.task_handlers import (
     handle_get_imaging_status,
     handle_persist_cohort,
     handle_reimport_studies,
+    handle_stage_job_data,
+    handle_unstage_job_data,
     handle_update_user_profile,
 )
 
@@ -70,6 +72,8 @@ def test_task_handlers_registry():
         "reimport_studies",
         "update_user_profile",
         "persist_cohort",
+        "stage_job_data",
+        "unstage_job_data",
     }
     assert set(TASK_HANDLERS.keys()) == expected_types
 
@@ -487,3 +491,81 @@ async def test_handle_persist_cohort_relays_the_refusal_status_code(mock_make_re
 
     assert result["success"] is False
     assert result["status_code"] == status_code
+
+
+# ---- Job data stage / unstage handlers (FLIP#1678) ----
+
+
+def _job_data_payload() -> dict:
+    return {
+        "project_id": str(uuid4()),
+        "trust_id": str(uuid4()),
+        "model_id": str(uuid4()),
+        "encrypted_project_id": "enc123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stage_posts_to_cohort_stage_with_cohort_admin_headers(mock_make_request):
+    mock_make_request.return_value = {"staged": True, "rows": 12}
+    payload = _job_data_payload()
+
+    with patch("trust_api.services.task_handlers.asyncio.sleep", new_callable=AsyncMock):
+        result = await handle_stage_job_data(payload)
+
+    assert result["success"] is True
+    assert json.loads(result["result"]) == {"staged": True, "rows": 12}
+    call = mock_make_request.call_args_list[0]
+    assert call.kwargs["method"] == "POST"
+    assert call.kwargs["url"].endswith("/cohort/stage")
+    assert call.kwargs["json_body"] == {"encrypted_project_id": "enc123", "model_id": payload["model_id"]}
+    _assert_cohort_admin_header(call)
+
+
+@pytest.mark.asyncio
+async def test_stage_waits_the_ack_delay_only_when_staged(mock_make_request):
+    # The sidecar turns a staged directory into a study entry within its sync interval; holding the ack for longer
+    # means the entry is in place by the time the hub submits the job.
+    with patch("trust_api.services.task_handlers.asyncio.sleep", new_callable=AsyncMock) as sleep:
+        mock_make_request.return_value = {"staged": True, "rows": 3}
+        await handle_stage_job_data(_job_data_payload())
+        sleep.assert_awaited_once_with(5.0)
+
+        sleep.reset_mock()
+        mock_make_request.return_value = {"staged": False, "rows": 0}
+        await handle_stage_job_data(_job_data_payload())
+        sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unstage_posts_to_cohort_stage_delete(mock_make_request):
+    mock_make_request.return_value = {"deleted": True}
+    payload = _job_data_payload()
+
+    result = await handle_unstage_job_data(payload)
+
+    assert result["success"] is True
+    call = mock_make_request.call_args_list[0]
+    assert call.kwargs["url"].endswith("/cohort/stage/delete")
+    assert call.kwargs["json_body"] == {"encrypted_project_id": "enc123", "model_id": payload["model_id"]}
+    _assert_cohort_admin_header(call)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 403, 503])
+async def test_stage_relays_status_codes(mock_make_request, status_code):
+    mock_make_request.side_effect = HTTPException(status_code=status_code, detail="refused")
+
+    result = await handle_stage_job_data(_job_data_payload())
+
+    assert result["success"] is False
+    assert result["status_code"] == status_code
+
+
+@pytest.mark.asyncio
+async def test_stage_invalid_payload(mock_make_request):
+    result = await handle_stage_job_data({"project_id": "p"})
+
+    assert result["success"] is False
+    assert "validation error" in result["error"]
+    mock_make_request.assert_not_called()

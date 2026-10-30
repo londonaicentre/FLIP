@@ -28,12 +28,7 @@ def create_fl_session() -> FLIP_Session:
     Returns:
         FLIP_Session: An initialized FLIP_Session object.
     """
-    username = get_settings().USERNAME
-    admin_dir = get_settings().FL_ADMIN_DIRECTORY
-    secure_mode = get_settings().SECURE_MODE
-    debug = get_settings().LOG_LEVEL == "DEBUG"
-
-    logger.info(f"Admin directory set to: {admin_dir}")
+    logger.info(f"Admin directory set to: {get_settings().FL_ADMIN_DIRECTORY}")
     # Refuse to start on a default the request contract rejects: every job that falls back to it would fail.
     default_resources = default_job_resources()
     logger.info(f"GPU request for a job that declares none: {default_resources.model_dump()}")
@@ -44,13 +39,10 @@ def create_fl_session() -> FLIP_Session:
     # API up but dead, with the failed session's connector retrying forever behind it.
     deadline = time.monotonic() + get_settings().TIMEOUT_FL_SERVER_STARTUP
     while True:
-        session = FLIP_Session(username=username, startup_path=admin_dir, secure_mode=secure_mode, debug=debug)
         try:
-            session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
+            session = _connect()
             break
         except FLCommunicationError as e:
-            with contextlib.suppress(Exception):
-                session.close()
             if time.monotonic() >= deadline:
                 raise
             logger.warning(f"FL server not reachable yet ({e}); retrying")
@@ -59,3 +51,37 @@ def create_fl_session() -> FLIP_Session:
     logger.info(f"Download directory set to: {session.download_dir}")
 
     return session
+
+
+def _connect(study: str | None = None) -> FLIP_Session:
+    """Build a session from the settings and connect it once, closing it when the server refuses."""
+    settings = get_settings()
+    session = FLIP_Session(
+        username=settings.USERNAME,
+        startup_path=settings.FL_ADMIN_DIRECTORY,
+        secure_mode=settings.SECURE_MODE,
+        debug=settings.LOG_LEVEL == "DEBUG",
+        study=study,
+    )
+    try:
+        session.try_connect(settings.TIMEOUT_SESSION_CONNECT)
+    except Exception:
+        with contextlib.suppress(Exception):
+            session.close()
+        raise
+    return session
+
+
+def open_study_session(study: str) -> FLIP_Session:
+    """Open an admin session in one NVFLARE study (FLIP#1678), connecting once.
+
+    The default session already waited for the server at boot; a study session is opened during a request, so it
+    fails fast rather than holding the request for ``TIMEOUT_FL_SERVER_STARTUP``.
+
+    Args:
+        study (str): The study, a project id.
+
+    Returns:
+        FLIP_Session: A connected session in that study.
+    """
+    return _connect(study)

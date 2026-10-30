@@ -301,3 +301,16 @@ def test_the_module_needs_nothing_beyond_the_standard_library():
 
     assert imported, "no imports found — the guard has drifted"
     assert imported <= set(sys.stdlib_module_names), imported - set(sys.stdlib_module_names)
+
+
+def test_runtime_document_puts_the_default_study_beside_each_project():
+    # FLIP#1678: the start-up switch and the study-sync sidecar write one format from one function.
+    from flip.nvflare.k8s_job_mode import runtime_document
+
+    default = {"container": {"image": "img"}, "pod_template": "pod_specs/job-pod.yaml"}
+    project = {"container": {"image": "img"}, "pod_template": {"spec": {}}}
+
+    assert runtime_document(default, {"p1": project}) == {
+        "format_version": 2,
+        "studies": {"default": default, "p1": project},
+    }

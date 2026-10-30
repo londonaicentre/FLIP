@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -21,6 +23,7 @@ from data_access_api.policy import describe_policy
 from data_access_api.routers.cohort import read_router as cohort_read_router
 from data_access_api.routers.cohort import write_router as cohort_write_router
 from data_access_api.routers.health import router as health_router
+from data_access_api.services import cohort_data
 from data_access_api.services.cohort_snapshot import ensure_store
 
 # Importing the logger configures structured logging.
@@ -34,6 +37,20 @@ from data_access_api.utils.logger import logger
 logger.warning(describe_policy(get_policy(), floor=get_settings().COHORT_QUERY_THRESHOLD))
 
 
+# How often staged job data (FLIP#1678) is checked against COHORT_DATA_MAX_AGE_HOURS.
+_COHORT_DATA_SWEEP_SECONDS = 3600
+
+
+async def _sweep_cohort_data() -> None:
+    """Remove staged job data the hub never unstaged, now and then hourly."""
+    while True:
+        try:
+            await asyncio.to_thread(cohort_data.sweep, get_settings().COHORT_DATA_MAX_AGE_HOURS)
+        except Exception:
+            logger.exception("Cohort data sweep failed; retrying at the next interval")
+        await asyncio.sleep(_COHORT_DATA_SWEEP_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Boot-time check of the approved-cohort snapshot store (FLIP#857): creates the
@@ -41,7 +58,15 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # store must not take the service down; the row-level routes then refuse projects
     # whose artefact cannot be read (fail-closed) while statistics keep serving.
     ensure_store()
+    cohort_data.ensure_data_dir()
+    sweeper = None
+    if cohort_data.staging_enabled():
+        sweeper = asyncio.create_task(_sweep_cohort_data(), name="cohort_data_sweep")
     yield
+    if sweeper is not None:
+        sweeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweeper
 
 
 # Disable Swagger / OpenAPI / ReDoc in production. Data-access-api executes SQL

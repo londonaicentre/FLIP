@@ -393,3 +393,17 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     logger.info(response)
 
     return response
+
+
+def job_sites(upload_dir: str, model_id: str) -> list[str]:
+    """The sites an uploaded job was configured for: its ``meta.json``'s ``mandatory_clients`` (FLIP#1678).
+
+    Args:
+        upload_dir (str): The admin session's upload directory.
+        model_id (str): The job folder, named after the hub model id.
+
+    Returns:
+        list[str]: The site names.
+    """
+    meta = read_config(safe_join(safe_join(Path.cwd() / upload_dir, model_id), META))
+    return list(meta["mandatory_clients"])

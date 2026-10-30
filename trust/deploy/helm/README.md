@@ -704,6 +704,33 @@ The fl-client Deployment uses `strategy: Recreate` whatever the mode: a trust is
 RollingUpdate the old and new pods evict each other's connection to the server until the old one exits.
 `make deploy` moves a release installed before this change across once (`scripts/migrate-strategy.sh`, FLIP#1524).
 
+#### Each project's data, mounted read-only (FLIP#1678)
+
+With job pods, each FLIP project is an NVFLARE **study**: the hub submits a job under its project's id, and NVFLARE
+starts it with that study's entry in `local/study_runtime.yaml`, which the launcher re-reads before every launch. A
+`study-sync` sidecar in the fl-client pod writes one entry per project, so the project's job pods mount, read-only:
+
+- `/data/<project>/cohort`: the job's approved dataframe (`<model>/dataframe.parquet`). Before submitting, the hub has
+  each trust stage it; data-access-api writes it to the `<release>-cohort-data` PVC with the same rules as
+  `/cohort/dataframe`, and removes it when the model ends (or after `COHORT_DATA_MAX_AGE_HOURS`, default a week).
+- `/data/<project>/imaging`: the project's own directory of XNAT's archive (`archive/<xnat-project>/arc001/<accession>/…`),
+  nothing copied. XNAT writes the archive `1001:1001`, `0750`/`0640`, so job pods read it through
+  `supplementalGroups: [1001]` (`flClient.nvflare.jobPods.xnatArchive.gid`), never `fsGroup`, which would re-own it.
+
+A project with no staged data has no entry, so its job does not start at this trust. Job pods no longer mount a
+service-account token.
+
+- **What a job sees.** Every study its XNAT project holds, including those of patients who left the cohort after the
+  studies were pulled: the same as the download route. The staged dataframe follows the cohort as it stands at the job's
+  start.
+- **Clinical rows at rest.** The staged dataframe is patient data outside OMOP while a job runs. The trust's
+  information-governance documents should say so.
+- **Storage.** The fl-client, its job pods and data-access-api share `<release>-cohort-data`, and job pods share
+  `<release>-xnat-web` with XNAT. ReadWriteOnce works on a single node. A separate GPU pool needs ReadWriteMany (or
+  ReadOnlyMany) storage for both, or `flClient.nvflare.jobPods.xnatArchive.enabled: false`, which keeps the cohort mount
+  only; jobs still read images through imaging-api until a later part moves them to `/data`.
+- **External XNAT.** With `xnat.enabled: false` there is no archive to mount, and entries carry the cohort mount only.
+
 ### Container Service jobs (dcm2niix)
 
 ```yaml
