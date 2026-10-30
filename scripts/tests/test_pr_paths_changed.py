@@ -54,6 +54,7 @@ GATED_WORKFLOWS = (
     "test_trust_data_access_api.yml",
     "test_trust_omop_db.yml",
     "test_trust_data_tools.yml",
+    "test_snowflake_specs.yml",
     "local_auth_smoke.yml",
 )
 
