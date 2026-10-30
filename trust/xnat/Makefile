@@ -239,6 +239,16 @@ define check_xnat_dir_owner
 	fi
 endef
 
+# True when the invoking user IS xnat-web's uid, holds its gid and owns every directory under
+# $(XNAT_DATA_DIR) (an absent tree qualifies): xnat-reset's wipe, mkdir and chown then all succeed
+# unprivileged. Development is there whenever the developer is uid 1001; a deployed kit gets there
+# by setting FLIP_UID/FLIP_GID to the operator (FLIP#1731).
+define operator_owns_xnat_tree
+	[ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ] \
+		&& case " $$(id -G) " in *" $(XNAT_CONTAINER_GID) "*) true;; *) false;; esac \
+		&& [ -z "$$(find $(XNAT_DATA_DIR) -type d ! -user $(XNAT_CONTAINER_UID) 2>/dev/null | head -n 1)" ]
+endef
+
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
 export XNAT_PATH=$(realpath .)
 
@@ -574,9 +584,10 @@ xnat-plugins-check:
 # for the resolution rule and how to override per-host.
 #
 # The remote deployed branch provisions over ssh under sudo, on a host FLIP administers. The
-# local one does it directly as root; for a non-root operator it deletes nothing and only checks
-# the empty tree `make -C trust prepare-host-dirs` made as root, refusing one that holds files
-# (FLIP#1723). The development branch provisions under sudo,
+# local one does it directly as root, or unprivileged when the operator is the container uid and
+# owns the tree (the kit's FLIP_UID, FLIP#1731); any other non-root operator deletes nothing and
+# only checks the empty tree `make -C trust prepare-host-dirs` made as root, refusing one that
+# holds files (FLIP#1723). The development branch provisions under sudo,
 # unless the invoking user IS the container uid, holds its gid and already owns
 # every directory under the tree — then the wipe, mkdir and chown all succeed
 # unprivileged (unlink needs write on the parent directory, so files a root-running
@@ -628,6 +639,9 @@ xnat-reset:
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
 				if [ "$$(id -u)" = 0 ]; then \
 					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+				elif $(operator_owns_xnat_tree); then \
+					echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns the tree — resetting it without root (FLIP#1731)"; \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
 				else \
 					echo "  👤 not root — deleting nothing, checking the tree prepare-host-dirs made (FLIP#1723)"; \
 					if [ -d $(XNAT_DATA_DIR) ] && [ -n "$$(find $(XNAT_DATA_DIR) -mindepth 1 ! -type d -print 2>&1 | head -n 1)" ]; then \
@@ -642,9 +656,7 @@ xnat-reset:
 		esac; \
 	else \
 		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
-		if [ "$$(id -u)" = "$(XNAT_CONTAINER_UID)" ] \
-			&& case " $$(id -G) " in *" $(XNAT_CONTAINER_GID) "*) true;; *) false;; esac \
-			&& [ -z "$$(find $(XNAT_DATA_DIR) -type d ! -user $(XNAT_CONTAINER_UID) 2>/dev/null | head -n 1)" ]; then \
+		if $(operator_owns_xnat_tree); then \
 			echo "  🔓 Operator is uid $(XNAT_CONTAINER_UID) and owns every directory in the tree — no sudo needed"; \
 			priv=""; \
 		else \

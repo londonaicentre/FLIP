@@ -103,7 +103,8 @@ DOCKER_CONTEXT (EC2) still prepares the membership store through the remote daem
 `FLIP_UID`/`FLIP_GID` to the operator's own ids needs neither step (FLIP#1731): every bind-mount
 writer runs as them (prod compose `user: "${FLIP_UID:-<image uid>}:${FLIP_GID:-<image gid>}"`,
 the same defaults as `deploy/portable.mk`'s `API_UID`/`ORTHANC_UID`/`XNAT_CONTAINER_UID`, which
-the ownership guards read), so the operator's own `mkdir` is enough. xnat-db alone keeps its
+the ownership guards read), so the operator's own `mkdir` is enough and `xnat-reset` provisions the
+XNAT tree itself, as in development. xnat-db alone keeps its
 root entrypoint (Alpine Postgres, no nss_wrapper). The images' runtime-written paths are
 world-writable with the sticky bit for that uid (`scripts/tests/test_container_identity.py`
 pins both the defaults and those lines).

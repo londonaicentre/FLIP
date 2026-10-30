@@ -63,7 +63,8 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
 
     It creates every directory below with its owner and deletes nothing, so it is safe to re-run.
 
-  ``make up-onprem-trust`` only checks the ownership either way, and a failed check names the fix.
+  On the first route ``make up-onprem-trust`` creates the XNAT tree itself; on the second it only checks the
+  ownership, and a failed check names the fix.
 
   .. list-table::
      :header-rows: 1
