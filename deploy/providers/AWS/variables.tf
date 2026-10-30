@@ -146,7 +146,7 @@ variable "INTERNAL_SERVICE_KEY" {
 }
 
 variable "FL_KIT_SLOT_NAMES" {
-  description = "JSON list (as a string) of FL kit-slot names for the fl_kit_slot pool register_trust claims from. Rendered ONLY into the /flip/fl_kit_slot_names SSM parameter (parameter_store.tf) — flip-api's single production source, read at boot seeding and re-read when a registration finds the pool exhausted. Growing the pool is an env-file edit + `make apply-fl-kit-slots` (no restart, no task-definition change). Empty ⇒ NoFreeKitSlotError on trust registration. Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  description = "JSON list (as a string) of FL kit-slot names for the fl_kit_slot pool register_trust claims from. Flower only: rendered into the /flip/fl_kit_slot_names SSM parameter (flip-api's slot source on a Flower hub) and the SuperLink's TRUST_NAMES. An NVFLARE hub ignores it — its pool is the kits marked ready in S3 (FLIP#1720). Set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
   type        = string
   default     = "[]"
 }

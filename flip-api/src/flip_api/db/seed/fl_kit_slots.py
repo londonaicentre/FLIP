@@ -12,6 +12,7 @@
 
 import json
 import re
+from collections import defaultdict
 
 from botocore.exceptions import BotoCoreError, ClientError
 from sqlmodel import Session, select
@@ -19,15 +20,18 @@ from sqlmodel import Session, select
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot
 from flip_api.db.seed.seed_logger import logger
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.get_parameters import get_parameter
+from flip_api.utils.s3_client import S3Client
 
-# SSM parameter holding the JSON list of slot names (Terraform-managed, see
-# deploy/providers/AWS/parameter_store.tf). The parameter is the runtime source of
-# truth in production so operators can grow the pool with a targeted `terraform
-# apply` of just this parameter — no task-definition revision, no flip-api restart
-# (register_trust reconciles on a pool miss). Slot names are plain configuration,
-# not secrets, hence Parameter Store per the /flip/* convention.
+# Flower's slot list (Terraform-rendered, see deploy/providers/AWS/parameter_store.tf):
+# the SuperLink labels SuperNodes from the same list at startup, so it stays authored
+# config there. Slot names are plain configuration, not secrets, hence Parameter Store.
 _FL_KIT_SLOT_NAMES_PARAMETER = "/flip/fl_kit_slot_names"
+
+# add_fl_kits.sh writes services/<slot>/READY as the last object of a kit's upload to a
+# net, so a slot whose marker is on every net has a complete kit on every net (FLIP#1720).
+_KIT_KEY_RE = re.compile(r"(net-\d+)/(?:services/([^/]+)/READY$)?")
 
 _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 
@@ -52,36 +56,76 @@ def _slot_number(slot_name: str) -> int:
 
 
 def resolve_fl_kit_slot_names() -> list[str]:
-    """Resolve the configured FL kit-slot names from their environment's single source.
+    """Resolve the FL kit-slot names from their environment's single source.
 
-    In production the source is the ``/flip/fl_kit_slot_names`` SSM parameter (a JSON
-    list string, rendered by Terraform from the env file's ``FL_KIT_SLOT_NAMES``), so
-    the pool can grow via a targeted apply of just that parameter without a
-    task-definition change or restart. In development the source is the
-    ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
+    - Development: the ``FL_KIT_SLOT_NAMES`` env var (a ``DevSettings``-only field).
+    - Production, NVFLARE: the kits themselves — every slot marked ready on every net
+      under ``FLARE_KITS_S3_URI``. Minting a kit with ``make add-fl-kits`` makes it
+      claimable; register_trust re-reads this when the pool runs dry, so no restart.
+    - Production, Flower: the ``/flip/fl_kit_slot_names`` SSM parameter.
 
-    Deliberately no prod fallback: a failure to fetch or parse the parameter returns
-    an empty list — the boot seed and the registration reconcile are additive, so
-    existing pool rows and assignments are untouched; the pool simply cannot grow
-    until the parameter is fixed, and nothing stale masks that. The log level splits
-    the two situations: a missing parameter is a not-yet-provisioned source (WARNING);
-    any other AWS error or a malformed value means the source of truth is broken (ERROR).
-
-    Note the pre-activation state is ERROR, not WARNING: ``make apply-fl-kit-slots``
-    creates the parameter *and* grants the task role's ``ssm:GetParameter``, so an
-    image deployed before that apply gets ``AccessDeniedException`` (ERROR) rather than
-    ``ParameterNotFound`` — observed on stag 2026-07-14. Either way the pool is intact
-    and the log names the fix.
+    Deliberately no fallback: an unreadable source returns an empty list, logged. The
+    boot seed and the registration reconcile are additive, so existing pool rows and
+    assignments are untouched; the pool simply cannot grow until the source is fixed.
 
     Returns:
-        list[str]: The configured slot names; empty when none are configured or the
-        parameter is unreadable.
+        list[str]: The slot names; empty when none are configured or the source is unreadable.
     """
-    if get_settings().ENV != "production":
+    settings = get_settings()
+    if settings.ENV != "production":
         # getattr: the field exists only on DevSettings, and mypy sees the
         # DevSettings | ProdSettings union here.
-        return getattr(get_settings(), "FL_KIT_SLOT_NAMES", []) or []
+        return getattr(settings, "FL_KIT_SLOT_NAMES", []) or []
+    if settings.FL_BACKEND == FLBackend.NVFLARE:
+        return _ready_flare_kit_names(getattr(settings, "FLARE_KITS_S3_URI", ""))
+    return _slot_names_from_parameter()
 
+
+def _ready_flare_kit_names(kits_uri: str) -> list[str]:
+    """List the slots whose FLARE kit is marked ready on every net under ``kits_uri``.
+
+    A kit missing its marker on any net (an interrupted upload, or a net added since the
+    kit was minted) is not claimable: a trust needs a working kit for every net.
+
+    Args:
+        kits_uri (str): ``s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>``.
+
+    Returns:
+        list[str]: The ready slot names; empty when there are none or the listing fails.
+    """
+    prefix = f"{kits_uri.rstrip('/')}/"
+    try:
+        if not kits_uri:
+            raise ValueError("FLARE_KITS_S3_URI is not set")
+        paths = S3Client().list_objects(prefix)
+    except Exception as e:
+        logger.error(f"Could not list the FLARE kits under '{prefix}' ({e}). The kit-slot pool cannot grow.")
+        return []
+
+    nets: set[str] = set()
+    ready_on: defaultdict[str, set[str]] = defaultdict(set)
+    for path in paths:
+        if match := _KIT_KEY_RE.match(path.removeprefix(prefix)):
+            net, slot_name = match.groups()
+            nets.add(net)
+            if slot_name:
+                ready_on[slot_name].add(net)
+
+    if not nets:
+        logger.error(f"No FLARE kits under '{prefix}' — is FLARE_KIT_DATE right? The kit-slot pool cannot grow.")
+        return []
+    return sorted((name for name, on in ready_on.items() if on == nets), key=lambda name: (_slot_number(name), name))
+
+
+def _slot_names_from_parameter() -> list[str]:
+    """Read Flower's slot list from the ``/flip/fl_kit_slot_names`` SSM parameter.
+
+    A missing parameter is a not-yet-provisioned source (WARNING); any other AWS error or
+    a malformed value means the source is broken (ERROR).
+
+    Returns:
+        list[str]: The configured slot names; empty when the parameter is unreadable.
+    """
     try:
         slot_names = json.loads(get_parameter(_FL_KIT_SLOT_NAMES_PARAMETER))
         if not isinstance(slot_names, list) or not all(isinstance(name, str) for name in slot_names):
@@ -90,16 +134,13 @@ def resolve_fl_kit_slot_names() -> list[str]:
     except (BotoCoreError, ClientError, TypeError, ValueError) as e:
         if isinstance(e, ClientError) and e.response.get("Error", {}).get("Code") == "ParameterNotFound":
             logger.warning(
-                f"SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' does not exist yet — run "
-                "`make -C deploy/providers/AWS apply-fl-kit-slots HUB=<stag|prod>` to create it. The kit-slot pool "
-                "cannot grow until then (existing slots and assignments are unaffected)."
+                f"SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' does not exist yet — a Terraform apply creates it. "
+                "The kit-slot pool cannot grow until then (existing slots and assignments are unaffected)."
             )
             return []
         logger.error(
             f"Could not read SSM parameter '{_FL_KIT_SLOT_NAMES_PARAMETER}' ({e!r}). The kit-slot pool "
-            "cannot grow until this is fixed — new slots applied with "
-            "`make -C deploy/providers/AWS apply-fl-kit-slots HUB=<stag|prod>` will NOT become claimable "
-            "(existing slots and assignments are unaffected)."
+            "cannot grow until this is fixed (existing slots and assignments are unaffected)."
         )
         return []
 

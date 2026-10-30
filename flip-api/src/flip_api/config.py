@@ -493,10 +493,9 @@ class DevSettings(Settings):
 
     # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
-    # free slot regardless of the trust's friendly name. Dev-only on purpose: in production
-    # the pool's single source is the /flip/fl_kit_slot_names SSM parameter (see
-    # db/seed/fl_kit_slots.resolve_fl_kit_slot_names) — there is no env-var fallback, so a
-    # broken parameter can't be silently masked by stale task-definition env. Defaults to []
+    # free slot regardless of the trust's friendly name. Dev-only on purpose: production
+    # reads the kits in S3 (NVFLARE) or the /flip/fl_kit_slot_names SSM parameter (Flower)
+    # — see db/seed/fl_kit_slots.resolve_fl_kit_slot_names. Defaults to []
     # so existing dev envs aren't required to set it; in that case the pool is empty until
     # the admin provisions kits and adds them here.
     FL_KIT_SLOT_NAMES: list[str] = []
@@ -534,6 +533,10 @@ class ProdSettings(Settings):
     EMAIL_BACKEND: Literal["ses"] = "ses"
     AWS_SES_ADMIN_EMAIL_ADDRESS: EmailStr  # e.g. admin@example.com
     AWS_SES_SENDER_EMAIL_ADDRESS: EmailStr  # e.g. no-reply@example.com, but can be same as admin email
+
+    # NVFLARE only: s3://<bucket>/fl-flare-participant-kits/<FLARE_KIT_DATE>. The kit-slot
+    # pool is every slot whose kit is marked ready on every net under it (FLIP#1720).
+    FLARE_KITS_S3_URI: str = ""
 
 
 # Eager load once (for app use)

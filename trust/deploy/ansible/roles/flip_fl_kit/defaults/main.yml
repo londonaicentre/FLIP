@@ -42,7 +42,7 @@ fl_kit_precreate_slot: Trust_2
 # participant kits after the slot, and the prod compose mounts
 # net-1/services/${FL_KIT_SLOT}/ — so staging must follow trust_num rather than
 # assume the first slot. A cloud trust can hold any slot: the hub allocates from
-# FL_KIT_SLOT_NAMES, so the second EC2 trust in an environment is Trust_2, the
+# its kit-slot pool, so the second EC2 trust in an environment is Trust_2, the
 # third Trust_3, and a re-registration can move a host to a different one.
 #
 # No `| default('1')`: the slot names a specific host, so an unset trust_num on a

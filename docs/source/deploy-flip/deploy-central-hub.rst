@@ -326,14 +326,20 @@ activates spare kits that were provisioned earlier but never made claimable, whi
 certificates. It mints new kits only for the shortfall: that restores and verifies each net's CA workspace and needs
 the FLARE provisioning tools. Existing kits are never touched and no CA is rotated.
 
-It ends with a targeted Terraform plan and apply of the slot list, and pauses for you to confirm both the kit plan
-and the Terraform plan (``YES=1`` skips the prompts). Read the plan before you confirm. The hub picks up the new
-slots without a restart, so the next ``register-trusts`` can claim one.
+It pauses for you to confirm the plan it prints (``YES=1`` skips the prompt). Each kit is marked ready once it is
+complete on every net, and the hub reads the ready kits straight from S3, so the next ``register-trusts`` can claim
+one: no Terraform apply and no restart.
+
+.. note::
+
+   On a hub whose kits were made before this release, ``add-fl-kits`` stops and asks you to run
+   ``make -C deploy/providers/AWS mark-fl-kits-ready HUB=<stag|prod>`` once first. That checks each existing kit
+   is complete on every net and marks it ready; it creates no kits.
 
 .. warning::
 
-   If the final apply fails, recover with ``make -C deploy/providers/AWS apply-fl-kit-slots HUB=<hub>``. Do not
-   re-run ``add-fl-kits``: the slot names are already in your env file, and a second run would add another ``N``.
+   If a run stops part-way, it prints which kits it uploaded. Re-running ``add-fl-kits`` is safe: a kit that is now
+   on every net is checked and marked ready, and one missing from some net is never claimable.
 
 .. seealso::
 
