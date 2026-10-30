@@ -32,8 +32,8 @@ tolerate the DICOM vocab the seed has already loaded):
 
 - **Dev**: `make load-omop-vocab [OMOP_DB_PORT=5436]` (after the stack is up and seeded). Cohort
   queries joining `omop.concept` return nothing until this runs.
-- **EC2**: the "load OMOP core vocabulary on Trust EC2" Ansible play (part of `seed-trust-data`;
-  throwaway container on loopback port 15499; kit credentials passed by the AWS Makefile).
+- **EC2**: the `flip_omop_vocab` Ansible role (part of the EC2 root's `make seed`; throwaway container on
+  loopback port 15499; kit credentials passed by that root's Makefile).
 - **Kubernetes**: the chart's `omop-vocab-load` post-install/post-upgrade hook Job
   (`omopDb.vocabLoad` values; bundle from S3, loader + constraints from the image). Its first
   stage runs `load_core_vocab.sh --check` and skips the multi-GB fetch when the database is

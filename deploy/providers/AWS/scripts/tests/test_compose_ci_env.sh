@@ -87,8 +87,6 @@ BASE_ENV=(
     FL_BACKEND=nvflare
     FL_KIT_SLOT_NAMES='["Trust_1", "Trust_2"]'
     FLARE_KIT_DATE=20260429
-    # Required, not optional: its Makefile `?=` default creates a trust host.
-    DEPLOY_TRUST_EC2=false
     ACCESS_LOGS_BUCKET_NAME=flip-access-logs-lza
     EFS_PROVISION_IMAGE=123456789012.dkr.ecr.eu-west-2.amazonaws.com/ecr-public/aws-cli/aws-cli:2.22.35
     LZA_VPC_NAME=AWSAccelerator-eu-west-2-prod
@@ -401,25 +399,6 @@ else
     ok "writes no file on failure"
 fi
 
-# 5b. THE DESTRUCTIVE DEFAULT. `?=` in the Makefile means an absent key does not
-#     reach variables.tf at all — it reaches Terraform as the Makefile's own
-#     default, and for DEPLOY_TRUST_EC2 that default creates a trust host. It is
-#     not on check-fl-plan-impact.sh's watch list, so an unattended apply would do
-#     it silently. Required, so the value has to be written down.
-run_case "DEPLOY_TRUST_EC2 is required, not defaulted" DEPLOY_TRUST_EC2
-expect_rc 1 "exits 1"
-expect_stderr "DEPLOY_TRUST_EC2" "names it"
-
-# ...and `false` is a legitimate value that must compose, not be mistaken for
-# absence: an explicit false is a decision, an absent key is an accident.
-run_case "an explicit false composes"
-expect_rc 0 "exits 0"
-if grep -qFx 'DEPLOY_TRUST_EC2=false' "${OUT_FILE}"; then
-    ok "writes the explicit false through"
-else
-    no "writes the explicit false through" "file: $(grep '^DEPLOY_TRUST' "${OUT_FILE}")"
-fi
-
 # 6. ALL missing keys are reported at once — a one-at-a-time script costs a CI
 #    round trip per key.
 run_case "reports every missing key at once" AES_KEY_BASE64 POSTGRES_USER SES_VERIFIED_EMAIL
@@ -540,7 +519,7 @@ else
     ok "does not write the raw keys twice"
 fi
 
-# The destructive default, in the same spirit as DEPLOY_TRUST_EC2 above: an absent
+# A destructive default: an absent
 # NETWORKING_INGRESS_CIDRS is not "no change", it is every rule the estate's edge
 # reaches the internal NLB through.
 for key in ACCESS_LOGS_BUCKET_NAME EFS_PROVISION_IMAGE LZA_VPC_NAME MANAGE_DNS NETWORKING_INGRESS_CIDRS; do

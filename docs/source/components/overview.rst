@@ -84,4 +84,4 @@ A FLIP node runs in one of three ways:
 - inside a Trusted Research Environment: :doc:`/deploy-flip/deploy-flip-node-in-tre`;
 - on Kubernetes, from the Helm chart: :ref:`deploy-flip-node-kubernetes`.
 
-The mock Trusts used for staging run the same Compose stack on an EC2 instance.
+The mock Trusts used for staging run the same stacks, on nodes from the AWS and Azure roots.

@@ -108,8 +108,8 @@ Choose your platform
        subset. The node itself installs as a Docker Compose host.
      - :doc:`deploy-flip-node-in-tre`
 
-The mock trust on an AWS EC2 instance, which the Central Hub deployment can create for testing, is covered in
-:gh:`deploy/providers/AWS/README.md`.
+A trust on AWS, in any account, is :doc:`deploy-flip-node-aws-ec2` or :doc:`deploy-flip-node-aws-eks`. The Central
+Hub deployment creates no trust of its own.
 
 ****************
 Before you start

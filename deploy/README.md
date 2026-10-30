@@ -36,7 +36,7 @@ they are filed by two different rules:
 | Run/change the **XNAT** swarm stack | `trust/xnat/docker-compose-stack*.yml` |
 | Build/populate the mock **OMOP** database | `trust/omop-db/compose.yml` |
 | Run the **FL** services standalone | `fl-services/<backend>/compose*.yml` |
-| Provision **AWS** (hub ECS + optional cloud trust EC2) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
+| Provision **AWS** (the hub: ECS, RDS, the SSM bastion; a trust node is `trust/deploy/terraform/aws/`) | [`deploy/providers/AWS/`](providers/AWS/README.md) |
 | Provision an **Azure** trust (VM or AKS) | [`trust/deploy/terraform/azure/`](../trust/deploy/terraform/azure/README.md) |
 | Provision an **AWS EC2** trust in any account | [`trust/deploy/terraform/aws/ec2/`](../trust/deploy/terraform/aws/ec2/README.md) |
 | Register a trust, sync or package its **kit**, upgrade a site | `make` targets; the scripts are in `trust/deploy/scripts/` |
@@ -101,8 +101,8 @@ FLIP uses AWS RDS PostgreSQL with the following version support policy:
 ### Prerequisites
 
 The workstation prerequisites for a hub deploy — the GHCR login (a `read:packages` token), AWS CLI SSO, the
-`~/.ssh/host-aws` key pair Terraform uploads as the EC2 key pair (`TF_VAR_flip_keypair` /
-`TF_VAR_ec2_public_key_path` customise it), the AWS profile aliases — are in
+`~/.ssh/host-aws` key pair Terraform uploads as the bastion's key pair (`TF_VAR_flip_keypair` customises
+it), the AWS profile aliases — are in
 [Deploy the Central Hub → Prerequisites](https://londonaicentreflip.readthedocs.io/en/latest/deploy-flip/deploy-central-hub.html#prerequisites).
 
 ### Final configuration
@@ -219,7 +219,7 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 **Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
 longer run as root, the host-side bind-mount source directories must be owned by the matching
 UID. For XNAT, the shared Ansible roles (`flip_trust_dirs` in `trust/deploy/ansible/roles/`, composed by
-both `deploy/providers/AWS/site.yml` and `trust/deploy/ansible/onprem.yml`) provision
+`trust/deploy/ansible/aws-ec2-host.yml`, `onprem.yml` and `azure.yml`) provision
 `/opt/flip/xnat/**` as UID 1001. `make -C trust/xnat xnat-reset` is the third path onto the same
 invariant and provisions the XNAT directories as UID 1001 too, verifying it afterwards and failing with
 the exact `chown` to run rather than leaving a host half-provisioned (FLIP#1095 — it previously used a
@@ -229,7 +229,7 @@ and the compose stacks both read `XNAT_DATA_DIR`, which in stag/prod defaults to
 `/opt/flip/xnat-trust<N>` so two trusts on one host stay isolated. `xnat-reset` is therefore the path
 that provisions the tree XNAT actually writes to, and an ownership change made against the playbooks'
 `/opt/flip/xnat` would not reach it. Orthanc's storage directory is not a role's job: on EC2,
-`site.yml`'s seed play creates `/opt/flip/orthanc/orthanc-storage` as UID 999 before Orthanc first
+`aws-ec2-host.yml`'s seed play creates `/opt/flip/orthanc/orthanc-storage` as UID 999 before Orthanc first
 starts, and on every other host `make -C trust up-trust` (which the on-prem `up-onprem-trust` calls)
 runs `trust/Makefile`'s `ensure_data_dirs`, which chowns it to UID 999 first. If you provision a trust
 host outside these paths, you must replicate this ownership or first-boot writes
@@ -267,7 +267,7 @@ below. The per-service grants in the compose files are:
 |------------|----------------------|--------|
 | flip-api, fl-api (Flower), trust-api, imaging-api, data-access-api, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
 | fl-fleet-proxy-net-* (Flower — production and development) | *(none)* | Plain nginx, baked as the SuperLink's uid 49999 with every writable path under `/tmp`, so it needs no capability: in production it reads the server key as the SuperLink does, in development through the host group (`group_add`), like the FL containers (FLIP#1517). |
-| fl-client-net-* (both backends, production and development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. FLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. In production the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `site.yml` / `onprem.yml`; the `DAC_OVERRIDE`/`FOWNER` grant kept for pre-GHSA-8465 root images is gone (FLIP#973). |
+| fl-client-net-* (both backends, production and development) | *(none)* | Runs non-root (GHSA-8465), and Docker grants effective capabilities only to root — a `cap_add` here would land in the bounding set with `CapEff` still `0`, so it would buy nothing. Flower's `flower-supernode` entrypoint does no chmod/chown at all and its dev mounts are `:ro`. FLARE's dev kit (`provision/workspace-dev/`) is written by `make provision` as the host user. Since FLIP#1171 the image identity is fixed at `flip`/1000/1000 rather than baked from whoever built the image, and the dev composes pass `user: "${UID:-1000}:1000"` — so the container runs as the host user that already owns the kit, and no `chown` (and no capability) is needed. In production the Ansible-provisioned `FL_KIT_DIR` is pre-chowned to the container's UID by `aws-ec2-host.yml` / `onprem.yml`; the `DAC_OVERRIDE`/`FOWNER` grant kept for pre-GHSA-8465 root images is gone (FLIP#973). |
 | fl-api (FLARE) | `CHOWN` | The `flare-fl-api` image runs as user `flip` (UID 1000, non-root — fixed by FLIP#1171; it previously varied with whoever built the image), so only the `CHOWN` baseline is needed; `DAC_OVERRIDE` and `FOWNER` are inert for non-root processes. |
 | fl-server (FLARE) | *(none)* | Runs non-root, so capabilities are inert here as they are for fl-client above — `CapEff` stays `0` and a `cap_add` sits unused in the bounding set. The grants that used to be here (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`) were removed by FLIP#1171 once measurement confirmed they had never taken effect; the comment claiming they were what made the host-owned mounts readable was wrong. What actually reads the provisioned kit's 0600 keys and the operator's 0600 AWS SSO token cache is the matching **uid**: the dev compose runs the container as the host user via `user: "${UID:-1000}:1000"`. |
 | fl-server (Flower, development only) | *(none)* | Runs non-root, so capabilities are inert here exactly as for the FLARE fl-server above. The dev compose ran the SuperLink as root until FLIP#1320, with `CHOWN` and `DAC_OVERRIDE` granted back on top of `cap_drop: ALL` so it could read the host-provisioned 0640 TLS keys; a root SuperLink also rewrote any host-owned file it touched as `root:root`, which is how the operator's AWS SSO token used to become unreadable to their own CLI. It now runs as `user: "${UID:-1000}:49999"` with `group_add: ["${DOCKER_GID}"]`, reading the keys through their own owner and group, and sets `HOME=/tmp` so the SuperLink's `~/.flwr` and the ServerApp's torch caches land somewhere the host uid can write on any SuperLink image, rather than in the image user's `/app`. Production runs the image's non-root user with an ECS task IAM role and keeps the `CHOWN` baseline. |

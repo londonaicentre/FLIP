@@ -67,9 +67,8 @@ users.
 .. note::
 
    **Trust hosts are not included.** A trust's cost depends on its GPU instance and how long that instance is busy,
-   which depends on the projects it joins. The mock trust EC2 Terraform can provision (a ``t3.xlarge`` with no
-   GPU) is a test fixture, not a sizing recommendation. For always-on versus on-demand GPUs, see *GPU Resource
-   Management* in :doc:`deploy-flip-node-in-tre`.
+   which depends on the projects it joins; see :doc:`deploy-flip-node-aws-ec2` for an AWS node's cost. For
+   always-on versus on-demand GPUs, see *GPU Resource Management* in :doc:`deploy-flip-node-in-tre`.
 
 *************
 Prerequisites
@@ -102,7 +101,7 @@ Prerequisites
 
    If your profile names differ, set ``STAG_AWS_PROFILE`` or ``PROD_AWS_PROFILE`` to them, in the env file or on the
    ``make`` command line.
-7. For the hub's SSM bastion and the optional mock trust EC2:
+7. For the hub's SSM bastion:
 
    - an **SSH key pair** at ``~/.ssh/host-aws``. Terraform uploads the public key as the EC2 key pair, and you use
      it for SSH over SSM:
@@ -111,7 +110,7 @@ Prerequisites
 
         ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "<your email>"
 
-   - the **AWS Session Manager plugin**, needed for ``ssh flip`` and ``make forward-trust``. See
+   - the **AWS Session Manager plugin**, needed for ``ssh flip``. See
      "Remote Access via SSM Session Manager" in :gh:`deploy/providers/AWS/README.md`.
 
 **Choose the hub with** ``HUB``, which every target in ``deploy/providers/AWS`` requires:
@@ -197,8 +196,6 @@ the same ground:
 The deployed hosts and services do not get these broad permissions; each runs with a scoped role:
 
 - **Central Hub bastion:** Session Manager access only. It cannot read FLIP secrets or buckets.
-- **Cloud trust EC2:** Session Manager and CloudWatch, plus read-only access to the bucket holding the FL participant
-  kits. No access to Cognito, SES, Secrets Manager or the FLIP application buckets.
 - **ECS tasks:** each service has its own task role with the application permissions it needs.
 
 The workload account's Identity Center permission set replaces this list, bounded by the estate's service control
@@ -290,8 +287,8 @@ file are kept.
 
 **Getting the kit to the trust host** is a separate, explicit step; nothing copies the kit file anywhere.
 
-- For the cloud trust EC2, ``make -C deploy/providers/AWS deploy-trust KIT=<CODE> HUB=<hub>`` reads the kit
-  locally and passes its values to the containers on the host.
+- For a node from ``trust/deploy/terraform/aws/ec2``, that root's ``make deploy KIT=<CODE> HUB=<hub>`` reads the kit
+  locally and passes its values to the containers on the host (:doc:`deploy-flip-node-aws-ec2`).
 - For an on-prem trust, see step 4 of :doc:`onboarding-a-trust`. The packaging takes the trust's code, packs the FL
   kit share of the kit's ``FL_KIT_SLOT``, and ships the kit as ``.env.<CODE>.<hub>``:
 
@@ -364,7 +361,7 @@ Three things to plan for:
 - **The internal service key rotates with it**, so every trust-internal container has to restart together, not only
   ``trust-api``. Deliver the kit and recreate them in one step:
 
-  - Cloud trust EC2: ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>``.
+  - AWS EC2 node: ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``.
   - On-prem: copy the filled kit onto its slot-named file, package it, and have the operator run their upgrade
     command:
 
@@ -373,7 +370,7 @@ Three things to plan for:
        cp trust/.env.<CODE>.<suffix> trust/.env.<slot>
        make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env>
 
-  Do **not** use ``deploy-trust``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+  Do **not** use that root's ``deploy``: it is a first-install command that re-seeds the trust's data and resets XNAT.
 - **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
   caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
   must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the
@@ -463,8 +460,9 @@ one maintenance window.
    reports ``deployment_mode: true`` and ``fl_quiesced: true``.
 2. **Redeploy the hub and every trust** in the same window: ``deploy-centralhub`` for the hub (see
    :ref:`deploy-central-hub-deploys`), and the upgrade command for each trust's platform (``upgrade-onprem-trust``,
-   ``upgrade-trust-k8s`` or ``upgrade-trust-ec2``; see :ref:`admin-upgrading-sites`). Do not use ``deploy-trust``
-   here: it is a first-install command that re-seeds the trust's data and resets XNAT.
+   ``upgrade-trust-k8s``, or an EC2 node's ``make upgrade``; see :ref:`admin-upgrading-sites`). Do not use a
+   first-install command (``up-onprem-trust``, an EC2 node's ``make deploy``) here: it re-seeds the trust's data and
+   resets XNAT.
 3. **Resume.** Disable Deployment Mode.
 
 .. warning::

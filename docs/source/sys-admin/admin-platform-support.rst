@@ -55,7 +55,7 @@ Port 22 (SSH) is never opened.
      -
      - 443; 80 for OS packages
    * - Operator access to trust host
-     - none (SSM Session Manager on the cloud trust EC2; the site's own access elsewhere)
+     - none (SSM Session Manager on an AWS node; the site's own access elsewhere)
      -
 
 The PACS return leg is the one inbound rule. :doc:`../components/component-pacs` explains it.
@@ -63,13 +63,9 @@ The PACS return leg is the one inbound rule. :doc:`../components/component-pacs`
 Operator access
 ===============
 
-On the cloud trust EC2, operators connect through AWS Systems Manager Session Manager (SSH over SSM), and XNAT,
-Orthanc and the trust-api Swagger docs are reachable only through SSM port forwarding. From the repo root on the
-deployment workstation:
-
-.. code-block:: shell
-
-   make -C deploy/providers/AWS forward-trust
+On an AWS EC2 node, operators connect through AWS Systems Manager Session Manager (SSH over SSM,
+``make -C trust/deploy/terraform/aws/ec2 shell``), and XNAT, Orthanc and the trust-api Swagger docs are reachable only
+through SSM port forwarding (``aws ssm start-session --document-name AWS-StartPortForwardingSession``).
 
 On-prem and Kubernetes nodes are reached through the site's own access, such as SSH or ``kubectl port-forward``.
 

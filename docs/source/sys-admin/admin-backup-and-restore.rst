@@ -109,7 +109,7 @@ What ``make destroy`` keeps
 It lists what it will remove and asks you to type ``yes``. It **keeps** the Cognito user pool, the ``FLIP_API``
 secret, every S3 bucket, the ACM certificates and Route 53 records, and the platform's VPC, which is never this
 stack's. It removes only what it targets: the database (unless deletion protection stops it) with its parameter and
-subnet groups, the cloud trust's EC2 instance, the bastion, the security groups, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
+subnet groups, the bastion, the security groups, the EC2 IAM role, the key pairs and the SES email templates, plus any resources Terraform
 finds depend on them. Everything else, including the CloudWatch logs, stays.
 
 .. warning::
@@ -118,11 +118,6 @@ finds depend on them. Everything else, including the CloudWatch logs, stays.
    ``--skip-final-snapshot`` rather than through Terraform, and does not ask AWS to keep its automated backups. On
    staging the database is gone at once. On production, deletion protection makes the delete fail; if you remove the
    protection first, take a manual snapshot (below) before you run ``make destroy``.
-
-.. warning::
-
-   **The destroy command deletes a cloud trust's data.** The trust EC2 instance keeps OMOP, Orthanc and XNAT on its
-   root disk, which is deleted with the instance. FLIP takes no snapshots of it.
 
 Recommended backups
 ===================
@@ -175,7 +170,7 @@ The Cognito user pool
 Trust node on Docker Compose (on-premises or EC2)
 *************************************************
 
-*Who: site operator* (for a cloud trust on EC2: FLIP admin)
+*Who: site operator* (for an AWS node: whoever deployed it)
 
 What holds state
 ================
@@ -283,7 +278,7 @@ or snapshot tooling.
 
 .. note::
 
-   For a cloud trust on EC2, FLIP's Terraform takes no snapshots of the instance's disk. Use AWS's own EBS snapshot
+   For an AWS EC2 node, FLIP's Terraform takes no snapshots of the instance's disk. Use AWS's own EBS snapshot
    tooling if the trust holds data you need to keep.
 
 Restoring a trust node
@@ -296,7 +291,7 @@ FLIP has no restore command for a trust. What it does tell you:
 .. warning::
 
    **Never run a first-install command on a restored site.** ``make up-onprem-trust``, ``make -C trust up-trust``,
-   ``restart-trust`` and ``make -C deploy/providers/AWS deploy-trust`` delete the whole ``XNAT_DATA_DIR`` (archive,
+   ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` delete the whole ``XNAT_DATA_DIR`` (archive,
    database and dumps) and may re-seed OMOP and Orthanc. Starting a stopped site with them has the same effect.
 
 - **The upgrade command touches no data.** It recreates the trust containers on their existing directories (see

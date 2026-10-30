@@ -17,8 +17,8 @@ seed_dir: "/opt/flip/seed"
 seed_trust_num: "{{ trust_num | default('1') }}"
 # Optional extra-vars get DISTINCT internal names (like hf_trust_data_repo above): a play
 # var that references itself (`x: "{{ x | default(...) }}"`) is fine only while an
-# extra-var of the same name shadows it, and these four are passed by `make
-# seed-trust-data` only when the operator sets them — unset, the first use would recurse
+# extra-var of the same name shadows it, and these four are passed by the EC2 root's
+# `make seed` only when the operator sets them — unset, the first use would recurse
 # ("Recursive loop detected in template").
 seed_source_trust: "{{ source_trust | default(seed_trust_num) }}"
 seed_num_trusts: "{{ num_trusts | default('2') }}"

@@ -19,13 +19,7 @@ It does not define the container stack or configure a site-owned host — both l
 
 | Provider | Provisions | Entry point |
 | -------- | ---------- | ----------- |
-| [`AWS/`](AWS/README.md) | **Hub + optional cloud trust** — ECS Fargate, RDS + Proxy, ALB/NLB, CloudFront, Cognito, SES, and a trust EC2 host **unless `DEPLOY_TRUST_EC2=false`** (it defaults to `true`, and is settable from the env file as well as the CLI) | `make -C deploy/providers/AWS full-deploy KIT=<CODE> HUB=<stag\|prod>`<br>hub-only: `full-deploy-hub-only HUB=<stag\|prod>` |
-
-`KIT=<CODE>` names the trust whose kit file (`trust/.env.<CODE>.<hub>`) the target reads; `HUB` selects
-that file's environment suffix. `KIT` is load-bearing, and omitting it costs a *partial* run rather than a
-clean failure: `full-deploy` pulls in `deploy-trust` → `seed-trust-data`, whose `KIT is required` guard fires
-only after `plan`, `apply`, `deploy-centralhub` and `register-trusts` have all run. Deploying the hub alone
-needs no `KIT`: use `full-deploy-hub-only`.
+| [`AWS/`](AWS/README.md) | **Hub only** — ECS Fargate, RDS + Proxy, NLB, CloudFront, Cognito, SES and the SSM bastion. It creates no trust (FLIP#1438): an AWS trust node is its own root, [`trust/deploy/terraform/aws/`](../../trust/deploy/terraform/aws/) | `make -C deploy/providers/AWS full-deploy HUB=<stag\|prod>` |
 
 ## How a trust node is deployed: shape × infrastructure
 
@@ -34,7 +28,7 @@ created or on infrastructure the site already has. Keep the two axes apart when 
 
 | Node shape | Defined in | Installed by | Infrastructure it runs on |
 | ---------- | ---------- | ------------ | ------------------------- |
-| **Compose on a host** | [`trust/deploy/compose/compose_trust.*.yml`](../../trust/deploy/README.md) | [`trust/deploy/ansible/onprem.yml`](../../trust/deploy/ansible/README.md) (site-owned host) or [`AWS/site.yml`](AWS/site.yml) (EC2), then `make up-onprem-trust` / `make -C trust up-trust-ec2` | an on-prem Ubuntu box, or the EC2 trust this provider creates |
+| **Compose on a host** | [`trust/deploy/compose/compose_trust.*.yml`](../../trust/deploy/README.md) | [`trust/deploy/ansible/onprem.yml`](../../trust/deploy/ansible/README.md) (site-owned host), `aws-ec2.yml` or `azure.yml`, then `make up-onprem-trust` / the root's `make deploy` | an on-prem Ubuntu box, or a VM from `trust/deploy/terraform/{aws/ec2,azure}` |
 | **Helm on Kubernetes** | [`trust/deploy/helm/`](../../trust/deploy/helm/README.md) (chart `flip-trust`) | `make -C trust/deploy/helm deploy-trust-k8s KIT=<CODE> HUB=<stag\|prod>` | a site-managed cluster (k3s, on-prem) or a managed one (AKS, EKS) |
 
 **Spell `HUB` out** on either row: `deploy/providers/AWS/Makefile` refuses to run without it, while
@@ -48,13 +42,10 @@ and the hub's Terraform is simply the `AWS/` root.
 ## AWS is the orchestrator
 
 Whatever shape and infrastructure a trust uses, it joins a hub that lives in AWS, so the AWS provider owns the
-outputs every trust needs in order to reach it — the NLB security-group rules and the FL participant kits in
-S3 — and its Makefile carries the targets that hand them over:
+outputs every trust needs in order to reach it — the FL participant kits in S3 — and its Makefile carries the
+targets that hand them over:
 
 - `provision-local-trust` runs `trust/deploy/ansible/onprem.yml` on the host and stages the FL kit from S3.
-  `AWS/site.yml` and `onprem.yml` compose the same roles (`trust/deploy/ansible/roles/`, found from here via
-  `AWS/ansible.cfg`); `site.yml` keeps only what an AWS-hosted trust has on top — the Terraform-derived
-  inventory, the AWS CLI, the SSM bastion, the CloudWatch agent, the S3 kit source and the S3-sourced vocabulary.
   This is the one known exception to the rule above: the play itself needs nothing from AWS, but its driver
   lives in this Makefile, which parses the hub env file at load and so cannot run on a host that holds only
   its kit file. Splitting the two halves is tracked under [#1213](https://github.com/londonaicentre/FLIP/issues/1213).
@@ -66,9 +57,7 @@ still receives its kit file from the hub admin.
 
 ## Note on the AWS Terraform root
 
-`AWS/` is a **single Terraform root with a single state file** (`backend.tf` → `key = "flip/terraform.tfstate"`).
-The cloud trust is instantiated from that same root (`AWS/main.tf`, `module "trust_ec2"`) and consumes
-hub-owned resources — the hub's VPC subnets, security group, key pair and IAM instance profile. The cloud
-trust runs *inside the hub's VPC*. It is therefore not separable into hub and trust halves without splitting
-Terraform state; treat `AWS/` as one indivisible unit. A second cloud provider should be its own root with its
-own state, not a module of this one.
+`AWS/` is a **single Terraform root with a single state file** (`backend.tf` → `key = "flip/terraform.tfstate"`)
+holding the hub alone. Until FLIP#1438 it also created a trust EC2 in the hub's VPC; every trust now deploys
+from its own root with its own state under `trust/deploy/terraform/`, linked to the hub only by its kit and its
+registration.

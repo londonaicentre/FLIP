@@ -243,7 +243,6 @@ COMPOSE_ENV = {
     "FL_BACKEND": "nvflare",
     "FLARE_KIT_DATE": "20260101",
     "FL_KIT_SLOT_NAMES": '["Trust_1"]',
-    "DEPLOY_TRUST_EC2": "false",
     "ACCESS_LOGS_BUCKET_NAME": "probe-access-logs",
     "EFS_PROVISION_IMAGE": "probe/image:1",
     "LZA_VPC_NAME": "AWSAccelerator-eu-west-2-stag",

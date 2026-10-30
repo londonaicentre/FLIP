@@ -145,6 +145,8 @@ variable "managed_role_names" {
     "flip-rds-proxy-role",
     # main.tf, via terraform-aws-modules/iam//modules/iam-assumable-role
     "ec2-role",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role",
   ]
 }
@@ -155,6 +157,8 @@ variable "managed_instance_profile_names" {
   type        = list(string)
   default = [
     "ec2-role-profile",
+    # Retiring (FLIP#1438): the root no longer declares it. Kept so the apply that deletes it is
+    # allowed; remove once stag and prod have applied that change.
     "trust-ec2-role-profile",
   ]
 }
@@ -167,8 +171,8 @@ variable "attachable_managed_policies" {
   type        = list(string)
   default = [
     "service-role/AmazonECSTaskExecutionRolePolicy", # iam_ecs.tf, execution role
-    "AmazonSSMManagedInstanceCore",                  # main.tf, both EC2 roles
-    "CloudWatchAgentServerPolicy",                   # main.tf, trust EC2 role
+    "AmazonSSMManagedInstanceCore",                  # main.tf, the bastion role
+    "CloudWatchAgentServerPolicy",                   # retiring with trust-ec2-role (FLIP#1438)
   ]
 }
 
