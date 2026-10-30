@@ -1772,7 +1772,7 @@ survive, which is why this is a stop and not a `terraform destroy`.
 | Plan, FL gate, apply | `terraform_apply.yml` job `apply` |
 | Restore the ECS desired counts | job `restore-staging-services`, after the gate |
 | End to end check against the deployed hub | job `staging-end-to-end` |
-| Hold, then stop | job `hold-then-stop-staging`, which calls `staging_lifecycle.yml` |
+| Hold, then stop | job `hold-then-stop-staging`, which dispatches `staging_lifecycle.yml` as its own run, so the next merge does not queue behind the window |
 | Re-stop whatever is left up | `staging_lifecycle.yml` schedule, 03:30 UTC |
 
 The ECS counts are restored *after* the FL gate on purpose. The gate holds any apply that would recreate
@@ -1783,7 +1783,8 @@ develop apply is back to needing an `fl_quiesced=true` dispatch, docs only merge
 **The hold window.** 120 minutes by default. Set the repository variable `STAGING_HOLD_MINUTES` to change the default
 for merges, or pass `hold_minutes` when dispatching `terraform_apply.yml` or `Staging Lifecycle`. To extend a window
 that is already running, dispatch `Staging Lifecycle` again with `hold-then-stop`: the second hold replaces the first
-rather than queueing a second stop behind it.
+rather than queueing a second stop behind it. A merge to `develop` during a window ends it (job `supersede-hold`),
+and its own deploy opens a new one.
 
 **Bringing staging back by hand.** Dispatch `Staging Lifecycle` with `start-stag`. It starts RDS, starts the hub host,
 waits for RDS to answer and restores the desired counts. A merge to `develop` does the same thing with no dispatch at
@@ -1794,11 +1795,9 @@ re-dispatch over the top of itself. The 03:30 UTC guard stops anything still up,
 apply or another lifecycle run is in flight. It also matters on its own account: AWS restarts a stopped RDS instance
 by itself after seven days, so without a recurring stop the database would come back every week forever.
 
-**Drift.** `terraform_drift.yml` asks whether staging is stopped before planning it, and stands down with a note on the
-summary when it is. A stopped estate cannot be planned at all, because Terraform refreshes RDS on every plan, and the three
-services at 0 would otherwise be reported as drift every night. `ecs_services.tf` carries
-`lifecycle { ignore_changes = [desired_count] }` for the same reason, so the live count belongs to the estate rather
-than to Terraform.
+**Drift.** `terraform_drift.yml` plans staging every night, stopped or not. A refresh only describes RDS, which works
+on a stopped instance, and `ecs_services.tf` carries `lifecycle { ignore_changes = [desired_count] }`, so services at 0
+are not reported as drift: the live count belongs to the estate rather than to Terraform.
 
 That `ignore_changes` is **unconditional, so it applies to production too**. A production service scaled by hand (or
 by an autoscaler) is no longer put back by an apply, and no longer shows up as drift. Production is never stopped by
