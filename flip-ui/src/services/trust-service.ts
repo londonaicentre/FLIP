@@ -125,3 +125,58 @@ const IMAGE_TAG = /^(v\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$/;
 
 export const isImageTag = (value: string | null | undefined): value is string =>
     typeof value === "string" && IMAGE_TAG.test(value);
+
+/** Where a trust's automatic upgrade stands (FLIP trust auto-upgrade). */
+export type AutoUpgradeState =
+    | "UP_TO_DATE"
+    | "PENDING"
+    | "IN_PROGRESS"
+    | "SUCCEEDED"
+    | "FAILED";
+
+/** Why a pending upgrade has not started yet; empty when nothing holds it back. */
+export type AutoUpgradeBlocker = "JOBS_RUNNING" | "OUTSIDE_WINDOW" | "LOCAL_MODIFICATIONS" | "SITE_UNHEALTHY" | "AGENT_OFFLINE";
+
+/** The auto-upgrade policy and status of one trust, as its Trust Admin sees it. */
+export interface IAutoUpgrade {
+    enabled: boolean;
+    // The release the hub runs, i.e. what the trust upgrades to; null until the hub reports one.
+    targetRelease: string | null;
+    // The release the trust's FL client reports; null when the trust has not reported one.
+    currentRelease: string | null;
+    // "HH:MM" in `timezone`; both null means any time of day.
+    windowStart: string | null;
+    windowEnd: string | null;
+    timezone: string | null;
+    state: AutoUpgradeState;
+    blockers: AutoUpgradeBlocker[];
+    // Set from the moment a newer release is waiting.
+    pendingSince: string | null;
+    lastAttempt: {
+        state: "SUCCEEDED" | "FAILED";
+        release: string;
+        at: string;
+        // A captured log tail on failure; an operator clears the failure in the portal before a retry.
+        detail: string | null;
+    } | null;
+}
+
+/** The part of the policy a Trust Admin edits. */
+export interface IAutoUpgradeSettings {
+    enabled: boolean;
+    windowStart: string | null;
+    windowEnd: string | null;
+    timezone: string | null;
+}
+
+export async function getAutoUpgrade(trustId: string): Promise<IAutoUpgrade> {
+    const response = await _http.get<IAutoUpgrade>(`/trust/${trustId}/auto-upgrade`);
+
+    return response.data;
+}
+
+export async function updateAutoUpgrade(trustId: string, settings: IAutoUpgradeSettings): Promise<IAutoUpgrade> {
+    const response = await _http.put<IAutoUpgrade>(`/trust/${trustId}/auto-upgrade`, settings);
+
+    return response.data;
+}

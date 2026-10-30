@@ -16,7 +16,7 @@
 		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
-		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
+		up-onprem-trust down-onprem-trust upgrade-onprem-trust setup-auto-upgrade onboard-onprem-trust \
 		demo-video demo-users seed-demo-projects reset-keycloak \
 		_release-tag release-prepare release-instance release-verify release-gates release-record release-main-check
 
@@ -290,6 +290,8 @@ up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) HUB=$(or $(HUB),prod)
+	@[ -n "$(AUTO_UPGRADE)" ] || [ -e /etc/systemd/system/flip-trust-upgrade.timer ] || \
+		echo "ℹ️  Automatic upgrades are not configured: run sudo -E make setup-auto-upgrade KIT=$(KIT) HUB=$(or $(HUB),prod) (or pass AUTO_UPGRADE=yes|no)"
 
 # Upgrade twin of up-onprem-trust (FLIP#1204): the same readiness-checklist gate, then
 # trust/Makefile's data-safe upgrade-trust — pull the target release, recreate what
@@ -305,6 +307,15 @@ upgrade-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> is required: the name in trust/.env.<CODE>.prod (e.g. KIT=GSTT)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT) ONBOARD_ARGS=--gate
 	$(MAKE) -C trust upgrade-trust KIT=$(KIT) HUB=$(or $(HUB),prod) TAG=$(TAG) FL_TAG=$(FL_TAG) FORCE=$(FORCE) YES=$(YES) ALLOW_CHECKOUT_DRIFT=$(ALLOW_CHECKOUT_DRIFT)
+
+# Automatic upgrades for an on-prem trust: a separate, interactive step (onboard-onprem-trust is a
+# non-interactive gate run on every up-onprem-trust; a prompt there would hang scripted installs).
+# Installs the hourly systemd timer, the agent's own checkout and the shared kit under
+# /etc/flip/trust, then sets the hub toggle with the trust's own API key. AUTO_UPGRADE=yes|no
+# answers for you; it can be switched off from the Trust portal at any time. Needs sudo -E.
+setup-auto-upgrade:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	$(MAKE) -C trust setup-auto-upgrade KIT=$(KIT) HUB=$(or $(HUB),prod) AUTO_UPGRADE=$(AUTO_UPGRADE)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or HUB value.

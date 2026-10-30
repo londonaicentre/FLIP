@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import Column, UniqueConstraint
+from sqlalchemy import Column, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
@@ -311,6 +311,29 @@ class Trust(SQLModel, table=True):
     # for trusts running pre-collector trust-api builds.
     services_health: dict | None = Field(default=None, sa_column=Column("services_health", JSONB, nullable=True))
     services_health_at: datetime | None = Field(default=None)
+    # Automatic upgrades (trust auto-upgrade). `auto_upgrade_enabled` is the Trust Admin's switch and defaults OFF:
+    # existing trusts are grandfathered, the install step turns it on. The window is trust-local wall-clock time
+    # ("HH:MM", both set or both NULL) in an IANA `auto_upgrade_timezone`; start > end is an overnight window.
+    auto_upgrade_enabled: bool = Field(default=False, sa_column_kwargs={"server_default": text("false")})
+    auto_upgrade_window_start: str | None = Field(default=None)
+    auto_upgrade_window_end: str | None = Field(default=None)
+    auto_upgrade_timezone: str | None = Field(default=None)
+    # The lease the host agent claims before it recreates anything: while `upgrade_lease_expires_at` is in the
+    # future the scheduler assigns no job to this trust. It expires by itself so a dead agent cannot wedge a trust.
+    upgrade_lease_expires_at: datetime | None = Field(default=None)
+    upgrade_lease_release: str | None = Field(default=None)
+    # The last attempt. A FAILED one stays until an operator clears it, and blocks a retry of that release.
+    last_upgrade_state: str | None = Field(default=None)
+    last_upgrade_release: str | None = Field(default=None)
+    last_upgrade_at: datetime | None = Field(default=None)
+    last_upgrade_detail: str | None = Field(default=None, sa_column=Column("last_upgrade_detail", Text, nullable=True))
+    # Last time the host agent asked for its policy, and the reason it last reported for not acting (e.g. a dirty
+    # checkout). Both are advisory and age out: the hub only shows them while fresh.
+    upgrade_agent_seen_at: datetime | None = Field(default=None)
+    upgrade_blocker: str | None = Field(default=None)
+    upgrade_blocker_at: datetime | None = Field(default=None)
+    # When the agent first saw this trust behind the hub's release; cleared once it has caught up.
+    upgrade_pending_since: datetime | None = Field(default=None)
 
 
 class TrustsAudit(SQLModel, table=True):

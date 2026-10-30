@@ -126,6 +126,7 @@ make down                      # Stop all trusts
 make up-trust KIT=GSTT         # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=GSTT       # Stop one trust stack
 make onboard-onprem-trust KIT=<CODE> HUB=<env>  # Read-only readiness check using this Makefile's resolved KIT_FILE; root on-prem wrappers default HUB=prod
+make setup-auto-upgrade KIT=<CODE> HUB=<env> [AUTO_UPGRADE=yes|no]  # On-prem only, needs sudo -E: install the hourly flip-trust-upgrade systemd timer (scripts/trust_upgrade_agent.py), the agent's own checkout /opt/flip/releases/FLIP, move the kit to /etc/flip/trust (symlink left), set the hub toggle with the trust's own key. Docs: docs/source/sys-admin/admin-trust-auto-upgrade.rst
 make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
 make upgrade-trust KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
