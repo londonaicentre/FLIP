@@ -85,7 +85,9 @@ The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
 the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
-the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
+the docker daemon, hence sudo; Hub-shared + Kit credentials populated; the hub API, the
+FL endpoint and the image registries reachable from the host (FLIP#1726: probed before
+anything starts, FAIL / FAIL / WARN, wording is "reachable from this host" only); FL_KIT_DIR
 exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
 Sudo because the provisioned login user is deliberately not in the docker group
 (root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
