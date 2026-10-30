@@ -55,10 +55,15 @@ class UpgradeXnat(unittest.TestCase):
 
 # A stand-in for the docker CLI, just enough of it for xnat-backup: `ps` finds the db by its service
 # label (NO_DB hides it), `exec` is the db container's `pg_dumpall | gzip` (DUMP=ok|fail|truncated),
-# and `run alpine …` runs the command here — under bash, as the containers' busybox sh has pipefail
-# and dash does not — with each `-v src:dst` mount rewritten to its host path.
+# `context` is a local daemon, and `run alpine …` runs the command here — under bash, as the
+# containers' busybox sh has pipefail and dash does not — with each `-v src:dst` mount rewritten
+# to its host path.
 STUB_DOCKER = r"""#!/bin/bash
 case "$1" in
+  context)
+    [ "$2" = show ] && echo default
+    [ "$2" = inspect ] && echo unix:///var/run/docker.sock
+    exit 0 ;;
   ps)
     [ -z "$NO_DB" ] && [[ "$*" == *"service.name="*"_xnat-db"* ]] && echo "stub-xnat-db"
     exit 0 ;;
@@ -215,6 +220,35 @@ class UpXnatBuild(unittest.TestCase):
         with mock.patch.dict(os.environ, {"XNAT_TAG": "stag"}):
             out = dry_run("up-xnat", subdir="trust/xnat")
         assert "XNAT_TAG=sha-badcff1" in out, out
+
+
+class XnatResetWithoutSudo(unittest.TestCase):
+    """xnat-reset's local prod branch, run for real as a non-root user with a stub docker and a
+    sudo that refuses: Docker socket access alone must carry it to the end (FLIP#1723)."""
+
+    def test_a_non_root_operator_provisions_through_a_container_and_never_calls_sudo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            refusing_sudo = '#!/bin/sh\necho "sudo: not permitted" >&2\nexit 1\n'
+            for name, body in (("docker", STUB_DOCKER), ("sudo", refusing_sudo)):
+                (bin_dir / name).write_text(body)
+                (bin_dir / name).chmod(0o755)
+            data = Path(tmp) / "xnat" / "data"
+            data.parent.mkdir()
+            result = run_target(
+                "xnat-reset",
+                f"XNAT_DATA_DIR={data}",
+                f"XNAT_CONTAINER_UID={os.getuid()}",
+                f"XNAT_CONTAINER_GID={os.getgid()}",
+                subdir="trust/xnat",
+                env={"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+            )
+            assert result.returncode == 0, result.stdout + result.stderr
+            assert "throwaway container" in result.stdout, result.stdout
+            assert "sudo:" not in result.stderr, result.stderr
+            for name in ("tomcat_logs", "archive", "build", "cache"):
+                assert (data / "xnat-data" / name).is_dir(), result.stdout
 
 
 if __name__ == "__main__":

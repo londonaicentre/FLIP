@@ -535,11 +535,12 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
         Path('/opt/operator kits/$HOME `echo unsafe` "file"'),
     )
     for selected in selected_paths:
-        for hub in (None, "prod", "stag"):
+        for hub, sudo_user in ((None, None), ("prod", None), ("stag", None), ("prod", "operator")):
+            env = {k: v for k, v in (("HUB", hub), ("SUDO_USER", sudo_user)) if v is not None}
             out = io.StringIO()
             exit_code = None
             with (
-                mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
+                mock.patch.dict(os.environ, env, clear=True),
                 mock.patch.object(sys, "argv", ["prog", "SITE", "--kit-file", str(selected)]),
                 mock.patch.object(sys, "stdout", out),
                 mock.patch.object(mod, "run_checks", return_value=[mod.Check("x", mod.Status.PASS, "mocked")]),
@@ -549,9 +550,11 @@ def test_29_ready_command_preserves_and_quotes_the_selected_kit() -> None:
                 except SystemExit as error:
                     exit_code = error.code
             text = out.getvalue().replace(mod.BOLD, "").replace(mod.RESET, "")
-            command = next(line.strip() for line in text.splitlines() if "sudo -E make up-onprem-trust" in line)
+            command = next(line.strip() for line in text.splitlines() if "make up-onprem-trust" in line)
             _assert(exit_code == 0, f"{selected.name}: READY exits 0")
-            expected = ["sudo", "-E", "make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
+            # Docker socket access is the requirement; sudo appears only when the checklist ran under it.
+            expected = ["sudo", "-E"] if sudo_user else []
+            expected += ["make", "up-onprem-trust", "KIT=SITE", f"KIT_FILE={selected}".replace("$", "$$")]
             if hub and hub != "prod":
                 expected.append(f"HUB={hub}")
             _assert(

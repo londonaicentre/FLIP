@@ -43,7 +43,7 @@ Two rules apply throughout:
      - Command (from a FLIP checkout at the release tag)
    * - On-premises (Docker Compose)
      - Site operator
-     - ``sudo -E make upgrade-onprem-trust KIT=<CODE>``
+     - ``make upgrade-onprem-trust KIT=<CODE>``
    * - Kubernetes (Helm)
      - Site operator
      - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env>``
@@ -117,7 +117,7 @@ upgrade refuses a release from a checkout at any other tag (exit code 6).
 
    **Kits named before FLIP#1479.** A kit was named ``.env.<slot>.production``, ``.env.<slot>.lza-prod`` or a bare
    ``.env.<slot>``, and the verbs took ``PROD=`` where they now take ``HUB=``. Run ``unset PROD`` first if your shell
-   still exports it: ``sudo -E`` passes it through, and any ``PROD`` now stops make. An old-named kit keeps working
+   still exports it (a ``sudo -E`` prefix passes it through too): any ``PROD`` now stops make. An old-named kit keeps working
    for one release (the verbs find it and print the exact rename), but rename it to ``trust/.env.<slot>.prod`` before
    the next one, and only once you will not roll back past this release: earlier releases know only the old names.
    Move it (``mv``), never copy it: two names for one kit stop make. The running stack needs nothing, since the verbs
@@ -134,12 +134,13 @@ Step 4 — Run the upgrade
 
 *Who: site operator*
 
-From the checkout:
+From the checkout, as a user with Docker socket access (``sudo -E make …`` on a host provisioned by the on-prem
+playbook; see :ref:`onprem-operator-access`):
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<CODE>                # e.g. KIT=GSTT; targets the hub's release
-   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z     # or pin the release explicitly
+   make upgrade-onprem-trust KIT=<CODE>                # e.g. KIT=GSTT; targets the hub's release
+   make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z     # or pin the release explicitly
 
 .. list-table:: Options
    :header-rows: 1
@@ -350,7 +351,7 @@ Check out the previous release's tag, then run the upgrade with that tag and ``F
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z FORCE=1
+   make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z FORCE=1
 
 **Rolling back to v0.7.0 or earlier.** Those releases have no ``:vX.Y.Z`` images (the registry check refuses
 ``TAG=v0.7.0``) and their checkouts have no upgrade command. Stay on your current checkout and use the images built from
@@ -368,7 +369,7 @@ that release's commit:
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=sha-23cf331
+   make upgrade-onprem-trust KIT=<CODE> TAG=sha-23cf331
 
 A ``sha-`` tag has no release order, so the command does not see this as a downgrade and needs no ``FORCE=1``: check the
 printed ``site <current> → target sha-…`` yourself. The old images then run under the newer checkout's compose files, a

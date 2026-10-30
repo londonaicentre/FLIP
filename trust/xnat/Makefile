@@ -233,6 +233,8 @@ define check_xnat_dir_owner
 		echo "    retrieval fails with the PACS reporting 'Peer aborted Association' and XNAT"; \
 		echo "    writes no logs to explain it (FLIP#1095)."; \
 		echo "    Fix: $(if $(2),$(2) ,)sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
+		echo "    or, without sudo (Docker socket access is enough):"; \
+		echo "         $(if $(2),$(2) ,)docker run --rm -v $(XNAT_DATA_DIR):/d alpine:3.20 chown -R $(XNAT_DIR_OWNER) /d"; \
 		exit 1; \
 	fi
 endef
@@ -621,9 +623,14 @@ xnat-reset:
 				;; \
 			*) \
 				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
-				sudo rm -rf $(XNAT_DATA_DIR); \
-				sudo mkdir -p $(XNAT_DATA_DIRS); \
-				sudo chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+				if [ "$$(id -u)" = 0 ]; then \
+					rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR); \
+				else \
+					echo "  🐳 not root — provisioning the tree through a throwaway container (FLIP#1723)"; \
+					parent="$$(dirname $(XNAT_DATA_DIR))"; \
+					docker run --rm -v "$$parent":"$$parent" alpine:3.20 sh -c \
+						"rm -rf $(XNAT_DATA_DIR) && mkdir -p $(XNAT_DATA_DIRS) && chown -R $(XNAT_DIR_OWNER) $(XNAT_DATA_DIR)"; \
+				fi; \
 				$(call check_xnat_dir_owner,$(call stat_fmt,%u:%g) $(XNAT_DATA_DIRS)); \
 				;; \
 		esac; \

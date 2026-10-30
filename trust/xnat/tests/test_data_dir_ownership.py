@@ -225,6 +225,7 @@ class TestOwnershipGuardFires:
         result = subprocess.run(["sh", "-c", guard], capture_output=True, text=True, timeout=TIMEOUT_SECONDS)
         assert result.returncode == 1
         assert "Fix: sudo chown -R" in result.stdout, "the guard must name the remedy, not just fail"
+        assert "docker run --rm -v" in result.stdout, "and the sudo-free one, for a docker-group operator (FLIP#1723)"
 
     def test_rejects_a_missing_directory(self, tmp_path: Path) -> None:
         """A dir absent entirely must fail too — `stat` prints nothing rather than erroring out."""

@@ -83,13 +83,18 @@ The packager does NOT edit the kit file.
 
 The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
-the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
+the Trust-local passwords, runs `make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
-the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
-exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
-Sudo because the provisioned login user is deliberately not in the docker group
-(root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
-GHCR login from `~/.docker/config.json`.
+the docker daemon; Hub-shared + Kit credentials populated, FL_KIT_DIR
+exists + has the expected files), then `make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
+Both need only Docker socket access plus bind-mount dirs owned by the container uids (the
+on-prem guide's "Access the operator needs", FLIP#1723); nothing in the Makefiles calls sudo. A
+host provisioned by the on-prem playbook deliberately leaves the login user out of the docker
+group (root-equivalent), so there the operator prefixes `sudo -E` (`-E` preserves `$HOME` so
+root's docker reuses the operator's GHCR login); the checklist then prints the same prefix for
+the next step (`SUDO_USER` set). Where a non-root operator cannot `chown` a bind mount to the
+container's uid, the Makefiles do it through a throwaway alpine container (`ensure_net_dirs`,
+`ensure_data_dirs`, `ensure_snapshot_dir`, the local prod branch of `xnat-reset`).
 
 ## Key Files
 
@@ -129,7 +134,7 @@ make onboard-onprem-trust KIT=<CODE> HUB=<env>  # Read-only readiness check usin
 make restart-trust KIT=GSTT    # Restart one trust stack (down + up-trust — first-install semantics, resets XNAT)
 make upgrade-trust KIT=<CODE> HUB=<env> [TAG=vX.Y.Z] [FORCE=1] [YES=1]  # Move a LIVE trust to a release, data intact (FLIP#1204): resolver pins the kit, pull, recreate what changed, upgrade-xnat in place. Never up-trust/restart-trust for this
 make up-trust-ec2 KIT=GSTT     # Start one trust stack on a cloud EC2 host
-make up-trust KIT=<CODE> HUB=prod  # Start a trust pointing at a remote hub (on-prem hosts: prefix sudo -E — login user is not in the docker group)
+make up-trust KIT=<CODE> HUB=prod  # Start a trust pointing at a remote hub (needs Docker socket access; playbook-provisioned hosts: prefix sudo -E)
 make debug                     # Trust-1 in debug mode
 make debug-trust-api           # Debug trust-api only
 make debug-imaging-api         # Debug imaging-api only

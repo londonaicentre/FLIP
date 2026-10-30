@@ -505,7 +505,7 @@ provision-bastion: ssh-config ## Install the minimal operator tooling on the Cen
 # a pointer to the on-prem flow instead of an obscure SSH/inventory error.
 .PHONY: check-trust-ec2-enabled
 check-trust-ec2-enabled:
-	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts and run 'sudo -E make -C trust up-trust' on their own host."; exit 1)
+	@[ "$(DEPLOY_TRUST_EC2)" != "false" ] || (echo "❌  DEPLOY_TRUST_EC2=false (hub-only deployment) — there is no cloud Trust EC2. On-prem trusts join via register-trusts and run 'make -C trust up-trust' on their own host."; exit 1)
 
 .PHONY: seed-trust-data
 seed-trust-data: check-trust-ec2-enabled ssh-config ## Seed the Trust EC2's OMOP + Orthanc from the canonical dataset, then load the vocabulary (re-run after a data version bump; requires KIT=)
@@ -1059,7 +1059,7 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack (sudo: the login user is deliberately not in the docker group):"
+	@echo "   2. Start the trust stack (sudo: this playbook leaves the login user without docker access):"
 	@echo "      cd ../../.. && sudo -E make -C trust up-trust KIT=$(KIT) HUB=$(HUB)"
 
 .PHONY: down
@@ -1198,8 +1198,8 @@ full-deploy-hub-only: ## Hub-only deployment: no cloud Trust EC2 — every trust
 	## After it completes, join each on-prem trust:
 	##   1. make new-trust TRUST_CODE=<CODE> ... HUB=$(HUB) && make register-trusts KIT=<CODE> HUB=$(HUB)
 	##      (register-trusts in this chain already registers every kit present)
-	##   2. on the trust host: sudo -E make -C trust up-trust KIT=<CODE> HUB=<env>
-	##      (sudo: the provisioned login user is deliberately not in the docker group)
+	##   2. on the trust host: make -C trust up-trust KIT=<CODE> HUB=<env>
+	##      (as a user with Docker socket access; sudo -E on a playbook-provisioned host)
 	## Remember `make deploy-ui HUB=$(HUB)` — the UI ships separately, same as full-deploy.
 full-deploy-hub-only: DEPLOY_TRUST_EC2 := false
 full-deploy-hub-only: github-login aws-login init generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts status

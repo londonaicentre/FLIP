@@ -123,12 +123,14 @@ include ../deploy/portable.mk
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
 #     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
-#     which the documented on-prem/EC2 bring-up already has (sudo).
+#     or the container fallback below.
 #   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
 #     already hands the client the host GID (`group_add: ["$${DOCKER_GID:-1000}"]`, for
 #     the 640 TLS keys), so group write is all that is missing — and an unprivileged dev
 #     bring-up could not chown to 49999 anyway.
 #
+# A non-root operator cannot chown to another uid, so a failed chown/chmod is retried through a
+# throwaway container (socket access is enough, as in ensure_data_dirs — FLIP#1723).
 # A failed chown/chmod is fatal: continuing lands in exactly the Permission-denied →
 # num_samples=0 failure this recipe exists to prevent, and a warning is easy to miss in
 # long bring-up output. It is fatal only after re-checking the dirs, though — chown/chmod
@@ -144,6 +146,8 @@ define ensure_net_dirs
 	fi; \
 	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
 	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
+	  docker run --rm -v "$$(cd "$$base" && pwd)":/d alpine:3.20 \
+	    sh -c "chown $$owner /d/net-1 /d/net-2 && chmod $$mode /d/net-1 /d/net-2" >/dev/null 2>&1 || true; \
 	  for d in "$$base/net-1" "$$base/net-2"; do \
 	    got="$$($(call stat_fmt,%u:%g %a) "$$d")"; \
 	    case "$$got" in "$$owner "*"$$mode") continue;; esac; \
@@ -151,6 +155,7 @@ define ensure_net_dirs
 	    echo "    fl-client both write there, so every image download would 500 and training"; \
 	    echo "    would later fail with a misleading num_samples=0."; \
 	    echo "    Fix: sudo chown $$owner $$base/net-1 $$base/net-2 && sudo chmod $$mode $$base/net-1 $$base/net-2"; \
+	    echo "    or, without sudo: docker run --rm -v $$base:/d alpine:3.20 sh -c 'chown $$owner /d/net-1 /d/net-2 && chmod $$mode /d/net-1 /d/net-2'"; \
 	    exit 1; \
 	  done; \
 	fi

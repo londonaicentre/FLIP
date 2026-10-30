@@ -109,6 +109,15 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert_data_safe(out, "upgrade-onprem-trust")
 
 
+class NetDirsWithoutSudo(unittest.TestCase):
+    def test_net_dirs_fall_back_to_a_throwaway_container(self):
+        """A non-root operator cannot chown to another uid; Docker socket access can (FLIP#1723)."""
+        out = dry_run("up-trust")
+        assert "alpine:3.20" in out, out
+        assert "chown $owner /d/net-1 /d/net-2" in out, out
+        assert "or, without sudo:" in out, out
+
+
 class RestartFlFleetProxies(unittest.TestCase):
     """restart-fl's server step carries Flower's fleet proxies, and drops them on NVFLARE (FLIP#1517).
 
@@ -459,7 +468,7 @@ with contextlib.redirect_stdout(out), \\
         mod.main()
     except SystemExit as error:
         assert error.code == 0
-ready = next(line.strip() for line in out.getvalue().splitlines() if 'sudo -E make up-onprem-trust' in line)
+ready = next(line.strip() for line in out.getvalue().splitlines() if 'make up-onprem-trust' in line)
 with mock.patch.object(mod.subprocess, 'run', return_value=mod.subprocess.CompletedProcess([], 1, 'bad policy', '')):
     check = mod.check_governance_document(
         {'ACCESS_POLICY_FILE': 'governance.toml'}, True, 'SITE', selected.parents[2], selected)
@@ -479,7 +488,9 @@ print(json.dumps({'ready': ready, 'governance': hint[1:hint.rfind('`')]}))
             for name, command in commands.items():
                 with self.subTest(hub=hub, command=name):
                     # Reuse the printed assignments, but run only the read-only checklist through stub uv.
-                    assignments = shlex.split(command)[4:]
+                    tokens = shlex.split(command)
+                    target = "up-onprem-trust" if name == "ready" else "check-governance"
+                    assignments = tokens[tokens.index(target) + 1 :]
                     self.run_make(
                         "onboard-onprem-trust",
                         None,

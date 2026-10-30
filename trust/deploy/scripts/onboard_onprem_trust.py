@@ -254,9 +254,10 @@ def check_swarm() -> Check:
             Status.FAIL,
             "docker daemon is up but denied this user access",
             hints=[
-                "Expected on an on-prem host — the login user is deliberately not in the docker group"
-                " (membership is root-equivalent). Do NOT add yourself to the docker group;"
-                " re-run via: sudo -E make onboard-onprem-trust KIT=<CODE>",
+                "This user cannot reach the Docker socket. On a host provisioned by the on-prem playbook"
+                " that is deliberate (the docker group is root-equivalent): re-run via"
+                " sudo -E make onboard-onprem-trust KIT=<CODE>. Otherwise ask the host admin for Docker"
+                " access — see 'Access the operator needs' in the on-prem deployment guide.",
             ],
         )
     if state == "unavailable":
@@ -961,10 +962,12 @@ def main() -> None:
             print("  Proceeding.")
         else:
             print("  Bring the stack up:")
-            # sudo -E: the provisioned on-prem login user is deliberately not in the
-            # docker group (root-equivalent), so the stack comes up via sudo.
+            # Docker socket access is all the stack needs. Only a checklist that itself ran under
+            # sudo (the playbook-provisioned host, whose login user has no socket access) prints the
+            # same prefix for the next step (FLIP#1723).
+            prefix = "sudo -E " if os.environ.get("SUDO_USER") else ""
             command = (
-                f"sudo -E make up-onprem-trust {quote_make_assignment('KIT', kit)} "
+                f"{prefix}make up-onprem-trust {quote_make_assignment('KIT', kit)} "
                 f"{quote_make_assignment('KIT_FILE', kit_file)}"
             )
             hub = os.environ.get("HUB", "prod")

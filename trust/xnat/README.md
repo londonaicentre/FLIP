@@ -488,7 +488,7 @@ registered only when none exists, and the step refuses to choose between two.
 
 A trigger fires on new scans only. `make -C trust reconvert-nifti KIT=<CODE> [PROJECT="<id> ..."]
 [LAUNCH=1]` converts the archived scans that have DICOM and no NIfTI, by Container Service bulk launch
-(report only without `LAUNCH=1`; on-prem prefix `sudo -E`). What it selects, what it leaves alone and
+(report only without `LAUNCH=1`). What it selects, what it leaves alone and
 its exit codes: [`trust/deploy/helm/TROUBLESHOOTING.md` §2.3e](../deploy/helm/TROUBLESHOOTING.md#23e-scans-archived-without-nifti-converting-the-backlog).
 
 ## Resource limits
