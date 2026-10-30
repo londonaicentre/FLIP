@@ -119,11 +119,12 @@ trustData:
     # image of them. Use the ref your service images were built from: `main` for :prod
     # tags, `develop` for :stag, a sha for a pinned deploy.
     sourceRef: "develop"
-    # uv's official image (python + uv, Debian slim). GHCR carries floating tags only, so the
-    # digest is what pins it: with `digest` set the image is `<repository>@<digest>` and `tag`
-    # is documentation. Refresh with `docker buildx imagetools inspect ghcr.io/astral-sh/uv:<tag>`.
+    # uv's official image (python + uv, Debian slim), from FLIP's GHCR mirror. Upstream carries
+    # floating tags only, so the digest is what pins it: with `digest` set the image is
+    # `<repository>@<digest>` and `tag` is documentation. The digest is the manifest's
+    # (trust/deploy/mirror-images.manifest).
     image:
-      repository: ghcr.io/astral-sh/uv
+      repository: ghcr.io/londonaicentre/mirror/astral-sh/uv
       tag: "python3.12-bookworm-slim"
       digest: "sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58"
       pullPolicy: IfNotPresent
@@ -674,6 +675,9 @@ omopDb:
     enabled: true
     s3Bucket: ""
     bundleName: "vocab_aicentre_core_20240916"
+    # The fetch initContainer runs in the omop-db image, which bakes the AWS CLI like unzip, so
+    # the Job installs nothing at run time and reaches no host but S3. It replaced a Docker Hub
+    # aws-cli image (FLIP#1721).
     # Scratch space for the downloaded bundle. Must hold the zip and its unpacked
     # contents at the same time — for the 20240916 bundle that is ~3.6 GiB
     # unpacked plus a ~600 MiB zip, so a peak near 4.2 GiB (both figures are in
@@ -683,8 +687,7 @@ omopDb:
     # rather than the pod being evicted before it has finished filling it.
     workDirSize: 10Gi
     # The fetch initContainer downloads the zip and stops there — unpacking is
-    # the loader's, because unzip is in the omop-db image and not in the aws-cli
-    # one. Its request is small for that reason, though the pod's request is set
+    # the loader's. Its request is small for that reason, though the pod's request is set
     # by loadResources either way (see the max rule below); the zip itself lands
     # in the emptyDir, which is charged to the pod and never to this container —
     # a container's own ephemeral-storage accounting covers only its writable
@@ -828,6 +831,12 @@ xnat:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
       pullPolicy: Always
+    # The init containers' shell (data-dir ownership, the wait for xnat-db): FLIP's mirror of
+    # busybox, pinned by digest (trust/deploy/mirror-images.manifest).
+    initImage:
+      repository: ghcr.io/londonaicentre/mirror/library/busybox
+      tag: "1.36"
+      digest: "sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
     # Tomcat/web-console only — the DICOM SCP is dicomService above, deliberately never on this
     # Service, so a NodePort/LoadBalancer exposure for DICOM can never expose the web UI with it.
     # Held at ClusterIP for a real-PACS install (validatePacsReachable refuses anything else): this
@@ -972,13 +981,17 @@ monailabel:
 # ---------------------------------------------------------------------------
 # Observability Stack — Loki, Alloy, Grafana
 # ---------------------------------------------------------------------------
+#
+# The images are FLIP's GHCR mirrors of upstream's, pinned by digest: `<repository>:<tag>@<digest>`.
+# The digests are trust/deploy/mirror-images.manifest's.
 observability:
   enabled: true   # single gate: set false to skip all observability components
   loki:
     enabled: true
     image:
-      repository: grafana/loki
+      repository: ghcr.io/londonaicentre/mirror/grafana/loki
       tag: "3.4.0"
+      digest: "sha256:74b8ccbd6e4b4932874742cf3997389592389ea721b3f210aad266486b985a4c"
       pullPolicy: IfNotPresent
     service:
       port: 3100
@@ -998,8 +1011,9 @@ observability:
   alloy:
     enabled: true
     image:
-      repository: grafana/alloy
+      repository: ghcr.io/londonaicentre/mirror/grafana/alloy
       tag: "v1.9.0"
+      digest: "sha256:32bc0ba6bad75ca24bdf4a6d2dd793a564dff06b6446927699c08d9f9c749c6e"
       pullPolicy: IfNotPresent
     service:
       port: 12345
@@ -1014,8 +1028,9 @@ observability:
   grafana:
     enabled: true
     image:
-      repository: grafana/grafana
+      repository: ghcr.io/londonaicentre/mirror/grafana/grafana
       tag: "11.5.0"
+      digest: "sha256:0a2874cf39c6487093c682215f7c7903ed8646d78ae5f911af945d2dfcc0a447"
       pullPolicy: IfNotPresent
     service:
       port: 3000

@@ -71,12 +71,16 @@ def hub_only_networks() -> set[str]:
 
 
 def repo_built_services(compose: str) -> dict[str, str]:
-    """Each dev-compose service that runs a repo-built image, mapped to its service block."""
+    """Each dev-compose service that runs a repo-built image, mapped to its service block.
+
+    `ghcr.io/londonaicentre/mirror/` holds digest-pinned copies of third-party images (FLIP#1721): not
+    built here, and nothing to re-pull.
+    """
     blocks = re.findall(r"^  ([\w-]+):\n((?:(?:    .*)?\n)+)", (REPO / compose).read_text(), re.MULTILINE)
     return {
         name: body
         for name, body in blocks
-        if re.search(r"^    image: (?:ghcr\.io/londonaicentre/|\$\{DOCKER_REGISTRY\})", body, re.MULTILINE)
+        if re.search(r"^    image: (?:ghcr\.io/londonaicentre/(?!mirror/)|\$\{DOCKER_REGISTRY\})", body, re.MULTILINE)
     }
 
 

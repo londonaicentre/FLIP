@@ -186,13 +186,10 @@ different load balancers, so allow both. This is everything a node connects out 
    * - ``ghcr.io`` **and** ``pkg-containers.githubusercontent.com``
      - 443
      - Always
-     - FLIP's container images, pulled on every deploy and upgrade. The second host serves the image layers, so
-       ``ghcr.io`` alone fails every pull
-     - Yes, Oct 2026
-   * - ``registry-1.docker.io``, ``auth.docker.io``, ``production.cloudfront.docker.com``
-     - 443
-     - Always
-     - The logging stack (Grafana, Loki, Alloy) and XNAT's Docker socket proxy, from Docker Hub
+     - Every container image the node runs, pulled on every deploy and upgrade: FLIP's own, and FLIP's mirrors of
+       the third-party ones (Grafana, Loki, Alloy, XNAT's Docker socket proxy, the chart's ``uv`` and ``busybox``
+       helpers). Nothing
+       comes from Docker Hub. The second host serves the image layers, so ``ghcr.io`` alone fails every pull
      - Yes, Oct 2026
    * - ``huggingface.co`` **and** ``*.hf.co``
      - 443
@@ -217,6 +214,11 @@ different load balancers, so allow both. This is everything a node connects out 
      - Not yet
 
 *Measured* means a node ran behind a firewall that denied everything not listed (an Azure node, October 2026).
+
+A registry allowlist works by host name, so it admits every public package on GHCR, not only FLIP's. What the
+node runs is fixed by the image references instead: FLIP's images by release tag, the third-party ones by digest
+from ``ghcr.io/londonaicentre/mirror/`` (:gh:`trust/deploy/mirror-images.manifest`, byte-identical copies of
+upstream's images).
 
 The hub keeps no per-trust allowlist: the networking account's edge decides what reaches the FL server, and the kit's
 mTLS certificates decide who gets in, so a changed public IP needs no hub-side change.
