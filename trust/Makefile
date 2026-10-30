@@ -14,7 +14,7 @@
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit onboard-onprem-trust \
 	create-networks remove-networks recreate-networks tests \
 	seed-omop seed-orthanc seed seed-trusts ensure-seeded wait-omop-db wait-pacs load-synthea-ehr \
-	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance \
+	publish-trust-data test-trust-data-tools integration_test require-xnat-aetitle check-governance reload-governance prepare-host-dirs \
 	reconvert-nifti
 # HUB selects the compose-file suffix (__DCKR_SUFFIX: every deployed environment
 # runs the prod compose) and the kit-file env token (ENV: .env.<CODE>.stag / .prod,
@@ -122,15 +122,13 @@ include ../deploy/portable.mk
 #   * FLARE, any env      — the base dir's own owner:group, 0755. Its client shares
 #     imaging-api's UID, so owner write covers both writers.
 #   * Flower, prod/stag     — <base-uid>:49999, 0775. The prod compose adds no
-#     supplementary group, so 49999 has to be the dir's own group. Setting it needs root,
-#     or the container fallback below.
+#     supplementary group, so 49999 has to be the dir's own group. Setting it needs root:
+#     a root bring-up does it here, otherwise `prepare-host-dirs` must have (FLIP#1723).
 #   * Flower, development   — <base-uid>:$(DOCKER_GID), 0775. The development compose
 #     already hands the client the host GID (`group_add: ["$${DOCKER_GID:-1000}"]`, for
 #     the 640 TLS keys), so group write is all that is missing — and an unprivileged dev
 #     bring-up could not chown to 49999 anyway.
 #
-# A non-root operator cannot chown to another uid, so a failed chown/chmod is retried through a
-# throwaway container (socket access is enough, as in ensure_data_dirs — FLIP#1723).
 # A failed chown/chmod is fatal: continuing lands in exactly the Permission-denied →
 # num_samples=0 failure this recipe exists to prevent, and a warning is easy to miss in
 # long bring-up output. It is fatal only after re-checking the dirs, though — chown/chmod
@@ -146,8 +144,6 @@ define ensure_net_dirs
 	fi; \
 	if ! chown "$$owner" "$$base/net-1" "$$base/net-2" 2>/dev/null || \
 	   ! chmod "$$mode" "$$base/net-1" "$$base/net-2" 2>/dev/null; then \
-	  docker run --rm -v "$$(cd "$$base" && pwd)":/d $(ROOT_HELPER_IMAGE) \
-	    sh -c "chown $$owner /d/net-1 /d/net-2 && chmod $$mode /d/net-1 /d/net-2" >/dev/null 2>&1 || true; \
 	  for d in "$$base/net-1" "$$base/net-2"; do \
 	    got="$$($(call stat_fmt,%u:%g %a) "$$d")"; \
 	    case "$$got" in "$$owner "*"$$mode") continue;; esac; \
@@ -155,7 +151,7 @@ define ensure_net_dirs
 	    echo "    fl-client both write there, so every image download would 500 and training"; \
 	    echo "    would later fail with a misleading num_samples=0."; \
 	    echo "    Fix: sudo chown $$owner $$base/net-1 $$base/net-2 && sudo chmod $$mode $$base/net-1 $$base/net-2"; \
-	    echo "    or, without sudo: docker run --rm -v $$base:/d $(ROOT_HELPER_IMAGE) sh -c 'chown $$owner /d/net-1 /d/net-2 && chmod $$mode /d/net-1 /d/net-2'"; \
+	    $(prepare_host_dirs_hint); \
 	    exit 1; \
 	  done; \
 	fi
@@ -337,43 +333,44 @@ TRUST_BUILD_VARS = \
 #   (compose passes it) — without it the role script aborts the init.
 # - Orthanc runs as uid 999 with CHOWN only (no DAC_OVERRIDE), so its storage dir must be
 #   owned by 999 before the first start or it exits at once. A plain chown works when
-#   this runs as root (the documented on-prem bring-up does); otherwise a throwaway
-#   ROOT_HELPER_IMAGE container does it, which needs no sudo. Only the top-level dir is touched.
+#   this runs as root; a non-root operator needs it done beforehand by `prepare-host-dirs`,
+#   run as root by the host owner (FLIP#1723). Only development falls back to a throwaway
+#   container, on the developer's own machine. Only the top-level dir is touched.
 # Pass the two resolved paths (what the compose file will mount) as $1 (OMOP) and $2 (PACS).
 define ensure_data_dirs
 	@omop="$(1)"; pacs="$(2)"; \
-	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; exit 1; }; \
+	mkdir -p "$$omop" "$$pacs" || { echo "❌ cannot create $$omop or $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
 	if [ "$$($(call stat_fmt,%u) "$$pacs")" != "999" ]; then \
 	  chown 999:999 "$$pacs" 2>/dev/null || \
-	  docker run --rm -v "$$(cd "$$pacs" && pwd)":/d $(ROOT_HELPER_IMAGE) chown 999:999 /d || { \
+	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$pacs" && pwd)":/d alpine:3.20 chown 999:999 /d ||) { \
 	    echo "❌ $$pacs must be owned by uid 999 (Orthanc) and is $$($(call stat_fmt,%u:%g) "$$pacs")"; \
-	    echo "   Fix: sudo chown 999:999 $$pacs"; exit 1; }; \
+	    echo "   Fix: sudo chown 999:999 $$pacs"; $(prepare_host_dirs_hint); exit 1; }; \
 	fi
 endef
 
 # Prepare the membership store before compose would create it root-owned (the non-root
-# data-access-api then fails every freeze and refuses every row-level request). An absolute path is
-# prepared by a throwaway container on the DOCKER HOST, so it works without sudo and over a remote
-# DOCKER_CONTEXT, where a local mkdir would touch the wrong machine — unless it is local and already
-# owned right (the provisioning playbooks create it), so a host without registry access still comes
-# up. A relative path is local by construction (compose resolves it on this machine), so mkdir it
-# here and fix the owner if needed.
+# data-access-api then fails every freeze and refuses every row-level request). Over a remote
+# DOCKER_CONTEXT (an EC2 trust driven from the operator's machine) an absolute path lives on the
+# docker host, where a local mkdir would touch the wrong machine, so a throwaway container there
+# prepares it. Locally it is created and owned here when this runs as root; a non-root operator
+# needs it done beforehand by `prepare-host-dirs` (FLIP#1723). Development falls back to a
+# throwaway container, on the developer's own machine.
 define ensure_snapshot_dir
 	@dir="$(COHORT_SNAPSHOT_DIR_HOST)"; owner="$(COHORT_SNAPSHOT_OWNER)"; \
-	case "$$dir" in \
-	  /*) name="$$(basename "$$dir")"; \
-	      if [ -z "$$DOCKER_CONTEXT" ] && [ "$$($(call stat_fmt,%u:%g) "$$dir" 2>/dev/null)" = "$$owner" ]; then exit 0; fi; \
-	      docker run --rm -v "$$(dirname "$$dir")":/parent $(ROOT_HELPER_IMAGE) \
-	        sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
-	        echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; } ;; \
-	  *) mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; exit 1; }; \
-	     if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
-	       chown "$$owner" "$$dir" 2>/dev/null || \
-	       docker run --rm -v "$$(cd "$$dir" && pwd)":/d $(ROOT_HELPER_IMAGE) chown "$$owner" /d || { \
-	         echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
-	         echo "   Fix: sudo chown $$owner $$dir"; exit 1; }; \
-	     fi ;; \
-	esac
+	if [ -n "$$DOCKER_CONTEXT" ] && [ "$${dir#/}" != "$$dir" ]; then \
+	  name="$$(basename "$$dir")"; \
+	  docker run --rm -v "$$(dirname "$$dir")":/parent alpine:3.20 \
+	    sh -c "mkdir -p /parent/$$name && chown $$owner /parent/$$name && chmod 0750 /parent/$$name" || { \
+	    echo "❌ could not prepare the cohort membership store $$dir (owner $$owner) on the docker host"; exit 1; }; \
+	  exit 0; \
+	fi; \
+	mkdir -p "$$dir" || { echo "❌ cannot create $$dir"; $(prepare_host_dirs_hint); exit 1; }; \
+	if [ "$$($(call stat_fmt,%u:%g) "$$dir")" != "$$owner" ]; then \
+	  { chown "$$owner" "$$dir" && chmod 0750 "$$dir"; } 2>/dev/null || \
+	  $(if $(IS_DEPLOYED),,docker run --rm -v "$$(cd "$$dir" && pwd)":/d alpine:3.20 chown "$$owner" /d ||) { \
+	    echo "❌ $$dir must be owned by $$owner (data-access-api) and is $$($(call stat_fmt,%u:%g) "$$dir")"; \
+	    echo "   Fix: sudo chown $$owner $$dir"; $(prepare_host_dirs_hint); exit 1; }; \
+	fi
 endef
 
 # Guard: any KIT-selected target needs KIT set (it derives the project name,
@@ -510,6 +507,26 @@ onboard-onprem-trust:
 # instead, for a host with no internet route. Run it again after a pull that changes the manifest.
 prepare-artifacts:
 	$(MAKE) -C xnat xnat-plugins-download
+
+# Create every bind-mount source this trust's containers write, each owned by its container's uid
+# (FLIP#1723). Setting another uid's ownership needs root, so this is the one step of an on-prem
+# bring-up that does: whoever prepares the host runs it once, as root, on the host itself; up-trust
+# and upgrade-trust then only check. It deletes nothing, so it is safe to re-run. The on-prem
+# Ansible playbook does the same for /opt/flip. A root-created images base would hand its root
+# ownership to the net dirs, so it goes to uid 1000 (imaging-api) first.
+prepare-host-dirs:
+	$(require_kit_file)
+	@[ "$$(id -u)" = 0 ] || { \
+	  echo "❌ prepare-host-dirs sets directory owners to the containers' uids, which needs root."; \
+	  echo "   Run it as root on the trust host (sudo -E make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))),"; \
+	  echo "   or ask the host owner to."; exit 1; }
+	@base="$(IMAGES_BASE)"; mkdir -p "$$base"; \
+	[ "$$($(call stat_fmt,%u) "$$base")" != 0 ] || chown 1000:1000 "$$base"
+	$(call ensure_data_dirs,$(OMOP_DATA_ABS),$(ORTHANC_STORAGE_ABS))
+	$(ensure_net_dirs)
+	$(ensure_snapshot_dir)
+	$(MAKE) --no-print-directory -C xnat xnat-prepare-dirs KIT=$(KIT) HUB=$(HUB)
+	@echo "✅ Host directories for $(KIT) are ready; the bring-up needs only Docker access from here."
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT>.<env> for that trust's ports / dirs / credentials. The

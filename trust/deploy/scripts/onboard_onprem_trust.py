@@ -898,8 +898,8 @@ def check_data_dir_paths(kit_vars: dict[str, str], kit_present: bool, kit_path: 
         if nearest != path and not os.access(nearest, os.W_OK):
             blocked.append(f"{var} ({nearest} is not writable)")
     hints = [
-        f"Set {', '.join(DATA_DIR_VARS)} in {kit_path} to absolute paths on the data disk,"
-        " under a directory you can write; the bring-up sets each one's owner itself.",
+        f"Set {', '.join(DATA_DIR_VARS)} in {kit_path} to absolute paths on the data disk, then have"
+        " the host owner run `make -C trust prepare-host-dirs` once, as root: it creates them with their owners.",
     ]
     if blocked:
         return Check(label, Status.FAIL, f"cannot create: {'; '.join(blocked)}", hints=hints)

@@ -109,14 +109,29 @@ class UpgradeOnpremTrust(unittest.TestCase):
         assert_data_safe(out, "upgrade-onprem-trust")
 
 
-class NetDirsWithoutSudo(unittest.TestCase):
-    def test_net_dirs_fall_back_to_a_throwaway_container(self):
-        """A non-root operator cannot chown to another uid; Docker socket access can (FLIP#1723)."""
+class HostDirsArePreparedNotEscalated(unittest.TestCase):
+    """A deployed bring-up checks bind-mount ownership and never escalates to set it: that is
+    prepare-host-dirs, run once as root by whoever prepares the host (FLIP#1723)."""
+
+    def test_deployed_up_trust_runs_no_root_container_and_names_the_remedy(self):
         out = dry_run("up-trust")
-        assert "ghcr.io/londonaicentre/omop-db:" in out, out  # not alpine: Docker Hub may be refused
-        assert "alpine" not in out, out
-        assert "chown $owner /d/net-1 /d/net-2" in out, out
-        assert "or, without sudo:" in out, out
+        assert "alpine:3.20 chown" not in out, out
+        assert "make -C trust prepare-host-dirs KIT=SCR HUB=prod" in out, out
+
+    def test_prepare_host_dirs_creates_every_mount_source(self):
+        out = dry_run("prepare-host-dirs")
+        for needle in ('pacs="/nonexistent/orthanc"', 'base="/nonexistent/images"', "cohort-snapshots/trust-9"):
+            assert needle in out, (needle, out)
+        assert "xnat-prepare-dirs KIT=SCR HUB=prod" in out, out
+        assert "chown 1001:1001 /nonexistent/xnat /nonexistent/xnat/xnat-data" in out, out
+        assert "rm -rf" not in out, out
+
+    def test_prepare_host_dirs_refuses_a_non_root_user(self):
+        if os.getuid() == 0:
+            self.skipTest("running as root")
+        result = run_target("prepare-host-dirs")
+        assert result.returncode != 0, result.stdout
+        assert "needs root" in result.stdout, result.stdout
 
 
 class RestartFlFleetProxies(unittest.TestCase):

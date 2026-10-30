@@ -77,14 +77,19 @@ class UpgradeTrust(unittest.TestCase):
         assert 'dir="/srv/flip/members"' in out, out
         assert 'COHORT_SNAPSHOT_STORAGE_DIR="/srv/flip/members"' in out, out
 
-    def test_the_prepared_store_image_is_the_trusts_own(self):
-        """The helper is omop-db at the stack's tag: pinned, and pulled from the registry the stack already
-        uses. alpine would need Docker Hub, which a TRE proxy may refuse (FLIP#1723)."""
-        store = next(line for line in dry_run("_upgrade-trust-apply").splitlines() if "cohort-snapshots" in line)
-        assert "ghcr.io/londonaicentre/omop-db:" in store, store
-        assert "alpine" not in store, store
-        out = dry_run("_upgrade-trust-apply", kit=KIT + "OMOP_DB_TAG=v0.9.9\n")
-        assert "ghcr.io/londonaicentre/omop-db:v0.9.9" in out, out
+    def test_the_prepared_store_image_is_pinned(self):
+        """An unpinned alpine is a moving target and a surprise pull on a host behind a firewall."""
+        out = dry_run("_upgrade-trust-apply")
+        assert "alpine:3.20" in out, out
+        assert " alpine " not in out.replace("alpine:3.20", ""), out
+
+    def test_a_local_deployed_store_is_checked_not_escalated(self):
+        """Only a remote DOCKER_CONTEXT prepares the store through a container; locally a non-root operator
+        gets the check and the prepare-host-dirs remedy (FLIP#1723)."""
+        out = dry_run("_upgrade-trust-apply")
+        assert '[ -n "$DOCKER_CONTEXT" ]' in out, out
+        assert "alpine:3.20 chown" not in out, out
+        assert "prepare-host-dirs KIT=SCR HUB=prod" in out, out
 
     def test_up_trust_is_still_the_first_install_verb(self):
         """The guard would be meaningless if up-trust had quietly stopped seeding and resetting."""

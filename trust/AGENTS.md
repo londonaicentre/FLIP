@@ -92,11 +92,12 @@ on-prem guide's "Access the operator needs", FLIP#1723); nothing in the Makefile
 host provisioned by the on-prem playbook deliberately leaves the login user out of the docker
 group (root-equivalent), so there the operator prefixes `sudo -E` (`-E` preserves `$HOME` so
 root's docker reuses the operator's GHCR login); the checklist then prints the same prefix for
-the next step (`SUDO_USER` set). Where a non-root operator cannot `chown` a bind mount to the
-container's uid, the Makefiles do it through a throwaway root container (`ensure_net_dirs`,
-`ensure_data_dirs`, `ensure_snapshot_dir`, the local prod branch of `xnat-reset`). Its image is
-the trust's own omop-db (`ROOT_HELPER_IMAGE` in `deploy/portable.mk`), not alpine, which would
-need Docker Hub.
+the next step (`SUDO_USER` set). Setting a bind mount's owner to a container's uid needs root,
+so bring-up only checks it: a non-root operator needs `make -C trust prepare-host-dirs KIT=<CODE>`
+run once, as root, by whoever prepares the host (it creates every mount source with its owner and
+deletes nothing), and `xnat-reset` then deletes nothing either, refusing a tree that holds files.
+Only development keeps a throwaway-container fallback, on the developer's own machine; a remote
+DOCKER_CONTEXT (EC2) still prepares the membership store through the remote daemon.
 
 ## Key Files
 

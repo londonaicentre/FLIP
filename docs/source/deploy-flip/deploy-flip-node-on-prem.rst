@@ -47,11 +47,16 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
 
 - **Docker socket access**: ``docker ps`` works, and the daemon is in swarm mode (``docker swarm init`` once, for
   XNAT). Socket access is root-equivalent on the host, so granting it is the host owner's decision, not FLIP's.
-- **Bind-mount directories owned by the uid of the container that writes them.** ``make up-onprem-trust`` prepares
-  them and verifies the ownership. A non-root user cannot ``chown`` to a uid they are not, so where a plain
-  ``chown`` fails the Makefile does it through a throwaway container, which socket access allows; the
-  ownership-failure messages print both remedies. That container runs the trust's own ``omop-db`` image from GHCR,
-  so it needs no Docker Hub access.
+- **Bind-mount directories owned by the uid of the container that writes them.** Setting another uid's ownership
+  needs root, so it is a host-preparation step, run once, not part of the bring-up. Whoever prepares the host
+  runs, as root on the host:
+
+  .. code-block:: shell
+
+     make -C trust prepare-host-dirs KIT=<CODE> HUB=prod
+
+  It creates every directory below with its owner and deletes nothing, so it is safe to re-run.
+  ``make up-onprem-trust`` then only checks the ownership, and a failed check names the same command.
 
   .. list-table::
      :header-rows: 1
@@ -74,9 +79,10 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - ``BASE_IMAGES_DOWNLOAD_DIR/net-<N>``, group-writable
 
   Set ``OMOP_DATA_DIR``, ``ORTHANC_STORAGE_DIR``, ``BASE_IMAGES_DOWNLOAD_DIR`` and ``COHORT_SNAPSHOT_STORAGE_DIR``
-  in the kit to absolute paths on the data disk, under a directory you can write. The kit template carries the
-  development values, which are relative and so land inside the checkout; unset ones fall back to ``/opt/flip``,
-  which a non-root user usually cannot create. The checklist's *Data dir paths* row checks both.
+  in the kit to absolute paths on the data disk before running ``prepare-host-dirs``. The kit template carries the
+  development values, which are relative and so land inside the checkout; unset ones fall back to ``/opt/flip``.
+  The checklist's *Data dir paths* row warns on a relative path and fails on one that does not exist yet and that
+  you cannot create.
 - **Read access to the checkout and the FL kit** (``FL_KIT_DIR``).
 - **Python 3.11 or later** for the readiness checklist and ``make -C trust check-governance``, which read TOML with
   the standard library. ``uv`` installs one when it can download it; otherwise the host must provide a
@@ -84,8 +90,9 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
 
 A host provisioned by the Ansible playbook below gives the login user none of this, on purpose: it does not add the
 user to the ``docker`` group. There, every command on this page runs as ``sudo -E make …`` (``-E`` keeps your
-``$HOME``, so root's Docker reuses your registry login). On a host where you already have Docker access but no
-``sudo``, as in many trusted research environments, run them as yourself. Rootless Docker is not supported: the
+``$HOME``, so root's Docker reuses your registry login), and the playbook has already created the directories. On
+a host where you already have Docker access but no ``sudo``, as in many trusted research environments, run them as
+yourself once the host owner has run ``prepare-host-dirs``. Rootless Docker is not supported: the
 images run as fixed uids that cannot write directories you own under it; use the Helm chart
 (:doc:`deploy-flip-node-kubernetes`) on such a host.
 
@@ -221,6 +228,9 @@ Step 4 — Run the readiness checklist and start the stack
 ********************************************************
 
 *Who: trust operator, from the repo root*
+
+Unless you run as root or on a host the playbook provisioned, the host owner first runs
+``make -C trust prepare-host-dirs KIT=<CODE> HUB=prod`` as root (:ref:`onprem-operator-access`).
 
 .. code-block:: shell
 

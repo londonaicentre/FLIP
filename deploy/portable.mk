@@ -19,8 +19,7 @@ else
 stat_fmt = stat -c '$(1)'
 endif
 
-# The image a throwaway root container runs to set a bind mount's owner when the operator cannot
-# chown: the trust's own omop-db (postgres, root by default), at the tag the stack runs. It comes
-# from the registry the stack already pulls from; alpine would need Docker Hub, which a TRE proxy
-# may refuse.
-ROOT_HELPER_IMAGE = ghcr.io/londonaicentre/omop-db:$(or $(OMOP_DB_TAG),$(DOCKER_TAG))
+# The remedy every bind-mount ownership guard prints beside `sudo chown` (FLIP#1723). Setting a
+# directory's owner to a container's uid needs root, so it belongs to whoever prepares the host, once;
+# bring-up only checks it.
+prepare_host_dirs_hint = echo "   or have the host owner run, as root: make -C trust prepare-host-dirs KIT=$(KIT)$(if $(HUB), HUB=$(HUB))"
