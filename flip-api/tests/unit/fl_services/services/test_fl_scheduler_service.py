@@ -109,7 +109,12 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
 
         mock_remove.assert_called_once_with(fl_job_id, fake_session)
         mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
-        mock_log.assert_called_once_with(model_id, "bundle failed", fake_session, success=False)
+        mock_log.assert_called_once_with(
+            model_id,
+            f"Training could not be started; the platform team has the details (job {fl_job_id}).",
+            fake_session,
+            success=False,
+        )
         # The failure handler must actually free the BUSY net, not leave it to the watchdog.
         mock_release.assert_called_once_with(model_id, fake_session)
 
@@ -242,7 +247,12 @@ def test_prepare_and_start_training_genuine_net_not_found_still_errors(fake_sess
         )
 
     mock_remove.assert_called_once_with(fl_job_id, fake_session)
-    mock_log.assert_called_once_with(model_id, "Net not found", fake_session, success=False)
+    mock_log.assert_called_once_with(
+        model_id,
+        f"Training could not be started; the platform team has the details (job {fl_job_id}).",
+        fake_session,
+        success=False,
+    )
     mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
     mock_release.assert_called_once_with(model_id, fake_session)
 

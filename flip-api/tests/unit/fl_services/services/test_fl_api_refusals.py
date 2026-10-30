@@ -17,7 +17,9 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from botocore.exceptions import ClientError
 from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.db.models.main_models import FLJob, FLLogs
 from flip_api.domain.interfaces.fl import INetDetails, IRequiredTrainingInformation
@@ -108,7 +110,7 @@ def test_training_refusal_reaches_activity_feed(net, failed_path, body):
         patch.object(fl_scheduler_service, "remove_job") as remove_job,
         patch.object(fl_scheduler_service, "update_model_status") as update_status,
         patch.object(fl_scheduler_service, "release_scheduler_for_model") as release,
-        patch.object(fl_scheduler_service.logger, "error") as logged,
+        patch.object(fl_scheduler_service.logger, "exception") as logged,
         pytest.raises(httpx.HTTPStatusError) as caught,
     ):
         fl_scheduler_service.prepare_and_start_training(model_id, job_id, [uuid4()], session)
@@ -124,8 +126,53 @@ def test_training_refusal_reaches_activity_feed(net, failed_path, body):
     assert "No participating trusts" not in str(caught.value)
     assert "private" not in str(caught.value)
     assert_failure_in_feed(session, model_id, message)
-    logged.assert_called_once_with(f"Failed to start training: {caught.value}")
+    logged.assert_called_once_with("Failed to start training for model %s (job %s)", model_id, job_id)
     assert "private" not in logged.call_args.args[0]
+    remove_job.assert_called_once_with(job_id, session)
+    update_status.assert_called_once_with(model_id, ModelStatus.ERROR, session)
+    release.assert_called_once_with(model_id, session)
+
+
+@pytest.mark.parametrize(
+    ("failure", "safe_message"),
+    [
+        (RuntimeError("http://private-fl-host:8000/upload_app"), None),
+        (
+            ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "private-bucket/path arn:aws:iam::123:role/private"}},
+                "ListObjectsV2",
+            ),
+            None,
+        ),
+        (SQLAlchemyError("SELECT * FROM private_table WHERE token = 'private-value'"), None),
+        (ValueError("Clients unavailable: private-bucket"), None),
+        (fl_service.ClientAvailabilityError("Clients unavailable: Trust_1"), "Clients unavailable: Trust_1"),
+        (fl_service.UnknownJobTypeError("Unknown job_type: example"), "Unknown job_type: example"),
+    ],
+    ids=["internal-host", "s3", "sql", "unmarked-value-error", "client-availability", "job-type"],
+)
+def test_scheduler_failure_feed_allowlist(net, caplog, failure, safe_message):
+    model_id, job_id = uuid4(), uuid4()
+    session = MagicMock()
+    with (
+        patch.object(fl_scheduler_service, "_raise_if_job_aborted"),
+        patch.object(fl_scheduler_service, "get_net_by_model_id", return_value=net),
+        patch.object(fl_scheduler_service, "bundle_nvflare_application", side_effect=failure),
+        patch.object(fl_scheduler_service, "bundle_flower_application", side_effect=failure),
+        patch.object(fl_scheduler_service, "remove_job") as remove_job,
+        patch.object(fl_scheduler_service, "update_model_status") as update_status,
+        patch.object(fl_scheduler_service, "release_scheduler_for_model") as release,
+        pytest.raises(type(failure)) as caught,
+    ):
+        fl_scheduler_service.prepare_and_start_training(model_id, job_id, [uuid4()], session)
+
+    assert caught.value is failure
+    message = safe_message or f"Training could not be started; the platform team has the details (job {job_id})."
+    assert_failure_in_feed(session, model_id, message)
+    record = next(r for r in caplog.records if r.msg == "Failed to start training for model %s (job %s)")
+    assert record.exc_info[1] is failure
+    assert str(model_id) in record.getMessage()
+    assert str(job_id) in record.getMessage()
     remove_job.assert_called_once_with(job_id, session)
     update_status.assert_called_once_with(model_id, ModelStatus.ERROR, session)
     release.assert_called_once_with(model_id, session)
