@@ -1757,6 +1757,76 @@ Two more pipeline-level escapes:
 - **An apply must not run.** Disable `terraform_apply.yml` in the Actions tab, or
   revert the merge — the workflow only acts on `deploy/providers/AWS/**` changes.
 
+### Staging is stopped between deploys ([FLIP#1596](https://github.com/londonaicentre/FLIP/issues/1596))
+
+Staging is not a permanently running estate. It is up while it is being deployed to, while the end to end check runs,
+and for a hold window afterwards. Outside that its ECS services are at desired count 0, the hub host is stopped and
+RDS `flip-database` is stopped. Nothing is destroyed: the state, the data, the KMS key and the LZA network handoff all
+survive, which is why this is a stop and not a `terraform destroy`.
+
+**What runs, and when.**
+
+| Step | Who does it |
+| --- | --- |
+| Start RDS and the hub host, wait for RDS | `terraform_apply.yml` job `start-staging`, before the plan |
+| Plan, FL gate, apply | `terraform_apply.yml` job `apply` |
+| Restore the ECS desired counts | job `restore-staging-services`, after the gate |
+| End to end check against the deployed hub | job `staging-end-to-end` |
+| Hold, then stop | job `hold-then-stop-staging`, which calls `staging_lifecycle.yml` |
+| Re-stop whatever is left up | `staging_lifecycle.yml` schedule, 03:30 UTC |
+
+The ECS counts are restored *after* the FL gate on purpose. The gate holds any apply that would recreate
+`fl-server-net-1` or `fl-api-net-1`, because that kills an in-flight training run. On a stopped estate there is no run
+to kill, so the gate reads the live desired counts and passes itself. Restore the counts before the gate and every
+develop apply is back to needing an `fl_quiesced=true` dispatch, docs only merges included.
+
+**The hold window.** 120 minutes by default. Set the repository variable `STAGING_HOLD_MINUTES` to change the default
+for merges, or pass `hold_minutes` when dispatching `terraform_apply.yml` or `Staging Lifecycle`. To extend a window
+that is already running, dispatch `Staging Lifecycle` again with `hold-then-stop`: the second hold replaces the first
+rather than queueing a second stop behind it.
+
+**Bringing staging back by hand.** Dispatch `Staging Lifecycle` with `start-stag`. It starts RDS, starts the hub host,
+waits for RDS to answer and restores the desired counts. A merge to `develop` does the same thing with no dispatch at
+all.
+
+**The nightly guard.** A hold lives in a runner, and runners die: a cancelled run, the six hour job limit, a
+re-dispatch over the top of itself. The 03:30 UTC guard stops anything still up, and stands down for the night if an
+apply or another lifecycle run is in flight. It also matters on its own account: AWS restarts a stopped RDS instance
+by itself after seven days, so without a recurring stop the database would come back every week forever.
+
+**Drift.** `terraform_drift.yml` asks whether staging is stopped before planning it, and stands down with a note on the
+summary when it is. A stopped estate cannot be planned at all, because Terraform refreshes RDS on every plan, and the three
+services at 0 would otherwise be reported as drift every night. `ecs_services.tf` carries
+`lifecycle { ignore_changes = [desired_count] }` for the same reason, so the live count belongs to the estate rather
+than to Terraform.
+
+That `ignore_changes` is **unconditional, so it applies to production too**. A production service scaled by hand (or
+by an autoscaler) is no longer put back by an apply, and no longer shows up as drift. Production is never stopped by
+anything here, so nothing scales it down on purpose, but the consequence is that a production desired count is now
+operational state rather than code: change it with `aws ecs update-service`, and expect an apply to leave it alone.
+Setting the count back under Terraform's control means removing the `ignore_changes` and giving the staging stop a
+different mechanism.
+
+**The production refusal.** `flip-cluster`, `flip-database` and `Ec2Instance` are named identically in both estates, so
+a misrouted stop would take production down. `staging_lifecycle.yml` has no `main` trigger, its jobs refuse to run on
+`main`, its environment is the literal `aws-stag`, and `scripts/staging-power.sh` independently checks
+`FLIP_ENVIRONMENT`, `TF_HUB` and the ref before making a single call, with no override flag. Those checks are pinned
+by `scripts/tests/test_staging_power.sh` and `tests/test_staging_lifecycle_workflow.py`.
+
+**The OIDC trust.** The power job runs from `staging_lifecycle.yml`, and `job_workflow_ref` names the reusable
+workflow rather than its caller, so the staging apply role's trust policy lists that file alongside
+`terraform_apply.yml` (`modules/terraform_ci_bootstrap`, `local.apply_workflow_refs`). Staging only: there is no
+production power workflow, and the production apply role still trusts exactly one file. Without that entry the power
+job is refused, and because the apply waits on `start-staging`, every develop apply would be skipped rather than just
+the stop. The platform repository that owns the CI bootstrap therefore has to bump its pinned SHA and apply before
+this lands.
+
+**Checking the state by hand** (read-only, no guard, safe against either estate):
+
+```bash
+AWS_PROFILE=stag AWS_REGION=eu-west-2 scripts/staging-power.sh status
+```
+
 ## Troubleshooting
 
 ### Quick Diagnosis

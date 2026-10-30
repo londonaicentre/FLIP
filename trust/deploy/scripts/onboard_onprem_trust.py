@@ -16,7 +16,8 @@
 
 Diagnoses what's still missing in the operator's setup before `make
 up-onprem-trust KIT=<CODE>` will succeed: docker swarm state,
-kit file presence, Hub-shared block, Kit credentials, FL_KIT_DIR + its
+kit file presence, Hub-shared block, the hub API / FL endpoint / image
+registries reachable from this host, Kit credentials, FL_KIT_DIR + its
 on-disk contents, OMOP / Orthanc data dirs.
 
 Each check renders ✅ (pass), ❌ (fail with concrete fix hint), or ⏳
@@ -45,10 +46,13 @@ import hashlib
 import json
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -323,6 +327,154 @@ def fetch_local_trust_health(port: str, timeout: float = 3.0) -> dict:
     with opener.open(request, timeout=timeout) as response:  # noqa: S310 — loopback only
         body = json.loads(response.read().decode() or "{}")
     return body if isinstance(body, dict) else {}
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Outbound reachability (FLIP#1726). Probed from the operator's account before anything
+# starts, so a firewall gap shows here, with the host:port to request, rather than as a failed
+# heartbeat or a dead FL client later. The rows say "reachable from this host" and no more: a
+# firewall that filters only one direction answers these probes while blocking nothing (#1684).
+# ─────────────────────────────────────────────────────────────────────
+
+PROBE_TIMEOUT_SECONDS = 4.0
+# Both hosts of each registry: ghcr.io alone passes while every pull fails on the layer host.
+REGISTRY_HOSTS: tuple[str, ...] = (
+    "ghcr.io",
+    "pkg-containers.githubusercontent.com",
+    "registry-1.docker.io",
+    "auth.docker.io",
+    "production.cloudfront.docker.com",
+)
+EGRESS_DOC = "the egress list on docs → Deploy a trust node → Network requirements"
+
+
+def _failure_reason(error: BaseException) -> str:
+    """One short phrase an operator can put in a firewall request."""
+    if isinstance(error, urllib.error.HTTPError):
+        return f"HTTP {error.code}"
+    if isinstance(error, urllib.error.URLError):
+        return _failure_reason(error.reason) if isinstance(error.reason, BaseException) else str(error.reason)
+    if isinstance(error, socket.gaierror):
+        return "DNS lookup failed"
+    if isinstance(error, (TimeoutError, socket.timeout)):
+        return "timed out (blackholed or filtered)"
+    if isinstance(error, ConnectionRefusedError):
+        return "connection refused"
+    if isinstance(error, OSError) and error.strerror:
+        return error.strerror
+    return f"{type(error).__name__}: {error}"
+
+
+def probe_tcp(host: str, port: int, timeout: float = PROBE_TIMEOUT_SECONDS) -> str | None:
+    """None when a TCP connection to host:port opens, else why it did not."""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return None
+    except OSError as error:
+        return _failure_reason(error)
+
+
+def probe_hub_health(hub_url: str, timeout: float = PROBE_TIMEOUT_SECONDS) -> tuple[str | None, str | None]:
+    """(release the hub reports, None) when ``GET <hub_url>/health`` answers, else (None, why not)."""
+    try:
+        return site_upgrade.fetch_hub_version(hub_url, timeout=timeout), None
+    except ValueError:
+        # The hub's CloudFront answers any unknown path with the UI's HTML and a 200, so a kit whose
+        # URL lacks `/api` gets a page, not the health JSON.
+        return None, "answered, but not with the health JSON — is CENTRAL_HUB_API_URL the API URL (ending /api)?"
+    except (urllib.error.URLError, OSError) as error:
+        return None, _failure_reason(error)
+
+
+def check_hub_reachable(kit_vars: dict[str, str], kit_present: bool) -> Check:
+    label = "Hub API reachable"
+    hub_url = kit_vars.get("CENTRAL_HUB_API_URL", "")
+    if not (kit_present and is_filled(hub_url)):
+        return Check(label, Status.PENDING, "pending — needs CENTRAL_HUB_API_URL in the kit file")
+    release, failure = probe_hub_health(hub_url)
+    if failure is None:
+        return Check(label, Status.PASS, f"{hub_url}/health answers" + (f", hub runs {release}" if release else ""))
+    return Check(
+        label,
+        Status.FAIL,
+        f"{hub_url}/health: {failure}",
+        hints=[
+            "trust-api polls this URL on 443 (HTTPS); nothing starts without it.",
+            f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
+        ],
+    )
+
+
+def fl_endpoint(kit_vars: dict[str, str]) -> tuple[str, int, str] | None:
+    """(host, port, where it came from) the FL client will dial, or None when the kit cannot say yet.
+
+    FLARE dials the ``target`` in its kit slice's ``startup/fed_client.json``, so that wins when the
+    slice is on disk; otherwise, and always for Flower (whose compose passes exactly these), the
+    kit's ``NLB_SUBDOMAIN`` and ``FL_EDGE_PORT`` (``FL_SERVER_PORT`` for a kit synced before FLIP#1365).
+    """
+    if kit_vars.get("FL_BACKEND") == "nvflare":
+        fed_client = (
+            Path(kit_vars.get("FL_KIT_DIR", "") or "/nonexistent")
+            / "net-1"
+            / "services"
+            / (kit_vars.get("FL_KIT_SLOT", "") or "unset")
+            / "startup"
+            / "fed_client.json"
+        )
+        try:
+            target = json.loads(fed_client.read_text())["servers"][0]["service"]["target"]
+            host, _, port = str(target).rpartition(":")
+            if host and port.isdigit():
+                return host, int(port), "startup/fed_client.json"
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            pass
+    host = kit_vars.get("NLB_SUBDOMAIN", "")
+    port = kit_vars.get("FL_EDGE_PORT", "") or kit_vars.get("FL_SERVER_PORT", "")
+    if is_filled(host) and port.isdigit():
+        return host, int(port), "the kit's NLB_SUBDOMAIN"
+    return None
+
+
+def check_fl_endpoint_reachable(kit_vars: dict[str, str], kit_present: bool) -> Check:
+    label = "FL endpoint reachable"
+    endpoint = fl_endpoint(kit_vars) if kit_present else None
+    if endpoint is None:
+        return Check(label, Status.PENDING, "pending — needs the kit's NLB_SUBDOMAIN and FL port")
+    host, port, source = endpoint
+    failure = probe_tcp(host, port)
+    if failure is None:
+        return Check(label, Status.PASS, f"tcp {host}:{port} connects (from {source})")
+    return Check(
+        label,
+        Status.FAIL,
+        f"tcp {host}:{port}: {failure} (from {source})",
+        hints=[
+            "The FL client connects out to this host:port over mutual TLS; a connection that opens"
+            " here but fails in the client log is a TLS-inspection proxy re-signing it — exempt the host.",
+            f"Ask the network team to allow it outbound from this host — {EGRESS_DOC}.",
+        ],
+    )
+
+
+def check_registries_reachable() -> Check:
+    """WARN, never FAIL: an offline image mirror is a supported shape (FLIP#1721)."""
+    label = "Image registries reachable"
+    with ThreadPoolExecutor(max_workers=len(REGISTRY_HOSTS)) as pool:
+        failures = dict(zip(REGISTRY_HOSTS, pool.map(lambda host: probe_tcp(host, 443), REGISTRY_HOSTS)))
+    unreachable = {host: why for host, why in failures.items() if why is not None}
+    if not unreachable:
+        return Check(label, Status.PASS, f"tcp 443 to {len(REGISTRY_HOSTS)} registry hosts connects")
+    return Check(
+        label,
+        Status.WARN,
+        "; ".join(f"{host}: {why}" for host, why in unreachable.items()),
+        hints=[
+            "ghcr.io + pkg-containers.githubusercontent.com serve FLIP's images; the docker.io hosts the"
+            " logging stack, XNAT's socket proxy and the alpine image xnat-backup runs. Pulls need both hosts"
+            " of a registry.",
+            f"Allow them outbound ({EGRESS_DOC}), or agree an image mirror with the FLIP team (FLIP#1721).",
+        ],
+    )
 
 
 def kit_key_fingerprint(kit_vars: dict[str, str]) -> str | None:
@@ -933,6 +1085,9 @@ def run_checks(kit: str, repo_root: Path, kit_file: Path | None = None) -> list[
         check_kit_file(kit, kit_file, kit_path),
         check_hub_shared(kit_vars, kit_present),
         check_hub_shared_current(kit_vars, kit_present),
+        check_hub_reachable(kit_vars, kit_present),
+        check_fl_endpoint_reachable(kit_vars, kit_present),
+        check_registries_reachable(),
         check_kit_credentials(kit_vars, kit_present, kit, kit_path),
         check_expected_trust_id_self_check(kit_vars, kit_present, kit, kit_path),
         check_fl_kit_dir_set(kit_vars, kit_present, kit, kit_path),

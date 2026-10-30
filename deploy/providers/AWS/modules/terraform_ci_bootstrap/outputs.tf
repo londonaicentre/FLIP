@@ -65,6 +65,11 @@ output "expected_apply_job_workflow_ref" {
   value       = local.apply_workflow_ref
 }
 
+output "apply_job_workflow_refs" {
+  description = "Every job_workflow_ref the apply role accepts: terraform_apply.yml, plus staging_lifecycle.yml on staging."
+  value       = local.apply_workflow_refs
+}
+
 output "plan_role_name" {
   description = "Name of the plan role."
   value       = aws_iam_role.terraform_plan.name
