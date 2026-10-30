@@ -239,10 +239,16 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) --namespace $(NAMESPACE) $(VALUES_OPTS) | \
 		NAMESPACE=$(NAMESPACE) RELEASE_NAME=$(RELEASE_NAME) KUBECTL="$(KUBECTL)" $(CHART_DIR)/scripts/migrate-strategy.sh
+	@rev=$$($(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE) -o json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null); \
+	rc=0; \
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout $(HELM_TIMEOUT) \
-		$(VALUES_OPTS)
+		$(VALUES_OPTS) || rc=$$?; \
+	python3 $(CHART_DIR)/scripts/deploy_verdict.py \
+		--release $(RELEASE_NAME) --namespace $(NAMESPACE) \
+		$(if $(KUBE_CONTEXT),--context $(KUBE_CONTEXT)) \
+		--helm-rc $$rc --revision-before "$$rev"
 
 undeploy: ## Remove the Helm release from the cluster
 	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)
@@ -262,8 +268,10 @@ ifdef KIT
 	$(MAKE) sync-kit-override KIT=$(KIT)
 	@rc=0; \
 	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
-	if [ $$rc -ne 0 ]; then \
-		echo "⚠️  deploy returned non-zero ($$rc) — often a non-fatal post-install hook (e.g. xnat-init — see #565), but it may be a genuine Helm failure. Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
+	if [ $$rc -eq 3 ]; then \
+		echo "⚠️  the release is live but xnat-init did not complete (see #565). Patching per-trust secrets, then re-exiting 3."; \
+	elif [ $$rc -ne 0 ]; then \
+		echo "❌ deploy failed ($$rc). Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
 	fi; \
 	$(MAKE) patch-kit-secrets KIT=$(KIT); \
 	exit $$rc
