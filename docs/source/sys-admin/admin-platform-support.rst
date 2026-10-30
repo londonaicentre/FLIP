@@ -51,6 +51,9 @@ Port 22 (SSH) is never opened.
    * - FL client → FL server (via NLB)
      -
      - configured ``FL_EDGE_PORT`` (else ``FL_SERVER_PORT``)
+   * - Image pulls, OS packages and mock data (hosts in :ref:`deploy-trust-node-network`)
+     -
+     - 443; 80 for OS packages
    * - Operator access to trust host
      - none (SSM Session Manager on an AWS node; the site's own access elsewhere)
      -

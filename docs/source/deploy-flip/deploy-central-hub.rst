@@ -336,6 +336,49 @@ slots without a restart, so the next ``register-trusts`` can claim one.
 
    :gh:`fl-services/nvflare/README.md` — minting kits by hand, and onboarding a new client onto an existing network.
 
+.. _deploy-central-hub-rotate-trust-keys:
+
+*************
+Rotating keys
+*************
+
+*Who: FLIP admin, with AWS access to the hub's account.* A trust's API key and internal service key are reissued in
+place, without re-registering it:
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS rotate-trust-keys KIT=<CODE> HUB=<env>
+
+``KIT`` is required, and exactly one trust rotates per run. The trust keeps its id, its code and its FL kit slot;
+only ``api_key_hash`` changes, in one transaction with a ``ROTATED`` entry in the trust audit log. The new
+credentials are written into ``trust/.env.<CODE>.<suffix>``.
+
+Three things to plan for:
+
+- **The trust goes offline the moment the rotation commits.** The hub re-checks the live hash on every request, so
+  the old key is refused straight away; the trust comes back only once its containers are recreated from the new
+  kit. Plan the rotation as a short outage for that site, not as an overlap window.
+- **The internal service key rotates with it**, so every trust-internal container has to restart together, not only
+  ``trust-api``. Deliver the kit and recreate them in one step:
+
+  - Cloud trust EC2: ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>``.
+  - On-prem: copy the filled kit onto its slot-named file, package it, and have the operator run their upgrade
+    command:
+
+    .. code-block:: shell
+
+       cp trust/.env.<CODE>.<suffix> trust/.env.<slot>
+       make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env>
+
+  Do **not** use ``deploy-trust``: it is a first-install command that re-seeds the trust's data and resets XNAT.
+- **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
+  caveat: Postgres applies ``XNAT_DATASOURCE_*`` only at the first initdb of the ``xnat-db`` volume, so a rotated value
+  must also be applied to the live database. See ``make generate-xnat-credentials FORCE=1`` and the
+  ``ALTER ROLE`` commands it prints.
+
+Rotating a trust that has no FL kit slot fails rather than minting keys the trust could not use: reclaiming a slot
+is a separate operation.
+
 .. _deploy-central-hub-deploys:
 
 **********************************

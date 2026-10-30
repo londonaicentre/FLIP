@@ -13,7 +13,7 @@
 .PHONY: build build-fl clean clean-object-store up down up-no-trust up-trusts central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks \
 		check-aws-access generate-internal-service-key generate-xnat-credentials _check-compose-project-owner \
-		register-trust register-trusts new-trust _wait-for-hub integration_test \
+		register-trust register-trusts rotate-trust-keys new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock checkov-lint tflint-lint aws-diagram \
 		deploy-trust-k8s undeploy-trust-k8s \
 		up-onprem-trust down-onprem-trust upgrade-onprem-trust onboard-onprem-trust \
@@ -691,6 +691,27 @@ register-trust: _check-compose-project-owner _wait-for-hub
 	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
 	  printf '%s\n' "$$kitjson" | uv run --no-config trust/deploy/scripts/distribute_trust_kits.py --target "$$kit"
 	@$(MAKE) generate-xnat-credentials KIT=$(KIT)
+
+# Reissue one trust's api and internal-service keys in place (FLIP#1569).
+# KIT is the trust CODE, as for register-trust. Unlike registration this changes
+# the accepted hash: the hub refuses the old key as soon as this commits, so the
+# trust stays offline until its containers are recreated from the new kit.
+# Only the two hub keys rotate here; XNAT credentials have their own caveat
+# (Postgres applies XNAT_DATASOURCE_* only on first initdb, see
+# generate-xnat-credentials).
+rotate-trust-keys: _check-compose-project-owner _wait-for-hub
+	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
+	@kit='$(call kit_file,trust/,$(KIT))'; \
+	  [ -f "$$kit" ] || { echo "❌ $$kit not found. Register the trust first."; exit 1; }; \
+	  name="$$(sed -n 's/^TRUST_NAME=//p' "$$kit" | head -1)"; \
+	  [ -n "$$name" ] || { echo "❌ TRUST_NAME not set in $$kit"; exit 1; }; \
+	  echo "🔑 Rotating keys for trust '$$name' (KIT=$(KIT))..."; \
+	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust --rotate --name "$$name")" \
+	    || { echo "❌ key rotation failed for KIT=$(KIT)"; exit 1; }; \
+	  printf '%s\n' "$$kitjson" | uv run --no-config trust/deploy/scripts/distribute_trust_kits.py --target "$$kit" \
+	    || { echo "❌ The hub has already committed the new keys, but $$kit could not be written: it still holds the OLD, now-refused keys."; \
+	         echo "   Fix the write error and re-run 'make rotate-trust-keys KIT=$(KIT)' to mint another pair."; exit 1; }; \
+	  echo "⚠️  Old key refused from now on: recreate the trust containers from $$kit."
 
 # Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
 # the roster (each is seeded to a live kit + registered). Used by `make up`.

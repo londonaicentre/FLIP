@@ -151,7 +151,7 @@ see `Key values`_).
 Extra network egress
 ====================
 
-On top of the hub endpoints every node needs:
+On top of :ref:`deploy-trust-node-network`:
 
 .. list-table::
    :header-rows: 1
@@ -161,8 +161,9 @@ On top of the hub endpoints every node needs:
      - Needed for
    * - FL server, the kit's FL port
      - ``sync-kit`` adds this port to the chart's egress policy for you.
-   * - ``huggingface.co``, ``github.com``, ``raw.githubusercontent.com`` and PyPI
-     - The mock-data seed job (``trustData.seed``), on install and on every upgrade while it is enabled.
+   * - ``github.com``, ``codeload.github.com``, ``raw.githubusercontent.com``
+     - The sample-data seed job (``trustData.seed``) fetches its scripts from FLIP's repository, on install and on
+       every upgrade while it is enabled. It also needs the sample-data hosts in the general table.
    * - Your S3 vocabulary bucket
      - The OMOP vocabulary load job, only if ``omopDb.vocabLoad.s3Bucket`` is set.
 

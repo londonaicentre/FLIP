@@ -64,19 +64,7 @@ from Docker Hub: ``grafana/loki``, ``grafana/alloy``, ``grafana/grafana`` and
 and ``trust/xnat/docker-compose-stack.yml`` pin.
 
 Where the TRE lets the FLIP host pull directly (CREATE does this for GHCR), allow both hosts of
-each registry: each serves its image layers from a second host, so allowing the registry name
-alone makes every pull fail.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Registry
-     - Hosts to allow (HTTPS, port 443)
-   * - GHCR
-     - ``ghcr.io`` and ``pkg-containers.githubusercontent.com``
-   * - Docker Hub
-     - ``registry-1.docker.io``, ``auth.docker.io`` and ``production.cloudfront.docker.com``
+each registry in :ref:`deploy-trust-node-network`.
 
 Otherwise, TREs typically block direct pulls from public registries,
 so images have to come in through the TRE's normal file-ingress process, for example as
@@ -95,14 +83,9 @@ The XNAT image carries its plugins, so a trust downloads none at start, on Compo
 
 **Network policy**
 
-- Allow the outbound connections in :ref:`deploy-trust-node-network`: the Central Hub API
-  and the FL server are **separate** hosts, and allowlisting the API host alone is not
-  sufficient.
-- If the TRE's firewall filters by hostname only in HTTP rules (Azure Firewall Basic, for
-  example, has no DNS proxy for its network rules), allow the FL Server by its IP address:
-  the hub's FL endpoint has a fixed one.
-- Do not let a TLS-inspecting proxy re-sign traffic to the FL Server: the FL client checks
-  the server's certificate against its kit, and a re-signed connection fails.
+- Allow the outbound connections in :ref:`deploy-trust-node-network`. The Central Hub API
+  and the FL server are **separate** hosts, and the FL server must be exempt from TLS
+  inspection.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**

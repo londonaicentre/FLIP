@@ -10,6 +10,9 @@
 # limitations under the License.
 #
 ---
-cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
+# AWS's copy in the host's own region, read from instance metadata by the role's first task. The
+# global s3.amazonaws.com bucket is in us-east-1, which a host reaching S3 only through its VPC's
+# gateway endpoint (an LZA workload account) cannot reach.
+cloudwatch_agent_deb: "https://amazoncloudwatch-agent-{{ cloudwatch_agent_region.stdout }}.s3.{{ cloudwatch_agent_region.stdout }}.amazonaws.com/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
 # One group per node; the streams inside it are named by instance id.
 cloudwatch_log_group: /aws/ec2/flip-trust
