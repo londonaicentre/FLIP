@@ -883,9 +883,10 @@ If neither connects, the hook fails. PG12 does not redact
 hook pins `log_statement=none`, `log_min_error_statement=panic`,
 `log_min_duration_statement=-1` and `log_transaction_sample_rate=0` for its
 session, which closes every route by which the new password could reach the
-log (FLIP#1658). All four are superuser-only, so on a current layout, where
-the app role is not a superuser, the hook fails at the first `SET` and the
-`ALTER` never runs. It reports its
+log (FLIP#1658). All four are superuser-only, so if the hook ever falls back
+to an app role that is not a superuser, it fails at the first `SET` and the
+`ALTER` never runs. On a current layout it connects as `postgres` and the
+rotation succeeds. It reports its
 outcome through the Postgres server log — the container's own log stream —
 because `postStart` stdout is not surfaced anywhere on success:
 
