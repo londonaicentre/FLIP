@@ -365,13 +365,11 @@ Three things to plan for:
   ``trust-api``. Deliver the kit and recreate them in one step:
 
   - Cloud trust EC2: ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>``.
-  - On-prem: copy the filled kit onto its slot-named file, package it, and have the operator run their upgrade
-    command:
+  - On-prem: package the rotated kit and have the operator run their upgrade command:
 
     .. code-block:: shell
 
-       cp trust/.env.<CODE>.<suffix> trust/.env.<slot>
-       make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> HUB=<env>
+       make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=<env>
 
   Do **not** use ``deploy-trust``: it is a first-install command that re-seeds the trust's data and resets XNAT.
 - **XNAT credentials do not rotate with it.** Their passwords live in the same kit, but changing them has its own
