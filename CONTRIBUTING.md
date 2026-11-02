@@ -390,6 +390,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 - `FL_PROVISIONED_DIR` — path to the FLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): FLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
+- `HUB_BIND_ADDRESS` — address the hub composes publish host ports on (default `127.0.0.1`; set `0.0.0.0` to publish on every interface). Trust kits have `TRUST_BIND_ADDRESS` for the same purpose.
 
 ### Setting up AWS access
 
