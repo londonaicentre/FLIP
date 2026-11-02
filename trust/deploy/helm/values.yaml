@@ -560,6 +560,13 @@ flClient:
   gpu:
     enabled: false
     count: 0
+    # How the pod gets its GPU (FLIP#1766):
+    #   devicePlugin: the container requests nvidia.com/gpu, so the NVIDIA device plugin (or GPU Operator) reserves
+    #                 one and Kubernetes places the pod on a node with a free GPU. Use it on any cluster that
+    #                 lists nvidia.com/gpu in its nodes' allocatable.
+    #   runtime:      no request; the node's default container runtime is nvidia and the pod takes that node's
+    #                 GPU 0, reserved for nobody (single-node k3s with default-runtime: nvidia and no plugin).
+    allocation: devicePlugin
     # GPU memory offered to the NVFLARE scheduler, per GPU; set for the site's hardware.
     memoryPerGpuInGiB: 7
     operator:
