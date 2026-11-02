@@ -113,7 +113,7 @@
         "xml2js": ">=0.5.0",
         "lodash": "^4.18.1",
         "lodash-es": "^4.18.1",
-        "follow-redirects": ">=1.15.12",
+        "follow-redirects": ">=1.16.2",
         "uuid": "$uuid",
         "fast-xml-parser": ">=5.7.0",
         "fast-xml-builder": ">=1.1.7",
@@ -128,6 +128,7 @@
         "svgo": ">=3.3.5 <4.0.0",
         "joi": ">=17.13.6 <18.0.0",
         "source-map-js": ">=1.2.2",
-        "postcss-selector-parser": ">=7.1.6"
+        "postcss-selector-parser": ">=7.1.6",
+        "systeminformation": ">=5.33.16 <6.0.0"
     }
 }
