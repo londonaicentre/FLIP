@@ -179,8 +179,9 @@ resource "snowflake_view" "compute_pool_cost" {
     SELECT
       DATE_TRUNC('day', START_TIME)::DATE AS USAGE_DATE,
       COMPUTE_POOL_NAME,
-      INSTANCE_FAMILY,
       SUM(CREDITS_USED)                   AS CREDITS
+    -- That view has no instance family (START_TIME, END_TIME, COMPUTE_POOL_NAME/_ID,
+    -- IS_EXCLUSIVE, APPLICATION_NAME/_ID, CREDITS_USED, checked on the live account).
     FROM SNOWFLAKE.ACCOUNT_USAGE.SNOWPARK_CONTAINER_SERVICES_HISTORY
     WHERE START_TIME >= DATEADD('day', -${var.cost_window_days}, CURRENT_TIMESTAMP())
     GROUP BY ALL
