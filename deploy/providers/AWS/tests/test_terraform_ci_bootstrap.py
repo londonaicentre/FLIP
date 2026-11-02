@@ -839,7 +839,7 @@ def test_the_ui_publish_role_trusts_the_reusable_workflow_at_the_apply_branch() 
 
 
 def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
-    """List the bucket, sync its objects, never write ark_demo/; no KMS, no other service."""
+    """List the bucket, sync its objects, never write demo/; no KMS, no other service."""
     document = 'data "aws_iam_policy_document" "ui_publish"'
     assert _module_locals()["ui_bucket_arn"] == (
         '"arn:${data.aws_partition.current.partition}:s3:::${var.ui_bucket_name}"'
@@ -854,10 +854,10 @@ def test_the_ui_publish_role_reaches_the_ui_bucket_and_nothing_else() -> None:
     assert sync["effect"] == '"Allow"'
     assert set(_list(sync["actions"])) == {'"s3:DeleteObject"', '"s3:GetObject"', '"s3:PutObject"'}
     assert sync["resources"] == '["${local.ui_bucket_arn}/*"]'
-    demo = _arguments(_statement(document, "NeverTouchTheArkDemo"))
+    demo = _arguments(_statement(document, "NeverTouchThePublicDemo"))
     assert demo["effect"] == '"Deny"'
     assert set(_list(demo["actions"])) == {'"s3:DeleteObject"', '"s3:PutObject"'}
-    assert demo["resources"] == '["${local.ui_bucket_arn}/ark_demo/*"]'
+    assert demo["resources"] == '["${local.ui_bucket_arn}/demo/*"]'
 
     body = _normalise(_module_block(document))
     actions = set(re.findall(r'"((?:[a-z0-9-]+):[A-Za-z*]+)"', body))

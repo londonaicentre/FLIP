@@ -66,19 +66,6 @@ resource "aws_s3_bucket_versioning" "flip_ui" {
 }
 
 ############################
-# Public Ark+ demo download assets (optional; prod only)
-#
-# The bucket is module.flip_demo_assets_bucket (services.tf), created when
-# DEMO_ASSETS_BUCKET_NAME is set; the edge distribution reads it through
-# cross-account OAC. Clearing the name on an estate that has the bucket
-# proposes a destroy, which prevent_destroy turns into a loud apply failure.
-############################
-
-locals {
-  demo_assets_enabled = var.DEMO_ASSETS_BUCKET_NAME != ""
-}
-
-############################
 # CloudFront: OAC, function, bucket policy
 ############################
 
@@ -93,7 +80,7 @@ resource "aws_cloudfront_origin_access_control" "flip_ui" {
 # SPA deep-link rewriter. Attached to the default (S3) cache behavior and
 # (when the demo is enabled) the /ark_demo/* behavior — both serve the same
 # s3-flip-ui origin, one real app at "/" and one second SPA bundled under
-# "/ark_demo/" (see the demo-assets section above). NOT attached to /api/*,
+# "/ark_demo/". NOT attached to /api/*,
 # so /api/* responses keep their real ALB status codes.
 # IMPORTANT: do not add distribution-level custom_error_response blocks
 # for 403/404 — they are inherited by /api/* and would mask real error
