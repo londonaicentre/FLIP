@@ -82,7 +82,8 @@ Terraform runs in GitHub Actions as well as from a laptop. `terraform_plan.yml`
 plans staging on every PR touching `deploy/providers/AWS/**`; `terraform_apply.yml`
 applies on every push to `develop` (stag) and `main` (prod), then its `ui` job
 publishes flip-ui through the reusable `publish_ui.yml`; `terraform_drift.yml` plans
-nightly and raises one issue per environment. All three authenticate via OIDC —
+nightly and raises one issue per environment; `staging_lifecycle.yml` powers staging
+on and off (FLIP#1596). All four authenticate via OIDC —
 no long-lived AWS keys in GitHub. **Merging to `main` changes production
 infrastructure.**
 

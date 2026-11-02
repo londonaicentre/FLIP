@@ -35,11 +35,14 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -491,6 +494,7 @@ def test_27_selected_kit_controls_values_and_filename_hints() -> None:
         with (
             mock.patch.object(mod, "check_swarm", return_value=passed),
             mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+            mock.patch.object(mod, "check_registries_reachable", return_value=passed),
             mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "invalid")),
         ):
             checks = mod.run_checks("SITE", root, selected)
@@ -575,6 +579,7 @@ def test_30_governance_action_preserves_and_quotes_the_selected_kit() -> None:
                 mock.patch.dict(os.environ, {} if hub is None else {"HUB": hub}, clear=True),
                 mock.patch.object(mod, "check_swarm", return_value=passed),
                 mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+                mock.patch.object(mod, "check_registries_reachable", return_value=passed),
                 mock.patch.object(
                     mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "❌ bad policy\n", "")
                 ),
@@ -616,6 +621,130 @@ def test_31_unrotated_passwords_compare_against_the_kit_template() -> None:
         _assert(check.status == status, f"{status.name}: {check.detail}", str(check))
 
 
+def test_32_hub_reachable_reports_the_release_or_the_failure() -> None:
+    """GET <hub>/health from this host: PASS names the release; FAIL names why, in firewall-request words."""
+    print("\n[32] Hub API reachable: release on PASS, reason on FAIL, PENDING without the URL")
+    kit = {"CENTRAL_HUB_API_URL": "https://hub.example/api"}
+    with mock.patch.object(mod.site_upgrade, "fetch_hub_version", return_value="v0.14.0"):
+        ok = mod.check_hub_reachable(kit, True)
+    _assert(ok.status == mod.Status.PASS, "answers -> PASS", str(ok))
+    _assert("v0.14.0" in ok.detail, "PASS names the hub's release", ok.detail)
+    failures = (
+        (urllib.error.URLError(socket.gaierror(8, "nodename nor servname provided")), "DNS lookup failed"),
+        (urllib.error.URLError(TimeoutError()), "timed out"),
+        (urllib.error.URLError(ConnectionRefusedError()), "connection refused"),
+        (urllib.error.HTTPError("https://hub.example/api/health", 503, "unavailable", {}, None), "HTTP 503"),
+        (json.JSONDecodeError("Expecting value", "<html>", 0), "not with the health JSON"),  # UI page: URL lacks /api
+    )
+    for error, reason in failures:
+        with mock.patch.object(mod.site_upgrade, "fetch_hub_version", side_effect=error):
+            bad = mod.check_hub_reachable(kit, True)
+        _assert(bad.status == mod.Status.FAIL, f"{reason}: FAIL", str(bad))
+        _assert(reason in bad.detail, f"detail names the reason: {reason}", bad.detail)
+        _assert("hub.example" in bad.detail, "detail names the host", bad.detail)
+        _assert(any("Network requirements" in h for h in bad.hints), "hint points at the egress list")
+    pending = mod.check_hub_reachable({}, True)
+    _assert(pending.status == mod.Status.PENDING, "no CENTRAL_HUB_API_URL -> PENDING", str(pending))
+    _assert(mod.check_hub_reachable(kit, False).status == mod.Status.PENDING, "no kit file -> PENDING")
+
+
+def test_33_fl_endpoint_comes_from_what_the_client_dials() -> None:
+    """FLARE: the kit slice's fed_client.json target when on disk, else the kit's NLB_SUBDOMAIN;
+    Flower: the kit's NLB_SUBDOMAIN with FL_EDGE_PORT over FL_SERVER_PORT. Probed by a plain TCP connect."""
+    print("\n[33] FL endpoint reachable: source per backend, TCP probe, TLS-inspection hint on FAIL")
+    with tempfile.TemporaryDirectory() as tmp:
+        kit_dir = Path(tmp)
+        startup = kit_dir / "net-1" / "services" / "Trust_5" / "startup"
+        startup.mkdir(parents=True)
+        (startup / "fed_client.json").write_text(
+            json.dumps({"servers": [{"service": {"target": "fl.hub.example:8002"}}]})
+        )
+        flare = {
+            "FL_BACKEND": "nvflare",
+            "FL_KIT_DIR": str(kit_dir),
+            "FL_KIT_SLOT": "Trust_5",
+            "NLB_SUBDOMAIN": "kit.hub.example",
+            "FL_SERVER_PORT": "8002",
+            "FL_EDGE_PORT": "8012",
+        }
+        from_slice = mod.fl_endpoint(flare)
+        _assert(
+            from_slice == ("fl.hub.example", 8002, "startup/fed_client.json"),
+            "FLARE with the slice on disk dials fed_client.json's target",
+            str(from_slice),
+        )
+        no_slice = mod.fl_endpoint({**flare, "FL_KIT_SLOT": "Trust_6"})
+        _assert(
+            no_slice == ("kit.hub.example", 8012, "the kit's NLB_SUBDOMAIN"),
+            "FLARE without the slice falls back to the kit",
+            str(no_slice),
+        )
+        flower = {**flare, "FL_BACKEND": "flower"}
+        _assert(
+            mod.fl_endpoint(flower) == ("kit.hub.example", 8012, "the kit's NLB_SUBDOMAIN"), "Flower: kit, edge port"
+        )
+        del flower["FL_EDGE_PORT"]
+        _assert(mod.fl_endpoint(flower)[1] == 8002, "Flower pre-FLIP#1365 kit: FL_SERVER_PORT")
+        _assert(mod.fl_endpoint({"FL_BACKEND": "flower"}) is None, "no host yet -> None")
+
+        with mock.patch.object(mod, "probe_tcp", return_value=None) as probe:
+            ok = mod.check_fl_endpoint_reachable(flare, True)
+        _assert(ok.status == mod.Status.PASS, "connects -> PASS", str(ok))
+        _assert(probe.call_args.args == ("fl.hub.example", 8002), "probed the dialled host:port", str(probe.call_args))
+        with mock.patch.object(mod, "probe_tcp", return_value="timed out (blackholed or filtered)"):
+            bad = mod.check_fl_endpoint_reachable(flare, True)
+        _assert(bad.status == mod.Status.FAIL, "cannot connect -> FAIL", str(bad))
+        _assert("fl.hub.example:8002" in bad.detail, "FAIL names host:port", bad.detail)
+        _assert(any("TLS-inspection" in h for h in bad.hints), "hint covers the TLS-inspection proxy case")
+        pending = mod.check_fl_endpoint_reachable({"FL_BACKEND": "flower"}, True)
+        _assert(pending.status == mod.Status.PENDING, "no endpoint yet -> PENDING", str(pending))
+
+
+def test_34_registries_warn_and_name_the_mirror() -> None:
+    """Both hosts of each registry on 443; unreachable ones WARN (an offline mirror is supported, FLIP#1721)."""
+    print("\n[34] Image registries reachable: PASS, else WARN naming the hosts and the mirror")
+    with mock.patch.object(mod, "probe_tcp", return_value=None):
+        ok = mod.check_registries_reachable()
+    _assert(ok.status == mod.Status.PASS, "all connect -> PASS", str(ok))
+
+    def layers_blocked(host: str, port: int, timeout: float = 0) -> str | None:
+        return "DNS lookup failed" if host == "pkg-containers.githubusercontent.com" else None
+
+    with mock.patch.object(mod, "probe_tcp", side_effect=layers_blocked):
+        warn = mod.check_registries_reachable()
+    _assert(warn.status == mod.Status.WARN, "a blocked host -> WARN, never FAIL", str(warn))
+    _assert(
+        "pkg-containers.githubusercontent.com: DNS lookup failed" in warn.detail, "names host and reason", warn.detail
+    )
+    _assert(any("FLIP#1721" in h for h in warn.hints), "hint names the mirror alternative")
+
+
+def test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub() -> None:
+    """run_checks includes the rows; an unreachable hub is a FAIL, so --gate refuses to start."""
+    print("\n[35] run_checks: the reachability rows are present; hub FAIL makes the checklist NOT READY")
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "trust").mkdir()
+        kit_file = root / "trust" / ".env.SITE.prod"
+        kit_file.write_text("CENTRAL_HUB_API_URL=https://hub.example/api\n")
+        passed = mod.Check("external probe", mod.Status.PASS, "mocked")
+        with (
+            mock.patch.object(mod, "check_swarm", return_value=passed),
+            mock.patch.object(mod, "check_hub_shared_current", return_value=passed),
+            mock.patch.object(mod, "probe_hub_health", return_value=(None, "timed out (blackholed or filtered)")),
+            mock.patch.object(mod, "probe_tcp", return_value=None),
+            mock.patch.object(mod.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")),
+        ):
+            checks = mod.run_checks("SITE", root, kit_file)
+    labels = [check.label for check in checks]
+    for label in ("Hub API reachable", "FL endpoint reachable", "Image registries reachable"):
+        _assert(label in labels, f"row present: {label}")
+    hub = next(check for check in checks if check.label == "Hub API reachable")
+    _assert(hub.status == mod.Status.FAIL, "unreachable hub is a FAIL (blocks --gate)", str(hub))
+    registries = next(check for check in checks if check.label == "Image registries reachable")
+    _assert(registries.status == mod.Status.PASS, "registries probed through probe_tcp", str(registries))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -651,6 +780,10 @@ def main() -> None:
     test_29_ready_command_preserves_and_quotes_the_selected_kit()
     test_30_governance_action_preserves_and_quotes_the_selected_kit()
     test_31_unrotated_passwords_compare_against_the_kit_template()
+    test_32_hub_reachable_reports_the_release_or_the_failure()
+    test_33_fl_endpoint_comes_from_what_the_client_dials()
+    test_34_registries_warn_and_name_the_mirror()
+    test_35_the_checklist_carries_the_three_rows_and_gates_on_the_hub()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

@@ -534,8 +534,9 @@ The eight service test workflows (`test_flip_ui.yml`, `test_flip_api.yml`, the f
 `validate_terraform.yml` does the credential-free `fmt`/`validate` pass. On top of that, three
 OIDC-authenticated workflows drive real state — no long-lived AWS keys in GitHub: `terraform_plan.yml`
 (plan staging on every PR touching `deploy/providers/AWS/**`), `terraform_apply.yml` (every push to
-`develop` → stag, every push to `main` → **prod**), and `terraform_drift.yml` (nightly plan, one issue per
-environment). **Merging to `main` changes production infrastructure.** After a successful apply the
+`develop` → stag, which starts staging first and stops it again after a hold; every push to `main` → **prod**),
+`terraform_drift.yml` (nightly plan, one issue per environment; it stands down while staging is stopped), and
+`staging_lifecycle.yml` (staging-only power on/off plus a 03:30 UTC nightly stop guard, FLIP#1596). **Merging to `main` changes production infrastructure.** After a successful apply the
 `ui` job calls the reusable `publish_ui.yml` (FLIP#1186): a credential-free build job, then a publish
 job under the bootstrap module's bucket-only `AICentre-FLIPUiPublishRole` (`TF_UI_PUBLISH_ROLE_ARN`)
 running `deploy/providers/AWS/scripts/publish-ui.sh`, the same script `make deploy-ui` runs. A held

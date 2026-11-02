@@ -149,9 +149,10 @@ Step 4 — Run the readiness checklist and start the stack
    sudo -E make up-onprem-trust KIT=<CODE>        # starts only if every check passes
 
 Both default to the production hub (``HUB=prod``); add ``HUB=stag`` for staging. The checklist prints a ✅ or ❌ for
-each precondition: the kit file, Docker swarm, the hub-shared settings and credentials being filled in, trust-local
-passwords, ``FL_KIT_DIR`` and the FL kit contents, and GPU capacity. Fix every ❌ row; ``up-onprem-trust`` runs the
-same checks and will not start until they pass.
+each precondition: the kit file, Docker swarm, the hub-shared settings and credentials being filled in, the hub API
+and the FL endpoint reachable from this host (the image registries too, as a warning), trust-local passwords,
+``FL_KIT_DIR`` and the FL kit contents, and GPU capacity. Fix every ❌ row; ``up-onprem-trust`` runs the same checks
+and will not start until they pass.
 
 Then continue at step 6 of :doc:`onboarding-a-trust`.
 

@@ -339,7 +339,8 @@ unless `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` are set; `KEYCLOAK_
 editing the realm run `make reset-keycloak` — the import skips a realm that already exists. Not available in-app under
 Keycloak, because the browser uses the OIDC password grant, which has no equivalent: TOTP enrolment/challenge (keep
 `ENFORCE_MFA=false`, which the dev compose sets — `true` only logs a warning and locks browser users out),
-forgot-password, and the admin "Reset password" button; use the Keycloak console for those. Everything else —
+and forgot-password; use the Keycloak console for those. The admin "Reset password" button works (FLIP#1705): flip-api
+re-sends the invitation, and with no mail server in dev sets the shared `ADMIN_USER_PASSWORD` as a temporary password. Everything else —
 register, roles, enable/disable, MFA reset from the admin screen, projects, cohorts, uploads — works the same. Scripts
 that sign in (`make e2e_smoke`, `make -C flip-api create_testing_projects`, `make seed-demo-projects`, `make demo-users`,
 the demo recorder) go through the configured provider, so they need no AWS session either. Details:
@@ -748,7 +749,7 @@ failure rather than an un-deployed chart.
 the kit (a trust holds no FLIP AWS credentials), so `flClient.kitHostPath` must already exist
 on the node. It reads the backend from the kit's own shape and chowns to that backend's uid.
 The previous `make patch-aws-creds` target is gone along with the chart's in-cluster S3 fetch;
-see "Upgrading an install that fetched its kit from S3" in the K8s README for the full list of
+see ["Upgrading: the chart no longer fetches the FL kit"](trust/deploy/helm/README.md#upgrading-the-chart-no-longer-fetches-the-fl-kit) in the K8s README for the full list of
 removed values.
 
 The chart has a `check_status.py` smoke test script (which also checks that XNAT on each running

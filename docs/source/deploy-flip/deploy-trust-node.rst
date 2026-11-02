@@ -162,6 +162,13 @@ network (see :doc:`../components/component-pacs`).
 The node must reach two **separate** hub endpoints, the API and the FL server. They have different hostnames behind
 different load balancers, so allow both. This is everything a node connects out to:
 
+.. tip::
+
+   On a Docker Compose host, ``make onboard-onprem-trust KIT=<CODE>`` probes the first four rows from the host
+   itself once the kit file is in place, and prints the host:port and the failure (DNS, refused, timed out, HTTP
+   status) for each one it cannot reach. That output is the evidence to hand your network team. It says only
+   "reachable from this host": a firewall that filters one direction answers the probe while blocking nothing.
+
 .. list-table::
    :header-rows: 1
    :widths: 26 14 13 35 12

@@ -64,6 +64,61 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # FLIP#1596. Staging is stopped most nights: the ECS services are at 0, the hub
+  # host is stopped and RDS is stopped. Planning that estate is not useful and not
+  # even possible: Terraform refreshes RDS on every plan and a stopped instance
+  # fails the refresh, so the nightly run would be red every night for a reason
+  # that is the intended state. Starting RDS just to plan it would be worse: the
+  # drift job would become the thing that keeps staging running, and it holds the
+  # read-only plan role, which cannot start anything anyway.
+  #
+  # So the staging leg asks first and stands down when the answer is "stopped",
+  # saying so on the summary rather than reporting nothing. Production has no
+  # stopped state and never reaches this job.
+  staging-state:
+    name: Is staging stopped?
+    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && github.ref_name != 'main' && vars.TF_STAG_DISABLED != 'true'
+    runs-on: ubuntu-latest
+    environment: aws-stag
+    permissions:
+      contents: read
+      id-token: write # mint the OIDC token
+    outputs:
+      stopped: ${{ steps.state.outputs.stopped }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5.1.1
+        with:
+          # The read-only plan role: this job only describes.
+          role-to-assume: ${{ vars.TF_PLAN_ROLE_ARN }}
+          role-session-name: flip-stag-state-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Describe the estate
+        id: state
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: deploy/providers/AWS/scripts/staging-power.sh status
+
+      - name: Say so on the summary
+        if: steps.state.outputs.stopped == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "### 😴 Staging is stopped, so it was not planned"
+            echo
+            echo "The ECS services are at desired count 0 and RDS is"
+            echo "\`${{ steps.state.outputs.rds_status }}\`. That is the expected state between"
+            echo "deploys (FLIP#1596), not drift, and Terraform cannot refresh a stopped"
+            echo "database anyway."
+            echo
+            echo "Staging drift is checked on the next night it is up, and on the apply's own"
+            echo "plan after every merge to \`develop\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   drift:
     name: Drift (${{ github.ref_name == 'main' && 'prod' || 'stag' }})
     # Both jobs skip outside londonaicentre/FLIP unless TF_CI_ON_FORK is `true`;
@@ -73,7 +128,19 @@ jobs:
     # TF_STAG_DISABLED pauses the staging leg only; see terraform_apply.yml.
     # dispatch-prod below does not depend on this job, so production drift still
     # runs from the develop schedule.
-    if: (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true') && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
+    #
+    # `always()` because staging-state is skipped on main, and a skipped
+    # dependency would otherwise skip production drift entirely. A FAILED
+    # staging-state also stops this job: not being able to tell whether staging is
+    # stopped is not a licence to plan it and report the refresh error as drift.
+    needs: [staging-state]
+    if: >-
+      (github.repository == 'londonaicentre/FLIP' || vars.TF_CI_ON_FORK == 'true')
+      && always()
+      && (github.ref_name == 'main' || vars.TF_STAG_DISABLED != 'true')
+      && needs.staging-state.result != 'failure'
+      && needs.staging-state.result != 'cancelled'
+      && (github.ref_name == 'main' || needs.staging-state.outputs.stopped != 'true')
     runs-on: ubuntu-latest
     # No matrix: a run can only reach the one environment its ref is trusted for,
     # so there is exactly one leg. The same `github.ref_name == 'main'` ternary

@@ -85,7 +85,9 @@ The operator extracts, copies `.env.<CODE>.prod` into their checkout,
 edits only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs) and rotates
 the Trust-local passwords, runs `sudo -E make onboard-onprem-trust KIT=<CODE>`
 for the readiness checklist (kit present, swarm active — the swarm check queries
-the docker daemon, hence sudo; Hub-shared + Kit credentials populated, FL_KIT_DIR
+the docker daemon, hence sudo; Hub-shared + Kit credentials populated; the hub API, the
+FL endpoint and the image registries reachable from the host (FLIP#1726: probed before
+anything starts, FAIL / FAIL / WARN, wording is "reachable from this host" only); FL_KIT_DIR
 exists + has the expected files), then `sudo -E make up-onprem-trust KIT=<CODE>` (both default to `HUB=prod`).
 Sudo because the provisioned login user is deliberately not in the docker group
 (root-equivalent); `-E` preserves `$HOME` so root's docker reuses the operator's
@@ -154,7 +156,7 @@ make reconvert-nifti KIT=GSTT [PROJECT="<id> ..."] [LAUNCH=1] [WAIT=<min>] [MAX_
 
 ## Environment
 
-- In production all runtime config comes from the kit file (`trust/.env.<CODE>.<env>`): neither `trust/Makefile` nor `trust/xnat/Makefile` includes a hub `.env.*`. In dev, `trust/Makefile` also `-include`s `../$(MAIN_ENV_FILE)` for the Hub-shared values (see *Kit file structure*). `HUB` also selects the compose-file suffix (development / production).
+- In production all runtime config comes from the kit file (`trust/.env.<CODE>.<env>`): neither `trust/Makefile` nor `trust/xnat/Makefile` includes a hub `.env.*`. In dev, `trust/Makefile` also `-include`s `../$(MAIN_ENV_FILE)` for the Hub-shared values (see *Kit file structure*). `HUB` also selects the compose-file suffix (`development` / `prod`: `stag` and `prod` both run the prod compose).
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<CODE>.<env>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
 - Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
 - `DEBUG`: `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
