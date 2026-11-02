@@ -67,6 +67,8 @@ Hub API and the FL API are not on it, and an FL client has no hub URL or hub cre
 - **FLARE** uses mutual TLS with the per-participant certificates in the provisioned kits.
 - **Flower** checks the SuperLink's certificate, and each SuperNode authenticates with its own key pair. A
   one-shot job registers the SuperNodes' public keys with the SuperLink when the net starts.
+  Trusts reach the SuperLink only through a *fleet proxy* that passes the SuperNodes' own API and nothing
+  else: the SuperLink's run control is unauthenticated in open-source Flower, so it is never exposed to a Trust.
 
 .. warning::
 

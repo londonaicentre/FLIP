@@ -359,6 +359,10 @@ def test_the_trust_policies_pin_the_environment_and_the_apply_ref() -> None:
     assert locals_["apply_workflow_ref"] == (
         '"${local.workflow_ref_prefix}/${var.apply_workflow_file}@refs/heads/${var.apply_branch}"'
     )
+    # The staging power workflow assumes the same role, from the same branch.
+    assert locals_["power_workflow_ref"] == (
+        '"${local.workflow_ref_prefix}/${var.power_workflow_file}@refs/heads/${var.apply_branch}"'
+    )
     apply = _block(_module_block('data "aws_iam_policy_document" "apply_assume_role"'), "statement")
     assert _conditions(apply) == [
         {
@@ -374,7 +378,7 @@ def test_the_trust_policies_pin_the_environment_and_the_apply_ref() -> None:
         {
             "test": '"StringEquals"',
             "variable": '"token.actions.githubusercontent.com:job_workflow_ref"',
-            "values": "[local.apply_workflow_ref]",
+            "values": "local.apply_workflow_refs",
         },
     ]
 
@@ -710,6 +714,12 @@ def test_the_service_allowlist_is_exactly_what_the_flip_root_uses() -> None:
     )
 
 
+# Granted only so the apply that deletes them is allowed (FLIP#1438). Drop with the bootstrap entries
+# once stag and prod have applied the removal.
+RETIRING_ROLES = {"trust-ec2-role"}
+RETIRING_PROFILES = {"trust-ec2-role-profile"}
+
+
 def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> None:
     """An unlisted role or profile would be denied at apply; a stale one would be a standing grant."""
     roles, profiles = set(), set()
@@ -724,8 +734,8 @@ def test_the_named_roles_and_profiles_are_the_ones_the_flip_root_declares() -> N
                 '"terraform-aws-modules/iam/aws//modules/iam-assumable-role'
             ):
                 roles.add(arguments["role_name"].strip('"'))
-    assert set(_string_list_default("managed_role_names")) == roles
-    assert set(_string_list_default("managed_instance_profile_names")) == profiles
+    assert set(_string_list_default("managed_role_names")) == roles | RETIRING_ROLES
+    assert set(_string_list_default("managed_instance_profile_names")) == profiles | RETIRING_PROFILES
 
 
 def test_the_plan_role_cannot_read_the_accounts_data() -> None:

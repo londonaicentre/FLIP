@@ -1,0 +1,67 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# fl_kit_source=local: copy this slot's kit from a directory on the machine running the play
+# (fl_kit_local_src), for a host that cannot read the hub's kit bucket, e.g. an EC2 node in a site's
+# own account (FLIP#1528). The directory is the slot's own kit, as the Helm chart's stage-kit takes
+# it: local/ startup/ transfer/ for FLARE, certificates/ and keys/ for Flower. Wipes net-1/ first and
+# asserts the result the way s3.yml does.
+---
+- name: check the local kit source is given
+  ansible.builtin.assert:
+    that:
+      - fl_kit_local_src is defined and fl_kit_local_src | length > 0
+    fail_msg: "fl_kit_source=local needs fl_kit_local_src, the directory holding this slot's kit."
+
+- name: clear the previous kit
+  shell: |
+    set -euo pipefail
+    mkdir -p "{{ fl_kit_dir }}/net-1"
+    find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete
+  args:
+    executable: /bin/bash
+  changed_when: true
+
+- name: copy the FLARE kit for {{ fl_kit_slot }}
+  copy:
+    src: "{{ fl_kit_local_src | regex_replace('/*$', '') }}/"
+    dest: "{{ fl_kit_dir }}/net-1/services/{{ fl_kit_slot }}/"
+    owner: "{{ flip_owner }}"
+    group: "{{ flip_group }}"
+    mode: preserve
+  when: fl_backend == "nvflare"
+
+- name: check the FLARE kit names {{ fl_kit_slot }}
+  shell: |
+    set -euo pipefail
+    dest="{{ fl_kit_dir }}/net-1/services/{{ fl_kit_slot }}"
+    mkdir -p "$dest/local" "$dest/transfer"
+    chown {{ flip_owner }}:{{ flip_group }} "$dest/local" "$dest/transfer"
+    [ -s "$dest/startup/fed_client.json" ] || { echo "ERROR: no startup/fed_client.json in the kit copied to $dest." >&2; exit 1; }
+    python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("client", {}).get("fqsn") == sys.argv[2] else 1)' \
+      "$dest/startup/fed_client.json" "{{ fl_kit_slot }}" || {
+      echo "ERROR: the kit copied to $dest does not name {{ fl_kit_slot }} in client.fqsn: it is another site's kit." >&2; exit 1; }
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: fl_backend == "nvflare"
+
+- name: copy the Flower CA certificate and this slot's SuperNode credential
+  copy:
+    src: "{{ fl_kit_local_src | regex_replace('/*$', '') }}/{{ item }}"
+    dest: "{{ fl_kit_dir }}/net-1/{{ item }}"
+    owner: "{{ flip_owner }}"
+    group: "{{ flip_group }}"
+    mode: preserve
+  loop:
+    - certificates/ca.crt
+    - "keys/supernode_credentials_{{ trust_num }}"
+  when: fl_backend == "flower"

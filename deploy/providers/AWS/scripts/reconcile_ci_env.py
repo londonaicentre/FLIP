@@ -125,7 +125,7 @@ class State:
         the demo-assets bucket by type/name alone would hand back whichever of
         the four buckets state happens to list first. The module is the only
         thing that distinguishes them, so it is matched — on a module boundary,
-        exactly as `has_module_resource` does.
+        so `module.x` never matches `module.x_y`.
 
         Args:
             module_prefix (str): Module address to match, e.g. `module.flip_demo_assets_bucket`.
@@ -144,39 +144,6 @@ class State:
                 if instances:
                     return instances[0].get("attributes") or {}
         return {}
-
-    def has_module_resource(self, module_prefix: str, rtype: str, name: str) -> bool:
-        """Whether a managed resource of this type/name exists inside a module.
-
-        `attrs` does *not* filter on `module` — it matches a type/name pair
-        wherever it sits, which is why the Cognito and SES module resources
-        recover through it perfectly well. The bug this method was written for
-        was not a missed module but a **wrong resource name**: `DEPLOY_TRUST_EC2`
-        was read from the root's `aws_instance.ec2_instance`, which is the SSM
-        bastion and exists in every environment, so the answer came back "true"
-        whether or not a trust host was deployed. Observed on stag, which runs no
-        cloud trust: the recovered value said `DEPLOY_TRUST_EC2=true` and the
-        resulting plan created one.
-
-        The right resource is `module.trust_ec2[0].aws_instance.trust_host`, and
-        this method exists to say *which module* as well as which name — the
-        module is the part that distinguishes it, so it is checked rather than
-        ignored.
-
-        The prefix has to match on a module boundary. A plain `startswith` would
-        accept `module.trust_ec2_role`, which is present even in a hub-only
-        deployment, so the very lookup that fixed one false "true" would hand
-        back another.
-        """
-        for r in self.doc.get("resources", []):
-            if r.get("mode") != "managed" or r.get("type") != rtype or r.get("name") != name:
-                continue
-            module = r.get("module") or ""
-            # `module.trust_ec2`, `module.trust_ec2[0]`, `module.trust_ec2.module.inner`
-            # — but never `module.trust_ec2_role`.
-            if module == module_prefix or module.startswith((f"{module_prefix}[", f"{module_prefix}.")):
-                return bool(r.get("instances"))
-        return False
 
     def output(self, name: str) -> str:
         """A root output's value, or '' when state has none."""
@@ -279,12 +246,12 @@ def live_image_tag(service: str, container: str, cluster: str, profile: str, reg
     tag = split_image(image)[1] if image and image != "None" else ""
     # Strip any digest: `v<X.Y.Z>@sha256:…` is the pin a release APPLY writes
     # into a task definition (FLIP#1283), but this value goes into the operator
-    # env file, where the Makefile reuses DOCKER_TAG for the three TRUST_IMAGES
-    # and for `-e omop_db_tag` (the omop-db and orthanc images). Those are
-    # different repositories, so flip-api's digest makes every one of them
-    # unpullable — `make deploy-trust` reports them all missing and
-    # seed-trust-data / ansible-init fail. The tag alone is the right record
-    # here; CI re-resolves the digest pin from live ECS on every run.
+    # env file, which sync-trust-kit copies into every kit's Hub-shared block,
+    # where DOCKER_TAG tags the trust images (trust-api, imaging-api,
+    # data-access-api, omop-db, orthanc). Those are different repositories, so
+    # flip-api's digest makes every one of them unpullable at the site. The tag
+    # alone is the right record here; CI re-resolves the digest pin from live
+    # ECS on every run.
     return tag.partition("@")[0]
 
 
@@ -348,7 +315,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         region,
     )
 
-    has_trust_ec2 = st.has_module_resource("module.trust_ec2", "aws_instance", "trust_host")
     # The OAC is named after the subdomain (cloudfront.tf); the Route 53 records once read
     # for both subdomains never existed on an LZA estate.
     oac_name = st.attrs("aws_cloudfront_origin_access_control", "flip_ui").get("name", "")
@@ -391,7 +357,6 @@ def build(env: str, profile: str, region: str, bucket: str, cluster: str) -> tup
         "INTERNAL_SERVICE_KEY": secret.get("internal_service_key", ""),
         "INTERNAL_SERVICE_KEY_HASH": secret.get("internal_service_key_hash", ""),
         "JOB_RESOURCE_SPEC_NUM_GPUS": fl_api_env.get("JOB_RESOURCE_SPEC_NUM_GPUS", ""),
-        "DEPLOY_TRUST_EC2": "true" if has_trust_ec2 else "false",
         # The keys every estate requires (compose-ci-env.sh's LZA_REQUIRED_KEYS).
         "ACCESS_LOGS_BUCKET_NAME": st.attrs("aws_s3_bucket", "flip_access_logs").get("bucket", ""),
         "EFS_PROVISION_IMAGE": st.container("efs_provision", "provision-efs-certs").get("image", ""),

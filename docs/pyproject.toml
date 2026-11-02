@@ -21,7 +21,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    # Renders deploy/providers/AWS/architecture/central_hub.py at build time (needs graphviz `dot` on PATH).
+    # Renders the architecture diagrams (deploy/providers/AWS, trust/deploy/terraform) at build time (needs `dot`).
     "diagrams>=0.25.1",
     "idna>=3.15",
     "readthedocs-sphinx-search>=0.3.2",
