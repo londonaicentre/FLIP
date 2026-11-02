@@ -254,7 +254,8 @@ make generate-internal-service-key
 ```
 
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into the active env file
-(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication.
+(`MAIN_ENV_FILE`, default `.env.development`) for fl-server-to-hub authentication. `make up` also runs
+`make generate-fl-api-key`, which writes `FL_API_KEY` there — the key flip-api presents to the FL APIs.
 
 #### Updating an existing checkout
 
@@ -265,6 +266,7 @@ These changes affect checkouts created before them. None is picked up automatica
 | --- | --- |
 | `NLB_SUBDOMAIN`, `AICENTRE_BUCKET_NAME` and `DEMO_*_PASSWORD` are commented out in `.env.development.example` | Nothing to do: the `scripts/check_env_vars.py` pre-commit hook no longer requires them, and a leftover line is harmless. A dev stack never reads the first two; set the demo passwords only to run `make demo-users`. |
 | `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` ship empty in `.env.development.example` (FLIP#1501) | Nothing to do: the next `make up` replaces a key still set to the old `<run-make-generate-internal-service-key>` placeholder with a random matching pair. |
+| `FL_API_KEY` is new in `.env.development.example` | Nothing to do: the next `make up` mints it. Add an empty `FL_API_KEY=` line if `scripts/check_env_vars.py` asks for it. The FL APIs refuse every call without it, so a stack brought up by hand needs `make generate-fl-api-key` first. |
 | uv floor raised to **>= 0.10.0** | `uv self update` (or reinstall). Below the floor, `make lock` and the FLARE provisioning script refuse to run rather than silently re-resolving `uv.lock` without the cooldown. |
 | `NUM_AVAILABLE_GPUS` defaults to `0` in the two shipped dev kit examples (`trust/.env.GSTT.development.example`, `trust/.env.KCH.development.example`) | Only those two pre-populated example kits were changed; the base template (`trust/.env.example`) that `make new-trust` scaffolds from still defaults to `1`, and an existing `trust/.env.<CODE>.<env>` keeps its own value regardless. On a GPU dev host, set `NUM_AVAILABLE_GPUS=1` in the kit to restore passthrough — `make up-trust` prints a warning naming the variable when it is zero, so this is not silent. |
 | `MIN_CLIENTS` is removed everywhere (FLIP#1230) | Nothing to add. Delete the `MIN_CLIENTS=` line from your `.env.development` and from any `trust/.env.<CODE>.<env>` kit if you like — a leftover is ignored. The FL images no longer read it: the per-job quorum is the participating-trust count, which fl-api writes into every job (`min_clients = len(trusts)` on FLARE, `flip-min-clients` on Flower), so a hub-wide value could only ever veto a legitimate project (set to 3, a 2-trust project never starts) and never lowered anything. On stag/prod the `MIN_CLIENTS` GitHub environment variable is now unread and can be deleted. |
@@ -375,6 +377,9 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
 - `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
+- `FL_API_KEY` — the key flip-api sends to every FL API (`fl-api-net-N`) in the `FL_API_KEY_HEADER` header
+  (default `X-FL-API-Key`); every FL API route but `/health` requires it. Minted by `make up`; on ECS a
+  Secrets Manager field. Distinct from `INTERNAL_SERVICE_KEY`, which the FL API never holds.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
   call to imaging-api or data-access-api.

@@ -140,6 +140,9 @@ therefore never becomes an implicit route into the trust's wider imaging estate.
 - Services within a trust authenticate to one another with a per-trust
   ``TRUST_INTERNAL_SERVICE_KEY``. It never reaches the Central Hub and is compared in
   constant time.
+- On the hub, the FL API that drives each federated network accepts calls only from the
+  hub's own services, which present a dedicated ``FL_API_KEY``; every route but its health
+  check refuses a missing or wrong key, and on AWS the network rules admit only those callers.
 
 Credentials compromised at one trust cannot be replayed against another.
 
