@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from flip.nvflare.recipes import FlipDiffusionRecipe, FlipEvalRecipe, FlipFedAvgRecipe, FlipFedOptRecipe
+from flip.nvflare.recipes import FlipEvalRecipe, FlipFedAvgRecipe, FlipFedOptRecipe
 
 _FL_APPS_NVFLARE = Path(__file__).resolve().parents[5] / "fl-apps" / "nvflare"
 
@@ -38,7 +38,6 @@ _TEMPLATES = [
     ("standard", FlipFedAvgRecipe),
     ("evaluation", FlipEvalRecipe),
     ("fed_opt", FlipFedOptRecipe),
-    ("diffusion_model", FlipDiffusionRecipe),
 ]
 
 

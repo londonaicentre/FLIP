@@ -276,20 +276,23 @@ a server-side request forgery surface:
 cannot, on its own, close a DNS-rebinding race between the check and the fetch. An FL API
 started without the allow-list logs a warning naming what that leaves open.
 
-**FL traffic is mutually authenticated.** Both supported backends, NVIDIA FLARE and
-Flower, run over TLS with per-participant certificates issued during network
-provisioning. So the FL server and each client authenticate *each other*, rather than one
-side trusting the network. A client cannot join a training network without a valid
+**FL traffic is mutually authenticated.** NVIDIA FLARE uses mutual TLS with
+per-participant certificates issued during network provisioning. Flower uses TLS to the
+SuperLink's certificate, and each SuperNode authenticates with its own provisioned key
+pair, registered with the SuperLink. Either way the FL server and each client
+authenticate *each other*, rather than one side trusting the network. A client cannot join a training network without a valid
 provisioned identity.
 
 **Privacy filtering of model updates differs by FL backend** (see
 :ref:`fl-update-privacy`):
 
-- **NVIDIA FLARE.** Every training template clips and sparsifies each update before it
-  leaves the trust, and an uploaded app cannot turn this off. It is **statistical
-  clipping and sparsification, not formal differential privacy**: there is no calibrated
-  noise and no privacy budget. A trust can also enforce its own filter as site policy,
-  which a job cannot bypass.
+- **NVIDIA FLARE.** Every FLARE training template clips and sparsifies each update before it
+  leaves the trust, and an uploaded app's configuration cannot turn this off. It is
+  **statistical clipping and sparsification, not formal differential privacy**: there is
+  no calibrated noise and no privacy budget. A trust can also enforce its own filter as
+  site policy, which a job's configuration cannot opt out of. Both bind what a job
+  declares, not what its code does: FLARE job code currently runs inside the client's
+  job process, so code review remains the control there (FLIP#1572).
 - **Flower.** Local differential privacy (clipping plus calibrated noise) is available,
   but it is **opt-in**: the researcher's uploaded code must enable it. Code that does not
   sends raw updates, and only review of the uploaded code catches that. There is no

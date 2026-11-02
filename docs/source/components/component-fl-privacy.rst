@@ -48,7 +48,7 @@ Privacy filters on shared model updates
 FLARE: percentile sparsification
 ==================================
 
-The FLARE training job types (``standard``, ``fed_opt``, ``diffusion_model``) pass each client's training
+The FLARE training job types (``standard``, ``fed_opt``) pass each client's training
 result through a percentile privacy filter before it leaves the site (``PercentilePrivacy``, after Shokri &
 Shmatikov, "Privacy-preserving deep learning", CCS '15). The filter:
 
@@ -57,8 +57,7 @@ Shmatikov, "Privacy-preserving deep learning", CCS '15). The filter:
 - truncates the remaining components to ``±gamma``.
 
 The templates use the FLARE defaults, ``percentile=10`` and ``gamma=0.01`` (share the top 90 %, clip at 0.01).
-The ``diffusion_model`` job type computes the cutoff separately for each training stage. The ``evaluation``
-templates have no filter: they send metrics, not weights.
+The ``evaluation`` templates have no filter: they send metrics, not weights.
 
 The filter is set in the template's ``config_fed_client.json``, which an upload cannot replace, so every FLIP run
 uses these values. In your own FLARE runs (the simulator, or a job exported with
@@ -175,16 +174,21 @@ different policies in the same federation, with no hub redeploy.
 
 How the site policy behaves (verified against FLARE 2.9.0):
 
-- **The job cannot bypass it.** FLARE runs site filters *before* the job's own filters, in one chain, and the
-  site filter has no ``off`` switch. It also covers jobs whose app has no filter of its own.
-- **Jobs cannot choose a weaker scope.** The policy defines a single default scope, and FLIP refuses any job whose
-  ``meta.json`` sets a ``scope``.
+- **A job's configuration cannot opt out of it.** FLARE runs site filters *before* the job's own filters, in one
+  chain, and the site filter has no ``off`` switch a job's configuration can set. It also covers jobs whose app has no
+  filter of its own.
+- **A job's configuration cannot choose a weaker scope.** The policy defines a single default scope, and FLIP
+  refuses any job whose ``meta.json`` sets a ``scope``.
+- **Job code is not isolated from the filter.** Every FLARE app template runs the Client API with
+  ``"execution_mode": "in_process"``, so the job's code runs inside the FL client's job process, alongside the
+  privacy service and the filter objects it is meant to be bound by. The filter therefore binds what a job
+  *declares*, not what its code can *do* at runtime. Code review remains the control (FLIP#1572).
 - **The percentile covers the whole model.** The site filter runs before FLIP drops the frozen parameters of a
   head-only fine-tune, so its percentile includes their all-zero diffs. Keep site percentiles modest (the default
   ``10``); the convergence warning above applies doubly.
 - **Evaluation results are unaffected.** The filter changes only weight payloads; metrics pass through.
 - **Failures are loud.** A filter error appears as ``TASK_RESULT_FILTER_ERROR`` in the FL logs and the client's
-  audit trail. Nothing is ever sent unfiltered.
+  audit trail. A filter that raises never sends the update unfiltered.
 - **FLARE only.** Flower has no site-side filter hook, so on Flower the review of uploaded training code remains
   the control.
 

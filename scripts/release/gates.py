@@ -46,6 +46,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TextIO
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import instance as instance_mod  # noqa: E402
@@ -172,7 +173,7 @@ def collect_logs(instance: str, logs: Path) -> list[str]:
     return names
 
 
-def _run_command(cmd: list[str], log, env: dict[str, str], lines: list[tuple[float, str]]) -> int:
+def _run_command(cmd: list[str], log: TextIO, env: dict[str, str], lines: list[tuple[float, str]]) -> int:
     """Run one command, streaming output to the log and keeping timed lines for the metric parsers."""
     log.write(f"▶ {' '.join(cmd)}\n")
     log.flush()
@@ -185,7 +186,7 @@ def _run_command(cmd: list[str], log, env: dict[str, str], lines: list[tuple[flo
     return proc.returncode
 
 
-def _run_check(check: Check, log) -> int:
+def _run_check(check: Check, log: TextIO) -> int:
     with contextlib.redirect_stdout(log):
         try:
             return 1 if check.fn() else 0

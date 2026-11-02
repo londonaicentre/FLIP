@@ -201,6 +201,22 @@ class CognitoIdentityProvider(IdentityProvider):
             logger.exception("Error deleting user")
             raise IdentityProviderError("Failed to delete user") from e
 
+    def reset_password(self, username: str) -> None:
+        # ForgotPassword cannot reset a user who never completed their first
+        # sign-in (FORCE_CHANGE_PASSWORD), and with prevent_user_existence_errors
+        # it says it sent a code anyway. Re-send their invite (a fresh temporary
+        # password) instead.
+        try:
+            status = self.client.admin_get_user(UserPoolId=self._pool_id, Username=username)["UserStatus"]
+            if status == "FORCE_CHANGE_PASSWORD":
+                self.client.admin_create_user(UserPoolId=self._pool_id, Username=username, MessageAction="RESEND")
+            else:
+                self.client.forgot_password(ClientId=self._app_client_id, Username=username)
+            logger.info(f"Password reset sent to user {username} (status {status})")
+        except ClientError as e:
+            logger.exception("Error resetting user password")
+            raise IdentityProviderError("Failed to reset user password") from e
+
     # --- MFA -------------------------------------------------------------------------------
 
     def _fetch_mfa_enabled(self, username: str) -> bool:

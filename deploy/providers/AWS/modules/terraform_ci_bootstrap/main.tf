@@ -18,6 +18,8 @@
 #                                    nightly drift run. Cannot write state.
 #   AICentre-FLIPTerraformApplyRole  assumed only by a push-triggered apply on
 #                                    the environment's branch.
+#   AICentre-FLIPUiPublishRole       optional (ui_bucket_name); syncs the flip-ui
+#                                    build to its bucket after an apply.
 #   AICentre-FLIPTerraformBoundary   the ceiling on every role an apply creates;
 #                                    optional (create_permissions_boundary) where
 #                                    the platform provides its own.
@@ -68,6 +70,35 @@ locals {
   workflow_ref_prefix = "${local.repo}/.github/workflows"
 
   apply_workflow_ref = "${local.workflow_ref_prefix}/${var.apply_workflow_file}@refs/heads/${var.apply_branch}"
+
+  # The staging power workflow (FLIP#1596) assumes the SAME apply role, because
+  # stopping staging is a mutation: ecs:UpdateService, ec2:Start/StopInstances,
+  # rds:Start/StopDBInstance. It is a separate workflow FILE, so it presents a
+  # different job_workflow_ref, and a trust pinned to terraform_apply.yml alone
+  # denies it. That denial is not confined to the power job: terraform_apply.yml
+  # needs the start to succeed before it plans, so every develop apply would be
+  # skipped. Hence the trust change ships with the workflow rather than after it.
+  #
+  # Staging only. There is no production power workflow and there must never be
+  # one, so the production apply role's trust stays a single value.
+  #
+  # `job_workflow_ref` names the REUSABLE workflow when one is called, so
+  # `staging_lifecycle.yml@refs/heads/<apply_branch>` covers both the calls from
+  # terraform_apply.yml and a direct dispatch of the same file. Pinned to the
+  # branch for the same reason as the apply ref: a pull request presents
+  # `@refs/pull/<n>/merge` and is denied.
+  power_workflow_ref = "${local.workflow_ref_prefix}/${var.power_workflow_file}@refs/heads/${var.apply_branch}"
+
+  apply_workflow_refs = concat(
+    [local.apply_workflow_ref],
+    var.environment == "stag" ? [local.power_workflow_ref] : [],
+  )
+
+  # The UI-publish role (iam_ui_publish.tf) trusts the reusable workflow at the
+  # apply branch, whichever workflow calls it.
+  ui_publish              = var.ui_bucket_name != ""
+  ui_publish_workflow_ref = "${local.workflow_ref_prefix}/${var.ui_publish_workflow_file}@refs/heads/${var.apply_branch}"
+  ui_bucket_arn           = "arn:${data.aws_partition.current.partition}:s3:::${var.ui_bucket_name}"
 
   # Plan runs from two places, so its allowed set is a list of patterns rather
   # than one exact string.
@@ -140,5 +171,6 @@ locals {
   # the documents render at plan time. Default IAM path "/" throughout.
   plan_role_arn            = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.plan_role_name}"
   apply_role_arn           = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.apply_role_name}"
+  ui_publish_role_arn      = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.ui_publish_role_name}"
   permissions_boundary_arn = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:policy/${var.permissions_boundary_name}"
 }

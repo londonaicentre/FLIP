@@ -17,3 +17,9 @@ dev = ["pytest>=8"]
 package = false
 # 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
 exclude-newer = "3 days"
+# Security: minimum versions for transitive packages with open CVEs.
+constraint-dependencies = [
+    # 41 advisories, five critical: GHSA-8g5g-8vmr-9782, GHSA-w889-685w-c8fh, GHSA-332p-7hrc-92wf,
+    # GHSA-v9pv-5gc8-w2m6, GHSA-5x8w-8jj5-q52h.
+    "pillow>=13.0.0",
+]

@@ -63,7 +63,7 @@ ENV_VAR_MAP = {
 # when it names an immutable, pullable image — a release (vX.Y.Z) or a CI sha- tag. A dev
 # kit's `dev` (a locally built tag) or the floating `stag` would otherwise pin a kind
 # deployment to an image the registry never serves, so those leave the client on the
-# release pin / the chart's own tag. Same shape as scripts/site_upgrade.py's is_image_tag.
+# release pin / the chart's own tag. Same shape as trust/deploy/scripts/site_upgrade.py's is_image_tag.
 IMMUTABLE_IMAGE_TAG = re.compile(r"^(?:v\d+\.\d+\.\d+(?:[-.][0-9A-Za-z.-]+)?|sha-[0-9a-f]{7})$")
 
 
@@ -104,6 +104,7 @@ CHART_KEY_SLOTS = (
     ("OMOP_POSTGRES_PASSWORD", "omop-postgres-password"),  # pragma: allowlist secret
     ("DATA_ACCESS_POSTGRES_PASSWORD", "data-access-postgres-password"),  # pragma: allowlist secret
     ("ORTHANC_REGISTERED_USERS", "orthanc-registered-users"),
+    ("XNAT_ADMIN_INITIAL_PASSWORD", "xnat-admin-initial-password"),  # pragma: allowlist secret
     ("XNAT_ADMIN_PASSWORD", "xnat-admin-password"),  # pragma: allowlist secret
     ("XNAT_SERVICE_USER", "xnat-service-user"),
     ("XNAT_SERVICE_PASSWORD", "xnat-service-password"),  # pragma: allowlist secret
@@ -168,7 +169,7 @@ def build_values(env: dict[str, str]) -> tuple[dict[str, Any], dict[str, str]]:
             continue
         secrets[secret_key] = env[env_var]
     # A kit carries Orthanc's one user as ORTHANC_USERNAME/ORTHANC_PASSWORD; Compose builds the
-    # same map from them (trust/deploy/compose_trust.*.yml).
+    # same map from them (trust/deploy/compose/compose_trust.*.yml).
     user, password = env.get("ORTHANC_USERNAME"), env.get("ORTHANC_PASSWORD")
     if "orthanc-registered-users" not in secrets and user and password:
         secrets["orthanc-registered-users"] = json.dumps({user: password})

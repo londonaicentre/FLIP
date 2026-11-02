@@ -27,7 +27,7 @@ import torch
 from tutorial_apps import TUTORIALS_ROOT, load_module
 
 NVFLARE_APP_FILES = TUTORIALS_ROOT / "nvflare" / "tabular_classification" / "ehr_risk_prediction" / "app_files"
-FLOWER_APP = TUTORIALS_ROOT / "flower" / "ehr_risk_prediction" / "app"
+FLOWER_APP = TUTORIALS_ROOT / "flower" / "tabular_classification" / "ehr_risk_prediction" / "app"
 
 
 fe = load_module("ehr_under_test.feature_engineering", NVFLARE_APP_FILES / "feature_engineering.py")

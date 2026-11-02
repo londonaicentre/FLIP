@@ -351,7 +351,7 @@ backends:
    * - ``xray_classification``
      - ``app_files/transforms.py``
      - ``get_xray_transforms(is_validation=True)``
-   * - ``flower/xray_classification``
+   * - ``flower/image_classification/xray_classification``
      - ``app/transforms.py``
      - ``get_xray_transforms(is_validation=True)``
 

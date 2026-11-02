@@ -15,7 +15,7 @@ Pure pandas/numpy/torch helpers over the cohort dataframe returned by ``flip.get
 (or its local-dev CSV). No ``flip``, ``nvflare`` or ``flwr`` imports — the same file serves both
 backends and is kept byte-identical between
 ``fl-tutorials/nvflare/tabular_classification/ehr_risk_prediction/app_files/feature_engineering.py``
-and ``fl-tutorials/flower/ehr_risk_prediction/app/feature_engineering.py``
+and ``fl-tutorials/flower/tabular_classification/ehr_risk_prediction/app/feature_engineering.py``
 (drift-checked by ``scripts/check_tutorial_sync.sh``).
 
 Preprocessing statistics (imputation medians, standardisation mean/std) are always fitted on

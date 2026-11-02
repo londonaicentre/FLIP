@@ -43,7 +43,7 @@ services:
       # Default 0 => empty resource_spec => FLARE hides the GPU from the training worker (CPU).
       - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
     ports:
-      - "${FL_API_PORT}:8000"
+      - "${HUB_BIND_ADDRESS:-127.0.0.1}:${FL_API_PORT}:8000"
     security_opt:
       - no-new-privileges:true
     cap_drop:

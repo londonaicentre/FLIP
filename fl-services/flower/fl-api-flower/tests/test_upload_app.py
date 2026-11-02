@@ -11,15 +11,20 @@
 # limitations under the License.
 #
 
+import logging
 from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 from tomlkit import parse
 
 from fl_api import app as app_module
 from fl_api.schemas import UploadAppRequest
+
+_URL_SECRET = "bundle-signature-sentinel"  # pragma: allowlist secret (synthetic sentinel)
+_SIGNED_QUERY = f"?X-Amz-Signature={_URL_SECRET}&X-Amz-Security-Token={_URL_SECRET}"
 
 
 @pytest.fixture
@@ -59,8 +64,9 @@ def mock_requests_get(monkeypatch):
     return _mock_get
 
 
-def test_upload_app_basic_success(client, upload_dir, mock_requests_get):
+def test_upload_app_basic_success(client, upload_dir, mock_requests_get, caplog):
     """Test basic app upload with pyproject.toml and config.toml."""
+    caplog.set_level(logging.INFO)
     model_id = str(uuid4())
 
     pyproject_content = b"""
@@ -79,8 +85,8 @@ checkpoint = "model.pt"
 
     mock_requests_get(
         {
-            f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-            f"https://example.com/{model_id}/app/config.toml": config_content,
+            f"https://example.com/{model_id}/pyproject.toml{_SIGNED_QUERY}": pyproject_content,
+            f"https://example.com/{model_id}/app/config.toml{_SIGNED_QUERY}": config_content,
         }
     )
 
@@ -89,8 +95,8 @@ checkpoint = "model.pt"
         cohort_query="SELECT * FROM patients",
         trusts=["trust1", "trust2"],
         bundle_urls=[
-            f"https://example.com/{model_id}/pyproject.toml",
-            f"https://example.com/{model_id}/app/config.toml",
+            f"https://example.com/{model_id}/pyproject.toml{_SIGNED_QUERY}",
+            f"https://example.com/{model_id}/app/config.toml{_SIGNED_QUERY}",
         ],
     )
 
@@ -104,6 +110,8 @@ checkpoint = "model.pt"
     job_dir = upload_dir / model_id
     assert (job_dir / "pyproject.toml").exists()
     assert (job_dir / "app" / "config.toml").exists()
+
+    assert _URL_SECRET not in caplog.text
 
 
 def test_upload_app_injects_flip_params_without_touching_pyproject(client, upload_dir, mock_requests_get):
@@ -470,8 +478,9 @@ def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypat
     assert "refusal" not in response.json()
 
 
-def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
+def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch, caplog):
     """A 3xx redirect on a bundle fetch is rejected: it would dodge validate_bundle_url (SSRF)."""
+    caplog.set_level(logging.INFO)
     model_id = str(uuid4())
 
     def _redirecting_get(url, stream=True, timeout=60, allow_redirects=True):
@@ -491,13 +500,16 @@ def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
         project_id="project-123",
         cohort_query="*",
         trusts=["trust1"],
-        bundle_urls=[f"https://example.com/{model_id}/pyproject.toml"],
+        bundle_urls=[f"https://example.com/{model_id}/pyproject.toml{_SIGNED_QUERY}"],
     )
 
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
 
     assert response.status_code == 400
     assert "refusal" not in response.json()
+
+    assert _URL_SECRET not in response.text
+    assert _URL_SECRET not in caplog.text
 
 
 def test_startup_reports_empty_bundle_allow_list(monkeypatch):
@@ -575,3 +587,52 @@ def test_upload_app_rejects_a_malformed_gpu_request(client, upload_dir, mock_req
     )
 
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("failure_at", ["get", "raise_for_status", "iter_content"])
+def test_upload_download_errors_do_not_expose_signed_url(client, upload_dir, monkeypatch, caplog, failure_at):
+    caplog.set_level(logging.INFO)
+    model_id = str(uuid4())
+    url = f"https://example.com/{model_id}/app/config.toml{_SIGNED_QUERY}"
+    response = Mock(is_redirect=False, is_permanent_redirect=False)
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=False)
+    fetch = Mock(return_value=response)
+    failure = requests.HTTPError(f"403 Forbidden for url: {url}")
+    (fetch if failure_at == "get" else getattr(response, failure_at)).side_effect = failure
+    monkeypatch.setattr("fl_api.utils.upload.requests.get", fetch)
+    body = UploadAppRequest(bundle_urls=[url], project_id="project", cohort_query="SELECT 1", trusts=["Trust_1"])
+
+    result = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+    assert result.status_code == 500
+    assert "HTTPError" in result.json()["detail"]
+    assert _URL_SECRET not in result.text
+    assert _URL_SECRET not in caplog.text
+    assert fetch.call_args.args[0] == url
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        (
+            "https://user:userinfo-sentinel@bucket"  # pragma: allowlist secret (synthetic URL)
+            "\uff0fexample.com/key?X-Amz-Signature=query-sentinel"
+        ),
+        (
+            "https://user:userinfo-sentinel@[invalid/"  # pragma: allowlist secret (synthetic URL)
+            "key?X-Amz-Signature=query-sentinel"
+        ),
+    ],
+)
+def test_upload_rejects_malformed_urls_without_echoing_credentials(client, upload_dir, monkeypatch, caplog, url):
+    caplog.set_level(logging.INFO)
+    model_id = str(uuid4())
+    fetch = Mock()
+    monkeypatch.setattr("fl_api.utils.upload.requests.get", fetch)
+    body = UploadAppRequest(bundle_urls=[url], project_id="project", cohort_query="SELECT 1", trusts=["Trust_1"])
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Bundle URL is malformed."}
+    assert "userinfo-sentinel" not in response.text + caplog.text
+    assert "query-sentinel" not in response.text + caplog.text
+    fetch.assert_not_called()

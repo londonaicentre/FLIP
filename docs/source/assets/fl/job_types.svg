@@ -15,7 +15,7 @@
   <title id="jt-title">How a job type turns uploaded files into an FL app</title>
   <desc id="jt-desc">The researcher uploads config.json, trainer.py, models.py and any helper files;
     the job_type in config.json selects a template in the FLIP Hub. 1: the template (standard,
-    evaluation, diffusion_model or fed_opt on NVFLARE) lists the files it requires from the
+    evaluation or fed_opt on NVFLARE) lists the files it requires from the
     researcher and provides its own fixed files. 2: if a required file is missing the submission
     is rejected, naming the missing files, and nothing ships. 3: otherwise the bundled app is the
     template's fixed files plus the researcher's files under app/custom, where the template's
@@ -69,13 +69,9 @@
   <rect x="374" y="392" width="290" height="28" fill="#ffffff" stroke="#2C3E6B" stroke-width="1.5"/>
   <text x="386" y="410.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" fill="#2C3E6B">evaluation</text>
   <rect x="374" y="426" width="290" height="28" fill="#ffffff" stroke="#2C3E6B" stroke-width="1.5"/>
-  <text x="386" y="444.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" fill="#2C3E6B">diffusion_model</text>
+  <text x="386" y="444.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" fill="#2C3E6B">fed_opt</text>
   <rect x="590" y="432" width="64" height="16" fill="#ffffff" stroke="#8A9BBD" rx="2"/>
   <text x="622" y="444" text-anchor="middle" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="bold" fill="#5A6B8F">NVFLARE</text>
-  <rect x="374" y="460" width="290" height="28" fill="#ffffff" stroke="#2C3E6B" stroke-width="1.5"/>
-  <text x="386" y="478.5" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" fill="#2C3E6B">fed_opt</text>
-  <rect x="590" y="466" width="64" height="16" fill="#ffffff" stroke="#8A9BBD" rx="2"/>
-  <text x="622" y="478" text-anchor="middle" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="10" font-weight="bold" fill="#5A6B8F">NVFLARE</text>
   <path d="M296,172 H335 V120 H374" stroke="#3F4252" stroke-width="2" fill="none"/>
   <circle cx="296" cy="172" r="4" fill="#3F4252"/>
   <circle cx="374" cy="120" r="4" fill="#3F4252"/>

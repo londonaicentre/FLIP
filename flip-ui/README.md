@@ -45,7 +45,7 @@ local Keycloak realm registers as a browser origin works — take one from 44350
 ### Staging and production (AWS)
 
 The UI is served as **static assets from S3 behind CloudFront** at the canonical subdomain
-(`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront forwards `/api/*` to the ALB, so users and
+(`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront relays `/api/*` to the internal NLB's web listener, so users and
 trusts keep hitting the same URLs. There is no flip-ui Docker container on stag/prod EC2 — only flip-api and the
 FL services. See [deploy/providers/AWS/README.md](../deploy/providers/AWS/README.md#flip-ui-on-s3--cloudfront)
 for the full rollout.
@@ -57,8 +57,10 @@ cd deploy/providers/AWS
 make deploy-ui HUB=stag     # or HUB=prod for prod
 ```
 
-This runs `npm ci && npm run build:deploy`, regenerates `public/js/window.js` with the target environment's values,
-syncs the build to S3, and invalidates CloudFront.
+This runs `npm ci && npm run build:deploy` (whose `postbuild:deploy` writes `dist/js/window.js` from the target
+environment's values) and publishes `dist/` to the UI bucket with `scripts/publish-ui.sh`. Nothing is invalidated:
+`index.html` and `window.js` are served `no-cache`. CI runs the same script after every successful apply
+(`publish_ui.yml`, FLIP#1186); `make deploy-ui` is the manual fallback and rollback.
 
 ### Public Ark+ demo build (`/ark_demo`)
 
@@ -137,12 +139,12 @@ picks the implementation once at boot from `window.AUTH_BACKEND`.
   sign-out.
 - **Keycloak** (`src/auth/keycloak-provider.ts`, the dev stack) — the OIDC Resource Owner Password grant against the
   realm's token endpoint, no SDK and no redirect, so the same username/password form works. Tokens live in
-  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are all off by
-  design: the password grant cannot run Keycloak's required actions (forced password update, TOTP enrolment are
-  browser flows in Keycloak's own UI), and Keycloak answers a wrong password and a missing OTP with the same
-  `invalid_grant`, so an in-app TOTP step cannot be offered honestly. The pages link out to the Keycloak console
-  instead ("Forgot password?" on the login page, the admin "Reset Password" tooltip), and an account with a pending
-  required action gets a "Finish setting up your account in Keycloak" notice with a link.
+  `localStorage["flip.auth.keycloak.<clientId>"]` and refresh 30 s ahead of expiry. Its capabilities are off by
+  design, except the admin "Reset Password" (flip-api re-sends the user's invite): the password grant cannot run
+  Keycloak's required actions (forced password update, TOTP enrolment are browser flows in Keycloak's own UI), and
+  Keycloak answers a wrong password and a missing OTP with the same `invalid_grant`, so an in-app TOTP step cannot be
+  offered honestly. The pages link out to the Keycloak console instead ("Forgot password?" on the login page), and an
+  account with a pending required action gets a "Finish setting up your account in Keycloak" notice with a link.
 
 > **`VITE_LOCAL=true` and `VITE_DEMO=true` must never reach a production build.** Both flags are inlined by Vite at
 > build time and short-circuit the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enable a

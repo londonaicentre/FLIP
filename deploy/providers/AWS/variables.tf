@@ -56,10 +56,6 @@ variable "lza_web_edge_distribution_arn" {
   default     = ""
 }
 
-variable "vpc_cidr" {
-  type = string
-}
-
 # POSTGRES_USER / POSTGRES_DB are configuration, not credentials, and are treated
 # as such consistently (FLIP#962): NOT `sensitive` here, and stored as GitHub
 # environment *variables* rather than environment secrets.
@@ -120,18 +116,8 @@ variable "flip_keypair" {
   type = string
 }
 
-variable "ec2_public_key_path" {
-  type = string
-}
-
 variable "AES_KEY_BASE64" {
   type = string
-}
-
-variable "deploy_trust_ec2" {
-  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts as usual."
-  type        = bool
-  default     = true
 }
 
 variable "INTERNAL_SERVICE_KEY_HASH" {
@@ -189,6 +175,21 @@ variable "fl_api_image_tag" {
   validation {
     condition     = lower(var.fl_api_image_tag) != "latest" && !endswith(lower(var.fl_api_image_tag), "-latest")
     error_message = "fl_api_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
+  }
+}
+
+# Flower's fleet proxy sidecar (FLIP#1517), a repository of its own: CI's
+# resolve-image-tags.sh pins its own `v<X.Y.Z>@sha256:…` on a release apply. Empty
+# means "the FL server's tag, minus any digest" (ecs_tasks.tf), right for every
+# caller that does not pin by digest. Unused on NVFLARE.
+variable "fl_fleet_proxy_image_tag" {
+  description = "Docker image tag for Flower's fleet proxy sidecar. Empty falls back to flip_fl_image_tag without its digest."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = lower(var.fl_fleet_proxy_image_tag) != "latest" && !endswith(lower(var.fl_fleet_proxy_image_tag), "-latest")
+    error_message = "fl_fleet_proxy_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
   }
 }
 

@@ -110,6 +110,10 @@ has no hub and leaves the variable unset — nothing presigns bundle URLs for it
 bypassed) saying exactly what is disabled: fetches from *any* public https host, with only the
 range check and its rebinding window left. On a hub deployment that warning is a wiring regression.
 
+Bundle-fetch logs and errors show the URL's origin and file name, without credentials, query parameters
+or fragments. Download errors name the exception type rather than repeating its URL-bearing message.
+The signed URL is preserved for the actual fetch.
+
 ## Testing
 
 The nvflare `local` and `startup` folders are created during the provisioning of each real network

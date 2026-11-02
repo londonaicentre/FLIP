@@ -25,7 +25,7 @@ Standalone FastAPI service for Flower deployment runtime.
 - `GET /list_runs`
 - `POST /upload_app/{model_id}`
 - `POST /submit_run/{job_folder}` — submit a previously uploaded application; `job_folder` is the Central Hub `model_id` (UUID). flip-api's production path (also exposed as the hidden `/submit_job` alias)
-- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `xray_classification`); the local tutorial harness targets this
+- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `xray_classification`); the local tutorial harness targets this. The name is resolved to `/app/src/<category>/<name>` (the `fl-tutorials/flower/` layout since #1500) and must match exactly one folder; a flat `/app/src/<name>` is never used
 - `DELETE /abort_run/{run_id}`
 
 ## API docs
@@ -132,6 +132,10 @@ has no hub and leaves the variable unset — nothing presigns bundle URLs for it
 `WARNING` naming the variable once at startup (and again on the first validation if startup was
 bypassed) saying exactly what is disabled: fetches from *any* public https host, with only the
 range check and its rebinding window left. On a hub deployment that warning is a wiring regression.
+
+Bundle-fetch logs and errors show the URL's origin and file name, without credentials, query parameters
+or fragments. Download errors name the exception type rather than repeating its URL-bearing message.
+The signed URL is preserved for the actual fetch.
 
 ## Development startup with Docker Compose
 

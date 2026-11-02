@@ -103,7 +103,7 @@ class _Missing(FetchError):
 class _Retry(Exception):
     """A transient failure: retried up to ATTEMPTS times, after waiting ``wait`` seconds."""
 
-    def __init__(self, reason: str, wait: float):
+    def __init__(self, reason: str, wait: float) -> None:
         super().__init__(reason)
         self.reason = reason
         self.wait = wait

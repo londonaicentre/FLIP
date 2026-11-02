@@ -28,7 +28,7 @@ import hashlib
 import os
 
 # Pin the AES key BEFORE any data_access_api module loads its Settings singleton.
-# Same value as trust/deploy/compose.test.yml so encrypt/decrypt round-trip works.
+# Same value as trust/deploy/compose/compose.test.yml so encrypt/decrypt round-trip works.
 os.environ["AES_KEY_BASE64"] = "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA="  # pragma: allowlist secret
 
 from collections.abc import Generator  # noqa: E402  — must come after the env override
@@ -41,12 +41,12 @@ from testcontainers.compose import DockerCompose  # noqa: E402
 # (``trust/data-access-api/tests/integration/conftest.py``) — that's the directory
 # Testcontainers needs as `context` so the compose file's `../trust-api/...` and
 # `../data-access-api/...` paths resolve back into trust/.
-_COMPOSE_DIR = Path(__file__).resolve().parents[3] / "deploy"
+_COMPOSE_DIR = Path(__file__).resolve().parents[3] / "deploy" / "compose"
 _COMPOSE_FILE = "compose.test.yml"
 _DATA_ACCESS_SERVICE = "data-access-api-test"
 _DATA_ACCESS_INTERNAL_PORT = 8000
 
-# Must match the value baked into ``trust/deploy/compose.test.yml``. Keeping this in source
+# Must match the value baked into ``trust/deploy/compose/compose.test.yml``. Keeping this in source
 # (rather than reading os.environ) makes it explicit which value the tests need.
 TRUST_INTERNAL_KEY = "test-trust-internal-service-key"  # pragma: allowlist secret
 AUTH_HEADERS = {"X-Trust-Internal-Service-Key": TRUST_INTERNAL_KEY}

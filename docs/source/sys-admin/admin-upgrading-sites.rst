@@ -31,7 +31,7 @@ Two rules apply throughout:
 .. warning::
 
    **Never use the first-install commands to move a live site.** ``make up-onprem-trust``, ``make -C trust
-   up-trust``, ``restart-trust`` and ``make -C deploy/providers/AWS deploy-trust`` re-seed the mock data and **wipe
+   up-trust``, ``restart-trust`` and an EC2 node's ``make -C trust/deploy/terraform/aws/ec2 deploy`` re-seed the mock data and **wipe
    the XNAT archive**. Use only the upgrade commands below.
 
 .. list-table:: Upgrade command per deployment shape
@@ -43,13 +43,13 @@ Two rules apply throughout:
      - Command (from a FLIP checkout at the release tag)
    * - On-premises (Docker Compose)
      - Site operator
-     - ``sudo -E make upgrade-onprem-trust KIT=<slot>``
+     - ``sudo -E make upgrade-onprem-trust KIT=<CODE>``
    * - Kubernetes (Helm)
      - Site operator
      - ``make -C trust/deploy/helm upgrade-trust-k8s KIT=<CODE> HUB=<env>``
-   * - Cloud (EC2) trust
-     - FLIP admin
-     - ``make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env>``
+   * - AWS EC2 node
+     - Whoever deployed it
+     - ``make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env>``
    * - Central Hub
      - FLIP admin
      - ``make -C deploy/providers/AWS deploy-centralhub HUB=prod TAG=vX.Y.Z`` (see :ref:`upgrade-hub`)
@@ -84,7 +84,7 @@ Step 2 — Replace the Hub-shared block (refreshed kit only)
 
 *Who: site operator*
 
-If you were sent a refreshed kit, open the new ``.env.<slot>.prod`` and copy **only** the block between
+If you were sent a refreshed kit, open the new ``.env.<CODE>.prod`` and copy **only** the block between
 ``# ── Hub-shared (managed …)`` and ``# ── Kit credentials (managed)`` into your own kit file. Keep your Host-local
 profile (ports, data directories, ``FL_KIT_DIR``) and your Trust-local credentials. Do not copy the whole file over
 yours.
@@ -138,8 +138,8 @@ From the checkout:
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot>                # e.g. KIT=Trust_2; targets the hub's release
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z     # or pin the release explicitly
+   sudo -E make upgrade-onprem-trust KIT=<CODE>                # e.g. KIT=GSTT; targets the hub's release
+   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z     # or pin the release explicitly
 
 .. list-table:: Options
    :header-rows: 1
@@ -147,8 +147,9 @@ From the checkout:
 
    * - Option
      - Effect
-   * - ``KIT=<slot>``
-     - Required. The trust's kit slot.
+   * - ``KIT=<CODE>``
+     - Required. The name in your kit file, ``trust/.env.<KIT>.prod``: the trust's code, or its FL slot (for
+       example ``Trust_2``) for a kit packaged before FLIP#1419.
    * - ``TAG=vX.Y.Z``
      - The release to move to. Default: the release the hub reports.
    * - ``HUB=<env>``
@@ -260,7 +261,7 @@ A healthy reply looks like
      - ``true`` when trust-api's encryption key matches the hub's.
 
 The hub fields are ``null`` until the next accepted heartbeat (a few seconds), and again whenever the hub rejects one.
-Run ``make onboard-onprem-trust KIT=<slot>`` to see every checklist row again.
+Run ``make onboard-onprem-trust KIT=<CODE>`` to see every checklist row again.
 
 On the hub, the FLIP admin sees the same versions in *Connection Status → trust drawer*. Any container still on another
 build shows an amber ``≠ hub`` pill.
@@ -287,6 +288,17 @@ populated data, and the API deployments roll onto the new images.
    Unlike Compose, the chart's mock-data seed also runs on upgrade. While ``trustData.seed.enabled`` is on, every
    upgrade re-applies the listed mock projects (only those projects' rows are replaced). **Turn it off in the
    override for a site whose stores hold real data only.**
+
+**Databases initialised before the role split.** A trust whose XNAT database volume was created by a chart
+older than the xnat-db role split holds a single superuser named ``xnat`` and no ``postgres`` role. Releases
+that carry FLIP#1658 connect as whichever of the two roles the volume has, so the upgrade completes and the
+application role's password is re-synced; on such a site the application role stays the database superuser
+until it is converged (see :ref:`ts-k8s-xnat-db-roles`). One related pre-flight check: a release from the
+``guard-xnat-db-passwords.sh`` era refuses to start xnat-db when the two XNAT passwords are equal
+(``XNAT_DATASOURCE_PASSWORD`` and ``XNAT_DATASOURCE_ADMIN_PASSWORD`` in the kit, ``xnat-datasource-password``
+and ``xnat-datasource-admin-password`` in ``values-secrets.yaml``; ``xnat-admin-password`` is a different
+secret, XNAT's web admin password), so a site that ever set them to the same value must
+rotate one of them before the upgrade, or the pod stops for that reason instead.
 
 **Per-image pins.** The kit's opt-outs reach the chart as pins that override ``global.image.tag`` for one image
 (or all three XNAT images for ``xnat.image.pin``):
@@ -316,17 +328,17 @@ three.
    Older xnat-web images (v0.12.0, for example) carry a Docker-only script, and the Job refuses them by name. Hold
    XNAT back only to an xnat-web image from the release that ships your chart, or later.
 
-Cloud (EC2) trust
-=================
+AWS EC2 node
+============
 
-*Who: FLIP admin*, from the admin workstation at the release tag. It uses the same SSH Docker context as
-``make deploy-trust``.
+*Who: whoever deployed the node*, from their workstation at the release tag. It uses the same SSH Docker context as
+the root's ``make deploy``.
 
 .. code-block:: shell
 
-   make -C deploy/providers/AWS upgrade-trust-ec2 KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
+   make -C trust/deploy/terraform/aws/ec2 upgrade KIT=<CODE> HUB=<env> [TAG=vX.Y.Z]
 
-It takes the same options as the on-premises upgrade and never re-seeds data. ``deploy-trust`` remains the
+It takes the same options as the on-premises upgrade and never re-seeds data. ``make deploy`` remains the
 first-install command: it re-seeds OMOP and Orthanc and resets the XNAT archive.
 
 .. _upgrade-rolling-back:
@@ -338,7 +350,7 @@ Check out the previous release's tag, then run the upgrade with that tag and ``F
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=vX.Y.Z FORCE=1
+   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=vX.Y.Z FORCE=1
 
 **Rolling back to v0.7.0 or earlier.** Those releases have no ``:vX.Y.Z`` images (the registry check refuses
 ``TAG=v0.7.0``) and their checkouts have no upgrade command. Stay on your current checkout and use the images built from
@@ -356,7 +368,7 @@ that release's commit:
 
 .. code-block:: shell
 
-   sudo -E make upgrade-onprem-trust KIT=<slot> TAG=sha-23cf331
+   sudo -E make upgrade-onprem-trust KIT=<CODE> TAG=sha-23cf331
 
 A ``sha-`` tag has no release order, so the command does not see this as a downgrade and needs no ``FORCE=1``: check the
 printed ``site <current> → target sha-…`` yourself. The old images then run under the newer checkout's compose files, a
@@ -395,12 +407,12 @@ until it is re-keyed. On the admin workstation:
 
       make sync-trust-kits HUB=prod
 
-#. **Package each site's kit** and send it over the encrypted channel used at onboarding. The packaging is keyed on
-   the kit's ``FL_KIT_SLOT``, so the kit is passed by path:
+#. **Package each site's kit** and send it over the encrypted channel used at onboarding. It packs the FL kit share
+   of the kit's ``FL_KIT_SLOT``:
 
    .. code-block:: shell
 
-      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot> KIT_FILE=$PWD/trust/.env.<CODE>.prod HUB=prod
+      make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> HUB=prod
 
 Then mark *Refreshed kit needed: yes* in the release's Site upgrade section, with the keys that changed, so operators
 replace the block before upgrading.

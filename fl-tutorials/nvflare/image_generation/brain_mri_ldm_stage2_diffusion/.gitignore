@@ -1,0 +1,3 @@
+fl_job/
+# The frozen autoencoder is produced locally by `make prepare-checkpoint`, never committed.
+app_files/pretrained_autoencoder.pt

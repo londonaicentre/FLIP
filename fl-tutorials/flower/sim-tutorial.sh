@@ -202,9 +202,30 @@ TUTORIAL="${1:-${TUTORIAL:-}}"
 # (e.g. --run-config 'num-server-rounds=1').
 [ $# -gt 0 ] && shift || true
 
-list() { for d in "$HERE"/*/app; do basename "$(dirname "$d")"; done; }
+list() { for d in "$HERE"/*/*/app; do basename "$(dirname "$d")"; done; }
 if [ -z "$TUTORIAL" ]; then echo "Set TUTORIAL=<name>. Available:"; list | sed 's/^/  - /'; exit 1; fi
-if [ ! -d "$HERE/$TUTORIAL/app" ]; then echo "❌ Unknown tutorial '$TUTORIAL'. Available:"; list | sed 's/^/  - /'; exit 1; fi
+# Tutorials live at <category>/<name> (#1500, the NVFLARE layout) and are addressed by <name>
+# alone — the data-mapping `case` below and every registration key on the bare name — so the
+# name is resolved to its directory here: exactly one match, never a path.
+if [[ "$TUTORIAL" == */* ]]; then echo "❌ Pass the tutorial name only, not a path: '$TUTORIAL'"; exit 1; fi
+TUTORIAL_DIR=""; MATCHES=0
+for d in "$HERE"/*/"$TUTORIAL"/app; do
+  [ -d "$d" ] || continue
+  MATCHES=$((MATCHES + 1)); TUTORIAL_DIR="$(dirname "$d")"
+done
+if [ "$MATCHES" -eq 0 ]; then echo "❌ Unknown tutorial '$TUTORIAL'. Available:"; list | sed 's/^/  - /'; exit 1; fi
+if [ "$MATCHES" -gt 1 ]; then
+  echo "❌ '$TUTORIAL' exists in several categories under fl-tutorials/flower/ — a tutorial name must be unique:"
+  for d in "$HERE"/*/"$TUTORIAL"/app; do [ -d "$d" ] && echo "  - $(dirname "${d#"$HERE"/}")"; done
+  exit 1
+fi
+# A checkout that pulled the #1500 move keeps ignored files (caches, a downloaded checkpoint) at the
+# old flat fl-tutorials/flower/<name>/; they are not tutorials, but they mislead `ls` and any
+# depth-one glob, so say so once and name the cleanup.
+for d in "$HERE"/*/app; do
+  [ -d "$d" ] || continue
+  echo "⚠️  Stale flat-layout leftover (ignored files from before #1500): $(dirname "$d") — remove with: git clean -fdX fl-tutorials/flower/$(basename "$(dirname "$d")")"
+done
 
 # The per-tutorial dev data mapping — LOCAL_DEV reads these directly instead of the bind
 # mounts the fl-services/flower containers would provide.
@@ -267,8 +288,8 @@ refuse_foreign_superlink "$CONTROL_PORT"
 
 # How many simulated sites, from the tutorial's own flip-min-clients so the two cannot drift.
 SITES="$(sed -n 's/^flip-min-clients[[:space:]]*=[[:space:]]*\([0-9]\{1,\}\).*/\1/p' \
-  "$HERE/$TUTORIAL/pyproject.toml" | head -1)"
-if [ -z "$SITES" ]; then echo "❌ No flip-min-clients in $TUTORIAL/pyproject.toml"; exit 1; fi
+  "$TUTORIAL_DIR/pyproject.toml" | head -1)"
+if [ -z "$SITES" ]; then echo "❌ No flip-min-clients in ${TUTORIAL_DIR#"$HERE"/}/pyproject.toml"; exit 1; fi
 
 export LOCAL_DEV=true
 # GPU share per simulated site. Ray hands a ClientApp actor no GPU unless the federation config
@@ -297,7 +318,7 @@ echo "   WORKING_DIR=$WORKING_DIR"
 # rides on --federation-config rather than a [tool.flwr.federations] block, because `flwr run`
 # migrates such a block into the user's ~/.flwr/config.toml and REWRITES the pyproject.toml to
 # comment it out (flwr/cli/config_migration.py) — which would dirty a tracked file every run.
-cd "$HERE/$TUTORIAL"
+cd "$TUTORIAL_DIR"
 # The streamed output is kept so the run id can be read back off it once the stream closes.
 # Through the pipe stdout is no longer a terminal, so PYTHONUNBUFFERED keeps the streamed log
 # lines arriving as they happen instead of block-buffered.

@@ -47,8 +47,8 @@ TEMPLATES_DIR = REPO_ROOT / "fl-apps" / "flower"
 
 
 def _tutorial_apps() -> list[Path]:
-    """Every fl-tutorials/flower/<name>/app directory, sorted for stable test ids."""
-    return sorted(p for p in TUTORIALS_DIR.glob("*/app") if p.is_dir())
+    """Every fl-tutorials/flower/<category>/<name>/app directory, sorted for stable test ids (#1500)."""
+    return sorted(p for p in TUTORIALS_DIR.glob("*/*/app") if p.is_dir())
 
 
 TUTORIAL_APPS = _tutorial_apps()

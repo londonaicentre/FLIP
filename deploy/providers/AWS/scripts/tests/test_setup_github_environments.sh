@@ -29,7 +29,7 @@
 # reclassifies real required keys as optional, and the operator is told a key the
 # workflow will dereference is "fine to omit". So the fixture omits one key from
 # the middle of REQUIRED_KEYS (AWS_REGION) and one from its end
-# (DEPLOY_TRUST_EC2), and asserts both.
+# (FL_KIT_SLOT_NAMES), and asserts both.
 #
 # Usage:
 #     bash deploy/providers/AWS/scripts/tests/test_setup_github_environments.sh
@@ -103,7 +103,11 @@ case "$1 $2" in
             Role.Arn) echo "arn:aws:iam::${STUB_ACCOUNT}:role/${name}-ARNMARKER" ;;
             *":sub"*) echo "${STUB_SUB}" ;;
             *":job_workflow_ref"*)
-                if [[ "${name}" == *Apply* ]]; then echo "${STUB_APPLY_REF}"; else echo "None"; fi ;;
+                # The UI-publish role trusts publish_ui.yml at the apply role's branch,
+                # unless STUB_UI_REF says otherwise.
+                if [[ "${name}" == *Apply* ]]; then echo "${STUB_APPLY_REF}"
+                elif [[ "${name}" == *UiPublish* ]]; then echo "${STUB_UI_REF:-${STUB_APPLY_REF/terraform_apply.yml/publish_ui.yml}}"
+                else echo "None"; fi ;;
             *) echo "unexpected get-role query" >&2; exit 98 ;;
         esac ;;
     "iam get-policy")
@@ -223,12 +227,12 @@ echo "==== setup-github-environments.sh ===="
 # 1. THE REGRESSION. Both ends of REQUIRED_KEYS must be classified as required: a
 #    membership glob that only matches the final element reports every other
 #    required key as an optional absence, which is the opposite of this script's
-#    job. AWS_REGION is first in the list, DEPLOY_TRUST_EC2 last.
+#    job. AWS_REGION is first in the list, FL_KIT_SLOT_NAMES last.
 run_case "a partial env file is read in dry-run" -- \
     --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
 expect_rc 0 "dry run succeeds"
 expect_mentions "- AWS_REGION" "a required key in the middle of the list is reported"
-expect_mentions "- DEPLOY_TRUST_EC2" "and so is the one at the end"
+expect_mentions "- FL_KIT_SLOT_NAMES" "and so is the one at the end"
 expect_mentions "REQUIRED but absent" "under the required heading"
 expect_mentions "reconcile_ci_env.py --env stag" "with the recovery command for this hub"
 
@@ -332,6 +336,37 @@ run_case "an environment that cannot be listed is said so, not passed as clean" 
 expect_rc 0 "dry run succeeds"
 expect_mentions "Could not list what aws-stag already holds" "the failed listing is reported"
 expect_mentions "ENFORCE_MFA" "with the keys to check by hand"
+
+# 6d. FLIP#1186: the UI-publish role. Where it exists its ARN is read from IAM and
+#     the UI build's inputs become required; where it does not, the run still
+#     succeeds and says CI will not publish the UI.
+run_case "the UI-publish role is wired and its inputs are required" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_rc 0 "succeeds"
+expect_mentions "the UI-publish role and its trust policy check out" "the role is checked"
+expect_mentions "set TF_UI_PUBLISH_ROLE_ARN" "its ARN is set"
+if grep -A1 '^gh variable set TF_UI_PUBLISH_ROLE_ARN ' "${CALLS}" | grep -qF 'role/AICentre-FLIPUiPublishRole-ARNMARKER'; then
+    ok "from IAM, not from the env file"
+else
+    no "from IAM, not from the env file" "$(grep -A1 'TF_UI_PUBLISH_ROLE_ARN' "${CALLS}")"
+fi
+expect_mentions "- CENTRAL_HUB_API_URL" "the API URL the UI build needs is required"
+expect_mentions "- AWS_COGNITO_USER_POOL_ID" "and so are the Cognito ids"
+expect_mentions "BLACKLISTED_MODEL_FILES" "an optional UI input is listed as absent"
+expect_silent_about "- BLACKLISTED_MODEL_FILES" "but not as required"
+
+run_case "without the UI-publish role the UI inputs are not asked for" \
+    STUB_MISSING_ROLES="AICentre-FLIPUiPublishRole" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip --dry-run
+expect_rc 0 "dry run succeeds"
+expect_mentions "CI will not publish the UI" "the missing role is reported, not fatal"
+expect_silent_about "TF_UI_PUBLISH_ROLE_ARN" "no role ARN is set"
+expect_silent_about "CENTRAL_HUB_API_URL" "and the UI inputs are not asked for"
+
+run_case "a UI-publish role pinned to another workflow is refused" \
+    STUB_UI_REF="acme/flip/.github/workflows/terraform_apply.yml@refs/heads/develop" -- \
+    --hub stag --env-file "${ENV_FILE}" --repo acme/flip
+expect_refused_before_gh "refused" "publish_ui.yml@refs/heads/develop" "naming the reusable workflow it must trust"
 
 # 7. Failures an operator has to get right. Nothing here may be a warning.
 for old in --env --mode; do

@@ -173,7 +173,7 @@ export XNAT_DATA_DIR
 # if someone pinned a `user:` on xnat-db. Its dir is included on stag/prod only, so
 # the whole tree carries one owner.
 #
-# deploy/providers/AWS/site.yml and trust/deploy/ansible/onprem.yml
+# trust/deploy/ansible/aws-ec2-host.yml and onprem.yml
 # provision XNAT's bind mounts with this same id: the uid is the invariant all three
 # paths share, and the one to keep in step. The directories deliberately are not —
 # both playbooks provision /opt/flip/xnat, while stag/prod resolves XNAT_DATA_DIR to
@@ -470,7 +470,7 @@ upgrade-xnat: create-xnat-network
 	$(require_xnat_passwords)
 	@echo "⬆️  Upgrading XNAT stack $(XNAT_STACK) to $(XNAT_TAG) (data dir $(XNAT_DATA_DIR) kept)..."
 	@# Check the directories where they are: on the trust host over ssh when the swarm is remote
-	@# (upgrade-trust-ec2 runs this from the admin workstation), locally otherwise — the same
+	@# (an EC2 node's upgrade runs this from the admin workstation), locally otherwise — the same
 	@# split the first-install reset target makes.
 	@xnat_ctx="$$(docker context show)"; \
 	xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \

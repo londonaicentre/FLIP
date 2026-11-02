@@ -209,6 +209,26 @@ def resolve_bundle_host(hostname: str) -> list[ipaddress.IPv4Address | ipaddress
     ]
 
 
+def redact_url(url: str) -> str:
+    """Return the origin and file name without URL credentials, query or fragment."""
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or ""
+        port = parsed.port
+    except ValueError:
+        return "<invalid URL>"
+    if ":" in hostname:
+        hostname = f"[{hostname}]"
+    origin = f"{hostname}:{port}" if port is not None else hostname
+    return parsed._replace(
+        netloc=origin,
+        path=f"/{Path(parsed.path).name}" if parsed.path else "",
+        params="",
+        query="",
+        fragment="",
+    ).geturl()
+
+
 def validate_bundle_url(url: str) -> str:
     """Reject bundle download URLs that are unsafe to fetch server-side.
 
@@ -247,17 +267,22 @@ def validate_bundle_url(url: str) -> str:
         str: The validated URL, unchanged.
 
     Raises:
-        HTTPException: 400 if the URL has no http(s) scheme or no host, names a private/loopback/link-local
+        HTTPException: 400 if the URL is malformed, has no http(s) scheme or host, names a private/loopback/link-local
             IP literal (in any spelling, root-label included) or ``localhost``, has an invalid port, is not
             on the origin allow-list when one is set, or — with no list — is not https on 443, does not
             resolve, or resolves to any non-public address. 500 if ``BUNDLE_URL_ALLOWED_ORIGINS`` is
             malformed (the startup hook refuses to boot on that, so this is the bypassed-hook fallback).
     """
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").rstrip(".")
+    except ValueError:
+        # Parser error text can contain URL credentials.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bundle URL is malformed.") from None
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL must use http or https: {url!r}.",
+            detail=f"Bundle URL must use http or https: {redact_url(url)!r}.",
         )
 
     # Strip any root label (trailing dots) before the emptiness check and both parsers below. DNS
@@ -265,11 +290,10 @@ def validate_bundle_url(url: str) -> str:
     # reject the trailing dot — so the unstripped spelling skipped every range check: the same
     # parsers-disagree failure mode as the numeric spellings. Stripping first also keeps a
     # dot-only host on the no-host rejection instead of the "not an IP literal" branch.
-    hostname = (parsed.hostname or "").rstrip(".")
     if not hostname:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL has no host: {url!r}.",
+            detail=f"Bundle URL has no host: {redact_url(url)!r}.",
         )
 
     # "localhost" is a literal loopback alias, not a name that needs resolving — the range checks
@@ -288,7 +312,7 @@ def validate_bundle_url(url: str) -> str:
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL has an invalid port: {url!r}.",
+            detail=f"Bundle URL has an invalid port: {redact_url(url)!r}.",
         ) from None
 
     # Refuse a host carrying a NUL or other control character before either parser sees it.
@@ -346,7 +370,7 @@ def validate_bundle_url(url: str) -> str:
     if parsed.scheme != "https":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL must use https: {url!r}.",
+            detail=f"Bundle URL must use https: {redact_url(url)!r}.",
         )
     if port not in (None, 443):
         raise HTTPException(

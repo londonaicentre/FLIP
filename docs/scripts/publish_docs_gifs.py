@@ -58,6 +58,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -135,7 +136,9 @@ def expected_gifs(specs_dir: Path, live_list: Path | None = None) -> list[str]:
     return sorted(paths + live)
 
 
-def carry_forward(gifs_dir: Path, live: list[str], repo: str, refs: list[str], download) -> list[str]:
+def carry_forward(
+    gifs_dir: Path, live: list[str], repo: str, refs: list[str], download: Callable[[str, str], str]
+) -> list[str]:
     """Copy each live-recorded GIF missing from ``gifs_dir`` from the first of ``refs`` that has it; returns those
     copied.
 

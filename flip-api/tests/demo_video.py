@@ -94,8 +94,8 @@ APPS: dict[str, dict[str, Any]] = {
                 "label": "FLARE",
             },
             "flower": {
-                "app_dir": "fl-tutorials/flower/xray_classification/app",
-                "query_file": "fl-tutorials/flower/xray_classification/query.sql",
+                "app_dir": "fl-tutorials/flower/image_classification/xray_classification/app",
+                "query_file": "fl-tutorials/flower/image_classification/xray_classification/query.sql",
                 "label": "Flower",
             },
         },
@@ -154,8 +154,8 @@ APPS: dict[str, dict[str, Any]] = {
                 "label": "FLARE",
             },
             "flower": {
-                "app_dir": "fl-tutorials/flower/ehr_risk_prediction/app",
-                "query_file": "fl-tutorials/flower/ehr_risk_prediction/query.sql",
+                "app_dir": "fl-tutorials/flower/tabular_classification/ehr_risk_prediction/app",
+                "query_file": "fl-tutorials/flower/tabular_classification/ehr_risk_prediction/query.sql",
                 "label": "Flower",
             },
         },
@@ -171,8 +171,8 @@ APPS: dict[str, dict[str, Any]] = {
                 "label": "FLARE",
             },
             "flower": {
-                "app_dir": "fl-tutorials/flower/3d_spleen_segmentation/app",
-                "query_file": "fl-tutorials/flower/3d_spleen_segmentation/query.sql",
+                "app_dir": "fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/app",
+                "query_file": "fl-tutorials/flower/image_segmentation/3d_spleen_segmentation/query.sql",
                 "label": "Flower",
             },
         },
