@@ -32,6 +32,8 @@ include ../../../../deploy/env_mode.mk
 
 # OpenTofu is the supported runtime (state encryption, which this root relies on for local state);
 # terraform is accepted as a fallback for sites standardised on it.
+SPLIT_MOVED := snowflake_account_parameter.event_table snowflake_account_password_policy_attachment.account snowflake_account_session_policy_attachment.account snowflake_password_policy.account snowflake_session_policy.account snowflake_resource_monitor.trust snowflake_warehouse.trust 'snowflake_schema.platform["policies"]'
+
 TF ?= $(shell command -v tofu 2>/dev/null || command -v terraform 2>/dev/null)
 
 TFVARS ?= terraform.$(ENV).tfvars
@@ -126,6 +128,14 @@ jit-grant: ## Print the SQL that grants the operator the platform role for one a
 
 jit-revoke: ## Print the SQL that takes the platform role away again
 	$(jit_revoke_sql)
+
+# One-off, for an account applied before the bootstrap split (epic #1589, step 2). Forgets the
+# objects that moved to ../snowflake-bootstrap WITHOUT destroying them. Order: this, then
+# `make adopt-state` in the bootstrap root, then its apply. Never needed on a new account.
+split-state: ## One-off: forget the objects that moved to snowflake-bootstrap (pre-split accounts only)
+	$(require_tf)
+	@read -p "Forget $(words $(SPLIT_MOVED)) objects from this root's state (nothing is destroyed)? [y/N] " a; [ "$$a" = y ]
+	$(TF) state rm $(SPLIT_MOVED)
 
 output: ## Print the names this tier created, as JSON
 	$(require_tf)

@@ -145,7 +145,7 @@ def test_the_account_policies_live_here():
 def test_the_account_parameter_points_at_that_event_table():
     block = hcl_block(source("observability.tf"), 'resource "snowflake_account_parameter" "event_table"')
     assert block, "EVENT_TABLE is an account parameter, so it belongs to the bootstrap tier"
-    assert "count = var.set_event_table ? 1 : 0" in block, "a new account sets it only after the platform made the table"
+    assert "count = var.set_event_table ? 1 : 0" in block, "set only once the platform root made the table"
     assert 'key   = "EVENT_TABLE"' in block
     assert "value = local.event_table_fqn" in block
 
@@ -168,7 +168,6 @@ def test_the_warehouse_carries_the_monitor_and_ci_may_only_pass_on_its_use():
     assert 'ci_warehouse_privileges = ["USAGE", "OPERATE", "MONITOR"]' in source("locals.tf")
     for word in ("MODIFY", "OWNERSHIP"):
         assert word not in source("warehouse.tf").split('resource "snowflake_grant_privileges_to_account_role"')[1]
-
 
 
 def test_the_ci_role_holds_exactly_its_account_privileges():
@@ -209,7 +208,8 @@ def test_the_ci_role_holds_no_system_role_and_sits_under_sysadmin_only():
         if "snowflake_account_role.platform_ci" in block.split("role_name", 1)[1].split("\n", 1)[0]:
             assert 'parent_role_name = "SYSADMIN"' in block or "user_name" in block
         for role in SYSTEM_ROLES:
-            assert f'role_name = "{role}"' not in block and f'role_name        = "{role}"' not in block, role
+            assert f'role_name = "{role}"' not in block, role
+            assert f'role_name        = "{role}"' not in block, role
 
 
 def test_the_ci_users_log_in_with_github_oidc_only():
@@ -220,8 +220,8 @@ def test_the_ci_users_log_in_with_github_oidc_only():
     assert 'github_oidc_subject = "repo:${var.github_repository}:environment:${var.ci_github_environment}"' in source(
         "locals.tf"
     ), "the environment form of the subject: a ref form would let any branch push in"
-    assert "plan  = { name = \"FLIP_CI_PLAN_USER\", role = local.ci_read_role" in source("locals.tf")
-    assert "apply = { name = \"FLIP_CI_APPLY_USER\", role = local.ci_role" in source("locals.tf")
+    assert 'plan  = { name = "FLIP_CI_PLAN_USER", role = local.ci_read_role' in source("locals.tf")
+    assert 'apply = { name = "FLIP_CI_APPLY_USER", role = local.ci_role' in source("locals.tf")
 
 
 def test_the_ci_environment_is_one_of_the_two():

@@ -11,37 +11,35 @@
     limitations under the License.
 -->
 
-# Snowflake platform tier, break glass (FLIP#1581, epic #1589)
+# Snowflake platform tier, applied by CI (FLIP#1581, epic #1589)
 
-**Read this before running anything here.** This is the break-glass root. It creates the Snowflake
-account's security objects and nothing else:
+This root creates the trust's identities and the platform database:
 
 - the six `FLIP_<CODE>_*` roles and the role hierarchy (`DEPLOY`, `SVC`, `OMOP_READER`,
   `OMOP_LOADER`, `OBSERVER`, `CONVERTER`), nothing granted to `PUBLIC`;
 - the deploy `SERVICE` user, public key only;
-- the **only** account-level grant in the whole design: four privileges to `FLIP_<CODE>_DEPLOY`;
-- the egress network rule and the external access integration (off by default);
-- the account network, password and session policies;
-- the event table and the `EVENT_TABLE` account parameter, in a small platform-owned database;
-- the resource monitor.
+- the deploy role's four account privileges, and its use of the trust warehouse;
+- the `FLIP_PLATFORM` database: the event table, the observability views and the prune task.
 
-It is applied **rarely**, by a **person** user with **MFA** holding `ACCOUNTADMIN` (or
-`SECURITYADMIN` where that is enough), and **never from CI**. Routine work belongs in
-[`../snowflake`](../snowflake/README.md), the workload root, applied as `FLIP_<CODE>_DEPLOY_USER`
-with key-pair auth. The two roots keep **separate state**: that is the point of the split. A
-routine apply cannot touch a role, a user, an account grant or an account policy, because none of
-those objects is in its state file.
+It is applied as **`FLIP_PLATFORM_CI`**, a contained role that
+[`../snowflake-bootstrap`](../snowflake-bootstrap/README.md) creates. That role may create roles,
+users and databases, and may pass on only the deploy role's privileges and the warehouse's use,
+which it holds with the grant option. It holds no `MANAGE GRANTS`, no system role and no account
+policy, so nothing applied here can reach `ACCOUNTADMIN`. Everything that needs `ACCOUNTADMIN`
+(resource monitor, warehouse, `EVENT_TABLE` parameter, account policies, egress integration, and the
+CI role itself) lives in the bootstrap root, applied rarely by the just-in-time operator. Routine
+work belongs in [`../snowflake`](../snowflake/README.md), the workload root, applied as
+`FLIP_<CODE>_DEPLOY_USER`. The three roots keep **separate state**.
 
-## The two tiers
+## The three tiers
 
-| | Platform (here) | Workload (`../snowflake`) |
-| --- | --- | --- |
-| Identity | person user, MFA | `FLIP_<CODE>_DEPLOY_USER` (`TYPE = SERVICE`, key pair) |
-| Role | `ACCOUNTADMIN` / `SECURITYADMIN` | `FLIP_<CODE>_DEPLOY` |
-| Frequency | rarely, by hand | every deploy |
-| Creates | roles, deploy user, account grants, EAI, account policies, event table, resource monitor, the trust warehouse (monitor attached) | database, schemas, compute pools, image repository, stages, nightly task, grants on those objects |
-| State | `terraform-platform.<env>.tfstate` | `terraform.<env>.tfstate` |
-| In CI | static checks only | static checks only |
+| | Bootstrap (`../snowflake-bootstrap`) | Platform (here) | Workload (`../snowflake`) |
+| --- | --- | --- | --- |
+| Identity | person operator, passkey MFA, JIT | CI service user, GitHub OIDC | `FLIP_<CODE>_DEPLOY_USER` (key pair) |
+| Role | `ACCOUNTADMIN` | `FLIP_PLATFORM_CI` (plan: `FLIP_PLATFORM_CI_READ`) | `FLIP_<CODE>_DEPLOY` |
+| Frequency | once per account, then rarely | on merge | every deploy |
+| Creates | CI role and users, resource monitor, trust warehouse, `EVENT_TABLE` parameter, account policies, EAI | roles, deploy user, account grants, `FLIP_PLATFORM` (event table, views, task) | database, schemas, pools, image repository, stages, nightly task |
+| State | `terraform-bootstrap.<env>.tfstate` | `terraform-platform.<env>.tfstate` | `terraform.<env>.tfstate` |
 
 The **account privileges** `FLIP_<CODE>_DEPLOY` holds are exactly:
 
@@ -63,9 +61,9 @@ once (`roles.tf`), and from then on a routine apply can say "grant `SELECT` on t
 `FLIP_<CODE>_OMOP_READER`" entirely within its own privileges. Ownership stays with the deploy
 role throughout.
 
-The trust warehouse lives here, not in the workload root, because assigning a resource monitor to a
-warehouse needs `ACCOUNTADMIN`. This root owns `FLIP_<CODE>_WH` with `FLIP_<CODE>_RM` attached and
-grants the deploy role USAGE, OPERATE and MONITOR (no MODIFY, no OWNERSHIP), so the cost guard is
+The trust warehouse lives in the bootstrap root, because assigning a resource monitor to a
+warehouse needs `ACCOUNTADMIN`. That root owns `FLIP_<CODE>_WH` with `FLIP_<CODE>_RM` attached;
+this one grants the deploy role, by name, USAGE, OPERATE and MONITOR (no MODIFY, no OWNERSHIP), so the cost guard is
 out of the deploy key's reach. `EXECUTE TASK` is the deploy role's fourth account privilege so it
 can run the nightly pool-suspend task it owns.
 

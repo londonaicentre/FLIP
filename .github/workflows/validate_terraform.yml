@@ -76,11 +76,13 @@ jobs:
           # Never applied by CI, but validating it exercises the module — so a
           # broken trust policy is caught before any caller picks it up.
           - ./deploy/providers/AWS/ci
-          # The Snowflake trust node's two roots (FLIP#1581, epic #1589). Validated with a
+          # The Snowflake trust node's three roots (FLIP#1581, epic #1589). Validated with a
           # backend-free init, so neither the local backend nor any Snowflake credential is
-          # needed. snowflake-platform is the break-glass tier (roles, deploy user, account
-          # grants, EAI, account policies, event table, resource monitor); snowflake is the
-          # least-privilege workload tier applied as FLIP_<CODE>_DEPLOY_USER.
+          # needed. snowflake-bootstrap is the break-glass tier (the contained CI role and its
+          # users, warehouse and resource monitor, account parameter and policies, EAI);
+          # snowflake-platform is applied by CI as FLIP_PLATFORM_CI (roles, deploy user, account
+          # grants, event table); snowflake is the workload tier applied as FLIP_<CODE>_DEPLOY_USER.
+          - ./trust/deploy/terraform/snowflake-bootstrap
           - ./trust/deploy/terraform/snowflake-platform
           - ./trust/deploy/terraform/snowflake
     defaults:
@@ -111,7 +113,9 @@ jobs:
   # no role, user, integration, account policy, account parameter or account-level grant, no
   # PUBLIC grant, SSE on every stage, auto-suspend on every compute pool, no secret value in
   # Terraform. For the platform root: exactly four account privileges to the deploy role and no
-  # others, MFA on the break-glass identity, no credential as a variable, egress off by default.
+  # others, no credential as a variable, only resource types the CI role can manage. For the
+  # bootstrap root: the CI role's exact privilege list, never MANAGE GRANTS or a system role,
+  # CI users that log in with a GitHub OIDC token only, egress off by default.
   snowflake-trust-root:
     name: Snowflake ${{ matrix.root }} static checks
     runs-on: ubuntu-latest
@@ -119,6 +123,7 @@ jobs:
       fail-fast: false
       matrix:
         root:
+          - snowflake-bootstrap
           - snowflake-platform
           - snowflake
     defaults:

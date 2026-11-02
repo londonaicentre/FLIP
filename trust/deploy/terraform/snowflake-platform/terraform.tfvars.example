@@ -15,8 +15,9 @@
 organization_name = "MYORG"
 account_name      = "MYACCOUNT"
 
-# The break-glass PERSON user's role. ACCOUNTADMIN is needed for the account parameter, the
-# resource monitor and the account policy attachments.
+# CI applies this root as FLIP_PLATFORM_CI (plans as FLIP_PLATFORM_CI_READ), both created by
+# ../snowflake-bootstrap. A break-glass operator may apply it with any role inheriting
+# FLIP_PLATFORM_CI (SYSADMIN does).
 platform_role      = "FLIP_PLATFORM_CI"
 platform_warehouse = "COMPUTE_WH"
 

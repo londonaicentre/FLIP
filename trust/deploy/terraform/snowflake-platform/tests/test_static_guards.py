@@ -213,7 +213,7 @@ def test_no_secret_resource_anywhere():
 def test_the_event_table_lives_in_a_platform_database():
     locals_text = source("locals.tf")
     assert 'platform_database = "FLIP_PLATFORM"' in locals_text
-    assert 'obs      = "OBS"' in locals_text
+    assert 'obs = "OBS"' in locals_text
     assert resource_blocks(source("platform_database.tf"), "snowflake_database"), (
         "an event table needs a database, and it must not be the trust database"
     )
@@ -524,7 +524,8 @@ def test_the_grafana_follow_up_is_recorded_and_not_half_built():
 
 def test_the_trust_roles_use_the_bootstrap_warehouse_without_owning_it():
     """The warehouse and its monitor are the bootstrap's; this root grants its use by name only."""
-    grant = hcl_block(source("warehouse.tf"), 'resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse"')
+    header = 'resource "snowflake_grant_privileges_to_account_role" "deploy_warehouse"'
+    grant = hcl_block(source("warehouse.tf"), header)
     assert 'privileges        = ["USAGE", "OPERATE", "MONITOR"]' in grant
     assert "object_name = local.warehouse" in grant
     for word in ("MODIFY", "OWNERSHIP"):

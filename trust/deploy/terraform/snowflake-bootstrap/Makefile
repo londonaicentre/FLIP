@@ -127,6 +127,16 @@ jit-grant: ## Print the SQL that grants the operator the platform role for one a
 jit-revoke: ## Print the SQL that takes the platform role away again
 	$(jit_revoke_sql)
 
+# One-off, pre-split accounts: take over the warehouse, the monitor and the EVENT_TABLE parameter
+# that the platform root used to manage (after `make split-state` there). The policies are not
+# imported: they move schema, so the bootstrap creates new ones in FLIP_ADMIN (see adopt-sql).
+adopt-state: init ## One-off: import the warehouse, monitor and EVENT_TABLE parameter (TRUST_CODE=<CODE>)
+	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<CODE> is required"; exit 1; }
+	@c=$$(echo "$(TRUST_CODE)" | tr a-z A-Z); \
+	$(TF) import -var-file="$(TFVARS)" snowflake_warehouse.trust "\"FLIP_$${c}_WH\"" && \
+	$(TF) import -var-file="$(TFVARS)" snowflake_resource_monitor.trust "\"FLIP_$${c}_RM\"" && \
+	$(TF) import -var-file="$(TFVARS)" 'snowflake_account_parameter.event_table[0]' EVENT_TABLE
+
 # One-off, for an account whose platform objects were created before the split (SFTEST): hand
 # everything the platform root manages to FLIP_PLATFORM_CI, so CI can apply it from then on. Run it
 # in Snowsight after the first bootstrap apply. COPY CURRENT GRANTS keeps every existing grant.
@@ -134,6 +144,11 @@ adopt-sql: ## Print the SQL that hands the pre-split platform objects to FLIP_PL
 	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<CODE> is required"; exit 1; }
 	@c=$$(echo "$(TRUST_CODE)" | tr a-z A-Z); \
 	echo "USE ROLE ACCOUNTADMIN;"; \
+	echo "-- the old policies sit in FLIP_PLATFORM, which CI will own: detach and drop them first,"; \
+	echo "-- then make apply here recreates and attaches them in FLIP_ADMIN."; \
+	echo "ALTER ACCOUNT UNSET PASSWORD POLICY;"; \
+	echo "ALTER ACCOUNT UNSET SESSION POLICY;"; \
+	echo "DROP SCHEMA IF EXISTS FLIP_PLATFORM.POLICIES;"; \
 	echo "ALTER TASK FLIP_PLATFORM.OBS.FLIP_PLATFORM_PRUNE_EVENTS SUSPEND;"; \
 	for r in DEPLOY SVC OMOP_READER OMOP_LOADER OBSERVER CONVERTER; do \
 	  echo "GRANT OWNERSHIP ON ROLE FLIP_$${c}_$${r} TO ROLE FLIP_PLATFORM_CI COPY CURRENT GRANTS;"; done; \

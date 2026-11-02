@@ -31,13 +31,13 @@ locals {
     converter   = "${local.prefix}_CONVERTER"
   }
 
-  deploy_user      = "${local.prefix}_DEPLOY_USER"
+  deploy_user = "${local.prefix}_DEPLOY_USER"
 
   # The platform tier owns one small database. An event table needs a database, and putting it in
   # the trust database would make the workload root's destroy take the account's logging with it.
   platform_database = "FLIP_PLATFORM"
   platform_schemas = {
-    obs      = "OBS"
+    obs = "OBS"
   }
   event_table     = "FLIP_EVENTS"
   event_table_fqn = "${local.platform_database}.${local.platform_schemas.obs}.${local.event_table}"
@@ -75,6 +75,4 @@ locals {
   ]
 
   warehouse = "${local.prefix}_WH"
-
-
 }
