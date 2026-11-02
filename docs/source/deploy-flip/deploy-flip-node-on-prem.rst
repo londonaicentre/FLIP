@@ -83,9 +83,10 @@ No FLIP command on this page runs ``sudo`` itself. The account that runs them ne
        - ``BASE_IMAGES_DOWNLOAD_DIR``, ``COHORT_SNAPSHOT_STORAGE_DIR``
      * - the FLARE client alone
        - 1000
-       - ``FL_KIT_DIR/net-<N>/services/<slot>/local`` and ``transfer``: the kit itself, which it writes at start.
-         ``prepare-host-dirs`` does not touch the kit, so extract it as uid 1000 or ``chown -R 1000`` those two
-         directories (the Ansible playbook does; under ``FLIP_UID`` the kit you extracted is already yours).
+       - ``FL_KIT_DIR/net-<N>/services/<slot>``: the kit itself. The client reads ``startup/client.key`` (mode
+         660) and writes ``local/`` and ``transfer/`` at start, so the whole slot directory must be that uid's.
+         ``prepare-host-dirs`` does not touch the kit: extract it as uid 1000 or ``chown -R 1000`` the slot
+         directory (the Ansible playbook does; under ``FLIP_UID`` the kit you extracted is already yours).
      * - xnat-web
        - 1001
        - ``XNAT_DATA_DIR``

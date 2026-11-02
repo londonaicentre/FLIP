@@ -887,6 +887,36 @@ def test_40_container_uid_row() -> None:
     _assert("mkdir -p" in hint and "prepare-host-dirs" not in hint, "data-dir hint says mkdir when run as me", hint)
 
 
+def test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key() -> None:
+    """The kit's private key is 600/660 to whoever extracted it; the client runs as FLIP_UID (FLIP#1731)."""
+    print("▶ FL kit contents: a key the client's uid cannot read -> WARN naming the chown")
+    me, other = str(os.getuid()), str(os.getuid() + 1)
+    with tempfile.TemporaryDirectory() as td:
+        slot = Path(td) / "net-1" / "services" / "Trust_1"
+        for d in ("local", "startup", "transfer"):
+            (slot / d).mkdir(parents=True)
+        key = slot / "startup" / "client.key"
+        key.write_text("secret")
+        key.chmod(0o600)
+        base = {"FL_KIT_DIR": td, "FL_BACKEND": "nvflare", "FL_KIT_SLOT": "Trust_1", "FL_KIT_SLOT_NUMBER": "1"}
+        mine = mod.check_fl_kit_contents({**base, "FLIP_UID": me, "FLIP_GID": str(os.getgid())}, True)
+        theirs = mod.check_fl_kit_contents({**base, "FLIP_UID": other, "FLIP_GID": other}, True)
+        image = mod.check_fl_kit_contents(base, True)  # the image's uid 1000 is not this user either
+        (Path(td) / "net-1" / "certificates").mkdir()
+        cred = Path(td) / "net-1" / "keys" / "supernode_credentials_1"
+        cred.parent.mkdir()
+        cred.write_text("secret")
+        cred.chmod(0o600)
+        flower = mod.check_fl_kit_contents({**base, "FL_BACKEND": "flower", "FLIP_UID": other}, True)
+    _assert(mine.status == mod.Status.PASS, "my key, my uid: PASS", str(mine))
+    _assert(theirs.status == mod.Status.WARN, "other uid: WARN", str(theirs))
+    _assert(f"runs as uid {other}" in theirs.detail, "names the client uid", theirs.detail)
+    _assert(f"chown -R <that uid> {slot}" in theirs.hints[0], "hint names the slot dir", theirs.hints[0])
+    expected = mod.Status.PASS if os.getuid() == 1000 else mod.Status.WARN
+    _assert(image.status == expected, "the image's uid 1000 is judged the same way", str(image))
+    _assert(flower.status == mod.Status.WARN and "supernode_credentials_1" in flower.detail, "flower too", str(flower))
+
+
 def main() -> None:
     if not SCRIPT.is_file():
         sys.exit(f"❌ {SCRIPT} not found")
@@ -933,6 +963,7 @@ def main() -> None:
     test_40_container_uid_row()
     test_41_untraversable_parent_is_a_fail_not_a_crash()
     test_42_rows_judge_the_sudo_user_not_root()
+    test_43_fl_kit_contents_warn_when_the_client_uid_cannot_read_its_key()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")

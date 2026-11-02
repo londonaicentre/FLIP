@@ -649,6 +649,25 @@ def check_fl_kit_dir_exists(fl_kit_dir: str, kit_present: bool) -> Check:
     )
 
 
+def _client_cannot_read(path: Path, kit_vars: dict[str, str], image_uid: int) -> str:
+    """Why the FL client's uid could not read this kit file, or "" when it can (FLIP#1731).
+
+    The kit's private key is 600/660 to whoever extracted it; the client runs as FLIP_UID, else the
+    image's uid, and the operator cannot test another uid's access, so judge owner, group and mode.
+    """
+    uid = int(kit_vars.get("FLIP_UID", "").strip() or image_uid)
+    gid = int(kit_vars.get("FLIP_GID", "").strip() or kit_vars.get("FLIP_UID", "").strip() or image_uid)
+    try:
+        st = path.stat()
+    except OSError:
+        return ""
+    mode = st.st_mode & 0o777
+    readable = st.st_uid == uid and mode & 0o400 or st.st_gid == gid and mode & 0o040 or mode & 0o004
+    if readable:
+        return ""
+    return f"{path} is owned by uid {st.st_uid} mode {mode:o}, and the client runs as uid {uid}"
+
+
 def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     if not kit_present:
         return Check("FL kit contents", Status.PENDING, "pending — needs kit file")
@@ -673,6 +692,13 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
         target = root / "net-1" / "services" / slot
         sub = {p: (target / p).is_dir() for p in ("local", "startup", "transfer")}
         if all(sub.values()):
+            if why := _client_cannot_read(target / "startup" / "client.key", kit_vars, 1000):
+                return Check(
+                    "FL kit contents (nvflare)",
+                    Status.WARN,
+                    f"{target}/{{local,startup,transfer}}; {why}",
+                    hints=[f"chown -R <that uid> {target} (the client also writes local/ and transfer/)."],
+                )
             return Check(
                 "FL kit contents (nvflare)",
                 Status.PASS,
@@ -689,6 +715,13 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     certs = root / "net-1" / "certificates"
     creds = root / "net-1" / "keys" / f"supernode_credentials_{slot_number}"
     if certs.is_dir() and creds.is_file():
+        if why := _client_cannot_read(creds, kit_vars, 49999):
+            return Check(
+                "FL kit contents (flower)",
+                Status.WARN,
+                f"{certs}/ + supernode_credentials_{slot_number}; {why}",
+                hints=[f"chown <that uid> {creds}, or chmod 640 it with the client's group."],
+            )
         return Check(
             "FL kit contents (flower)",
             Status.PASS,
