@@ -11,13 +11,20 @@
  * limitations under the License.
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { assertClean, checkDist, checkFixtures, demoId, ROSTER, scrubFiles } from "../demo-fixtures.mjs";
+import { assertClean,
+    checkDist,
+    checkFixtures,
+    demoId,
+    ROSTER,
+    runCli,
+    scrubFiles,
+    scrubProjects } from "../demo-fixtures.mjs";
 
 // Raw captures are arbitrary JSON that the tests reach into freely.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -262,6 +269,35 @@ describe("scrubFiles", () => {
         inject(files);
         expect(() => scrubFiles(files, TRUST_MAP)).toThrow(/unmapped trust/);
     });
+
+    it("drops a non-participant named in full, and refuses free text that still names it", () => {
+        const riverside = {
+            id: "5b8c7d6e-1111-4222-8333-999988887777",
+            name: "Riverside Health",
+            code: "RIV"
+        };
+        const map = {
+            ...TRUST_MAP,
+            [riverside.id]: null
+        };
+        const files = rawFiles();
+        files["m1_step.json"].trusts.push(riverside);
+        expect(JSON.stringify(scrubFiles(clone(files), map)["m1_step.json"])).not.toContain("Riverside");
+
+        files["m1_logs.json"].push({
+            modelId: MODEL_ID,
+            log: "Riverside Health declined the round"
+        });
+        expect(() => scrubFiles(files, map)).toThrow(/Riverside Health/);
+    });
+
+    it("refuses a trustMap that points a trust at something other than a roster site", () => {
+        const wrongMap = {
+            ...TRUST_MAP,
+            [PROD_A.id]: PROD_B.id
+        };
+        expect(() => scrubFiles(rawFiles(), wrongMap)).toThrow(/not a roster site/);
+    });
 });
 
 describe("assertClean", () => {
@@ -340,5 +376,148 @@ describe("checkDist", () => {
 
     it("fails rather than passing vacuously on an empty build", () => {
         expect(() => checkDist(dist)).toThrow(/no scannable/);
+    });
+});
+
+// A demo directory on disk holding one raw capture, as `make capture-demo-project` leaves it.
+function writeRawProject(demoDir: string, slug = "p1", files: Record<string, Json> = rawFiles()): string {
+    const data = path.join(demoDir, "projects", slug, "data");
+    mkdirSync(data, { recursive: true });
+    writeFileSync(path.join(demoDir, "projects", slug, "capture.json"), JSON.stringify({ trustMap: TRUST_MAP }));
+    for (const [name, body] of Object.entries(files)) {
+        writeFileSync(path.join(data, name), JSON.stringify(body));
+    }
+
+    return data;
+}
+
+const makeIo = () => ({
+    log: vi.fn(),
+    error: vi.fn()
+});
+
+describe("scrubProjects", () => {
+    let demoDir: string;
+    beforeEach(() => {
+        demoDir = mkdtempSync(path.join(tmpdir(), "demo-projects-"));
+    });
+    afterEach(() => rmSync(demoDir, {
+        recursive: true,
+        force: true
+    }));
+
+    it("rewrites a project's data in place, and a second run changes nothing", () => {
+        const data = writeRawProject(demoDir);
+
+        expect(scrubProjects([], demoDir)).toEqual(["p1"]);
+        const once = readFileSync(path.join(data, "project.json"), "utf8");
+        expect(once).not.toMatch(/Bangkok|King's College London|aicentreflip@gmail\.com/);
+        expect(JSON.parse(once).approvedTrusts[0].id).toBe(ROSTER.sites[0].id);
+
+        scrubProjects([], demoDir);
+        expect(readFileSync(path.join(data, "project.json"), "utf8")).toBe(once);
+    });
+
+    it("scrubs only the slugs asked for", () => {
+        const data = writeRawProject(demoDir);
+
+        expect(scrubProjects(["other"], demoDir)).toEqual([]);
+        expect(readFileSync(path.join(data, "project.json"), "utf8")).toContain("Bangkok");
+    });
+
+    it("writes an oversized file compactly so it stays under the repo's large-file limit", () => {
+        const files = rawFiles();
+        files["m1_metrics.json"][0].metrics[0].data = Array.from({ length: 20_000 }, (_, i) => ({
+            xValue: i,
+            yValue: 0.5
+        }));
+        const data = writeRawProject(demoDir, "p1", files);
+
+        scrubProjects([], demoDir);
+        const metrics = readFileSync(path.join(data, "m1_metrics.json"), "utf8");
+        expect(metrics.split("\n").length).toBe(2);
+        expect(readFileSync(path.join(data, "project.json"), "utf8").split("\n").length).toBeGreaterThan(2);
+    });
+
+    it("lets checkFixtures see the difference: raw fails, scrubbed passes", () => {
+        writeRawProject(demoDir);
+        expect(checkFixtures(demoDir).problems.length).toBeGreaterThan(0);
+
+        scrubProjects([], demoDir);
+        expect(checkFixtures(demoDir)).toEqual({
+            problems: [],
+            checked: Object.keys(rawFiles()).length
+        });
+    });
+});
+
+describe("runCli", () => {
+    let demoDir: string;
+    let dist: string;
+    beforeEach(() => {
+        demoDir = mkdtempSync(path.join(tmpdir(), "demo-cli-"));
+        dist = mkdtempSync(path.join(tmpdir(), "demo-cli-dist-"));
+    });
+    afterEach(() => {
+        rmSync(demoDir, {
+            recursive: true,
+            force: true
+        });
+        rmSync(dist, {
+            recursive: true,
+            force: true
+        });
+    });
+
+    it("scrub reports the projects it rewrote", () => {
+        writeRawProject(demoDir);
+        const io = makeIo();
+
+        expect(runCli(["scrub", "p1"], io, { demoDir })).toBe(0);
+        expect(io.log).toHaveBeenCalledWith("demo-fixtures: scrubbed p1");
+    });
+
+    it("scrub says so when nothing matched", () => {
+        const io = makeIo();
+
+        expect(runCli(["scrub", "nope"], io, { demoDir })).toBe(0);
+        expect(io.log).toHaveBeenCalledWith("demo-fixtures: scrubbed nothing");
+    });
+
+    it("check fails on raw fixtures and names the problem", () => {
+        writeRawProject(demoDir);
+        const io = makeIo();
+
+        expect(runCli(["check"], io, { demoDir })).toBe(1);
+        expect(io.error.mock.calls.flat().join("\n")).toMatch(/denied string|e-mail/);
+        expect(io.error.mock.calls.flat().join("\n")).toContain("FAILED");
+    });
+
+    it("check passes on scrubbed fixtures and a clean bundle", () => {
+        writeRawProject(demoDir);
+        runCli(["scrub"], makeIo(), { demoDir });
+        writeFileSync(path.join(dist, "index.js"), `const s="${ROSTER.sites[0].name}";`);
+        const io = makeIo();
+
+        expect(runCli(["check", "--dist", dist], io, { demoDir })).toBe(0);
+        expect(io.log).toHaveBeenCalledWith("demo-fixtures: 1 bundle files scanned");
+        expect(io.error).not.toHaveBeenCalled();
+    });
+
+    it("check fails on a bundle that carries a production name", () => {
+        writeRawProject(demoDir);
+        runCli(["scrub"], makeIo(), { demoDir });
+        writeFileSync(path.join(dist, "index.js"), "x=\"Bangkok Dusit Medical Services\"");
+        const io = makeIo();
+
+        expect(runCli(["check", "--dist", dist], io, { demoDir })).toBe(1);
+        expect(io.error.mock.calls.flat().join("\n")).toContain("index.js");
+    });
+
+    it("prints usage and exits 2 on an unknown command", () => {
+        const io = makeIo();
+
+        expect(runCli(["frobnicate"], io, { demoDir })).toBe(2);
+        expect(io.error.mock.calls.flat().join("\n")).toContain("usage");
     });
 });

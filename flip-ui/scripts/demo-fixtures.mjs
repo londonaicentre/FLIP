@@ -43,7 +43,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const UI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEMO_DIR = join(UI_ROOT, "mocks/demo");
-const PROJECTS_DIR = join(DEMO_DIR, "projects");
 
 export const ROSTER = JSON.parse(readFileSync(join(DEMO_DIR, "roster.json"), "utf8"));
 
@@ -222,18 +221,23 @@ export function scrubFiles(files, trustMap) {
     return result;
 }
 
-const projectDirs = () => (existsSync(PROJECTS_DIR) ? readdirSync(PROJECTS_DIR) : [])
-    .map(slug => join(PROJECTS_DIR, slug))
-    .filter(dir => existsSync(join(dir, "capture.json")));
+const projectDirs = (demoDir = DEMO_DIR) => {
+    const root = join(demoDir, "projects");
+
+    return (existsSync(root) ? readdirSync(root) : [])
+        .map(slug => join(root, slug))
+        .filter(dir => existsSync(join(dir, "capture.json")));
+};
 
 const readCapture = dir => JSON.parse(readFileSync(join(dir, "capture.json"), "utf8"));
-const capturedIds = () => projectDirs().flatMap(dir => Object.keys(readCapture(dir).trustMap ?? {}));
+const capturedIds = (demoDir = DEMO_DIR) => projectDirs(demoDir)
+    .flatMap(dir => Object.keys(readCapture(dir).trustMap ?? {}));
 const readJsonDir = dir => Object.fromEntries(readdirSync(dir).filter(f => f.endsWith(".json"))
     .map(f => [f, JSON.parse(readFileSync(join(dir, f), "utf8"))]));
 
 /** Rewrite projects/<slug>/data/*.json in place. Returns the slugs scrubbed. */
-export function scrubProjects(slugs = []) {
-    const dirs = projectDirs().filter(dir => !slugs.length || slugs.includes(dir.split("/").pop()));
+export function scrubProjects(slugs = [], demoDir = DEMO_DIR) {
+    const dirs = projectDirs(demoDir).filter(dir => !slugs.length || slugs.includes(dir.split("/").pop()));
     for (const dir of dirs) {
         const scrubbed = scrubFiles(readJsonDir(join(dir, "data")), readCapture(dir).trustMap ?? {});
         for (const [name, body] of Object.entries(scrubbed)) {
@@ -248,11 +252,11 @@ export function scrubProjects(slugs = []) {
 }
 
 /** Every committed fixture (project data and estate files) must already be clean. */
-export function checkFixtures() {
-    const extra = capturedIds();
+export function checkFixtures(demoDir = DEMO_DIR) {
+    const extra = capturedIds(demoDir);
     const problems = [];
     let checked = 0;
-    const dirs = [...projectDirs().map(dir => join(dir, "data")), join(DEMO_DIR, "estate")].filter(existsSync);
+    const dirs = [...projectDirs(demoDir).map(dir => join(dir, "data")), join(demoDir, "estate")].filter(existsSync);
     for (const dir of dirs) {
         for (const [name, body] of Object.entries(readJsonDir(dir))) {
             checked += 1;
@@ -314,30 +318,48 @@ export function checkDist(distDir, extraDenied = capturedIds()) {
     };
 }
 
+const USAGE = "usage: node scripts/demo-fixtures.mjs scrub [slug ...] | check [--dist <dir>]";
+
+/**
+ * The command line, as a function so it can be tested: returns the exit code.
+ * `options.demoDir` points it at another demo directory (tests use a temporary one).
+ */
+export function runCli(argv, io, { demoDir = DEMO_DIR } = {}) {
+    const [command, ...rest] = argv;
+    if (command === "scrub") {
+        io.log(`demo-fixtures: scrubbed ${scrubProjects(rest, demoDir).join(", ") || "nothing"}`);
+
+        return 0;
+    }
+    if (command !== "check") {
+        io.error(USAGE);
+
+        return 2;
+    }
+    const fixtures = checkFixtures(demoDir);
+    fixtures.problems.forEach(problem => io.error(`  ${problem}`));
+    let failed = fixtures.problems.length > 0;
+    const distIndex = rest.indexOf("--dist");
+    if (distIndex !== -1) {
+        const result = checkDist(resolve(UI_ROOT, rest[distIndex + 1] ?? "dist"), capturedIds(demoDir));
+        result.problems.forEach(({ file, hit }) => io.error(`  ${file}: ${JSON.stringify(hit)}`));
+        failed ||= result.problems.length > 0;
+        io.log(`demo-fixtures: ${result.checked} bundle files scanned`);
+    }
+    io.log(`demo-fixtures: ${fixtures.checked} fixture files checked`);
+    if (failed) {
+        io.error("demo-fixtures: FAILED — the public demo would publish what is listed above.");
+
+        return 1;
+    }
+
+    return 0;
+}
+
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
-    const [command, ...rest] = process.argv.slice(2);
-    if (command === "scrub") {
-        console.log(`demo-fixtures: scrubbed ${scrubProjects(rest).join(", ") || "nothing"}`);
-    } else if (command === "check") {
-        const fixtures = checkFixtures();
-        fixtures.problems.forEach(p => console.error(`  ${p}`));
-        let failed = fixtures.problems.length > 0;
-        const distIndex = rest.indexOf("--dist");
-        if (distIndex !== -1) {
-            const dist = resolve(UI_ROOT, rest[distIndex + 1] ?? "dist");
-            const result = checkDist(dist);
-            result.problems.forEach(({ file, hit }) => console.error(`  ${file}: ${JSON.stringify(hit)}`));
-            failed ||= result.problems.length > 0;
-            console.log(`demo-fixtures: ${result.checked} bundle files scanned`);
-        }
-        console.log(`demo-fixtures: ${fixtures.checked} fixture files checked`);
-        if (failed) {
-            console.error("demo-fixtures: FAILED — the public demo would publish what is listed above.");
-            process.exit(1);
-        }
-    } else {
-        console.error("usage: node scripts/demo-fixtures.mjs scrub [slug ...] | check [--dist <dir>]");
-        process.exit(2);
-    }
+    process.exit(runCli(process.argv.slice(2), {
+        log: msg => console.log(msg),
+        error: msg => console.error(msg)
+    }));
 }

@@ -27,9 +27,14 @@ export declare function scrubFiles(
     files: Record<string, unknown>,
     trustMap: Record<string, string | null>
 ): Record<string, unknown>;
-export declare function scrubProjects(slugs?: readonly string[]): string[];
-export declare function checkFixtures(): { problems: string[]; checked: number };
+export declare function scrubProjects(slugs?: readonly string[], demoDir?: string): string[];
+export declare function checkFixtures(demoDir?: string): { problems: string[]; checked: number };
 export declare function checkDist(
     distDir: string,
     extraDenied?: readonly string[]
 ): { problems: { file: string; hit: string }[]; checked: number };
+export declare function runCli(
+    argv: readonly string[],
+    io: { log: (message: string) => void; error: (message: string) => void },
+    options?: { demoDir?: string }
+): number;
