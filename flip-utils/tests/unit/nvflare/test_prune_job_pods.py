@@ -12,11 +12,16 @@
 
 """Finished job pods go once they are older than the keep period (FLIP#1428); running and recent ones stay."""
 
+import runpy
+import sys
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
-from flip.nvflare.prune_job_pods import finished_at, prune
+import pytest
+
+from flip.nvflare.prune_job_pods import INTERVAL_SECONDS, finished_at, prune
 
 NOW = datetime(2026, 11, 2, 12, tzinfo=timezone.utc)
 KEEP = timedelta(hours=24)
@@ -64,3 +69,40 @@ def test_a_pod_whose_containers_report_nothing_ages_from_its_creation():
     pod.status.container_statuses = None
 
     assert finished_at(pod) == NOW - timedelta(hours=30)
+
+
+class _StopLoop(Exception):
+    """Raised by the patched sleep to end the module's endless loop."""
+
+
+def test_the_module_prunes_with_its_own_service_account_hourly_and_survives_a_failed_pass(monkeypatch, capsys):
+    """Run as the chart runs it: in-cluster config, env-driven settings, one pass that deletes, one that fails."""
+    old = _pod("old-success", "Succeeded", 100, finished_hours_ago=48)
+    api = Mock()
+    api.list_namespaced_pod.side_effect = [NS(items=[old]), RuntimeError("API server unreachable")]
+    config = Mock()
+    kubernetes = NS(client=NS(CoreV1Api=Mock(return_value=api)), config=config)
+    monkeypatch.setitem(sys.modules, "kubernetes", kubernetes)
+    monkeypatch.delitem(sys.modules, "flip.nvflare.prune_job_pods")  # runpy runs it afresh as __main__
+    monkeypatch.setenv("FL_K8S_NAMESPACE", "flip-trust")
+    monkeypatch.setenv("FL_JOB_POD_SELECTOR", "app.kubernetes.io/component=fl-job")
+    monkeypatch.setenv("FL_JOB_POD_KEEP_HOURS", "36")
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 2:
+            raise _StopLoop
+
+    monkeypatch.setattr(time, "sleep", sleep)
+
+    with pytest.raises(_StopLoop):
+        runpy.run_module("flip.nvflare.prune_job_pods", run_name="__main__")
+
+    config.load_incluster_config.assert_called_once_with()
+    api.list_namespaced_pod.assert_called_with("flip-trust", label_selector="app.kubernetes.io/component=fl-job")
+    api.delete_namespaced_pod.assert_called_once_with("old-success", "flip-trust")
+    assert sleeps == [INTERVAL_SECONDS, INTERVAL_SECONDS]
+    out = capsys.readouterr()
+    assert "Deleted 1 finished job pod(s): old-success" in out.out
+    assert "Job pod pruning failed: RuntimeError('API server unreachable')" in out.err
