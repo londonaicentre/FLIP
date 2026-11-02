@@ -216,6 +216,13 @@ def test_unavailable_clients_names_only_the_clients_not_connected(mock_get_statu
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
+def test_unavailable_clients_names_every_client_when_none_is_connected(mock_get_status):
+    mock_get_status.return_value = []
+
+    assert fl_service.unavailable_clients(["Trust_1", "Trust_2"], "endpoint") == ["Trust_1", "Trust_2"]
+
+
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_unavailable_clients_never_raises_when_the_fl_api_reports_nothing(mock_get_status):
     """No statuses means nothing is known: no client is named and the submission goes ahead (#1133)."""
     mock_get_status.return_value = None
@@ -1606,9 +1613,17 @@ def test_check_client_status_success(mock_http_get):
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
 def test_check_client_status_returns_none_when_no_response(mock_http_get):
-    mock_http_get.return_value = []
+    mock_http_get.return_value = None
 
     assert fl_service.check_client_status("endpoint") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_returns_an_empty_list_when_no_client_is_connected(mock_http_get):
+    """FLARE drops a client from its list once it stops answering, so [] means every client is offline."""
+    mock_http_get.return_value = []
+
+    assert fl_service.check_client_status("endpoint") == []
 
 
 # --- fetch_* unavailable branches ----------------------------------------------------------------

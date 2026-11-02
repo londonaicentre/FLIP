@@ -526,8 +526,8 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses, or ``None`` when the FL API cannot be
-            reached or answers with an error status.
+        list[IClientStatus] | None: A list of client statuses, empty when no client is connected, or
+            ``None`` when the FL API cannot be reached, answers with an error status or sends nothing.
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
@@ -545,7 +545,7 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
             logger.error(f"HTTP GET failed for {url}: {e}")
         return None
     logger.debug(f"Client status response: {response}")
-    if not response:
+    if response is None:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         return None
     client_statuses = [IClientStatus.model_validate(c) for c in response]
@@ -619,11 +619,11 @@ def unavailable_clients(clients: list[str], endpoint: str) -> list[str]:
         endpoint (str): The endpoint of the FL API service.
 
     Returns:
-        list[str]: The clients that are not connected, in the order given. Empty when the FL API reports no
-            statuses, since then nothing is known.
+        list[str]: The clients that are not connected, in the order given; all of them when none is. Empty when
+            the FL API cannot say, since then nothing is known.
     """
     client_statuses = check_client_status(endpoint)
-    if not client_statuses:
+    if client_statuses is None:
         logger.warning(f"No client status response from FL API at {endpoint}")
         return []
     logger.info(f"Client status: {client_statuses}")
